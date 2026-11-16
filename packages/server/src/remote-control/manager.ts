@@ -95,6 +95,14 @@ export class RemoteControlManager {
     return this.options.registry.tunnelPushEpoch()
   }
 
+  devicePushEpoch(id: string): string {
+    return this.options.registry.devicePushEpoch(id)
+  }
+
+  invalidatePushConsent(id: string): void {
+    this.options.registry.invalidatePushConsent(id)
+  }
+
   async start(): Promise<RemoteControlStartResponse> {
     if (this.options.disabledByAdministrator) throw new Error(REMOTE_CONTROL_DISABLED)
     this.enabled = true

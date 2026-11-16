@@ -140,7 +140,10 @@ test("unreadable private storage fails closed rather than replacing it", t => {
   const { options, push } = fixture(t)
   push.consent(principal); push.close()
   fs.writeFileSync(options.file, "invalid private storage")
-  assert.throws(() => new PushService(options as any), /storage unavailable/)
+  const unavailable = new PushService(options as any)
+  t.after(() => unavailable.close())
+  assert.equal(unavailable.status(principal).enabled, false)
+  assert.throws(() => unavailable.consent(principal), /storage unavailable/)
   assert.equal(fs.readFileSync(options.file, "utf8"), "invalid private storage")
 })
 

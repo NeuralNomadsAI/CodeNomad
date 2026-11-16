@@ -237,6 +237,17 @@ existing notification routing System column; later project/preference changes
 replace that subscription's snapshot. DELETE removes this principal's subscriptions.
 GET status reports capability, subscription state and the public key when initialized.
 
+The host keeps revocation observers active while push is dormant. Push storage loads
+only with the feature and administrator policy enabled, after all listener metadata
+and direct HTTPS origins are published. Restored devices are then revalidated;
+revoked devices are purged by the ordinary sweep. Device logout rotates a private
+registry consent epoch, including while push is dormant.
+
+Unreadable or invalid private push storage disables push alone: status reports
+`enabled: false, unavailable: true`, consent/subscription writes return 503, and
+the existing file stays untouched. Reads retry at most once every five seconds;
+repairing the file or clearing a transient file lock restores availability.
+
 Push endpoints use qualified FCM, Mozilla and Apple HTTPS hosts, validated key
 sizes and public DNS answers pinned to the connection. Redirects are refused.
 Private storage contains VAPID keys, bounded subscriptions and expiring opaque routes;

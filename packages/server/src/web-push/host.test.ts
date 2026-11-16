@@ -14,6 +14,7 @@ import { resolveConfigLocation } from "../config/location"
 import { acquirePushHost, readPushPolicy } from "./host"
 import Fastify from "fastify"
 import { registerAuthRoutes } from "../server/routes/auth"
+import { DEVICE_COOKIE_NAME, gateRemoteRequest } from "../remote-control/gate"
 import type { WorkspaceManager } from "../workspaces/manager"
 import type { PushPrincipal } from "./service"
 
@@ -34,6 +35,7 @@ function consent() {
   projects: ["project"], preferences: { v: 1, needsInput: true, sessionDone: true } }
 }
 async function fixture(t: test.TestContext, idleMs = 24 * 60 * 60 * 1000) {
+  let ready = true
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "push-host-"))
   const logger = createLogger({ level: "silent" } as never), eventBus = new EventBus()
   const location = resolveConfigLocation(path.join(dir, "config.yaml"))
@@ -42,12 +44,12 @@ async function fixture(t: test.TestContext, idleMs = 24 * 60 * 60 * 1000) {
   const authManager = new AuthManager({ configPath: location.configYamlPath, username: "user", generateToken: true, sessionIdleMs: idleMs }, logger)
   const remoteControlManager = new RemoteControlManager({
     registry: new RemoteDeviceRegistry(path.join(dir, "devices.json")), logger,
-    directHttpsOrigins: () => [origin], router: () => null,
+    directHttpsOrigins: () => ready ? [origin] : [], router: () => null,
     openTunnel: async () => ({ url: "https://push.tunnel.example", hostname: "push.tunnel.example",
       status: () => ({ state: "connected", connections: 0 }), closed: new Promise<string>(() => {}), close: async () => {} }),
   })
   const workspaceManager = { list: () => [{ id: "project" }] } as unknown as WorkspaceManager
-  const deps = { authManager, remoteControlManager, settings, eventBus, workspaceManager }
+  const deps = { authManager, remoteControlManager, settings, eventBus, workspaceManager, authorityReady: () => ready }
   const host = acquirePushHost(deps)
   t.after(async () => { host.release(); await remoteControlManager.shutdown(); fs.rmSync(dir, { recursive: true, force: true }) })
   const pairing = remoteControlManager.createDirectPairing(origin)
@@ -55,7 +57,7 @@ async function fixture(t: test.TestContext, idleMs = 24 * 60 * 60 * 1000) {
   const devicePrincipal: PushPrincipal = { id: `remote-device:${device.device.id}`, channel: "https", origin }
   const session = authManager.createSession("user")
   const sessionPrincipal: PushPrincipal = { id: session.id, channel: "https", origin }
-  return { ...deps, host, devicePrincipal, sessionPrincipal }
+  return { ...deps, host, devicePrincipal, deviceToken: device.token, sessionPrincipal, setReady: (value: boolean) => { ready = value } }
 }
 
 test("one host across listeners; logout and password replacement revoke actual private consent", async t => {
@@ -109,4 +111,69 @@ test("host restart preserves VAPID/device consent and drops password-session bin
   assert.equal(restarted.push.status(f.sessionPrincipal).subscribed, false)
   assert.equal(restarted.push.status(f.devicePrincipal).subscribed, true)
   assert.equal(restarted.push.status(f.devicePrincipal).publicKey, publicKey)
+})
+
+test("restart waits for listener origins before revalidating persisted HTTPS consent", async t => {
+  const f = await fixture(t)
+  f.host.push.subscribe(f.devicePrincipal, consent())
+  const file = path.join(path.dirname(f.settings.configYamlPathForAuthority()), "web-push.json")
+  const before = fs.readFileSync(file, "utf8")
+  f.host.release()
+  f.setReady(false)
+  const restarted = acquirePushHost(f)
+  t.after(restarted.release)
+  await new Promise(resolve => setTimeout(resolve, 300))
+  assert.equal(fs.readFileSync(file, "utf8"), before)
+  f.setReady(true)
+  await new Promise(resolve => setTimeout(resolve, 300))
+  assert.equal(restarted.push.status(f.devicePrincipal).subscribed, true)
+})
+
+test("a genuinely revoked HTTPS device is removed after listener authority is ready", async t => {
+  const f = await fixture(t)
+  f.host.push.subscribe(f.devicePrincipal, consent())
+  f.host.release()
+  f.remoteControlManager.revokeDevice(f.devicePrincipal.id.slice(14))
+  f.setReady(false)
+  const restarted = acquirePushHost(f)
+  t.after(restarted.release)
+  f.setReady(true)
+  restarted.push.status(f.devicePrincipal)
+  await new Promise(resolve => setTimeout(resolve, 300))
+  assert.equal(restarted.push.status(f.devicePrincipal).subscribed, false)
+  const file = path.join(path.dirname(f.settings.configYamlPathForAuthority()), "web-push.json")
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).entries, [])
+})
+
+test("dormant push performs no storage reads and device logout stays revoked across restart", async t => {
+  const f = await fixture(t)
+  f.host.push.subscribe(f.devicePrincipal, consent())
+  f.host.release()
+  f.settings.mergePatchOwner("config", "ui", { settings: { multiBackend: false } })
+  const file = path.join(path.dirname(f.settings.configYamlPathForAuthority()), "web-push.json")
+  const bytes = fs.readFileSync(file, "utf8"), read = fs.readFileSync
+  let reads = 0
+  const mock = t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
+    if (args[0] === file) reads++
+    return read(...args)
+  })
+  const dormant = acquirePushHost(f)
+  t.after(dormant.release)
+  assert.equal(dormant.push.status(f.devicePrincipal).enabled, false)
+  const app = Fastify()
+  app.addHook("onRequest", async (request, reply) => { gateRemoteRequest(request, reply, f.remoteControlManager.gate()) })
+  registerAuthRoutes(app, { authManager: f.authManager })
+  const url = await app.listen({ host: "127.0.0.1", port: 0 })
+  t.after(() => app.close())
+  assert.equal((await fetch(`${url}/api/auth/logout`, { method: "POST", headers: {
+    host: new URL(origin).host, origin, cookie: `${DEVICE_COOKIE_NAME}=${f.deviceToken}`,
+  } })).status, 200)
+  assert.equal(reads, 0)
+  dormant.release()
+  mock.mock.restore()
+  assert.equal(fs.readFileSync(file, "utf8"), bytes)
+  f.settings.mergePatchOwner("config", "ui", { settings: { multiBackend: true } })
+  const restarted = acquirePushHost(f)
+  t.after(restarted.release)
+  assert.equal(restarted.push.status(f.devicePrincipal).subscribed, false)
 })

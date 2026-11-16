@@ -174,6 +174,7 @@ interface HttpServerDeps {
   worktreeDeletionFence?: WorktreeDeletionFence
   /** See `registerMissionRoutes`. */
   missionsHost?: () => boolean
+  pushAuthorityReady?: () => boolean
   /** Shared by every listener of one backend; a fresh in-memory one serves a lone server. */
   integrationCatalog?: IntegrationCatalogSource
 }
@@ -350,7 +351,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   registerAuthRoutes(app, { authManager: deps.authManager })
   let pushHost: ReturnType<typeof acquirePushHost> | undefined
-  const getPushHost = () => pushHost ??= acquirePushHost(deps)
+  const getPushHost = () => pushHost ??= acquirePushHost({ ...deps, authorityReady: deps.pushAuthorityReady })
   if (multiBackendEnabled() || typeof deps.settings.configYamlPathForAuthority?.() === "string") getPushHost()
   registerPushRoutes(app, {
     get push() { return getPushHost().push }, auth: deps.authManager, remoteControl: deps.remoteControlManager,

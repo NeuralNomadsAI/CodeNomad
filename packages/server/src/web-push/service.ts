@@ -53,35 +53,15 @@ export class PushService {
   private active = new Map<string, Set<AbortController>>()
   private running = 0
   private closed = false
+  private loaded = false
+  private nextLoadAt = 0
   private sweep: ReturnType<typeof setInterval>
 
   constructor(private readonly options: Options) {
-    try {
-      const doc = z.object({
-        v: z.literal(1), epoch: z.string(), keys: z.object({ publicKey: z.string(), privateKey: z.string() }),
-        entries: z.array(EntrySchema).max(128),
-        routes: z.array(z.tuple([z.string(), z.object({ owner: z.string(), instanceId: z.string(), sessionId: z.string(), expiresAt: z.number() })])).max(1024),
-      }).parse(JSON.parse(fs.readFileSync(options.file, "utf8")))
-      this.keys = doc.keys
-      for (const raw of doc.epoch === (options.epoch?.(doc.keys.publicKey) ?? "") ? doc.entries : []) {
-        // Password sessions live in memory. Device identity is revalidated before any IO.
-        if (!raw.device) continue
-        const principal: PushPrincipal = { id: `remote-device:${raw.device}`, channel: raw.channel, origin: raw.origin }
-        if (ownerOf(principal) !== raw.owner || options.authority(principal) === "revoked"
-          || raw.channelEpoch !== (options.channelEpoch?.(principal) ?? "")) continue
-        const entry = { ...raw, subscription: this.validate(raw.subscription) }
-        this.entries.set(hash(entry.subscription.endpoint), entry)
-        this.principals.set(raw.owner, principal)
-      }
-      for (const [token, route] of doc.routes) {
-        if (route.expiresAt > Date.now() && this.principals.has(route.owner)) this.routes.set(token, route)
-      }
-      this.persist()
-    } catch (error: any) {
-      if (error.code !== "ENOENT") throw new Error("Private push storage unavailable", { cause: error })
-    }
+    this.load()
     this.sweep = setInterval(() => {
       try {
+        if (!this.available()) return
         for (const [owner, principal] of this.principals) {
           const authority = options.authority(principal)
           if (!options.enabled() || authority !== "active") {
@@ -95,23 +75,66 @@ export class PushService {
     this.sweep.unref()
   }
 
+  private load() {
+    if (this.loaded || this.closed || !this.options.enabled() || Date.now() < this.nextLoadAt) return
+    try {
+      const doc = z.object({
+        v: z.literal(1), epoch: z.string(), keys: z.object({ publicKey: z.string(), privateKey: z.string() }),
+        entries: z.array(EntrySchema).max(128),
+        routes: z.array(z.tuple([z.string(), z.object({ owner: z.string(), instanceId: z.string(), sessionId: z.string(), expiresAt: z.number() })])).max(1024),
+      }).parse(JSON.parse(fs.readFileSync(this.options.file, "utf8")))
+      const entries = new Map<string, Entry>(), principals = new Map<string, PushPrincipal>(), routes = new Map<string, Route>()
+      for (const raw of doc.epoch === (this.options.epoch?.(doc.keys.publicKey) ?? "") ? doc.entries : []) {
+        // Password sessions live in memory. Device identity is revalidated before any IO.
+        if (!raw.device) continue
+        const principal: PushPrincipal = { id: `remote-device:${raw.device}`, channel: raw.channel, origin: raw.origin }
+        if (ownerOf(principal) !== raw.owner
+          || raw.channelEpoch !== (this.options.channelEpoch?.(principal) ?? "")) continue
+        const entry = { ...raw, subscription: this.validate(raw.subscription) }
+        entries.set(hash(entry.subscription.endpoint), entry)
+        principals.set(raw.owner, principal)
+      }
+      for (const [token, route] of doc.routes) {
+        if (route.expiresAt > Date.now() && principals.has(route.owner)) routes.set(token, route)
+      }
+      this.keys = doc.keys
+      this.entries = entries
+      this.principals = principals
+      this.routes = routes
+      this.loaded = true
+    } catch (error: any) {
+      if (error.code === "ENOENT") this.loaded = true
+      else this.nextLoadAt = Date.now() + 5000
+    }
+  }
+  private available() {
+    this.load()
+    return this.loaded && !this.closed
+  }
+  private requireStorage() {
+    if (!this.available()) throw new Error("Private push storage unavailable")
+  }
+
   private validate(value: unknown): Subscription {
     try { return (this.options.validate ?? validateSubscription)(value) }
     catch { throw new PushInputError("Invalid push subscription") }
   }
   interested(instanceId: string): boolean {
-    if (this.closed || !this.options.enabled()) return false
+    if (!this.options.enabled() || !this.available()) return false
     return [...this.entries.values()].some(entry => entry.projects.includes(instanceId)
       && (entry.preferences.needsInput || entry.preferences.sessionDone)
       && this.options.authority(this.principals.get(entry.owner)!) === "active")
   }
   status(principal: PushPrincipal) {
-    const enabled = !this.closed && this.options.enabled()
-    return { enabled, subscribed: this.hasOwner(ownerOf(principal)), ...(enabled && this.keys ? { publicKey: this.keys.publicKey } : {}) }
+    const available = this.available(), enabled = available && this.options.enabled()
+    return { enabled, subscribed: available && this.hasOwner(ownerOf(principal)),
+      ...(!available && this.options.enabled() ? { unavailable: true } : {}),
+      ...(enabled && this.keys ? { publicKey: this.keys.publicKey } : {}) }
   }
   consent(principal: PushPrincipal) {
     PrincipalSchema.parse(principal)
     if (!this.options.enabled() || this.closed) throw new PushInputError("Web Push disabled")
+    this.requireStorage()
     if (principal.id === "auth-disabled" || this.options.authority(principal) !== "active") throw new PushInputError("Push principal refused")
     this.keys ??= (this.options.keys ?? generateKeys)()
     this.persist()
@@ -120,6 +143,7 @@ export class PushService {
   subscribe(principal: PushPrincipal, value: unknown) {
     PrincipalSchema.parse(principal)
     if (!this.options.enabled() || this.closed) throw new PushInputError("Web Push disabled")
+    this.requireStorage()
     if (principal.id === "auth-disabled" || this.options.authority(principal) !== "active") throw new PushInputError("Push principal refused")
     const consent = Consent.parse(value), subscription = this.validate(consent.subscription)
     const projects = new Set(this.options.projects())
@@ -141,14 +165,16 @@ export class PushService {
     }
     return { publicKey: this.keys.publicKey }
   }
-  unsubscribe(principal: PushPrincipal) { this.removeOwner(ownerOf(principal)) }
+  unsubscribe(principal: PushPrincipal) { this.requireStorage(); this.removeOwner(ownerOf(principal)) }
   revoke(id?: string, channel?: "tunnel") {
+    if (!this.loaded) return
     for (const [owner, p] of this.principals) {
       if ((id === undefined || p.id === id || p.id === `remote-device:${id}`) && (!channel || p.channel === channel)) this.removeOwner(owner, false)
     }
     this.persist()
   }
   async resolve(principal: PushPrincipal, token: string) {
+    if (!this.available()) return undefined
     const route = this.routes.get(token)
     const current = () => this.options.enabled() && this.options.authority(principal) === "active" && route
       && this.routes.get(token) === route && route.owner === ownerOf(principal) && route.expiresAt > Date.now()
@@ -160,7 +186,7 @@ export class PushService {
     return { instanceId: route.instanceId, sessionId: route.sessionId }
   }
   async publish(event: PushEvent): Promise<void> {
-    if (this.closed || !this.options.enabled()) return
+    if (!this.options.enabled() || !this.available()) return
     this.prune()
     const expiresAt = Date.now() + TTL
     await Promise.all([...this.entries].map(([id, entry]) => {

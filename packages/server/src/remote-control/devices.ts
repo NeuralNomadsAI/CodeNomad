@@ -17,6 +17,7 @@ interface StoredDevice {
   lastSeenAt: string
   /** Verified direct HTTPS origin the device paired on; absent for Remote Control devices. */
   origin?: string
+  pushEpoch?: string
 }
 
 interface StoredState {
@@ -61,6 +62,17 @@ export class RemoteDeviceRegistry {
 
   tunnelPushEpoch(): string {
     return this.state.tunnelPushEpoch ?? ""
+  }
+
+  devicePushEpoch(id: string): string {
+    return this.state.devices.find(device => device.id === id)?.pushEpoch ?? ""
+  }
+
+  invalidatePushConsent(id: string): void {
+    const device = this.state.devices.find(device => device.id === id)
+    if (!device) return
+    device.pushEpoch = randomUUID()
+    this.persist()
   }
 
   /** Records the Start/Stop choice and rotates tunnel push authority atomically on Stop. */
@@ -219,7 +231,8 @@ function readState(filePath: string): StoredState | null {
     typeof device === "object" && device !== null
     && typeof device.id === "string" && typeof device.name === "string" && /^[0-9a-f]{64}$/.test(String(device.tokenHash))
     && !Number.isNaN(Date.parse(String(device.createdAt))) && !Number.isNaN(Date.parse(String(device.lastSeenAt)))
-    && (device.origin === undefined || typeof device.origin === "string" && device.origin.startsWith("https://")))
+    && (device.origin === undefined || typeof device.origin === "string" && device.origin.startsWith("https://"))
+    && (device.pushEpoch === undefined || typeof device.pushEpoch === "string" && /^[0-9a-f-]{36}$/i.test(device.pushEpoch)))
   return {
     version: 1, route: candidate.route, devices,
     ...(candidate.enabled === true ? { enabled: true } : {}),

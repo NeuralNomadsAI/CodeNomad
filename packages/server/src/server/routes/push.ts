@@ -65,7 +65,9 @@ export function registerPushRoutes(app: FastifyInstance, deps: RouteDeps) {
     const principal = principalFor(request, reply)
     if (!principal) return
     try {
-      if (!deps.push.status(principal).enabled) return reply.code(403).send({ error: "Web Push disabled", code: "web_push_disabled" })
+      const status = deps.push.status(principal)
+      if (status.unavailable) return reply.code(503).send({ error: "Push storage unavailable" })
+      if (!status.enabled) return reply.code(403).send({ error: "Web Push disabled", code: "web_push_disabled" })
       if (ConsentBody.safeParse(request.body).success) return await deps.push.consent(principal)
       const parsed = SubscriptionBody.safeParse(request.body)
       if (!parsed.success) return reply.code(400).send({ error: "Invalid push subscription" })
