@@ -14,6 +14,8 @@ Ask an agent in any project conversation, including a subagent or scheduled run,
 
 ### Configuration {#saved-briefs}
 
+Agents can read every Mission in the project, including yours, from any owned conversation. Read-only project views cover tasks, results, cleanup, scheduled passages and source choices; browsing never starts or retries work.
+
 **Configuration** optionally loads a saved objective, notes, playbook, agents/models and task-session choices. Its name supplies the editable title. Check the filled fields before creating.
 
 Agents can read saved configurations and copy your chosen values into a separate Mission.

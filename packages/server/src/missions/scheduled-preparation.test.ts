@@ -87,9 +87,9 @@ test("calendar preparation recovers without a journal or another dispatch, survi
   assert.equal("acknowledgement" in replay.preparation && replay.preparation.acknowledgement, "recovered")
   assert.equal(f.sends, 1)
   assert.equal((await rebuilt.inspect(author, { missionID: document.id }, "read")).schedule?.document?.id, document.id)
-  await assert.rejects(rebuilt.inspect("ses_other", { missionID: document.id }, "read"), { code: "mission-not-found" })
+  assert.equal((await rebuilt.inspect("ses_other", { missionID: document.id }, "read")).schedule?.document?.id, document.id)
   assert.deepEqual((await rebuilt.listMissions(author)).map(item => item.missionID), [document.id])
-  assert.deepEqual(await rebuilt.listMissions("ses_other"), [])
+  assert.deepEqual((await rebuilt.listMissions("ses_other")).map(item => item.missionID), [document.id])
   for (const changed of [{ launch: { when: [{ kind: "now" as const }] } }, { watchedConversationIDs: ["ses_source"] },
     { coordinatorSessionID: "ses_chosen" }, { startOnCreation: true }]) {
     await assert.rejects(rebuilt.prepare(author, { ...request, ...changed }), { code: "prepare-conflict" })

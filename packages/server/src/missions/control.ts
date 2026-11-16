@@ -1042,7 +1042,14 @@ export class MissionControl {
   async inspect(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
     if (input.missionID !== undefined && input.start !== undefined) throw new MissionControlError("start attaches this conversation as coordinator; use missionID only to inspect an existing mission", "invalid-input")
     input = structuredClone(input)
-    if (!input.start) return this.inspectCurrent(sessionID, input, operationID)
+    if (!input.start) {
+      const caller = await this.ownedSession(sessionID)
+      const result = await this.inspectCurrent(sessionID, input, operationID)
+      const fresh = await this.ownedSession(sessionID)
+      this.assertActive()
+      if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Caller moved while inspecting Missions", "foreign-session")
+      return result
+    }
     if (input.start.title !== undefined) {
       const title = parseMissionTitle(input.start.title)
       if (title === undefined) throw new MissionControlError("Mission title must be 1–60 characters", "invalid-input")
@@ -1061,19 +1068,18 @@ export class MissionControl {
       { input: selected, preferenceError, location: caller.location }))
   }
 
-  /** The caller's owned root, read afresh with the root and project checks of every
-   * inspection, selecting no mission: native catalog reads need nothing else. */
+  /** Project ownership for read-only tools, independently of mission membership. */
   ownedRoot(sessionID: string): Promise<NativeMissionSession> {
-    return this.ownedRootSession(sessionID)
+    return this.ownedSession(sessionID)
   }
 
   async savedConfigurations(sessionID: string) {
-    const caller = await this.ownedRootSession(sessionID)
+    const caller = await this.ownedSession(sessionID)
     if (!this.options.transport?.readConfigurations) throw missionRecoveryControlError("mission-preferences-unavailable")
     const value = await this.options.transport.readConfigurations(sessionID)
     if (!Array.isArray(value) || !validMissionModels(value)) throw missionRecoveryControlError("mission-preferences-invalid")
     this.assertActive()
-    const fresh = await this.ownedRootSession(sessionID)
+    const fresh = await this.ownedSession(sessionID)
     if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Caller moved while reading saved configurations", "foreign-session")
     return normalizeMissionModels(value)
   }
@@ -1158,15 +1164,15 @@ export class MissionControl {
       return this.inspection(this.requireMission(snapshot, missionID), sessionID)
     }
 
-    // Reads also reach hand-offs this session prepared; mutations keep exact membership.
+    // Explicit project reads keep mutations' membership checks independent.
     const read = await this.hintedSelection(sessionID, input.missionID)
     const mission = input.missionID ? read.missions.some(item => item.id === input.missionID)
       ? this.visibleMission(read, sessionID, input.missionID) : undefined : this.membership(read, sessionID)
     if (!mission && input.missionID && this.options.documents) {
       const doc = await (this.options.documentReads ?? this.options.documents)(store => store.read(input.missionID!))
-      if (doc && !("deletedAt" in doc) && doc.creation?.author?.coordinatorSessionID === sessionID)
+      if (doc && !("deletedAt" in doc))
         return { mission: null, actor: null, templates: missionRecipeCatalog(), schedule: missionScheduleView(doc),
-          ...(doc.creation.creationDefaults ? { selection: doc.creation.creationDefaults } : {}) }
+          ...(doc.creation?.creationDefaults ? { selection: doc.creation.creationDefaults } : {}) }
     }
     if (!mission && input.missionID) this.visibleMission(read, sessionID, input.missionID)
     return mission ? this.inspection(mission, sessionID) : {
@@ -1176,24 +1182,27 @@ export class MissionControl {
     }
   }
 
-  /** The caller's missions and the hand-offs it prepared, newest first, without task or report text. */
+  /** Project missions, newest first, without task or report text. */
   async listMissions(sessionID: string) {
-    await this.ownedSession(sessionID)
-    const missions: Array<ReturnType<typeof missionListEntry> | { missionID: string; title: string; relation: "prepared"; kind: "schedule";
-      template: MissionMap["template"]; status: string; revision: number; createdAt: number }> = (await this.hintedSelection(sessionID)).missions.flatMap(mission => {
-      const relation = missionRelation(mission, sessionID)
-      return relation ? [missionListEntry(mission, relation)] : []
-    })
+    const caller = await this.ownedSession(sessionID)
+    const missions: Array<ReturnType<typeof missionListEntry> | { missionID: string; title: string; relation: "prepared" | "project"; kind: "schedule" | "one-time";
+      template: MissionMap["template"]; status: string; revision: number; createdAt: number }> = this.options.storage.isolated
+        ? (await this.snapshot()).missions.map(mission => missionListEntry(mission, missionRelation(mission, sessionID) ?? "project"))
+        : await this.journal.readHints(hints => hints.toolSummaries(sessionID))
     if (this.options.documents) {
       let after: string | undefined
       do {
         const page = await readMissionSchedulePage(this.options.storage, this.options.project, { after })
-        for (const doc of page.schedules) if (doc.creation?.author?.coordinatorSessionID === sessionID && !missions.some(item => item.missionID === doc.id))
-          missions.push({ missionID: doc.id, title: doc.configuration.title, relation: "prepared", kind: "schedule",
+        for (const doc of page.schedules) if (!missions.some(item => item.missionID === doc.id))
+          missions.push({ missionID: doc.id, title: doc.configuration.title,
+            relation: doc.creation?.author?.coordinatorSessionID === sessionID ? "prepared" : "project", kind: doc.kind,
             template: doc.configuration.template, status: doc.state, revision: doc.revision, createdAt: doc.createdAt })
         after = page.next
       } while (after)
     }
+    const fresh = await this.ownedSession(sessionID)
+    this.assertActive()
+    if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Caller moved while listing Missions", "foreign-session")
     return missions.sort((left, right) => right.createdAt - left.createdAt)
   }
 
@@ -1353,7 +1362,9 @@ export class MissionControl {
 
   /** Advisory native evidence of a native task's own conversations; never settlement. */
   async observeTask(sessionID: string, missionID: string | undefined, taskKey: string): Promise<MissionTaskObservation | undefined> {
-    const mission = this.selectMission(await this.hintedSelection(sessionID, missionID), sessionID, missionID)
+    await this.ownedSession(sessionID)
+    const snapshot = await this.hintedSelection(sessionID, missionID)
+    const mission = missionID ? this.visibleMission(snapshot, sessionID, missionID) : this.membership(snapshot, sessionID)
     const task = mission?.tasks.find(task => task.key === taskKey)
     if (!mission || !task || task.executionMode?.kind !== "native" || task.executionMode.parentTaskKey !== null
       || !this.options.transport?.observeTask) return undefined
@@ -1385,7 +1396,9 @@ export class MissionControl {
 
   /** Answered native questions that qualify a native Wayfinder decision task, each verified by the gate. */
   async decisionCandidates(sessionID: string, missionID: string | undefined, taskKey: string): Promise<HumanDecisionDiscovery | undefined> {
-    const mission = this.selectMission(await this.hintedSelection(sessionID, missionID), sessionID, missionID)
+    await this.ownedSession(sessionID)
+    const snapshot = await this.hintedSelection(sessionID, missionID)
+    const mission = missionID ? this.visibleMission(snapshot, sessionID, missionID) : this.membership(snapshot, sessionID)
     const task = mission?.tasks.find(task => task.key === taskKey)
     if (!mission || !task || mission.template !== "wayfinder" || task.role !== "decision") return undefined
     return this.discoverDecisions(mission, task)
@@ -2039,7 +2052,7 @@ export class MissionControl {
 
   private visibleMission(snapshot: Pick<MissionSnapshot, "missions">, sessionID: string, missionID: string): MissionMap {
     const mission = snapshot.missions.find(candidate => candidate.id === missionID)
-    if (!mission || !missionRelation(mission, sessionID)) throw new MissionControlError("Mission is not visible to this session", "mission-not-found")
+    if (!mission || mission.projectID !== this.options.project.id) throw new MissionControlError("Mission not found in this project", "mission-not-found")
     return mission
   }
 

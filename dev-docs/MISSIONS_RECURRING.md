@@ -268,6 +268,11 @@ List and detail projections include the full launch policy/configuration, frozen
 one-shot/end instants, admitted/settled/successful counts, structural/template locks,
 pending passage identity and the thirty retained passage receipts.
 
+Agent project inspection shares the pure panel and passage readers through
+`mission.inspect({ project })`, preserving the same bounded pages and native
+source identity. Any owned project conversation can inspect human-created documents,
+their controls and observations; every read revalidates project ownership.
+
 The panel publishes its loaded inventory and cursor independently of the selected
 document's point read. A partial selected receipt keeps uncertainty visible beside
 the valid inventory. Scoped retained controls keep their display and original

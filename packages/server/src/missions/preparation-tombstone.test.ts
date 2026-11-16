@@ -71,7 +71,7 @@ for (const kind of ["schedule", "one-time"] as const) {
       const rebuilt = control()
       await assert.rejects(rebuilt.prepare(author, request), { code: "mission-deleted" })
       assert.equal(sends, 1, "the deleted original never reaches creation again")
-      assert.equal((await rebuilt.listMissions(author)).length, 0, "tombstones stay absent from the author's inventory")
+      assert.equal((await rebuilt.listMissions(author)).some(item => item.missionID === id), false, "tombstones stay absent from the project inventory")
       await rebuilt.prepare(author, { ...request, requestID: "another_request" })
       assert.equal(sends, 2, "a new request remains eligible after source release")
     })

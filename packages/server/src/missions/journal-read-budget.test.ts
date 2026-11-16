@@ -68,7 +68,7 @@ test("read-mostly paths read one mission's range, never the finished history", a
     assert.deepEqual(inspected.value.mission, (await f.journal.snapshot()).missions.find(candidate => candidate.id === mission.id))
   }
   const listed = await cost(f, () => control.listMissions(coordinator))
-  assert.deepEqual([listed.value.map(entry => entry.missionID), listed.fullScans, listed.entries <= own], [[mission.id], 0, true])
+  assert.deepEqual([listed.value.length, listed.value[0]?.missionID, listed.fullScans, listed.entries], [HISTORY_MISSIONS + 1, mission.id, 0, 0])
 
   const outbox = await cost(f, () => control.retryPendingNotifications())
   assert.deepEqual([outbox.value, outbox.fullScans, outbox.entries <= own], [{ attempted: 0, failed: 0 }, 0, true])

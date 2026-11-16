@@ -14,6 +14,8 @@ Demandez à un agent dans toute conversation du projet, y compris un sous-agent 
 
 ### Configuration {#saved-briefs}
 
+Les agents peuvent consulter toutes les Missions du projet, y compris les vôtres, depuis toute conversation possédée. Les vues en lecture seule couvrent tâches, résultats, nettoyage, passages programmés et choix des sources ; consulter ne lance ni ne relance le travail.
+
 **Configuration** charge éventuellement un objectif, des notes, un scénario et des choix d’agents, de modèles et de sessions enregistrés. Son nom fournit le titre modifiable. Vérifiez les champs remplis avant de créer.
 
 Les agents peuvent lire les configurations enregistrées et copier les valeurs choisies dans une Mission séparée.

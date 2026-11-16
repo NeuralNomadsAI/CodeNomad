@@ -72,6 +72,7 @@ export interface MissionInspectInput {
   missionID?: string
   start?: MissionStartInput
   configurations?: true | string
+  project?: unknown
 }
 
 export interface MissionDelegateInput {

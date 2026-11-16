@@ -26,6 +26,26 @@ class MemoryStorage implements MissionStorage {
 
 const coordinator = "ses_coordinator"
 
+test("every owned project session reads a human Mission and its task without membership or effects", async () => {
+  const observed: string[] = []
+  const f = fixture({ transport: { observeTask: async id => { observed.push(id); return { sessions: [], complete: true } } } })
+  const source = await f.start("custom")
+  await f.declare("native-work", "specialist")
+  const original = structuredClone([...f.storage.values])
+  for (const [id, parentID] of [["ses_root", undefined], ["ses_child", coordinator], ["ses_actor", undefined], ["ses_passage", undefined]]) {
+    f.sessions.set(id!, { id: id!, parentID, projectID: "project-1", location: { directory: "/repo" } })
+    assert.equal((await f.control.inspect(id!, { missionID: source.id }, "read")).mission?.id, source.id)
+    assert.equal((await f.control.inspectTool(id!, { missionID: source.id, taskKey: "native-work" }, "task") as any).task.key, "native-work")
+    assert.equal((await f.control.listMissions(id!))[0]?.relation, "project")
+    assert.equal((await f.control.ownedRoot(id!)).id, id)
+  }
+  assert.deepEqual([...f.storage.values], original, "reads append and normalize nothing")
+  assert.deepEqual(observed, Array(4).fill(coordinator), "observation retains the actual task owner")
+  f.sessions.set("ses_foreign", { id: "ses_foreign", projectID: "other-project", location: { directory: "/repo" } })
+  await assert.rejects(f.control.listMissions("ses_foreign"), { code: "foreign-session" })
+  await assert.rejects(f.control.inspect("ses_foreign", { missionID: source.id }, "read"), { code: "foreign-session" })
+})
+
 function fixture(options: { transport?: Partial<MissionInputTransport>; humanGate?: NativeHumanAnswerGate;
   validateProfiles?: ConstructorParameters<typeof MissionControl>[0]["validateProfiles"];
   storage?: MemoryStorage; sessions?: Map<string, NativeMissionSession> } = {}) {
@@ -192,7 +212,7 @@ test("prepare creates a paused hand-off through the backend; its coordinator may
   await assert.rejects(control.declare(coordinator, { missionID: mission.id, taskKey: "work", title: "Work", brief: "No", role: "specialist", blockedBy: [] }),
     /not visible/)
   f.sessions.set("ses_other", { id: "ses_other", projectID: "project-1", title: "Other", location: { directory: "/repo" } })
-  await assert.rejects(control.inspect("ses_other", { missionID: mission.id }, "other"), /not visible/)
+  assert.equal((await control.inspect("ses_other", { missionID: mission.id }, "other")).mission?.id, mission.id)
   const plain = fixture()
   await plain.start()
   await assert.rejects(plain.control.prepare(coordinator, request), /unavailable here/)
@@ -337,7 +357,7 @@ test("inspect Compare freezes the known coordinator model for an omitted judge a
   assert.equal(reads, 1)
 })
 
-test("an ordinary root prepares once across concurrent calls and restart, remains outside, and reads only its own hand-off", async () => {
+test("an ordinary root prepares once across concurrent calls and restart, remains outside, and reads project hand-offs", async () => {
   let control!: MissionControl, calls = 0
   const transport: Partial<MissionInputTransport> = {
     resolveCreationDefaults: async (_id, input) => resolveMissionCreationDefaults({ ...input, preferences: [] }),
@@ -370,8 +390,8 @@ test("an ordinary root prepares once across concurrent calls and restart, remain
     await assert.rejects(control.prepare(coordinator, { ...request, ...changed }), (error: any) => error.code === "prepare-conflict")
   }
   f.sessions.set("ses_other", { ...original!, id: "ses_other" })
-  assert.deepEqual(await control.listMissions("ses_other"), [])
-  await assert.rejects(control.inspect("ses_other", { missionID: first.mission.id }, "foreign"), /not visible/)
+  assert.deepEqual((await control.listMissions("ses_other")).map(entry => [entry.missionID, entry.relation]), [[first.mission.id, "project"]])
+  assert.equal((await control.inspect("ses_other", { missionID: first.mission.id }, "project")).mission?.id, first.mission.id)
 })
 
 test("a passage release during preparation cannot split concurrent retries into two source domains", async () => {
@@ -485,19 +505,19 @@ test("descendants keep actual author provenance, read-only access and stable rep
   assert.deepEqual([...f.sessions].slice(0, before.length), before)
   assert.deepEqual(await f.current(), sourceBefore)
   assert.equal((await control.inspect(child, { missionID: first.mission.id }, "read")).actor, null)
-  assert.deepEqual((await control.listMissions(child)).map(entry => entry.missionID), [first.mission.id])
+  assert.deepEqual((await control.listMissions(child)).map(entry => entry.missionID), [first.mission.id, source.id])
   await assert.rejects(control.inspect(child, { start: { objective: "No adoption", template: "custom" } }, "start"),
     (error: any) => error.code === "child-session")
   await assert.rejects(control.declare(child, { missionID: source.id, taskKey: "no", title: "No", brief: "No", role: "specialist", blockedBy: [] }),
     (error: any) => error.code === "child-session")
-  await assert.rejects(control.inspect(parent, { missionID: first.mission.id }, "foreign"), /not visible/)
+  assert.equal((await control.inspect(parent, { missionID: first.mission.id }, "project")).mission?.id, first.mission.id)
   await control.report(coordinator, { missionID: source.id, outcome: "completed", summary: "Done", evidence: [], next: [], final: true })
   assert.equal((await control.prepare(child, request)).mission.id, first.mission.id)
   assert.equal(calls, 1, "source completion preserves the author's replay identity")
   const other = (await control.prepare(parent, request)).mission
   assert.notEqual(other.id, first.mission.id, "the same requestID from another author is independent")
   assert.equal(other.preparedBy!.coordinatorSessionId, parent)
-  await assert.rejects(control.inspect(child, { missionID: other.id }, "foreign"), /not visible/)
+  assert.equal((await control.inspect(child, { missionID: other.id }, "project")).mission?.id, other.id)
 })
 
 test("persisted source-scoped coordinator preparations retain replay and conflict identities", async () => {

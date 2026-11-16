@@ -416,6 +416,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const developerCdp = new DeveloperCdp()
   const scheduleSettingsActivation = new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager)
   registerAutomationPluginRoute(app, {
+    forge: forgeWorkItems,
     memory,
     authManager: deps.authManager,
     settings: deps.settings,

@@ -163,7 +163,8 @@ test("registers eight tools, typed snapshot RPC, and role context", async () => 
   assert.match(description("briefing"), /Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report/)
   assert.match(description("briefing"), /requestID "auto:<revision>" matching basedOnRevision; for an explicit UI request use its exact requestID/)
   const inspect = tools.find((tool) => tool.name === "inspect")!
-  assert.match(description("inspect"), /attaching THIS root conversation as coordinator/)
+  assert.match(description("inspect"), /start attaches THIS root as a paused coordinator/)
+  assert.match(description("inspect"), /including human-created Missions, from any owned conversation/)
   assert.match(description("prepare"), /this conversation stays unchanged/)
   assert.match(description("prepare"), /new coordinator is the default/)
   assert.match(description("prepare"), /Any owned project session may prepare/)

@@ -37,7 +37,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
          if (name === "prepare" || name === "schedule" || name === "inspect" && (input.configurations !== undefined || input.content?.kind === "configuration")) return author
         const own = author && name === "inspect" && (input.list || input.missionID)
           ? await author.control.listMissions(sessionID) : undefined
-        if (author && own?.some(mission => mission.missionID === input.missionID && mission.relation === "prepared")) return author
+         if (author && own?.some(mission => mission.missionID === input.missionID)) return author
         const selected = await documentBusiness?.select(sessionID) ?? await selectNativePassageBusiness(ctx, sessionID, humanGate)
         if (selected && author && own && input.list) {
           return { ...selected, preparationAvailable: true, listMissions: async (offset, operationID) => {
@@ -50,7 +50,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           } }
         }
         return selected ? { ...selected, preparationAvailable: Boolean(author) } : author
-       }, (sessionID, input) => sendMissionInput(sessionID, "schedule", input))
+       }, (sessionID, input) => sendMissionInput(sessionID, "schedule", input),
+         (sessionID, input) => sendMissionInput(sessionID, "project-read", input))
       const promptHook = await ctx.session.hook("prompt", async event => {
         if (!await documentBusiness?.prepare(event.sessionID)) await prepareNativePassageSession(ctx, event.sessionID, humanGate)
       })

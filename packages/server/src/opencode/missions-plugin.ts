@@ -51,6 +51,7 @@ import type { MissionDocumentAccess } from "../missions/mission-document-one-tim
 import { NativeMissionDocumentStore } from "../missions/mission-document-store"
 import type { MissionBusinessControl } from "../missions/business-control"
 import { scheduleToolInput, scheduleToolWire } from "../missions/schedule-tool"
+import { parseProjectRead, projectReadWire } from "../missions/project-read-tool"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
@@ -367,7 +368,7 @@ const executeMissionBusiness = <T>(selected: MissionBusinessRoute, use: (control
 /** One set of native names. Selection is invocation-scoped, never model-provided storage. */
 export async function setupMissionsBusiness(context: MissionsPluginContext,
   select: (sessionID: string, name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown) => Promise<MissionBusinessRoute | undefined>,
-  schedule?: MissionInputTransport["schedule"]): Promise<() => Promise<void>> {
+  schedule?: MissionInputTransport["schedule"], projectRead?: (sessionID: string, input: unknown) => Promise<unknown>): Promise<() => Promise<void>> {
   let active = true
   const writer = createMissionWriterRetirement(), registrations: Registration[] = []
   const assertActive = () => { if (!active) throw new Error("CodeNomad Missions is no longer available") }
@@ -399,12 +400,16 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog. start prepares a paused custom, debugging, Wayfinder, product delivery, or two-model comparison mission, attaching THIS root conversation as coordinator; use mission.prepare for a separate mission with a NEW coordinator conversation. Never combine missionID and start. Inspection includes saved selection (profiles, taskMode and explicit/preference/opencode-default origins) when creation metadata exists. These are requested choices; check the catalog for availability. selection.preferences: 'unavailable' warns that omitted choices used OpenCode defaults. Recover preference/ownership errors or supply the coordinator, every template role and taskMode explicitly; update CodeNomad when requested. The starting coordinator must match the resolved profile. Creation never sends a coordinator prompt. The user presses Play in CodeNomad before Mission work begins. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers. Follow taskPage.nextTaskOffset with taskOffset for more tasks. For { omittedCharacters, read }, pass read as the whole input and follow each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared. configurations: true lists the owning backend's saved configurations; pass an ID to read its saved inputs and suggested title, then copy the chosen fields explicitly into prepare/start.",
+        description: "Read any Mission in the owned project, including human-created Missions, from any owned conversation. list discovers project Missions; missionID reads one, taskKey reads its exact assignment, reports and native evidence. project reads bounded panel, passage and source views. Follow returned page cursors and pass omission reads whole, joining every slice. catalog includes available profiles; configurations lists saved inputs or reads one ID. start attaches THIS root as a paused coordinator; prepare creates a separate Mission. Never combine missionID and start. Saved selection records requested profiles and their origins; preferences: unavailable warns of OpenCode defaults. The starting profile must match. Compare requires different A/B models and a blind judge. Creation sends no prompt; Play starts work.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
           assertActive()
           const parsed = parseInspectInput(input)
+          if (parsed.project !== undefined) {
+            if (!projectRead) throw new Error("Project Mission reads unavailable")
+            return textResult(await projectRead(tool.sessionID, parsed.project))
+          }
           const selected = await route(tool.sessionID, "inspect", input)
           await tool.progress({ status: "Reading the mission map" })
           selected.current()
@@ -729,9 +734,10 @@ const inspectSchema = {
   type: "object",
   properties: {
     missionID: { type: "string", description: "Mission to inspect; omit to use the caller's active mission." },
+    project: { ...projectReadWire, description: "Read-only project views, from any owned session. panel reads bounded summaries, cleanups and mission fields; current/current-page/current-content read a scheduled passage; passage reads archived daily results. sources discovers local branches, conversations, eligible coordinator roots or the detected forge repository. Use alone; continue each view's explicit pages/cursors." },
     taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$", description: "Read only this task: its status, revision, frontier and, for a live native task, its contract, exact current assignmentPrompt, observed native conversations and, for a Wayfinder decision, the qualifying human answers with ready-to-pass artifacts. Not with start." },
     taskOffset: { type: "integer", minimum: 0, description: "Read the map's tasks from this position when the map is too large for one result: its taskPage gives nextTaskOffset. Not with taskKey, list or start." },
-    list: { type: "boolean", const: true, description: "List the missions you belong to and the hand-offs you prepared, newest first. Use alone, or with listOffset." },
+    list: { type: "boolean", const: true, description: "List every Mission in the owned project, newest first. Use alone, or with listOffset." },
     listOffset: { type: "integer", minimum: 0, description: "With list: read the list from this position when it is too large for one result: its listPage gives nextListOffset." },
     configurations: { oneOf: [{ type: "boolean", const: true }, { type: "string", minLength: 1, maxLength: 100 }], description: "Read-only saved configurations from the unique owning backend, including outside a mission: true lists IDs/names/templates; an ID reads saved inputs and the editor's suggested title. Use alone, then pass chosen fields explicitly to prepare/start." },
     content: {
@@ -809,6 +815,10 @@ export function parseInspectInput(input: unknown): MissionInspectInput & {
   taskKey?: string; list?: true; taskOffset?: number; listOffset?: number; content?: MissionInspectContent
 } {
   const value = object(input)
+  if (value.project !== undefined) {
+    if (Object.keys(value).some(key => key !== "project")) throw new Error("project must be used alone")
+    return { project: parseProjectRead(value.project) }
+  }
   const missionID = optionalText(value.missionID, "missionID", 100)
   if (value.missionID !== undefined && value.start !== undefined) throw new Error("missionID inspects an existing mission; start attaches this conversation as coordinator")
   if (value.configurations !== undefined) {

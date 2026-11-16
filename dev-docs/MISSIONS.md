@@ -84,8 +84,8 @@ call (the catalog, a task's `native` conversations and `humanAnswers`) can chang
 without a new revision, and slices never join two observations. Map reads are also
 refused at another revision. The catalog read (`{ kind: "catalog", digest, offset }`)
 names no mission: it is the caller's Location's catalog, read afresh after the
-owned-root checks alone (`MissionControl.ownedRoot`, no mission or journal read), so an
-owned root without a mission pages a large catalog too, and a failing mission journal
+project-ownership checks alone (`MissionControl.ownedRoot`, no mission or journal read), so an
+owned conversation without a mission pages a large catalog too, and a failing mission journal
 never blocks it. A marker names its value as read before any value nested in it gave
 way. Fitting serializes the result once and keeps its exact size as values give way
 (each change counted at the value's indentation), so it stays linear in the result's
@@ -105,7 +105,7 @@ crossing its bounded RPC response. Mutations share `missionMutationToolResult` w
 the ordinary tools and carry the already fitted result, including its exact omission
 reads and task pages, in `toolResult`. The 100,000 UTF-16-unit JSON bound costs at
 most 300,000 UTF-8 bytes plus fixed RPC envelopes, within the 1 MiB transport limit.
-`mission.inspect({ list: true })` pages its missions the same way (`listOffset`,
+`mission.inspect({ list: true })` pages every project Mission the same way (`listOffset`,
 `listPage.nextListOffset`). `mission.inspect({ taskKey })`
 rereads one task with its contract, exact current assignment prompt and every report
 of that task, each once, its largest values replaced the same way. A native
@@ -137,8 +137,8 @@ can use `mission.prepare`, including descendants, task actors and scheduled pass
   author's Location. `startOnCreation` defaults false; the user then starts it with
   Play. An explicitly requested `true` may continue only its fresh creation
   acknowledgement through the ordinary guarded lifecycle operation. The trusted `preparedBy`
-  (`{ coordinatorSessionId, missionId? }`) gives its author read-only
-  visibility (`inspect({ missionID })`, `inspect({ list: true })`). The stable
+  (`{ coordinatorSessionId, missionId? }`) records its author for immutable replay
+  (`inspect({ missionID })`, `inspect({ list: true })`). The stable
   `coordinatorSessionId` field names the actual author session, including a descendant;
   `missionId` records the source from native membership, passage metadata or bounded
   native ancestry when available. Stored provenance with both fields uses the same
@@ -146,10 +146,10 @@ can use `mission.prepare`, including descendants, task actors and scheduled pass
   task actors, descendants and scheduled-passage sessions share the author admission.
   Native control and the backend independently validate project and placement;
   ambiguous ownership is refused. Passage preparation uses the ordinary project
-  journal, preserving its isolated source journal. Authored target reads use that
-  same ordinary journal; lists combine the caller's preparations and passage membership.
+  journal, preserving its isolated source journal. Project target reads use that
+  same ordinary journal; passage lists combine it with isolated passage membership.
   Scheduled documents retain the author and original inputs before their first journal
-  exists; authored list and point reads use bounded native document pages without reconciliation.
+  exists; project list and point reads use bounded native document pages without reconciliation.
   The calling conversation stays unchanged. Follow
   the [creation and retry discipline](#mission-profile-selection-and-creation-recovery).
 
@@ -173,6 +173,18 @@ different summary when the latest automatic briefing is still the last event. On
 of them in `replacesTaskKey`.
 
 ## Mission profile selection and creation recovery
+
+Explicit `missionID` reads any Mission in the owned project, including human-created
+Missions and another agent's preparation. `mission.inspect({ project })` exposes
+fixed pure native reads through the unique owning backend: `panel` for summaries,
+cleanups and mission fields; `current`, `current-page`, `current-content` for an
+admitted passage; `passage` for archived daily results; and `sources` for local
+branches, native conversation pages, coordinator roots and the detected forge.
+These reuse the panel's codecs, native page bounds and physical-directory admission.
+Every backend read revalidates the actual native caller, project and Location.
+Source continuation is explicit; file criteria use relative paths discovered with
+the ordinary file tools. Schedule list/read retains counts, observations, control
+receipts and the bounded result history. Reads keep all execution identities intact.
 
 `mission.inspect({ start })` attaches the calling root conversation as the
 coordinator of a paused mission for human Play. `mission.prepare` creates a separate
@@ -211,7 +223,7 @@ may Play, Pause, Stop, Resume, Run now, Check, configure or delete.
 `mission.inspect({ configurations: true })` lists the owning backend's saved
 configuration IDs, names and templates. `configurations: "<id>"` reads one complete
 saved record plus the editor's suggested `title` (collapsed whitespace, bounded to
-60 characters). These read-only requests work from an owned root outside a mission
+60 characters). These read-only requests work from any owned conversation outside a mission
 and from a scheduled-passage coordinator. Lists, point reads and content slices
 use the ordinary owning backend, select no journal and use the same strict
 unique-backend discovery as profile preferences. The backend reads `ui.settings.missionModels` through
@@ -376,8 +388,8 @@ of a reused passage root. Before creation, the author/request lane searches the
 journal, paged documents and retained preparation bindings for existing identities;
 multiple existing identities refuse as a conflict. Documents with an extended creation
 binding compare its frozen inputs; historical one-time documents use their original
-journal inputs and available creation choices. Each author retains its own
-read-only visibility. Compaction keeps the original author/source, creation request and
+journal inputs and available creation choices. Each author retains its original
+replay identity. Compaction keeps the original author/source, creation request and
 input digest in the existing bounded document tombstone. Preparation identity reads
 include these tombstones, so deletion refuses replay after source release and restart
 for both scheduled and one-time targets; display inventories omit them.

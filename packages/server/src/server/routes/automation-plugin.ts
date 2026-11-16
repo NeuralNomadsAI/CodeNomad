@@ -12,6 +12,8 @@ import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
 import { controlAgentMissionSchedule } from "./mission-agent-schedule"
+import { readAgentMissionProject } from "./mission-agent-read"
+import type { ForgeWorkItems } from "../../forge/work-items"
 import type { ScheduledPreparationDeps } from "./mission-prepare-scheduled"
 import { readMissionConfigurations, readMissionProfileDefaults } from "./mission-profile-defaults"
 import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
@@ -40,6 +42,7 @@ interface AutomationPluginRouteDeps {
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
   verifyScheduleAgentCreation?: VerifyScheduleAgentCreation
   memory?: MemoryService
+  forge?: Pick<ForgeWorkItems, "openRepository">
 }
 
 interface DeveloperNativeStatus {
@@ -165,7 +168,8 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
           ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal)
           : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal,
              { settings: deps.settings, bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation })
-           : commandKind === "schedule" ? await controlAgentMissionSchedule({
+            : commandKind === "project-read" ? await readAgentMissionProject(deps, body.sessionID, body.command, signal)
+            : commandKind === "schedule" ? await controlAgentMissionSchedule({
              workspaceManager: deps.workspaceManager, worktreeDeletionFence: fence, settings: deps.settings,
              bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation,
            }, body.sessionID, body.command, signal)

@@ -45,7 +45,7 @@ export function liveContinuations(tasks: readonly MissionTask[], taskKey: string
   return tasks.filter(task => task.key !== taskKey && !["withdrawn", "completed", "failed"].includes(task.status) && reaches(task)).map(task => task.key)
 }
 
-/** Missions a session may read: those it belongs to, and hand-offs it prepared (read-only). */
+/** Display relation; project ownership authorizes reads independently. */
 export function missionRelation(mission: MissionMap, sessionID: string): "member" | "prepared" | undefined {
   if (mission.actors.some(actor => actor.sessionId === sessionID)) return "member"
   if (mission.preparedBy?.coordinatorSessionId === sessionID) return "prepared"
@@ -80,7 +80,7 @@ export async function missionPreparationSource(snapshot: MissionSnapshot, sessio
   return refuse()
 }
 
-export function missionListEntry(mission: MissionMap, relation: "member" | "prepared") {
+export function missionListEntry(mission: MissionMap, relation: "member" | "prepared" | "project") {
   return {
     missionID: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }), relation,
     template: mission.template, status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }),

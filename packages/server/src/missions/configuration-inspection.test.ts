@@ -33,7 +33,7 @@ test("saved configurations are read-only outside missions, short-listed and poin
       scan: async () => assert.fail("Configuration reads never scan the journal"),
     },
     sessions: {
-      get: async ({ sessionID }) => ({ id: sessionID, projectID: "project", location: { directory } }),
+      get: async ({ sessionID }) => ({ id: sessionID, parentID: "ses_parent", projectID: "project", location: { directory } }),
       create: async () => assert.fail("Read-only"), prompt: async () => assert.fail("Read-only"), synthetic: async () => assert.fail("Read-only"),
     },
     transport: { readConfigurations: async () => { reads++; onRead(); return library }, prompt: async () => assert.fail(), synthetic: async () => assert.fail() },

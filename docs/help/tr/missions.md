@@ -14,6 +14,8 @@ Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşma
 
 ### Yapılandırma {#saved-briefs}
 
+Ajanlar, projeye ait her konuşmadan sizin oluşturduklarınız dahil tüm Görevleri okuyabilir. Salt okunur görünümler işleri, sonuçları, temizliği, zamanlanmış çalıştırmaları ve kaynak seçeneklerini kapsar; görüntülemek işi başlatmaz veya yeniden denemez.
+
 **Yapılandırma**, kayıtlı hedefi, notları, rehberi, profilleri ve görev oturumlarını yükler; adı düzenlenebilir başlık olur. Alanları kontrol edin.
 
 Ajanlar kayıtlı yapılandırmaları okuyabilir ve seçtiğiniz değerleri ayrı bir Göreve kopyalayabilir.

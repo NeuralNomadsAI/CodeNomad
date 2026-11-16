@@ -1,12 +1,10 @@
 import { z } from "zod"
-import { isSessionNotFoundError } from "@opencode/client"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { scheduleToolInput } from "../../missions/schedule-tool"
 import { requiresMissionCalendar } from "../../missions/launch-policy"
 import type { MissionScheduleRead } from "../../missions/mission-schedule-view"
 import type { MissionScheduleList } from "../../missions/mission-schedule-list"
-import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
-import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
+import { ownedMissionAgent } from "./mission-agent-owner"
 import { executeScheduledMission, type ScheduledMissionDeps } from "./mission-scheduled"
 import type { ScheduledPreparationDeps } from "./mission-prepare-scheduled"
 import { prepareMissionMapMutation } from "./mission-map-mutation"
@@ -22,38 +20,9 @@ type Deps = ScheduledMissionDeps & Pick<ScheduledPreparationDeps, "scheduleSetti
 /** Private bridge entry: native caller identity, never an HTTP-supplied principal. */
 export async function controlAgentMissionSchedule(deps: Deps, sessionID: string, command: unknown, signal: AbortSignal) {
   const { input } = commandSchema.parse(command), manager = deps.workspaceManager
-  if (!deps.worktreeDeletionFence || isReservedMissionScheduleSessionID(sessionID)) throw new Error("Mission schedule owner unavailable")
-  const candidates = await Promise.all(manager.list().map(async workspace => {
-    const connection = await manager.getSharedServiceConnection(workspace.id)
-    if (!connection) throw new Error("Mission schedule ownership unavailable")
-    const session = await connection.client.session.get({ sessionID }, { signal }).catch(error => {
-      if (isSessionNotFoundError(error)) return undefined
-      throw error
-    })
-    if (!session) return undefined
-    const owned = await manager.ownsLocation(workspace.id, session.location, connection.client, { signal, strict: true })
-    return owned && session.id === sessionID ? { connection, workspace, session } : undefined
-  }))
-  const owners = candidates.filter(value => value !== undefined)
-  if (!owners.length || new Set(owners.map(value => value.connection)).size !== 1) throw new Error("Mission schedule owner ambiguous")
-  const { connection, workspace, session } = owners[0], client = connection.client
-  const current = () => {
-    signal.throwIfAborted(); connection.assertCurrent()
-    if (manager.get(workspace.id) !== workspace) throw new Error("Mission schedule owner changed")
-  }
-  const refresh = async () => {
-    current()
-    const fresh = await client.session.get({ sessionID }, { signal })
-    if (fresh.id !== sessionID || fresh.projectID !== session.projectID || !sameLocation(fresh.location, session.location)
-      || !await manager.ownsLocation(workspace.id, fresh.location, client, { signal, strict: true }))
-      throw new Error("Mission schedule author changed")
-    current()
-  }
-  await refresh()
-  const options = { location: { directory: session.location.directory }, ...locationRequestOptions(session.location), signal }
+   if (!deps.worktreeDeletionFence) throw new Error("Mission schedule owner unavailable")
+   const { client, workspace, session, current, refresh, options } = await ownedMissionAgent(manager, sessionID, signal)
   const rpc = client.rpc(CODENOMAD_MISSIONS_RPC)
-  const nativeLocation = await client.location.get({ location: options.location }, { signal })
-  if (nativeLocation.project.id !== session.projectID) throw new Error("Mission schedule project differs")
   if (input.action !== "list" && input.action !== "read") {
     const capability = await rpc.documentCapabilities({}, options) as { version?: number; agentScheduleControl?: boolean }
     await refresh()
