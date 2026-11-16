@@ -101,6 +101,18 @@ describe("OpenCode data read merge", () => {
     assert.equal(merged.content[3].state.status, "completed", "a part the live row missed joins it")
   })
 
+  it("keeps a recovered part on its side of anonymous fragments", () => {
+    const tool = (id: string, status: string) => ({ type: "tool", id, name: "bash", time: { created: 2 }, state: { status, input: {}, metadata: {} } })
+    const text = (value: string) => ({ type: "text", text: value })
+    const withContent = (...content: unknown[]) => ({ ...row("live", ""), content }) as unknown as SessionMessageInfo
+    const since = snapshotRows([withContent(tool("a", "running"), text("between"))])
+    const live = withContent(tool("a", "completed"), text("between"))
+    const page = withContent(tool("a", "running"), text("between"), tool("b", "completed"), text("after"), tool("c", "running"))
+    const [merged] = mergePageWithSnapshot([live], [page], since) as any[]
+    assert.deepEqual(merged.content.map((part: any) => part.id ?? part.text), ["a", "between", "b", "after", "c"],
+      "a recovered part crossed the text around it on the page")
+  })
+
   it("settles a stranded tool while a sibling tool reports progress during the fetch", async () => {
     const instanceId = "opencode-merge-sibling-progress"
     const stranded = { assistantMessageID: "live", id: "stranded" }

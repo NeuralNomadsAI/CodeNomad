@@ -29,9 +29,12 @@ const partId = (part: unknown): string | undefined => {
 
 /** A live row changed since its snapshot keeps its live version, except that
  * each identified content part (a tool call, for example) left unchanged since
- * the snapshot takes the page's version, and an identified part only the page
- * holds joins the row beside its page neighbours: progress on one part never
- * shadows authority for a sibling part, nor hides one the live row missed. */
+ * the snapshot takes the page's version, and a part only the page holds (by ID,
+ * or a text/reasoning fragment by kind and ordinal unless the stream created
+ * the row during the fetch) joins the row beside its page neighbours: progress
+ * on one part never shadows authority for a sibling part, nor hides one the
+ * live row missed. Live fragments stay aligned to native ordinals because
+ * misaligned fragment events never reduce. */
 function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, snapshot: string | undefined): SessionMessageInfo {
   const content = (row as ContentRow).content
   const fetchedContent = (fetched as ContentRow).content
@@ -46,22 +49,39 @@ function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, s
     replaced = true
     return fetchedById.get(id)
   })
-  const liveIds = new Set(content.flatMap((part) => partId(part) === undefined ? [] : [partId(part)!]))
+  // Anonymous fragments pair up by kind and ordinal, so a recovered part keeps
+  // its side of the text and reasoning between its page neighbours.
+  const fetchedKeys = partKeys(fetchedContent)
+  const keys = partKeys(parts)
+  const held = new Set(keys)
   fetchedContent.forEach((part, index) => {
-    const id = partId(part)
-    if (id === undefined || liveIds.has(id)) return
+    // A row the stream created during the fetch keeps its live fragments.
+    if (held.has(fetchedKeys[index]) || (partId(part) === undefined && !Array.isArray(before))) return
     // After the nearest preceding page part the row holds, else before the
     // nearest following one, else at the end.
-    const anchorAfter = fetchedContent.slice(0, index).reverse().map(partId).find((other) => other !== undefined && liveIds.has(other))
-    const anchorBefore = fetchedContent.slice(index + 1).map(partId).find((other) => other !== undefined && liveIds.has(other))
-    const position = anchorAfter !== undefined
-      ? parts.findIndex((other) => partId(other) === anchorAfter) + 1
-      : anchorBefore !== undefined ? parts.findIndex((other) => partId(other) === anchorBefore) : parts.length
+    const anchorAfter = fetchedKeys.slice(0, index).reverse().find((key) => held.has(key))
+    const anchorBefore = fetchedKeys.slice(index + 1).find((key) => held.has(key))
+    const position = anchorAfter !== undefined ? keys.indexOf(anchorAfter) + 1
+      : anchorBefore !== undefined ? keys.indexOf(anchorBefore) : parts.length
     parts.splice(position, 0, part)
-    liveIds.add(id)
+    keys.splice(position, 0, fetchedKeys[index])
+    held.add(fetchedKeys[index])
     replaced = true
   })
   return replaced ? { ...(row as object), content: parts } as SessionMessageInfo : row
+}
+
+/** A content key per part: its ID, else its kind and ordinal among parts of that kind. */
+function partKeys(content: readonly unknown[]): string[] {
+  const ordinals = new Map<string, number>()
+  return content.map((part) => {
+    const id = partId(part)
+    if (id !== undefined) return `id:${id}`
+    const type = String((part as { type?: unknown } | null)?.type)
+    const ordinal = ordinals.get(type) ?? 0
+    ordinals.set(type, ordinal + 1)
+    return `${type}:${ordinal}`
+  })
 }
 
 /** Text-bearing parts without part identity: a stream only ever appends within

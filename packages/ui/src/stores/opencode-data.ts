@@ -19,16 +19,18 @@ import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
 import { hasTranscriptProjectionGates, isTranscriptWatched, scheduleTranscriptProjection } from "./opencode-projection-frame"
 import { cancelTranscriptProjections, flushTranscriptProjections } from "./opencode-projection-frame"
 import {
-  divergenceFor, isDiverged, isRedeliveredFragment, MAX_DIVERGENCE_REPAIRS, missingEventTarget, settleHeldTargets,
-  type TranscriptDivergence,
+  divergenceFor, isDiverged, MAX_DIVERGENCE_REPAIRS, settleHeldTargets, type TranscriptDivergence,
 } from "./opencode-data-divergence"
+import { fitLiveEvent, recordPageFragments, type PageFragments } from "./opencode-data-fragments"
 
 const log = getLogger("session")
 
 type DataEntry = {
   data: Data
   emit: (event: OpenCodeEvent) => void
-  syncMessages: (sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) => Promise<boolean>
+  /** Rows installed from an authoritative page are `fetched` before the read merge. */
+  syncMessages: (sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean, fetched?: SessionMessageInfo[]) => Promise<boolean>
+  pageFragments: (sessionId: string) => PageFragments | undefined
   syncAuthoritative: (sessionId: string, isCurrent: () => boolean) => Promise<boolean>
   dispose: () => void
 }
@@ -179,6 +181,8 @@ export function getOpenCodeInstanceGeneration(instanceId: string): number {
 function createDataEntry(instanceId: string, directory: string): DataEntry {
   const listeners = new Set<(event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void>()
   const messageSnapshots = new Map<string, SessionMessageInfo[]>()
+  // Fragments the latest authoritative page installed, per session.
+  const pageFragments = new Map<string, PageFragments>()
   // Bumped only by events that make a fetched page obsolete.
   const destructiveRevisions = new Map<string, number>()
   const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
@@ -228,7 +232,9 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   compactionDeltas.flush(instanceId, input.sessionID)
                   if ((destructiveRevisions.get(input.sessionID) ?? 0) !== revision) continue
                   const live = data.session.message.list(input.sessionID)
-                  return { ...response, data: mergePageWithSnapshot(live, response.data, since) }
+                  const merged = mergePageWithSnapshot(live, response.data, since)
+                  pageFragments.set(input.sessionID, recordPageFragments(response.data, merged))
+                  return { ...response, data: merged }
                 }
               }
             },
@@ -267,10 +273,6 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         })
         return
       }
-      // An authoritative page (a seed, a repair or a settlement read) can hold
-      // a step whose events are still in transit: their fragment starts would
-      // append duplicates of parts the page already holds.
-      if (isRedeliveredFragment(data, details)) return
       for (const listener of listeners) listener({ name: details.type, details })
     }
     return {
@@ -278,7 +280,13 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       emit(details: OpenCodeEvent) {
         emit(details)
       },
-      async syncMessages(sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) {
+      pageFragments(sessionId: string) {
+        return pageFragments.get(sessionId)
+      },
+      async syncMessages(sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean, fetched?: SessionMessageInfo[]) {
+        // Only an authoritative page records provenance; a rotation replays the
+        // reducer's own rows and keeps the record it had.
+        if (fetched) pageFragments.set(sessionId, recordPageFragments(fetched, messages))
         messageSnapshots.set(sessionId, messages)
         try {
           data.session.message.invalidate(sessionId)
@@ -970,6 +978,8 @@ export async function seedOpenCodeSessionMessages(
   directory: string,
   page: SessionMessageInfo[],
   knownIdle = false,
+  /** The page as fetched, before a first load merged it with live rows. */
+  fetched: SessionMessageInfo[] = page,
 ): Promise<void> {
   const existing = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
   // Nothing streams into a known-idle session without a reducer.
@@ -990,15 +1000,17 @@ export async function seedOpenCodeSessionMessages(
   const live = entry.data.session.message.list(sessionId)
   const merged = live.length ? mergePageWithSnapshot(live, [...seed].reverse(), snapshotRows(live)).reverse() : seed
   try {
-    await entry.syncMessages(sessionId, merged, () => true)
+    await entry.syncMessages(sessionId, merged, () => true, fetched)
     if (transcript.entry === entry && transcript.divergence?.entry === entry) settleHeldTargets(transcript.divergence, entry.data)
   } catch (error) {
     log.warn("Failed to seed OpenCode session messages", { instanceId, sessionId, error })
   }
 }
 
-/** Reduces a session event and records a divergence when the event targets a
- * row the reducer lacks (its start never arrived) or the reducer throws. */
+/** Reduces a session event as it fits the reducer (`fitLiveEvent`): a delivery
+ * behind an authoritative page is dropped, one for a row or fragment the
+ * reducer lacks (its start never arrived) records a divergence and reduces
+ * only when that is harmless, and a reducer exception records one too. */
 function emitTranscriptEvent(
   instanceId: string,
   sessionId: string,
@@ -1006,7 +1018,12 @@ function emitTranscriptEvent(
   entry: DataEntry,
   event: OpenCodeEvent,
 ): void {
-  const missing = missingEventTarget(entry.data, event)
+  const fit = fitLiveEvent(entry.data, entry.pageFragments(sessionId), event)
+  if (fit.kind === "drop") return
+  if (fit.kind === "diverged" && !fit.apply) {
+    noteTranscriptDivergence(instanceId, sessionId, transcript, fit.key, event)
+    return
+  }
   try {
     entry.emit(event)
   } catch (error) {
@@ -1014,7 +1031,8 @@ function emitTranscriptEvent(
     noteTranscriptDivergence(instanceId, sessionId, transcript, REDUCE_FAILED_TARGET)
     return
   }
-  if (missing !== undefined) noteTranscriptDivergence(instanceId, sessionId, transcript, missing, event)
+  if (fit.kind === "diverged") noteTranscriptDivergence(instanceId, sessionId, transcript, fit.key, event, fit.settlement)
+  else if (fit.settles !== undefined && transcript.divergence?.entry === entry) transcript.divergence.targets.delete(fit.settles)
 }
 
 const REDUCE_FAILED_TARGET = "\0reduce-failed"
@@ -1035,11 +1053,13 @@ function noteTranscriptDivergence(
   transcript: TranscriptEntry,
   target: string,
   event?: OpenCodeEvent,
+  /** Owed only by settlement (`repairDivergedSettlement`), never read at once. */
+  atSettlement = false,
 ): void {
   if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.reconnectResync
     || transcript.resyncing || transcript.needsAuthoritativeResync) return
   divergenceFor(transcript, transcript.entry).targets.set(target, event)
-  if (!isTranscriptWatched(instanceId, sessionId) || awaitsFirstPage(instanceId, sessionId, transcript)) return
+  if (atSettlement || !isTranscriptWatched(instanceId, sessionId) || awaitsFirstPage(instanceId, sessionId, transcript)) return
   repairDivergedTranscript(instanceId, sessionId, transcript, false)
 }
 

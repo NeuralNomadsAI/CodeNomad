@@ -1777,6 +1777,8 @@ async function loadMessages(
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
     let apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
+    // The reducer seed records which fragments the page itself installed.
+    const fetchedMessages = [...apiMessages]
     if (rowSnapshot) {
       apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, apiMessages.reverse(), rowSnapshot).reverse()
     }
@@ -1880,7 +1882,7 @@ async function loadMessages(
         const current = sessions().get(instanceId)?.get(sessionId)
         if (nextWindow.kind === "latest") {
           void seedOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder, authoritativeApiMessages,
-            current?.status === "idle" && current.runtimeStatusKnown === true)
+            current?.status === "idle" && current.runtimeStatusKnown === true, fetchedMessages)
         }
       }
     }
