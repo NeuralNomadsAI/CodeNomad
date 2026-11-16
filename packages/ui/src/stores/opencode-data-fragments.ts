@@ -1,5 +1,6 @@
 import type { OpenCodeEvent, SessionMessageInfo } from "@opencode/client"
 import type { Data } from "@opencode/client/solid"
+import { fragmentKey, isCommittedFragment } from "./opencode-data-read-merge"
 
 /** How a live event fits the session reducer, evaluated before it reduces.
  *
@@ -46,7 +47,6 @@ type Kind = "text" | "reasoning"
 const fragmentKind = (type: string): Kind | undefined =>
   type.startsWith("session.text.") ? "text" : type.startsWith("session.reasoning.") ? "reasoning" : undefined
 
-const fragmentKey = (messageId: string, kind: Kind, ordinal: number) => `${messageId}\0${kind}\0${ordinal}`
 
 function assistantOf(data: Data, event: OpenCodeEvent): { payload: Payload; messageId?: string; row?: Assistant } {
   const payload = event.data as Payload
@@ -129,44 +129,9 @@ export function eventFragmentKey(event: OpenCodeEvent | undefined): string | und
 
 type Fragment = { type?: unknown; text?: unknown; time?: { completed?: unknown } }
 
-/** Positive closure evidence only: the message completed, or (reasoning) the
- * fragment's own completion. Text stays open while reasoning or tool parts
- * follow it, so a later part proves nothing. */
-const isCommitted = (row: Assistant, kind: Kind, part: Fragment) =>
-  row.time.completed !== undefined || (kind === "reasoning" && part.time?.completed !== undefined)
-
-/** Committed page content for owed fragments replaces the live fragment even
- * where the read merge kept a live-changed row: an owed fragment's live text
- * is unproven. Rows without such a fragment are returned unchanged. */
-export function restoreOwedFragments(
-  installed: SessionMessageInfo[],
-  fetched: readonly SessionMessageInfo[],
-  owed: ReadonlySet<string>,
-): SessionMessageInfo[] {
-  if (!owed.size) return installed
-  const fetchedById = new Map(fetched.map((row) => [row.id, row]))
-  return installed.map((row) => {
-    const page = fetchedById.get(row.id)
-    if (row.type !== "assistant" || page?.type !== "assistant") return row
-    const ordinals = new Map<string, number>()
-    const pageFragments = (kind: Kind) => page.content.filter((item) => item.type === kind) as Fragment[]
-    let replaced = false
-    const content = row.content.map((item) => {
-      if (item.type !== "text" && item.type !== "reasoning") return item
-      const ordinal = ordinals.get(item.type) ?? 0
-      ordinals.set(item.type, ordinal + 1)
-      const authoritative = pageFragments(item.type)[ordinal]
-      if (!owed.has(fragmentKey(row.id, item.type, ordinal)) || !authoritative || !isCommitted(page, item.type, authoritative)) return item
-      replaced = true
-      return authoritative as typeof item
-    })
-    return replaced ? { ...row, content } : row
-  })
-}
-
 /** The provenance of fragments a page installed (`installed`, after the read
  * merge) exactly as fetched: a fragment the merge kept live belongs to the
- * stream. A committed fragment (`isCommitted`) is closed; an open fragment
+ * stream. A committed fragment (`isCommittedFragment`) is closed; an open fragment
  * holding text is partial; an empty open one simply streams. */
 export function recordPageFragments(fetched: readonly SessionMessageInfo[], installed: readonly SessionMessageInfo[]): PageFragments {
   const fragments: PageFragments = new Map()
@@ -178,7 +143,7 @@ export function recordPageFragments(fetched: readonly SessionMessageInfo[], inst
       const installedParts = live.content.filter((item) => item.type === kind) as Fragment[]
       ;(row.content.filter((item) => item.type === kind) as Fragment[]).forEach((part, ordinal) => {
         if (installedParts[ordinal]?.text !== part.text) return
-        if (isCommitted(row, kind, part)) fragments.set(fragmentKey(row.id, kind, ordinal), "closed")
+        if (isCommittedFragment(row, kind, part)) fragments.set(fragmentKey(row.id, kind, ordinal), "closed")
         else if (part.text !== "") fragments.set(fragmentKey(row.id, kind, ordinal), "partial")
       })
     }

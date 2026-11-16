@@ -21,7 +21,7 @@ import { cancelTranscriptProjections, flushTranscriptProjections } from "./openc
 import {
   divergenceFor, isDiverged, MAX_DIVERGENCE_REPAIRS, owedFragments, settleHeldTargets, type TranscriptDivergence,
 } from "./opencode-data-divergence"
-import { fitLiveEvent, recordPageFragments, restoreOwedFragments, type PageFragments } from "./opencode-data-fragments"
+import { fitLiveEvent, recordPageFragments, type PageFragments } from "./opencode-data-fragments"
 
 const log = getLogger("session")
 
@@ -232,8 +232,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   compactionDeltas.flush(instanceId, input.sessionID)
                   if ((destructiveRevisions.get(input.sessionID) ?? 0) !== revision) continue
                   const live = data.session.message.list(input.sessionID)
-                  const merged = restoreOwedFragments(mergePageWithSnapshot(live, response.data, since), response.data,
-                    owedFragmentsOf(instanceId, input.sessionID, data))
+                  const merged = mergePageWithSnapshot(live, response.data, since, owedFragmentsOf(instanceId, input.sessionID, data))
                   pageFragments.set(input.sessionID, recordPageFragments(response.data, merged))
                   return { ...response, data: merged }
                 }
@@ -285,13 +284,9 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         return pageFragments.get(sessionId)
       },
       async syncMessages(sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean, fetched?: SessionMessageInfo[]) {
-        // Only an authoritative page records provenance and restores owed
-        // fragments; a rotation replays the reducer's own rows and keeps the
-        // record it had.
-        if (fetched) {
-          messages = restoreOwedFragments(messages, fetched, owedFragmentsOf(instanceId, sessionId, data))
-          pageFragments.set(sessionId, recordPageFragments(fetched, messages))
-        }
+        // Only an authoritative page records provenance; a rotation replays the
+        // reducer's own rows and keeps the record it had.
+        if (fetched) pageFragments.set(sessionId, recordPageFragments(fetched, messages))
         messageSnapshots.set(sessionId, messages)
         try {
           data.session.message.invalidate(sessionId)
@@ -329,7 +324,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
   })
 }
 
-/** Fragments the transcript owning reducer `data` still owes, for its reads to restore. */
+/** Fragments the transcript owning reducer `data` still owes, for its reads' merge. */
 function owedFragmentsOf(instanceId: string, sessionId: string, data: Data): Set<string> {
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
   return transcript?.entry.data === data && transcript.divergence?.entry === transcript.entry

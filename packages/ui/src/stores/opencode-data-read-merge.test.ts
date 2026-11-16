@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { SessionMessageInfo } from "@opencode/client"
-import { mergePageWithSnapshot, snapshotRows } from "./opencode-data-read-merge.ts"
+import { fragmentKey, mergePageWithSnapshot, snapshotRows } from "./opencode-data-read-merge.ts"
 import {
   armLive, assistantRow, delta, emitEvent, readFixture, readTestingModel as model,
   readTestingSessionId as sessionId, settleSync, textOf,
@@ -99,6 +99,35 @@ describe("OpenCode data read merge", () => {
     assert.deepEqual(merged.content.map((part: any) => part.id ?? part.type), ["text", "first", "a", "b", "c", "last"])
     assert.equal(merged.content[2].state.status, "completed", "the live change of a part is kept")
     assert.equal(merged.content[3].state.status, "completed", "a part the live row missed joins it")
+  })
+
+  it("decides every text and reasoning fragment by kind and ordinal", () => {
+    const text = (value: string) => ({ type: "text", text: value })
+    const reasoning = (value: string, completed?: number) => ({ type: "reasoning", text: value, time: { created: 1, ...(completed ? { completed } : {}) } })
+    const open = (...content: unknown[]) => ({ ...row("live", ""), content }) as unknown as SessionMessageInfo
+    const done = (...content: unknown[]) => ({ ...row("live", "", 9), content }) as unknown as SessionMessageInfo
+    const texts = (merged: SessionMessageInfo[]) => ((merged[0] as any).content as any[]).map((part) => `${part.type}:${part.text}`)
+    const unchanged = (live: SessionMessageInfo, page: SessionMessageInfo) => mergePageWithSnapshot([live], [page], snapshotRows([live]))
+
+    assert.deepEqual(texts(unchanged(open(text("Live prefix")), open(text(""), reasoning("")))), ["text:Live prefix", "reasoning:"],
+      "open live text survives a page holding it empty before another kind")
+    assert.deepEqual(texts(unchanged(open(text("a"), reasoning("r", 3), text("b")), open(text("a"), reasoning("r", 3)))),
+      ["text:a", "reasoning:r", "text:b"], "an open page keeps a live fragment it does not hold yet")
+    assert.deepEqual(texts(unchanged(open(text("Hello world")), open(text("Hi")))), ["text:Hi"],
+      "a page text that live does not extend keeps page authority")
+    assert.deepEqual(texts(unchanged(open(reasoning("long thought")), open(reasoning("long", 4)))), ["reasoning:long"],
+      "a completed fragment takes the page even when live extends it")
+    assert.deepEqual(texts(unchanged(open(text("Hello world")), done(text("Hello")))), ["text:Hello"],
+      "a completed row's shortened replacement takes the page")
+    assert.deepEqual(texts(unchanged(open(text("Hello world")), open({ ...text(""), native: { item: "t" } }))), ["text:"],
+      "a text's own ending state commits it")
+    assert.deepEqual(texts(unchanged(open(reasoning("long thought")), open({ ...reasoning(""), native: { item: "r" } }))), ["reasoning:long thought"],
+      "reasoning carries its provider state from its start, which commits nothing")
+    const since = snapshotRows([open(text("Fin"))])
+    assert.deepEqual(texts(mergePageWithSnapshot([open(text("Fin and more"))], [done(text("Final"))], since)), ["text:Fin and more"],
+      "a row the stream changed during the fetch keeps its live fragment")
+    assert.deepEqual(texts(mergePageWithSnapshot([open(text("Fin and more"))], [done(text("Final"))], since, new Set([fragmentKey("live", "text", 0)]))),
+      ["text:Final"], "an owed fragment takes committed page content even in a live-changed row")
   })
 
   it("keeps a recovered part on its side of anonymous fragments", () => {

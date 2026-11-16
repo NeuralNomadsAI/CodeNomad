@@ -283,6 +283,26 @@ describe("live transcript divergence repair", () => {
     } finally { f.dispose() }
   })
 
+  it("keeps healthy open text through a repair page that holds it empty before another kind", async () => {
+    const f = fixture("divergence-repair-keeps-open-text")
+    try {
+      f.pages.set("s", [user("msg_u1")])
+      await loadMessages("divergence-repair-keeps-open-text", "s")
+      await settle()
+      f.native("session.step.started", { assistantMessageID: "msg_a1", agent: "build", model, started: 5 })
+      f.native("session.text.started", { assistantMessageID: "msg_a1", ordinal: 0 })
+      f.native("session.text.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: "Live prefix" })
+      // The reasoning start is lost; the repair page holds the native empty fragments.
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", ""), content: [{ type: "text", text: "" }, { type: "reasoning", text: "", time: { created: 6 } }] }])
+      f.native("session.reasoning.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: "think" })
+      await settle()
+      assert.equal(f.reads.length, 2)
+      assert.equal(f.text("msg_a1"), "Live prefix", "the repair erased valid open text")
+      f.native("session.text.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: " more" })
+      assert.equal(f.text("msg_a1"), "Live prefix more")
+    } finally { f.dispose() }
+  })
+
   it("keeps a repaired fragment owed until committed content replaces it at settlement", async () => {
     const f = fixture("divergence-owed-fragment")
     try {

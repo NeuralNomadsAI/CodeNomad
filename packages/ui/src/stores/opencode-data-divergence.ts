@@ -30,6 +30,17 @@ export function isDiverged(holder: { divergence?: TranscriptDivergence }, entry:
   return holder.divergence?.entry === entry && holder.divergence.targets.size > 0
 }
 
+/** Fragments whose live text is unproven: an authoritative read gives their
+ * committed page content precedence even in a live-changed row. */
+export function owedFragments(divergence: TranscriptDivergence | undefined): Set<string> {
+  const owed = new Set<string>()
+  for (const event of divergence?.targets.values() ?? []) {
+    const fragment = eventFragmentKey(event)
+    if (fragment !== undefined) owed.add(fragment)
+  }
+  return owed
+}
+
 /** After an authoritative page reseeded the reducer: settle the targets it
  * now holds (and a reducer failure); the rest stay owed. A text or reasoning
  * fragment settles only once the page installed it committed (`fragments`):
@@ -43,14 +54,4 @@ export function settleHeldTargets(divergence: TranscriptDivergence | undefined, 
       divergence.targets.delete(key)
     }
   }
-}
-
-/** Fragments whose live text an authoritative page's committed content replaces. */
-export function owedFragments(divergence: TranscriptDivergence | undefined): Set<string> {
-  const owed = new Set<string>()
-  for (const event of divergence?.targets.values() ?? []) {
-    const fragment = eventFragmentKey(event)
-    if (fragment !== undefined) owed.add(fragment)
-  }
-  return owed
 }
