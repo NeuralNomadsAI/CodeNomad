@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "./mission-cleanup"
 
-test("only the declared cleanup-pending 503 means remaining cleanup; other failures stay redacted and unconfirmed", () => {
+test("deletion errors distinguish cleanup, controls and conflicts while redacting unrelated failures", () => {
   assert.equal(deletionErrorKey(new MissionDeletionError(503, "cleanup-pending")), "missions.cleanup.error.pending")
   assert.equal(deletionErrorKey(new MissionDeletionError(403, "cleanup-pending")), "missions.cleanup.error.forbidden")
   assert.equal(deletionErrorKey(new MissionDeletionError(409, "revision-conflict")), "missions.cleanup.error.revisionConflict")
@@ -11,7 +11,7 @@ test("only the declared cleanup-pending 503 means remaining cleanup; other failu
   assert.equal(deletionErrorKey(new MissionDeletionError(409)), "missions.cleanup.error.unconfirmed")
   assert.equal(deletionErrorKey(new MissionDeletionError(404, "mission-not-found")), "missions.cleanup.error.missing")
   assert.equal(deletionErrorKey(new MissionDeletionError(503)), "missions.cleanup.error.unconfirmed")
-  assert.equal(deletionErrorKey(new MissionDeletionError(503, "control-pending")), "missions.cleanup.error.unconfirmed")
+  assert.equal(deletionErrorKey(new MissionDeletionError(503, "control-pending")), "missions.cleanup.error.controlPending")
   assert.equal(deletionErrorKey(new Error("private transport detail")), "missions.cleanup.error.unconfirmed")
 })
 

@@ -272,10 +272,8 @@ test("a stale deletion rereads its original intent and never adopts a fresh revi
   } finally { await page.close(); await f.app.close() }
 })
 
-for (const [code, message] of [
-  ["request-conflict", "Deletion request differs. Check the original request before retrying."],
-  ["control-pending", "A control is pending. Check it before retrying deletion."],
-] as const) test(`${code} rereads the original deletion before any explicit retry`, async () => {
+test("request-conflict rereads the original deletion before any explicit retry", async () => {
+  const code = "request-conflict", message = "Deletion request differs. Check the original request before retrying."
   const f = cleanupBackend(), mission = await f.create(code)
   const { page } = await setup(f)
   const writes: unknown[] = []
@@ -295,6 +293,31 @@ for (const [code, message] of [
     await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
     assert.equal(writes.length, 2); assert.deepEqual(writes[1], writes[0])
     assert.ok(reads >= before + 2, "explicit retry preflights and reconciles without changing its request")
+    assert.deepEqual(f.removed, [])
+  } finally { await page.close(); await f.app.close() }
+})
+
+test("a real pending control returns 503 and rereads the original deletion without replay", async () => {
+  const f = cleanupBackend(), mission = await f.create("pending-control")
+  const { page, requests } = await setup(f, false, undefined, async () => {
+    // No native lifecycle acknowledgement: the real controller retains its pending Pause.
+    await assert.rejects(f.control.lifecycle({ missionID: mission.id, requestID: "pause-original",
+      expectedRevision: mission.revision, action: "pause" }), { code: "control-pending" })
+  })
+  let reads = 0
+  await page.route(`**/api/workspaces/fixture/missions/${mission.id}`, route => {
+    if (route.request().method() === "GET") reads++
+    return route.fallback()
+  })
+  try {
+    await remove(page, "Private cleanup pending-control")
+    const form = page.locator("form.mission-editor")
+    await form.getByRole("alert").getByText("A control is pending. Check it before retrying deletion.", { exact: true }).waitFor()
+    assert.equal(requests.length, 1); assert.equal(requests[0].status, 503)
+    assert.ok(reads >= 1, "the real refusal rereads the original deletion")
+    await submit(page)
+    await form.getByRole("alert").getByText("Mission changed. Cancel and select it again before deleting.", { exact: true }).waitFor()
+    assert.equal(requests.length, 1, "the original deletion never adopts the pending control's revision")
     assert.deepEqual(f.removed, [])
   } finally { await page.close(); await f.app.close() }
 })
