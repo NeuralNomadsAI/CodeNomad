@@ -640,8 +640,8 @@ async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID:
   if (response.status !== 200) {
     const recovery = missionRecoveryError(response.body.code, response.body.error)
     if (recovery && recovery.status === response.status) throw missionRecoveryControlError(recovery.code, response.body.error)
-    if (kind === "profile-defaults" && response.body.code === "mission-not-owner") throw missionRecoveryControlError("mission-preferences-unavailable")
-    if (kind === "profile-defaults" && [400, 404, 405, 501].includes(response.status)) {
+    if (["profile-defaults", "configurations"].includes(kind) && response.body.code === "mission-not-owner") throw missionRecoveryControlError("mission-preferences-unavailable")
+    if (["profile-defaults", "configurations"].includes(kind) && [400, 404, 405, 501].includes(response.status)) {
       throw missionRecoveryControlError("mission-preferences-update-required")
     }
     throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
@@ -658,6 +658,17 @@ export async function resolveMissionProfileDefaults(sessionID: string, input: un
     }
     if (targets.length !== 1) throw new Error("Mission preferences require exactly one owning CodeNomad backend")
     return await callMissionInput(targets[0], sessionID, "profile-defaults", input)
+  } catch (error) {
+    if (error instanceof MissionControlError && missionRecoveryError(error.code)) throw error
+    throw missionRecoveryControlError("mission-preferences-unavailable")
+  }
+}
+
+export async function readMissionConfigurations(sessionID: string): Promise<unknown> {
+  try {
+    const targets = await probeBrowserBridges(await registrations({ strict: true }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission-preferences")
+    if (targets.length !== 1) throw new Error("Saved configurations require exactly one owning CodeNomad backend")
+    return await callMissionInput(targets[0], sessionID, "configurations", {})
   } catch (error) {
     if (error instanceof MissionControlError && missionRecoveryError(error.code)) throw error
     throw missionRecoveryControlError("mission-preferences-unavailable")

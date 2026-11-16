@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import Ajv from "ajv"
 
 import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput, setupMissionsPlugin } from "./missions-plugin"
 import { buildAssignmentPrompt } from "../missions/recipes"
@@ -48,6 +49,24 @@ test("validates the compact mission tool contracts", () => {
     retireTasks: [], addTasks: [], dependencyUpdates: [],
   })
   assert.throws(() => parseReviseInput({ expectedRevision: 1, requestID: "bad", reason: "Missing contract", addTasks: [{ taskKey: "bad" }] }), /title/)
+})
+
+test("inspect start accepts bounded titles and verbatim notes and refuses an existing mission selector", () => {
+  for (const notes of [undefined, "", "   ", "\n  Keep spacing \r\n"]) {
+    const start = parseInspectInput({ start: { objective: "Brief", title: "  Label  ", template: "custom", notes } }).start!
+    assert.equal(start.title, "Label")
+    assert.equal(start.notes, notes)
+  }
+  assert.equal(parseInspectInput({ start: { objective: "Brief", title: "x".repeat(60), template: "custom" } }).start!.title?.length, 60)
+  for (const title of ["", "  ", "x".repeat(61), "two\nlines", null, 42]) {
+    assert.throws(() => parseInspectInput({ start: { objective: "Brief", title, template: "custom" } }), /title/i)
+  }
+  assert.throws(() => parseInspectInput({ missionID: "msn_existing", start: { objective: "Brief", template: "custom" } }), /missionID/)
+  assert.deepEqual(parseInspectInput({ configurations: true }), { configurations: true })
+  assert.deepEqual(parseInspectInput({ configurations: "id" }), { configurations: "id" })
+  for (const extra of [{ start: {} }, { catalog: true }, { missionID: "msn_existing" }, { list: true }]) {
+    assert.throws(() => parseInspectInput({ configurations: true, ...extra }), /alone/)
+  }
 })
 
 test("registers seven tools, typed snapshot RPC, and role context", async () => {
@@ -109,6 +128,21 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   assert.match(description("briefing"), /Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report/)
   assert.match(description("briefing"), /requestID "auto:<revision>" matching basedOnRevision; for an explicit UI request use its exact requestID/)
   const inspect = tools.find((tool) => tool.name === "inspect")!
+  assert.match(description("inspect"), /attaching THIS root conversation as coordinator/)
+  assert.match(description("prepare"), /NEW coordinator conversation; the calling conversation stays unchanged/)
+  assert.match(description("prepare"), /Outside an active mission use the Missions editor/)
+  assert.equal((inspect as any).input.properties.start.properties.title.maxLength, 60)
+  const validateInspect = new Ajv().compile((inspect as any).input)
+  const validatePrepare = new Ajv().compile((tools.find(tool => tool.name === "prepare") as any).input)
+  for (const field of ["autoStart", "launch", "schedule", "recurrence"]) {
+    assert.equal(validateInspect({ start: { objective: "Brief", template: "custom", [field]: true } }), false)
+    assert.equal(validatePrepare({ requestID: "reserved", objective: "Brief", template: "custom", [field]: true }), false)
+  }
+  const beforeInvalid = structuredClone([...values])
+  await assert.rejects(inspect.execute({ missionID: "msn_existing", start: { objective: "Invalid", template: "custom" } }, {
+    sessionID: "ses_coordinator", messageID: "msg_invalid", id: "call_invalid", progress: async () => assert.fail("Must refuse before progress"),
+  }), /missionID/)
+  assert.deepEqual([...values], beforeInvalid)
   assert.deepEqual((inspect as any).input.properties.start.properties.template.enum, ["custom", "debug", "wayfinder", "delivery", "compare"])
   assert.match((tools.find(tool => tool.name === "report") as any).input.properties.artifact.description, /Compare comparator.*version 1 comparison/)
   const started = JSON.parse((await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
@@ -251,9 +285,12 @@ test("inspect start and prepare return frozen profiles, task mode and origins wi
   const tools = new Map<string, { execute(input: unknown, context: any): Promise<{ content: string }> }>()
   let handlers: any, reads = 0, preparations = 0
   let preferences: unknown = [{ template: "all", profiles: { coordinator: { agent: "lead" }, roles: { specialist: { agent: "worker" } } }, taskMode: "independent" }]
+  const savedConfiguration = { version: 1, id: "00000000-0000-4000-8000-000000000001", name: "Saved title",
+    objective: "Coordinate", notes: " \n verbatim notes \r\n ", template: "custom", profiles: { coordinator: {} } }
   const transport: MissionInputTransport = {
     prompt: async () => assert.fail("Creation never prompts"), synthetic: async () => assert.fail("Creation never resumes"),
     resolveCreationDefaults: async (_sessionID, input) => { reads++; return resolveMissionCreationDefaults({ ...input, preferences }) },
+    readConfigurations: async () => [savedConfiguration],
     prepare: async (sessionID, input) => {
       preparations++
       return handlers.create({ ...input, prepared: true, preparedBy: { missionID: input.missionID, coordinatorSessionID: sessionID } })
@@ -281,8 +318,15 @@ test("inspect start and prepare return frozen profiles, task mode and origins wi
     sessionID: "ses_coordinator", messageID: `msg_${id}`, id: `call_${id}`, progress: async () => {},
   })).content)
   try {
-    const start = { objective: "Coordinate", template: "custom" as const, profiles: { coordinator: {} } }
+    assert.deepEqual((await call("inspect", { configurations: true })).configurations,
+      [{ id: savedConfiguration.id, name: savedConfiguration.name, template: "custom" }])
+    const { configuration } = await call("inspect", { configurations: savedConfiguration.id })
+    assert.equal(values.size, 0, "listing and reading configurations never creates a mission")
+    const { objective, title, notes, template, profiles } = configuration
+    const start = { objective, title, notes, template, profiles }
     const started = await call("inspect", { start }, "start")
+    assert.equal(started.mission.title, savedConfiguration.name)
+    assert.equal(started.mission.notes, savedConfiguration.notes)
     assert.deepEqual(started.selection, resolveMissionCreationDefaults({ ...start, preferences }))
     assert.equal("creationDefaults" in started.mission, false, "tool replies expose the selection without its private replay request")
     assert.deepEqual(started.selection.origins, { coordinator: "explicit", roles: { specialist: "preference" }, taskMode: "preference" })

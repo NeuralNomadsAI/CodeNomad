@@ -158,6 +158,32 @@ of them in `replacesTaskKey`.
 
 ## Mission profile selection and creation recovery
 
+`mission.inspect({ start })` attaches the calling root conversation as the
+coordinator of a paused mission. `mission.prepare` creates a separate paused
+mission with a new coordinator conversation, preserving the calling conversation.
+The human presses Play in either case. `missionID` selects an existing mission;
+combining it with `start` is refused before routing, preference discovery or creation.
+Both creation inputs accept an optional trimmed, single-line title of 1–60
+characters and preserve notes verbatim, including empty and whitespace-only notes.
+An exact `start` retry compares the original creation title, objective, notes,
+template and requested choices even after human edits.
+
+`mission.inspect({ configurations: true })` lists the owning backend's saved
+configuration IDs, names and templates. `configurations: "<id>"` reads one complete
+saved record plus the editor's suggested `title` (collapsed whitespace, bounded to
+60 characters). These read-only requests work from an owned root outside a mission,
+select no journal and use the same strict unique-backend discovery as profile
+preferences. The backend reads `ui.settings.missionModels` through
+`getRawConfigOwner("ui")`; the shared `missions/model-library.ts` codec validates
+every record. An absent field returns an empty list; invalid data and unavailable
+or ambiguous owners return their respective preference errors, with bytes preserved.
+The list stays short (at most 20 entries); a record exceeding the inspection bound
+returns a `{ kind: "configuration", configurationID, digest, offset }` content read,
+whose slices reread the owner and reject changed content. Pass each `read` whole and
+follow `next`. Copy the selected objective, suggested title, notes, template,
+profiles and task mode explicitly into creation so its retry contract freezes
+the supplied values.
+
 Both `mission.prepare` and `mission.inspect({ start })` resolve omitted
 coordinator/role profiles and `taskMode` from the owning CodeNomad backend's
 `ui.settings.missionProfileDefaults`. The editor and server share

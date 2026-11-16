@@ -76,6 +76,34 @@ test("a stalled inspect-start preference read never holds the project's mutation
   }
 })
 
+test("inspect refuses missionID with start before identity reads, preferences or writes", async () => {
+  const storage = new MemoryStorage()
+  storage.get = async () => assert.fail("Must reject before creation identity or journal reads")
+  storage.scan = async () => assert.fail("Must reject before discovery")
+  const f = fixture({ storage, transport: { resolveCreationDefaults: async () => assert.fail("Must reject before preferences") } })
+  await assert.rejects(f.control.inspect(coordinator, { missionID: "msn_existing", start: { objective: "Brief", template: "custom" } }, "invalid"),
+    (error: unknown) => error instanceof MissionControlError && error.code === "invalid-input")
+  assert.equal(storage.values.size, 0)
+})
+
+test("journal-only inspect persists title and exact notes, with replay against original creation after edits", async () => {
+  for (const notes of [undefined, "", " \n keep \r\n "]) {
+    const f = fixture()
+    const start = { objective: "Original", title: "  Short label  ", notes, template: "custom" as const }
+    const created = (await f.control.inspect(coordinator, { start }, "same-start")).mission!
+    assert.equal(created.title, "Short label")
+    assert.equal(created.notes, notes)
+    await f.control.update({ missionID: created.id, objective: "Human edited", notes: "Changed", expectedRevision: created.revision, requestID: "edit" })
+    const retry = (await f.control.inspect(coordinator, { start }, "same-start")).mission!
+    assert.equal(retry.objective, "Human edited")
+    assert.equal(retry.notes, "Changed")
+    for (const changed of [{ title: "Other label" }, { title: undefined }, { notes: notes === "" ? undefined : "" }]) {
+      await assert.rejects(f.control.inspect(coordinator, { start: { ...start, ...changed } }, "same-start"),
+        (error: unknown) => error instanceof MissionControlError && error.code === "request-conflict")
+    }
+  }
+})
+
 test("a coordinator moving during the final creation preflight is a foreign-session refusal", async () => {
   const sessions = new Map<string, NativeMissionSession>([[coordinator,
     { id: coordinator, projectID: "project-1", location: { directory: "/repo" } }]])

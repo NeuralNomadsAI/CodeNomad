@@ -59,6 +59,8 @@ export type MissionManagedRootCreation = (coordinatorID: string,
 
 export interface MissionStartInput {
   objective: string
+  /** Optional short label (1–60 characters, trimmed). */
+  title?: string
   template: MissionTemplateId
   notes?: string
   profiles?: MissionProfiles
@@ -68,6 +70,7 @@ export interface MissionStartInput {
 export interface MissionInspectInput {
   missionID?: string
   start?: MissionStartInput
+  configurations?: true | string
 }
 
 export interface MissionDelegateInput {
@@ -140,8 +143,6 @@ export interface MissionInspection {
 export interface MissionCreateInput extends MissionStartInput {
   /** Original agent request and frozen preference provenance, supplied by the owning backend. */
   creationDefaults?: MissionCreationMetadata
-  /** Optional short label (1–60 characters, trimmed). */
-  title?: string
   prepared?: boolean
   requestID: string
   coordinatorSessionID?: string
@@ -188,6 +189,7 @@ export interface MissionReviseInput {
 }
 
 export interface MissionInputTransport {
+  readConfigurations?(sessionID: string): Promise<unknown>
   resolveCreationDefaults?(sessionID: string, input: MissionCreationChoices & { template: MissionTemplateId; coordinatorModel?: MissionExecution["model"] }): Promise<unknown>
   lifecycle?(coordinatorID: string, input: { missionID: string; operationID: string; sessionID: string;
     startText?: string;

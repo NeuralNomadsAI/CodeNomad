@@ -12,19 +12,26 @@ import type { MissionContentSelector } from "./mission-content-wire"
 export const MISSION_INSPECT_OUTPUT_LIMIT = 100_000
 
 /** Where a value too large for one result lives. Fields are the map's own keys;
- * `revision` pins the map the value was paged from. The native catalog is the
- * caller's Location's, independent of any mission. */
+ * `revision` pins the map the value was paged from. Catalog and saved configuration
+ * reads use the caller's owner independently of any mission. */
 export type MissionInspectSelector = { kind: "inspection"; field: string } | MissionContentSelector
-type ContentSource = MissionInspectSelector | { kind: "catalog" }
+type ConfigurationSource = { kind: "configuration"; configurationID: string }
+type ContentSource = MissionInspectSelector | { kind: "catalog" } | ConfigurationSource
 /** A content read. `digest` names the exact serialized value its slices are cut from:
  * values read afresh on each call (the catalog, native conversations, human answers)
  * can change without a new revision, so a slice of a value that now reads differently
  * is refused and slices never join two observations. A `receipt` read names, by its
  * digest alone, the whole original result of a `mission.interrupt` call too large for
- * one result, as the plugin holds it. Catalog and receipt reads name no mission. */
-export type MissionInspectContent = ((MissionInspectSelector & { revision: number }) | { kind: "catalog" } | { kind: "receipt" })
+ * one result, as the plugin holds it. Catalog, receipt and configuration reads name no mission. */
+export type MissionInspectContent = ((MissionInspectSelector & { revision: number }) | { kind: "catalog" } | { kind: "receipt" } | ConfigurationSource)
   & { digest: string; offset: number }
 const CATALOG = { kind: "catalog" } as const
+
+export function boundedConfiguration(configuration: { id: string; [key: string]: unknown }): unknown {
+  const value: Owner = { configuration }
+  if (!fit(() => value, [{ owner: value, key: "configuration", selector: { kind: "configuration", configurationID: configuration.id }, tier: 0 }])) throw outOfBounds()
+  return checked(value)
+}
 
 /** Task fields of the `taskKey` view computed outside the map; the plugin supplies them. */
 export const MISSION_TASK_VIEW_FIELDS = ["contract", "assignmentPrompt", "requirement", "native", "humanAnswers"] as const
@@ -145,7 +152,7 @@ export function boundedMissionList(missions: ReadonlyArray<Owner & { missionID: 
  * `MISSION_TASK_VIEW_FIELDS` and the catalog are the plugin's. */
 export function inspectionContentValue(inspection: MissionInspection, read: MissionInspectContent): unknown {
   const mission = inspection.mission
-  if (!mission || read.kind === "catalog" || read.kind === "receipt") throw contentUnavailable()
+  if (!mission || read.kind === "catalog" || read.kind === "receipt" || read.kind === "configuration") throw contentUnavailable()
   if (read.revision !== mission.revision) throw new Error("Mission changed since this page: read it again from its first page")
   if (read.kind !== "inspection") return missionContentValue(mission, read)
   if (read.field === "mission" || !Object.prototype.hasOwnProperty.call(inspection, read.field)) throw contentUnavailable()
@@ -172,15 +179,15 @@ export function missionContentValue(mission: MissionMap, read: Exclude<MissionIn
 /** One slice of a value: the string itself, or the value's JSON, from `read.offset`,
  * as long as the whole result fits; `next` repeats the read from where it stopped.
  * `value` is read afresh and must be the one `read.digest` names. `missionID` is the
- * mission of map reads; catalog and receipt reads name none. */
+ * mission of map reads; catalog, receipt and configuration reads name none. */
 export function inspectionContent(missionID: string | undefined, read: MissionInspectContent, value: unknown): unknown {
   const json = typeof value !== "string", text = contentText(value)
   if (contentDigest(text) !== read.digest) throw new Error("This value changed since its first slice: inspect again for its current read")
   if (read.offset > text.length) throw new Error("Mission content offset is past its end")
-  const missionless = read.kind === "catalog" || read.kind === "receipt"
+  const missionless = read.kind === "catalog" || read.kind === "receipt" || read.kind === "configuration"
   if (!missionless && !missionID) throw contentUnavailable()
   const owner = missionless ? {} : { missionID }
-  const result = (end: number) => ({ ...(read.kind === "catalog" || read.kind === "receipt" ? {} : { mission: { id: missionID, revision: read.revision } }),
+  const result = (end: number) => ({ ...("revision" in read ? { mission: { id: missionID, revision: read.revision } } : {}),
     content: { ...read, characters: text.length, ...(json ? { json: true } : {}), text: text.slice(read.offset, end),
       ...(end < text.length ? { next: { ...owner, content: { ...read, offset: end } } } : {}) }, note: CONTENT_NOTE })
   return checked(result(sliceEnd(text, read.offset, result)))
@@ -295,7 +302,7 @@ function indentations(envelope: () => unknown, slots: readonly Slot[]): number[]
 
 function omission(mission: Pick<MissionMap, "id" | "revision"> | undefined, selector: ContentSource, text: string) {
   const digest = contentDigest(text)
-  if (selector.kind === "catalog") return { omittedCharacters: text.length, read: { content: { ...selector, digest, offset: 0 } } }
+  if (selector.kind === "catalog" || selector.kind === "configuration") return { omittedCharacters: text.length, read: { content: { ...selector, digest, offset: 0 } } }
   if (!mission) throw contentUnavailable()
   return { omittedCharacters: text.length, read: { missionID: mission.id, content: { ...selector, revision: mission.revision, digest, offset: 0 } } }
 }

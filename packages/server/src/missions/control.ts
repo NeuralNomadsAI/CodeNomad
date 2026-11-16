@@ -58,6 +58,7 @@ import { hasUnsettledNativeExecution } from "./native-call-observation"
 import { parseMissionTaskMode, sameExecutionMode, type MissionTaskMode } from "./task-execution-mode"
 import { coordinatorReadout } from "./coordinator-readout"
 import { missionCoordinatorTitle, parseMissionTitle } from "./mission-title"
+import { normalizeMissionModels, validMissionModels } from "./model-library"
 import { AUTOMATIC_BRIEFING_REQUEST, invalidBriefingSources, isAutomaticBriefing, parseMissionBriefingRequest,
   type MissionBriefingInput, type MissionBriefingRequest } from "./briefing"
 import { prepareMissionOneTimeDocument, prepareMissionOneTimeControl, acknowledgeMissionOneTimeControl, projectMissionDocuments, synchronizeMissionDocumentText, markMissionDocumentTaskCreation, requireMissionOneTimeDocument, recordedMissionOneTimeAcknowledgement,
@@ -1020,8 +1021,14 @@ export class MissionControl {
   }
 
   async inspect(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
+    if (input.missionID !== undefined && input.start !== undefined) throw new MissionControlError("start attaches this conversation as coordinator; use missionID only to inspect an existing mission", "invalid-input")
     input = structuredClone(input)
     if (!input.start) return this.inspectCurrent(sessionID, input, operationID)
+    if (input.start.title !== undefined) {
+      const title = parseMissionTitle(input.start.title)
+      if (title === undefined) throw new MissionControlError("Mission title must be 1–60 characters", "invalid-input")
+      input.start.title = title
+    }
     try { input.start.profiles = parseMissionProfiles(input.start.profiles); validateMissionProfiles(input.start.template, input.start.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
     const caller = await this.ownedRootSession(sessionID)
@@ -1041,6 +1048,17 @@ export class MissionControl {
     return this.ownedRootSession(sessionID)
   }
 
+  async savedConfigurations(sessionID: string) {
+    const caller = await this.ownedRootSession(sessionID)
+    if (!this.options.transport?.readConfigurations) throw missionRecoveryControlError("mission-preferences-unavailable")
+    const value = await this.options.transport.readConfigurations(sessionID)
+    if (!Array.isArray(value) || !validMissionModels(value)) throw missionRecoveryControlError("mission-preferences-invalid")
+    this.assertActive()
+    const fresh = await this.ownedRootSession(sessionID)
+    if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Caller moved while reading saved configurations", "foreign-session")
+    return normalizeMissionModels(value)
+  }
+
   private async inspectCurrent(sessionID: string, input: MissionInspectInput, operationID: string,
     selected?: { input?: MissionStartInput & { creationDefaults?: MissionCreationMetadata }; preferenceError?: unknown; location: NativeMissionSession["location"] }): Promise<MissionInspection> {
     input = structuredClone(input)
@@ -1051,10 +1069,10 @@ export class MissionControl {
       const { requestID, missionID, created } = await this.inspectCreationIdentity(sessionID, operationID)
       const replay = snapshot.missions.find((mission) => mission.id === missionID)
       if (replay) {
-        const original = created?.type === "mission.created" && created.creationDefaults ? created : replay
+        const original = created?.type === "mission.created" ? created : replay
         const sameChoices = this.sameCreationChoices(original, input.start, replay.profiles?.roles?.comparator?.model)
         if (original.template !== input.start.template || original.objective !== input.start.objective
-          || original.notes !== input.start.notes || !sameChoices) {
+          || original.title !== input.start.title || original.notes !== input.start.notes || !sameChoices) {
           throw new MissionControlError(MISSION_CREATION_REQUEST_CONFLICT, "request-conflict")
         }
         if (this.options.documents && created?.type === "mission.created") {
@@ -1101,6 +1119,7 @@ export class MissionControl {
         projectID: this.options.project.id,
         projectCanonical: this.options.project.canonical,
         objective: input.start.objective,
+        ...(input.start.title === undefined ? {} : { title: input.start.title }),
         notes: input.start.notes,
         template: input.start.template,
         taskMode: input.start.taskMode,

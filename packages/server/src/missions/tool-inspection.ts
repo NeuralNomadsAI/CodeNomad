@@ -2,12 +2,22 @@ import { NO_TASK_CONVERSATION, type MissionControl } from "./control"
 import { MissionControlError } from "./control-error"
 import type { MissionInspectInput } from "./control-types"
 import type { MissionMap } from "./model"
-import { boundedInspection, boundedMissionList, boundedTaskView, inspectionContent, inspectionContentValue, MISSION_TASK_VIEW_FIELDS, type MissionInspectContent } from "./inspect-view"
+import { boundedConfiguration, boundedInspection, boundedMissionList, boundedTaskView, inspectionContent, inspectionContentValue, MISSION_TASK_VIEW_FIELDS, type MissionInspectContent } from "./inspect-view"
+import { missionConfigurationTitle } from "./model-library"
 import { compactMission, compactMissionTask, nativeAssignment } from "./tool-result"
 
 /** Fit inside the owning journal invocation, before a scheduled passage crosses RPC. */
 export type MissionToolInspectInput = MissionInspectInput & { taskKey?: string; taskOffset?: number; content?: MissionInspectContent; list?: boolean; listOffset?: number }
 export async function missionToolInspection(control: MissionControl, sessionID: string, input: MissionToolInspectInput, operationID: string, catalog?: unknown) {
+  if (input.configurations !== undefined || input.content?.kind === "configuration") {
+    const configurations = await control.savedConfigurations(sessionID)
+    if (input.configurations === true) return { configurations: configurations.map(({ id, name, template }) => ({ id, name, template })) }
+    const read = input.content?.kind === "configuration" ? input.content : undefined
+    const stored = configurations.find(item => item.id === (read?.configurationID ?? input.configurations))
+    if (!stored) throw new MissionControlError("Saved configuration not found", "configuration-not-found")
+    const configuration = { ...stored, title: missionConfigurationTitle(stored.name) }
+    return read ? inspectionContent(undefined, read, configuration) : boundedConfiguration(configuration)
+  }
   if (input.list) return boundedMissionList(await control.listMissions(sessionID), input.listOffset)
   const result = await control.inspect(sessionID, input, operationID)
   const response = input.taskKey === undefined ? result : await observedTaskView(control, sessionID, result.mission, input.taskKey)

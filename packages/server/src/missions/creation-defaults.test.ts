@@ -123,7 +123,7 @@ test("both agent creation paths store the editor's effective Compare judge and f
 })
 
 test("inspect start recovers frozen preferences from its document before a missing creation event", async () => {
-  const f = fixture(), start = { objective: "Frozen document", template: "custom" as const }
+  const f = fixture(), start = { objective: "Frozen document", title: "Frozen title", notes: " \n verbatim \r\n ", template: "custom" as const }
   f.fail()
   await assert.rejects(f.control.inspect(f.coordinator, { start }, "inspect-create"), /Journal write unavailable/)
   assert.equal(f.reads, 1)
@@ -131,6 +131,10 @@ test("inspect start recovers frozen preferences from its document before a missi
   await assert.rejects(f.control.inspect(f.coordinator, { start: { ...start, profiles: {} } }, "inspect-create"), /different mission/)
   const result = await f.control.inspect(f.coordinator, { start }, "inspect-create")
   assert.equal(result.mission?.runState, "prepared")
+  assert.equal(result.mission?.title, start.title)
+  assert.equal(result.mission?.notes, start.notes)
+  await assert.rejects(f.control.inspect(f.coordinator, { start: { ...start, title: "Changed" } }, "inspect-create"), /different mission/)
+  await assert.rejects(f.control.inspect(f.coordinator, { start: { ...start, notes: "" } }, "inspect-create"), /different mission/)
   assert.deepEqual(result.selection?.profiles.roles, { specialist: { agent: "worker" } })
   assert.equal(result.selection?.origins.roles.specialist, "preference")
   assert.equal(f.reads, 1, "even invalid current preferences are unread on recovery")

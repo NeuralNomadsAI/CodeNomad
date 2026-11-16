@@ -3,7 +3,7 @@ import test, { type TestContext } from "node:test"
 import Fastify from "fastify"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
-import { readMissionProfileDefaults } from "./mission-profile-defaults"
+import { readMissionConfigurations, readMissionProfileDefaults } from "./mission-profile-defaults"
 import { MISSION_DEFAULTS_REQUEST_INVALID } from "../../missions/recovery-error"
 
 function fixture(t: TestContext, read?: () => unknown) {
@@ -106,4 +106,27 @@ test("profile resolution leaves Compare validation to mission control", async t 
   assert.deepEqual(response.json().result.profiles.roles, { "model-a": {}, "model-b": {}, comparator: {} })
   const known = await fixture(t, () => ({}))({ template: "compare", coordinatorModel: { providerID: "p", id: "known", variant: "default" } })
   assert.deepEqual(known.json().result.profiles.roles.comparator, { model: { providerID: "p", id: "known" } })
+})
+
+test("saved configuration reads distinguish absence, invalid data and unavailable owners without writes", async t => {
+  let owner: unknown = {}
+  let reads = 0
+  const request = fixture(t, () => { reads++; return owner })
+  const read = () => request({}, { kind: "configurations" })
+  assert.deepEqual((await read()).json(), { result: [] })
+  const record = { version: 1, id: "00000000-0000-4000-8000-000000000001", name: "Saved", objective: "Brief", notes: " \n ", template: "custom" }
+  owner = { settings: { missionModels: [record], unrelated: "preserve" } }
+  const snapshot = structuredClone(owner)
+  assert.deepEqual((await read()).json(), { result: [record] })
+  assert.deepEqual(owner, snapshot)
+  for (const missionModels of [null, {}, [record, record], [{ ...record, runState: "running" }]]) {
+    owner = { settings: { missionModels } }
+    const response = await read()
+    assert.equal(response.statusCode, 409)
+    assert.equal(response.json().code, "mission-preferences-invalid")
+  }
+  const count = reads
+  assert.equal((await request({ mutation: true }, { kind: "configurations" })).json().code, "invalid-execution")
+  assert.equal(reads, count, "validate before reading")
+  assert.throws(() => readMissionConfigurations(undefined, { kind: "configurations", input: {} }), { code: "mission-preferences-unavailable" })
 })

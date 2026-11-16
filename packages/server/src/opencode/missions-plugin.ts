@@ -387,15 +387,15 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or prepare a paused custom, debugging, Wayfinder, product delivery, or two-model comparison mission. Inspection includes saved selection (profiles, taskMode and explicit/preference/opencode-default origins) when creation metadata exists. These are requested choices; check the catalog for availability. selection.preferences: 'unavailable' warns that omitted choices used OpenCode defaults. Recover preference/ownership errors or supply the coordinator, every template role and taskMode explicitly; update CodeNomad when requested. The starting coordinator must match the resolved profile. Creation never sends a coordinator prompt. The user presses Play in CodeNomad before Mission work begins. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers. Follow taskPage.nextTaskOffset with taskOffset for more tasks. For { omittedCharacters, read }, pass read as the whole input and follow each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
+        description: "Inspect the caller's durable mission map and optional native catalog. start prepares a paused custom, debugging, Wayfinder, product delivery, or two-model comparison mission, attaching THIS root conversation as coordinator; use mission.prepare for a separate mission with a NEW coordinator conversation. Never combine missionID and start. Inspection includes saved selection (profiles, taskMode and explicit/preference/opencode-default origins) when creation metadata exists. These are requested choices; check the catalog for availability. selection.preferences: 'unavailable' warns that omitted choices used OpenCode defaults. Recover preference/ownership errors or supply the coordinator, every template role and taskMode explicitly; update CodeNomad when requested. The starting coordinator must match the resolved profile. Creation never sends a coordinator prompt. The user presses Play in CodeNomad before Mission work begins. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers. Follow taskPage.nextTaskOffset with taskOffset for more tasks. For { omittedCharacters, read }, pass read as the whole input and follow each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared. configurations: true lists the owning backend's saved configurations; pass an ID to read its saved inputs and suggested title, then copy the chosen fields explicitly into prepare/start.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
           assertActive()
+          const parsed = parseInspectInput(input)
           const selected = await route(tool.sessionID, "inspect", input)
           await tool.progress({ status: "Reading the mission map" })
           selected.current()
-          const parsed = parseInspectInput(input)
           if (parsed.list) return textResult(await executeMissionBusiness(selected, control => control.inspectTool(selected.readSessionID, parsed, tool.id, undefined)))
           const read = parsed.content
           // The caller's Location's native catalog, read afresh on every call.
@@ -513,7 +513,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "prepare",
-        description: "Coordinator only: prepare a separate paused one-time mission, such as a pilot hand-off, from an objective, optional title and notes, a template, profiles and task mode. Keep the owning CodeNomad backend available. Read selection for saved requested profiles, taskMode and explicit/preference/opencode-default origins; inspection includes that saved selection when creation metadata exists. The user starts it with Play; you cannot control it. Reuse the same requestID and original inputs to retry; saved choices stay frozen if preferences change. Outside an active mission use the Missions editor. Find it with mission.inspect({ list: true }) and read it with mission.inspect({ missionID }).",
+        description: "Coordinator only: prepare a separate paused one-time mission with a NEW coordinator conversation; the calling conversation stays unchanged. inspect with start instead attaches THIS conversation as coordinator. Supply an objective, optional title and notes, a template, profiles and task mode. Keep the owning CodeNomad backend available. Read selection for saved requested profiles, taskMode and explicit/preference/opencode-default origins; inspection includes that saved selection when creation metadata exists. The user starts it with Play; you cannot control it. Reuse the same requestID and original inputs to retry; saved choices stay frozen if preferences change. Outside an active mission use the Missions editor. Find it with mission.inspect({ list: true }) and read it with mission.inspect({ missionID }).",
         input: prepareSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -674,11 +674,13 @@ const inspectSchema = {
     taskOffset: { type: "integer", minimum: 0, description: "Read the map's tasks from this position when the map is too large for one result: its taskPage gives nextTaskOffset. Not with taskKey, list or start." },
     list: { type: "boolean", const: true, description: "List the missions you belong to and the hand-offs you prepared, newest first. Use alone, or with listOffset." },
     listOffset: { type: "integer", minimum: 0, description: "With list: read the list from this position when it is too large for one result: its listPage gives nextListOffset." },
+    configurations: { oneOf: [{ type: "boolean", const: true }, { type: "string", minLength: 1, maxLength: 100 }], description: "Read-only saved configurations from the unique owning backend, including outside a mission: true lists IDs/names/templates; an ID reads saved inputs and the editor's suggested title. Use alone, then pass chosen fields explicitly to prepare/start." },
     content: {
       type: "object",
       description: "Read one slice of a value a result replaced by { omittedCharacters, read }: pass that read as the whole input, then each slice's next. A slice of a value that changed since the read began is refused: inspect again for its current read.",
       properties: {
-        kind: { type: "string", enum: ["inspection", "mission", "task", "report", "change", "catalog", "receipt"] },
+        kind: { type: "string", enum: ["inspection", "mission", "task", "report", "change", "catalog", "receipt", "configuration"] },
+        configurationID: { type: "string", minLength: 1, maxLength: 100 },
         field: { type: "string", minLength: 1, maxLength: 64 },
         taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$" },
         reportId: { type: "string", minLength: 1, maxLength: 240 },
@@ -693,8 +695,10 @@ const inspectSchema = {
     catalog: { type: "boolean", description: "Include the native agent, enabled model and variant catalog for this session's location." },
     start: {
       type: "object",
+      description: "Attach THIS root conversation as coordinator of a paused mission. For a separate mission with a NEW coordinator use mission.prepare. The human presses Play. Never combine with missionID.",
       properties: {
         objective: { type: "string", minLength: 1, maxLength: 20_000 },
+        title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
         template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
         notes: { type: "string", maxLength: 20_000 },
         profiles: { ...missionProfilesSchema, description: MISSION_PROFILES_DESCRIPTION },
@@ -747,11 +751,16 @@ export function parseInspectInput(input: unknown): MissionInspectInput & {
 } {
   const value = object(input)
   const missionID = optionalText(value.missionID, "missionID", 100)
+  if (value.missionID !== undefined && value.start !== undefined) throw new Error("missionID inspects an existing mission; start attaches this conversation as coordinator")
+  if (value.configurations !== undefined) {
+    if (Object.keys(value).some(key => key !== "configurations")) throw new Error("configurations must be used alone")
+    return { configurations: value.configurations === true ? true : requiredText(value.configurations, "configurations", 100) }
+  }
   if (value.content !== undefined) {
     if (value.list !== undefined || value.taskKey !== undefined || value.start !== undefined || value.taskOffset !== undefined
       || value.listOffset !== undefined || value.catalog !== undefined) throw new Error("content reads one value; use it with missionID only")
     const content = parseInspectContent(value.content)
-    if ((content.kind === "catalog" || content.kind === "receipt") && missionID !== undefined) throw new Error(`A ${content.kind} read names no mission: pass its read as the whole input`)
+    if ((content.kind === "catalog" || content.kind === "receipt" || content.kind === "configuration") && missionID !== undefined) throw new Error(`A ${content.kind} read names no mission: pass its read as the whole input`)
     return { missionID, content }
   }
   if (value.taskOffset !== undefined) {
@@ -780,9 +789,10 @@ export function parseInspectInput(input: unknown): MissionInspectInput & {
     missionID,
     start: {
       objective: requiredText(start.objective, "start.objective", 20_000),
+      ...(start.title === undefined ? {} : { title: missionTitle(start.title) }),
       template,
       ...(start.taskMode === undefined ? {} : { taskMode: parseMissionTaskMode(start.taskMode) }),
-      notes: optionalText(start.notes, "start.notes", 20_000),
+      notes: optionalBodyText(start.notes, "start.notes", 20_000),
       ...(start.profiles === undefined ? {} : { profiles: parseMissionProfiles(start.profiles) }),
     },
   }
@@ -794,6 +804,11 @@ function parseInspectContent(input: unknown): MissionInspectContent {
     throw new Error("content needs its digest and a non-negative offset")
   }
   const read = { digest: value.digest, offset: Number(value.offset) }
+  if (value.kind === "configuration") {
+    if (value.field !== undefined || value.revision !== undefined || value.taskKey !== undefined || value.reportId !== undefined || value.change !== undefined) throw new Error("A configuration read has only its ID, digest and offset")
+    return { kind: "configuration", configurationID: requiredText(value.configurationID, "content.configurationID", 100), ...read }
+  }
+  if (value.configurationID !== undefined) throw new Error("configurationID requires a configuration read")
   if (value.kind === "catalog" || value.kind === "receipt") {
     if (value.field !== undefined || value.revision !== undefined || value.taskKey !== undefined || value.reportId !== undefined || value.change !== undefined) {
       throw new Error(`A ${value.kind} read has only its digest and offset`)

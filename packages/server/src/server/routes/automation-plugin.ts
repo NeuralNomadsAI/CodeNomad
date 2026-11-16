@@ -11,7 +11,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
-import { readMissionProfileDefaults } from "./mission-profile-defaults"
+import { readMissionConfigurations, readMissionProfileDefaults } from "./mission-profile-defaults"
 import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
@@ -111,7 +111,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     // subagent families; they stay below the plugin's 95 s bridge timeout.
     const commandKind = body?.command && typeof body.command === "object" && "kind" in body.command ? body.command.kind : undefined
     const preferenceProbe = body.mode === "browser-claim" && (body.purpose === "mission-preferences" || body.purpose === "mission-prepare")
-      || body.mode === "mission-input" && commandKind === "profile-defaults"
+      || body.mode === "mission-input" && (commandKind === "profile-defaults" || commandKind === "configurations")
     const preferenceUnavailable = () => {
       const failure = missionRecoveryControlError("mission-preferences-unavailable")
       return reply.code(503).send({ error: failure.message, code: failure.code })
@@ -151,6 +151,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     if (body.mode === "mission-input") {
       try {
         if (commandKind === "profile-defaults") return reply.send({ result: readMissionProfileDefaults(deps.settings, body.command) })
+        if (commandKind === "configurations") return reply.send({ result: readMissionConfigurations(deps.settings, body.command) })
         if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
         // Journal-keyed creation capability of the owning backend. Durable
         // admission does not use this bridge or gain a new native API fallback.
