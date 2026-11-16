@@ -10,6 +10,7 @@ import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { prepareInterruptionDock } from "./fixtures/interruption-dock-preparation"
+import { messagingMessages } from "../../src/lib/i18n/messages/en/messaging"
 
 let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
@@ -119,7 +120,7 @@ test("ordinary question answers settle through the ordinary reply; the human hea
  *  own "needs your answer" entry. */
 const recoveryWarnings = (page: Page) => page.evaluate(() => (window as any).fixture.notifications()
   .filter((item: { title?: string }) => /questions and permissions not fully recovered|^Some waiting questions may be missing$/.test(item.title ?? "")).length)
-const unsupportedNotice = /^CodeNomad could not reach its helper in OpenCode, so questions and permission requests that were already waiting may not appear\./
+const unsupportedNotice = messagingMessages["interruption.recoveryCause.unsupported"]
 
 test("removed idle worktree inventory heals before warning while real-event questions keep their draft", async () => {
   const { page, errors } = await fixture()
