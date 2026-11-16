@@ -312,7 +312,7 @@ export const instanceMessages = {
   "versionPill.ui": "UI",
   "versionPill.uiWithVersion": "UI {version}",
   "versionPill.source": " ({source})",
-  "opencodeBinarySelector.title": "OpenCode Binary",
+  "opencodeBinarySelector.title": "OpenCode İkili Dosyası",
   "opencodeBinarySelector.customPath.placeholder": "{name} binary yolunu girin…",
   "opencodeBinarySelector.actions.add": "Ekle",
   "opencodeBinarySelector.actions.chooseOther": "Başka bir binary seç…",

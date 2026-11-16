@@ -2,7 +2,7 @@
 
 ## CLI seçin veya kurun {#select-cli}
 
-1. **Ayarlar → OpenCode** öğesini açın ve yürütülebilir dosyayı seçmek için **OpenCode sürümü** altındaki **OpenCode Binary** kartını kullanın.
+1. **Ayarlar → OpenCode** öğesini açın ve yürütülebilir dosyayı seçmek için **OpenCode sürümü** altındaki **OpenCode İkili Dosyası** kartını kullanın.
 2. Otomatik girişi seçili bırakın veya **Başka bir binary seç…** bölümünü açarak **Binary için gözat…** kullanın ya da bir yol girip **Ekle** öğesini seçin.
 3. **Durumu ve güncellemeleri denetle** öğesini kullanın. OpenCode eksikse **OpenCode'u kur ve başlat** öğesini seçin; önce ana bilgisayarı ve kurulum kapsamını inceleyin.
 4. Kurulum **Bağlan ve devam et** sunuyorsa, bildirilen sorunu çözdükten sonra bunu kullanın.
@@ -29,7 +29,7 @@ Proje sekmesini kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da de
 
 ## Başlangıçta başlat {#login-start}
 
-**Ayarlar → OpenCode** içindeki **Başlangıçta başlat**, oturum açtığınızda işletim sisteminin OpenCode hizmetini arka planda başlatmasını sağlar; CodeNomad kapalıyken de çalışır. Siz açana kadar kapalı kalır, bir sonraki oturum açılışınızda etkinleşir ve CodeNomad sunucusunu çalıştıran bilgisayardaki hesabınız için geçerlidir. **OpenCode Binary** kartında seçilen yürütülebilir dosyayı başlatır; başka bir yerel yürütülebilir dosya seçmek onu günceller, aksi halde öncekini başlatmaya devam eder.
+**Ayarlar → OpenCode** içindeki **Başlangıçta başlat**, oturum açtığınızda işletim sisteminin OpenCode hizmetini arka planda başlatmasını sağlar; CodeNomad kapalıyken de çalışır. Siz açana kadar kapalı kalır, bir sonraki oturum açılışınızda etkinleşir ve CodeNomad sunucusunu çalıştıran bilgisayardaki hesabınız için geçerlidir. **OpenCode İkili Dosyası** kartında seçilen yürütülebilir dosyayı başlatır; başka bir yerel yürütülebilir dosya seçmek onu günceller, aksi halde öncekini başlatmaya devam eder.
 
 | Sistem | OpenCode'u ne başlatır | Çökmeden sonra |
 | --- | --- | --- |
