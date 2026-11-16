@@ -135,4 +135,37 @@ describe("OpenCode data delivery repair read", () => {
       f.cleanup()
     }
   })
+
+  it("takes the page's committed empty final that carries native metadata as the last part", async () => {
+    const instanceId = "opencode-data-delivery-repair-native-final"
+    let reads = 0
+    const f = readFixture(instanceId, async () => {
+      reads += 1
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      // The fragment's ending committed as empty and stamped the provider's
+      // native metadata onto the stored part; the next part has not been
+      // appended yet, so the committed empty final is the row's last part.
+      return {
+        data: [
+          { id: "msg_prompt", type: "user", text: "follow-up", time: { created: 250 } },
+          {
+            ...assistantRow("live", undefined, 100),
+            content: [
+              { type: "text", text: "", native: { itemId: "msg_1", phase: "final_answer" } },
+            ],
+          },
+        ],
+        cursor: {},
+      }
+    })
+    try {
+      const data = armLive(instanceId, streamedText)
+      armDeliveryRepair(instanceId)
+
+      await waitForQuietReads(() => reads)
+      assert.equal(textOf(data, "live"), "", "a committed empty final with native metadata must replace the streamed draft")
+    } finally {
+      f.cleanup()
+    }
+  })
 })
