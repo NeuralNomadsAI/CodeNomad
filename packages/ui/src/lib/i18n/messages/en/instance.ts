@@ -97,7 +97,6 @@ export const instanceMessages = {
   "instanceWelcome.empty.title": "No Previous Sessions",
   "instanceWelcome.empty.description": "Create a new session below to get started",
   "instanceWelcome.loading.title": "Launching workspace",
-  "instanceWelcome.loading.description": "Starting OpenCode for this workspace...",
   "instanceWelcome.resume.title": "Resume Session",
   "instanceWelcome.resume.subtitle.one": "{count} session available",
   "instanceWelcome.resume.subtitle.other": "{count} sessions available",

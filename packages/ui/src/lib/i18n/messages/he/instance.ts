@@ -97,7 +97,6 @@ export const instanceMessages = {
   "instanceWelcome.empty.title": "אין סשנים קודמים",
   "instanceWelcome.empty.description": "צור סשן חדש למטה כדי להתחיל",
   "instanceWelcome.loading.title": "מפעיל סביבת עבודה",
-  "instanceWelcome.loading.description": "מפעיל את OpenCode עבור סביבת העבודה הזו...",
   "instanceWelcome.resume.title": "המשך סשן",
   "instanceWelcome.resume.subtitle.one": "{count} סשן זמין",
   "instanceWelcome.resume.subtitle.other": "{count} סשנים זמינים",

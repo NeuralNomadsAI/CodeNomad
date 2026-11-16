@@ -97,7 +97,6 @@ export const instanceMessages = {
   "instanceWelcome.empty.title": "以前のセッションはありません",
   "instanceWelcome.empty.description": "下で新しいセッションを作成して開始",
   "instanceWelcome.loading.title": "ワークスペースを起動中",
-  "instanceWelcome.loading.description": "このワークスペース用に OpenCode を起動しています...",
   "instanceWelcome.resume.title": "セッションを再開",
   "instanceWelcome.resume.subtitle.one": "{count} 件のセッション",
   "instanceWelcome.resume.subtitle.other": "{count} 件のセッション",
