@@ -2,6 +2,8 @@
 
 Eine Mission verbindet ein Ziel, eine Koordinator-Unterhaltung, Aufgaben und Ergebnisse. Öffnen Sie **Missionen** im rechten Panel.
 
+Ist Missions nicht verfügbar, öffnet **OpenCode-Einstellungen** die Dienstwiederherstellung für ein fehlendes oder fehlerhaftes Plugin. **Serverdiagnose** öffnet den Diagnosebericht unter Einstellungen → Info, wenn die lokale Missions-Verbindung des Servers nicht verfügbar ist.
+
 ## Eine Mission erstellen {#create}
 
 Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Verwenden Sie vorzugsweise HTTPS, um den Netzwerkverkehr zu schützen.

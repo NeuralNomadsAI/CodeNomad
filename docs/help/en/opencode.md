@@ -50,9 +50,9 @@ Turning it off removes only that task, LaunchAgent or service; a running OpenCod
 | --- | --- |
 | Update CLI | Changes the supported installed executable; does not implicitly restart the running daemon. |
 | Restart service | Replaces the shared process and interrupts active work in all connected OpenCode clients; session history remains. |
-| Reload OpenCode configuration | Keeps the process. For all connected clients, cancels pending permissions/Forms, closes terminals/background commands and may interrupt active work. |
+| Reload OpenCode configuration | Keeps the process. For all connected clients, cancels pending permissions/Forms, closes terminals/background commands and can interrupt active work. |
 
-Use **Reload OpenCode configuration**, under **Troubleshooting** when the running service supports it, explicitly when a saved configuration or installed plugin remains unavailable and the disruption is acceptable. CodeNomad will not use an older selected CLI to downgrade a newer running daemon.
+Use **Reload OpenCode configuration**, under **Troubleshooting** when the running service supports it, when a saved configuration or installed plugin remains unavailable. Review and confirm the warning: reloading can interrupt active work in all connected clients. CodeNomad will not use an older selected CLI to downgrade a newer running daemon.
 
 ## Session environment {#session-environment}
 

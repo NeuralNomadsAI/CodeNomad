@@ -32,7 +32,7 @@ import { MISSION_ROW_TITLE_MAX, missionDisplayTitle, missionRelativeTime } from 
 import { useI18n } from "../../../../../lib/i18n"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
 import { missionCleanupPending } from "../../../../../lib/mission-cleanup"
-import { openSettings } from "../../../../../stores/settings-screen"
+import { openSettings, openSettingsRow } from "../../../../../stores/settings-screen"
 import { createMissionRecurrenceList } from "../../../../mission-recurrence-list"
 import { missionTaskConversation } from "../../../../mission-task-navigation"
 import { conversationActivity, missionTaskRowState } from "../../../../mission-task-tree"
@@ -829,6 +829,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             icon={<AlertTriangle class="h-5 w-5" />}
             title={props.t("missions.control.unavailable.title")}
             detail={props.t(UNAVAILABLE_DETAIL[state().reason ?? "plugin-unavailable"])}
+            action={state().reason === "workspace-unavailable" ? undefined : props.t(state().reason === "host-unavailable"
+              ? "missions.control.unavailable.diagnostics" : "missions.control.unavailable.openCode")}
+            onAction={() => void (state().reason === "host-unavailable" ? openSettingsRow("info", "server-diagnostics") : openSettings("opencode"))}
           />
         </Match>
         <Match when={state().status === "error" && rows().length === 0}>
@@ -872,7 +875,7 @@ const StateMessage: Component<{
     <strong>{props.title}</strong>
     <Show when={props.detail}><p>{props.detail}</p></Show>
     <Show when={props.action && props.onAction}>
-      <button type="button" class="button-secondary px-3" onClick={props.onAction}>{props.action}</button>
+      <button type="button" class="window-action" onClick={props.onAction}>{props.action}</button>
     </Show>
   </div>
 )

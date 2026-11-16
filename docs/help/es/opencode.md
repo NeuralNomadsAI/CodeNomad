@@ -52,7 +52,7 @@ Desactivarlo solo retira esa tarea, ese LaunchAgent o ese servicio; un OpenCode 
 | Reiniciar servicio | Reemplaza el proceso compartido e interrumpe el trabajo activo de todos los clientes OpenCode conectados; el historial de sesiones permanece. |
 | Recargar la configuración de OpenCode | Mantiene el proceso. Para todos los clientes conectados, cancela permisos/formularios pendientes, cierra terminales/comandos en segundo plano y puede interrumpir el trabajo activo. |
 
-Usa **Recargar la configuración de OpenCode**, en **Solución de problemas** cuando el servicio en ejecución lo admite, explícitamente cuando una configuración guardada o un plugin instalado siga sin estar disponible y la interrupción sea aceptable. CodeNomad no usará una CLI seleccionada más antigua para rebajar un daemon en ejecución más nuevo.
+Usa **Recargar la configuración de OpenCode**, en **Solución de problemas** cuando el servicio en ejecución lo admite, cuando una configuración guardada o un plugin instalado siga sin estar disponible. Lee y confirma la advertencia: la recarga puede interrumpir el trabajo activo de todos los clientes conectados. CodeNomad no usará una CLI seleccionada más antigua para rebajar un daemon en ejecución más nuevo.
 
 ## Entorno de sesión {#session-environment}
 

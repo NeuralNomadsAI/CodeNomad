@@ -36,6 +36,22 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
       if (!disposed) setRestartPending(false)
     }
   }
+  const reload = async () => {
+    if (disabled() || openCodeSetupCheckError() || !status()?.canReload) return
+    const binary = serverSettings().opencodeBinary
+    setConfirmPending(true)
+    try {
+      const confirmed = await showConfirmDialog(t("settings.opencode.setup.reloadDescription"), {
+        title: t("settings.opencode.setup.reload"), variant: "warning",
+        confirmLabel: t("settings.opencode.setup.reload"), cancelLabel: t("alertDialog.actions.cancel"),
+      })
+      if (!confirmed || disposed || binary !== serverSettings().opencodeBinary || busy() || checking()
+        || openCodeSetupCheckError() || !status()?.canReload) return
+      await runOpenCodeSetup("reload")
+    } finally {
+      if (!disposed) setConfirmPending(false)
+    }
+  }
   // Replacing OpenCode 1.x removes an npm package: always confirm it, and fence
   // the confirmation against a changed executable, status or concurrent action.
   const install = async () => {
@@ -136,8 +152,7 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
           <p class="settings-toggle-caption">{t("settings.opencode.setup.restartDescription")}</p>
           <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={actionPending() || openCodeSetupCheckError() || !data().canRestart} onClick={() => void restartForTroubleshooting()}>{t("settings.opencode.setup.restartTroubleshooting")}</button></div>
           <Show when={data().canReload}>
-            <p class="settings-toggle-caption">{t("settings.opencode.setup.reloadDescription")}</p>
-            <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("reload")}>{t("settings.opencode.setup.reload")}</button></div>
+            <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void reload()}>{t("settings.opencode.setup.reload")}</button></div>
           </Show>
         </details>
       </>}

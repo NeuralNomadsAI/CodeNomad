@@ -2,6 +2,8 @@
 
 A Mission keeps an objective, a coordinator conversation, tasks and their results together. Open **Missions** in the right panel.
 
+If Missions is unavailable, **OpenCode settings** opens runtime recovery for a missing or failed plugin. **Server diagnostics** opens the diagnostic report in Settings → Info when the server's local Missions bridge is unavailable.
+
 ## Create a Mission {#create}
 
 Remote connections use the same form and controls. Prefer HTTPS to protect network traffic.
