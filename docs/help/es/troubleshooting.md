@@ -41,6 +41,8 @@ Si no puede verificarse un worktree propio o la ubicación de una conversación,
 
 ## Entorno de ejecución OpenCode y WSL {#opencode-runtime}
 
+En el diálogo de error de inicio, elige **Abrir Configuración de OpenCode** para comprobar el ejecutable y la versión; para los valores de entorno personalizados, ve a **Avanzado → Variables de entorno**.
+
 1. Abre **Preferencias → OpenCode** y comprueba la tarjeta **Versión de OpenCode** (versión instalada y estado del servicio en ejecución) y después el ejecutable seleccionado en **Binario de OpenCode**.
 2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.3.0**; versión recomendada/verificada: **2.3.0**.
 3. Si la CLI instalada difiere del servicio en ejecución, decide explícitamente si reiniciar el servicio compartido.
