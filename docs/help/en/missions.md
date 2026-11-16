@@ -16,6 +16,8 @@ Ask an agent in any project conversation, including a subagent or scheduled run,
 
 Agents can read every Mission in the project, including yours, from any owned conversation. Read-only project views cover tasks, results, cleanup, scheduled passages and source choices; browsing never starts or retries work.
 
+Agents can also diagnose scheduling, prepare its settings while preserving explicit OFF, resume a confirmed partial edit with its original request, and create or control daily schedules.
+
 **Configuration** optionally loads a saved objective, notes, playbook, agents/models and task-session choices. Its name supplies the editable title. Check the filled fields before creating.
 
 Agents can read saved configurations and copy your chosen values into a separate Mission.

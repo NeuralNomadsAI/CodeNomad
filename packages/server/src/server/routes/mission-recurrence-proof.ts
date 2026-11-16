@@ -79,7 +79,7 @@ export async function verifyRecurrenceRequest(input: unknown, deps: {
         throw new Error("Recurrence agent owner unavailable")
     }
     await authorCurrent()
-    if (body.action === "create") {
+    if (body.action === "create" && principal.creationRequestID) {
       if (body.requestID !== principal.creationRequestID
         || body.scheduleID !== missionScheduleID(location.project.id, location.project.canonical, body.requestID))
         throw new Error("Recurrence agent creation identity differs")

@@ -59,7 +59,7 @@ export function recurrenceSchedulePrincipal(input: Pick<RecurrenceControlProofBo
 }
 export function assertSchedulePrincipalAction(principal: SchedulePrincipal, action: RecurrenceControlProofBody["action"]): void {
   if (principal.kind !== "agent") return
-  if (principal.creationRequestID ? action !== "create" && action !== "play" : action === "create")
+  if (principal.creationRequestID && action !== "create" && action !== "play")
     throw new Error("Recurrence agent control refused")
 }
 

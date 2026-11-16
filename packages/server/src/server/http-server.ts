@@ -426,6 +426,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     developerCdp,
     workspaceManager: deps.workspaceManager,
     scheduleSettingsActivation,
+    scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())

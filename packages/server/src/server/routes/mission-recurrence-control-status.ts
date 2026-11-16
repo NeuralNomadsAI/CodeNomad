@@ -15,13 +15,14 @@ import type { RemoteControlManager } from "../../remote-control/manager"
 
 /** Explicit bounded read of an uncertain action. No mutation retry and no
  * generic RPC proxy, even when a signed archive establishes prior commitment. */
-export function registerMissionRecurrenceControlStatus(app: FastifyInstance, deps: {
+export type RecurrenceControlStatusDeps = {
   auth: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">
   manager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection" | "ownsLocation"
     | "getWorktreeIdentityForPath">
   fence: WorktreeDeletionFence
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
-}) {
+}
+export function registerMissionRecurrenceControlStatus(app: FastifyInstance, deps: RecurrenceControlStatusDeps) {
   app.post<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/control/status", async (request, reply) => {
     const session = recurrenceHumanSession(request, deps)
     if (!session) return reply.code(401).send({ error: "Human authentication required" })
@@ -32,6 +33,18 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
     const input = recurrenceControlRequestSchema.safeParse({ ...identity, scheduleID: request.params.scheduleID })
     if (!input.success) return reply.code(400).send({ error: "Invalid exact control status request" })
     const lifetime = requestAdmission(request, reply), id = request.params.id
+    try { return await readExactRecurrenceControlStatus(deps, { id, requestedDirectory, input: input.data, lifetime,
+      currentPrincipal() { if (recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId) throw new Error("Control principal changed") },
+    }, reply) } finally { lifetime.dispose() }
+  })
+}
+
+/** Receipt-only reconciliation shared with project agents; never resends the control. */
+export async function readExactRecurrenceControlStatus(deps: Omit<RecurrenceControlStatusDeps, "auth" | "remoteDevices">, args: {
+  id: string; requestedDirectory?: string; input: z.infer<typeof recurrenceControlRequestSchema>;
+  lifetime: Pick<ReturnType<typeof requestAdmission>, "signal" | "wait">; currentPrincipal(): void
+}, reply: { code(status: number): { send(body: unknown): unknown } }) {
+    const { id, requestedDirectory, lifetime } = args, input = { data: args.input }
     try {
       const workspace = deps.manager.get(id), base = deps.manager.getServiceLocation(id)
       if (!workspace || !base) return reply.code(404).send({ error: "Workspace unavailable" })
@@ -46,9 +59,9 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
       const currentDeletion = heldRead ?? replacedRead ?? await lifetime.wait(captureDisplayIdentities(deps.fence, deps.manager, id, [base.directory, directory])) ?? (() => false)
       const current = () => {
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
+        args.currentPrincipal()
         if (!currentDeletion() || deps.manager.get(id) !== workspace
-          || !sameLocation(deps.manager.getServiceLocation(id) ?? { directory: "" }, base)
-          || recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId) throw new Error("Control read changed")
+          || !sameLocation(deps.manager.getServiceLocation(id) ?? { directory: "" }, base)) throw new Error("Control read changed")
       }
       const location = { directory }, signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(10_000)])
       if (!heldRead && !await lifetime.wait(deps.manager.ownsLocation(id, location, connection.client, { signal }))) return reply.code(403).send({ error: "Foreign Location" })
@@ -72,8 +85,6 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
       reconcileRecurrenceControlHold(deps.fence, id, location, read, result, connection, owner)
       return result
     } catch {
-      request.log.warn({ code: "recurrence-control-status-unavailable" }, "Mission recurrence control status unavailable")
       return reply.code(503).send({ error: "Exact recurrence control status unavailable" })
-    } finally { lifetime.dispose() }
-  })
+    }
 }

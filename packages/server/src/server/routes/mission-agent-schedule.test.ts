@@ -21,6 +21,7 @@ import { verifyRecurrenceRequest } from "./mission-recurrence-proof"
 import { scheduledMissionHold } from "./mission-scheduled-holds"
 import { scheduleToolInput } from "../../missions/schedule-tool"
 import type { NativeScheduleActivationJournal } from "../../opencode/native-schedule-settings-activation"
+import { missionDocumentSummary } from "../../missions/mission-document-one-time"
 
 async function fixture(t: test.TestContext, agentCreated = false) {
   const f = await ownerFixture(t)
@@ -64,7 +65,7 @@ async function fixture(t: test.TestContext, agentCreated = false) {
     documentCapabilities: async () => ({ version: 1, ...(state.capability ? { agentScheduleControl: true } : {}) }),
     documentActivation: async (input: any) => {
       const before = await read()
-      if (input.action === "read") return { document: before }
+      if (input.action === "read") return { document: missionDocumentSummary(before) }
       state.activationWrites++
       const doc = await f.store.change(before.id, input.action === "prepare" ? input.expectedRevision : before.revision, f.current, value => {
         if (input.action === "prepare") value.scheduleActivation = { requestID: input.requestID, expectedRevision: input.expectedRevision,
@@ -74,7 +75,7 @@ async function fixture(t: test.TestContext, agentCreated = false) {
         else assert.fail("Unexpected activation action")
       })
       if (input.action === "ready" && state.loseActivationACK) throw new Error("Lost activation ACK")
-      return { document: doc }
+      return { document: missionDocumentSummary(doc) }
     },
     scheduleList: async () => ({ version: 1, projectID: "project", schedules: [missionScheduleView(await read()).document] }),
     scheduleRead: async ({ missionID, requestID }: { missionID: string; requestID?: string }) => {
@@ -146,6 +147,7 @@ async function fixture(t: test.TestContext, agentCreated = false) {
   const fence = new WorktreeDeletionFence(5000)
   const deps = { workspaceManager: manager, worktreeDeletionFence: fence, settings, bridgeToken: "private-token",
     auth: { isAuthEnabled: () => true, getSessionFromRequest: () => ({ sessionId: "human_cookie", username: "human" }) },
+    scheduleCapability: { read: async () => ({ api: { available: true }, enabled: !state.activationOff }) },
     scheduleSettingsActivation: {
       prepare: async () => {
         if (state.activationOff) throw new Error("Explicit OFF")
@@ -166,6 +168,31 @@ async function fixture(t: test.TestContext, agentCreated = false) {
     missionID: created.id, action, requestID, expectedRevision: (await read()).revision, ...extra })
   return { ...f, read, config, state, fence, agent, human, action, rpc, app }
 }
+
+test("agent scheduling diagnostics and activation receipt reads are passive, explicit activation shares preparation", async t => {
+  const f = await fixture(t)
+  const before = await f.read()
+  const diagnostics = await f.agent({ action: "capabilities" })
+  assert.equal(diagnostics.activation.available, true)
+  assert.equal((await f.read()).revision, before.revision)
+  assert.equal(f.state.activationWrites, 0)
+  f.state.activationOff = true
+  assert.equal((await f.agent({ action: "capabilities" })).activation.available, false)
+  assert.equal((await f.read()).revision, before.revision)
+  f.state.activationOff = false
+  await f.store.change(before.id, before.revision, f.current, doc => { doc.scheduleActivation = null })
+  const expectedRevision = (await f.read()).revision
+  const identity = { missionID: before.id, requestID: "explicit_activation", expectedRevision }
+  await f.agent({ action: "activation-read", ...identity })
+  assert.equal(f.state.activationWrites, 0)
+  const activated = await f.agent({ action: "activate", ...identity })
+  assert.equal(activated.document.scheduleActivation.state, "ready")
+  const writes = f.state.activationWrites
+  assert.equal((await f.agent({ action: "activation-read", ...identity })).document.scheduleActivation.state, "ready")
+  assert.equal((await f.agent({ action: "activate", ...identity })).document.scheduleActivation.state, "ready")
+  assert.equal(f.state.activationWrites, writes)
+  assert.equal(f.state.writes.length, 0, "activation never sends Play or starts a passage")
+})
 
 for (const agentCreated of [false, true]) test(`agent controls ${agentCreated ? "agent" : "human"} schedule through native owner and passage admission`, async t => {
   const f = await fixture(t, agentCreated)

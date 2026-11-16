@@ -50,6 +50,19 @@ never resend or choose a replacement identity to evade the shared hold. Exact
 completed requests replay idempotently; changed inputs conflict. Keep exactly one
 owning CodeNomad backend available.
 
+`schedule.capabilities` is a passive diagnostic, including explicit scheduling OFF.
+`activate` prepares settings using the original request/revision; `activation-read`
+reads that preparation without Play. `configure` accepts eligible immediate/schedule
+conversion. Use `retry: true` only after positively reading the exact partial
+configuration receipt, preserving every original field.
+For daily documents use `owner: "daily"` with list/read, paused create (`creation`
+contains instructions, clock, profiles, task mode and followed sources), or
+play/pause/resume/stop/run-now/check. Creation takes a stable requestID and no missionID
+or expectedRevision. An exact daily receipt read includes requestID, expectedRevision
+and receiptAction. Only partial Pause/Stop supports explicit original `retry: true`.
+Recover a daily creation with `read`, its original `requestID` and `creation`
+fields alone; an absent receipt stays pending without dispatch.
+
 `prepare.launch?: { when: [...] }` accepts the editor's ordered criteria: same-kind
 cards are OR, schedule→event is IF, event→schedule is ELSE. Absent, empty or sole
 `now` is one-time. Calendar-backed preparation requires complete explicit agent/model

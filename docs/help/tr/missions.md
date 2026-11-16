@@ -16,6 +16,8 @@ Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşma
 
 Ajanlar, projeye ait her konuşmadan sizin oluşturduklarınız dahil tüm Görevleri okuyabilir. Salt okunur görünümler işleri, sonuçları, temizliği, zamanlanmış çalıştırmaları ve kaynak seçeneklerini kapsar; görüntülemek işi başlatmaz veya yeniden denemez.
 
+Ajanlar ayrıca zamanlamayı tanılayabilir, açık OFF durumunu koruyarak ayarları hazırlayabilir, doğrulanmış kısmi düzenlemeyi özgün istekle sürdürebilir ve günlük zamanlamalar oluşturup yönetebilir.
+
 **Yapılandırma**, kayıtlı hedefi, notları, rehberi, profilleri ve görev oturumlarını yükler; adı düzenlenebilir başlık olur. Alanları kontrol edin.
 
 Ajanlar kayıtlı yapılandırmaları okuyabilir ve seçtiğiniz değerleri ayrı bir Göreve kopyalayabilir.

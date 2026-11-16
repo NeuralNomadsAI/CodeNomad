@@ -14,6 +14,7 @@ import { prepareCoordinatorMission } from "./mission-prepare"
 import { controlAgentMissionSchedule } from "./mission-agent-schedule"
 import { readAgentMissionProject } from "./mission-agent-read"
 import type { ForgeWorkItems } from "../../forge/work-items"
+import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
 import type { ScheduledPreparationDeps } from "./mission-prepare-scheduled"
 import { readMissionConfigurations, readMissionProfileDefaults } from "./mission-profile-defaults"
 import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
@@ -39,6 +40,7 @@ interface AutomationPluginRouteDeps {
   worktreeDeletionFence?: WorktreeDeletionFence
   settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner" | "configYamlPathForAuthority">>
   scheduleSettingsActivation?: ScheduledPreparationDeps["scheduleSettingsActivation"]
+  scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
   verifyScheduleAgentCreation?: VerifyScheduleAgentCreation
   memory?: MemoryService
@@ -171,7 +173,8 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
             : commandKind === "project-read" ? await readAgentMissionProject(deps, body.sessionID, body.command, signal)
             : commandKind === "schedule" ? await controlAgentMissionSchedule({
              workspaceManager: deps.workspaceManager, worktreeDeletionFence: fence, settings: deps.settings,
-             bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation,
+              bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation,
+              scheduleCapability: deps.scheduleCapability,
            }, body.sessionID, body.command, signal)
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)

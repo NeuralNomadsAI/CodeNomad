@@ -43,7 +43,7 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
   const request = recurrenceControlRequestSchema.parse({ scheduleID: input.scheduleID, requestID: input.requestID,
     action: input.action, expectedRevision: input.expectedRevision })
   if (input.action === "run-now" || input.action === "create") throw new Error("Use the dedicated recurrence method")
-  yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(input))
+  yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(input, { allowAgent: true }))
   const { location, store, before, rootCurrent: physicalCurrent } = yield* qualifyNativeRecurrenceOrigin(ctx, input)
   const placement = { projectID: location.project.id, projectCanonical: location.project.canonical,
     directory: location.directory, workspaceID: location.workspaceID, scheduleID: input.scheduleID,

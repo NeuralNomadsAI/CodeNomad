@@ -542,8 +542,11 @@ that is still authorized; the bridge callback revalidates the same principal and
 never treats a device as a cookie. Any other principal is refused before a
 deletion permit or control hold exists, so a refusal is definitive, never uncertain.
 
-Agents create unified schedules through `mission.prepare` and control every unified
-project schedule through `mission.schedule`, including human-created documents.
+Agents create unified schedules through `mission.prepare` and control project
+schedules through `mission.schedule`, including human-created documents. The
+`owner: "daily"` selector reads and creates paused daily documents and exposes
+their existing controls and exact original receipts through the same signed
+project-agent admission. Partial Pause/Stop retries keep their original identity.
 Its list/read actions expose project pages and exact receipts. Play, Pause, Stop,
 Resume, Run now, Check, configure and delete use the shared human business operations,
 physical holds and native admission. Every owned project session qualifies, including

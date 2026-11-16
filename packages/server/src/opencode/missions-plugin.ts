@@ -566,7 +566,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "schedule",
-        description: "List, read or control any schedule in this project, including human-created schedules. Any owned project session may call. list pages by after/limit; read takes missionID and optional requestID for the exact original receipt. Mutations require missionID, a stable requestID per action and expectedRevision from a fresh read. configure replaces the editor configuration with explicit frozen agent/model profiles and ordered launch criteria. Play/Resume preserve explicit scheduling OFF. Adoption requires an idle root excluding the caller and followed/trigger conversations. Run now uses ordinary single-passage admission. On uncertainty read the original requestID; never resend or substitute a fresh identity to evade a hold. Identical completed requests replay without effects; changed inputs conflict. Stop is terminal. delete preserves conversations unless deleteManagedSessions is explicitly true. Keep exactly one owning CodeNomad backend available.",
+        description: "List, read or control project schedules, including human-created schedules, from any owned conversation. list pages by after/limit; read optionally names an original requestID. capabilities diagnoses scheduling and explicit OFF; activate prepares settings, activation-read reads its original requestID/expectedRevision without Play. Mutations require a stable requestID and fresh expectedRevision. configure edits the complete configuration, including eligible one-time/schedule conversion; retry: true explicitly resumes only a positively confirmed partial original edit. Play/Resume preserve explicit OFF. Existing-coordinator adoption requires an idle root excluding caller and followed/trigger sources. owner: daily selects daily documents: list/read, create with creation fields (paused, no missionID/revision), play/pause/resume/stop/run-now/check. Recover daily creation with read plus its original requestID and creation fields alone; absence stays pending. Other exact daily reads add receiptAction and expectedRevision; partial Pause/Stop accepts retry: true. On uncertainty read the original identity; never resend or replace it to evade a hold. Exact completed replays have no effects; changed inputs conflict. Stop is terminal; delete preserves conversations unless deleteManagedSessions: true. Keep one owning backend available.",
         input: scheduleToolWire,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -577,7 +577,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           selected.current()
           try { return textResult(await schedule(tool.sessionID, request)) }
           catch (error) {
-            if (request.action === "list" || request.action === "read") throw error
+            if (["list", "read", "capabilities", "activation-read"].includes(request.action)) throw error
             return textResult({ status: 503, pending: true, missionID: request.missionID,
               requestID: request.requestID, action: request.action, code: "schedule-unconfirmed" })
           }

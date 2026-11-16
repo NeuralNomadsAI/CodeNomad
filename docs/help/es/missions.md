@@ -16,6 +16,8 @@ Pide a un agente en cualquier conversación del proyecto, incluido un subagente 
 
 Los agentes pueden consultar todas las Misiones del proyecto, incluidas las tuyas, desde cualquier conversación propia. Las vistas de solo lectura incluyen tareas, resultados, limpieza, ejecuciones programadas y selección de fuentes; consultar nunca inicia ni reintenta trabajo.
 
+También pueden diagnosticar la programación, preparar sus ajustes conservando un OFF explícito, reanudar una edición parcial confirmada con la solicitud original y crear o controlar programaciones diarias.
+
 **Configuración** carga opcionalmente objetivo, notas, guion, perfiles y sesiones guardados. Su nombre proporciona el título editable. Revisa los campos.
 
 Los agentes pueden leer las configuraciones guardadas y copiar los valores elegidos en una Misión separada.

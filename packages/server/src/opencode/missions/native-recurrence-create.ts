@@ -75,7 +75,7 @@ export const nativeRecurrenceHandlers = (ctx: Pick<Plugin.Context, "location" | 
       if (transport.action !== "create" || transport.requestID !== input.requestID || transport.scheduleID !== input.id
         || transport.expectedRevision !== 0 || transport.configDigest !== input.digest || transport.location.directory !== native.directory
         || transport.location.workspaceID !== native.workspaceID) throw new Error("Recurrence creation transport differs")
-      yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(transport))
+      yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(transport, { allowAgent: true }))
       const id = recurrenceIDSchema.parse(input.id)
       if (!/^[A-Za-z0-9_-]{3,100}$/.test(input.requestID)
         || id !== recurrenceScheduleID(native.project.id, native.project.canonical, input.requestID)

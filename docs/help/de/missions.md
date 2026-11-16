@@ -16,6 +16,8 @@ Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten o
 
 Agenten können aus jeder zugehörigen Unterhaltung alle Missionen des Projekts lesen, auch Ihre. Schreibgeschützte Ansichten zeigen Aufgaben, Ergebnisse, Bereinigung, geplante Durchläufe und Quellenauswahl; das Lesen startet oder wiederholt keine Arbeit.
 
+Agenten können die Zeitplanung prüfen, ihre Einstellungen unter Beibehaltung eines ausdrücklichen OFF vorbereiten, bestätigte Teiländerungen mit der ursprünglichen Anfrage fortsetzen und tägliche Zeitpläne erstellen oder steuern.
+
 **Konfiguration** lädt gespeichertes Ziel, Notizen, Playbook, Profile und Aufgabensitzungen. Der Name wird zum bearbeitbaren Titel. Prüfen Sie die Felder.
 
 Agenten können gespeicherte Konfigurationen lesen und Ihre gewählten Werte in eine separate Mission übernehmen.

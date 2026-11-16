@@ -381,6 +381,25 @@ conflict. Lost acknowledgements retain the original hold: read that request's re
 without resending or choosing another identity. Deletion replays read the tombstone.
 Public HTTP mutations authenticate their human principal before admission.
 
+`capabilities` shares the panel's passive capability and activation-plan reader.
+`activate` prepares native settings under its stable request and document revision;
+`activation-read` observes that exact preparation without Play. Explicit OFF keeps
+its structured refusal. `configure` also admits eligible one-time documents and
+their editor conversion guard. `retry: true` resumes only an explicitly read partial
+original configure, retaining its request, payload and revision through the shared
+schedule hold.
+
+`owner: "daily"` selects daily storage: bounded list/read, paused `create` with
+`creation` instructions/clock/profiles/task mode/sources, and Play/Pause/Resume/Stop/
+Run now/Check. Creation takes `requestID` alone, with no mission ID or revision.
+An exact receipt read supplies `missionID`, `requestID`, `expectedRevision` and
+`receiptAction`. Partial Pause/Stop retries use their original fields and
+`retry: true`. The public human routes and private agent bridge share physical
+admission, signed-principal verification, dispatch and receipt settlement.
+A daily creation's exact recovery uses `read` with its original `requestID` and
+`creation` fields, with no mission ID or revision; absence remains pending and
+the read dispatches no creation.
+
 Preparation requestIDs are scoped to the actual author and native source mission
 when present; authors outside a mission use their stable `outside-mission` domain.
 The original author/source binding owns replay after source completion or release
