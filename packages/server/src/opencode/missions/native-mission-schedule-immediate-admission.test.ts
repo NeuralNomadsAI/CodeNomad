@@ -119,5 +119,7 @@ for (const delta of [0, 1]) test(`immediate Play remains unknown until exact ori
   assert.equal(admitted.pending!.id, originalID); assert.equal(admitted.pending!.messageID, originalMessageID); assert.equal(admitted.pending!.coordinatorSessionID, originalRootID)
   assert.equal((await status(request.requestID)).pending, false)
   assert.equal((await status(request.requestID)).document!.control!.pending, false)
+  assert.equal((await status("check_16")).pending, false, "Check of an admitted first Play needs no actor-resume receipt")
+  assert.equal((await status()).pending, false)
   assert.deepEqual(f.calls, [])
 })

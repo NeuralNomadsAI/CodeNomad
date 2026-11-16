@@ -243,7 +243,9 @@ profile source, request ID and document revision through the existing signed bri
 missing or evicted proof stays unknown. Passive reads send no controls.
 An exact completed human or agent control replay reads that receipt without a
 document write or revision change. Completion includes the actor-family control
-and original passage admission proofs. Partial or missing proofs keep their
+and original passage admission proofs. Check resolves its linked original control,
+or the latest retained actor control, before checking actor-family completion.
+Partial or missing proofs keep their
 original reconciliation path.
 
 Serialized calendar validation returns an identity/payload-bound refusal for an

@@ -11,7 +11,7 @@ import { acquireNativeMissionScheduleOwner } from "./native-mission-schedule-own
 import { acquireNativeScheduleInstallation, acquireNativeMissionServiceRegistration, type NativeScheduleArtifacts } from "./native-schedule-installation"
 import { acquireNativeScheduledActorTransport, scheduledActorCalendarBarrier } from "./native-mission-schedule-actors"
 import { acquireNativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
-import { nativeImmediatePlayPassage, nativeMissionScheduleResult } from "./native-mission-schedule-result"
+import { nativeImmediatePlayPassage, nativeMissionScheduleActorControl, nativeMissionScheduleResult } from "./native-mission-schedule-result"
 import { immediateMissionControlReceipts, prepareNativeImmediateMissionControl } from "./native-mission-schedule-immediate"
 import { NativeScheduleControlRefusal, nativeScheduleOwnerControlReceipt, type NativeScheduleOwnerControl } from "./native-schedule-owner"
 import { finishMissionDocumentDeletion } from "../../missions/mission-document-deletion"
@@ -196,10 +196,7 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
       admitControl(doc)
       doc = yield* Effect.tryPromise(() => owner.reconcile(missionID))
     }
-    const checkedOriginal = action === "check" && doc.calendarOwner?.checks.find(item => item.requestID === requestID)?.originalRequestID
-    const actorControl = checkedOriginal ? nativeScheduleOwnerControlReceipt(doc, checkedOriginal)
-      : action === "check" ? [...doc.calendarOwner?.receipts ?? []].reverse().find(item => ["pause", "stop", "resume", "play"].includes(item.action))
-      : nativeScheduleOwnerControlReceipt(doc, requestID)
+    const actorControl = nativeMissionScheduleActorControl(doc, requestID)
     const actorAction = actorControl?.action === "pause" ? "pause" : actorControl && ["stop", "delete"].includes(actorControl.action) ? "stop" : "start"
     if (actorControl && doc.pending && doc.calendarOwner && scheduledActorCalendarBarrier(doc.calendarOwner, actorControl.requestID, actorAction)) {
       actorPending = !runtime || !lifecycle || (yield* Effect.tryPromise(async () => {

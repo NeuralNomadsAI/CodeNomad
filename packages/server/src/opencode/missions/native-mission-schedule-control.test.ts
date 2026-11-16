@@ -8,9 +8,10 @@ import { nativeMissionScheduleControlExecution } from "./native-mission-schedule
 import { missionDocumentChanges } from "../../missions/mission-document-state"
 
 test("exact completed calendar controls return read-only receipts for human and agent entries", async t => {
-  for (const action of ["play", "pause", "configure", "check"] as const) {
+  for (const action of ["play", "pause", "stop", "resume", "configure", "check"] as const) {
     const f = await ownerFixture(t)
     if (action !== "play") await f.control("play")
+    if (action === "resume") await f.control("pause")
     const before = await f.read()
     const configuration = action === "configure" ? { ...before.configuration, title: "Edited",
       coordinatorSelectionAuthor: { coordinatorSessionID: "ses_agent" } } : undefined
@@ -126,6 +127,8 @@ test("native deletion conflicts are input-bound refusals and exact tombstone rep
   const recovered = await execute(original)
   assert.ok("deleted" in recovered && recovered.deleted)
   assert.equal(recovered.pending, false)
+  const agentReplay = await execute({ ...original, transport: { principal: { kind: "agent", author: { coordinatorSessionID: "ses_agent" } } } })
+  assert.deepEqual(agentReplay, recovered)
   for (const patch of [{ requestID: "another_delete" }, { expectedRevision: 6 }, { deleteManagedSessions: true }]) {
     const request = { ...original, ...patch }, result = await execute(request)
     assert.ok("refusal" in result)

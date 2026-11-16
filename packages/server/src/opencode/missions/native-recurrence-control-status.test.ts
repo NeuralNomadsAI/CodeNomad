@@ -43,6 +43,29 @@ test("lost control replies read exact request/revision status without starting J
     const manual = await Effect.runPromiseWith(graph)(readNativeRecurrenceRunNow(ctx, { scheduleID: "schedule_one", requestID: "manual_unknown", expectedRevision: 1 }))
     assert.equal(manual.outcome, "unknown")
     assert.equal((db.prepare("SELECT value FROM kv").get() as { value: string }).value, bytes)
+    for (const action of ["play", "pause", "stop", "resume", "check"]) {
+      const state = action === "pause" ? "paused" : action === "stop" ? "stopped" : "running"
+      const partial = { ...control, action, state, controlsComplete: false }
+      const write = (value: unknown) => db.prepare("UPDATE kv SET value=? WHERE key=?").run(JSON.stringify(value), key)
+      const currentBytes = () => (db.prepare("SELECT value FROM kv").get() as { value: string }).value
+      write({ ...doc, state, controls: [partial] })
+      const before = currentBytes()
+      assert.equal((await read({ ...input, action })).outcome, "unknown", `${action} retains its own partial proof`)
+      assert.equal(currentBytes(), before, "partial receipt lookup never starts or retries work")
+      write({ ...doc, state, controls: [{ ...partial, controlsComplete: true }] })
+      const complete = currentBytes()
+      assert.equal((await read({ ...input, action })).outcome, "committed", `${action} complete receipt`)
+      assert.equal(currentBytes(), complete, "complete receipt lookup preserves bytes and revision")
+      if (action === "pause" || action === "stop") {
+        write({ ...doc, state, revision: 2, controls: [partial,
+          { ...control, action: "check", state, requestID: "check_complete", expectedRevision: 1, revision: 2 }] })
+        const checked = currentBytes()
+        assert.equal((await read({ ...input, requestID: "check_complete", expectedRevision: 1, action: "check" })).outcome, "committed")
+        assert.equal((await read({ ...input, action })).outcome, "unknown", "daily Check never substitutes for an original actor proof")
+        assert.equal(currentBytes(), checked)
+      }
+    }
+    db.prepare("UPDATE kv SET value=? WHERE key=?").run(bytes, key)
     const due = { kind: "manual" as const, requestID: "manual_one", expectedRevision: 2, at: 2 }
     const passageID = recurrencePassageID(stableToken("project\0/project", 24), "schedule_one", 0, due)
     const passage = { id: passageID, messageID: recurrenceMessageID(passageID), coordinatorSessionID: recurrenceCoordinatorSessionID("project", passageID, 2), scheduleRevision: 0, createdAt: 2, due }
