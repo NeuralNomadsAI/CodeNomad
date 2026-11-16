@@ -239,6 +239,15 @@ Preview capability admission requires the matched route's `previewCapability`
 configuration; a capability Host on an ordinary application route retains that
 route's authentication, origin and host-only checks.
 
+Outbound HTTP proxies and preview/SideCar WebSockets resolve their destination
+once and connect only to those pinned answers while retaining the target's HTTP Host
+and TLS identity. `server/proxy-destination.ts` refuses any destination address/port
+covered by a live backend listener, including sibling HTTP/HTTPS listeners,
+remote proxy session HTTPS listeners and the Remote Control ingress. Unspecified
+destinations (`0.0.0.0`, `::` and mapped forms) match every local listener on
+that port. Wildcard binds cover loopback and the host's current interface
+addresses. Other loopback ports and LAN applications remain eligible.
+
 Direct state-changing requests check Origin first, then the origin of Referer
 when Origin is absent. Non-local mutations require an allowed source; native
 loopback calls may omit both. Read-only methods are GET, HEAD and OPTIONS.
@@ -270,14 +279,18 @@ credentials follow their separate registry lifetime and revocation rules.
   host-only paths including encoded ones, loopback privileges, spoofed headers,
   upgrades, web previews and their switch, revocation of a live stream, skipped
   local auth and tunnel failure.
-- `remote-control/direct-https.test.ts` drives the real application as a reverse
-  proxy would, from loopback and LAN peers with the tunnel stopped: the origin
-  set and predicate, host-only issuance, origin-bound single-use pairing and its
-  cookie, channel separation from the tunnel, device scope without loopback
-  privileges, refusal on `http:`, loopback, opaque, foreign and missing origins,
-  no password or skipped-auth fallback, the shared failure bucket, loss of an
-  unverified origin, and revocation and eviction closing streams that Stop and
-  tunnel failure leave open.
+- `remote-control/direct-https.test.ts` covers verified-origin pairing from
+  loopback/LAN, channel and device scope, no credential fallback, failure limits,
+  origin revocation, and socket lifetimes across Stop, revocation and eviction.
+- `server/preview-proxy-boundary.test.ts` uses simulated DNS and local listeners
+  to check refusal before upstream contact, password-enabled and skipped-auth
+  previews, capability hosts, Referer fallback, SideCar HTTP and both WebSocket
+  proxies, unspecified destinations, bound-interface matching and a pinned
+  ordinary dev-server connection. `server/__tests__/remote-proxy.test.ts`
+  checks registration of the remote proxy session's HTTPS listener.
+- Isolated preview listeners and SSH reservation/forward addresses register with
+  `guardProxyListener`. Forward protection lasts until observed child exit;
+  proof-owned capability WebSockets keep their captured pinned dial and TLS policy.
 - `direct-listener.test.ts` exercises the real application with LAN and loopback
   peers, credentialed CORS, Origin/Referer checks and host-only routes.
   `server/__tests__/sidecar-proxy.test.ts` covers SideCar upgrade source checks,

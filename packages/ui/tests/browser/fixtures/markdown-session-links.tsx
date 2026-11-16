@@ -116,7 +116,7 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   dispose,
   remoteCalls: () => [...remoteCalls],
   remoteTarget: (owner: string) => getFilePreview(`${owner}~${id}`)?.path ?? null,
-  previewMode: (owner: string) => getSessionPreview("ses_link", owner === "local" ? scope : `${owner}~${scope}`)?.mode ?? null,
+  previewMode: (owner: string) => getSessionPreview("ses_link", owner === "local" ? id : `${owner}~${id}`)?.mode ?? null,
   detach: (owner: string) => remoteDetach.get(owner)?.(),
   holdPreview: () => { holdPreview = true },
   pending: () => Boolean(rejectPending),

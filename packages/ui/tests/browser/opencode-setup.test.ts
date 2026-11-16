@@ -19,6 +19,31 @@ before(async () => {
 })
 after(async () => { await browser?.close(); })
 
+for (const explicit of [false, true]) test(`remote restoration releases only automatic local setup (explicit=${explicit})`, async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {
+    state: "missing", binaryPath: "opencode", target: "host", canUpgrade: true,
+    minimumVersion: "2.3.0", latestVersion: "2.3.0", recommendedVersion: "2.3.0",
+  } }))
+  try {
+    await page.goto(url)
+    await page.getByRole("dialog").waitFor()
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    if (explicit) await page.evaluate(() => (window as any).fixture.reopen())
+    await page.evaluate(() => (window as any).fixture.automatic(false))
+    if (explicit) assert.equal(await page.getByRole("dialog").count(), 1, "an explicit local dialog keeps its owner")
+    else await page.getByRole("dialog").waitFor({ state: "detached" })
+    assert.equal(await page.locator(".opencode-setup-reminder").count(), 0)
+    if (!explicit) {
+      await page.evaluate(() => (window as any).fixture.reopen())
+      await page.getByRole("dialog").waitFor()
+    }
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 for (const surface of ["recovery", "settings"]) test(`${surface} shows sustained install progress through checking and connection`, async () => {
   const page = await browser.newPage()
   let finishInstall!: () => void, finishCheck!: () => void, finishConnect!: () => void
@@ -278,6 +303,7 @@ for (const surface of ["settings", "recovery"]) test(`${surface} configuration r
     await confirm.getByText(/cancels pending permissions and forms/).waitFor()
     await confirm.getByText(/can interrupt active work in all connected clients/).waitFor()
     assert.equal(reloads, 0)
+    await page.waitForFunction(() => document.activeElement?.textContent === "Cancel")
     await page.keyboard.press("Enter")
     await confirm.waitFor({ state: "hidden" })
     assert.equal(reloads, 0, "Cancel has initial focus")

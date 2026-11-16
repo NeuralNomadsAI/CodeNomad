@@ -13,6 +13,7 @@ import type { Logger } from "../../logger"
 import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
 import { createRemoteProxyApp, RemoteProxySessionManager } from "../remote-proxy"
 import { resolveHttpsOptions } from "../tls"
+import { proxyDestination, ProxyDestinationDenied } from "../proxy-destination"
 
 const sharedTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-proxy-test-"))
 const sharedTls = resolveHttpsOptions({ enabled: true, configDir: sharedTempDir, host: "127.0.0.1", logger: createStubLogger() })
@@ -32,6 +33,16 @@ after(async () => {
 })
 
 describe("RemoteProxySessionManager", () => {
+  it("registers its HTTPS listener in the outbound proxy destination boundary", async () => {
+    const app = createRemoteProxyApp(sharedHttpsOptions)
+    try {
+      const origin = new URL(await app.listen({ host: "127.0.0.1", port: 0 }))
+      await assert.rejects(proxyDestination(origin.hostname, Number(origin.port)), ProxyDestinationDenied)
+    } finally {
+      await app.close()
+    }
+  })
+
   it("blocks proxying before activation and keeps bootstrap tokens scoped per session", async () => {
     await withUpstreamServer(async (upstreamBaseUrl) => {
       const manager = createSessionManager()

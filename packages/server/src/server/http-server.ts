@@ -96,6 +96,7 @@ import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import { sidecarRequestCookies, sidecarResponseCookies } from "../sidecars/proxy-cookies"
 import { proxyWebSocket } from "./proxy-websocket"
+import { guardProxyListener, proxyConnector, ProxyDestinationDenied } from "./proxy-destination"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
@@ -204,6 +205,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   ) as unknown as FastifyInstance
   // Before any route: `all()` routes take the methods supported when declared.
   addProxiedHttpMethods(app)
+  guardProxyListener(app.server)
   const proxyLogger = deps.logger.child({ component: "proxy" })
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
@@ -306,6 +308,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.register(replyFrom, {
     contentTypesToEncode: [],
     undici: {
+      connect: proxyConnector,
       connections: 16,
       pipelining: 1,
       bodyTimeout: 0,
@@ -2335,7 +2338,7 @@ async function proxyPreviewTargetRequest(args: {
     },
     onError: (proxyReply, { error }) => {
       args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
-      if (!proxyReply.sent) proxyReply.code(502).send({ error: args.errorMessage })
+      if (!proxyReply.sent) proxyReply.code(error.cause instanceof ProxyDestinationDenied ? 404 : 502).send({ error: args.errorMessage })
     },
   })
 }
@@ -2359,7 +2362,7 @@ async function proxyTargetRequest(args: {
     onError: (reply, { error }) => {
       args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
       if (!reply.sent) {
-        reply.code(502).send({ error: args.errorMessage })
+        reply.code(error.cause instanceof ProxyDestinationDenied ? 404 : 502).send({ error: args.errorMessage })
       }
     },
   })

@@ -18,7 +18,7 @@ the execution journal retains its task, report and lifecycle contracts.
 
 ## Backend routing
 
-The Mission panel, reader, editor and controls resolve the project's `backendOf(instanceId)` for all Mission, schedule, recurrence and passage requests. Playbooks belong to that backend; native profile catalogues and Wayfinder Forms use its root SDK client. Workspace HTTP paths carry the raw workspace ID, while view persistence uses the backend-qualified project scope and request directories remain physical paths. Missing owners fail closed. Attachment and request generations fence reads, follow-up effects and publication; in-flight deduplication and busy cleanup retain their exact operation owner. Dispatched mutations retain their selected backend and durable request identity for explicit reconciliation.
+The Mission panel, reader, editor and controls resolve the project's `backendOf(instanceId)` for all Mission, schedule, recurrence and passage requests. Playbooks belong to that backend; native profile catalogues and Wayfinder Forms use its root SDK client. Workspace HTTP paths carry the raw workspace ID; presentation uses the qualified occurrence's `instanceId`, completion acknowledgements retain backend-qualified project scope, and request directories remain physical paths. Missing owners fail closed. Attachment and request generations fence reads, follow-up effects and publication; in-flight deduplication and busy cleanup retain their exact operation owner. Dispatched mutations retain their selected backend and durable request identity for explicit reconciliation.
 
 ## Ownership
 

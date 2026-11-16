@@ -39,6 +39,7 @@ import PromptInput from "../prompt-input"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
 import { captureBackendOperation } from "../../lib/backend-operation"
+import { projectScope } from "../../lib/backend-identity"
 import { hotkeyLabel, withHotkey } from "../../lib/hotkeys"
 import { getInterruptionQueue } from "../../stores/interruption-scope"
 import SessionSidebar from "./shell/SessionSidebar"
@@ -1236,7 +1237,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
-                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} /></Show>
+                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={projectScope(props.instance)} /></Show>
                     </div>
 
                     <Show when={draftAttachments().length > 0}>

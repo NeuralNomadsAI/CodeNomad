@@ -1,5 +1,7 @@
 # Vistas previas de navegador y SideCars
 
+Las vistas previas iframe y los SideCars rechazan conexiones a las direcciones y puertos de escucha del propio CodeNomad, incluidos los alias DNS. Use el puerto independiente del servidor de su aplicación.
+
 ## Abrir el navegador de una sesión {#session-browser}
 
 1. En la barra de herramientas de una conversación, elige **Abrir vista previa web**.

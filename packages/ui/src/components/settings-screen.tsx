@@ -126,9 +126,9 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
           void requestServerSelection(intent).catch(() => showToastNotification({ category: "settings", variant: "error", message: t("remoteBrowse.unreachable") }))
         }} /></Show>
       case "providers":
-        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
+        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "missions":
-        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
+        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "usage":
         return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><UsageSettingsSection instanceId={props.providerContext?.instanceId} /></Show>
       case "sidecars":

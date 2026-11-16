@@ -49,8 +49,8 @@ for (const [id, backendId] of [["same", undefined], [remoteId(), remote.id]] as 
   addInstance({ id, backendId, folder: "/same", port: 0, pid: 0, proxyPath: "/workspaces/same/instance", status: "ready" } as any)
 }
 const [hostVersion, setHostVersion] = createSignal("")
-function Consumer(props: { id: string; scope: string }) {
-  const preview = () => getSessionPreview("session", props.scope)
+function Consumer(props: { id: string }) {
+  const preview = () => getSessionPreview("session", props.id)
   return <>
     <Markdown instanceId={props.id} sessionId="session" disableHighlight part={{ id: "link", type: "text", text: "[App](http://localhost:3000/app?q=1#hash)" } as any} />
     <Show when={preview()}>{value => <SessionPreviewView preview={value()} onInsertComment={() => {}} />}</Show>
@@ -58,8 +58,8 @@ function Consumer(props: { id: string; scope: string }) {
 }
 render(() => <ConfigProvider><I18nProvider>
   <output data-host-version>{hostVersion()}</output>
-  <section data-owner="local" style={{ height: "500px", display: "flex", "flex-direction": "column" }}><Consumer id="same" scope="/same" /></section>
-  <section data-owner="remote" style={{ height: "500px", display: "flex", "flex-direction": "column" }}><Consumer id={remoteId()} scope="preview_remote~/same" /></section>
+  <section data-owner="local" style={{ height: "500px", display: "flex", "flex-direction": "column" }}><Consumer id="same" /></section>
+  <section data-owner="remote" style={{ height: "500px", display: "flex", "flex-direction": "column" }}><Consumer id={remoteId()} /></section>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).previewRouting = {
   calls,

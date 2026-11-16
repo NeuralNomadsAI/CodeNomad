@@ -426,6 +426,7 @@ test("a depth write acknowledged after leaving Settings is accepted and reread o
     await waitForDepthInfo(page, "OpenCode effective depth: 1")
     await waitForDepthReady(page)
     await menu.selectOption("2"); await started
+    assert.equal(await page.locator(".mission-depth [role=status]").textContent(), "Saving subagent depth…")
     await closeMissionSettings(page)
     release()
     await until(() => depth === 2)
@@ -592,7 +593,7 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
     await waitForDepthReady(form)
     await menu.selectOption("3")
     await writing.promise
-    await controls.getByRole("status").filter({ hasText: "Saving…" }).waitFor({ state: "attached" })
+    await controls.getByRole("status").filter({ hasText: "Saving subagent depth…" }).waitFor({ state: "attached" })
     assert.equal(await locked(), true, "a write locks the menu too")
     assert.equal(await menu.evaluate(element => (element as HTMLSelectElement).disabled), false, "and keeps it focusable")
     // Choices made during the write (a native closed select's arrow keys fire one change

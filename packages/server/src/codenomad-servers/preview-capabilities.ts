@@ -9,6 +9,7 @@ import { resolveExplicitAddress } from "../opencode/servers/endpoint"
 import { createExplicitTransport } from "../opencode/servers/transport"
 import { routedPath } from "../server/routed-path"
 import { proxyWebSocket } from "../server/proxy-websocket"
+import { guardProxyListener } from "../server/proxy-destination"
 import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
 import type { RemoteServerBrowseManager } from "./browse-manager"
 import type { RemotePreviewCapability } from "../api-types"
@@ -33,6 +34,7 @@ export class RemotePreviewCapabilities {
   #closed = false
 
   constructor(private readonly manager: RemoteServerBrowseManager, private readonly logger: Logger) {
+    guardProxyListener(this.#server)
     this.#server.on("connection", socket => {
       this.#sockets.add(socket)
       socket.once("close", () => this.#sockets.delete(socket))

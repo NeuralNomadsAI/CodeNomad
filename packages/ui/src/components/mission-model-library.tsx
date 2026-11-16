@@ -20,6 +20,7 @@ interface LibraryProps { instanceId?: string; disabled?: boolean; active?: () =>
 function createMissionModelActions(props: LibraryProps) {
   const { t } = useI18n(), config = useConfig(() => props.instanceId)
   const [pending, setPending] = createSignal(false), [failed, setFailed] = createSignal(false)
+  const [pendingLabel, setPendingLabel] = createSignal("")
   const [reconciliationPending, setReconciliationPending] = createSignal(false)
   const owner = () => parseInstanceKey(props.instanceId ?? "").backendId
   let generation = 0
@@ -34,14 +35,14 @@ function createMissionModelActions(props: LibraryProps) {
   onCleanup(() => { alive = false })
   const active = () => props.active?.() ?? true
   const disabled = () => props.disabled || !active() || pending() || !config.missionModelsValid()
-  const begin = () => { setPending(true); setFailed(false); setReconciliationPending(false) }
+  const begin = (label = "") => { setPendingLabel(label); setPending(true); setFailed(false); setReconciliationPending(false) }
   const settle = (error: unknown) => { if (alive) { if (error instanceof ConfigOwnerReconciliationPendingError) setReconciliationPending(true); else setFailed(true) } }
   /** Resolves the saved ID once acknowledged (including an unreadable-owner acknowledgement), never retrying. */
   const save = async (name: string, draft: MissionModelBrief): Promise<string | undefined> => {
     const { target, operation } = capture()
     if (!operation.current()) return
     if (disabled() || !name.trim()) return
-    begin()
+    begin("missions.models.saving")
     let acknowledged: string | undefined
     try {
       const record = parseMissionModel({ version: 1, id: generateUUID(), name, ...draft })
@@ -66,6 +67,7 @@ function createMissionModelActions(props: LibraryProps) {
         variant: "warning", confirmLabel: t("missions.models.remove"), cancelLabel: t("missions.control.cancel"), dismissible: false,
       })
       if (!confirmed || !operation.current() || !alive || props.disabled) return false
+      setPendingLabel("missions.models.removing")
       await target.removeUserMissionModel(model.id, expected)
       return operation.current() && alive
     } catch (error) { if (operation.current()) settle(error); return false }
@@ -75,7 +77,7 @@ function createMissionModelActions(props: LibraryProps) {
     const { target, operation } = capture()
     if (!operation.current()) return
     if (pending() || !active()) return
-    begin()
+    begin("missions.models.reloading")
     try { await target.reloadMissionPreferences() } catch { if (operation.current() && alive) setFailed(true) }
     finally { if (operation.current() && alive) setPending(false) }
   }
@@ -89,13 +91,16 @@ function createMissionModelActions(props: LibraryProps) {
       const confirmed = await showConfirmDialog(t("missions.models.resetConfirm"), {
         variant: "warning", confirmLabel: t("missions.models.reset"), cancelLabel: t("missions.control.cancel"), dismissible: false,
       })
-      if (operation.current() && confirmed && alive && !props.disabled) await target.resetMissionModels(expected)
+      if (operation.current() && confirmed && alive && !props.disabled) {
+        setPendingLabel("missions.models.resetting")
+        await target.resetMissionModels(expected)
+      }
     } catch (error) { if (operation.current()) settle(error) }
     finally { if (operation.current() && alive) setPending(false) }
   }
   /** Inline recovery offers only an explicit authoritative reload, never a replayed write. */
   const status = () => <>
-    <Show when={pending()}><p role="status">{t("missions.control.mutation.pending")}</p></Show>
+    <Show when={pending() && pendingLabel()}><p role="status">{t(pendingLabel())}</p></Show>
     <Show when={failed()}><p role="alert">{t("missions.models.error")}</p></Show>
     <Show when={reconciliationPending()}><p role="alert">{t("missions.defaults.reconciliationPending")}</p></Show>
     {/* An unreadable library already offers its own Reload beside the repair. */}

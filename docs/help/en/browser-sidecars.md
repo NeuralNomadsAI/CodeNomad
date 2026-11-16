@@ -1,5 +1,7 @@
 # Browser previews and SideCars
 
+Iframe previews and SideCars refuse connections to CodeNomad's own listening addresses and ports, including DNS aliases. Use your application's separate server port.
+
 ## Open a session browser {#session-browser}
 
 1. In a conversation's toolbar, choose **Open web preview**.
