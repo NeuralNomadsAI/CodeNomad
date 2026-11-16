@@ -9,6 +9,7 @@ import { captureRequestFocus } from "../lib/request-focus"
 import { useConfig } from "../stores/preferences"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { serverApi } from "../lib/api-client"
+import { secretEntryAllowed } from "../lib/server-meta"
 
 interface RemoteServerDialogProps {
   open: boolean
@@ -63,6 +64,7 @@ const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
     if (carriesCredentials(baseUrl())) { setBaseUrl(""); setError("folderSelection.browseMenu.errorCredentials"); return }
     const link = classifyCodeNomadLink(baseUrl())
     if (!link) { setError("folderSelection.browseMenu.errorInvalid"); return }
+    if (link.kind === "pairing" && !secretEntryAllowed()) { setBaseUrl(""); setError("remoteBrowse.secretEntryForbidden"); return }
     const flight = ++generation, initial = props.initial, focus = captureRequestFocus()
     releaseFocus = focus.dispose
     const current = () => alive && props.open && flight === generation && props.initial === initial && config.preferences().multiBackend === true
@@ -106,6 +108,9 @@ const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
                   value={baseUrl()} onInput={event => {
                     changed()
                     const value = event.currentTarget.value
+                    if (classifyCodeNomadLink(value)?.kind === "pairing" && !secretEntryAllowed()) {
+                      event.currentTarget.value = ""; setBaseUrl(""); setError("remoteBrowse.secretEntryForbidden"); return
+                    }
                     if (classifyCodeNomadLink(value)?.baseUrl !== classifyCodeNomadLink(baseUrl())?.baseUrl) setSkipTlsVerify(false)
                     setBaseUrl(value); setError(undefined)
                   }} placeholder={t("folderSelection.servers.dialog.urlPlaceholder")} />
@@ -170,6 +175,9 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
 
   const submit = async (openWindow: boolean) => {
     if (busy()) return
+    if (classifyCodeNomadLink(baseUrl())?.kind === "pairing" && !secretEntryAllowed()) {
+      setBaseUrl(""); setError(t("remoteBrowse.secretEntryForbidden")); return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -199,7 +207,13 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
             <div class="flex flex-col gap-2 text-sm text-secondary">
               <label class="flex flex-col gap-2">
                 <span>{t("folderSelection.servers.dialog.url")}</span>
-                <input class="selector-input w-full" value={baseUrl()} onInput={(event) => setBaseUrl(event.currentTarget.value)} placeholder={t("folderSelection.servers.dialog.urlPlaceholder")} aria-describedby={urlHintId} />
+                <input class="selector-input w-full" value={baseUrl()} onInput={(event) => {
+                  const value = event.currentTarget.value
+                  if (classifyCodeNomadLink(value)?.kind === "pairing" && !secretEntryAllowed()) {
+                    event.currentTarget.value = ""; setBaseUrl(""); setError(t("remoteBrowse.secretEntryForbidden")); return
+                  }
+                  setBaseUrl(value)
+                }} placeholder={t("folderSelection.servers.dialog.urlPlaceholder")} aria-describedby={urlHintId} />
               </label>
               <span id={urlHintId} class="text-xs">{t("folderSelection.servers.dialog.urlHint")}</span>
             </div>

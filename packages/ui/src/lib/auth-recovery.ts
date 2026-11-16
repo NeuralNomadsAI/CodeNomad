@@ -3,7 +3,8 @@ import { localTransport, resolveBackendUrl, type BackendHttp } from "./backend-t
 
 /** Browser login recovery only. Never retries a failed application request or
  * interprets an upstream OpenCode 401 as proof of an expired CodeNomad login. */
-export function createAuthRecovery(base: string | undefined | Pick<BackendHttp, "url">, fetcher: typeof fetch = (...args) => fetch(...args)) {
+export function createAuthRecovery(base: string | undefined | Pick<BackendHttp, "url">, fetcher: typeof fetch = (...args) => fetch(...args),
+  beforeSignIn: (credentials: { username: string; password: string }) => void = () => {}) {
   const [required, setRequired] = createSignal(false)
   // Remote Control devices cannot sign in with a password; they pair again on the host.
   const [pairingRequired, setPairingRequired] = createSignal(false)
@@ -53,6 +54,7 @@ export function createAuthRecovery(base: string | undefined | Pick<BackendHttp, 
   }
 
   async function signIn(username: string, password: string): Promise<"ok" | "credentials" | "unavailable"> {
+    beforeSignIn({ username, password })
     // Fence probes started before this login, including their response bodies.
     const current = ++generation
     checking.clear()

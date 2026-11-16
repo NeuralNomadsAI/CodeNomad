@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.secretEntryForbidden": "प्रमाणहरू प्रविष्ट गर्न HTTPS वा Remote Control प्रयोग गर्नुहोस्।",
   "remoteBrowse.incompatible": "असंगत CodeNomad सर्भर।",
   "remoteBrowse.unreachable": "सर्भर पहुँचयोग्य छैन।",
   "remoteBrowse.pairAgain": "{name}: नयाँ जोडी बनाउने लिङ्क टाँस्नुहोस्।",

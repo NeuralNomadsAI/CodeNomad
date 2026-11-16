@@ -93,11 +93,13 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 ## Save a remote server {#saved-servers}
 
+Experimental `multiBackend` is off by default and has no visible activation control. When enabled, authenticated remote clients can use and manage all servers saved on the host; Home and **Settings → Servers** show the actions allowed by the host's capabilities. Plain LAN HTTP disables new server password and pairing-link entry: “Use HTTPS or Remote Control to enter credentials.” Connections using saved credentials and adding, editing or removing profiles without secrets remain available.
+
 For an SSH-only destination in experimental **Settings → Servers**, choose **Add server**, enter its **URL** and **SSH host (optional)**, then **Save**. The profile saves offline; its connection uses the backend's SSH relay.
 
 With the experimental multi-backend setting enabled, use **Settings → Servers** instead: paste an address or pairing link into **Server address or link**, or press Enter to add it. Adding saves a host-owned profile without opening a project. **Edit server** changes its **URL** or optional **Name**; renaming with the same URL and TLS policy works offline. **Remove saved server** asks for confirmation, forgets this profile's connection and saves its removal; a save error leaves the profile available to retry. Other profiles keep their connections.
 
-**Skip TLS verification** is offered after a certificate failure for that address; changing the address clears the consent. Pairing always verifies TLS. **Open** is disabled in this experimental settings composition. The steps below describe the default mode.
+**Skip TLS verification** is offered after a certificate failure for that address; changing the address clears the consent. Pairing always verifies TLS. **Open** browses the server's projects. The steps below describe the default mode.
 
 With experimental multi-backend enabled, **SSH host (optional)** saves an OpenSSH host or alias for the backend relay. Suggestions come from the local backend account's `~/.ssh/config`. Enter the CodeNomad address as seen from that host (for example `https://127.0.0.1:9898`, using its actual port), then **Save**. SSH profiles use the backend relay; **Connect** opens direct server windows and is disabled for these profiles. CodeNomad must already be installed and running there. OpenSSH must be available locally, with key authentication and a verified host key in `known_hosts`; CodeNomad authentication and HTTPS certificate checks still apply.
 

@@ -3,7 +3,7 @@ import { Select } from "@kobalte/core/select"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { LocationRef } from "@opencode/client"
 import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, Keyboard, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
-import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show, onMount, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
   activeSettingsSection,
@@ -44,6 +44,7 @@ import { requestServerSelection } from "../lib/native/server-selection"
 import { showToastNotification } from "../lib/notifications"
 import { backendRegistry } from "../stores/remote-backends"
 import { parseInstanceKey } from "../lib/backend-identity"
+import { getServerMeta, serversUsable } from "../lib/server-meta"
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -65,7 +66,9 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const { t } = useI18n()
   const phoneQuery = useMediaQuery("(max-width: 640px)")
   const config = useConfig()
-  const serversEnabled = () => config.preferences().multiBackend === true
+  const serversEnabled = () => config.preferences().multiBackend === true && serversUsable()
+  const [serverCapabilitiesResolved, setServerCapabilitiesResolved] = createSignal(false)
+  onMount(() => { void getServerMeta().catch(() => {}).finally(() => setServerCapabilitiesResolved(true)) })
   const embeddedProject = createPreferencesProjectContext(() => {
     const instanceId = !props.standalone && !props.providerContext ? activeInstanceId() ?? undefined : undefined
     return { section: "general", instanceId, serverId: instanceId ? backendRegistry.serverId(parseInstanceKey(instanceId).backendId) : undefined,
@@ -114,7 +117,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
           <div class="settings-section-stack">
             <RemoteControlSettingsSection />
             <RemoteAccessSettingsSection />
-            <Show when={canOpenRemoteWindows() && !serversEnabled()}>
+            <Show when={canOpenRemoteWindows() && config.preferences().multiBackend !== true}>
               <SavedRemoteServersCard />
             </Show>
           </div>
@@ -204,8 +207,9 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId)
   }
 
+  // The controlled selector must not commit General while Servers admission is still loading.
   const content = () => (
-    <>
+    <Show when={activeSettingsSection() !== "servers" || config.preferences().multiBackend !== true || serverCapabilitiesResolved()}>
             <Show when={props.standalone}><h1 class="sr-only">{t("settings.title")}</h1></Show>
 
             <aside class="settings-screen-nav">
@@ -332,7 +336,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
 
               <div ref={settingsScroll} class="window-body settings-screen-scroll">{renderSection()}</div>
             </div>
-    </>
+    </Show>
   )
 
   if (props.standalone) {

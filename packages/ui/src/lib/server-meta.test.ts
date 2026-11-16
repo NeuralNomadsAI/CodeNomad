@@ -4,6 +4,7 @@ import { it } from "node:test"
 import type { ServerMeta } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
 import { createServerMetaCache, getServerMeta, localRequest, sidecarsAllowed } from "./server-meta"
+import * as hostMeta from "./server-meta"
 
 it("allows a metadata retry after a failed request", async () => {
   const originalFetch = serverApi.fetchServerMeta
@@ -100,5 +101,30 @@ it("SideCar access follows only the host transport snapshot, independently of li
     serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: false })
     await getServerMeta(true)
     assert.equal(sidecarsAllowed(), false, "missing flags revoke direct HTTPS access")
+  } finally { serverApi.fetchServerMeta = original }
+})
+
+it("server capabilities follow only host metadata, with explicit denial and local legacy fallback", async () => {
+  const original = serverApi.fetchServerMeta
+  const meta = await getServerMeta()
+  try {
+    for (const local of [false, true]) {
+      for (const allowed of [undefined, false, true]) {
+        serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: local,
+          serversUsable: allowed, serversManageable: allowed, secretEntryAllowed: allowed })
+        await getServerMeta(true)
+        assert.equal(hostMeta.serversUsable(), allowed ?? local)
+        assert.equal(hostMeta.serversManageable(), allowed ?? local)
+        assert.equal(hostMeta.secretEntryAllowed(), allowed ?? local)
+        assert.equal(localRequest(), local)
+      }
+    }
+    serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: false })
+    await getServerMeta(true)
+    const remote = createServerMetaCache({ fetchServerMeta: async () => ({ ...meta, serversUsable: true, serversManageable: true }) })
+    await remote.getServerMeta()
+    assert.equal(hostMeta.serversUsable(), false)
+    assert.equal(hostMeta.serversManageable(), false)
+    assert.equal(hostMeta.secretEntryAllowed(), false)
   } finally { serverApi.fetchServerMeta = original }
 })

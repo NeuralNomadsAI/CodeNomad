@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.secretEntryForbidden": "Usa HTTPS o Control remoto para introducir credenciales.",
   "remoteBrowse.incompatible": "Servidor CodeNomad incompatible.",
   "remoteBrowse.unreachable": "Servidor inaccesible.",
   "remoteBrowse.pairAgain": "{name}: pega un nuevo enlace de vinculación.",

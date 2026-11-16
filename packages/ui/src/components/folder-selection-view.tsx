@@ -19,7 +19,7 @@ import { renameProject } from "../stores/project-names"
 import { LocaleSelector } from "./locale-selector"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
-import { getServerMeta, localRequest, sidecarsAllowed } from "../lib/server-meta"
+import { getServerMeta, localRequest, serversUsable, serversManageable, sidecarsAllowed } from "../lib/server-meta"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 import { preferences } from "../stores/preferences"
 import { selectRemoteServer } from "../stores/remote-project-open"
@@ -61,8 +61,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const folders = () => recentFolders()
   const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
-  const canUseRemoteServerWindows = () => localRequest() && (preferences().multiBackend === true || canOpenRemoteWindows())
+  const canUseRemoteServerWindows = () => preferences().multiBackend === true ? serversUsable() : localRequest() && canOpenRemoteWindows()
+  const canManageRemoteServers = () => canUseRemoteServerWindows() && (preferences().multiBackend !== true || serversManageable())
   const openServer = (id: string) => {
+    if (!canUseRemoteServerWindows()) return
     const server = serverList().find(p => p.id === id)
     if (preferences().multiBackend === true && server) selectRemoteServer({ id: server.id, baseUrl: server.baseUrl,
       skipTlsVerify: server.skipTlsVerify, ...(server.ssh ? { ssh: server.ssh } : {}) })
@@ -300,6 +302,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const openCloneDialog = () => dialogs.clone()
 
   function openServerDialog() {
+    if (!canManageRemoteServers()) return
     if (preferences().multiBackend === true) void openSettings("servers")
     else if (canUseRemoteServerWindows()) dialogs.addServer()
   }
@@ -534,14 +537,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                 <Globe class="w-12 h-12 mx-auto" />
                               </div>
                               <p class="panel-empty-state-title">{t("folderSelection.servers.empty.title")}</p>
-                              <button
+                              <Show when={canManageRemoteServers()}><button
                                 type="button"
                                 class="button-primary mt-4 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
                                 onClick={openServerDialog}
                               >
                                 <Globe class="w-4 h-4" />
                                 <span>{t("folderSelection.actions.connectButton")}</span>
-                              </button>
+                              </button></Show>
                             </div>
                           </Show>
                         }
@@ -804,7 +807,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </div>
                   </button></Show>
 
-                  <Show when={canUseRemoteServerWindows()}>
+                  <Show when={canManageRemoteServers()}>
                     <button
                       onClick={openServerDialog}
                       class="button-primary w-full flex items-center justify-center text-sm"

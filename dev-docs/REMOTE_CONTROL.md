@@ -77,8 +77,8 @@ override them. An unknown value refuses startup.
   available to authenticated clients; content and WebSockets require loopback,
   except under the host's SideCar opt-in below.
   Live preview capabilities retain their scoped admission. `/api/meta` reports
-  `localRequest` using that same transport authority; the UI hides password changes
-  and remote-server management unless it is true. `/api/meta` also reports
+   `localRequest` using that same transport authority; the UI restricts password changes
+   to that authority. `/api/meta` also reports
   `sidecarsAllowed` (local, or admitted by the opt-in); the UI shows SideCar opening
   and the picker only when it or `localRequest` is true.
 - SideCar opt-in over direct HTTPS: the host setting `server.sidecarsOverDirectHttps`
@@ -148,13 +148,46 @@ override them. An unknown value refuses startup.
 
 ## Saved-profile relay
 
+### Remote UI operation lifetime
+
+Every admitted operation uses one request principal captured by the common `onRequest` hook before body parsing. Its signal follows queued work and IO; dispatch and publication check that same signal. Revocation closes the client response and upstream work. A completed explicit profile mutation retains its durable result.
+An originless native caller keeps local UI authority on a loopback target Host. A declared public HTTP Host through a loopback proxy keeps its remote class, including when Origin/Referer are absent; secret entry then remains refused.
+
+| Surface | Capture and revocation | Shared work | Publication and logs |
+|---|---|---|---|
+| `/api/backends/*`, bootstrap and ordinary reads/mutations | Common pre-body capture; signal through HTTP, queued authentication and raw uploads | Borrower-aware authentication observation, including calls without a proof | Check before dispatch and publication; proof carriers stripped upstream |
+| Backend SSE / streaming uploads | Same capture; invalidation aborts upstream and client streams | Each request owns its IO; shared authentication keeps independent borrowers | Stream signal remains live through the body |
+| Backend WebSocket upgrades | Closed with 404 before upstream IO | None | No relay authority or content publication |
+| `/api/remote-servers/:id/browse` | Common capture; signal enters the per-profile queue and each status/filesystem/state read | Borrower-aware observation; one cancellation releases only its own share | Check at queue entry, between IO and before returning the listing |
+| `/api/remote-servers/:id/connect`, including password/pairing | Common capture; queue and private connection/pairing client inherit its signal | Each connect owns its private candidate; destination-generation checks fence credential persistence | Check before dispatch and credential/result publication |
+| SSH forward readiness and renewal identity check | Each principal owns its interruptible wait; profile generation and forward identity fence readiness | The backend owns one bounded forward/identity check per profile generation, across principals | Cancelled waiters cannot resume business dispatch; retargeting, Forget and final-owner shutdown close shared infrastructure |
+| Probe, SSH-host/profile inventory, Forget and profile-state mutations | Common capture; probe IO inherits the signal; synchronous administration checks before mutation | None; explicit administration retains its profile-wide effects | Common pre-publication check |
+| Request logging, including rejected/malformed targets | Independent of admission | None | Static route template, method, status and duration only; raw paths, params, queries and bodies stay private |
+
+Registered wildcard families retain their static template, including `/api/backends/:id/*`. Only global `*` / `/*` fallbacks use `<catchall>`; unmatched routes use `<unmatched>`.
+
 Experimental Settings → Servers uses the host client for `POST /api/remote-servers/:id/connect` and `forget`, with caller cancellation and stable typed errors. Pairing keeps verified TLS, clears its field before waiting and saves only the origin. Its private device identity persists beside the host configuration across launches. Same-origin/TLS renames keep that identity. Removal captures the profile policy, awaits Forget and then awaits profile persistence; a refused persistence leaves an actionable save error and the registered row. Mounting, adding and editing profiles are independent of backend attachment and project creation. View cancellation fences continuations while already dispatched durable mutations retain their result.
 
-An optional saved `ssh.host` routes the profile through a backend-owned OpenSSH local forward to its remote-visible `baseUrl`. The destination is part of credential scope and profile generation. Relay proofs bind that declared origin, SSH host and TLS policy. Each new forward with an admitted identity gates all waiting operations on one shared, bounded metadata check through that exact forward, using the saved TLS policy and declared server hostname. A matching `serverId` preserves the proof; a changed, missing or unreadable identity revokes it, removes credentials and closes the forward before business dispatch. Host retargeting also revokes the generation. SSH uses strict known-host verification and batch key authentication; the remote CodeNomad instance is already running. `GET /api/remote-servers/ssh-hosts` shares the local relay guard and suggests concrete aliases from the backend account's `~/.ssh/config` and Includes. Stable failures are `ssh_unavailable`, `ssh_host_key` and `ssh_auth`. Tests in `codenomad-servers/ssh.test.ts` and `ssh-manager.test.ts` cover parsing, process readiness, authentication failure, credential scope, relay proof lifetime, concurrent renewal gates and shared tunnel ownership.
+An optional saved `ssh.host` routes the profile through a backend-owned OpenSSH local forward to its remote-visible `baseUrl`. The destination is part of credential scope and profile generation. Relay proofs bind that declared origin, SSH host and TLS policy. Each new forward with an admitted identity gates all waiting operations on one shared, bounded metadata check through that exact forward, using the saved TLS policy and declared server hostname. A matching `serverId` preserves the proof; a changed, missing or unreadable identity revokes it, removes credentials and closes the forward before business dispatch. Host retargeting also revokes the generation. SSH uses strict known-host verification and batch key authentication; the remote CodeNomad instance is already running. `GET /api/remote-servers/ssh-hosts` shares the authenticated UI relay guard and suggests concrete aliases from the backend account's `~/.ssh/config` and Includes. Stable failures are `ssh_unavailable`, `ssh_host_key` and `ssh_auth`. Tests in `codenomad-servers/ssh.test.ts` and `ssh-manager.test.ts` cover parsing, process readiness, authentication failure, credential scope, relay proof lifetime, concurrent renewal gates and shared tunnel ownership.
 
-The local CodeNomad backend connects to saved CodeNomad profiles through `codenomad-servers/`. Its browse/connect/forget routes and `/api/backends/:profileId/*` require both `isLocalRequest()` and exact loopback local-origin provenance. Same-origin EventSource and media reads use a loopback self Referer with `Sec-Fetch-Site: same-origin` when the browser omits Origin. Foreign, null and absent provenance, LAN peers and Remote Control ingress sockets are refused before credential or network access. Server-advertised LAN/remote addresses also stay outside this loopback-origin authority. Remote pages and opaque preview/extension frames stay outside this authority. SideCars intentionally share the local UI's origin and full application privileges, including this relay and OpenCode command execution; they are trusted extensions.
+The host connects to saved CodeNomad profiles through `codenomad-servers/`. Local relay callers retain exact loopback Origin provenance, or a loopback self Referer with `Sec-Fetch-Site: same-origin` for GET/HEAD. With the authoritative `config.ui.settings.multiBackend === true`, `createBackendUiAccess()` also admits authenticated UI clients for the reviewed `isBackendUiRoute()` method/path catalog: saved-profile browse/connect/forget, probe, SSH-host suggestions and backend business relays. All host profiles share this authority. SideCars share the local UI's application privileges and remain trusted extensions.
+
+| UI channel | Saved-server admission |
+|---|---|
+| Remote Control | Paired device on the physical ingress, exact tunnel Host, exact public Origin for mutations; supplied read Origin/Referer must also match. |
+| Direct HTTPS | Authenticated session or origin-bound device and `verifiedDirectHttpsOrigin()`, retaining the direct listener's source/CORS policy. |
+| Direct LAN HTTP | Authenticated session and an explicitly admitted non-loopback HTTP Origin; sensitive reads may instead supply its Referer. |
+| Installed PWA | Its current URL's channel rules. |
+
+`/api/meta` announces `serversUsable`, `serversManageable` and `secretEntryAllowed`. The UI uses these host capabilities alongside the strict feature flag. Password or pairing-link submission to connect and relay login is backend-refused with `403` / `secret_entry_forbidden` on LAN HTTP; Remote Control, verified HTTPS and local loopback permit it. Foreign, opaque, undeclared or absent LAN provenance is refused before destination access. Forwarding headers confer no authority. Explicit server-device traffic retains its closed protocol catalog; it never receives these browser exceptions. Remote-side administration, nested relays, memory and remote-preview capability management keep their existing route boundaries. Administrator-disabled Remote Control supplies no ingress principal; the listening lock governs which direct peers can connect.
+
+Shared state writes that replace `ui.remoteServers`, delete that key or replace/delete its owner apply the same admission before persistence. Local preference writes retain their direct source policy. Non-loopback HTTP/HTTPS provenance through a loopback proxy retains its remote UI class and the strict feature flag. Probe URLs reject userinfo and pairing fragments before IO; malformed URL diagnostics omit the submitted value.
 
 The saved profile alone selects the destination and TLS verification policy. The explicit transport pins validated DNS answers to the connection, keeps the saved hostname for TLS verification and SNI, never follows redirects and never manufactures Origin or browser Fetch Metadata. Caller cookies, authorization and forwarding headers stay local; private session/device cookies stay in the backend's mode-0600 store beside its configuration. Response cookies and authentication headers remain private. Response documents receive sandbox CSP and `nosniff`; the relay publishes a small response-header allowlist. Log records retain fixed relay route names and completion metadata, excluding request payloads and target queries.
+
+`relay-principal.ts` captures each remote UI relay's authenticated principal before body parsing. Its signal spans queued work, upstream dispatch and response publication. Session logout, idle/absolute expiry and successful password replacement synchronously invalidate the captured session through `SessionManager.onInvalidated()`; watched sessions retain their ordinary activity deadlines. Device revocation and tunnel Stop close their tracked sockets; a 250 ms read-only device validity check also covers idle expiry and origin removal. Invalidation aborts the upstream and client response, while other principals retain their transfers and the host's saved connection. Local-loopback UI relays retain their local authority.
+
+Principal-bound relays use the shared client's borrower-aware status observation even for calls without a relay proof. Each authenticated waiter owns its cancellation; a departing waiter releases only its share of a pending private login. Local legacy callers retain their recovery contract.
 
 HTTP, HTTPS and the private bridge share the backend's connection authority and private credential cache. Admission captures the profile id, exact origin, TLS policy and revocable generation before entering a queue; dispatch and publication recheck that owner. Retargeting or changing TLS invalidates pending and queued operations and the stored identity. Stored identities include their TLS policy; entries without that field bind to verified TLS. Forget through any listener closes all of that profile's streams and removes its identity for every listener. The backend owns shutdown; a standalone listener releases its shared lease without closing another listener's owner.
 
@@ -209,10 +242,11 @@ asset-fallback and WebSocket dispatch. Control APIs on this backend's own origin
 and loopback aliases, and every preview capability origin, return 404 before IO.
 Ordinary application targets retain their proxy behavior. Direct HTTPS SideCar
 opt-in admits only SideCar content, including an authenticated direct browser
-device; backend relay, memory and remote-preview authority retain their host rules.
+device. Backend relays follow the authenticated UI matrix; memory and remote-preview
+authority retain their host rules.
 
 The administrator's listening lock governs the ordinary application listener.
-Relay APIs share that listener and retain their loopback-origin admission.
+Relay APIs share that listener and apply the authenticated UI admission matrix.
 Outbound profile transports, SSH forwards and the isolated preview listener keep
 their private lifetimes and bindings; a local relay operation leaves the Remote
 Control administrator policy unchanged.
@@ -269,6 +303,9 @@ A failed password change preserves the existing sessions. Remote Control device
 credentials follow their separate registry lifetime and revocation rules.
 
 ## Validation
+
+- `remote-control/security-sentinels.test.ts` scans admitted Remote Control, TLS reverse-proxy and non-loopback LAN flows over direct and injected SSH TCP-forward transports. Controlled A/B destinations exercise stored password/device identities, private SSH/TLS material, pairing tokens and relay proofs. Captured response bodies/headers, redirect failures, rejected raw targets, exposed URL carriers, persisted state and trace-level application logs are checked together. Relay proofs retain their authorized bootstrap-header/resource-query contract; every other response, state/log field and upstream request keeps them private. Rejected targets retain the fixed namespace log treatment even when path admission refuses their syntax.
+- `codenomad-servers/relay-principal.test.ts` drives real HTTP streams through logout, idle/absolute session expiry, persistent password replacement, device revocation/expiry and tunnel Stop, checking bounded upstream/client closure and isolation of other principals and local-loopback authority.
 
 - `codenomad-servers/ssh-manager.test.ts` exercises private authentication restoration through the owned SSH dial, single business dispatch and stale-proof refusal before IO after SSH retargeting. Concurrent mutations, direct status reads and post-401 observations share the renewal identity gate; a changed, missing or refused identity prevents status dispatch through the replacement forward.
 

@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.secretEntryForbidden": "Kimlik bilgilerini girmek için HTTPS veya Uzaktan Kontrol kullanın.",
   "remoteBrowse.incompatible": "Uyumsuz CodeNomad sunucusu.",
   "remoteBrowse.unreachable": "Sunucuya ulaşılamıyor.",
   "remoteBrowse.pairAgain": "{name}: yeni bir eşleştirme bağlantısı yapıştırın.",

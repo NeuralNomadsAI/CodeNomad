@@ -93,11 +93,13 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
+La opción experimental `multiBackend` está desactivada de forma predeterminada y no tiene un control de activación visible. Cuando está activa, los clientes remotos autenticados pueden usar y administrar todos los servidores guardados en el anfitrión; el inicio y **Configuración → Servidores** muestran las acciones permitidas por las capacidades del anfitrión. HTTP sin cifrar en la LAN desactiva la entrada de nuevas contraseñas de servidor y enlaces de vinculación: «Usa HTTPS o Control remoto para introducir credenciales.» Las conexiones con credenciales guardadas y la adición, edición o eliminación de perfiles sin secretos siguen disponibles.
+
 Para un destino accesible solo por SSH en **Ajustes → Servidores** experimental, elija **Añadir servidor**, introduzca su **URL** y **Host SSH (opcional)** y pulse **Guardar**. El perfil se guarda sin conexión; la conexión utiliza el relé SSH del backend.
 
 Con el ajuste multibackend experimental, usa **Configuración → Servidores**: pega una dirección o enlace de vinculación en **Dirección o enlace del servidor**, o pulsa Intro. Añadir guarda un perfil en el anfitrión sin abrir un proyecto. **Editar servidor** cambia la **URL** o el **Nombre** opcional; renombrar con la misma URL y política TLS funciona sin conexión. **Eliminar servidor guardado** pide confirmación, olvida su conexión y guarda la eliminación; si falla el guardado, el perfil permanece para reintentar. Las otras conexiones se mantienen.
 
-**Omitir la verificación TLS** aparece tras un fallo de certificado para esa dirección; cambiar la dirección borra el consentimiento. La vinculación siempre verifica TLS. **Abrir** está desactivado en estos ajustes experimentales. Los pasos siguientes describen el modo predeterminado.
+**Omitir la verificación TLS** aparece tras un fallo de certificado para esa dirección; cambiar la dirección borra el consentimiento. La vinculación siempre verifica TLS. **Abrir** muestra los proyectos del servidor. Los pasos siguientes describen el modo predeterminado.
 
 Con el multi-backend experimental activado, **Host SSH (opcional)** guarda un host o alias de OpenSSH para el relé del backend. Las sugerencias proceden del archivo `~/.ssh/config` de la cuenta del backend local. Introduzca la dirección de CodeNomad vista desde ese host (por ejemplo, `https://127.0.0.1:9898`, con su puerto real) y pulse **Guardar**. Los perfiles SSH usan el relé; **Conectar** abre ventanas directas y está desactivado para estos perfiles. CodeNomad debe estar instalado y ejecutándose allí. Se requieren OpenSSH local, autenticación por clave y una clave de host verificada en `known_hosts`; siguen aplicándose la autenticación de CodeNomad y la verificación de certificados HTTPS.
 

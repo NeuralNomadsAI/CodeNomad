@@ -14,6 +14,7 @@ import { captureRequestFocus } from "../lib/request-focus"
 import ServerAddField from "./server-add-field"
 import RemoteServerSignin from "./remote-server-signin"
 import WindowCloseButton from "./window-close-button"
+import { secretEntryAllowed } from "../lib/server-meta"
 
 /** Saved-server folder navigation with ordinary project tabs (#1236). */
 function RemoteServerBrowser(props: { profile: RemoteServerProfile; onOpened?: () => void }) {
@@ -49,6 +50,7 @@ function RemoteServerBrowser(props: { profile: RemoteServerProfile; onOpened?: (
     if (busy()) return
     setBusy(true)
     try {
+      if (!secretEntryAllowed()) { setError("secret_entry_forbidden"); return }
       await serverApi.connectRemoteServer(props.profile.id, credentials, opening.signal)
       await connected()
     } catch (failure) { if (!opening.signal.aborted) setError(failure instanceof Error ? failure.message : "unreachable") }

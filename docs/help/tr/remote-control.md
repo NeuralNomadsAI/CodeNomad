@@ -70,7 +70,8 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | Normal kimlik doğrulamalı kullanıcı arayüzü, çalışma alanları, konuşmalar ve SSE | Eşleştirilmiş bir cihazda kullanılabilir. |
 | Parolayla giriş/çıkış, parola değişiklikleri, yerel belirteç önyüklemesi | Mevcut değil; doğrudan kimlik doğrulama devre dışı bırakılsa bile cihaz kimlik bilgileri gereklidir. |
 | Uzaktan Kontrol durumu | Eşleştirilmiş bir cihaz tarafından okunabilir; yönetim mevcut değildir. Başlat/Durdur, eşleştirme oluşturma, cihaz listesi ve iptal etme, ana bilgisayar erişim yolunda kalır. |
-| Masaüstü uzak pencere/sunucu yönetimi ve proxy rotaları | Kullanılamıyor (`/api/remote-servers/`, `/api/remote-proxy/`). |
+| Deneysel kayıtlı sunucular ve backend aktarımı | Özellik ve ana bilgisayar yetenekleri izin verdiğinde kimliği doğrulanmış uzak istemciler tüm kayıtlı sunucuları kullanabilir/yönetebilir. Yeni sunucu parolaları/eşleştirme bağlantıları düz LAN HTTP yerine Uzaktan Kontrol veya HTTPS gerektirir. [Kayıtlı sunuculara](remote-access.md#saved-servers) bakın. |
+| Masaüstü uzak pencereleri ve pencere proxy'si | Yalnızca ana bilgisayarda (`/api/remote-proxy/`). |
 | SideCar **içerik proxy'si** | SideCar WebSocket'leri gibi loopback gerektirir (`/sidecars/`). `/api/sidecars` kayıt API'leri, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. |
 | Web önizleme içeriği | Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında **Web önizlemeleri** açık olduğu sürece (varsayılan) kullanılabilir. Her önizleme adresi sayfasını eşleştirme olmadan açar; bu yüzden gizli tutun. Anahtarı kapatmak sunulan önizlemeleri ve WebSocket bağlantılarını durdurur; eşleştirilmiş cihazlar yeniden yüklendiğinde **Web önizlemesini aç** seçeneğini gizler. |
 | Otomasyon köprüsü | Kullanılamaz (`/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. |

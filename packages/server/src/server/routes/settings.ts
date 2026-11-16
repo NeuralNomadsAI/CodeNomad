@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify"
+import { FastifyInstance, type FastifyRequest } from "fastify"
 import { z } from "zod"
 import type { BinaryValidationResult } from "../../api-types"
 import { probeOpenCodeBinary } from "../../workspaces/spawn"
@@ -10,6 +10,8 @@ import { applyConditionalMissionPreferences, MissionPreferenceConflictError } fr
 import { SettingsReadError } from "../../settings/yaml-doc-store"
 import { HostOnlySettingError, hostOnlyServerCheck } from "../../settings/host-only-settings"
 import { isLocalRequest } from "../../remote-control/request-origin"
+import { isPlainObject } from "../../settings/merge-patch"
+import type { BackendCallerGuard } from "../../codenomad-servers/ui-caller"
 
 interface RouteDeps {
   settings: SettingsService
@@ -17,6 +19,8 @@ interface RouteDeps {
   /** An installed login start follows an explicit executable change; its failure never refuses the save. */
   refreshLoginStart?: () => Promise<void>
   withConfigLock?: <T>(action: () => T) => Promise<T>
+  guardServerProfiles?: BackendCallerGuard
+  principalSignal?: (request: FastifyRequest) => AbortSignal | undefined
 }
 
 const ValidateBinarySchema = z.object({
@@ -133,6 +137,10 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/storage/state", async () => deps.settings.getDoc("state"))
   app.patch("/api/storage/state", async (request, reply) => {
     try {
+      deps.principalSignal?.(request)?.throwIfAborted()
+      const ui = isPlainObject(request.body) ? request.body.ui : undefined
+      if (ui !== undefined && (!isPlainObject(ui) || Object.hasOwn(ui, "remoteServers"))
+        && deps.guardServerProfiles?.(request, reply)) return
       return deps.settings.mergePatchDoc("state", request.body ?? {})
     } catch (error) {
       reply.code(400)
@@ -146,6 +154,9 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.patch<{ Params: { owner: string } }>("/api/storage/state/:owner", async (request, reply) => {
     try {
+      deps.principalSignal?.(request)?.throwIfAborted()
+      if (request.params.owner === "ui" && isPlainObject(request.body) && Object.hasOwn(request.body, "remoteServers")
+        && deps.guardServerProfiles?.(request, reply)) return
       return deps.settings.mergePatchOwner("state", request.params.owner, request.body ?? {})
     } catch (error) {
       reply.code(400)

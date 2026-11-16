@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
@@ -100,7 +100,9 @@ import { guardProxyListener, proxyConnector, ProxyDestinationDenied } from "./pr
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
-import { gateRemoteRequest, isHostOnlyPath, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
+import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
 import { registerDirectOriginPolicy } from "./direct-origin"
 import { verifiedDirectHttpsOrigin } from "../remote-control/direct-https"
@@ -200,6 +202,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     ({
       logger: false,
       routerOptions: ROUTER_OPTIONS,
+      frameworkErrors: (error: FastifyError, _request: FastifyRequest, reply: FastifyReply) => {
+        reply.header("connection", "close").code(error.statusCode ?? (error.code === "FST_ERR_BAD_URL" ? 400 : 500)).send({ error: "Invalid request" })
+      },
       ...(deps.protocol === "https" && deps.httpsOptions ? { https: deps.httpsOptions } : {}),
     } as unknown) as any,
   ) as unknown as FastifyInstance
@@ -225,10 +230,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   // upgrades (for example Vite HMR). Server.close() cannot drain them itself.
   const upgrades = new Set<Socket>()
   let closing = false
-  app.server.on("upgrade", (_request, socket: Socket) => {
+  app.server.on("upgrade", (request, socket: Socket) => {
     if (closing) { socket.destroy(); return }
     upgrades.add(socket)
     socket.once("close", () => upgrades.delete(socket))
+    const pathname = routedPath(request.url ?? "/")
+    // Only the reviewed content proxies own upgrades; control APIs use HTTP/SSE.
+    if (!parsePreviewCapabilityHost(request.headers.host) && (pathname === "/api" || pathname?.startsWith("/api/"))) {
+      rejectUpgrade(socket, 404, "Not Found")
+    }
   })
   app.addHook("preClose", async () => {
     closing = true
@@ -251,7 +261,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   const sidecarOverDirectHttps = createSideCarDirectHttpsAccess({
     meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, enabled: () => sidecarsOverDirectHttpsEnabled(deps.settings),
   })
-  const requestGate = { ...remoteGate, allowsDirectSidecar: sidecarOverDirectHttps }
+  const multiBackendEnabled = () => deps.settings.multiBackendEnabled?.() === true
+  const requestGate = { ...remoteGate, allowsDirectSidecar: sidecarOverDirectHttps, allowsBackendUi: multiBackendEnabled }
   const getSelfOrigins = (): Set<string> => {
     const origins = new Set<string>()
     for (const candidate of [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl, ...(deps.serverMeta.addresses ?? []).map(address => address.remoteUrl)]) {
@@ -294,8 +305,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     if (pathname === null) return reply.header("connection", "close").code(400).send({ error: "Invalid request path" })
     // Browser pairing also answers on verified direct HTTPS origins; its route rechecks the origin.
     const directPairing = pathname === PAIR_EXCHANGE_PATH && verifiedDirectHttpsOrigin(request, remoteGate?.directHttpsOrigins?.() ?? []) !== null
+    const backendUi = request.headers["x-codenomad-server-request"] === undefined
+      && multiBackendEnabled() && isBackendUiRoute(pathname, request.method)
     if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request)
-      && !directPairing && !(isSideCarContentPath(pathname) && sidecarOverDirectHttps(request))) {
+      && !directPairing && !backendUi && !(isSideCarContentPath(pathname) && sidecarOverDirectHttps(request))) {
       return reply.header("connection", "close").code(404).send({ error: "Not found" })
     }
     done()
@@ -303,6 +316,22 @@ export function createHttpServer(deps: HttpServerDeps) {
   const allowsDirectSource = registerDirectOriginPolicy(app, {
     meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, devServerUrl: deps.uiDevServerUrl,
     publicHost: () => remoteGate.publicHost(), isPreview: isLivePreview,
+  })
+  const backendUiAccess = createBackendUiAccess({
+    enabled: multiBackendEnabled, selfOrigins: getSelfOrigins, allowsDirectSource,
+    publicHost: () => remoteGate.publicHost(),
+    directHttpsOrigins: () => remoteGate.directHttpsOrigins?.() ?? [],
+  })
+  const remotePrincipals = createRelayPrincipalBinding({
+    auth: deps.authManager, devices: deps.remoteControlManager, local: backendUiAccess.localUiRequest,
+  })
+  app.addHook("onRequest", async (request, reply) => {
+    const pathname = routedPath(request.raw.url ?? "")
+    if (pathname && isBackendUiRoute(pathname, request.method)) remotePrincipals.bind(request, reply)
+  })
+  app.addHook("onSend", (request, reply, payload, done) => {
+    if (remotePrincipals.signal(request)?.aborted) reply.raw.destroy()
+    done(null, payload)
   })
 
   app.register(replyFrom, {
@@ -415,7 +444,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   const memory = deps.memoryStore ? new MemoryService(deps.memoryStore, deps.settings, deps.workspaceManager, deps.eventBus) : undefined
   if (memory) registerMemoryRoutes(app, memory)
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
-    withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined })
+    withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined,
+    guardServerProfiles: backendUiAccess.guardProfiles, principalSignal: remotePrincipals.signal })
   const accounts = new ProviderAccountsService(deps.settings)
   const freeUsage = createOpenCodeFreeUsage()
   const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
@@ -430,7 +460,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   const remotePreviewsAllowed = () => deps.remoteControlManager.previewsAllowed()
-  registerMetaRoutes(app, { serverMeta: deps.serverMeta, remotePreviewsAllowed, sidecarsOverDirectHttps: sidecarOverDirectHttps })
+  registerMetaRoutes(app, { serverMeta: deps.serverMeta, remotePreviewsAllowed, sidecarsOverDirectHttps: sidecarOverDirectHttps,
+    backendUiCapabilities: backendUiAccess.capabilities })
   registerEventRoutes(app, {
     eventBus: deps.eventBus,
     registerClient: registerSseClient,
@@ -444,10 +475,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
-  registerRemoteServerRoutes(app, { logger: apiLogger })
+  registerRemoteServerRoutes(app, { logger: apiLogger, guardCaller: backendUiAccess.guard, principalSignal: remotePrincipals.signal })
   const remoteServerBrowse = deps.remoteServerBrowseManager ?? new RemoteServerBrowseManager(deps.settings)
-  registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
-  registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
+  registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard,
+    guardSecret: backendUiAccess.guardSecret, principalSignal: remotePrincipals.signal })
+  registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard,
+    guardSecret: backendUiAccess.guardSecret, principalSignal: remotePrincipals.signal })
   registerRemotePreviewCapabilityRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, logger: deps.logger })
   const reconcileBackends = () => remoteServerBrowse.reconcile()
   if (!deps.remoteServerBrowseManager) deps.eventBus.on("storage.stateChanged", reconcileBackends)
@@ -728,6 +761,7 @@ function withoutQuery(target: string): { url: string; query: string } {
 
 function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocketProxyDeps) {
   app.server.on("upgrade", (request, socket, head) => {
+    if (socket.destroyed || socket.writableEnded) return
     if (parsePreviewCapabilityHost(request.headers.host)) return
     const rawUrl = request.url ?? "/"
     const parsed = parseSideCarUpgradePath(rawUrl)
@@ -778,6 +812,7 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
     })
   }
   app.server.on("upgrade", (request, socket, head) => {
+    if (socket.destroyed || socket.writableEnded) return
     const rawUrl = request.url ?? "/"
     const capabilityToken = parsePreviewCapabilityHost(request.headers.host)
     let parsed = parsePreviewUpgradePath(rawUrl)

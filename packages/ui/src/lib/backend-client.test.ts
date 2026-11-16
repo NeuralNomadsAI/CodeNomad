@@ -219,6 +219,10 @@ test("only the transport modules read the injected API base and events URL", () 
 })
 
 test("the remote factory routes HTTP, SDK, media, SSE and login through the local profile relay", async t => {
+  const { hostServerMeta, setHostServerMeta } = await import("./host-server-meta")
+  const previous = hostServerMeta()
+  setHostServerMeta({ localRequest: true } as import("../../../server/src/api-types").ServerMeta)
+  t.after(() => setHostServerMeta(previous))
   useRendererWindow(t)
   const requests: { url: string; init?: RequestInit }[] = []
   const sources: FakeEventSource[] = []

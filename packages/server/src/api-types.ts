@@ -967,6 +967,12 @@ export interface SupportMeta {
 export interface ServerMeta extends Partial<ServerContractMeta> {
   /** Whether this request has host-local privileges (loopback, outside Remote Control). */
   localRequest?: boolean
+  /** Whether this client may use the host's saved server profiles. */
+  serversUsable?: boolean
+  /** Whether this client may add, edit or remove the host's server profiles. */
+  serversManageable?: boolean
+  /** Whether this client may submit new remote-server credentials. */
+  secretEntryAllowed?: boolean
   /** Whether this request may open SideCars: local, or a verified direct HTTPS origin the host opted in. */
   sidecarsAllowed?: boolean
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */

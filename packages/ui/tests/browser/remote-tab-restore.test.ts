@@ -77,7 +77,8 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         return route.fulfill({ status: ["auth", "pairing"].includes(mode) ? 401 : mode === "refused" ? 200 : 503,
           json: mode === "refused" ? { apiContract: -1, serverId: "a" } : { error: "unavailable" } })
       } else if (path === "/api/auth/status") body = { authenticated: healthy }
-      else if (path === "/api/meta") body = { apiContract: CODENOMAD_API_CONTRACT, serverId: remote ? "a" : "local" }
+      else if (path === "/api/meta") body = { apiContract: CODENOMAD_API_CONTRACT, serverId: remote ? "a" : "local",
+        ...(!remote ? { localRequest: true, secretEntryAllowed: true } : {}) }
       else if (path === "/api/workspaces") {
         if (request.method() === "POST") {
           const input = request.postDataJSON()

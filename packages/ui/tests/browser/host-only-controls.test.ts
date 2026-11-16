@@ -81,3 +81,17 @@ test("listening and Remote Control locks preserve only device-local SideCar admi
     }
   } finally { await page.close() }
 })
+
+for (const mode of ["servers", "servers-readonly", "servers-refused"]) test(`home uses host server capabilities (${mode}) with the strict flag`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: "en-US" })
+  try {
+    for (const scenario of ["ssh", "saved"]) {
+      await page.goto(`${url}?mode=${mode}&surface=home&scenario=${scenario}`)
+      await page.locator("html[data-meta-settled=true]").waitFor()
+      await page.waitForFunction(() => (window as any).hostControlsConfig.isLoaded())
+      assert.equal(await page.getByRole("button", { name: /^Servers/ }).count(), Number(scenario === "ssh" && mode !== "servers-refused"))
+      assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), Number(scenario === "ssh" && mode === "servers"))
+      assert.equal(await page.getByRole("button", { name: "Open SideCar", exact: true }).count(), 0)
+    }
+  } finally { await page.close() }
+})

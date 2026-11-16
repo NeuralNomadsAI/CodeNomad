@@ -31,7 +31,7 @@ type LoginFlight = { promise: Promise<void>; legacy: boolean; destructive: boole
 type AuthMode = "observe-status"
 
 /** A follower owns its wait, never the shared exchange's cancellation. */
-function waitFor<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+export function waitFor<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(new CodeNomadServerError("unreachable"))
     promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))

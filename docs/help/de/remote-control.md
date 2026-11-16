@@ -70,7 +70,8 @@ Gekoppelte Geräte können normale Projekt-/Unterhaltungs-APIs verwenden, Prompt
 | Normale authentifizierte Oberfläche, Arbeitsbereiche, Unterhaltungen und SSE | Für gekoppelte Geräte verfügbar. |
 | Passwortanmeldung/-abmeldung, Passwortänderungen, lokale Token-Ersteinrichtung | Nicht verfügbar; Gerätezugangsdaten sind auch bei deaktivierter direkter Authentifizierung nötig. |
 | Fernsteuerungsstatus | Für gekoppelte Geräte lesbar; Verwaltung nicht verfügbar. Start/Stop, Kopplungserstellung, Geräteliste und Widerruf bleiben auf dem Host-Zugriffsweg. |
-| Desktop-Remote-Fenster-/Serververwaltung und Proxy-Routen | Nicht verfügbar (`/api/remote-servers/`, `/api/remote-proxy/`). |
+| Experimentelle gespeicherte Server und Backend-Relay | Authentifizierte Remote-Clients können alle Host-Server nutzen/verwalten, wenn Funktion und Host-Fähigkeiten dies erlauben. Neue Serverpasswörter/Kopplungslinks erfordern Fernsteuerung oder HTTPS statt unverschlüsseltem LAN-HTTP. Siehe [gespeicherte Server](remote-access.md#saved-servers). |
+| Desktop-Remote-Fenster und Fenster-Proxy | Nur auf dem Host (`/api/remote-proxy/`). |
 | SideCar-**Inhaltsproxy** | Erfordert Loopback (`/sidecars/`), ebenso wie SideCar-WebSockets. Die Registrierungs-APIs `/api/sidecars` sind für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. |
 | Inhalt der Web-Vorschau | Verfügbar, solange **Web-Vorschauen** (Standard) unter **Einstellungen → Remote-Zugriff → Fernsteuerung** auf dem Host eingeschaltet ist. Jede Vorschauadresse öffnet ihre Seite ohne Kopplung; halten Sie sie privat. Das Ausschalten beendet ausgelieferte Vorschauen und ihre WebSockets; gekoppelte Geräte blenden **Web-Vorschau öffnen** nach dem Neuladen aus. |
 | Automatisierungsbrücke | Nicht verfügbar (`/api/opencode-plugin/`). Native Desktop-Fähigkeiten werden nicht zu Browserfähigkeiten. |

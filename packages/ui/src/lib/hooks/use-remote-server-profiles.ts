@@ -11,6 +11,11 @@ import { RemoteServerInUseError, RemoteServerRequestError } from "../remote-serv
 import { backends } from "../backend-client"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { normalizeExplicitOrigin } from "../../../../server/src/opencode/servers/origin"
+import { secretEntryAllowed } from "../server-meta"
+
+function assertRemoteSecretEntry() {
+  if (!secretEntryAllowed()) throw new RemoteServerProbeError("secret_entry_forbidden")
+}
 
 export type RemoteServerInput = {
   id?: string
@@ -28,6 +33,7 @@ export function remoteServerErrorKey(error: unknown): string {
   if (error instanceof RemoteServerInUseError) return "remoteRestore.inUse"
   const code = error instanceof RemoteServerProbeError || error instanceof RemoteServerRequestError ? error.code : "unreachable"
   return code === "save" ? "settings.preferenceSaveFailed"
+    : code === "secret_entry_forbidden" ? "remoteBrowse.secretEntryForbidden"
     : code === "required" ? "settings.servers.dialog.errorRequired"
     : code === "credentials" ? "folderSelection.browseMenu.errorCredentials"
     : code === "invalid" ? "folderSelection.browseMenu.errorInvalid"
@@ -62,6 +68,7 @@ export function useRelayServerProfiles() {
     if (carriesCredentials(input.baseUrl)) throw new RemoteServerProbeError("credentials")
     const link = classifyCodeNomadLink(input.baseUrl)
     if (!link) throw new RemoteServerProbeError("invalid")
+    if (link.kind === "pairing") assertRemoteSecretEntry()
     const ssh = input.ssh ? { host: input.ssh.host.trim() } : undefined
     if (ssh && !/^[A-Za-z0-9_.@:/[\]%+][A-Za-z0-9_.@:/[\]%+-]{0,254}$/.test(ssh.host)) throw new RemoteServerProbeError("invalid")
     const saved = input.id ? config.remoteServers().find(p => p.id === input.id) : config.remoteServers().find(p => p.baseUrl === link.baseUrl && p.ssh?.host === ssh?.host)
@@ -90,7 +97,10 @@ export function useRelayServerProfiles() {
       // The write may have changed the captured policy. Connect requires the committed exact new policy.
       if (!enabled() || !viewCurrent() || profile.baseUrl !== baseUrl || profile.skipTlsVerify !== skipTlsVerify
         || profile.ssh?.host !== ssh?.host || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
-      if (link.kind === "pairing") await serverApi.connectRemoteServer(profile.id, { pairingLink: link.entryUrl }, op.signal)
+      if (link.kind === "pairing") {
+        assertRemoteSecretEntry()
+        await serverApi.connectRemoteServer(profile.id, { pairingLink: link.entryUrl }, op.signal)
+      }
       if (!enabled() || !viewCurrent() || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
       return profile
     } finally { op.dispose() }
@@ -132,6 +142,7 @@ export function useRemoteServerProfiles() {
     }
     // A Remote Control pairing code is consumed by the window that opens it, so a pairing link opens one where possible.
     const pairing = splitPairingLink(input.baseUrl)
+    if (pairing && !secretEntryAllowed()) throw new Error(t("remoteBrowse.secretEntryForbidden"))
     const openWindow = requestedWindow || (pairing !== null && canOpenRemoteWindows())
     if (openWindow && !canOpenRemoteWindows()) {
       throw new Error("Remote server windows can only be opened from a local desktop window")
@@ -162,6 +173,7 @@ export function useRemoteServerProfiles() {
           : undefined
 
       try {
+        if (pairing && !secretEntryAllowed()) throw new Error(t("remoteBrowse.secretEntryForbidden"))
         await openRemoteServerWindow(profile, pairing?.entryUrl ?? proxySession?.windowUrl, proxySession?.sessionId, windowOptions)
       } catch (error) {
         if (proxySession) void serverApi.deleteRemoteProxySession(proxySession.sessionId).catch(() => {})
