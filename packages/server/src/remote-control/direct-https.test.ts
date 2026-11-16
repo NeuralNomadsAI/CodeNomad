@@ -164,12 +164,15 @@ test("a direct HTTPS device is admitted through a reverse proxy, in device scope
     assert.equal((await f.app.inject({ url: "/api/remote-control/status", remoteAddress, headers: { host: PUBLIC_HOST, cookie } })).json().manageable, false)
     const mutation = await f.app.inject({ method: "DELETE", url: MUTATION, remoteAddress, headers: { host: PUBLIC_HOST, origin: PUBLIC, cookie } })
     assert.equal(mutation.statusCode, 204, mutation.body)
-    for (const [method, path] of [["POST", "/api/auth/token"], ["POST", "/api/auth/logout"], ["GET", "/login"], ["POST", "/api/remote-control/pairings"],
+    for (const [method, path] of [["POST", "/api/auth/token"], ["GET", "/login"], ["POST", "/api/remote-control/pairings"],
       ["GET", "/api/remote-control/devices"], ["GET", "/api/backends/x/api/meta"], ["GET", "/api/remote-servers"], ["GET", "/sidecars/x/"],
       ["POST", "/api/memory"], ["GET", "/api/memory/settings"], ["POST", "/api/remote-%63ontrol/pairings"]] as const) {
       const response = await f.app.inject({ method, url: path, remoteAddress, headers: { host: PUBLIC_HOST, origin: PUBLIC, cookie } })
       assert.equal(response.statusCode, 404, `${remoteAddress} ${method} ${path}`)
     }
+    const logout = await f.app.inject({ method: "POST", url: "/api/auth/logout", remoteAddress, headers: { host: PUBLIC_HOST, origin: PUBLIC, cookie } })
+    assert.equal(logout.statusCode, 200, logout.body)
+    assert.match(String(logout.headers["set-cookie"]), /__Host-codenomad_device=.*Max-Age=0/)
   }
 })
 

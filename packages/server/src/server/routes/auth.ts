@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify"
 import fs from "fs"
 import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
+import { deviceCookie } from "../../remote-control/gate"
 import { isRefusedDeviceRequest, isRemoteRequest } from "../../remote-control/request-origin"
 
 interface RouteDeps {
@@ -135,8 +136,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
   })
 
   app.post("/api/auth/logout", async (request, reply) => {
-    deps.authManager.revokeSession(request)
-    deps.authManager.clearSessionCookieWithOptions(reply, { secure: isSecureRequest(request) })
+    try {
+      deps.authManager.revokeSession(request)
+    } catch {
+      return reply.code(503).send({ error: "Logout unavailable" })
+    }
+    if (isRemoteRequest(request)) reply.header("Set-Cookie", deviceCookie("", 0))
+    else deps.authManager.clearSessionCookieWithOptions(reply, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })
 

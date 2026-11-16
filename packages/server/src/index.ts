@@ -557,7 +557,9 @@ async function main() {
   eventBus.on("storage.stateChanged", reconcileBackends)
 
   // The same application behind every listener of this backend.
+  let pushAuthorityReady = false
   const listenerDeps = {
+    pushAuthorityReady: () => pushAuthorityReady,
     allowedOrigins,
     memoryStore,
     workspaceManager,
@@ -705,6 +707,7 @@ async function main() {
   } else {
     serverMeta.addresses = []
   }
+  pushAuthorityReady = true
 
   console.log(`Local Connection URL : ${serverMeta.localUrl}`)
   if (serverMeta.remoteUrl) {
