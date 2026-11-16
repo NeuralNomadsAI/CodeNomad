@@ -193,6 +193,20 @@ test("tree capture records immutable root and nested descendant identities", asy
   ] })
 })
 
+test("tree capture leaves out an orphan whose dead parent's PID a descendant now holds", async () => {
+  // 300 and its child 301 outlived their launcher; the root's later child 200 took its PID.
+  const tables = {
+    linux: "100|1|linux:boot:1000\n300|200|linux:boot:500\n301|300|linux:boot:510\n200|100|linux:boot:2000\n201|200|linux:boot:2000\n",
+    win32: "100|1|win32:1000\n300|200|win32:500\n301|300|win32:510\n200|100|win32:2000\n201|200|win32:2000\n",
+    darwin: "100 1 Mon Nov 16 10:00:00 2026\n300 200 Mon Nov 16 09:00:00 2026\n301 300 Mon Nov 16 09:00:05 2026\n"
+      + "200 100 Mon Nov 16 10:00:30 2026\n201 200 Mon Nov 16 10:00:30 2026\n",
+  }
+  for (const [platform, stdout] of Object.entries(tables) as Array<[NodeJS.Platform, string]>) {
+    const tree = await captureProcessTree(100, platform, () => ({ status: 0, stdout, stderr: "" }))
+    assert.deepEqual(tree?.members.map(({ pid }) => pid), [100, 200, 201], platform)
+  }
+})
+
 test("Linux captures ready processes without per-process helper commands", {
   skip: process.platform !== "linux",
   timeout: 5_000,
