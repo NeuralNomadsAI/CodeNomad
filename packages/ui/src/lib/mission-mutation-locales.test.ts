@@ -15,7 +15,7 @@ import { zhHansMessages } from "./i18n/messages/zh-Hans"
 test("all ten registered locale bundles own truthful creation classification keys without fallback", () => {
   const bundles: Record<Locale, Record<string, string>> = { en: enMessages, de: deMessages, es: esMessages, fr: frMessages,
     he: heMessages, ja: jaMessages, ne: neMessages, ru: ruMessages, tr: trMessages, "zh-Hans": zhHansMessages }
-  const keys = ["missions.control.creation.uncertain", "missions.control.creation.uncertainOther", "missions.control.creation.scopeConflict", "missions.control.creation.capacity",
+  const keys = ["missions.control.creation.capacity",
     "missions.control.creation.unavailable", "missions.control.creation.worktreeDeleting",
      "missions.control.mutation.requestConflict", "missions.control.mutation.forbidden",
      "missions.cleanup.error.revisionConflict", "missions.cleanup.error.requestConflict", "missions.cleanup.error.controlPending"]
@@ -24,10 +24,6 @@ test("all ten registered locale bundles own truthful creation classification key
     assert.ok(messages[key]?.length, `${locale} owns ${key}`)
     if (locale !== "en") assert.notEqual(messages[key], enMessages[key as keyof typeof enMessages])
   }
-  assert.match(enMessages[keys[0] as keyof typeof enMessages], /deletion remains blocked/)
-  assert.match(enMessages[keys[0] as keyof typeof enMessages], /reopening does not repair/)
-  assert.match(enMessages[keys[0] as keyof typeof enMessages], /restart recovery are not yet qualified/)
-  // A second editor's own draft was never sent; it must not inherit the sender's wording.
-  assert.match(enMessages["missions.control.creation.uncertainOther"], /was not sent/)
-  assert.doesNotMatch(enMessages["missions.control.creation.uncertainOther"], /exactly as sent|original request and draft/)
+  for (const messages of Object.values(bundles)) for (const key of ["uncertain", "uncertainOther", "scopeConflict"])
+    assert.equal(`missions.control.creation.${key}` in messages, false)
 })

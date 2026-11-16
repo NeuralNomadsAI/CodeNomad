@@ -591,9 +591,10 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
     read.resolve()
     await waitForDepthInfo(form, "OpenCode effective depth: 2")
     await waitForDepthReady(form)
+    const saving = await fixtureText(page, "missions.depth.saving")
     await menu.selectOption("3")
     await writing.promise
-    await controls.getByRole("status").filter({ hasText: "Saving…" }).waitFor({ state: "attached" })
+    await controls.getByRole("status").filter({ hasText: saving }).waitFor({ state: "attached" })
     assert.equal(await locked(), true, "a write locks the menu too")
     assert.equal(await menu.evaluate(element => (element as HTMLSelectElement).disabled), false, "and keeps it focusable")
     // Choices made during the write (a native closed select's arrow keys fire one change
@@ -610,7 +611,7 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
     assert.deepEqual(writes, [3, 5])
     assert.equal(await menu.inputValue(), "5")
     assert.equal(await menu.evaluate(element => element === document.activeElement), true, "focus stays on the menu")
-    await page.waitForFunction(() => !document.querySelector(".mission-depth [role=status]")?.textContent?.includes("Saving…"))
+    await page.waitForFunction(text => !document.querySelector(".mission-depth [role=status]")?.textContent?.includes(text), saving)
   } finally { read.resolve(); write.resolve(); await page.close() }
 })
 
@@ -1302,6 +1303,71 @@ test("mission selection, focus and reader survive native invalidations, remount 
     assert.equal(await page.locator(".mission-reader").count(), 0)
     await page.screenshot({ path: screenshotPath("mission-control-browser"), fullPage: true })
   } catch (error) { console.error(await page.locator("body").innerText()); throw error } finally { await page.close() }
+})
+
+for (const outcome of ["created", "rejected", "unknown", "remounted", "hidden-response", "new-client"] as const) test(`lost creation response reconciles ${outcome} silently without a duplicate`, async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const receiptGate = Promise.withResolvers<void>()
+  try {
+    await setup(page)
+    await routeUiSettings(page, {})
+    const created = { ...mission("recovered"), title: "Recovered mission", objective: "Original request" }
+    let requestId = "", creates = 0, reads = 0, settled = false
+    const state = () => outcome === "remounted" ? settled ? "created" : "unknown"
+      : outcome === "hidden-response" ? "created" : outcome === "new-client" ? "unknown" : outcome
+    await page.route("**/api/workspaces/fixture/missions**", async route => {
+      const request = route.request()
+      if (request.url().includes("/creation/")) {
+        const read = ++reads
+        assert.ok(request.url().endsWith(encodeURIComponent(requestId)))
+        if (outcome === "hidden-response" || outcome === "new-client" && read === 1) await receiptGate.promise
+        const resultState = outcome === "new-client" && read === 1 ? "created" : state()
+        return route.fulfill({ json: { requestId, state: resultState, ...(resultState === "created" ? { mission: created } : {}) } })
+      }
+      if (isMissionContentRequest(request.url())) return route.fallback()
+      if (request.method() === "POST" && !request.url().endsWith("/panel-page")) {
+        creates++; requestId = request.postDataJSON().requestId
+        return outcome === "remounted" ? route.fulfill({ status: 409, json: { code: "creation-conflict" } }) : route.abort("failed")
+      }
+      return route.fulfill({ json: { available: true, missions: panelMissions(state() === "created" && reads ? [created] : []), generatedAt: 1, discardedEvents: 0 } })
+    })
+    await page.goto(url)
+    if (outcome === "new-client") await fixtureCall(page, "connectCatalog")
+    await missionGeneralAction(page, "Create mission").click()
+    const form = page.locator("form.mission-editor"), objective = form.locator("textarea").first(), submit = form.locator("button[type=submit]")
+    await objective.fill("Original request")
+    await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
+    await submit.click()
+    await until(() => reads > 0)
+    if (outcome === "hidden-response") {
+      await page.getByRole("button", { name: "Cancel", exact: true }).click()
+      const received = page.waitForResponse(response => response.url().includes("/missions/creation/"))
+      receiptGate.resolve(); await received
+      await missionGeneralAction(page, "Create mission").click()
+    } else if (outcome === "new-client") {
+      await fixtureCall(page, "replaceClient")
+      await until(() => reads >= 2).catch(async error => { throw new Error(`${error}; reads=${reads}; ${await form.innerText()}`) })
+      receiptGate.resolve()
+    }
+    if (outcome === "remounted") {
+      await page.getByRole("button", { name: "Cancel", exact: true }).click()
+      settled = true
+      await missionGeneralAction(page, "Create mission").click()
+    }
+    if (state() === "created") await selectedMissionTitle(page).filter({ hasText: "Recovered mission" }).waitFor()
+    else if (outcome === "rejected") {
+      await page.waitForFunction(() => !(document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled)
+      assert.equal(await objective.inputValue(), "Original request")
+    } else {
+      assert.equal(await submit.isDisabled(), true)
+      await form.evaluate(element => (element as HTMLFormElement).requestSubmit())
+      await page.getByRole("button", { name: "Cancel", exact: true }).click()
+      await missionGeneralAction(page, "Create mission").click()
+      assert.equal(await page.locator("form.mission-editor button[type=submit]").isDisabled(), true)
+    }
+    assert.equal(await page.locator("form.mission-editor [role=alert]").count(), 0)
+    assert.equal(creates, 1)
+  } finally { receiptGate.resolve(); await page.close() }
 })
 
 test("edits keep drafts and original revision during refresh, and creation retries reuse request identity", async () => {

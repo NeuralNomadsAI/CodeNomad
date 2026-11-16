@@ -689,11 +689,12 @@ test("malformed and wrong-playbook profiles refuse before creation dispatch", as
   const app = Fastify({ logger: false })
   registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
   try {
+    let invalid = 0
     for (const profiles of [{ roles: { validator: { agent: "child" } } },
       { coordinator: { model: { providerID: "owned", id: "large", forged: "bad" } } },
       { roles: { __unknown: { agent: "child" } } }]) {
       const result = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions",
-        payload: { objective: "Profiles", template: "wayfinder", requestId: "bad-profiles", profiles } })
+        payload: { objective: "Profiles", template: "wayfinder", requestId: `bad-profiles-${invalid++}`, profiles } })
       assert.equal(result.statusCode, 400)
     }
     assert.equal(fake.calls.length, 0)
@@ -714,9 +715,10 @@ test("creation forwards both task policies; dropping independent mode retains an
   }
   const fake = mutationManager(), app = Fastify({ logger: false }); t.after(() => app.close())
   registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
+  let invalid = 0
   for (const taskMode of [null, "root", false, {}]) {
     assert.equal((await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions",
-      payload: { objective: "Invalid policy", template: "custom", requestId: "bad-mode", taskMode } })).statusCode, 400)
+      payload: { objective: "Invalid policy", template: "custom", requestId: `bad-mode-${invalid++}`, taskMode } })).statusCode, 400)
   }
   assert.equal(fake.calls.length, 0)
 })

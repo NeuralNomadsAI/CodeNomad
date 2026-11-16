@@ -9,7 +9,7 @@ import { missionStore } from "../stores/missions"
 import { createMissionViewFence } from "../lib/mission-view-fence"
 import { isDefinitiveCreationRejection, missionMutationErrorKey } from "../lib/mission-mutation"
 import { copyMissionProfiles, holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation,
-  retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
+  consumeMissionCreation, reconcileMissionCreation, retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
 import { MissionProfileControls } from "./mission-profile-controls"
 import { MissionProfileSummary } from "./mission-profile-summary"
 import { missionProfileRoles, profilesForTemplate } from "./mission-profile-controls-data"
@@ -27,6 +27,7 @@ import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-r
 import { MISSION_TITLE_MAX, deriveMissionTitle } from "../../../server/src/missions/mission-title"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
+import { instances } from "../stores/instances"
 import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
 import type { MissionEditorAction, MissionEditorDraft } from "../stores/mission-editor-state"
 import { MissionBodyPending } from "./mission-reader-body"
@@ -148,6 +149,23 @@ export function MissionEditor(props: {
   const [adopted, setAdopted] = createSignal(Boolean(held))
   const creationHold = () => kind === "create" && adopted() ? missionCreationHold(identity()) : undefined
   const creationPending = () => creationHold()?.state === "pending"
+  const [creationReading, setCreationReading] = createSignal(false)
+  const reconcileCreation = async () => {
+    const scope = identity(), instanceId = props.instanceId, view = captureView()
+    const operation = props.captureOperation?.() ?? (() => true)
+    const current = () => view() && operation() && props.action === action
+    const owner = { client: instances().get(instanceId)?.client, generation: getOpenCodeInstanceGeneration(instanceId) }
+    const ownerCurrent = () => instances().get(instanceId)?.client === owner.client && getOpenCodeInstanceGeneration(instanceId) === owner.generation
+    setCreationReading(true)
+    try {
+      const receipt = await reconcileMissionCreation(scope, instanceId, owner, ownerCurrent)
+      if (!current() || !ownerCurrent() || !receipt || !consumeMissionCreation(scope, receipt, owner)) return
+      if (receipt.state === "created") props.onSaved(receipt.mission)
+    } finally { if (current() && ownerCurrent()) setCreationReading(false) }
+  }
+  createEffect(on([() => creationHold()?.state, isActive, identity, () => instances().get(props.instanceId)?.client, () => getOpenCodeInstanceGeneration(props.instanceId)], () => {
+    if (isActive() && creationHold()?.state === "uncertain") void reconcileCreation()
+  }))
   const uncertain = () => recurrenceUncertain() || creationHold()?.state === "uncertain" || schedule.held()?.state === "uncertain"
   // The request whose exact draft this editor shows. An adopted hold from another
   // editor leaves this draft unsent; its wording must not claim otherwise.
@@ -605,9 +623,9 @@ export function MissionEditor(props: {
         <button type="button" class="window-action" disabled={schedule.reading() || !!schedule.held()} onClick={() => void schedule.reload()}>{t("missions.scheduling.reload")}</button></Show>
       <Show when={schedule.previousDraft()}>{previous => <details class="mission-profile-optional"><summary>{t("missions.scheduling.previousDraft")}</summary>
         <textarea readOnly rows={8} value={previous()} aria-label={t("missions.scheduling.previousDraft")} /></details>}</Show>
-      <Show when={uncertain()} fallback={<Show when={error()}><p role="alert">{error()}</p></Show>}><p role="alert">{t(schedule.held()
-        ? otherUncertain() ? "missions.scheduling.uncertainOther" : "missions.scheduling.uncertain"
-        : otherUncertain() ? "missions.control.creation.uncertainOther" : "missions.control.creation.uncertain")}</p></Show>
+      <Show when={!uncertain() && error()}><p role="alert">{error()}</p></Show>
+      <Show when={kind !== "create" && schedule.held()?.state === "uncertain"}><p role="alert">{t(otherUncertain()
+        ? "missions.scheduling.uncertainOther" : "missions.scheduling.uncertain")}</p></Show>
     </div>
     <footer class="window-footer">
       <Show when={kind === "create"}>
@@ -619,11 +637,11 @@ export function MissionEditor(props: {
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>
       <Show when={needsSourceLocation() && sourceLocationFailed() && !uncertain()}><button type="button" class="button-secondary"
         onClick={() => setSourceLocationRevision(value => value + 1)}>{t("missions.control.refresh")}</button></Show>
-      <Show when={uncertain()}><button type="button" class="button-secondary" disabled={schedule.reading()} onClick={() => {
+      <Show when={uncertain()}><button type="button" class="button-secondary" disabled={schedule.reading() || creationReading()} onClick={() => {
         if (!isActive()) return
         if (schedule.held()) void schedule.reconcile()
         else if (mode() === "recurring") props.onRecurrenceRefresh?.()
-        else void missionStore.refresh(props.instanceId)
+        else void reconcileCreation()
       }}>{t(schedule.held() ? "missions.scheduling.readReceipt" : "missions.control.refresh")}</button></Show>
       <Show when={uncertain() && schedule.retryable()}><button type="button" class="button-secondary" disabled={schedule.reading()}
         onClick={() => void schedule.retryPreparation()}>{t("missions.control.retry")}</button></Show>

@@ -143,6 +143,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         recover(input: unknown, context: MutationContext): Promise<unknown>
         cleanupTarget(input: unknown): Promise<unknown>
         create(input: unknown, context: MutationContext): Promise<unknown>
+        creationReceipt(input: unknown): Promise<unknown>
         update(input: unknown, context: MutationContext): Promise<unknown>
         delete(input: unknown, context: MutationContext): Promise<unknown>
       },
@@ -295,6 +296,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
         })))
       },
       create: async (input, context) => { assertActive(); return mutationResult(context, () => control.create(parseCreateMissionInput(input))) },
+      creationReceipt: async input => { assertActive(); return control.creationReceipt(parseCreateMissionInput(input)) },
       update: async (input, context) => { assertActive(); return mutationResult(context, () => control.update(parseUpdateMissionInput(input))) },
       delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
     }
@@ -305,7 +307,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       scheduleCarrierRead: tracked(handlers.scheduleCarrierRead),
       documentCapabilities: tracked(handlers.documentCapabilities),
       documentActivation: tracked(handlers.documentActivation),
-      snapshot: tracked(handlers.snapshot), list: tracked(handlers.list), mission: tracked(handlers.mission),
+      snapshot: tracked(handlers.snapshot), list: tracked(handlers.list), mission: tracked(handlers.mission), creationReceipt: tracked(handlers.creationReceipt),
       content: tracked(handlers.content), tasks: tracked(handlers.tasks), panelPage: tracked(handlers.panelPage), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
       recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
       recurrenceRunNow: tracked(handlers.recurrenceRunNow), recurrenceRunNowStatus: tracked(handlers.recurrenceRunNowStatus),

@@ -504,6 +504,21 @@ panel remounts; the editor shows no slot preview. An explicit conflict reload ad
 comparison containing only the preceding user fields. Refreshing observation at the same revision
 preserves those editable fields.
 
+Immediate creation retains its original request and physical scope before dispatch.
+`GET /api/workspaces/:id/missions/creation/:requestId` reads the backend's original
+HTTP outcome. Unknown native transport outcomes use `creationReceipt` under project
+exclusion: the immutable creation event and document digest confirm the exact input.
+Positive proof releases the original physical hold and selects the Mission; a
+certified terminal refusal restores the form. Missing or unreadable evidence retains
+the request with read-only Refresh, silently. Scope conflicts reconcile that retained
+request in its original Location. The backend retains at most 128 outcomes; terminal
+entries may be evicted, while unresolved entries stay reserved for its lifetime.
+Successful requests retain their original outcome and preparation through repeated
+POSTs, which direct callers to receipt recovery. Receipt HTTP reads have one
+30-second deadline through body consumption. Confirmed renderer results stay held
+until a current owning view consumes them; client and native-generation fences
+separate concurrent reads and reject late responses from a replaced connection.
+
 `stores/mission-schedule-editor-holds.ts` retains serialized create/configure/journal-edit
 intent and its exact draft before dispatch. Transport loss and incomplete replies keep
 that identity across mountings. Explicit receipt refresh performs reads only; a matching

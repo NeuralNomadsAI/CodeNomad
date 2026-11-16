@@ -148,6 +148,75 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
 }
 const payload = { requestId: "create", objective: "Private test", template: "custom", directory }
 
+test("lost creation acknowledgement is read by its original request without another create or premature fence release", async () => {
+  const f = await fixture(false, 20)
+  try {
+    f.loseAck()
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })).json().code, "creation-uncertain")
+    const creates = f.rpcCreates, writes = f.writes
+    const receipt = await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })
+    assert.equal(receipt.json().state, "created")
+    assert.equal(receipt.json().requestId, payload.requestId)
+    assert.equal(receipt.json().mission.bodies.objective.characters, payload.objective.length)
+    assert.equal(f.rpcCreates, creates); assert.equal(f.writes, writes)
+    await f.fence.run(physical, [physical], async () => {})
+  } finally { await f.close() }
+})
+
+test("the original terminal refusal is recoverable; an absent request is unknown", async () => {
+  const f = await fixture()
+  try {
+    await f.handlers.create({ requestID: payload.requestId, objective: "Other contract", template: payload.template })
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })).statusCode, 409)
+    const receipt = await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })
+    assert.deepEqual(receipt.json(), { requestId: "create", state: "rejected" })
+    assert.deepEqual((await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/absent" })).json(), { requestId: "absent", state: "unknown" })
+    assert.equal(f.creates, 1)
+  } finally { await f.close() }
+})
+
+test("a lost pre-dispatch refusal is retained as terminal without any native effect", async () => {
+  const f = await fixture()
+  try {
+    f.setDocumentCapabilities(false)
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })).statusCode, 503)
+    assert.deepEqual((await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })).json(),
+      { requestId: "create", state: "rejected" })
+    assert.equal(f.rpcCreates, 0); assert.equal(f.creates, 0)
+  } finally { await f.close() }
+})
+
+test("a repeated successful request cannot replace its original outcome with a later preflight refusal", async () => {
+  const f = await fixture()
+  try {
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })).statusCode, 200)
+    f.setDocumentCapabilities(false)
+    const repeat = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })
+    assert.equal(repeat.json().code, "creation-uncertain")
+    assert.equal((await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })).json().state, "created")
+    assert.equal(f.rpcCreates, 1); assert.equal(f.creates, 1)
+  } finally { await f.close() }
+})
+
+test("pending creation and changed-scope duplicates retain the original request until native completion", async () => {
+  const f = await fixture(false, 20), gate = f.delayCreation()
+  try {
+    const original = f.track(f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload }).then(r => r))
+    await waitForGate(f.creationStarted, original, "receipt pending")
+    assert.equal((await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })).json().state, "unknown")
+    const changed = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions",
+      payload: { ...payload, directory: "C:/private-fixture/other" } })
+    assert.equal(changed.json().code, "creation-conflict")
+    await assert.rejects(f.fence.run(physical, [physical], async () => assert.fail("pending create")), /Timed out/)
+    assert.equal(f.rpcCreates, 1)
+    gate.resolve(); assert.equal((await original).statusCode, 200)
+    f.manager.getServiceLocation = () => ({ directory: "C:/private-fixture/current-default" })
+    const receipt = (await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })).json()
+    assert.equal(receipt.state, "created")
+    assert.equal(receipt.mission.bodies.objective.characters, payload.objective.length)
+  } finally { gate.resolve(); await f.close() }
+})
+
 test("healthy existing creation contract conflicts return definitive rejection without new roots or parked permits", async () => {
   const f = await fixture(false, 50)
   try {
@@ -156,12 +225,12 @@ test("healthy existing creation contract conflicts return definitive rejection w
     for (const objective of [payload.objective, "Different creation", "Different creation", "Changed contract"]) {
       const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload: { ...payload, objective } })
       assert.equal(response.statusCode, 409)
-      assert.equal(response.json().code, "request-conflict", "including unprepared native creation versus prepared HTTP creation")
+      assert.equal(response.json().code, objective === payload.objective ? "request-conflict" : "creation-conflict")
       assert.deepEqual([...f.storage], bytes)
       assert.deepEqual([...f.sessions], roots)
       await f.fence.run(physical, [physical], async () => {})
     }
-    assert.equal(f.creates, 1); assert.equal(f.writes, 1); assert.equal(f.rpcCreates, 4)
+    assert.equal(f.creates, 1); assert.equal(f.writes, 1); assert.equal(f.rpcCreates, 1)
   } finally { await f.close() }
 })
 
@@ -196,6 +265,7 @@ test("unproven or mismatched no-effect conflicts retain the original permit and 
       })
       const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })
       assert.equal(response.json().code, "creation-uncertain", mode)
+      assert.equal((await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })).json().state, "unknown", mode)
       assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })).json().code, "creation-uncertain")
       assert.equal(f.rpcCreates, 1)
       await assert.rejects(f.fence.run(physical, [physical], async () => assert.fail("must not evacuate")), /Timed out/)
@@ -213,6 +283,7 @@ test("post-create profile/publication errors and lost ACKs retain the hold witho
       const request = { ...payload, profiles: { coordinator: { agent: "fixture" } } }
       const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload: request })
       assert.equal(response.json().code, "creation-uncertain", mode)
+      if (mode !== "ack") assert.equal((await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })).json().state, "unknown", mode)
       assert.equal(f.creates, 1)
       assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload: request })).json().code, "creation-uncertain")
       assert.equal(f.creates, 1); assert.equal(f.rpcCreates, 1)
@@ -238,7 +309,7 @@ test("damaged creation storage cannot produce a no-effect receipt or create anot
   } finally { await f.close() }
 })
 
-test("damaged existing creation evidence rejects before duplicate root creation even below capacity", async () => {
+test("damaged evidence after successful creation prevents replay without acquiring another physical permit", async () => {
   const f = await fixture(false, 20)
   try {
     assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })).statusCode, 200)
@@ -247,7 +318,8 @@ test("damaged existing creation evidence rejects before duplicate root creation 
     const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })
     assert.equal(response.json().code, "creation-uncertain")
     assert.equal(f.creates, 1); assert.equal(f.writes, 1)
-    await assert.rejects(f.fence.run(physical, [physical], async () => assert.fail("must not evacuate")), /Timed out/)
+    assert.equal((await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })).json().state, "unknown")
+    await f.fence.run(physical, [physical], async () => {})
   } finally { await f.close() }
 })
 async function specialist(f: Awaited<ReturnType<typeof fixture>>) {
@@ -558,6 +630,12 @@ test("HTTP, pipeline and coordinator prepare freeze the same Compare judge befor
       const run = async () => {
         if (path === "http") {
           const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload: request })
+          if (response.statusCode === 409) {
+            assert.equal(response.json().code, "creation-uncertain")
+            const receipt = (await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })).json()
+            assert.equal(receipt.state, "created")
+            return receipt.mission
+          }
           assert.equal(response.statusCode, 200); return response.json().mission
         }
         if (path === "pipeline") {
@@ -570,7 +648,9 @@ test("HTTP, pipeline and coordinator prepare freeze the same Compare judge befor
       }
       const mission = await run()
       assert.deepEqual(mission.profiles.roles.comparator, { model: profiles.coordinator.model })
-      assert.deepEqual(await run(), mission)
+      const replay = await run()
+      assert.equal(replay.id, mission.id)
+      assert.deepEqual(replay.profiles, mission.profiles)
       assert.equal(f.creates, 1)
     } finally { await f.close() }
   }

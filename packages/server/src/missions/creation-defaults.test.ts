@@ -68,6 +68,30 @@ function fixture() {
     setPreferences: (value: unknown) => { preferences = value }, invalidate: () => { preferences = null }, restart: () => { control = new MissionControl(options) } }
 }
 
+test("read-only creation receipt validates immutable request/document evidence after edits and reload", async () => {
+  const f = fixture(), input = { prepared: true, requestID: "origin", objective: "Original", template: "custom" as const,
+    taskMode: "native" as const, expectedCoordinatorLocation: { directory: "/repo" }, watchedConversationIDs: ["ses_context"] }
+  const empty = await f.control.creationReceipt(input)
+  assert.equal(empty.mission, undefined)
+  assert.equal(f.created, 0)
+  const { mission } = await f.control.create(input)
+  await f.control.update({ missionID: mission.id, requestID: "edit", expectedRevision: mission.revision, objective: "Edited" })
+  f.restart()
+  const bytes = structuredClone([...f.values])
+  const receipt = await f.control.creationReceipt(input)
+  assert.equal(receipt.mission?.id, mission.id)
+  const ajv = new Ajv()
+  const validate = ajv.compile(CODENOMAD_MISSIONS_RPC.methods.creationReceipt.output)
+  assert.ok(validate(receipt), JSON.stringify(validate.errors))
+  for (const changed of [{ objective: "Changed" }, { expectedCoordinatorLocation: { directory: "/other" } },
+    { watchedConversationIDs: ["ses_other"] }]) {
+    try { assert.equal((await f.control.creationReceipt({ ...input, ...changed })).mission, undefined) }
+    catch (error) { assert.equal((error as any).code, "request-conflict") }
+  }
+  assert.deepEqual([...f.values], bytes, "receipt reads leave both journal and document untouched")
+  assert.equal(f.created, 1)
+})
+
 test("both agent creation paths store the editor's effective Compare judge and freeze the selected slot's origin", async () => {
   const model = { providerID: "p", id: "coordinator" }
   for (const method of ["prepare", "inspect"] as const) for (const origin of ["explicit", "preference"] as const) {

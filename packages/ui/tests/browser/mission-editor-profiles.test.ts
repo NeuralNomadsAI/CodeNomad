@@ -194,7 +194,8 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
       await page.setViewportSize({ width: 1280, height: 720 })
     }
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
-    await page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" }).waitFor()
+    await page.waitForFunction(() => Boolean(window.missionEditorLifetime.held()))
+    assert.equal(await page.locator("form.mission-editor [role=alert]").count(), 0)
     const expected = { coordinator: { agent: "root-only", model: { providerID: "p", id: "m", variant: "high" } },
       roles: { "review-spec": { agent: "child-only", model: { providerID: "p", id: "m", variant: "low" } },
         "review-standards": { agent: "all" }, validator: { agent: "child-only" }, implementer: { agent: "all" } } }
@@ -280,7 +281,8 @@ test("creation waits for owned defaults and sends their exact snapshot through v
     await openAgents(page)
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "saved-root")
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
-    await page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" }).waitFor()
+    await page.waitForFunction(() => Boolean(window.missionEditorLifetime.held()))
+    assert.doesNotMatch(await page.locator("form.mission-editor").innerText(), /native creation result is unconfirmed/)
     assert.equal(writes.length, 1)
     assert.deepEqual(writes[0].profiles, profiles)
     assert.equal(writes[0].directory, undefined)
@@ -365,7 +367,9 @@ test("recurring creation shares the draft, prefills its title and picks named co
       await page.screenshot({ path: path.join(captureDirectory, "creation-recurring.png"), fullPage: true })
     }
     await form.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
-    await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    await page.waitForFunction(() => (document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled
+      && document.querySelector('form.mission-editor button[type=submit]')?.textContent === "Create")
+    assert.doesNotMatch(await form.innerText(), /unconfirmed/)
     assert.equal(writes.length, 1)
     const configuration = writes[0].configuration as Record<string, unknown>
     assert.equal(configuration.title, "My daily schedule")
@@ -408,7 +412,7 @@ test("the Playbook selector keeps a folded model summary, separated groups and n
     assert.equal(await page.locator(".mission-create-template > p").count(), 0)
     assert.equal(await page.locator(".mission-create-option button").count(), 0, "profiles have no reset or Preferences commands")
     assert.deepEqual(await page.locator(".mission-create-group, form.mission-editor .mission-scheduling").evaluateAll(groups =>
-      groups.map(group => getComputedStyle(group).borderBlockStartWidth)), ["1px", "1px", "1px"])
+      groups.map(group => getComputedStyle(group).borderBlockStartWidth)), ["1px", "1px", "1px", "1px"])
     const row = page.locator("form.mission-editor .mission-profile-row").first()
     const columns = await row.locator("label").evaluateAll(labels => labels.map(label => label.getBoundingClientRect().x))
     assert.ok(columns[0] < columns[1] && columns[1] < columns[2], "Agent, Model and Thinking use the shared three-column layout")

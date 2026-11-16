@@ -257,6 +257,20 @@ const mutationMissionResult = {
 } as const
 
 const requestID = { type: "string", minLength: 1, maxLength: 128 } as const
+const creationInput = {
+  type: "object", properties: {
+    requestID, objective: { type: "string", minLength: 1, maxLength: 20_000 },
+    title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX }, notes: { type: "string", maxLength: 20_000 },
+    template: { type: "string", enum: ["custom", "wayfinder", "debug", "delivery", "compare"] },
+    coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
+    watchedConversationIDs: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 240 } },
+    expectedCoordinatorLocation: location, prepared: { type: "boolean" },
+    preparedBy: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
+      coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 } },
+      required: ["missionID", "coordinatorSessionID"], additionalProperties: false },
+    profiles: missionProfilesSchema, creationDefaults: missionCreationDefaultsWire, taskMode: missionTaskModeSchema,
+  }, required: ["requestID", "objective", "template"], additionalProperties: false,
+} as const
 const contentSelector = {
   kind: { type: "string", enum: ["mission", "task", "report", "change"] }, field: { type: "string", minLength: 1, maxLength: 64 },
   taskKey: { type: "string", minLength: 2, maxLength: 64 }, reportId: { type: "string", minLength: 1, maxLength: 240 },
@@ -452,26 +466,13 @@ export const CODENOMAD_MISSIONS_RPC = {
     },
     create: {
       errors: missionMutationErrors,
-      input: {
-        type: "object", properties: {
-          requestID, objective: { type: "string", minLength: 1, maxLength: 20_000 },
-          title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
-          notes: { type: "string", maxLength: 20_000 },
-          template: { type: "string", enum: ["custom", "wayfinder", "debug", "delivery", "compare"] },
-          coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
-          watchedConversationIDs: { type: "array", maxItems: 32, uniqueItems: true,
-            items: { type: "string", minLength: 1, maxLength: 240 } },
-          expectedCoordinatorLocation: location,
-          prepared: { type: "boolean" },
-          preparedBy: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
-            coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 } },
-            required: ["missionID", "coordinatorSessionID"], additionalProperties: false },
-          profiles: missionProfilesSchema,
-          creationDefaults: missionCreationDefaultsWire,
-          taskMode: missionTaskModeSchema,
-        }, required: ["requestID", "objective", "template"], additionalProperties: false,
-      },
+      input: creationInput,
       output: mutationMissionResult,
+    },
+    creationReceipt: {
+      input: creationInput,
+      output: { type: "object", properties: { requestID, projectID: { type: "string" }, mission: compactMission },
+        required: ["requestID", "projectID"], additionalProperties: false },
     },
     update: {
       errors: missionMutationErrors,

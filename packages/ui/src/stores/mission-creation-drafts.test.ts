@@ -1,7 +1,71 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation, retainUncertainMissionCreation,
-  uncertainMissionCreation } from "./mission-creation-drafts"
+  uncertainMissionCreation, reconcileMissionCreation, consumeMissionCreation } from "./mission-creation-drafts"
+import { serverApi } from "../lib/api-client"
+const owner = { client: {}, generation: 1 }, current = () => true
+
+test("a confirmed result remains held until its owning view consumes it", async t => {
+  const operation = { requestId: "hidden-result", objective: "Original", notes: "", template: "custom" as const }
+  retainUncertainMissionCreation("hidden-result/scope", operation)
+  t.mock.method(serverApi, "missionCreationReceipt", async () => ({ requestId: operation.requestId, state: "created", mission: { id: "msn_original" } }))
+  const receipt = await reconcileMissionCreation("hidden-result/scope", "original-instance", owner, current)
+  assert.equal(receipt?.state, "created")
+  assert.ok(missionCreationHold("hidden-result/scope"))
+  assert.equal(holdMissionCreation("hidden-result/scope", { ...operation, requestId: "duplicate" }), false)
+  assert.equal(await reconcileMissionCreation("hidden-result/scope", "original-instance", owner, current), receipt)
+  assert.equal(consumeMissionCreation("hidden-result/scope", receipt!, owner), true)
+})
+
+test("exact original receipts release created/rejected holds; unknown and foreign receipts cannot authorize duplicates", async t => {
+  const operation = { requestId: "receipt-original", objective: "Original", notes: "", template: "custom" as const, directory: "/original" }
+  let receipt: any = { requestId: operation.requestId, state: "unknown" }, reads = 0
+  t.mock.method(serverApi, "missionCreationReceipt", async (instanceId: string, requestId: string) => {
+    reads++; assert.equal(instanceId, "original-instance"); assert.equal(requestId, operation.requestId)
+    return receipt
+  })
+  for (const state of ["created", "rejected"] as const) {
+    const scope = `receipt/${state}`
+    holdMissionCreation(scope, operation); retainUncertainMissionCreation(scope, operation)
+    for (const response of [{ requestId: operation.requestId, state: "unknown" }, { requestId: "other", state: "rejected" }, {}]) {
+      receipt = response
+      assert.equal(await reconcileMissionCreation(scope, "original-instance", owner, current), undefined)
+      assert.equal(holdMissionCreation(scope, { ...operation, requestId: "duplicate" }), false)
+    }
+    receipt = { requestId: operation.requestId, state, ...(state === "created" ? { mission: { id: "msn_original" } } : {}) }
+    const result = await reconcileMissionCreation(scope, "original-instance", owner, current)
+    assert.equal(result?.state, state)
+    assert.ok(missionCreationHold(scope), "proof stays held before a current view consumes it")
+    assert.equal(consumeMissionCreation(scope, result!, owner), true)
+    assert.equal(missionCreationHold(scope), undefined)
+  }
+  assert.equal(reads, 8)
+})
+
+test("replacement client or native generation starts a fresh read and cannot consume an old receipt", async t => {
+  for (const change of ["client", "generation"] as const) {
+    const scope = `connection/${change}`, operation = { requestId: `connection-${change}`, objective: "Original", notes: "", template: "custom" as const }
+    const original = { client: {}, generation: 1 }, replacement = change === "client" ? { ...original, client: {} } : { ...original, generation: 2 }
+    let live = original
+    const calls: Array<{ resolve(value: any): void; signal: AbortSignal }> = []
+    t.mock.method(serverApi, "missionCreationReceipt", (_instance: string, _request: string, signal: AbortSignal) =>
+      new Promise(resolve => calls.push({ resolve, signal })))
+    retainUncertainMissionCreation(scope, operation)
+    const first = reconcileMissionCreation(scope, "fixture", original, () => live === original)
+    live = replacement
+    const second = reconcileMissionCreation(scope, "fixture", replacement, () => live === replacement)
+    assert.notEqual(second, first)
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0].signal.aborted, true)
+    calls[0].resolve({ requestId: operation.requestId, state: "rejected" })
+    assert.equal(await first, undefined)
+    assert.ok(missionCreationHold(scope))
+    calls[1].resolve({ requestId: operation.requestId, state: "rejected" })
+    const result = await second
+    assert.equal(consumeMissionCreation(scope, result!, original), false)
+    assert.equal(consumeMissionCreation(scope, result!, replacement), true)
+  }
+})
 
 test("uncertain creation keeps immutable original request/draft in its window scope, never adopting a refreshed scope", () => {
   const original = { requestId: "original", objective: "Draft", notes: "Notes", template: "custom" as const, directory: "/private" }

@@ -11,7 +11,7 @@ import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
 import { missionCreationChoices, sameMissionCreationChoices, parseMissionCreationSelection, missionCreationSelection, type MissionCreationMetadata } from "./creation-defaults"
 import { MissionCreationIntents } from "./creation-intent"
 import { hasExplicitMissionCreationChoices, resolveMissionCreationDefaults, type MissionCreationSelection } from "./profile-defaults"
-import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
+import type { MissionPanelMap, MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
 import { missionPanelPage, missionPanelWindow, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
 import { projectMissionPanel } from "./mission-panel-projection"
 import {
@@ -415,6 +415,30 @@ export class MissionControl {
   create(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
     const request = structuredClone(input)
     return this.mutate(() => this.createCurrent(request))
+  }
+
+  /** Read the immutable creation binding under the original project exclusion. */
+  creationReceipt(input: MissionCreateInput): Promise<{ requestID: string; projectID: string; mission?: MissionPanelMap }> {
+    input = structuredClone(input)
+    return this.mutate(async () => {
+      const missionID = `msn_${stableToken(`${this.options.project.id}\0${input.requestID}`, 24)}`
+      const result = { requestID: input.requestID, projectID: this.options.project.id }
+      const event = await this.journal.event(missionID, this.eventID(missionID, "created"))
+      if (!event || event.type !== "mission.created" || event.requestID !== input.requestID
+        || event.objective !== input.objective || event.title !== input.title || event.notes !== input.notes
+        || event.template !== input.template || Boolean(event.prepared) !== Boolean(input.prepared)
+        || !sameMissionProfiles(event.profiles, input.profiles) || (event.taskMode ?? "native") !== (input.taskMode ?? "native")
+        || !isDeepStrictEqual(event.preparedBy, input.preparedBy) || !isDeepStrictEqual(event.creationDefaults, input.creationDefaults)
+        || input.coordinatorSessionID !== undefined && event.coordinator.sessionID !== input.coordinatorSessionID
+        || !input.expectedCoordinatorLocation || !sameLocation(event.coordinator.location, input.expectedCoordinatorLocation)) return result
+      const read = await this.journal.missionView(missionID)
+      if (!read.mission) return result
+      if (this.options.documents) {
+        const doc = await requireMissionOneTimeDocument(this.options.documents, missionID, event.coordinator.sessionID, input)
+        if (!doc) return result
+      } else if (input.watchedConversationIDs?.length) return result
+      return { ...result, mission: compactMissionMap(read.mission) }
+    })
   }
 
   private assertCompareCreation(template: MissionMap["template"], profiles?: MissionProfiles): void {

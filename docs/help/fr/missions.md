@@ -8,7 +8,7 @@ Si Missions est indisponible, **Paramètres OpenCode** ouvre la récupération d
 
 Les connexions distantes utilisent le même formulaire et les mêmes commandes. Préférez HTTPS pour protéger les échanges réseau.
 
-Choisissez **Créer une mission**. Le formulaire remplace l’arbre jusqu’à la création ou l’annulation. Ses groupes suivent l’ordre ci-dessous.
+Choisissez **Créer une mission**. Le formulaire remplace l’arbre jusqu’à la création ou l’annulation. Une création confirmée sélectionne la Mission ; une création refusée laisse le formulaire modifiable.
 
 ### Configuration {#saved-briefs}
 
