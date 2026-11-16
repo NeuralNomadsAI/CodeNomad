@@ -100,7 +100,7 @@ import { guardProxyListener, proxyConnector, ProxyDestinationDenied } from "./pr
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
-import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
 import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
@@ -327,7 +327,17 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   app.addHook("onRequest", async (request, reply) => {
     const pathname = routedPath(request.raw.url ?? "")
-    if (pathname && isBackendUiRoute(pathname, request.method)) remotePrincipals.bind(request, reply)
+    // Global diagnostics retain local UI authority even behind a loopback reverse proxy.
+    if (pathname === "/api/opencode/logs" && !backendUiAccess.localUiRequest(request))
+      return reply.header("connection", "close").code(404).send({ error: "Not found" })
+    if (pathname && isBackendUiRoute(pathname, request.method)) {
+      // The existing direct server-device memory contract keeps its closed protocol.
+      // Every browser memory call uses the same pre-body channel/provenance guard as the relay.
+      if (isMemoryRelayRoute(pathname, request.method)
+        && !backendUiAccess.localUiRequest(request)
+        && request.headers["x-codenomad-server-request"] !== "1" && backendUiAccess.guard(request, reply)) return
+      remotePrincipals.bind(request, reply)
+    }
   })
   app.addHook("onSend", (request, reply, payload, done) => {
     if (remotePrincipals.signal(request)?.aborted) reply.raw.destroy()
@@ -442,7 +452,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const loginStart = createOpenCodeLoginStart(deps.settings, deps.workspaceManager)
   registerOpenCodeLoginStartRoutes(app, { loginStart, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
   const memory = deps.memoryStore ? new MemoryService(deps.memoryStore, deps.settings, deps.workspaceManager, deps.eventBus) : undefined
-  if (memory) registerMemoryRoutes(app, memory)
+  if (memory) registerMemoryRoutes(app, memory, remotePrincipals.signal)
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
     withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined,
     guardServerProfiles: backendUiAccess.guardProfiles, principalSignal: remotePrincipals.signal })
