@@ -1,29 +1,16 @@
 # CodeNomad'i destekleyin
 
-## Neden CodeNomad'e sponsor olunmalı {#why}
-
-CodeNomad, [MIT lisansı](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) altında yayımlanır; indirmek ve kullanmak ücretsizdir. Pascal André ve Shantur Rathore, topluluğun katkılarıyla onu kendi boş zamanlarında sürdürür. OpenCode bağımsız olarak güncellenir; bu yüzden CodeNomad, herhangi bir yeni özellikten önce yalnızca uyumlu kalmak için bile düzenli çalışma gerektirir.
-
-## Sponsorluk neleri finanse eder {#how-it-helps}
-
-- **Bakım**: bildirilen hataları düzeltmek ve CodeNomad'i yeni OpenCode sürümleriyle uyumlu tutmak.
-- **Sürümler**: Windows, macOS ve Linux uygulamalarını derlemek, test etmek ve yayımlamak.
-- **Diller**: arayüzü ve bu yardım sitesini on dilde güncel tutmak.
-- **Yeni özellikler**, örneğin [Görevler](missions.md), [Uzaktan Kontrol](remote-control.md) ve [geçmiş araması](history.md) arkasındaki çalışma.
-
-## Finansman politikası {#policy}
-
-- Sponsorluk bir katkıdır, satın alma değildir. Özellik, yol haritası üzerinde etki, destek önceliği veya lisans hakkı satın almaz.
-- Sponsorlar herkesle aynı CodeNomad'i alır. Ücretli bir sürüm veya yalnızca sponsorlara özel bir derleme yoktur.
-- Hata raporları ve özellik istekleri, sponsor olsanız da olmasanız da kendi değerlerine göre ele alınır.
-- CodeNomad'i indirmek, kullanmak veya güncellemek için sponsorluk asla gerekmez.
-- Her kanal parayı kimin aldığını belirtir. Ödeme kanalın kendi sitesinde gerçekleşir; bu yardım sitesi ödeme bilgilerinizi asla görmez.
-
-## Sponsor olun {#channels}
-
-Her kanalın sayfası, tutarı ve ne sıklıkla katkıda bulunacağınızı seçmenizi sağlar.
-
 {{funding}}
+
+CodeNomad'i tam zamanlı olarak geliştiriyor ve sürdürüyorum. Ücretsiz ve açık kaynaklı; gerçek işlerde kullanılan bir aracın hak ettiği özeni ona göstermeye devam etmek istiyorum.
+
+Geçmişim 3D ve görsel efektlerde: otuz yıl boyunca üretim yaptım, prodüksiyon sorunlarını çözdüm ve yazılımları, onları kullanan insanlarla birlikte geliştirdim. Bu deneyim CodeNomad'e yaklaşımımı belirliyor: bir araç ilk gösterimin ötesinde de dayanmalı; uzun oturumlarda, karmaşık projelerde ve günlük işin beklenmedik durumlarında da.
+
+Geri bildirimler, hata raporları ve kod katkıları CodeNomad'i daha iyi yapıyor. Bağışlar, bunları güvenilir bir şeye dönüştürmek ve OpenCode geliştikçe onu sürdürmek için harcadığım zamanı destekliyor.
+
+Bunu tam zamanlı sürdürebilmek için bu maddi desteğe ihtiyacım var. CodeNomad işinizin bir parçası olduysa, sponsorluk herkesin kullanımına açık kalan bir aracı geliştirip sürdürerek geçimimi sağlamama yardımcı oluyor.
+
+Pascal André
 
 ## Yardım etmenin diğer yolları {#other-ways}
 

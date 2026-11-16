@@ -9,9 +9,9 @@ certificate.
 
 | Role | Maintainer | Responsibilities |
 | --- | --- | --- |
-| Project owners | [Shantur Rathore (@shantur)](https://github.com/shantur) and [Pascal André (@pascalandr)](https://github.com/pascalandr) | Own project governance, authorize the signing integration and approve changes to signing responsibilities. |
+| Project owner | [Pascal André (@pascalandr)](https://github.com/pascalandr) | Owns project governance, authorizes the signing integration and approves changes to signing responsibilities. |
 | Signing operator and approver | [Pascal André (@pascalandr)](https://github.com/pascalandr) | Coordinates the application, maintains the signing workflow, submits and approves release signing requests, and verifies signed artifacts before publication. |
-| Authors and reviewers | [Shantur Rathore](https://github.com/shantur) and [Pascal André](https://github.com/pascalandr) | Maintain the source and build workflows, and review contributions before they enter the release build. |
+| Author and reviewer | [Pascal André (@pascalandr)](https://github.com/pascalandr) | Maintains the source and build workflows, and reviews contributions before they enter the release build. |
 
 Everyone involved in signing must use multi-factor authentication for GitHub
 and SignPath access.
@@ -74,7 +74,7 @@ built and is not signed.
    published signed files. Release records identify the source commit and
    build workflow.
 
-Signing access and policy changes are reviewed by the project owners. The
+Signing access and policy changes are reviewed by the project owner. The
 operator investigates failed verifications and reported signing-policy issues.
 
 ## Workflow configuration
