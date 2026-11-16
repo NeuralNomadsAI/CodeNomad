@@ -207,7 +207,6 @@ export const missionMessages = {
   "missions.control.unavailable.host": "यो CodeNomad सर्भरले मिसनहरूका लागि आफ्नो स्थानीय जडान (127.0.0.1) खोल्न सकेन, त्यसैले यसले प्लगइन उपलब्ध गराउँदैन। सर्भर लग जाँच गर्नुहोस्; OpenCode पुनः लोड गर्दा समाधान हुँदैन।",
   "missions.control.error.title": "मिसन नक्सा ताजा गर्न सकिएन",
   "missions.control.error.detail": "कार्यक्षेत्र जडान जाँचेर फेरि प्रयास गर्नुहोस्।",
-  "missions.control.error.stale": "पुनः जडान हुँदा पछिल्लो दिगो नक्सा देखाइँदै छ।",
   "missions.control.retry": "फेरि प्रयास गर्नुहोस्",
   "missions.control.empty.title": "अहिलेसम्म कुनै मिसन छैन",
   "missions.control.empty.detail": "मिसन सिर्जना गर्नुहोस् वा सहायकलाई योजना बनाउन भन्नुहोस्।",

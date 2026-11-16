@@ -96,9 +96,8 @@ test("a failed selected-map read stays parked until an explicit retry; a success
     await failing.page.waitForTimeout(900)
     assert.deepEqual(failing.includes, [[], ["closed"]], "one include read, then parked")
     assert.equal(await failing.page.evaluate(() => (window as any).missionFixture.snapshot().status), "error")
-    // Parked: the stale banner and the refresh button, never a claim that the map is being read.
+    // A parked read leaves the refresh button available without claiming an active read.
     assert.deepEqual(await failing.page.locator(".mission-control > p[role=status]").allTextContents(), [])
-    await failing.page.locator(".mission-control-stale").waitFor()
     assert.equal(await missionRefresh(failing.page).isDisabled(), false)
     await missionRefresh(failing.page).click()
     await failing.page.waitForTimeout(500)
@@ -111,6 +110,30 @@ test("a failed selected-map read stays parked until an explicit retry; a success
     await loading.page.waitForTimeout(500)
     assert.deepEqual(loading.includes, [[], ["closed"]], "a loaded map needs no further read")
   } finally { await loading.page.close() }
+})
+
+test("failed refreshes keep the mission list mounted and stationary through recovery", async () => {
+  let fail = false
+  const { page } = await panel([mission("closed", { status: "completed", updatedAt: 2 })], async () => fail ? 503 : undefined)
+  try {
+    await choose(page, "closed")
+    await shownDetail(page, "Objective closed").waitFor({ state: "attached" })
+    const row = await inlineMissionEntry(page, "Objective closed")
+    const node = await row.elementHandle()
+    const position = await row.boundingBox()
+    fail = true
+    await missionRefresh(page).click()
+    await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "error")
+    assert.equal(await page.locator(".mission-control > [role=status]").count(), 0)
+    assert.deepEqual(await row.boundingBox(), position, "a failed read never shifts the list")
+    assert.equal(await row.evaluate((element, previous) => element === previous, node), true)
+    assert.equal(await shownDetail(page, "Objective closed").count(), 1, "the last loaded detail stays mounted")
+    fail = false
+    await missionRefresh(page).click()
+    await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "ready")
+    assert.deepEqual(await row.boundingBox(), position, "recovery never shifts the list")
+    assert.equal(await row.evaluate((element, previous) => element === previous, node), true)
+  } finally { await page.close() }
 })
 
 test("an obsolete include response never unmounts the current selection's loaded detail (A → B → A)", async () => {

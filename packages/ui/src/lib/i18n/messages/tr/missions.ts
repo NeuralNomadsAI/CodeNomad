@@ -207,7 +207,6 @@ export const missionMessages = {
   "missions.control.unavailable.host": "Bu CodeNomad sunucusu görevler için yerel bağlantısını (127.0.0.1) açamadı, bu yüzden eklentiyi sağlamıyor. Sunucu günlüğünü kontrol edin; OpenCode'u yeniden yüklemek işe yaramaz.",
   "missions.control.error.title": "Görev haritası yenilenemedi",
   "missions.control.error.detail": "Çalışma alanı bağlantısını kontrol edip tekrar deneyin.",
-  "missions.control.error.stale": "Yeniden bağlantı beklenirken son kalıcı harita gösteriliyor.",
   "missions.control.retry": "Tekrar dene",
   "missions.control.empty.title": "Henüz görev yok",
   "missions.control.empty.detail": "Bir görev oluşturun veya asistanınızdan planlamasını isteyin.",
