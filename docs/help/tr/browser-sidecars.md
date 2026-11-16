@@ -1,5 +1,7 @@
 # Tarayıcı önizlemeleri ve SideCars
 
+Iframe önizlemeleri ve SideCars, DNS takma adları dahil CodeNomad'ın kendi dinleme adreslerine ve bağlantı noktalarına bağlantıları reddeder. Uygulamanızın sunucusu için ayrı bir bağlantı noktası kullanın.
+
 ## Bir oturum tarayıcısı açın {#session-browser}
 
 1. Konuşmanın araç çubuğunda **Web önizlemesini aç** öğesini seçin.

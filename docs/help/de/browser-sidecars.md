@@ -1,5 +1,7 @@
 # Browser-Vorschauen und SideCars
 
+Iframe-Vorschauen und SideCars verweigern Verbindungen zu den eigenen Listener-Adressen und Ports von CodeNomad, auch über DNS-Aliase. Verwenden Sie den separaten Server-Port Ihrer Anwendung.
+
 ## Sitzungsbrowser öffnen {#session-browser}
 
 1. Wählen Sie in der Symbolleiste einer Unterhaltung **Web-Vorschau öffnen**.

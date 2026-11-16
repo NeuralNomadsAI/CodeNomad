@@ -165,6 +165,15 @@ Preview capability admission requires the matched route's `previewCapability`
 configuration; a capability Host on an ordinary application route retains that
 route's authentication, origin and host-only checks.
 
+Outbound HTTP proxies and preview/SideCar WebSockets resolve their destination
+once and connect only to those pinned answers while retaining the target's HTTP Host
+and TLS identity. `server/proxy-destination.ts` refuses any destination address/port
+covered by a live backend listener, including sibling HTTP/HTTPS listeners,
+remote proxy session HTTPS listeners and the Remote Control ingress. Unspecified
+destinations (`0.0.0.0`, `::` and mapped forms) match every local listener on
+that port. Wildcard binds cover loopback and the host's current interface
+addresses. Other loopback ports and LAN applications remain eligible.
+
 Direct state-changing requests check Origin first, then the origin of Referer
 when Origin is absent. Non-local mutations require an allowed source; native
 loopback calls may omit both. Read-only methods are GET, HEAD and OPTIONS.
@@ -192,6 +201,12 @@ credentials follow their separate registry lifetime and revocation rules.
   host-only paths including encoded ones, loopback privileges, spoofed headers,
   upgrades, web previews and their switch, revocation of a live stream, skipped
   local auth and tunnel failure.
+- `server/preview-proxy-boundary.test.ts` uses simulated DNS and local listeners
+  to check refusal before upstream contact, password-enabled and skipped-auth
+  previews, capability hosts, Referer fallback, SideCar HTTP and both WebSocket
+  proxies, unspecified destinations, bound-interface matching and a pinned
+  ordinary dev-server connection. `server/__tests__/remote-proxy.test.ts`
+  checks registration of the remote proxy session's HTTPS listener.
 - `direct-listener.test.ts` exercises the real application with LAN and loopback
   peers, credentialed CORS, Origin/Referer checks and host-only routes.
   `server/__tests__/sidecar-proxy.test.ts` covers SideCar upgrade source checks,
