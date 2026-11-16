@@ -529,7 +529,7 @@ test("a native refresh straddling header and task revisions keeps the selected d
         timeout = setTimeout(() => reject(new Error(`Missing skew retry: ${JSON.stringify({ headers, requests: f.requests.slice(-12) })}`)), 20000)
       })])
     } finally { clearTimeout(timeout) }
-    assert.equal(await f.page.evaluate(() => (window as any).missionFixture.snapshot().status), "ready")
+    await f.page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "ready")
     assert.equal(await f.page.evaluate(() => (window as any).missionFixture.snapshot().missions[0].revision), before)
     assert.equal(await f.page.locator(".mission-detail").evaluate((current, old) => current === old, node), true)
     release()
