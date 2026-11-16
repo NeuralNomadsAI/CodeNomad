@@ -4,7 +4,7 @@ Utilisez l’interface navigateur sur téléphone ou tablette pour poursuivre le
 
 ## Se connecter depuis un téléphone ou une tablette {#connect}
 
-Avec le multi-serveurs activé sur l’hôte, les serveurs enregistrés sont accessibles depuis l’accueil et Paramètres → Serveurs. Les onglets distants retrouvent leur serveur, leurs brouillons et leurs vues après rechargement. Un projet indisponible garde son onglet : **Réessayer** retrouve un enregistrement existant ; **Ouvrir** ouvre explicitement un projet manquant.
+Avec le multi-serveurs activé sur l’hôte, les serveurs enregistrés sont accessibles depuis l’accueil et Paramètres → Serveurs. Les onglets de projet de chaque backend, y compris le backend primaire, retrouvent leurs brouillons et leurs vues après rechargement. Un projet indisponible garde son onglet : **Réessayer** retrouve un enregistrement existant ; **Ouvrir** ouvre explicitement un projet manquant.
 
 1. Sur l’hôte, ouvrez **Paramètres → Accès distant → Contrôle à distance**, puis choisissez **Démarrer le contrôle à distance**.
 2. Scannez le QR code d’appairage avec votre appareil mobile et ouvrez le lien dans le navigateur que vous comptez garder.

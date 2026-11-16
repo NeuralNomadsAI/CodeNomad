@@ -152,3 +152,84 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
 function descriptor(id: string, path: string) {
   return { id, path, status: "ready", port: 1234, proxyPath: `/workspaces/${id}/instance`, binaryId: "fixture", createdAt: "", updatedAt: "" }
 }
+
+const primaryCases = [
+  ...[false, true].flatMap(multiBackend => ["open", "retry"].map(recovery => ({ multiBackend, recovery, initiallyUnavailable: false }))),
+  { multiBackend: false, recovery: "retry", initiallyUnavailable: true },
+]
+for (const { multiBackend, recovery, initiallyUnavailable } of primaryCases) {
+  test(`web missing primary record preserves its occurrence (${multiBackend}, ${recovery}, unavailable=${initiallyUnavailable})`, async () => {
+    const context = await browser.newContext(), page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    page.setDefaultNavigationTimeout(60_000)
+    const errors: string[] = [], creates: string[] = [], projects: ReturnType<typeof descriptor>[] = []
+    let reads = 0, unavailable = initiallyUnavailable
+    page.on("pageerror", error => errors.push(error.message))
+    await context.addInitScript(() => {
+      ;(window as any).__name = new Function("value", "return value")
+      Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "web", __CODENOMAD_WINDOW_CONTEXT__: "remote" })
+      window.EventSource = class extends EventTarget { close() {} } as any
+      if (!sessionStorage.getItem("codenomad.client-state.v1")) sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
+        version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 0, tabs: [{
+          kind: "workspace", folder: "/same", workspaceId: "gone", occurrence: 0,
+          drafts: { __no_session_draft__: "primary-backend-draft" }, attachments: {},
+          scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+        }] },
+      }))
+    })
+    await context.route(/\/(?:api|workspaces)\//, async route => {
+      const request = route.request(), path = new URL(request.url()).pathname
+      assert.equal(path.startsWith("/api/backends/"), false, "primary recovery keeps its host API")
+      let body: any = {}
+      if (path.startsWith("/api/storage/")) body = path.endsWith("/config/ui") ? { settings: { multiBackend } } : {}
+      else if (path === "/api/meta") body = { apiContract: CODENOMAD_API_CONTRACT, serverId: "local", localRequest: false }
+      else if (path === "/api/workspaces") {
+        if (request.method() === "POST") {
+          creates.push(request.postDataJSON().path)
+          body = { ...descriptor("opened", "/same"), requestId: request.postDataJSON().requestId }
+          projects.push(body)
+        } else {
+          reads++
+          if (unavailable) return route.fulfill({ status: 503, json: { error: "unavailable" } })
+          body = projects
+        }
+      } else if (path.endsWith("/worktrees")) body = { isGitRepo: false, worktrees: [] }
+      else if (path.includes("/instance/api/")) body = { data: [], cursor: {} }
+      await route.fulfill({ json: body })
+    })
+    const tabs = () => page.evaluate(() => (window as any).restoreFixture.tabs())
+    const waitReady = () => page.locator('[data-restoring="false"]').waitFor()
+    const waitIdle = () => page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("[data-remote-restore] button:disabled"))
+    try {
+      await page.goto(url)
+      await waitReady()
+      assert.equal((await tabs()).length, 1, "the missing primary record keeps its tab")
+      assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
+      assert.deepEqual(creates, [])
+      await page.evaluate(() => window.dispatchEvent(new Event("pagehide")))
+      await page.reload()
+      await waitReady()
+      assert.equal((await tabs())[0].kind, "remote-restore")
+      assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
+      assert.equal(await page.getByRole("button", { name: "Connect", exact: true }).count(), 0)
+      unavailable = false
+      const before = reads
+      await page.getByRole("button", { name: "Retry", exact: true }).click()
+      await waitIdle()
+      assert.ok(reads > before, "Retry reads the primary inventory")
+      assert.deepEqual(creates, [], "reload and Retry never create")
+      if (recovery === "retry") projects.push(descriptor("resumed", "/same"))
+      await page.getByRole("button", { name: recovery === "retry" ? "Retry" : "Open", exact: true }).click()
+      await page.waitForFunction(() => (window as any).restoreFixture.tabs()[0]?.kind === "instance")
+      assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
+      assert.deepEqual(creates, recovery === "open" ? ["/same"] : [])
+      await page.evaluate(() => window.dispatchEvent(new Event("pagehide")))
+      await page.reload()
+      await waitReady()
+      assert.equal((await tabs())[0].id, `instance:${recovery === "open" ? "opened" : "resumed"}`)
+      assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
+      assert.deepEqual(creates, recovery === "open" ? ["/same"] : [])
+      assert.deepEqual(errors, [])
+    } finally { await context.close() }
+  })
+}
