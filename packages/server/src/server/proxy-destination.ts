@@ -19,12 +19,13 @@ export class ProxyDestinationDenied extends Error {
 export function targetsListener(address: string, port: number, bound: { address: string; port: number }): boolean {
   if (port !== bound.port) return false
   const target = normalizeNetworkHost(address)
+  if (isWildcardHost(target)) return true
   const host = normalizeNetworkHost(bound.address)
   const addresses = new BlockList()
   const add = (ip: string) => addresses.addAddress(ip, isIP(ip) === 6 ? "ipv6" : "ipv4")
   if (isWildcardHost(host)) {
     if (host === "0.0.0.0" && isIP(target) !== 4) return false
-    if (isLoopbackHost(target) || isWildcardHost(target)) return true
+    if (isLoopbackHost(target)) return true
     for (const entry of Object.values(os.networkInterfaces()).flat()) if (entry) add(entry.address)
   } else add(host)
   return addresses.check(target, isIP(target) === 6 ? "ipv6" : "ipv4")

@@ -110,6 +110,37 @@ test("implicit HTTP and HTTPS ports use the same listener boundary", async t => 
   }
 })
 
+for (const host of ["0.0.0.0", "[::]", "[::ffff:0:0]", "unspecified.invalid"]) {
+  test(`unspecified preview destination ${host} is refused before HTTP or WS contact`, async t => {
+    const f = await startRemoteSurface(t, { skipAuth: true })
+    let lookups = 0
+    t.mock.method(dns, "lookup", ((hostname: string, _options: unknown, callback: (...values: unknown[]) => void) => {
+      assert.equal(hostname, "unspecified.invalid", "external DNS is forbidden")
+      lookups++
+      callback(null, [{ address: "0.0.0.0", family: 4 }])
+    }) as typeof dns.lookup)
+    let contacts = 0
+    f.app.server.on("connection", () => { contacts++ })
+    const preview = f.previewManager.create("unspecified", `http://${host}:${f.local.split(":")[1]}`)
+    const pathname = `/previews/${preview.token}/api/remote-control/devices`
+    assert.equal((await request(f.target(), pathname, { host: FAKE_TUNNEL_HOST })).status, 404)
+    assert.equal((await request(f.target(), pathname, {
+      host: FAKE_TUNNEL_HOST, connection: "Upgrade", upgrade: "websocket",
+    })).status, 404)
+    assert.equal(contacts, 0)
+    assert.equal(lookups, host === "unspecified.invalid" ? 2 : 0)
+  })
+}
+
+test("unspecified destinations match every local listener only on its own port", () => {
+  for (const host of ["127.0.0.1", "::1", "192.0.2.10", "2001:db8::10"]) {
+    for (const address of ["0.0.0.0", "::", "::ffff:0.0.0.0"]) {
+      assert.equal(targetsListener(address, 43210, { address: host, port: 43210 }), true)
+      assert.equal(targetsListener(address, 43211, { address: host, port: 43210 }), false)
+    }
+  }
+})
+
 test("ordinary loopback preview ports retain dual-stack fallback with one pinned DNS lookup", async t => {
   const f = await startRemoteSurface(t, { skipAuth: true })
   const app = http.createServer((_request, reply) => reply.end("ordinary preview"))
