@@ -95,7 +95,7 @@ const DOWNLOAD_KEYS = ["label", "windows", "windowsDetail", "macos", "macosDetai
 export async function readChromeStrings(locales, directory = chrome) {
   const strings = {}
   for (const locale of locales) strings[locale] = await readJson(resolve(directory, `i18n/${locale}.json`))
-  const expected = ["language", "siteTitle", "brand", "tagline", "onThisPage", "skipToContent", "editPage", "translatePage", "reportProblem", "github", ...DOWNLOAD_KEYS.map((key) => `download.${key}`), "languageLabel", "projectLinks", "helpTopics", "scope", "findHint", "untranslated", ...SECTION_IDS.map((id) => `sections.${id}`), ...["label", "clear", "empty", "noResults", "failure", "loading", "count"].map((key) => `search.${key}`), ...["published", "unavailable"].map((key) => `release.${key}`), ...["label", "poster", "caption"].map((key) => `tour.${key}`), ...["label", "action", "recipient"].map((key) => `funding.${key}`)].sort().join()
+  const expected = ["language", "siteTitle", "brand", "tagline", "onThisPage", "skipToContent", "editPage", "translatePage", "reportProblem", "github", ...DOWNLOAD_KEYS.map((key) => `download.${key}`), "languageLabel", "projectLinks", "helpTopics", "scope", "findHint", "untranslated", ...SECTION_IDS.map((id) => `sections.${id}`), ...["label", "clear", "empty", "noResults", "failure", "loading", "count"].map((key) => `search.${key}`), ...["published", "unavailable"].map((key) => `release.${key}`), ...["label", "poster", "caption"].map((key) => `tour.${key}`), ...["label", "action"].map((key) => `funding.${key}`)].sort().join()
   for (const locale of locales) {
     if (flatKeys(strings[locale]).join() !== expected) throw new Error(`docs/help/i18n/${locale}.json: keys differ from en.json`)
     if (Object.keys(strings[locale].sections).join() !== SECTION_IDS.join()) throw new Error(`docs/help/i18n/${locale}.json: section labels must follow site.json order`)
@@ -120,14 +120,14 @@ export async function readDownloads(directory = chrome) {
   return downloads
 }
 
-/** Validates funding channels in display order: each { id, name, url, recipient } with an allowlisted URL. */
+/** Validates funding channels in display order: each { id, name, url } with an allowlisted URL. */
 export function validateFunding(funding) {
   if (!Array.isArray(funding)) throw new Error("funding.json: expected a list")
   const ids = new Set()
   for (const entry of funding) {
-    if (!exactKeys(entry, "id,name,recipient,url")) throw new Error("funding.json: each entry needs exactly id, name, url and recipient")
+    if (!exactKeys(entry, "id,name,url")) throw new Error("funding.json: each entry needs exactly id, name and url")
     if (typeof entry.id !== "string" || !ID_PATTERN.test(entry.id) || ids.has(entry.id)) throw new Error(`funding.json: invalid or duplicate id ${entry.id}`)
-    for (const key of ["name", "recipient"]) if (typeof entry[key] !== "string" || !entry[key].trim()) throw new Error(`funding.json: ${entry.id} needs a non-empty ${key}`)
+    if (typeof entry.name !== "string" || !entry.name.trim()) throw new Error(`funding.json: ${entry.id} needs a non-empty name`)
     if (typeof entry.url !== "string" || !FUNDING_URLS.some((pattern) => pattern.test(entry.url))) throw new Error(`funding.json: ${entry.id} url is not an accepted funding page`)
     ids.add(entry.id)
   }
@@ -278,7 +278,7 @@ function renderMarkdown(markdown, file, media, report, { locale, page, strings, 
       return ""
     }
     const t = strings.funding
-    const items = funding.map((entry) => `<li><a href="${escape(entry.url)}">${format(t.action, { channel: `<bdi>${escape(entry.name)}</bdi>` })}</a><span>${format(t.recipient, { recipient: `<bdi>${escape(entry.recipient)}</bdi>` })}</span></li>`)
+    const items = funding.map((entry) => `<li><a href="${escape(entry.url)}">${format(t.action, { channel: `<bdi>${escape(entry.name)}</bdi>` })}</a></li>`)
     return `<ul class="funding">${items.join("")}</ul>\n`
   }
   const generate = {

@@ -2,21 +2,15 @@
 
 {{funding}}
 
-CodeNomad is free and open source under the [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE). I work on it full time, with no company or investors behind it. Shantur Rathore created CodeNomad; I now develop and maintain it, with the community's feedback, bug reports and contributions.
+I develop and maintain CodeNomad full time. It is free and open source, and I want to keep giving it the attention that a tool used for real work deserves.
 
-OpenCode moves fast, so much of my time goes into keeping CodeNomad compatible, tested and released on Windows, macOS and Linux, alongside new features.
+My background is in 3D and visual effects, with three decades spent creating, solving production problems and building software alongside the people who use them. That experience shapes how I approach CodeNomad: a tool has to hold up beyond the first demonstration, through long sessions, complex projects and the unexpected things that happen in daily use.
 
-Sponsorship is what lets me keep working on it full time. If CodeNomad saves you time, sponsoring is the most direct way to keep it going.
+Feedback, bug reports and code contributions help make CodeNomad better. Donations support the time I spend turning that input into something dependable, and maintaining it as OpenCode evolves.
 
-— Pascal André, maintainer
+To continue doing this full time, I need that financial support. If CodeNomad has become part of your work, sponsoring helps me make a living from building and maintaining a tool that remains available to everyone.
 
-## Funding policy {#policy}
-
-- A sponsorship is a contribution, not a purchase. It buys no features, roadmap influence, support priority or license rights.
-- Sponsors get the same CodeNomad as everyone else. There is no paid edition and no sponsor-only build.
-- Bug reports and feature requests are handled on their merits, whether or not you sponsor.
-- Sponsoring is never required to download, use or update CodeNomad.
-- All sponsorship goes to Pascal André. Payment happens on the channel's own site; this help site never sees your payment details.
+Pascal André
 
 ## Other ways to help {#other-ways}
 

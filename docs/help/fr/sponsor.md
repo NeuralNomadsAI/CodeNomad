@@ -2,21 +2,15 @@
 
 {{funding}}
 
-CodeNomad est libre et open source, sous [licence MIT](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE). J’y travaille à plein temps, sans entreprise ni investisseurs derrière moi. Shantur Rathore a créé CodeNomad ; c’est moi qui le développe et le maintiens aujourd’hui, grâce aux retours, aux signalements de bugs et aux contributions de la communauté.
+Je développe et maintiens CodeNomad à plein temps. Il est libre et open source, et je veux continuer à lui accorder l’attention que mérite un outil utilisé pour du vrai travail.
 
-OpenCode évolue vite : une grande partie de mon temps sert à garder CodeNomad compatible, testé et publié sur Windows, macOS et Linux, en plus des nouvelles fonctionnalités.
+Je viens de la 3D et des effets visuels : trois décennies passées à créer, à résoudre des problèmes de production et à développer des logiciels aux côtés de ceux qui les utilisent. Cette expérience guide ma façon d’aborder CodeNomad : un outil doit tenir au-delà de la première démonstration, sur de longues sessions, des projets complexes et face aux imprévus du quotidien.
 
-C’est le parrainage qui me permet de continuer à y travailler à plein temps. Si CodeNomad vous fait gagner du temps, le parrainer est le moyen le plus direct de le faire durer.
+Les retours, les signalements de bugs et les contributions de code aident à améliorer CodeNomad. Les dons financent le temps que je passe à transformer ces retours en quelque chose de fiable, et à le maintenir au fil des évolutions d’OpenCode.
 
-— Pascal André, mainteneur
+Pour continuer à plein temps, j’ai besoin de ce soutien financier. Si CodeNomad fait désormais partie de votre travail, le parrainage m’aide à vivre du développement et de la maintenance d’un outil qui reste accessible à tous.
 
-## Politique de financement {#policy}
-
-- Un parrainage est une contribution, pas un achat. Il n’achète ni fonctionnalités, ni influence sur la feuille de route, ni priorité d’assistance, ni droits de licence.
-- Les personnes qui parrainent reçoivent le même CodeNomad que tout le monde. Il n’existe ni édition payante ni version réservée aux parrains.
-- Les signalements de bugs et demandes de fonctionnalités sont traités selon leur intérêt, que vous parrainiez ou non.
-- Le parrainage n’est jamais requis pour télécharger, utiliser ou mettre à jour CodeNomad.
-- Tout le parrainage revient à Pascal André. Le paiement a lieu sur le site du canal ; ce site d’aide ne voit jamais vos informations de paiement.
+Pascal André
 
 ## Autres façons d’aider {#other-ways}
 

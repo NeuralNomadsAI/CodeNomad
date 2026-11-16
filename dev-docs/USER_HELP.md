@@ -88,7 +88,7 @@ provenance and encoding live in `docs/screenshots/README.md`.
 `{{funding}}` is allowed only on `sponsor.md` and `download.md` (`#support-development`, the
 download page's last section, never gating the download) and renders `ul.funding`: one outlined
 44px button per channel of `docs/help/funding.json`, in file order, labelled `funding.action`
-with the channel name in `<bdi>`, followed by `funding.recipient` naming who receives the money.
+with the channel name in `<bdi>`.
 With an empty `funding.json` a page using it is a fatal `missing-funding` problem.
 Each directive appears at most once per page (`duplicate-directive`) and every
 translation of a page carries the same directives as English (`directive-mismatch`).
@@ -114,7 +114,7 @@ size are escaped before they fill chrome templates. Tests use the offline fixtur
 
 `docs/help/funding.json` (untranslated, read from this repository even with `--content`) lists
 the funding channels in display order: each entry has exactly `id` (unique kebab-case), `name`
-and `recipient` (non-empty display text, escaped) and `url`. URLs must match an allowlisted
+(non-empty display text, escaped) and `url`. URLs must match an allowlisted
 canonical form, currently `https://github.com/sponsors/<login>` (a valid GitHub login) and
 `https://ko-fi.com/<page>` (1-50 letters, digits or underscores), each with a lowercase host and
 no `www`, credentials, port, query, fragment or trailing path; add a pattern to
