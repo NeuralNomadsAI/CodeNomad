@@ -8,14 +8,17 @@ export function createRelayPrincipalBinding(deps: {
   devices: Pick<RemoteControlManager, "isDeviceAuthorized">
   local(request: FastifyRequest): boolean
 }) {
-  return (request: FastifyRequest, reply: FastifyReply): AbortSignal | undefined => {
-    if (deps.local(request)) return undefined
+  const principals = new WeakMap<FastifyRequest, AbortSignal>()
+  const bind = (request: FastifyRequest, reply: FastifyReply): void => {
+    if (principals.has(request)) return
+    if (deps.local(request)) return
     const principal = deps.auth.getSessionFromRequest(request)
     if (!principal) {
       reply.header("connection", "close").code(401).send({ error: "auth" })
-      return AbortSignal.abort()
+      return
     }
     const controller = new AbortController()
+    principals.set(request, controller.signal)
     let active = true
     let releaseSession = () => {}
     let deviceTimer: ReturnType<typeof setInterval> | undefined
@@ -46,6 +49,6 @@ export function createRelayPrincipalBinding(deps: {
     } else {
       releaseSession = deps.auth.onSessionInvalidated(principal.sessionId, abort)
     }
-    return controller.signal
   }
+  return { bind, signal: (request: FastifyRequest) => principals.get(request) }
 }

@@ -86,7 +86,8 @@ async function stopped(f: Awaited<ReturnType<typeof fixture>>, id: string, strea
 
 async function alive(stream: { bytes: number; closed: boolean }) {
   const before = stream.bytes
-  await delay(100)
+  const deadline = Date.now() + 1800
+  while (!stream.closed && stream.bytes === before && Date.now() < deadline) await delay(20)
   assert.equal(stream.closed, false, "unrelated principal stays connected")
   assert.ok(stream.bytes > before, "unrelated principal keeps receiving bytes")
 }

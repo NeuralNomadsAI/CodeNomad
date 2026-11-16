@@ -448,7 +448,12 @@ test("relay diagnostics omit private request bodies and target queries", async t
   assert.equal((await f.connect()).status, 200)
   await f.call("/api/filesystem?credential=private-query-marker")
   const output = JSON.stringify(f.logs)
-  assert(output.includes("/api/backends/:id/*"))
+  const records = f.logs as Array<Record<string, unknown>>
+  assert(records.some(record => record.url === "/api/backends/:id/api/auth/login"))
+  assert(records.some(record => record.url === "<catchall>"))
+  for (const record of records) {
+    assert.deepEqual(Object.keys(record).sort(), ["durationMs", "method", "status", "url"])
+  }
   for (const secret of ["private-query-marker", "remote-password", "codenomad_session", "username"]) assert.equal(output.includes(secret), false, secret)
 })
 

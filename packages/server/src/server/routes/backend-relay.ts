@@ -30,19 +30,16 @@ function relayAuthority(request: FastifyRequest, target = request.raw.url ?? "")
 export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
   manager: RemoteServerBrowseManager; getSelfOrigins(): Set<string>; guardCaller?: BackendCallerGuard
   guardSecret?: (request: FastifyRequest, reply: FastifyReply, body: unknown) => boolean
-  bindPrincipal?: (request: FastifyRequest, reply: FastifyReply) => AbortSignal | undefined
+  principalSignal?: (request: FastifyRequest) => AbortSignal | undefined
 }) {
   const guard = deps.guardCaller ?? ((request: FastifyRequest, reply: FastifyReply) => guardLocalBackendCaller(request, reply, deps.getSelfOrigins()))
-  const principals = new WeakMap<FastifyRequest, AbortSignal>()
   const requestSignal = (request: FastifyRequest, controller: AbortController) => {
-    const principal = principals.get(request)
+    const principal = deps.principalSignal?.(request)
     return principal ? AbortSignal.any([principal, controller.signal]) : controller.signal
   }
   void app.register(async scope => {
     scope.addHook("onRequest", async (request, reply) => {
-      if (guard(request, reply)) return
-      const principal = deps.bindPrincipal?.(request, reply)
-      if (principal) principals.set(request, principal)
+      guard(request, reply)
     })
     scope.post<{ Params: { id: string } }>("/api/backends/:id/api/auth/login", { bodyLimit: 24 * 1024 }, async (request, reply) => {
       if (!profileId.test(request.params.id)) return reply.code(404).send({ error: "unknown_server" })
@@ -67,7 +64,7 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
     scope.post<{ Params: { id: string } }>("/api/backends/:id/api/auth/logout", async (request, reply) => {
       if (!profileId.test(request.params.id)) return reply.code(404).send({ error: "unknown_server" })
       try {
-        principals.get(request)?.throwIfAborted()
+        deps.principalSignal?.(request)?.throwIfAborted()
         const { proof } = relayAuthority(request)
         if (proof !== undefined) deps.manager.assertProof(request.params.id, proof)
         return deps.manager.forget(request.params.id)
@@ -115,7 +112,7 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
           }
           const body = ["GET", "HEAD"].includes(request.method) ? undefined : Readable.toWeb(request.raw) as ReadableStream<Uint8Array>
           const response = await deps.manager.relay(id, target, { method: request.method, headers, body, signal, duplex: "half" } as RequestInit,
-            proof, principals.has(request))
+            proof, deps.principalSignal?.(request) !== undefined)
           signal.throwIfAborted()
           reply.code(response.status)
           for (const [name, value] of response.headers) if (responseHeaders.has(name)) reply.header(name, value)

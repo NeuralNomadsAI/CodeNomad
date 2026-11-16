@@ -4,7 +4,7 @@ import { z } from "zod"
 import type { SettingsService } from "../settings/service"
 import type { RemoteServerBrowseResponse } from "../api-types"
 import { normalizeExplicitOrigin } from "../opencode/servers/endpoint"
-import { CodeNomadServerClient, CodeNomadServerError } from "./client"
+import { CodeNomadServerClient, CodeNomadServerError, waitFor } from "./client"
 import { CodeNomadServerCredentials, type CodeNomadServerSecret } from "./credentials"
 import { relayedFolderListing } from "./folders"
 import { isRelayAuthority, RELAY_AUTHORITY_HEADER, RELAY_BOOTSTRAP } from "./relay-authority"
@@ -121,16 +121,20 @@ export class RemoteServerBrowseManager {
     this.#state.previews.delete(authority)
   }
 
-  private serial<T>(authority: ProfileAuthority, run: () => Promise<T>): Promise<T> {
+  private serial<T>(authority: ProfileAuthority, run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted()
     const id = authority.id
-    const pending = (this.#state.queues.get(id) ?? Promise.resolve()).catch(() => {}).then(() => {
+    const pending = (this.#state.queues.get(id) ?? Promise.resolve()).catch(() => {}).then(async () => {
+      signal?.throwIfAborted()
       if (this.#closed) throw new CodeNomadServerError("unreachable")
       this.assertCurrent(authority)
-      return run()
+      const result = await run()
+      signal?.throwIfAborted()
+      return result
     })
     this.#state.queues.set(id, pending)
     void pending.finally(() => { if (this.#state.queues.get(id) === pending) this.#state.queues.delete(id) }).catch(() => {})
-    return pending
+    return signal ? waitFor(pending, signal) : pending
   }
 
   async connect(id: string, body: z.infer<typeof ConnectBody>, signal?: AbortSignal) {
@@ -149,7 +153,7 @@ export class RemoteServerBrowseManager {
         skipTlsVerify: profile.skipTlsVerify,
         dial: this.dial(profile),
         onSecretChanged: next => { secret = next },
-        onRejected: () => { if (!code && !body.password && this.#state.authorities.get(id) === profile) this.remove(id) },
+          onRejected: () => { if (!signal?.aborted && !code && !body.password && this.#state.authorities.get(id) === profile) this.remove(id) },
       })
       this.#state.pending.set(client, profile)
       try {
@@ -158,6 +162,7 @@ export class RemoteServerBrowseManager {
         if (result.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
         if (result.status !== 200) throw new CodeNomadServerError("unreachable")
         if (result.body?.authenticated !== true) throw new CodeNomadServerError("needs_credentials")
+        signal?.throwIfAborted()
         this.assertCurrent(profile)
         if (this.#closed || client.closed) throw new CodeNomadServerError("unknown_server")
         // Publish only under the still-current authority after remote authentication.
@@ -173,10 +178,10 @@ export class RemoteServerBrowseManager {
         this.#state.clients.delete(id)
         return { ok: true }
       } finally { this.#state.pending.delete(client); client.close() }
-    })
+    }, signal)
   }
 
-  async browse(id: string, body: z.infer<typeof BrowseBody>, signal?: AbortSignal): Promise<RemoteServerBrowseResponse> {
+  async browse(id: string, body: z.infer<typeof BrowseBody>, signal?: AbortSignal, observeStatus = false): Promise<RemoteServerBrowseResponse> {
     const profile = this.capture(id)
     body = { ...body }
     return this.serial(profile, async () => {
@@ -184,13 +189,13 @@ export class RemoteServerBrowseManager {
       const entry = this.client(profile)
       const suffix = body.path === undefined ? "" : `?path=${encodeURIComponent(body.path)}`
       if (!this.credentials.has(id, profile.scope, profile.skipTlsVerify)) {
-        const status = await entry.client.json<{ pairingRequired?: unknown }>("/api/auth/status", { signal })
+        const status = await entry.client.json<{ pairingRequired?: unknown }>("/api/auth/status", { signal }, observeStatus ? "observe-status" : undefined)
         if (status.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
       }
-      const folders = await entry.client.json<unknown>(`/api/filesystem${suffix}`, { signal })
+      const folders = await entry.client.json<unknown>(`/api/filesystem${suffix}`, { signal }, observeStatus ? "observe-status" : undefined)
       if (folders.status !== 200) throw new CodeNomadServerError("unreachable")
       const listing = relayedFolderListing(folders.body)
-      const state = await entry.client.json<{ recentFolders?: unknown }>("/api/storage/state/ui", { signal })
+      const state = await entry.client.json<{ recentFolders?: unknown }>("/api/storage/state/ui", { signal }, observeStatus ? "observe-status" : undefined)
       if (state.status !== 200 || !state.body || typeof state.body !== "object") throw new CodeNomadServerError("unreachable")
       const recents = Array.isArray(state.body.recentFolders) ? state.body.recentFolders.slice(0, 2000).flatMap(value => {
         const parsed = Recent.safeParse(value)
@@ -198,7 +203,7 @@ export class RemoteServerBrowseManager {
       }) : []
       this.assertCurrent(profile)
       return { listing, recents }
-    })
+    }, signal)
   }
 
   private client(profile: ProfileAuthority) {

@@ -1,5 +1,5 @@
 import { Agent, fetch } from "undici"
-import type { FastifyInstance } from "fastify"
+import type { FastifyInstance, FastifyRequest } from "fastify"
 import { z } from "zod"
 import type { Logger } from "../../logger"
 import type { RemoteServerProbeResponse } from "../../api-types"
@@ -8,6 +8,7 @@ import type { BackendCallerGuard } from "../../codenomad-servers/ui-caller"
 interface RouteDeps {
   logger: Logger
   guardCaller?: BackendCallerGuard
+  principalSignal?: (request: FastifyRequest) => AbortSignal | undefined
 }
 
 const ProbeSchema = z.object({
@@ -23,7 +24,11 @@ export function registerRemoteServerRoutes(app: FastifyInstance, deps: RouteDeps
   }, async (request, reply) => {
     try {
       const body = ProbeSchema.parse(request.body ?? {})
-      return await probeRemoteServer(body.baseUrl, Boolean(body.skipTlsVerify))
+      const signal = deps.principalSignal?.(request)
+      signal?.throwIfAborted()
+      const result = await probeRemoteServer(body.baseUrl, Boolean(body.skipTlsVerify), signal)
+      signal?.throwIfAborted()
+      return result
     } catch (error) {
       deps.logger.warn({ err: error }, "Failed to probe remote server")
       reply.code(400)
@@ -32,10 +37,11 @@ export function registerRemoteServerRoutes(app: FastifyInstance, deps: RouteDeps
   })
 }
 
-async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean): Promise<RemoteServerProbeResponse> {
+async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean, principal?: AbortSignal): Promise<RemoteServerProbeResponse> {
   const normalizedUrl = normalizeBaseUrl(baseUrl)
   const probeUrl = new URL("./api/auth/status", `${normalizedUrl}/`)
   const controller = new AbortController()
+  const signal = principal ? AbortSignal.any([principal, controller.signal]) : controller.signal
   const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   const dispatcher = skipTlsVerify ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined
 
@@ -43,7 +49,7 @@ async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean): Promi
     const response = await fetch(probeUrl, {
       method: "GET",
       dispatcher,
-      signal: controller.signal,
+      signal,
       headers: {
         Accept: "application/json",
       },
@@ -63,6 +69,7 @@ async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean): Promi
     }
 
     const payload = (await response.json()) as { authenticated?: unknown }
+    signal.throwIfAborted()
     if (typeof payload?.authenticated !== "boolean") {
       return {
         ok: false,

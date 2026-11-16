@@ -47,7 +47,12 @@ export function createBackendUiAccess(deps: {
     if (!isLocalRequest(request) || request.headers["x-codenomad-server-request"] !== undefined
       || verifiedDirectHttpsOrigin(request, deps.directHttpsOrigins())) return false
     const source = request.headers.origin ?? request.headers.referer
-    if (source === undefined) return true
+    if (source === undefined) {
+      const host = request.headers.host
+      if (host === undefined) return true
+      if (/[\s/\\@?#]/.test(host)) return false
+      try { return isLoopbackHost(new URL(`http://${host}`).hostname) } catch { return false }
+    }
     try { return isLoopbackHost(new URL(source).hostname) } catch { return false }
   }
   const capabilities = (request: FastifyRequest) => {

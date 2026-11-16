@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
@@ -202,6 +202,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     ({
       logger: false,
       routerOptions: ROUTER_OPTIONS,
+      frameworkErrors: (error: FastifyError, _request: FastifyRequest, reply: FastifyReply) => {
+        reply.header("connection", "close").code(error.statusCode ?? (error.code === "FST_ERR_BAD_URL" ? 400 : 500)).send({ error: "Invalid request" })
+      },
       ...(deps.protocol === "https" && deps.httpsOptions ? { https: deps.httpsOptions } : {}),
     } as unknown) as any,
   ) as unknown as FastifyInstance
@@ -227,10 +230,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   // upgrades (for example Vite HMR). Server.close() cannot drain them itself.
   const upgrades = new Set<Socket>()
   let closing = false
-  app.server.on("upgrade", (_request, socket: Socket) => {
+  app.server.on("upgrade", (request, socket: Socket) => {
     if (closing) { socket.destroy(); return }
     upgrades.add(socket)
     socket.once("close", () => upgrades.delete(socket))
+    const pathname = routedPath(request.url ?? "/")
+    // Only the reviewed content proxies own upgrades; control APIs use HTTP/SSE.
+    if (!parsePreviewCapabilityHost(request.headers.host) && (pathname === "/api" || pathname?.startsWith("/api/"))) {
+      rejectUpgrade(socket, 404, "Not Found")
+    }
   })
   app.addHook("preClose", async () => {
     closing = true
@@ -314,8 +322,16 @@ export function createHttpServer(deps: HttpServerDeps) {
     publicHost: () => remoteGate.publicHost(),
     directHttpsOrigins: () => remoteGate.directHttpsOrigins?.() ?? [],
   })
-  const bindRelayPrincipal = createRelayPrincipalBinding({
+  const remotePrincipals = createRelayPrincipalBinding({
     auth: deps.authManager, devices: deps.remoteControlManager, local: backendUiAccess.localUiRequest,
+  })
+  app.addHook("onRequest", async (request, reply) => {
+    const pathname = routedPath(request.raw.url ?? "")
+    if (pathname && isBackendUiRoute(pathname, request.method)) remotePrincipals.bind(request, reply)
+  })
+  app.addHook("onSend", (request, reply, payload, done) => {
+    if (remotePrincipals.signal(request)?.aborted) reply.raw.destroy()
+    done(null, payload)
   })
 
   app.register(replyFrom, {
@@ -429,7 +445,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (memory) registerMemoryRoutes(app, memory)
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
     withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined,
-    guardServerProfiles: backendUiAccess.guardProfiles })
+    guardServerProfiles: backendUiAccess.guardProfiles, principalSignal: remotePrincipals.signal })
   const accounts = new ProviderAccountsService(deps.settings)
   const freeUsage = createOpenCodeFreeUsage()
   const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
@@ -459,11 +475,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
-  registerRemoteServerRoutes(app, { logger: apiLogger, guardCaller: backendUiAccess.guard })
+  registerRemoteServerRoutes(app, { logger: apiLogger, guardCaller: backendUiAccess.guard, principalSignal: remotePrincipals.signal })
   const remoteServerBrowse = deps.remoteServerBrowseManager ?? new RemoteServerBrowseManager(deps.settings)
-  registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard, guardSecret: backendUiAccess.guardSecret })
+  registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard,
+    guardSecret: backendUiAccess.guardSecret, principalSignal: remotePrincipals.signal })
   registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard,
-    guardSecret: backendUiAccess.guardSecret, bindPrincipal: bindRelayPrincipal })
+    guardSecret: backendUiAccess.guardSecret, principalSignal: remotePrincipals.signal })
   registerRemotePreviewCapabilityRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, logger: deps.logger })
   const reconcileBackends = () => remoteServerBrowse.reconcile()
   if (!deps.remoteServerBrowseManager) deps.eventBus.on("storage.stateChanged", reconcileBackends)
@@ -744,6 +761,7 @@ function withoutQuery(target: string): { url: string; query: string } {
 
 function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocketProxyDeps) {
   app.server.on("upgrade", (request, socket, head) => {
+    if (socket.destroyed || socket.writableEnded) return
     if (parsePreviewCapabilityHost(request.headers.host)) return
     const rawUrl = request.url ?? "/"
     const parsed = parseSideCarUpgradePath(rawUrl)
@@ -794,6 +812,7 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
     })
   }
   app.server.on("upgrade", (request, socket, head) => {
+    if (socket.destroyed || socket.writableEnded) return
     const rawUrl = request.url ?? "/"
     const capabilityToken = parsePreviewCapabilityHost(request.headers.host)
     let parsed = parsePreviewUpgradePath(rawUrl)

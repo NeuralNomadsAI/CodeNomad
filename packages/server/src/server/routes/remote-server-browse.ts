@@ -10,6 +10,7 @@ export function registerRemoteServerBrowseRoutes(app: FastifyInstance, deps: {
   getSelfOrigins(): Set<string>
   guardCaller?: BackendCallerGuard
   guardSecret?: (request: FastifyRequest, reply: FastifyReply, body: unknown) => boolean
+  principalSignal?: (request: FastifyRequest) => AbortSignal | undefined
 }) {
   const guard = deps.guardCaller ?? ((request: FastifyRequest, reply: FastifyReply) => guardLocalBackendCaller(request, reply, deps.getSelfOrigins()))
   app.get("/api/remote-servers/ssh-hosts", {
@@ -27,15 +28,21 @@ export function registerRemoteServerBrowseRoutes(app: FastifyInstance, deps: {
       const abort = () => controller.abort()
       reply.raw.once("close", abort)
       try {
+        const principal = deps.principalSignal?.(request)
+        const signal = principal ? AbortSignal.any([principal, controller.signal]) : controller.signal
+        signal.throwIfAborted()
         const id = request.params.id
         if (!id || id.length > 256) return reply.code(404).send({ error: "unknown_server" })
-        if (action === "forget") return await deps.manager.forget(id)
-        if (action === "connect") {
+        let result: unknown
+        if (action === "forget") result = await deps.manager.forget(id)
+        else if (action === "connect") {
           if (deps.guardSecret?.(request, reply, request.body)) return
           const body = ConnectBody.parse(request.body ?? {})
-          return await deps.manager.connect(id, body, controller.signal)
+          result = await deps.manager.connect(id, body, signal)
         }
-        return await deps.manager.browse(id, BrowseBody.parse(request.body ?? {}), controller.signal)
+        else result = await deps.manager.browse(id, BrowseBody.parse(request.body ?? {}), signal, principal !== undefined)
+        signal.throwIfAborted()
+        return result
       } catch (error) {
         const code = endpointErrorCode(error)
         return reply.code(code === "unknown_server" ? 404 : ["needs_credentials", "auth", "pairing_unavailable", "pairing_expired", "pairing_rate_limited"].includes(code) ? 409 : 502).send({ error: code })

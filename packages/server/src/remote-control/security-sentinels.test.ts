@@ -17,10 +17,29 @@ import { SettingsService } from "../settings/service"
 import { resolveHttpsOptions } from "../server/tls"
 import { SERVER_PAIR_PATH } from "./server-pairing"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
-import { sentinelForward } from "./test-support/sentinel-forward"
+import { assertSentinelsHidden, sentinelForms, sentinelForward } from "./test-support/sentinel-forward"
 
 type Reply = { status: number; headers: http.IncomingHttpHeaders; body: string }
 type Options = { method?: string; headers?: Record<string, string>; body?: unknown }
+
+test("sentinel scanner catches every encoding in a populated capture", () => {
+  // UTF-8 bytes force both base64 alphabets and padding; whitespace/backslash force URL/JSON transforms.
+  const secret = 'password/token/proof? \\"࿿'
+  const b64 = Buffer.from(secret).toString("base64")
+  const url = b64.replaceAll("+", "-").replaceAll("/", "_")
+  let count = 0
+  for (const value of [secret, b64, b64.replace(/=+$/, ""), url, url.replace(/=+$/, "")]) {
+    for (const encoded of [value, encodeURIComponent(value), new URLSearchParams({ value }).toString().slice(6)]) {
+      for (const form of [encoded, JSON.stringify(encoded).slice(1, -1)]) {
+        assert.throws(() => assertSentinelsHidden(`captured:${form}:end`, [secret], "counterexample"), /exposed sentinel/)
+        count++
+      }
+    }
+  }
+  assert.equal(count, 30)
+  assert.equal(sentinelForms(secret).length, 30)
+  assertSentinelsHidden("ordinary populated capture", [secret], "clean")
+})
 
 // Real sockets on both sides, including TLS termination before the direct listener.
 function send(base: string, target: string, options: Options = {}, ca?: string): Promise<Reply> {
@@ -70,14 +89,7 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
         fs.readFileSync(path.join(directory, "tls", "ca-key.pem"), "utf8")]
         .flatMap(pem => [pem, pem.split(/\r?\n/).filter(line => line && !line.startsWith("-----")).join("")]) ]
     const assertHidden = (value: unknown, label: string, extra: string[] = []) => {
-      const text = typeof value === "string" ? value : JSON.stringify(value)
-      for (const sentinel of [...hidden, ...extra]) {
-        const forms = [sentinel, encodeURIComponent(sentinel), new URLSearchParams({ value: sentinel }).toString().slice("value=".length)]
-        for (const form of forms) {
-          assert.equal(text.includes(form), false, `${label}: exposed sentinel ${hidden.indexOf(sentinel)}`)
-          assert.equal(text.includes(JSON.stringify(form).slice(1, -1)), false, `${label}: escaped sentinel`)
-        }
-      }
+      assertSentinelsHidden(value, [...hidden, ...extra], label)
     }
     const remotes = await Promise.all(["A", "B"].map(async id => {
       const remote = await startFakeCodeNomad({ password, anonymous: id === "B", tls: tls.httpsOptions })
@@ -156,10 +168,13 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
     const replies: Reply[] = []
     const urls: string[] = []
     const proofs: string[] = []
+    const network: Array<{ target: string; method: string; headers: Record<string, string>; body?: unknown }> = []
+    hidden.push(cookie.split("=")[1]!)
     const call = async (target: string, options: Options = {}) => {
       urls.push(target)
-      const reply = await send(base, target, { ...options, headers: { cookie, origin: publicOrigin,
-        host: new URL(publicOrigin).host, ...options.headers } }, ca)
+      const headers = { cookie, origin: publicOrigin, host: new URL(publicOrigin).host, ...options.headers }
+      network.push({ target, method: options.method ?? "GET", headers, body: options.body })
+      const reply = await send(base, target, { ...options, headers }, ca)
       replies.push(reply)
       assertHidden(reply, target)
       return reply
@@ -253,9 +268,25 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
       const reply = await call("/api/remote-servers/probe", { method: "POST", body: { baseUrl } })
       assert.ok(reply.status >= 400 || JSON.parse(reply.body).ok === false, reply.body)
     }
-    for (const reply of replies) {
+    let malformedPaths = 0
+    const malformedReplies: Reply[] = []
+    for (const proof of proofs) for (const form of new Set(sentinelForms(proof))) {
+      for (const prefix of ["/api/backends/%", "/api/backends;ignored", "/api/%2562ackends", "/api/remote-servers;ignored"]) {
+        // Deliberately hostile inbound targets; exclude them from the app's permitted outbound carrier catalog.
+        const reply = await send(base, `${prefix}/${encodeURIComponent(form)}/connect?opaque=${encodeURIComponent(form)}`,
+          { headers: { cookie, origin: publicOrigin, host: new URL(publicOrigin).host } }, ca)
+        assert.ok(reply.status >= 400, "malformed/denied target stays refused")
+        malformedReplies.push(reply)
+        malformedPaths++
+      }
+    }
+    for (const [index, reply] of replies.entries()) {
       const { [AUTHORITY]: carrier, ...headers } = reply.headers
-      if (carrier !== undefined) assert.ok(proofs.includes(String(carrier)), "only issued proof in the authorized header")
+      if (carrier !== undefined) {
+        assert.ok(proofs.includes(String(carrier)), "only issued proof in the authorized header")
+        assert.match(network[index]!.target, /^\/api\/backends\/[AB]\/api\/meta$/)
+        assert.equal(network[index]!.headers[AUTHORITY], RELAY_BOOTSTRAP)
+      }
       assertHidden({ body: reply.body, headers }, "non-carrier response", proofs)
     }
     for (const target of urls) {
@@ -268,6 +299,35 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
     assertHidden(fs.readFileSync(location.stateYamlPath, "utf8"), "persisted client state", proofs)
     assertHidden(settings.getDoc("state"), "client state snapshot", proofs)
     assertHidden(urls, "client-visible URLs")
+    for (const request of network) {
+      const url = new URL(request.target, "http://client.invalid")
+      const headers = { ...request.headers }
+      assert.equal(headers.cookie, cookie, "exact admitted browser authentication carrier")
+      delete headers.cookie
+      const carrier = headers[AUTHORITY]
+      if (carrier !== undefined) {
+        assert.ok(carrier === RELAY_BOOTSTRAP || proofs.includes(carrier), "exact outbound header carrier")
+        delete headers[AUTHORITY]
+      }
+      const query = url.searchParams.get(QUERY)
+      if (query !== null) {
+        assert.deepEqual(url.searchParams.getAll(QUERY), [query])
+        assert.ok(query === "malformed" || proofs.includes(query), "exact outbound query carrier")
+        url.searchParams.delete(QUERY)
+      }
+      let body = request.body
+      if (request.method === "POST" && /^\/api\/remote-servers\/[AB]\/connect$/.test(url.pathname)) {
+        const { password: submittedPassword, pairingLink, ...rest } = (body ?? {}) as Record<string, unknown>
+        if (submittedPassword !== undefined) assert.ok(submittedPassword === password || submittedPassword === wrongPassword)
+        if (pairingLink !== undefined) assert.equal(pairingLink, `${remotes[1]!.origin}/remote-pair#${pairingToken}`)
+        body = rest
+      } else if (url.pathname === "/api/remote-servers/probe") {
+        assert.ok([`https://user:${password}@invalid.test`, `https://invalid.test/remote-pair#${pairingToken}`]
+          .includes((body as { baseUrl: string }).baseUrl))
+        body = {}
+      }
+      assertHidden({ target: url.href, headers, body }, "captured non-carrier outgoing request", proofs)
+    }
     for (const reply of replies) {
       const headers = { ...reply.headers }
       delete headers[AUTHORITY]
@@ -278,12 +338,40 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
       assert.equal(request.headers[AUTHORITY], undefined)
       assert.equal(JSON.stringify(request).includes("caller-only-SENTINEL"), false)
       assertHidden({ path: request.path, authority: request.headers[AUTHORITY] }, "upstream proof stripping", proofs)
+      const headers = { ...request.headers }
+      // These exact private authentication carriers are the upstream contract.
+      if (headers.cookie) {
+        headers.cookie = headers.cookie.split(/;\s*/).filter(part => {
+          if (part.includes(device)) {
+            assert.ok(part === `__Host-codenomad_device=${device}` || part === `private=${device}`)
+            return false
+          }
+          if (part.includes(pairedCredential)) {
+            assert.equal(part, `__Host-codenomad_device=${pairedCredential}`)
+            return false
+          }
+          return true
+        }).join("; ")
+      }
+      let body = request.body
+      if (request.path === "/api/auth/login") {
+        const parsed = JSON.parse(body)
+        assert.ok(parsed.password === password || parsed.password === wrongPassword)
+        const { password: _, ...rest } = parsed
+        body = JSON.stringify(rest)
+      } else if (request.path === SERVER_PAIR_PATH) {
+        const { code, ...rest } = JSON.parse(body)
+        assert.equal(code, pairingToken)
+        body = JSON.stringify(rest)
+      }
+      assertHidden({ ...request, headers, body }, "captured non-carrier upstream request", proofs)
     }
     assert.ok(remotes[0]!.state.logins > 0, "stored password actually used")
     assert.ok(remotes[1]!.state.requests.some(request => request.headers.cookie?.includes(device)), "stored device actually used")
     assert.deepEqual(forward.opened, viaSsh ? ["fixture-A", "fixture-B"] : [])
     assert.ok(logs.split("\n").some(line => line && JSON.parse(line).msg), "real pino emitted records")
     assertHidden(logs, "real application logs", [...proofs, surface.code, cookie.split("=")[1]!])
-    t.diagnostic(`${channel}/${viaSsh ? "SSH-forward" : "direct"}: ${replies.length} captured replies; stored and new password/pairing entry+refusal; A/B connect+browse+bootstrap; query/header proof; 200/503, redirect-to-502, ${channel === "LAN" ? "403 before IO" : "409 secret errors"}; response bodies/all headers, URLs, persisted state/snapshot, trace pino`)
+    t.diagnostic(`${channel}/${viaSsh ? "injected TCP-forward" : "direct"}: ${replies.length} replies, ${network.length} client requests, ${remotes.reduce((n, remote) => n + remote.state.requests.length, 0)} upstream requests; ${malformedPaths} malformed-path probes; ${hidden.length} secrets + ${proofs.length} proofs; 30 encoding slots each; response bodies/headers, client URL/header/body, upstream URL/header/body, persisted state/snapshot, trace pino`)
+    for (const reply of malformedReplies) assertHidden(reply, "malformed-path response", proofs)
   })
 }

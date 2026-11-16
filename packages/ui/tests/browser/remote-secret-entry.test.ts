@@ -4,9 +4,13 @@ import { chromium, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { fixtureEventStream } from "./fixture-event-stream"
+import { assertSentinelsHidden, sentinelForms } from "../../../server/src/remote-control/test-support/sentinel-forward"
 
 const sentinel = "SECRET_ENTRY_SENTINEL_731"
 const pairing = `https://fixture.opentunnel.xyz/remote-pair#${sentinel}`
+const sentinels = [sentinel, pairing, "PASSWORD_SENTINEL_+/?\\\"\n", "DEVICE_TOKEN_SENTINEL_592",
+  "PAIRING_TOKEN_SENTINEL_281", "RELAY_PROOF_SENTINEL_417", "SSH_PRIVATE_KEY_SENTINEL_862",
+  "C:\\synthetic\\SSH_PATH_SENTINEL_936", "TLS_PRIVATE_KEY_SENTINEL_184"]
 const refusal = "Use HTTPS or Remote Control to enter credentials."
 const deferred = () => {
   let release!: () => void
@@ -29,11 +33,13 @@ async function fixture(t: TestContext, surface: string, initial: Meta) {
   const gates = new Set<ReturnType<typeof deferred>>()
   const requests: Array<{ method: string; path: string; body: string }> = []
   const leaks: string[] = [], errors: string[] = [], unexpected: string[] = []
+  const network: Array<{ url: string; method: string; headers: Record<string, string>; body: string }> = []
+  const responses: Promise<void>[] = []
+  const storageSnapshot = () => page.evaluate(() => ({
+    local: { ...localStorage }, session: { ...sessionStorage },
+  }))
   const checkStorage = async () => {
-    assert.deepEqual(await page.evaluate(value => ({
-      local: Object.values(localStorage).some(entry => String(entry).includes(value)),
-      session: Object.values(sessionStorage).some(entry => String(entry).includes(value)),
-    }), sentinel), { local: false, session: false }, "credential sentinel stays out of browser storage")
+    assertSentinelsHidden(await storageSnapshot(), sentinels, "browser local/session storage keys and values")
   }
   t.after(async () => {
     for (const gate of gates) gate.release()
@@ -42,7 +48,18 @@ async function fixture(t: TestContext, surface: string, initial: Meta) {
   })
   page.on("pageerror", error => errors.push(error.message))
   page.on("request", request => {
-    if (`${request.url()} ${request.postData() ?? ""} ${JSON.stringify(request.headers())}`.includes(sentinel)) leaks.push(new URL(request.url()).pathname)
+    const capture = { url: request.url(), method: request.method(), headers: request.headers(), body: request.postData() ?? "" }
+    network.push(capture)
+    if (sentinels.some(value => sentinelForms(value).some(form => JSON.stringify(capture).includes(form)))) leaks.push(new URL(request.url()).pathname)
+  })
+  page.on("response", response => {
+    if (!new URL(response.url()).pathname.startsWith("/api/")) return
+    responses.push((async () => {
+      const headers = await response.allHeaders()
+      assertSentinelsHidden({ url: response.url(), headers,
+        body: headers["content-type"]?.includes("text/event-stream") ? "" : await response.text() },
+        sentinels, "captured browser response")
+    })())
   })
   await page.route("**/api/**", async route => {
     const request = route.request(), path = new URL(request.url()).pathname
@@ -76,7 +93,7 @@ async function fixture(t: TestContext, surface: string, initial: Meta) {
   await page.goto(`${borrowed.url}?surface=${surface}`)
   await page.waitForFunction(() => !!(window as any).secretEntryFixture)
   return {
-    page, requests, leaks,
+    page, requests, leaks, network, storageSnapshot,
     holdPatch: () => { patchGate = deferred(); gates.add(patchGate); return patchGate },
     revoke: async () => {
       meta = { ...meta, secretEntryAllowed: false }
@@ -84,11 +101,50 @@ async function fixture(t: TestContext, surface: string, initial: Meta) {
     },
     check: async (allowedSecrets = 0) => {
       assert.equal(leaks.length, allowedSecrets, "exact secret-bearing outgoing request count")
+      for (const capture of network) {
+        let body = capture.body
+        if (allowedSecrets && capture.method === "POST") {
+          const path = new URL(capture.url).pathname
+          if (path === "/api/auth/login") {
+            assert.deepEqual(JSON.parse(body), { username: "codenomad", password: sentinel })
+            body = ""
+          } else if (/^\/api\/remote-servers\/[^/]+\/connect$/.test(path) && body.includes(sentinel)) {
+            assert.deepEqual(JSON.parse(body), { pairingLink: pairing })
+            body = ""
+          }
+        }
+        assertSentinelsHidden({ ...capture, body }, sentinels, "captured non-carrier browser request")
+      }
+      await Promise.all(responses)
       assert.deepEqual(errors, []); assert.deepEqual(unexpected, [])
       await checkStorage()
     },
   }
 }
+test("encoding guards detect planted network and both browser-storage counterexamples without credential dispatch", { timeout: 60_000 }, async t => {
+  const f = await fixture(t, "dispatch", { localRequest: false, secretEntryAllowed: false })
+  const forms = sentinels.flatMap(value => sentinelForms(value))
+  const snapshots = await f.page.evaluate(forms => {
+    return forms.flatMap(form => [localStorage, sessionStorage].map(store => {
+      store.setItem("synthetic-secret", form)
+      const snapshot = { local: { ...localStorage }, session: { ...sessionStorage } }
+      store.removeItem("synthetic-secret")
+      return snapshot
+    }))
+  }, forms)
+  assert.equal(forms.length, 270, "9 sentinel types × 30 representation slots")
+  assert.equal(snapshots.length, 540, "every representation planted in both browser stores")
+  for (const snapshot of snapshots) assert.throws(() => assertSentinelsHidden(snapshot, sentinels, "planted browser storage"))
+  for (const form of forms) {
+    for (const capture of [{ url: `https://capture.invalid/${form}` }, { headers: { "x-leak": form } }, { body: form }]) {
+      assert.throws(() => assertSentinelsHidden(capture, sentinels, "planted network capture"))
+    }
+  }
+  assert.equal(f.requests.filter(request => request.method === "POST"
+    && (request.path.endsWith("/connect") || request.path.endsWith("/auth/login"))).length, 0)
+  await f.check()
+  t.diagnostic("9 sentinels × 30 slots: 540 browser-storage and 810 network counterexamples; zero credential requests")
+})
 const field = (page: Page) => page.locator("[data-server-add-field]")
 async function forgedInput(page: Page, selector: string, value: string) {
   await page.locator(selector).evaluate((element, value) => {

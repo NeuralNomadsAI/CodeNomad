@@ -5,6 +5,25 @@ import { once } from "node:events"
 import type { TestContext } from "node:test"
 import type { openSshForward } from "../../codenomad-servers/ssh"
 
+/** Five representations, each raw/URI/form encoded and JSON escaped: 30 scan slots. */
+export function sentinelForms(value: string): string[] {
+  const base64 = Buffer.from(value).toString("base64")
+  const base64url = base64.replaceAll("+", "-").replaceAll("/", "_")
+  return [value, base64, base64.replace(/=+$/, ""), base64url, base64url.replace(/=+$/, "")]
+    .flatMap(form => [form, encodeURIComponent(form), new URLSearchParams({ value: form }).toString().slice(6)])
+    .flatMap(form => [form, JSON.stringify(form).slice(1, -1)])
+}
+
+export function assertSentinelsHidden(value: unknown, sentinels: string[], label: string) {
+  const text = typeof value === "string" ? value : JSON.stringify(value)
+  for (const [index, sentinel] of sentinels.entries()) {
+    for (const form of sentinelForms(sentinel)) {
+      assert.equal(text.includes(form) || text.includes(JSON.stringify(form).slice(1, -1)), false,
+        `${label}: exposed sentinel ${index}`)
+    }
+  }
+}
+
 /** Replace only OpenSSH process creation: the relay still owns and dials a real TCP forward. */
 export function sentinelForward(t: TestContext, origins: string[], keyPath: string, key: string) {
   const opened: string[] = []

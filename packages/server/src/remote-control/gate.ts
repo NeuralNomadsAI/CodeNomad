@@ -279,7 +279,7 @@ export function isMemoryRelayRoute(pathname: string, method: string): boolean {
 /** Browser-only exceptions; remote-side host administration and nested relays stay closed. */
 export function isBackendUiRoute(pathname: string, method: string): boolean {
   const verb = method === "HEAD" ? "GET" : method
-  if (verb === "PATCH" && ["/api/storage/state", "/api/storage/state/ui"].includes(pathname)) return true
+  if (["GET", "PATCH"].includes(verb) && ["/api/storage/state", "/api/storage/state/ui"].includes(pathname)) return true
   if (verb === "GET" && pathname === "/api/remote-servers/ssh-hosts") return true
   if (verb === "POST" && (pathname === "/api/remote-servers/probe"
     || /^\/api\/remote-servers\/[A-Za-z0-9_-]{1,64}\/(?:browse|connect|forget)$/.test(pathname))) return true
