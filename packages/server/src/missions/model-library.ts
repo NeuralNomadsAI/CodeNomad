@@ -48,6 +48,16 @@ export function validMissionModels(input: unknown): boolean {
   return input === undefined || (Array.isArray(input) && (input.length === 0 || normalizeMissionModels(input).length === input.length))
 }
 
+export function saveMissionModelRecord(current: readonly UserMissionModel[], input: UserMissionModel): UserMissionModel[] {
+  const model = parseMissionModel(input)
+  if (!current.some(item => item.id === model.id) && current.length >= MAX_MISSION_MODELS) throw new Error("Mission model limit reached")
+  return [...current.filter(item => item.id !== model.id).map(parseMissionModel), model]
+}
+
+export function removeMissionModelRecord(current: readonly UserMissionModel[], id: string): UserMissionModel[] {
+  return current.filter(item => item.id !== id).map(parseMissionModel)
+}
+
 /** Match the editor's title prefill without changing the saved name. */
 export function missionConfigurationTitle(name: string): string {
   return name.replace(/\s+/g, " ").trim().slice(0, MISSION_TITLE_MAX).replace(/[\uD800-\uDBFF]$/, "").trimEnd()

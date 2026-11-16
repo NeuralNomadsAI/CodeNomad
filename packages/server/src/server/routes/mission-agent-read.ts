@@ -11,6 +11,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import type { ForgeWorkItems } from "../../forge/work-items"
 import { prepareMissionMapMutation } from "./mission-map-mutation"
 import { ownedMissionAgent } from "./mission-agent-owner"
+import { missionPlaybookDetails } from "../../missions/recipes"
 
 type Deps = { workspaceManager: WorkspaceManager; worktreeDeletionFence?: WorktreeDeletionFence;
   forge?: Pick<ForgeWorkItems, "openRepository"> }
@@ -21,6 +22,13 @@ export async function readAgentMissionProject(deps: Deps, sessionID: string, raw
   const input = parseProjectRead(command.input), manager = deps.workspaceManager
   const agent = await ownedMissionAgent(manager, sessionID, signal)
   const { client, workspace, options, session, refresh } = agent
+  if (input.kind === "playbook") {
+    const details = missionPlaybookDetails(input.taskMode)
+    const result = { taskMode: details.taskMode, playbook: details.playbooks.find(item => item.id === input.template)! }
+    await refresh()
+    if (JSON.stringify(result, null, 2).length > 100_000) throw new Error("Mission playbook read capacity")
+    return result
+  }
   const owned = await prepareMissionMapMutation({ manager, fence: deps.worktreeDeletionFence, workspaceID: workspace.id,
     directory: session.location.directory, signal })
   return owned.run(async (rpc, call) => {

@@ -20,7 +20,7 @@ Ajanlar ayrıca zamanlamayı tanılayabilir, açık OFF durumunu koruyarak ayarl
 
 **Yapılandırma**, kayıtlı hedefi, notları, rehberi, profilleri ve görev oturumlarını yükler; adı düzenlenebilir başlık olur. Alanları kontrol edin.
 
-Ajanlar kayıtlı yapılandırmaları okuyabilir ve seçtiğiniz değerleri ayrı bir Göreve kopyalayabilir.
+Ajanlar yapılandırmaları okuyabilir, kaydedebilir, değiştirebilir veya yeniden adlandırabilir, kaldırabilir ve onarabilir; mevcut bir Görevin talimatlarını da kaydedebilir. Ayrıca genel veya rehbere özel profil ve görev oturumu varsayılanlarını değiştirebilir, devralmayı geri getirebilir, geçersiz tercihleri sıfırlayabilir ve görev konuşmalarını silme tercihini değiştirebilir. Kitaplık ve bu tercihler CodeNomad profilinin tüm projelerinde geçerlidir. Projenin alt ajan derinliği, boş yapılandırma bloğunun onarımı dahil 1–10 veya **Devral** seçeneğini destekler. Her değişiklik son okunan değeri denetler ve sonradan yapılan insan düzenlemelerini korur.
 
 Altta İptal ve Oluştur yanındaki **Yapılandırmayı kaydet**, yeniden kullanılabilir bir yapılandırma saklar; Görev oluşturmaz veya başlatmaz. Zamanlama ve otomatik başlatma ayrı seçilir. Dişli, Tercihler ve kitaplığı açar; yapılandırmayı silmek mevcut görevleri ve konuşmaları korur.
 

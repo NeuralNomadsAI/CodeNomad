@@ -52,7 +52,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
         return selected ? { ...selected, preparationAvailable: Boolean(author) } : author
        }, (sessionID, input) => sendMissionInput(sessionID, "schedule", input),
           (sessionID, input) => sendMissionInput(sessionID, "project-read", input),
-          (sessionID, input) => sendMissionInput(sessionID, "project-control", input))
+           (sessionID, input) => sendMissionInput(sessionID, "project-control", input),
+           (sessionID, input) => sendMissionInput(sessionID, "settings", input))
       const promptHook = await ctx.session.hook("prompt", async event => {
         if (!await documentBusiness?.prepare(event.sessionID)) await prepareNativePassageSession(ctx, event.sessionID, humanGate)
       })

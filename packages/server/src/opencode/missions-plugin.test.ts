@@ -180,7 +180,7 @@ test("registers project tools, typed snapshot RPC, and role context", async () =
     },
   } as never)
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "control", "configure", "delete"])
+  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "settings", "control", "configure", "delete"])
   const description = (name: string) => (tools.find((tool) => tool.name === name) as unknown as { description: string }).description
   for (const name of ["report", "briefing"]) {
     assert.match(description(name), /plain language in the user's language[:,] 3-5 short sentences, outcome first/)

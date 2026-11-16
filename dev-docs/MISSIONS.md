@@ -28,7 +28,7 @@ the execution journal retains its task, report and lifecycle contracts.
 
 The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`,
 `mission.report`, `mission.briefing`, `mission.interrupt`, `mission.prepare`, `mission.schedule`,
-`mission.control`, `mission.configure` and `mission.delete`.
+`mission.control`, `mission.configure`, `mission.delete` and `mission.settings`.
 The coordinator is the topology writer.
 Native RPC schemas use the decoder's portable primitives; strict server codecs
 validate principal exclusivity and identifier/digest formats before authentication
@@ -181,7 +181,9 @@ fixed pure native reads through the unique owning backend: `panel` for summaries
 cleanups and mission fields; `current`, `current-page`, `current-content` for an
 admitted passage; `passage` for archived daily results; and `sources` for local
 branches, native conversation pages, coordinator roots and the detected forge.
-These reuse the panel's codecs, native page bounds and physical-directory admission.
+`playbook` reads one template's exact steps, roles and prompts for the selected
+taskMode, sharing the UI recipe builder. These reuse the panel's codecs, native
+page bounds and physical-directory admission.
 Every backend read revalidates the actual native caller, project and Location.
 Source continuation is explicit; file criteria use relative paths discovered with
 the ordinary file tools. Schedule list/read retains counts, observations, control
@@ -203,11 +205,11 @@ template and requested choices even after human edits.
 
 | Editor option | Agent-tool contract |
 | --- | --- |
-| Configuration | `inspect({ configurations: true })` lists saved records; `configurations: "<id>"` reads one. Copy its chosen creation fields explicitly. Library writes use Save configuration and Preferences. |
+| Configuration | `inspect({ configurations: true })` lists saved records; `configurations: "<id>"` reads one. Copy its chosen creation fields explicitly. `settings` with scope `configurations` saves, replaces/renames by ID, deletes or resets the library. |
 | Objective, Title, Notes | `prepare` and `inspect.start` accept `objective`, optional `title` and verbatim `notes`. |
 | Playbook | Both accept `template`: `custom`, `debug`, `wayfinder`, `delivery`, `compare`. |
 | Task sessions | Both accept `taskMode`: `native` or `independent`, with the same preference resolution as the editor. |
-| Subagent depth | Project-wide OpenCode configuration saved immediately by its dedicated control. Mission creation uses the effective native depth; never change it to bypass a delegation limit. |
+| Subagent depth | `settings` with scope `depth` reads the project snapshot and saves 1–10 or `null` (Inherit), with the exact document expectation. Never change it to bypass a delegation limit. |
 | Agents and models | Both accept `profiles.coordinator` and `profiles.roles`, with `agent`, `model.providerID`, `model.id` and optional `model.variant`. Omitted slots inherit preferences. |
 | Start automatically | `prepare.startOnCreation`, default false; true requires an explicit user request and continues only a fresh creation acknowledgement. `inspect.start` waits for human Play. |
 | Scheduling | `prepare.launch.when` accepts ordered `now`, cron and event criteria with the editor's grouping and validation. Hourly/daily/weekday/monthly shortcuts use cron expressions and their IANA zone. |
@@ -401,6 +403,71 @@ exact command, project, directory and issue time. The native controller asks the
 owning backend to verify its signature and fresh ownership before effects.
 Public HTTP keeps its human entry. The authenticated human-answer mark remains
 behind its separate human gate.
+
+### Agent library and preferences
+
+`mission.settings` is available to every owned project conversation through the
+unique owning backend. Its fixed scopes share the UI's existing write owners:
+
+- `configurations`: `read` returns validity, presence, a raw-field `expectation`
+  and the short ID/name/template list. `save` takes `configuration` with a stable
+  UUID `id`, name, objective, verbatim notes, template and optional profiles/taskMode.
+  A new ID appends; an existing ID replaces/renames that record. `delete` takes
+  `configurationID`; `reset` writes an empty library, including for invalid data.
+  `inspect.configurations` reads complete records with bounded slices. To save
+  an existing Mission's instructions, read its recorded objective/notes and
+  template/profiles/taskMode, then supply those fields to `settings.save`.
+- `preferences`: select `field: "missionProfileDefaults"` or
+  `"missionDeleteSessions"`. `read` returns validity, presence, expectation and
+  the decoded value when valid. `save` replaces the `defaults` array (scopes
+  `all`, `custom`, `debug`, `wayfinder`, `delivery`, `compare`) or supplies
+  `deleteSessions`. Omitted scopes, roles and taskMode inherit; a role's `{}` is
+  an explicit OpenCode-default selection. A scope's profile reset keeps its
+  taskMode by supplying that entry with `profiles: {}`. `reset` clears defaults
+  or removes the deletion preference to restore its false fallback. A complete
+  valid save or reset can repair invalid data using its original expectation.
+  Both fields and the library belong globally to the owning CodeNomad profile,
+  across its projects.
+- `depth`: `read` returns the existing `SubagentDepthSettings` snapshot.
+  `save` takes `depth: 1–10 | null` with `snapshot.project.expectation`;
+  `null` inherits and repairs a redundant empty project `experimental` object.
+  The native owner keeps neighboring settings, comments and its marked nesting rule.
+
+The private authenticated bridge supplies the actual agent principal and rechecks
+caller/project/Location ownership before the write. Profile expectations hash
+the exact raw field together with its presence as UTF-16LE JSON using SHA-256;
+absence, `{}` and normalized values remain distinct. The bridge reads through
+`getRawConfigOwner`, validates with the shared library/default codecs, then
+uses `applyConditionalMissionPreferences`. Its authoritative write-base check
+refuses intervening edits, preserving neighboring fields through the ordinary
+owner merge. A changed field returns `settings-conflict`; after a conflict or
+unknown acknowledgement, read afresh before choosing another edit.
+
+### Human action / agent surface
+
+The Mission components, Missions Preferences and public Mission routes use these
+equivalent agent surfaces:
+
+| Human action | Agent surface |
+| --- | --- |
+| Create with title, instructions, notes, playbook, profiles and task sessions | `prepare`; `inspect.start` attaches the calling root |
+| Load a configuration; save instructions; replace/rename, remove or repair a configuration | `inspect.configurations`; `settings` / `configurations` |
+| Global/playbook defaults, role inheritance, resets and deletion preference | `settings` / `preferences` |
+| Project depth, Inherit, empty experimental repair and refresh | `settings` / `depth` |
+| Add/remove/reorder schedule criteria, followed conversations, choose an eligible existing scheduled coordinator | `prepare.launch`; `schedule.configure` or `configure.configuration` |
+| Discover branches, conversations, coordinator candidates and forge | `inspect.project` / `sources`; ordinary file tools for relative file criteria |
+| Read playbook steps, roles and complete instructions | `inspect.project` / `playbook`, with template and optional taskMode |
+| Read lists, tasks, reports, plan changes, passages, history and cleanup | `inspect`, its bounded project views and content/page continuations; `schedule.read` |
+| One-time Start/Resume, graceful Pause, Interrupt now, Stop | `control` |
+| Recover coordination or a missing report; request an update | `control` |
+| Edit text or eligible structural configuration, convert immediate/calendar | `configure`; `schedule.configure` |
+| Delete and explicitly continue partial controls, edits or cleanup | `delete`; `control`/`configure`/`schedule` exact receipt reads and `retry` |
+| Schedule Start/Pause/Resume/Stop, Run now, Check, activation/diagnostic and daily controls | `schedule` |
+
+Presentation gestures (selection, copy, mark read, opening conversations) remain
+window-local. Authenticated human answers use the human question gate. Existing
+coordinator selection belongs to the scheduled editor; one-time preparation uses
+a fresh root, while `inspect.start` attaches the calling root.
 
 ### Agent schedule controls
 

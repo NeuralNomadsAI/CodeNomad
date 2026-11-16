@@ -47,7 +47,7 @@ test("presence-owned setup registers one-time Missions without touching the reti
     } as never)
     assert.equal(typeof cleanup, "function")
     try {
-      assert.deepEqual(tools, ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "control", "configure", "delete"])
+      assert.deepEqual(tools, ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "settings", "control", "configure", "delete"])
       assert.deepEqual((await snapshot!() as { missions: unknown[] }).missions, [])
     } finally { await cleanup?.() }
     assert.deepEqual(touched.filter(key => key.startsWith(RETIRED)), [], "no retired namespace read, create or repair")

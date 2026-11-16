@@ -4,6 +4,7 @@ import { readAgentMissionProject } from "./mission-agent-read"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { parseInspectInput } from "../../opencode/missions-plugin"
 import { parseProjectRead } from "../../missions/project-read-tool"
+import { missionPlaybookDetails } from "../../missions/recipes"
 
 function fixture() {
   const directory = process.cwd(), workspace = { id: "owned" }, calls: string[] = []
@@ -71,6 +72,21 @@ test("project read refuses foreign or ambiguous owners and foreign replies", asy
     Object.assign(f.state, { [key]: key === "owned" ? false : key === "projectID" || key === "responseProject" ? "foreign" : true })
     await assert.rejects(f.read({ kind: "panel", input: { source: "cleanups" } }))
   }
+})
+
+test("all playbooks and both task modes expose the UI's exact recipes from an owned conversation without native effects", async () => {
+  const f = fixture()
+  for (const taskMode of ["native", "independent"] as const) {
+    for (const playbook of missionPlaybookDetails(taskMode).playbooks) {
+      const result = await f.read({ kind: "playbook", template: playbook.id, taskMode })
+      assert.deepEqual(result, { taskMode, playbook })
+      assert.ok(JSON.stringify(result, null, 2).length <= 100_000)
+    }
+  }
+  assert.deepEqual(f.calls, [])
+  f.state.owned = false
+  await assert.rejects(f.read({ kind: "playbook", template: "custom" }))
+  assert.throws(() => parseProjectRead({ kind: "playbook", template: "custom", taskMode: "forged" }))
 })
 
 test("project inspection validates pure methods before bridge dispatch", () => {

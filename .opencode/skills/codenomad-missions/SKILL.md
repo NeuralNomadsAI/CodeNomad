@@ -17,12 +17,30 @@ Prefer ordinary native delegation for bounded work. Use a mission only when the 
 
 Use `mission.inspect({ catalog: true })` before selecting a native execution profile.
 Use `mission.inspect({ list: true })` to discover all project Missions, including human-created ones; explicit `missionID` reads them from any owned conversation. `project` provides pure bounded native views: `panel` for summaries, cleanup and mission fields; `current`, `current-page` and `current-content` for scheduled passages; `passage` for archived daily results; `sources` for branch, conversation, coordinator and forge discovery. Continue only the returned pages/cursors explicitly. File criteria take relative paths; existing file tools discover them. Project reads preserve work and request identities.
+Use `mission.inspect({ project: { kind: "playbook", template, taskMode } })` to read the UI's exact steps, roles and full prompts before creation (taskMode defaults to native).
 Use `mission.inspect({ configurations: true })` to list the unique owning backend's saved configurations, including from an owned root outside a mission; pass `configurations: "<id>"` to read one record and its suggested title. Copy the chosen fields explicitly into `prepare` or `start`. For an oversized record, pass its `read` whole and join every slice following `next`; a changed digest requires a fresh read. Invalid or unavailable libraries require recovery, preserving their stored data.
 Copy only `objective`, suggested `title`, `notes`, `template`, `profiles` and `taskMode`;
 the saved record's `id`, `version` and `name` belong to the library.
 Follow the [creation and retry discipline](../../../dev-docs/MISSIONS.md#mission-profile-selection-and-creation-recovery)
 and its editor/tool option inventory. Subagent depth is a project setting; preparation
 uses native permissions and the effective configured depth.
+
+Use `mission.settings` from any owned project conversation for the library and
+Missions settings. `scope: "configurations"` reads short IDs/names/templates;
+`save` supplies `configuration` (stable UUID id, name, objective, notes, template,
+optional profiles/taskMode), replacing/renaming an existing ID. Copy an inspected
+Mission's recorded inputs to save its instructions. `delete` takes configurationID;
+`reset` clears or repairs the library. `scope: "preferences"` selects field
+`missionProfileDefaults` or `missionDeleteSessions`: save a complete `defaults`
+array (all plus playbook scopes) or `deleteSessions`; reset restores defaults.
+Omit a scope/role/taskMode to inherit; `{}` explicitly selects native defaults.
+These preferences and the library are global to the owning CodeNomad profile.
+Read first and pass its `expectation` on every write, including invalid-data repair:
+it hashes the raw field and its presence, preserving concurrent human changes.
+`scope: "depth"` reads the project snapshot; save 1–10 or null (Inherit/empty
+experimental repair) with `snapshot.project.expectation`. Keep native permissions
+and delegation limits intact. After conflict or uncertainty, read afresh; never
+blindly replay a settings write.
 
 `prepare` returns `outcome: prepared | activated | refused | uncertain`, a compact
 `target` when created, and `acknowledgement: fresh | recovered` for confirmed outcomes.

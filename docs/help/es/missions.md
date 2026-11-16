@@ -20,7 +20,7 @@ También pueden diagnosticar la programación, preparar sus ajustes conservando 
 
 **Configuración** carga opcionalmente objetivo, notas, guion, perfiles y sesiones guardados. Su nombre proporciona el título editable. Revisa los campos.
 
-Los agentes pueden leer las configuraciones guardadas y copiar los valores elegidos en una Misión separada.
+Los agentes pueden leer, guardar, reemplazar o renombrar, eliminar y reparar configuraciones, incluidas las instrucciones de una Misión existente. También pueden cambiar los perfiles y las sesiones predeterminados globalmente o por guion, restaurar la herencia, restablecer preferencias inválidas y cambiar la preferencia de eliminación de conversaciones de tareas. La biblioteca y estas preferencias se aplican a todos los proyectos del perfil de CodeNomad. La profundidad de subagentes del proyecto admite 1–10 o **Heredar**, incluida la reparación de un bloque de configuración vacío. Cada cambio comprueba el último valor leído y conserva las modificaciones humanas posteriores.
 
 **Guardar configuración**, abajo junto a Cancelar y Crear, conserva una configuración reutilizable sin crear ni iniciar una Misión. Programación e inicio automático se eligen aparte. El engranaje abre Preferencias y la biblioteca; eliminar una configuración conserva las misiones y conversaciones.
 

@@ -369,7 +369,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerIntegrationInstallRoutes(app, { installer: new IntegrationInstaller({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog, sources: pluginSources }) })
   registerIntegrationAttachmentRoutes(app, { attachments: new IntegrationAttachments({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog }) })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
-  registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
+  const subagentDepth = new SubagentDepthSettings(configurationControls, deps.workspaceManager)
+  registerSubagentDepthSettingsRoutes(app, subagentDepth)
   const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)
   registerImageSettingsRoutes(app, imageSettings)
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
@@ -416,6 +417,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const developerCdp = new DeveloperCdp()
   const scheduleSettingsActivation = new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager)
   registerAutomationPluginRoute(app, {
+    subagentDepth,
     forge: forgeWorkItems,
     memory,
     authManager: deps.authManager,

@@ -10,7 +10,7 @@ import { normalizeMissionModels, validMissionModels } from "../../missions/model
 const commandSchema = z.object({ kind: z.literal("profile-defaults"), input: z.unknown() }).strict()
 const configurationsSchema = z.object({ kind: z.literal("configurations"), input: z.object({}).strict() }).strict()
 
-/** Read only the raw owning field; malformed libraries require explicit human repair. */
+/** Read only the raw owning field; malformed libraries require expectation-guarded repair. */
 export function readMissionConfigurations(settings: Partial<Pick<SettingsService, "getRawConfigOwner">> | undefined, command: unknown) {
   if (!configurationsSchema.safeParse(command).success) throw new MissionControlError("Invalid saved configurations request", "invalid-execution")
   let value: unknown

@@ -54,6 +54,7 @@ import { scheduleToolInput, scheduleToolWire } from "../missions/schedule-tool"
 import { parseProjectRead, projectReadWire } from "../missions/project-read-tool"
 import { projectMissionController, projectControlResult } from "../missions/project-control"
 import { projectControlInput, projectConfigureInput, projectDeleteInput, projectControlWire, projectConfigureWire, projectDeleteWire } from "../missions/project-control-tool"
+import { missionSettingsInput, missionSettingsWire } from "../missions/settings-tool"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
@@ -390,7 +391,8 @@ const executeMissionBusiness = <T>(selected: MissionBusinessRoute, use: (control
 export async function setupMissionsBusiness(context: MissionsPluginContext,
   select: (sessionID: string, name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown) => Promise<MissionBusinessRoute | undefined>,
   schedule?: MissionInputTransport["schedule"], projectRead?: (sessionID: string, input: unknown) => Promise<unknown>,
-  projectControl?: MissionInputTransport["projectControl"]): Promise<() => Promise<void>> {
+   projectControl?: MissionInputTransport["projectControl"],
+   settings?: (sessionID: string, input: import("../missions/settings-tool").MissionSettingsInput) => Promise<unknown>): Promise<() => Promise<void>> {
   let active = true
   const writer = createMissionWriterRetirement(), registrations: Registration[] = []
   const assertActive = () => { if (!active) throw new Error("CodeNomad Missions is no longer available") }
@@ -605,6 +607,20 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           }
         },
       })
+      add({
+        name: "settings", input: missionSettingsWire, options: { namespace: "mission", codemode: false },
+        description: "Read/change Missions settings from any owned conversation. configurations: read lists IDs; inspect.configurations reads records. save configuration with stable UUID id appends or replaces/renames; delete takes configurationID; reset repairs. Copy a Mission's recorded inputs to save its instructions. preferences are GLOBAL to the CodeNomad profile: field missionProfileDefaults saves a complete defaults array (all/playbook scopes; omit role/scope/taskMode to inherit, {} selects native defaults); missionDeleteSessions saves deleteSessions. reset restores defaults, including invalid data. Writes require the read's raw-field expectation. depth reads the project snapshot; save depth 1–10 or null (Inherit/empty experimental repair) with snapshot.project.expectation. Never bypass delegation limits. After conflict or uncertainty read again; never blindly replay.",
+        execute: async (raw, tool) => {
+          assertActive()
+          if (!settings) throw new Error("Mission settings unavailable")
+          const input = missionSettingsInput.parse(raw)
+          try { return textResult(await settings(tool.sessionID, input)) }
+          catch (error) {
+            if (input.action === "read") throw error
+            return textResult({ uncertain: true, scope: input.scope, action: input.action })
+          }
+        },
+      })
       for (const definition of [
         { name: "control", schema: projectControlInput, wire: projectControlWire,
           description: "Control any one-time Mission in the owned project, including human-created Missions, from any owned conversation. play/resume start prepared/paused work; pause is graceful (finish the current step), interrupt stops immediately, stop is terminal. recover-coordinator resumes coordination, including a failed Mission; recover-report takes taskKey and asks only for its missing report. request-update steers one fixed briefing request to the preserved coordinator profile; briefing publishes the response. Mutations take requestID and expectedRevision. read observes the Mission and an optional original requestID, including unconfirmed controls. On uncertainty read first, never resend or change identity. retry: true explicitly continues only a positively read partial lifecycle receipt, retaining its original action/revision (pause retains graceful). mission.interrupt instead stops a retired task's conversations." },
@@ -672,11 +688,12 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
         try {
           const selected = await select(event.sessionID, "inspect", {})
           if (!selected) {
-            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report", "prepare", "schedule", "control", "configure", "delete"]) delete event.tools[`mission_${name}`]
+            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report", "prepare", "schedule", "settings", "control", "configure", "delete"]) delete event.tools[`mission_${name}`]
             return
           }
           selected.current()
-          if (!schedule) delete event.tools.mission_schedule
+           if (!schedule) delete event.tools.mission_schedule
+           if (!settings) delete event.tools.mission_settings
           if (!projectControl) for (const name of ["control", "configure", "delete"]) delete event.tools[`mission_${name}`]
           const backendActions = await executeMissionBusiness(selected, async control => control.backendActions)
           if (!selected.preparationAvailable && !backendActions) delete event.tools.mission_prepare
@@ -778,7 +795,7 @@ const inspectSchema = {
   type: "object",
   properties: {
     missionID: { type: "string", description: "Mission to inspect; omit to use the caller's active mission." },
-    project: { ...projectReadWire, description: "Read-only project views, from any owned session. panel reads bounded summaries, cleanups and mission fields; current/current-page/current-content read a scheduled passage; passage reads archived daily results. sources discovers local branches, conversations, eligible coordinator roots or the detected forge repository. Use alone; continue each view's explicit pages/cursors." },
+    project: { ...projectReadWire, description: "Read-only project views, from any owned session. panel reads bounded summaries, cleanups and mission fields; current/current-page/current-content read a scheduled passage; passage reads archived daily results. sources discovers local branches, conversations, eligible coordinator roots or the detected forge repository. playbook reads exact steps, roles and prompts for template and optional taskMode (native by default). Use alone; continue each view's explicit pages/cursors." },
     taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$", description: "Read only this task: its status, revision, frontier and, for a live native task, its contract, exact current assignmentPrompt, observed native conversations and, for a Wayfinder decision, the qualifying human answers with ready-to-pass artifacts. Not with start." },
     taskOffset: { type: "integer", minimum: 0, description: "Read the map's tasks from this position when the map is too large for one result: its taskPage gives nextTaskOffset. Not with taskKey, list or start." },
     list: { type: "boolean", const: true, description: "List every Mission in the owned project, newest first. Use alone, or with listOffset." },

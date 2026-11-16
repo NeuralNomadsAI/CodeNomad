@@ -13,6 +13,11 @@ import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
 import { controlAgentMissionSchedule } from "./mission-agent-schedule"
 import { controlAgentMission, verifyAgentMissionControl } from "./mission-agent-control"
+import { controlAgentMissionSettings } from "./mission-agent-settings"
+import { MissionPreferenceConflictError } from "../../settings/mission-preference-condition"
+import { PluginControlsError } from "../../opencode/plugin-controls"
+import type { SubagentDepthSettings } from "../../opencode/subagent-depth-settings"
+import { z } from "zod"
 import { readAgentMissionProject } from "./mission-agent-read"
 import type { ForgeWorkItems } from "../../forge/work-items"
 import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
@@ -39,7 +44,8 @@ interface AutomationPluginRouteDeps {
   workspaceManager: WorkspaceManager
   developerCdp: DeveloperCdp
   worktreeDeletionFence?: WorktreeDeletionFence
-  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner" | "configYamlPathForAuthority">>
+  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner" | "mergePatchOwner" | "configYamlPathForAuthority">>
+  subagentDepth?: Pick<SubagentDepthSettings, "read" | "update">
   scheduleSettingsActivation?: ScheduledPreparationDeps["scheduleSettingsActivation"]
   scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
@@ -122,7 +128,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     // subagent families; they stay below the plugin's 95 s bridge timeout.
     const commandKind = body?.command && typeof body.command === "object" && "kind" in body.command ? body.command.kind : undefined
     const preferenceProbe = body.mode === "browser-claim" && (body.purpose === "mission-preferences" || body.purpose === "mission-prepare")
-      || body.mode === "mission-input" && (commandKind === "profile-defaults" || commandKind === "configurations")
+      || body.mode === "mission-input" && (commandKind === "profile-defaults" || commandKind === "configurations" || commandKind === "settings")
     const preferenceUnavailable = () => {
       const failure = missionRecoveryControlError("mission-preferences-unavailable")
       return reply.code(503).send({ error: failure.message, code: failure.code })
@@ -163,6 +169,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       try {
         if (commandKind === "profile-defaults") return reply.send({ result: readMissionProfileDefaults(deps.settings, body.command) })
         if (commandKind === "configurations") return reply.send({ result: readMissionConfigurations(deps.settings, body.command) })
+        if (commandKind === "settings") return reply.send({ result: await controlAgentMissionSettings(deps, body.sessionID, body.command, signal) })
         if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
         // Journal-keyed creation capability of the owning backend. Durable
         // admission does not use this bridge or gain a new native API fallback.
@@ -185,6 +192,10 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
           : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory)
         return reply.send({ result })
       } catch (error) {
+        if (commandKind === "settings" && (error instanceof MissionPreferenceConflictError || error instanceof PluginControlsError || error instanceof z.ZodError)) {
+          return reply.send({ result: { refused: true, code: error instanceof MissionPreferenceConflictError ? "settings-conflict"
+            : error instanceof PluginControlsError ? `settings-${error.kind}` : "settings-invalid" } })
+        }
         if (error instanceof MissionCreationHoldError) {
           return reply.code(error.code === "creation-capacity" ? 503 : 409).send({ error: error.message, code: error.code })
         }

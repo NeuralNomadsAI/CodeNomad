@@ -20,7 +20,7 @@ Les agents peuvent aussi diagnostiquer la programmation, préparer ses réglages
 
 **Configuration** charge éventuellement un objectif, des notes, un scénario et des choix d’agents, de modèles et de sessions enregistrés. Son nom fournit le titre modifiable. Vérifiez les champs remplis avant de créer.
 
-Les agents peuvent lire les configurations enregistrées et copier les valeurs choisies dans une Mission séparée.
+Les agents peuvent lire, enregistrer, remplacer ou renommer, supprimer et réparer les configurations, y compris enregistrer les instructions d’une Mission existante. Ils peuvent aussi modifier les profils et sessions par défaut, globalement ou par scénario, rétablir l’héritage, réinitialiser les préférences invalides et modifier la préférence de suppression des conversations de tâches. La bibliothèque et ces préférences s’appliquent à tous les projets du profil CodeNomad. La profondeur des sous-agents du projet accepte 1 à 10 ou **Hériter**, avec réparation d’un bloc de configuration vide. Chaque modification vérifie la valeur lue et préserve les changements humains intervenus depuis.
 
 **Enregistrer la configuration**, en bas à côté d’Annuler et Créer, nomme et conserve une configuration réutilisable. Cette action ne crée ni ne démarre de Mission. Programmation et **Démarrer automatiquement** se règlent séparément. L’engrenage des Missions ouvre les Préférences et la bibliothèque ; supprimer une configuration conserve les missions et conversations existantes.
 

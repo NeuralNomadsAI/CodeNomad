@@ -22,7 +22,7 @@ For one-time Missions, agents can start, resume, pause gracefully, interrupt imm
 
 **Configuration** optionally loads a saved objective, notes, playbook, agents/models and task-session choices. Its name supplies the editable title. Check the filled fields before creating.
 
-Agents can read saved configurations and copy your chosen values into a separate Mission.
+Agents can read, save, replace or rename, remove and repair saved configurations, including saving an existing Mission's instructions. They can also change global or playbook-specific profile and task-session defaults, restore inheritance, reset invalid preferences, and change the task-conversation deletion preference. The library and these preferences apply across the CodeNomad profile's projects. Project subagent depth supports 1–10 or **Inherit**, including repair of an empty configuration block. Each change checks the last-read value and preserves intervening human edits.
 
 **Save configuration**, in the footer beside Cancel and Create, names and saves a reusable configuration. It does not create or start a Mission. Scheduling and **Start automatically** are separate choices. The Missions gear opens Preferences, including the saved-configuration library; removing a configuration keeps existing missions and conversations.
 

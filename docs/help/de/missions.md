@@ -20,7 +20,7 @@ Agenten können die Zeitplanung prüfen, ihre Einstellungen unter Beibehaltung e
 
 **Konfiguration** lädt gespeichertes Ziel, Notizen, Playbook, Profile und Aufgabensitzungen. Der Name wird zum bearbeitbaren Titel. Prüfen Sie die Felder.
 
-Agenten können gespeicherte Konfigurationen lesen und Ihre gewählten Werte in eine separate Mission übernehmen.
+Agenten können Konfigurationen lesen, speichern, ersetzen oder umbenennen, entfernen und reparieren sowie die Anweisungen einer bestehenden Mission speichern. Sie können globale oder Playbook-spezifische Profil- und Aufgabensitzungsstandards ändern, Vererbung wiederherstellen, ungültige Einstellungen zurücksetzen und die Einstellung zum Löschen von Aufgabenunterhaltungen ändern. Bibliothek und Einstellungen gelten für alle Projekte des CodeNomad-Profils. Die Unteragententiefe des Projekts unterstützt 1–10 oder **Erben**, einschließlich der Reparatur eines leeren Konfigurationsblocks. Jede Änderung prüft den zuletzt gelesenen Wert und bewahrt zwischenzeitliche menschliche Änderungen.
 
 **Konfiguration speichern** unten neben Abbrechen und Erstellen speichert eine wiederverwendbare Konfiguration, ohne eine Mission zu erstellen oder zu starten. Zeitplanung und automatischer Start werden separat gewählt. Das Zahnrad öffnet die Einstellungen und die Bibliothek; das Entfernen einer Konfiguration erhält Missionen und Unterhaltungen.
 
