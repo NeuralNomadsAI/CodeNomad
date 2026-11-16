@@ -7,6 +7,7 @@ import type { DocumentPassageAdmission } from "../../missions/mission-document-p
 import { nativeScheduledPassageBusiness, scheduledPassageMarker, type NativeScheduledPassageContext } from "./native-scheduled-passage-business"
 import { readAutonomousMissionEnvironment } from "./autonomous-environment"
 import { documentPassageDispatchAllowed } from "./native-scheduled-passage-authority"
+import { prepareAgentScheduledCoordinator } from "./native-scheduled-coordinator-adoption"
 
 const same = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)
 
@@ -33,7 +34,14 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
   const { native, observation, signal } = input
   const current = (): true => { signal.throwIfAborted(); input.current(); return input.authority(doc, "observe") }
   const publicationCurrent = (): true => { signal.throwIfAborted(); input.current(); return input.locked.assertActive() }
-  const effectCurrent = (): true => { current(); return input.authority(doc, "initial") }
+  let agentCurrent: (() => true) | undefined
+  const effectCurrent = (): true => { current(); agentCurrent?.(); return input.authority(doc, "initial") }
+  const validateCoordinator = async () => {
+    if (!doc.creation?.author || !pending.coordinatorReused) return
+    const fence = input.settlementFence?.()
+    if (!fence) throw new Error("Agent coordinator validation unavailable")
+    agentCurrent = await prepareAgentScheduledCoordinator({ ...input, current, fence })
+  }
   const config = pending.configuration, selected = config.profiles?.coordinator
   if (!selected?.agent || !selected.model || !config.profileID || !config.executionHost) throw new Error("Frozen document profile unavailable")
   let original: ReturnType<typeof documentPassageStartInput>
@@ -61,17 +69,19 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
   if (pending.coordinatorReused && !exists) throw new Error("Selected coordinator session is missing")
   if (pending.coordinatorReused && pending.admittedAt === null && !observed?.present && !pending.admissionAttempted) {
     if (!dispatchAllowed(doc)) return { kind: "not-started", current: publicationCurrent }
+    await validateCoordinator()
     if (!pending.coordinatorBaseline) {
       const fence = input.settlementFence?.()
       if (!fence) throw new Error("Existing coordinator baseline unavailable")
       const baseline = fence.family(pending.coordinatorSessionID, undefined, true)
       const fresh = await input.locked.read(doc.id)
       if (!fresh || "deletedAt" in fresh || fresh.pending?.id !== pending.id) throw new Error("Existing coordinator baseline owner changed")
-      await input.locked.change(doc.id, fresh.revision, () => { publicationCurrent(); return fence.current() }, next => { next.pending!.coordinatorBaseline = baseline })
+      await input.locked.change(doc.id, fresh.revision, () => { publicationCurrent(); agentCurrent?.(); return fence.current() }, next => { next.pending!.coordinatorBaseline = baseline })
       pending.coordinatorBaseline = baseline
     }
     if (!input.adoptCoordinator) throw new Error("Existing coordinator adoption unavailable")
-    await input.adoptCoordinator(metadata, effectCurrent)
+    await input.adoptCoordinator(metadata, () => { current(); return input.authority(doc, "initial") })
+    await validateCoordinator()
   }
   const session = exists ? await native.get({ sessionID: pending.coordinatorSessionID }, { signal })
     : await native.create({ id: pending.coordinatorSessionID, title: missionCoordinatorTitle(config.title, config.objective),
@@ -100,6 +110,7 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
   }
   const variables = await (input.environment ?? readAutonomousMissionEnvironment)({ profileID: config.profileID, executionHost: config.executionHost }, input.profile, signal)
   const exact = { id: session.id, projectID: doc.projectID, location: session.location, metadata: session.metadata ?? metadata, agent: selected.agent, model: selected.model }
+  await validateCoordinator()
   await native.environment({ sessionID: session.id, variables: { ...variables } }, { signal }, effectCurrent, exact)
   const beforeSend = await readOriginalDocumentAdmission(input, original)
   if (!beforeSend.present) {
@@ -108,7 +119,9 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
       || fresh.pending.admittedAt !== null) return { kind: "unknown" }
     // Write ahead of the native effect. A lost write ACK or later pruning keeps
     // the original uncertain; native absence can never authorize a second try.
-    await input.locked.change(fresh.id, fresh.revision, publicationCurrent, next => { next.pending!.admissionAttempted = true })
+    await validateCoordinator()
+    await input.locked.change(fresh.id, fresh.revision, () => { publicationCurrent(); return agentCurrent?.() ?? true },
+      next => { next.pending!.admissionAttempted = true })
     const acknowledgement = await native.admit({ kind: "synthetic", input: original }, { signal }, effectCurrent, exact)
     if (acknowledgement.type !== "synthetic" || acknowledgement.id !== original.id || acknowledgement.sessionID !== original.sessionID
       || acknowledgement.delivery !== original.delivery

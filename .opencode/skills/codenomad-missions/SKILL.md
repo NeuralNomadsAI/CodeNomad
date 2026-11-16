@@ -28,8 +28,19 @@ including after source completion. Another caller has its own identity and visib
 A changed flag conflicts. A recovered creation
 never continues Play: an unattempted automatic start stays prepared, an attempted
 one exposes its original acknowledgement or uncertainty. Inspect the saved target;
-never replace an uncertain request or emulate controls. Pause, Resume, Stop and
-recurrence controls remain human actions.
+never replace an uncertain request or emulate controls. Pause, Resume, Stop, Run now,
+Check, configure and delete remain human actions.
+
+`prepare.launch?: { when: [...] }` accepts the editor's ordered criteria: same-kind
+cards are OR, schedule→event is IF, event→schedule is ELSE. Absent, empty or sole
+`now` is one-time. Calendar-backed preparation requires complete explicit agent/model
+profiles after preference resolution. Keep launch order, followed sources
+(`watchedConversationIDs`), explicit coordinator choice and start flag unchanged on retry.
+`coordinatorSessionID` selects an eligible idle root for scheduling only; a new root
+is the default. The author, source conversations and roots with active or uncertain
+Mission ownership are ineligible. Native validation rechecks adoption before effects.
+Explicit OFF and unavailable scheduling capabilities refuse activation. An agent can
+create its own calendar-backed document and continue only its fresh first-Play request.
 
 The mission `role` is independent of `execution.agent`. To pin execution, pass
 `execution: { agent: "catalog-agent-id", model: { providerID: "catalog-provider", id: "catalog-model", variant: "optional-catalog-variant" } }`.

@@ -9,6 +9,7 @@ import { missionCreationDefaultsSchema, missionCreationChoicesSchema, missionCre
 import { missionGithubKinds } from "./mission-github-condition"
 import { coordinatorBaselineSchema } from "./mission-coordinator-baseline"
 import { automaticMissionStartID } from "./preparation-result"
+import { missionPreparationCreationSchema } from "./preparation-input"
 import {
   documentCounter, documentID, documentTimestamp, nativeDocumentID, missionConfigurationSchema,
   missionLaunchLimit, missionLaunchModel, missionSlotEndsAt, requiresMissionCalendar, MISSION_DOCUMENT_MAX_BYTES,
@@ -107,13 +108,7 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
   checks: z.object({ count: documentCounter, since: documentTimestamp }).strict().nullable().optional(),
   lastSuccessfulPassageID: documentID.nullable().default(null), everCreatedTask: z.boolean(),
   blocked: z.enum(["failed", "ended-without-report", "unknown"]).nullable(),
-  creation: z.object({ requestID, digest,
-    author: z.object({ coordinatorSessionID: nativeDocumentID, missionID: documentID.optional() }).strict().optional(),
-    input: missionCreationChoicesSchema.extend({ objective: z.string().min(1).max(20_000), title: z.string().min(1).max(60).optional(),
-      notes: z.string().max(20_000).optional(), template: missionCreationTemplateSchema, startOnCreation: z.boolean() }).strict().optional(),
-    creationDefaults: missionCreationDefaultsSchema.optional(),
-    automaticStart: z.object({ requestID, attempted: z.boolean() }).strict().optional(),
-  }).strict().optional(),
+  creation: missionPreparationCreationSchema.optional(),
   oneTime: oneTime.nullable(), scheduleActivation: missionScheduleActivationSchema.nullable(),
   dormantJournal: z.object({ revision: documentCounter.positive(), deleted: z.boolean() }).strict().nullable().optional(),
   preparation: z.object({ requestID, expectedRevision: documentCounter, expectedJournalRevision: documentCounter.positive(),

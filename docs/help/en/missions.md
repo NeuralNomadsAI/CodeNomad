@@ -10,7 +10,7 @@ Remote connections use the same form and controls. Prefer HTTPS to protect netwo
 
 Choose **Create mission**. The form replaces the tree until you create or cancel. A confirmed creation selects the Mission; a refused creation leaves the form editable.
 
-You can ask an agent in any project conversation, including a subagent or scheduled run, to prepare a separate Mission with a new coordinator conversation. Your discussion stays unchanged. It stays paused unless you explicitly request automatic first start; otherwise, review it in the panel and start it yourself.
+You can ask an agent in any project conversation, including a subagent or scheduled run, to prepare a separate one-time or scheduled Mission with the editor's criteria and carry-forward context, using a new coordinator conversation by default. An explicit request for automatic first start authorizes only the first activation of its newly created schedule; after creation recovery, starting remains manual. Pausing, stopping, resuming, running now, checking, configuring and deleting remain your actions in the panel.
 
 ### Configuration {#saved-briefs}
 

@@ -17,10 +17,12 @@ import type { NativeScheduleCalendarInfo, NativeScheduleCalendarService } from "
 import { nativeScheduleCalendarMatches as exact } from "./native-schedule-calendar-service"
 import type { NativeScheduleWake } from "./native-schedule-transport-contract"
 import type { NativeScheduleOwnerBindings } from "./native-schedule-owner-bindings"
+import type { PreparationAuthor } from "../../missions/preparation-input"
 
 export type NativeScheduleOwnerControl = { missionID: string; requestID: string; expectedRevision: number;
   action: "play" | "resume" | "pause" | "stop" | "check" | "configure" | "delete";
-  configuration?: MissionConfiguration; checkpoints?: MissionSourceCheckpoint[]; deleteManagedSessions?: boolean }
+  configuration?: MissionConfiguration; checkpoints?: MissionSourceCheckpoint[]; deleteManagedSessions?: boolean;
+  automaticStart?: { author: PreparationAuthor; creationRequestID: string; creationDigest: string } }
 export type NativeScheduleOwnerOptions = { store: NativeMissionDocumentStore; native: NativeScheduleCalendarService;
   bindings: NativeScheduleOwnerBindings; installation: NativeScheduleCarrierInstallation;
   profileSource: { profileID: string; executionHost: string; configYamlPath: string }; current(): true; now?: () => number;
@@ -124,6 +126,15 @@ export class NativeScheduleCalendarOwner {
   private applyControl(input: NativeScheduleOwnerControl, processAfterCommit: boolean): Promise<MissionDocument> {
     return this.options.store.withExclusion(async locked => {
       let doc = await this.required(locked, input.missionID)
+      const assertAutomaticStart = (value: MissionDocument) => {
+        if (!input.automaticStart) return
+        const creation = value.creation, start = creation?.automaticStart
+        if (input.action !== "play" || value.firstPlayedAt !== null || !creation?.author
+          || !same(creation.author, input.automaticStart.author) || creation.requestID !== input.automaticStart.creationRequestID
+          || creation.digest !== input.automaticStart.creationDigest || start?.requestID !== input.requestID || start.attempted
+          || creation.input?.startOnCreation !== true) throw new Error("Agent Mission first Play unavailable")
+      }
+      assertAutomaticStart(doc)
       if (doc.oneTime && !doc.dormantJournal || doc.preparation?.pending) throw new Error("Use immediate Mission preparation")
       const fingerprint = stableToken(canonicalAuthority({ action: input.action, configuration: input.configuration ?? null,
         deleteManagedSessions: input.deleteManagedSessions ?? false }), 64)
@@ -215,6 +226,8 @@ export class NativeScheduleCalendarOwner {
         return processAfterCommit ? this.process(locked, doc) : doc
       }
       doc = await locked.change(doc.id, doc.revision, () => { locked.assertActive(); sources?.current(); if (resumeProof) assertSynchronousAuthorityGuard(resumeProof.current, "policy-unqualified"); return this.options.current() }, value => {
+        assertAutomaticStart(value)
+        if (input.automaticStart) value.creation!.automaticStart!.attempted = true
         const old = value.calendarOwner
         if (input.action === "play" && value.firstPlayedAt === null && missionLaunchModel(value.configuration.launch).schedules
           .some(item => item.kind === "at" && item.at <= now)) throw new NativeScheduleControlRefusal(input, "date-passed")

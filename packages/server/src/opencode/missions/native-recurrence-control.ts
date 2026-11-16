@@ -1,7 +1,8 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Cause, Effect, Schema } from "effect"
 import { verifyRecurrenceBridge } from "../automation-plugin"
-import { assertRecurrenceProofFresh, recurrenceControlRequestDigest, type RecurrenceControlProofBody } from "../../missions/recurrence-control-proof"
+import { assertRecurrenceProofFresh, assertSchedulePrincipalAction, recurrenceControlProofSchema,
+  recurrenceControlRequestDigest, recurrenceSchedulePrincipal } from "../../missions/recurrence-control-proof"
 import { recurrenceControlRequestSchema } from "../../missions/recurrence-control-contract"
 import { cancelNativeRecurrenceClock, observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClock, readNativeRecurrenceClockStatus,
   startNativeRecurrenceClock } from "./native-service-clock"
@@ -10,7 +11,8 @@ import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
 import { qualifyNativeRecurrenceOrigin } from "./native-recurrence-origin"
 import { interruptRecurrenceActors } from "./native-recurrence-actor-controls"
 
-export const nativeRecurrenceControlInputSchema = Schema.Struct({ sessionID: Schema.String, workspaceID: Schema.String, requestID: Schema.String,
+export const nativeRecurrenceControlInputSchema = Schema.Struct({ sessionID: Schema.optional(Schema.String),
+  principal: Schema.optional(Schema.Unknown), workspaceID: Schema.String, requestID: Schema.String,
   location: Schema.Struct({ directory: Schema.String, workspaceID: Schema.optional(Schema.String) }),
   digest: Schema.String, scheduleID: Schema.String, expectedRevision: Schema.Number,
   action: Schema.Literals(["play", "pause", "stop", "resume", "run-now", "check", "create"]), retry: Schema.optional(Schema.Boolean),
@@ -20,14 +22,18 @@ export const nativeRecurrenceControlInputSchema = Schema.Struct({ sessionID: Sch
 export type NativeRecurrenceControlInput = typeof nativeRecurrenceControlInputSchema.Type
 
 /** Transport authentication only. It does not mint a grant or authorize a model tool. */
-export async function assertRecurrenceBridgeProof(input: RecurrenceControlProofBody & { proof: string; retry?: boolean }) {
-  const { proof, retry: _retry, ...body } = input
-  assertRecurrenceProofFresh(input.issuedAt)
-  if (!/^[a-f0-9]{64}$/.test(proof) || input.sessionID === "auth-disabled" || !input.sessionID
-    || input.sessionID.length > 256 || !input.workspaceID || input.workspaceID.length > 200
-    || input.digest !== recurrenceControlRequestDigest((({ digest: _digest, ...identity }) => identity)(body))
+export async function assertRecurrenceBridgeProof(input: unknown, options: { allowAgent?: boolean } = {}) {
+  if (!input || typeof input !== "object") throw new Error("Recurrence transport authentication failed")
+  const { proof, retry: _retry, ...raw } = input as Record<string, unknown>
+  const body = recurrenceControlProofSchema.parse(raw), principal = recurrenceSchedulePrincipal(body)
+  assertSchedulePrincipalAction(principal, body.action)
+  if (principal.kind === "agent" && !options.allowAgent) throw new Error("Recurrence agent control refused")
+  assertRecurrenceProofFresh(body.issuedAt)
+  if (typeof proof !== "string" || !/^[a-f0-9]{64}$/.test(proof)
+    || principal.kind === "human" && principal.sessionID === "auth-disabled"
+    || body.digest !== recurrenceControlRequestDigest((({ digest: _digest, ...identity }) => identity)(body))
     || !await verifyRecurrenceBridge(body, proof)) throw new Error("Recurrence transport authentication failed")
-  assertRecurrenceProofFresh(input.issuedAt)
+  assertRecurrenceProofFresh(body.issuedAt)
 }
 
 export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurrence")(function* (

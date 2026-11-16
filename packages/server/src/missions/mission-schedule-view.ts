@@ -15,7 +15,8 @@ export function missionScheduleView(doc: MissionDocument | MissionDocumentTombst
   for (const item of owner?.retired ?? []) carriers.push({ role: item.descriptor.role, slot: item.descriptor.slot,
     timeGeneration: item.descriptor.timeGeneration, sessionID: item.descriptor.sessionID, scheduleID: item.descriptor.scheduleID,
     retiring: true, cleanupPending: !item.scheduleRemoved || !item.sessionRemoved || !item.indexRemoved })
-  return { document: { ...missionDocumentSummary(doc), id: doc.id, configuration: doc.configuration,
+  return { document: { ...missionDocumentSummary(doc), id: doc.id, createdAt: doc.createdAt, configuration: doc.configuration,
+    ...(doc.creation ? { creation: doc.creation } : {}),
     kind: doc.oneTime && !doc.dormantJournal ? "one-time" as const : "schedule" as const,
     oneShotAt: doc.oneShotAt, slotEndsAt: doc.slotEndsAt, successfulCount: doc.successfulCount, checks: doc.checks ?? null,
     observation: observation ?? unobservedMissionSchedule(doc), availableActions: missionScheduleAvailableActions(doc),

@@ -2,9 +2,11 @@ import { realpathSync } from "node:fs"
 import { realpath } from "node:fs/promises"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Location } from "@opencode/schema/location"
+import { Session } from "@opencode/schema/session"
 import { Context, Effect, Schema } from "effect"
 import { canonicalAuthority } from "../../missions/authority-protocol"
-import { assertRecurrenceProofFresh } from "../../missions/recurrence-control-proof"
+import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
+import { assertRecurrenceProofFresh, assertSchedulePrincipalAction, recurrenceSchedulePrincipal } from "../../missions/recurrence-control-proof"
 import { missionScheduleID, missionScheduleRequestSchema, type MissionScheduleRequest } from "../../missions/mission-schedule-contract"
 import type { MissionDocument } from "../../missions/mission-document"
 import { stableToken } from "../../missions/receipt-identity"
@@ -14,9 +16,51 @@ import { physical } from "../../missions/physical-path"
 import { createFamilyAuthorityIdentityFence, readFamilyAuthorityPlacement } from "../../workspaces/family-authority-claim"
 import { acquireNativeMissionDocumentStore, type NativeMissionDocumentRunner } from "./native-mission-document-storage"
 import { assertRecurrenceBridgeProof } from "./native-recurrence-control"
+import { automaticMissionStartID } from "../../missions/preparation-result"
+import { acquireNativeSourceFence } from "./native-source-fence"
+import { missionPreparationBindingSchema, readMissionPreparationBinding } from "../../missions/creation-intent"
 
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
 export const NATIVE_MISSION_SCHEDULE_CONTROL_TIMEOUT_MS = 95_000
+/** Read the exact immutable native preparation intent and return its synchronous
+ * transaction fence. Missing/unreadable/foreign intent must refuse. */
+export type NativeMissionScheduleAgentCreationVerifier = (request: MissionScheduleRequest) => Effect.Effect<() => true, unknown>
+
+export function nativeMissionScheduleAgentCreationVerifier(ctx: Pick<Plugin.Context, "storage" | "location">,
+  run: NativeMissionDocumentRunner): NativeMissionScheduleAgentCreationVerifier {
+  return request => Effect.gen(function* () {
+    const principal = recurrenceSchedulePrincipal(request.transport)
+    if (principal.kind !== "agent" || request.action !== "create") throw new Error("Mission schedule agent creation differs")
+    const fence = (yield* acquireNativeSourceFence(() => true))()
+    const binding = yield* Effect.tryPromise(() => readMissionPreparationBinding({
+      get: key => { fence.document(key); return run(ctx.storage.get(key)) },
+    }, ctx.location.project, principal.creationRequestID))
+    const { kind: _kind, ...expected } = principal
+    if (canonicalAuthority(missionPreparationBindingSchema.parse(binding)) !== canonicalAuthority(expected))
+      throw new Error("Mission schedule agent creation binding differs")
+    fence.current()
+    return () => { fence.current(); return true }
+  })
+}
+
+/** Agent authority ends at its immutable creation and its unconsumed first Play. */
+export function assertMissionScheduleAgentRequest(request: MissionScheduleRequest, document?: MissionDocument | null): void {
+  const principal = recurrenceSchedulePrincipal(request.transport)
+  assertSchedulePrincipalAction(principal, request.action)
+  if (principal.kind !== "agent") return
+  const creation = request.action === "create" ? request.creation : document?.creation
+  if (request.retry || request.action === "create" && request.requestID !== principal.creationRequestID
+    || !creation || creation.requestID !== principal.creationRequestID
+    || creation.digest !== principal.creationDigest
+    || canonicalAuthority(creation.author ?? null) !== canonicalAuthority(principal.author))
+    throw new Error("Mission schedule agent creation differs")
+  if (request.action === "play" && (!document || document.firstPlayedAt !== null
+    || document.revision !== request.expectedRevision || document.state !== "paused" || document.pending
+    || creation.input?.startOnCreation !== true || creation.automaticStart?.attempted !== false
+    || creation.automaticStart.requestID !== request.requestID
+    || request.requestID !== automaticMissionStartID(creation.requestID)))
+    throw new Error("Mission schedule agent first Play refused")
+}
 
 /** Fresh transport admits the exact durable control. Its bounded execution keeps
  * ownership checks after the proof's admission window has elapsed. */
@@ -45,13 +89,16 @@ export function nativeMissionScheduleControlExecution(request: MissionScheduleRe
   } }
 }
 
-/** Human mutations acquire a fresh RPC graph and the existing authenticated
- * bridge proof. Autonomous wakes use their persisted consent and separate guard. */
+/** Signed controls acquire a fresh RPC graph and the authenticated bridge proof.
+ * Autonomous wakes use their persisted consent and separate guard. */
 export const acquireNativeMissionScheduleAuthority = Effect.fn("missions.acquireScheduleAuthority")(function* (
   ctx: Plugin.Context, raw: unknown, run: NativeMissionDocumentRunner,
+  verifyAgentCreation: NativeMissionScheduleAgentCreationVerifier = nativeMissionScheduleAgentCreationVerifier(ctx, run),
 ) {
   const request = missionScheduleRequestSchema.parse(raw), proof = request.transport
-  yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(proof))
+  const principal = recurrenceSchedulePrincipal(proof)
+  assertSchedulePrincipalAction(principal, request.action)
+  yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(proof, { allowAgent: true }))
   const origin = yield* locationTag
   const location = yield* Schema.decodeUnknownEffect(Schema.toType(Schema.Struct(Location.Info.fields)))(origin)
   const sameLocation = () => location.directory === ctx.location.directory && location.workspaceID === ctx.location.workspaceID
@@ -65,10 +112,29 @@ export const acquireNativeMissionScheduleAuthority = Effect.fn("missions.acquire
     throw new Error("Mission schedule creation identity differs")
   if (request.action !== "create" && (!before || "deletedAt" in before && request.action !== "delete"))
     throw new Error("Mission schedule unavailable")
+  assertMissionScheduleAgentRequest(request, before && !("deletedAt" in before) ? before : undefined)
+  let agentCurrent = (): void => {}
+  if (principal.kind === "agent") {
+    const author = yield* ctx.session.get({ sessionID: Session.ID.make(principal.author.coordinatorSessionID) })
+    if (author.id !== principal.author.coordinatorSessionID || author.projectID !== location.project.id
+      || author.location.directory !== location.directory || author.location.workspaceID !== location.workspaceID)
+      throw new Error("Mission schedule agent owner differs")
+    const fence = (yield* acquireNativeSourceFence(() => {
+      if (!sameLocation()) throw new Error("Mission schedule Location changed")
+      return true
+    }))()
+    fence.selectedSession(author)
+    let creationCurrent = (): true => true
+    if (request.action === "create") {
+      creationCurrent = yield* verifyAgentCreation(request)
+    }
+    agentCurrent = () => { fence.current(); assertSynchronousAuthorityGuard(creationCurrent, "policy-unqualified") }
+  }
   const configuration = request.configuration ?? (before && !("deletedAt" in before) ? before.configuration : undefined)
   if (!configuration) {
     if (request.action !== "delete" || !before || !("deletedAt" in before)) throw new Error("Mission schedule configuration unavailable")
     const execution = nativeMissionScheduleControlExecution(request, () => {
+      agentCurrent()
       if (!sameLocation()) throw new Error("Mission schedule Location changed")
       return true
     })
@@ -111,6 +177,7 @@ export const acquireNativeMissionScheduleAuthority = Effect.fn("missions.acquire
     }, configuration.taskMode)
   }
   const execution = nativeMissionScheduleControlExecution(request, () => {
+    agentCurrent()
     if (!sameLocation()) throw new Error("Mission schedule Location changed")
     for (const guard of rootGuards) guard()
     return true

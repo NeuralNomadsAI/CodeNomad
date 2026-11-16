@@ -16,6 +16,7 @@ import { MissionCreationHoldError, missionCreationDigest } from "./mission-creat
 import type { MissionCreationMetadata } from "../../missions/creation-defaults"
 import { nativeDocumentID } from "../../missions/launch-policy"
 import type { MissionPanelMap } from "../../missions/mission-panel-map"
+import type { MissionPreparationOptions } from "../../missions/preparation-input"
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
@@ -45,6 +46,7 @@ export async function prepareMissionCreation(input: {
   preparedBy?: { missionID?: string; coordinatorSessionID: string }
   creationDefaults?: MissionCreationMetadata
   startOnCreation?: boolean
+  preparationOptions?: MissionPreparationOptions
 }) {
   const { manager, workspaceID, signal } = input
   const wait = input.wait ?? (<T>(operation: Promise<T>) => operation)
@@ -86,7 +88,8 @@ export async function prepareMissionCreation(input: {
   }
   try {
     const capability = await wait(client.rpc(CODENOMAD_MISSIONS_RPC).documentCapabilities({}, { location, ...locationRequestOptions(location), signal }))
-    const parsed = z.object({ version: z.literal(1), automaticStart: z.literal(true).optional() }).strict().parse(capability)
+    const parsed = z.object({ version: z.literal(1), automaticStart: z.literal(true).optional(),
+      agentSchedulePreparation: z.literal(true).optional() }).strict().parse(capability)
     if (input.startOnCreation !== undefined && parsed.automaticStart !== true) throw new Error("Automatic start capability unavailable")
   } catch { throw new MissionCreationPreparationError(503, "Unified Mission documents unavailable") }
   signal.throwIfAborted(); connection.assertCurrent()
@@ -117,6 +120,7 @@ export async function prepareMissionCreation(input: {
     expectedCoordinatorLocation: locations.at(-1)!,
     ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),
     ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation }),
+    ...(input.preparationOptions === undefined ? {} : { preparationOptions: input.preparationOptions }),
   }
   const admission = await admitMissionCreationLocations(manager, input.fence, workspaceID, connection, locations, signal, {
     key: `human:${projectID}:${missionID}`, workspaceID, projectID, missionID, sessionID, requestDigest: missionCreationDigest(nativeInput),

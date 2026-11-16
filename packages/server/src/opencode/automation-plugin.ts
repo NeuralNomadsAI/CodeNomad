@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { MissionControlError } from "../missions/control-error"
-import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
+import { recurrenceSchedulePrincipal, signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
 import { missionRecoveryControlError, missionRecoveryError } from "../missions/recovery-error"
 import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults"
 import { MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
@@ -403,7 +403,9 @@ export async function verifyRecurrenceBridge(body: RecurrenceControlProofBody, p
     const digest = Buffer.from(signNativeRecurrenceControl(body, registration.token), "hex")
     if (!timingSafeEqual(digest, Buffer.from(proof, "hex"))) continue
     try {
-      const reply = await callBridge(registration, { mode: "recurrence-control-verify", sessionID: body.sessionID, command: body })
+      const principal = recurrenceSchedulePrincipal(body)
+      const reply = await callBridge(registration, { mode: "recurrence-control-verify",
+        sessionID: principal.kind === "human" ? principal.sessionID : principal.author.coordinatorSessionID, command: body })
       if (reply.status === 200 && reply.body.result && typeof reply.body.result === "object"
         && "admitted" in reply.body.result && reply.body.result.admitted === true) return true
     } catch { /* Missing backend is not a reusable human grant. */ }

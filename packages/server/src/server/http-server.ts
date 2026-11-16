@@ -414,6 +414,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   const developerCdp = new DeveloperCdp()
+  const scheduleSettingsActivation = new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager)
   registerAutomationPluginRoute(app, {
     memory,
     authManager: deps.authManager,
@@ -423,6 +424,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     nativeParent: deps.nativeParent,
     developerCdp,
     workspaceManager: deps.workspaceManager,
+    scheduleSettingsActivation,
     remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
@@ -431,7 +433,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const stopMissionActivityCache = connectMissionActivityCache(deps.eventBus, missionActivityCache)
   app.addHook("onClose", async () => stopMissionActivityCache())
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings, activityCache: missionActivityCache,
-    scheduleSettingsActivation: new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager),
+    scheduleSettingsActivation,
     scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,
     missionsHost: deps.missionsHost })

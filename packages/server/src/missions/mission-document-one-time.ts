@@ -13,6 +13,7 @@ import { documentPassageSources, documentSourceStartText } from "./mission-docum
 import type { QualifiedDocumentSourceSnapshot } from "../opencode/missions/native-scheduled-passage-sources"
 import { automaticMissionStartID, type CreationAcknowledgement } from "./preparation-result"
 import { missionCreationChoices } from "./creation-defaults"
+import { normalizedPreparationOptions } from "./preparation-input"
 
 /** The owner keeps every operation inside its current native invocation graph. */
 export type MissionDocumentSources = (document: MissionDocument, current: () => true) => Promise<QualifiedDocumentSourceSnapshot>
@@ -37,6 +38,8 @@ export async function requireMissionOneTimeDocument(access: MissionDocumentAcces
 export async function prepareMissionOneTimeDocument(access: MissionDocumentAccess, project: MissionProject,
   id: string, input: MissionCreateInput, coordinatorSessionID: string, createdAt: number, current: () => true): Promise<CreationAcknowledgement<MissionDocument>> {
   const digest = stableToken(canonicalAuthority(JSON.parse(JSON.stringify(input))), 64)
+  const options = normalizedPreparationOptions(input.preparationOptions ?? {})
+  if (options.kind !== "one-time" || options.coordinatorSessionID) throw new MissionControlError("Use scheduled Mission preparation", "invalid-input")
   return access(async store => {
     const previous = await store.read(id)
     if (previous) {
@@ -51,7 +54,7 @@ export async function prepareMissionOneTimeDocument(access: MissionDocumentAcces
       ...(input.profiles === undefined ? {} : { profiles: input.profiles }), taskMode: input.taskMode ?? "native",
       // One-time admission resolves the owning backend/profile afresh at each send.
       profileID: null, executionHost: null, roots: [{ mode: "directory-only", directory: location.directory }],
-      watchedConversationIDs: input.watchedConversationIDs ?? [],
+      watchedConversationIDs: input.watchedConversationIDs ?? options.watchedConversationIDs,
       launch: { timing: { kind: "immediate" }, condition: null, ends: { maxLaunches: null, afterMs: null, at: null } },
     }, createdAt, current, { creationRequestID: input.requestID, creationDigest: digest,
       ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),
@@ -59,7 +62,8 @@ export async function prepareMissionOneTimeDocument(access: MissionDocumentAcces
         requestID: input.requestID, digest, author: input.preparedBy,
         input: { objective: input.objective, template: input.template, startOnCreation: input.startOnCreation === true,
           ...(input.title === undefined ? {} : { title: input.title }), ...(input.notes === undefined ? {} : { notes: input.notes }),
-          ...missionCreationChoices(input.creationDefaults?.request ?? input) },
+          ...missionCreationChoices(input.creationDefaults?.request ?? input),
+          ...(input.preparationOptions ? { watchedConversationIDs: options.watchedConversationIDs } : {}) },
         ...(input.creationDefaults ? { creationDefaults: input.creationDefaults } : {}),
         ...(input.startOnCreation ? { automaticStart: { requestID: automaticMissionStartID(input.requestID), attempted: false } } : {}),
       } : undefined)

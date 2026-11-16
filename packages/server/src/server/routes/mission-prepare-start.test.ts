@@ -116,6 +116,18 @@ function fixture() {
     beforeStart: (callback: () => Promise<void>) => { beforeStart = callback } }
 }
 
+test("one-time preparation retains followed sources and normalizes a sole now selector on replay", async () => {
+  const f = fixture(), input = { ...request, watchedConversationIDs: ["ses_followed"], launch: { when: [{ kind: "now" as const }] } }
+  const first = (await f.control.prepare(author, input)).preparation
+  if (first.target?.kind !== "one-time") assert.fail()
+  const doc = await f.store.read(first.target.mission.id)
+  if (!doc || "deletedAt" in doc) assert.fail()
+  assert.deepEqual(doc.configuration.watchedConversationIDs, ["ses_followed"])
+  assert.equal(f.starts, 0)
+  assert.equal((await f.control.prepare(author, { ...request, watchedConversationIDs: ["ses_followed"] })).preparation.outcome, "prepared")
+  await assert.rejects(f.control.prepare(author, { ...input, watchedConversationIDs: ["ses_changed"] }), { code: "prepare-conflict" })
+})
+
 for (const flag of [undefined, false, true]) test(`explicit creation start ${flag}: lifecycle only, once across retry`, async () => {
   const f = fixture(), input = { ...request, ...(flag === undefined ? {} : { startOnCreation: flag }) }
   const first = await f.prepare(input)

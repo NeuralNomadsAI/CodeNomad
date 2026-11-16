@@ -128,7 +128,7 @@ can use `mission.prepare`, including descendants, task actors and scheduled pass
   task along `reuseFromTaskKey`/`parentTaskKey` chains, or its actor. The coordinator, other tasks and the plan are
   untouched, under the worktree-deletion fence; `complete: false` is reported
   honestly, and an empty result notes that only canonical assignments are visible.
-- `mission.prepare` creates a one-time hand-off through the same
+- `mission.prepare` creates a separate one-time or scheduled hand-off through the same
   `prepareMissionCreation` pipeline, holds and fences as the editor, at the
   author's Location. `startOnCreation` defaults false; the user then starts it with
   Play. An explicitly requested `true` may continue only its fresh creation
@@ -144,6 +144,8 @@ can use `mission.prepare`, including descendants, task actors and scheduled pass
   ambiguous ownership is refused. Passage preparation uses the ordinary project
   journal, preserving its isolated source journal. Authored target reads use that
   same ordinary journal; lists combine the caller's preparations and passage membership.
+  Scheduled documents retain the author and original inputs before their first journal
+  exists; authored list and point reads use bounded native document pages without reconciliation.
   The calling conversation stays unchanged. Follow
   the [creation and retry discipline](#mission-profile-selection-and-creation-recovery).
 
@@ -274,9 +276,11 @@ and `missionPreparationStart` capabilities. Preparation also requires the native
 document's positive `automaticStart` capability before creation dispatch.
 Missing backend support returns the update-required refusal before dispatch
 and releases only newly reserved choices; previous uncertain outcomes remain retained.
+Calendar-backed preparation additionally requires the native document's positive
+`agentSchedulePreparation` capability before reserving or dispatching creation.
 
 Preparation results separate `outcome: prepared | activated | refused | uncertain`
-and a `target: { kind: "one-time", mission }`, retained after a start refusal or
+and a `target: { kind: "one-time", mission } | { kind: "schedule", document }`, retained after a start refusal or
 uncertain start. Confirmed outcomes carry `acknowledgement: fresh | recovered`;
 `activated` confirms the original first Play. Refusals name their phase and code;
 uncertainty retains the original request and Mission identities. Tool targets expose
@@ -296,7 +300,21 @@ journal/document revision guards. An attempted slot stays consumed after any fai
 Recovered creation with an unattempted slot stays prepared; an attempted slot reports
 only the original first-Play acknowledgement or uncertainty. Never send another Play
 from prepare replay, receipt reads, inspection, listing, reconnect or restart.
-Pause, Resume, Stop and recurrence controls remain human actions.
+For scheduled preparation, `launch?: { when: [...] }` uses the editor's ordered
+criteria codec and its OR/IF/ELSE grouping, limits, event sources and cron zones.
+An absent or empty list and a sole `now` select one-time preparation.
+`watchedConversationIDs` freezes followed sources; `coordinatorSessionID` explicitly
+selects an eligible root for a schedule, with a fresh root per passage as the default.
+Calendar profiles resolve to complete explicit agent/model selections and pass the
+native catalog check. Launch policy, followed sources, coordinator choice, target kind
+and automatic start participate in the original immutable retry identity.
+Scheduled creation and its first automatic Play use an authenticated agent principal
+bound to that author, creation request and document. The first-Play intent CAS consumes
+the single automatic-start slot. Explicit OFF, missing capabilities and incompatible
+settings refuse activation while keeping the prepared target visible.
+Document recovery reads the backend's exact retained receipt to release its physical
+permit; its internal observation-only path keeps absent or partial receipts uncertain.
+Pause, Resume, Stop, Run now, Check, configure and delete remain human actions.
 
 Preparation requestIDs are scoped to the actual author and native source mission
 when present; authors outside a mission use their stable `outside-mission` domain.

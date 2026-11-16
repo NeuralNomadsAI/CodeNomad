@@ -1,14 +1,10 @@
-import path from "node:path"
-import { realpath } from "node:fs/promises"
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import { missionConfigurationSchema, requiresMissionCalendar } from "../../missions/launch-policy"
 import { missionScheduleActions, missionScheduleID, missionSchedulePayloadDigest, missionScheduleRefusalSchema } from "../../missions/mission-schedule-contract"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
-import { physical } from "../../missions/physical-path"
 import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../../missions/recurrence-control-proof"
-import { resolveStandingProfileSource } from "../../missions/host-authority/profile-source"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { requestAdmission } from "../request-admission"
 import { prepareMissionMapMutation, MissionMapMutationError } from "./mission-map-mutation"
@@ -19,6 +15,7 @@ import { holdScheduledMission, scheduledMissionHold, scheduledMissionCreationHol
   type ScheduledHoldBinding } from "./mission-scheduled-holds"
 import type { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import { scheduledMissionProfileSource } from "./mission-scheduled-admission"
 
 type Deps = Parameters<typeof registerMissionRecurrenceCreate>[1] & {
   workspaceManager: Parameters<typeof registerMissionRecurrenceCreate>[1]["workspaceManager"] & Partial<Pick<WorkspaceManager, "getServicePathStyle">>
@@ -103,14 +100,8 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
               connection: owned.connection, location: owned.location, base: owned.base, profile, configYamlPath: yaml, executionHost }
             const binding = checking ? { ...held!.binding, owner, connection: owned.connection, location: owned.location,
               base: owned.base, profile, configYamlPath: yaml, executionHost } : requested
-            if (!manager.getServicePathStyle) throw new Error("Mission schedule host paths unavailable")
-            const profileSource = await resolveStandingProfileSource({ settings: {
-              getProfileScope: () => settings.getProfileScope(), configYamlPathForAuthority: () => settings.configYamlPathForAuthority!(),
-            }, descriptor: { scope, physicalProfile: physical(await realpath(path.dirname(yaml))), executionHost },
-            binding: { profileID: scope.key, executionHost, projectID: owner.projectID, projectCanonical: owner.projectCanonical,
-              roots: [{ mode: "directory-only", directory: owned.location.directory }] },
-            manager: manager as WorkspaceManager, workspaceID: selected.data.id,
-            roots: { assertRoots: async () => { await owned.refresh(); check(owned) } }, assertCurrent: () => { check(owned); return true } })
+            const profileSource = await scheduledMissionProfileSource({ manager, settings, workspaceID: selected.data.id,
+              owned, owner, scope, yaml, executionHost, check: () => check(owned) })
             if (!held) retain!(release => { held = holdScheduledMission(deps.worktreeDeletionFence!, binding, release); ownsHold = true })
             await owned.refresh(); check(owned)
             const identity = { sessionID: human.sessionId, workspaceID: selected.data.id, requestID: value.requestID,

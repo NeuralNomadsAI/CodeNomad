@@ -10,7 +10,7 @@ Les connexions distantes utilisent le même formulaire et les mêmes commandes. 
 
 Choisissez **Créer une mission**. Le formulaire remplace l’arbre jusqu’à la création ou l’annulation. Une création confirmée sélectionne la Mission ; une création refusée laisse le formulaire modifiable.
 
-Vous pouvez demander à un agent dans toute conversation du projet, y compris un sous-agent ou un passage programmé, de préparer une Mission séparée avec une nouvelle conversation de coordination. Votre discussion reste inchangée. Elle reste en pause sauf si vous demandez explicitement son premier démarrage automatique ; sinon, vérifiez-la dans le panneau et démarrez-la vous-même.
+Vous pouvez demander à un agent dans toute conversation du projet, y compris un sous-agent ou un passage programmé, de préparer une Mission séparée, ponctuelle ou programmée, avec les critères de l’éditeur et le contexte suivi, dans une nouvelle conversation de coordination par défaut. Une demande explicite de premier démarrage automatique autorise uniquement la première activation de sa programmation nouvellement créée ; après récupération de la création, le démarrage reste manuel. Mettre en pause, arrêter, reprendre, exécuter maintenant, vérifier, configurer et supprimer restent vos actions dans le panneau.
 
 ### Configuration {#saved-briefs}
 

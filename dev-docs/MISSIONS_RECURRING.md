@@ -185,7 +185,12 @@ Adoption applies the frozen agent/model through public native switches and merge
 the Missions metadata key. Existing transcript, title, permissions and unrelated metadata
 remain. The user's choice authorizes ordinary Mission controls over that conversation
 and its work, including Stop cancellation of existing queued user/synthetic inputs.
-Never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
+For human-authored choices, never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
+Agent-authored preparations restrict explicit adoption to an idle eligible root:
+the author, followed/event sources, active family work, queued inputs, durable claims,
+open requests and active or uncertain ownership by another Mission refuse adoption.
+Preparation and every authoritative adoption revalidate this boundary before native
+profile, metadata, environment or input effects; the current passage's own marker is allowed.
 A missing chosen root stays missing; attempted admission retains its original proof rules.
 
 Before adoption, one immutable `coordinatorBaseline` checkpoint captures the bounded
@@ -446,7 +451,7 @@ its receiving RPC acquires fresh Session/Database/Location services. Each busine
 mutation takes the document exclusion before the existing journal writer. Native
 permissions, original message identities and whole-family H11 settlement apply.
 With an owning CodeNomad backend present, passage coordinators, actors and descendants
-can prepare a separate one-time Mission through `mission.prepare`. The actual caller
+can prepare a separate one-time or calendar-backed Mission through `mission.prepare`. The actual caller
 owns its preparation and read-only target access in the ordinary project journal.
 An explicitly requested `startOnCreation` continues only fresh creation through the
 guarded first-Play contract in [Missions](MISSIONS.md#mission-profile-selection-and-creation-recovery).
@@ -529,7 +534,13 @@ that is still authorized; the bridge callback revalidates the same principal and
 never treats a device as a cookie. Any other principal is refused before a
 deletion permit or control hold exists, so a refusal is definitive, never uncertain.
 
-Never expose these controls as model tools. Validate project/Location ownership,
+Unified agent preparation admits only creation of its own document and, when explicitly
+requested through `startOnCreation`, that fresh creation's first Play. A signed agent
+principal binds the actual owned author, original request and creation digest; live
+bridge verification and document CAS enforce that scope. Recovered acknowledgements
+only read the original result. Public HTTP controls retain their authenticated human
+principal. Pause, Stop, Resume, Run now, Check, configure, delete and another Play stay human-only.
+Never expose these controls as model tools beyond that bounded preparation path. Validate project/Location ownership,
 connection identity, inputs and frozen execution profiles at the existing boundary.
 Each control has `requestID` idempotency and `expectedRevision` CAS.
 A duplicate request must not start a second Job, passage or coordinator message.

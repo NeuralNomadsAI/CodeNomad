@@ -26,7 +26,9 @@ export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeS
   const register: typeof ctx.rpc.register = (definition, handlers) => ctx.rpc.register(definition,
     definition.id === CODENOMAD_MISSIONS_RPC_ID
       ? { ...handlers, ...nativeMissionScheduleHandlers(ctx, artifacts),
-        documentCapabilities: () => acquireNativeMissionDocumentStore(ctx).pipe(Effect.as({ version: 1 as const, automaticStart: true as const }), Effect.orDie),
+        documentCapabilities: () => acquireNativeMissionDocumentStore(ctx).pipe(Effect.as({
+          version: 1 as const, automaticStart: true as const, agentSchedulePreparation: true as const,
+        }), Effect.orDie),
         documentActivation: (input: unknown) => documentInvocation.capture(Effect.tryPromise({
           try: () => documentInvocation.check(run => run(Effect.gen(function* () {
             const store = yield* acquireNativeMissionDocumentStore(ctx, run)

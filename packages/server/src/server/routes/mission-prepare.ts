@@ -15,6 +15,9 @@ import { missionRecoveryControlError as refusal, missionRecoveryRejection } from
 import { missionPreparationSource } from "../../missions/coordinator-actions"
 import { automaticMissionStartID, recoveredPreparation, type PreparationResult } from "../../missions/preparation-result"
 import { prepareMissionMapMutation } from "./mission-map-mutation"
+import { missionPreparationOptionsSchema, normalizedPreparationOptions } from "../../missions/preparation-input"
+import { prepareScheduledCoordinatorMission, type ScheduledPreparationDeps } from "./mission-prepare-scheduled"
+import type { ScheduledMissionManager } from "./mission-scheduled-admission"
 
 const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
   missionID: z.string().min(1).max(100).optional(), requestID: z.string().min(1).max(128),
@@ -23,15 +26,20 @@ const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
   creationDefaults: z.unknown().optional(),
   startOnCreation: z.boolean().optional(),
+  observeOnly: z.literal(true).optional(),
+  ...missionPreparationOptionsSchema.shape,
 }).strict() }).strict()
 
 type Manager = MissionCreationPipelineManager & Pick<WorkspaceManager, "list">
+  & Partial<Pick<WorkspaceManager, "getServiceWslDistro" | "getServicePathStyle">>
 
 /** Fresh creation alone may continue the explicit first-Play intention.
  * Native lifecycle consumes it durably before any effect. */
 export async function prepareCoordinatorMission(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown,
-  signal: AbortSignal): Promise<PreparationResult> {
+  signal: AbortSignal, scheduled: ScheduledPreparationDeps = {}): Promise<PreparationResult> {
   const { input } = commandSchema.parse(command)
+  const options = normalizedPreparationOptions(input)
+  if (options.kind === "one-time" && options.coordinatorSessionID) throw refusal("prepare-refused")
   let creation: Awaited<ReturnType<typeof prepareMissionCreation>> | undefined
   try {
     if (hasMissionPreparationHold(fence, input.requestID)) throw refusal("prepare-uncertain")
@@ -55,9 +63,16 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
     if (source?.id !== input.missionID) {
       throw refusal("prepare-refused")
     }
+    if (options.kind === "schedule") {
+      if (!manager.getServiceWslDistro) throw refusal("prepare-refused")
+      return prepareScheduledCoordinatorMission({ manager: manager as ScheduledMissionManager, fence, workspaceID: workspace.id,
+        authorSessionID: coordinatorID, input: { ...input, creationDefaults: input.creationDefaults === undefined
+          ? undefined : parseMissionCreationDefaults(input.template, input.creationDefaults) }, signal, ...scheduled })
+    }
     creation = await prepareMissionCreation({ manager, fence, workspaceID: workspace.id, signal,
       expectedProjectID: coordinator.projectID, preparedBy: { ...(source ? { missionID: source.id } : {}), coordinatorSessionID: coordinatorID },
       startOnCreation: input.startOnCreation === true,
+      ...(options.watchedConversationIDs.length ? { preparationOptions: { watchedConversationIDs: options.watchedConversationIDs } } : {}),
       ...(input.creationDefaults === undefined ? {} : { creationDefaults: parseMissionCreationDefaults(input.template, input.creationDefaults) }),
       request: { requestId: input.requestID, objective: input.objective, template: input.template, directory: coordinator.location.directory,
         ...(input.title === undefined ? {} : { title: input.title }), ...(input.notes === undefined ? {} : { notes: input.notes }),

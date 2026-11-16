@@ -7,6 +7,7 @@ import type { MissionRecipe, missionRecipeCatalog } from "./recipes"
 import type { MissionProfiles } from "./playbook-profiles"
 import type { MissionCreationChoices, MissionCreationMetadata } from "./creation-defaults"
 import type { MissionCreationSelection } from "./profile-defaults"
+import type { MissionPreparationOptions } from "./preparation-input"
 
 export interface NativeMissionSession extends MissionExecution {
   id: string
@@ -129,6 +130,7 @@ export type MissionNativeReportAuthorization = (request: MissionNativeReportRequ
 }>
 
 export interface MissionInspection {
+  schedule?: import("./mission-schedule-view").MissionScheduleRead
   selection?: MissionCreationSelection
   mission: Omit<MissionMap, "creationDefaults"> | null
   actor: MissionActor | null
@@ -141,6 +143,7 @@ export interface MissionInspection {
 }
 
 export interface MissionCreateInput extends MissionStartInput {
+  preparationOptions?: MissionPreparationOptions
   startOnCreation?: boolean
   /** Original agent request and frozen preference provenance, supplied by the owning backend. */
   creationDefaults?: MissionCreationMetadata
@@ -199,13 +202,13 @@ export interface MissionInputTransport {
   prompt(coordinatorID: string, input: Parameters<MissionSessionAdapter["prompt"]>[0]): Promise<unknown>
   synthetic(coordinatorID: string, input: Parameters<MissionSessionAdapter["synthetic"]>[0]): Promise<unknown>
   /** Backend coordinator actions behind the authenticated bridge; absent without backend presence. */
-  prepare?(coordinatorID: string, input: MissionPrepareRequest & { missionID?: string }): Promise<unknown>
+  prepare?(coordinatorID: string, input: MissionPrepareRequest & { missionID?: string; observeOnly?: true }): Promise<unknown>
   observeTask?(coordinatorID: string, input: { missionID: string; taskKey: string }): Promise<unknown>
   interruptTask?(coordinatorID: string, input: { missionID: string; taskKey: string }): Promise<unknown>
 }
 
 /** An owned author's separate mission; automatic first Play is an explicit creation choice. */
-export interface MissionPrepareRequest {
+export interface MissionPrepareRequest extends MissionPreparationOptions {
   startOnCreation?: boolean
   /** Trusted resolved creation metadata, carried only through the backend transport. */
   creationDefaults?: MissionCreationMetadata

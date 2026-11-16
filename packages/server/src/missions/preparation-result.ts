@@ -15,18 +15,26 @@ export const automaticMissionStartID = (creationRequestID: string) => `start_${s
 /** Rebuild model-facing headers from bounded known fields; the native map is read
  * independently by the owner instead of forwarding a backend's arbitrary body. */
 export function preparationResult(input: unknown, mission: MissionMap, creationRequestID: string): PreparationResult {
+  return validatedPreparationResult(input, { kind: "one-time", mission }, mission.id, creationRequestID)
+}
+
+export function scheduledPreparationResult(input: unknown, document: MissionScheduleRead, creationRequestID: string): PreparationResult {
+  if (!document.document) throw new Error("Mission schedule unavailable")
+  return validatedPreparationResult(input, { kind: "schedule", document }, document.document.id, creationRequestID)
+}
+
+function validatedPreparationResult(input: unknown, target: PreparationTarget, missionID: string, creationRequestID: string): PreparationResult {
   const value = z.object({ outcome: z.enum(["prepared", "activated", "refused", "uncertain"]),
     acknowledgement: z.enum(["fresh", "recovered"]).optional(), phase: z.enum(["creation", "activation", "start"]).optional(),
     code: z.string().regex(/^[a-z0-9-]{1,80}$/).optional(), requestID: z.string().min(1).max(128).optional(),
     missionID: z.string().min(1).max(100).optional() }).parse(input)
-  const target = { kind: "one-time" as const, mission }
   if ((value.outcome === "prepared" || value.outcome === "activated") && value.acknowledgement)
     return { outcome: value.outcome, acknowledgement: value.acknowledgement, target }
   if (value.outcome === "refused" && value.phase && value.code)
     return { outcome: "refused", phase: value.phase, code: value.code, target }
-  if (value.outcome === "uncertain" && value.phase && value.missionID === mission.id
+  if (value.outcome === "uncertain" && value.phase && value.missionID === missionID
     && (value.requestID === creationRequestID || value.requestID === automaticMissionStartID(creationRequestID)))
-    return { outcome: "uncertain", phase: value.phase, requestID: value.requestID, missionID: mission.id, target }
+    return { outcome: "uncertain", phase: value.phase, requestID: value.requestID, missionID, target }
   throw new Error("Invalid Mission preparation acknowledgement")
 }
 

@@ -2,6 +2,7 @@ import { executionSchema } from "./execution"
 import { missionProfilesSchema } from "./playbook-profiles"
 import { missionCreationDefaultsWire } from "./creation-defaults"
 import { automaticStartWire } from "./automatic-start"
+import { missionPreparationOptionsWire } from "./preparation-input"
 import { missionTaskModeSchema } from "./task-execution-mode"
 import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
@@ -22,6 +23,7 @@ import { recurrenceNativeControlWire, recurrenceSnapshotOutput, recurrenceContro
 import { RECURRENCE_RUN_NOW_STATUS_INPUT, RECURRENCE_RUN_NOW_STATUS_REQUEST, RECURRENCE_RUN_NOW_OUTPUT } from "./recurrence-manual-rpc"
 import { missionDocumentSummaryWire, missionScheduleActivationWire } from "./mission-document-wire"
 import { missionScheduleRpcMethods } from "./mission-schedule-contract"
+import { schedulePrincipalWire } from "./recurrence-control-proof"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -266,6 +268,7 @@ const creationInput = {
     coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
     watchedConversationIDs: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 240 } },
     expectedCoordinatorLocation: location, prepared: { type: "boolean" }, startOnCreation: { type: "boolean" },
+    preparationOptions: { type: "object", properties: missionPreparationOptionsWire, additionalProperties: false },
     preparedBy: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
       coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 } },
       required: ["coordinatorSessionID"], additionalProperties: false },
@@ -296,7 +299,8 @@ export const CODENOMAD_MISSIONS_RPC = {
     ...missionScheduleRpcMethods,
     documentCapabilities: {
       input: { type: "object", properties: {}, additionalProperties: false },
-      output: { type: "object", properties: { version: { type: "integer", const: 1 }, automaticStart: { const: true } }, required: ["version"], additionalProperties: false },
+      output: { type: "object", properties: { version: { type: "integer", const: 1 }, automaticStart: { const: true },
+        agentSchedulePreparation: { const: true } }, required: ["version"], additionalProperties: false },
     },
     documentActivation: {
       input: { type: "object", properties: { missionID: { type: "string", minLength: 3, maxLength: 100 }, requestID,
@@ -307,7 +311,7 @@ export const CODENOMAD_MISSIONS_RPC = {
       output: { type: "object", properties: { document: missionDocumentSummaryWire }, required: ["document"], additionalProperties: false },
     },
     recurrenceControl: {
-      input: { type: "object", properties: { sessionID: { type: "string", minLength: 1, maxLength: 256 },
+      input: { type: "object", properties: { sessionID: { type: "string", minLength: 1, maxLength: 256 }, principal: schedulePrincipalWire,
         workspaceID: { type: "string", minLength: 1, maxLength: 200 }, requestID,
         location, digest: { type: "string", minLength: 64, maxLength: 64 },
         scheduleID: { type: "string", minLength: 3, maxLength: 100 },
@@ -316,7 +320,8 @@ export const CODENOMAD_MISSIONS_RPC = {
         profileSource: { type: "object", properties: { profileID: { type: "string" }, executionHost: { type: "string" },
           configYamlPath: { type: "string" } }, required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
         proof: { type: "string", minLength: 64, maxLength: 64 } },
-        required: ["sessionID", "workspaceID", "requestID", "location", "digest", "scheduleID", "expectedRevision", "action", "issuedAt", "profileSource", "proof"], additionalProperties: false },
+        oneOf: [{ required: ["sessionID"], not: { required: ["principal"] } }, { required: ["principal"], not: { required: ["sessionID"] } }],
+        required: ["workspaceID", "requestID", "location", "digest", "scheduleID", "expectedRevision", "action", "issuedAt", "profileSource", "proof"], additionalProperties: false },
       output: { type: "object", properties: { version: { type: "integer", const: 1 }, scheduleID: { type: "string" }, requestID,
         revision: { type: "integer" }, expectedRevision: { type: "integer" }, action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] },
         state: { type: "string", enum: ["running", "paused", "stopped"] }, targetsKnown: { type: "boolean" },
@@ -330,11 +335,12 @@ export const CODENOMAD_MISSIONS_RPC = {
     },
     recurrenceRunNow: {
       input: { type: "object", properties: { ...RECURRENCE_RUN_NOW_STATUS_INPUT.properties,
-        action: { type: "string", const: "run-now" }, sessionID: { type: "string" }, workspaceID: { type: "string" }, location,
+        action: { type: "string", const: "run-now" }, sessionID: { type: "string" }, principal: schedulePrincipalWire, workspaceID: { type: "string" }, location,
         profileSource: { type: "object", properties: { profileID: { type: "string" }, executionHost: { type: "string" }, configYamlPath: { type: "string" } },
           required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
         issuedAt: { type: "integer" }, digest: { type: "string" }, proof: { type: "string" } },
-        required: ["scheduleID", "requestID", "expectedRevision", "action", "sessionID", "workspaceID", "location", "profileSource", "issuedAt", "digest", "proof"], additionalProperties: false },
+         oneOf: [{ required: ["sessionID"], not: { required: ["principal"] } }, { required: ["principal"], not: { required: ["sessionID"] } }],
+         required: ["scheduleID", "requestID", "expectedRevision", "action", "workspaceID", "location", "profileSource", "issuedAt", "digest", "proof"], additionalProperties: false },
       output: RECURRENCE_RUN_NOW_OUTPUT,
     },
     recurrenceRunNowStatus: { input: RECURRENCE_RUN_NOW_STATUS_REQUEST, output: RECURRENCE_RUN_NOW_OUTPUT },

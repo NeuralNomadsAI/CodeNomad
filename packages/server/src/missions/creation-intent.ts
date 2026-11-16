@@ -8,21 +8,29 @@ import type { MissionStorage } from "./journal"
 import type { MissionEvent, MissionJsonValue } from "./model"
 import { MISSION_TITLE_MAX } from "./mission-title"
 import { missionRecoveryControlError } from "./recovery-error"
+import { missionPreparationOptionsSchema, preparationAuthorSchema, samePreparationOptions, type MissionPreparationOptions } from "./preparation-input"
+import { stableToken } from "./receipt-identity"
+import { canonicalAuthority } from "./authority-protocol"
 
-type Request = MissionStartInput & { startOnCreation?: boolean }
+type Request = MissionStartInput & MissionPreparationOptions & { startOnCreation?: boolean }
 const requestSchema = missionCreationChoicesSchema.extend({ objective: z.string().min(1).max(20_000),
   title: z.string().min(1).max(MISSION_TITLE_MAX).optional(), notes: z.string().max(20_000).optional(),
-  template: missionCreationTemplateSchema, startOnCreation: z.boolean().optional() }).strict()
+  template: missionCreationTemplateSchema, startOnCreation: z.boolean().optional(), ...missionPreparationOptionsSchema.shape }).strict()
+export const missionPreparationBindingSchema = z.object({ author: preparationAuthorSchema,
+  creationRequestID: z.string().min(1).max(128), creationDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
 const intentSchema = z.object({ version: z.literal(1), request: requestSchema, defaults: z.unknown(),
+  binding: missionPreparationBindingSchema.optional(),
   createdAt: z.number().finite().nonnegative() }).strict()
 export const MISSION_CREATION_INTENT_RETENTION_MS = 24 * 60 * 60 * 1_000
 export const MISSION_CREATION_INTENT_LIMIT = 128
 const sameRequest = (left: Request, right: Request) => left.objective === right.objective && left.title === right.title
   && left.notes === right.notes && left.template === right.template && Boolean(left.startOnCreation) === Boolean(right.startOnCreation)
   && sameMissionCreationChoices(left, right)
+  && samePreparationOptions(left, right)
 const originalRequest = (input: Request, defaults: MissionCreationMetadata): Request => ({
   objective: input.objective, template: input.template, ...(input.title === undefined ? {} : { title: input.title }),
   ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation }),
+  ...missionPreparationOptionsSchema.parse(input),
   ...(input.notes === undefined ? {} : { notes: input.notes }), ...missionCreationChoices(defaults.request),
 })
 
@@ -115,6 +123,16 @@ export class MissionCreationIntents {
     try { await runMissionExclusive(this.prefix, () => this.clear(missionID)) } catch { /* Retain until storage recovers. */ }
   }
 
+  async bind(missionID: string, binding: z.infer<typeof missionPreparationBindingSchema>): Promise<void> {
+    await runMissionExclusive(this.prefix, async () => {
+      const key = this.prefix + missionID, raw = await this.storage.get(key)
+      if (raw === undefined || raw === null) throw new MissionControlError("Mission preparation binding unavailable", "invalid-journal")
+      const saved = parseIntent(raw), selected = missionPreparationBindingSchema.parse(binding)
+      if (saved.binding && canonicalAuthority(saved.binding) !== canonicalAuthority(selected)) this.conflict("prepare-conflict")
+      if (!saved.binding) await this.storage.set(key, JSON.parse(JSON.stringify({ ...saved, binding: selected })) as MissionJsonValue)
+    })
+  }
+
   private async clear(missionID: string): Promise<void> {
     const key = this.prefix + missionID
     const value = await this.storage.get(key)
@@ -125,4 +143,15 @@ export class MissionCreationIntents {
     // ponytail: adapters without remove retain null markers; provide remove if scan cost matters.
     await this.storage.set(key, null)
   }
+}
+
+/** Exact retained preparation only; callers revalidate its owned native author. */
+export async function readMissionPreparationBinding(storage: Pick<MissionStorage, "get">, project: { id: string; canonical: string }, nativeRequestID: string) {
+  const token = stableToken(`${project.id}\0${project.canonical}`, 24)
+  const id = `msn_${stableToken(`${project.id}\0${nativeRequestID}`, 24)}`
+  const raw = await storage.get(`codenomad-missions/v2/creation-intents/${token}/${id}`)
+  if (raw === undefined || raw === null) return undefined
+  const saved = parseIntent(raw)
+  if (Date.now() - saved.createdAt >= MISSION_CREATION_INTENT_RETENTION_MS || saved.binding?.creationRequestID !== nativeRequestID) return undefined
+  return saved.binding
 }

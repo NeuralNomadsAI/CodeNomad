@@ -11,6 +11,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
+import type { ScheduledPreparationDeps } from "./mission-prepare-scheduled"
 import { readMissionConfigurations, readMissionProfileDefaults } from "./mission-profile-defaults"
 import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
@@ -18,7 +19,7 @@ import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
 import { missionRecoveryControlError, missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
-import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
+import { verifyRecurrenceRequest, type VerifyScheduleAgentCreation } from "./mission-recurrence-proof"
 import { BrowserPage } from "../../automation/browser-page"
 import type { SettingsService } from "../../settings/service"
 import type { RemoteControlManager } from "../../remote-control/manager"
@@ -33,8 +34,10 @@ interface AutomationPluginRouteDeps {
   workspaceManager: WorkspaceManager
   developerCdp: DeveloperCdp
   worktreeDeletionFence?: WorktreeDeletionFence
-  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner">>
+  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner" | "configYamlPathForAuthority">>
+  scheduleSettingsActivation?: ScheduledPreparationDeps["scheduleSettingsActivation"]
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
+  verifyScheduleAgentCreation?: VerifyScheduleAgentCreation
   memory?: MemoryService
 }
 
@@ -79,8 +82,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     }
     if (body?.mode === "recurrence-control-verify") {
       try {
-        return reply.send({ result: await verifyHumanRecurrenceRequest(body.command, {
+        return reply.send({ result: await verifyRecurrenceRequest(body.command, {
           auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, remoteDevices: deps.remoteDevices,
+          verifyAgentCreation: deps.verifyScheduleAgentCreation,
         }, lifetime.signal) })
       } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
@@ -158,7 +162,8 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         const fence = deps.worktreeDeletionFence
         const result = commandKind === "create-root"
           ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal)
-          : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal)
+          : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal,
+            { settings: deps.settings, bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation })
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)
           : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory)

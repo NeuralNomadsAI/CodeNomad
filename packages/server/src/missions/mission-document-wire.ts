@@ -16,7 +16,7 @@ const events = [
   ...["github-pull-request", "github-issue"].map(kind => ({ type: "object", properties: { kind: { const: kind }, repository: text, author: text }, required: ["kind", "repository"], additionalProperties: false })),
 ] as const
 /** One ordered criteria list (roles by position); the strict domain codec checks counts and uniqueness. */
-const criteriaLaunchPolicyWire = { type: "object", properties: {
+export const criteriaLaunchPolicyWire = { type: "object", properties: {
   when: { type: "array", maxItems: 16, items: { oneOf: [
     { type: "object", properties: { kind: { const: "now" } }, required: ["kind"], additionalProperties: false }, cron, ...events,
   ] } },

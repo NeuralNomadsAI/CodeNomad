@@ -41,6 +41,7 @@ import { missionBriefingToolSchema, parseMissionBriefingRequest } from "../missi
 import { MissionCreateNoEffectError } from "../missions/control-error"
 import { automaticStartSchema } from "../missions/automatic-start"
 import type { PreparationResult } from "../missions/preparation-result"
+import { missionPreparationOptionsSchema, missionPreparationOptionsWire } from "../missions/preparation-input"
 import { MISSION_TITLE_MAX, parseMissionTitle } from "../missions/mission-title"
 import { MISSION_LIST_MAX_INCLUDE } from "../missions/mission-summary"
 import { createMissionWriterRetirement } from "./missions/writer-retirement"
@@ -118,6 +119,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         definition: typeof CODENOMAD_MISSIONS_RPC,
       handlers: {
         scheduleFlag(input: unknown): Promise<unknown>
+        schedulePreparationRead(input: unknown): Promise<unknown>
         scheduleList(input: unknown): Promise<unknown>
         scheduleRead(input: unknown): Promise<unknown>
         scheduleControl(input: unknown): Promise<unknown>
@@ -233,6 +235,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     await policy?.configure(control)
     const handlers: Parameters<MissionsPluginContext["rpc"]["register"]>[1] = {
       scheduleFlag: async () => { throw new Error("Native Mission schedule flag graph unavailable") },
+      schedulePreparationRead: async () => { throw new Error("Native Mission preparation graph unavailable") },
       scheduleList: async () => { throw new Error("Native Mission schedule graph unavailable") },
       scheduleRead: async () => { throw new Error("Native Mission schedule graph unavailable") },
       scheduleControl: async () => { throw new Error("Native Mission schedule graph unavailable") },
@@ -304,6 +307,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       scheduleFlag: tracked(handlers.scheduleFlag),
+      schedulePreparationRead: tracked(handlers.schedulePreparationRead),
       scheduleList: tracked(handlers.scheduleList),
       scheduleRead: tracked(handlers.scheduleRead), scheduleControl: tracked(handlers.scheduleControl),
       scheduleCarrierRead: tracked(handlers.scheduleCarrierRead),
@@ -520,7 +524,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "prepare",
-        description: "Prepare a separate one-time mission with a NEW coordinator conversation; this conversation stays unchanged. Any owned project session may prepare: ordinary roots, coordinators, descendants, current or historical task actors and scheduled passages. The actual caller remains its author with read-only access. inspect with start attaches THIS root conversation instead and keeps its coordinator admission rules. startOnCreation defaults false (prepared); set true only when the user explicitly requested automatic first Play. Only a fresh creation acknowledgement may continue through guarded lifecycle admission. Recovered creation never starts or resends Play. Results separate prepared, activated (first Play acknowledged), refused and uncertain; uncertainty retains native operation and mission IDs. Keep exactly one owning CodeNomad backend available. Read selection for frozen requested profiles/taskMode and their origins. Reuse the original tool requestID and inputs, including startOnCreation; never substitute a returned native request ID. The author has read-only access: inspect({ list: true }) or inspect({ missionID }).",
+        description: "Prepare a separate Mission; this conversation stays unchanged. Any owned project session may prepare. launch is the editor's ordered criteria list: adjacent same-kind cards mean OR, schedule→event IF, event→schedule ELSE. Absent, empty or sole now is one-time; calendars require explicit complete agent/model profiles after preference resolution. A new coordinator is the default; coordinatorSessionID explicitly selects an eligible idle root for scheduling only, excluding this author and source conversations. watchedConversationIDs adds followed context. startOnCreation defaults false; true requires the user's explicit automatic first-Play request. Only a fresh creation acknowledgement may continue; recovery never sends Play. Pause, Stop, Resume, Run now, Check, configure and delete remain human controls. Results separate prepared, activated, refused and uncertain; retain original requestID and all inputs on retries. Keep one owning CodeNomad backend available. The author can inspect its target or list preparations. inspect with start instead attaches THIS root as coordinator.",
         input: prepareSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -537,7 +541,14 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
             else if (error.code === "prepare-uncertain") throw error
             else result = { outcome: "refused", phase: "creation", code: error.code }
           }
-          if (result.target?.kind !== "one-time") return textResult(result)
+           if (result.target?.kind === "schedule") {
+             const document = result.target.document.document
+             return textResult({ ...result, target: { kind: "schedule", document: document ? {
+               missionID: document.id, title: document.configuration.title, state: document.state, revision: document.revision,
+               ...(document.creation?.creationDefaults ? { selection: document.creation.creationDefaults } : {}),
+             } : null } })
+           }
+           if (result.target?.kind !== "one-time") return textResult(result)
           const mission = result.target.mission
           return textResult({ ...result, target: { kind: "one-time", mission: {
             missionID: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }),
@@ -663,6 +674,7 @@ const prepareSchema = {
     profiles: { ...missionProfilesSchema, description: MISSION_PROFILES_DESCRIPTION },
     taskMode: { ...missionTaskModeSchema, description: "Explicit policy wins; omission inherits Missions preferences (type exception, then global), then native." },
     startOnCreation: { type: "boolean", description: "Default false. True only for the user's explicit automatic first-Play request; recovered creation leaves Play explicit." },
+    ...missionPreparationOptionsWire,
   },
   required: ["requestID", "objective", "template"],
   additionalProperties: false,
@@ -687,6 +699,7 @@ export function parsePrepareInput(input: unknown): MissionPrepareRequest {
     ...(value.startOnCreation === undefined ? {} : { startOnCreation: value.startOnCreation as boolean }),
     ...(value.taskMode === undefined ? {} : { taskMode: parseMissionTaskMode(value.taskMode) }),
     ...(value.profiles === undefined ? {} : { profiles: parseMissionProfiles(value.profiles) }),
+    ...missionPreparationOptionsSchema.parse(value),
   }
 }
 
@@ -905,6 +918,7 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
   return {
     ...(value.prepared === undefined ? {} : { prepared: value.prepared as boolean }),
     ...(value.startOnCreation === undefined ? {} : { startOnCreation: value.startOnCreation as boolean }),
+    ...(value.preparationOptions === undefined ? {} : { preparationOptions: missionPreparationOptionsSchema.strict().parse(value.preparationOptions) }),
     requestID: requiredText(value.requestID, "requestID", 128),
     ...(value.title === undefined ? {} : { title: missionTitle(value.title) }),
     objective: requiredText(value.objective, "objective", 20_000),

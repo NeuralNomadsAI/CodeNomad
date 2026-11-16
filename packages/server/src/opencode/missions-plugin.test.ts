@@ -129,9 +129,11 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   assert.match(description("briefing"), /requestID "auto:<revision>" matching basedOnRevision; for an explicit UI request use its exact requestID/)
   const inspect = tools.find((tool) => tool.name === "inspect")!
   assert.match(description("inspect"), /attaching THIS root conversation as coordinator/)
-  assert.match(description("prepare"), /NEW coordinator conversation; this conversation stays unchanged/)
+  assert.match(description("prepare"), /this conversation stays unchanged/)
+  assert.match(description("prepare"), /new coordinator is the default/)
   assert.match(description("prepare"), /Any owned project session may prepare/)
-  assert.match(description("prepare"), /current or historical task actors and scheduled passages/)
+  assert.match(description("prepare"), /coordinatorSessionID explicitly selects an eligible idle root for scheduling only/)
+  assert.match(description("prepare"), /Pause, Stop, Resume, Run now, Check, configure and delete remain human controls/)
   assert.equal((inspect as any).input.properties.start.properties.title.maxLength, 60)
   const validateInspect = new Ajv().compile((inspect as any).input)
   const validatePrepare = new Ajv().compile((tools.find(tool => tool.name === "prepare") as any).input)

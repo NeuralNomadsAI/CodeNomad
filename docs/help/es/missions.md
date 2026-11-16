@@ -10,7 +10,7 @@ Las conexiones remotas usan el mismo formulario y los mismos controles. Usa pref
 
 **Crear misión** sustituye el árbol por el formulario hasta crear o cancelar. Una creación confirmada selecciona la misión; una creación rechazada deja el formulario editable.
 
-Puedes pedir a un agente en cualquier conversación del proyecto, incluido un subagente o una ejecución programada, que prepare una Misión separada con una nueva conversación del coordinador. Tu conversación no cambia. La Misión permanece pausada salvo que solicites expresamente el primer inicio automático; de lo contrario, revísala en el panel e iníciala tú.
+Puedes pedir a un agente en cualquier conversación del proyecto, incluido un subagente o una ejecución programada, que prepare una Misión separada, puntual o programada, con los criterios del editor y el contexto de seguimiento, en una nueva conversación del coordinador por defecto. Una solicitud explícita de primer inicio automático autoriza solo la primera activación de su programación recién creada; tras recuperar la creación, el inicio sigue siendo manual. Pausar, detener, reanudar, ejecutar ahora, comprobar, configurar y eliminar siguen siendo acciones tuyas en el panel.
 
 ### Configuración {#saved-briefs}
 

@@ -10,7 +10,7 @@ Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak 
 
 **Görev oluştur**, oluşturana veya iptal edene kadar ağacın yerine formu gösterir. Oluşturma doğrulanınca görev seçilir; reddedilince form düzenlenebilir kalır.
 
-Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşmasındaki ajandan yeni koordinatör konuşmasıyla ayrı bir Görev hazırlamasını isteyebilirsiniz. Konuşmanız değişmez. İlk otomatik başlatmayı açıkça istemediğiniz sürece Görev duraklatılmış kalır; panelde inceleyip kendiniz başlatın.
+Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşmasındaki ajandan düzenleyicinin ölçütleri ve sonraki çalıştırmalara taşınan bağlamla ayrı, tek seferlik veya zamanlanmış bir Görev hazırlamasını isteyebilirsiniz; varsayılan olarak yeni bir koordinatör konuşması açılır. İlk otomatik başlatmaya yönelik açık istek, yalnızca bu Görev için yeni oluşturulan zamanlamanın ilk etkinleştirilmesine izin verir; oluşturma kurtarıldıktan sonra başlatma elle yapılır. Duraklatma, durdurma, sürdürme, şimdi çalıştırma, kontrol, yapılandırma ve silme panelde sizin yapacağınız işlemler olarak kalır.
 
 ### Yapılandırma {#saved-briefs}
 

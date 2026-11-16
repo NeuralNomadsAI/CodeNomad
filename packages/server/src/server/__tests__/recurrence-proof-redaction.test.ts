@@ -7,7 +7,10 @@ test("all recurrence proof envelopes redact cookies and selected YAML while norm
   const proof = { sessionID: "reusable-real-cookie", scheduleID: "daily_review", digest: "digest",
     profileSource: { configYamlPath: "C:/private/custom.yaml" }, issuedAt: 1000 }
   for (const payload of [proof, { mode: "recurrence-control-verify", sessionID: proof.sessionID, command: proof },
-    { input: proof }, { body: { mode: "recurrence-control-verify", command: proof } }]) {
+    { input: proof }, { body: { mode: "recurrence-control-verify", command: proof } },
+    { ...proof, sessionID: undefined, principal: { kind: "human", sessionID: proof.sessionID } },
+    { ...proof, sessionID: undefined, principal: { kind: "agent", author: { coordinatorSessionID: "ses_author" },
+      creationRequestID: "original", creationDigest: "a".repeat(64) } }]) {
     const output = JSON.stringify(redactSecrets(payload))
     assert(!output.includes(proof.sessionID))
     assert(!output.includes(proof.profileSource.configYamlPath))
