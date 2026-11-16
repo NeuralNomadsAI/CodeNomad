@@ -295,6 +295,46 @@ test("a rejected choice is not resent: an edit made from it is refused, an indep
   } finally { release(); await page.close() }
 })
 
+for (const outcome of ["accepted", "replaced", "invalid", "unreadable"] as const) test(`a lost defaults write response reconciles ${outcome} owner state without replay`, async () => {
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
+  let writes = 0, reads = 0
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.evaluate(() => window.missionDefaultsModels.view("settings"))
+    await page.route("**/api/storage/config/ui*", route => {
+      if (route.request().method() === "GET") {
+        reads++
+        return outcome === "unreadable" ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: fixture.bucket() })
+      }
+      writes++
+      const submitted = route.request().postDataJSON().patch.settings.missionProfileDefaults
+      fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionProfileDefaults:
+        outcome === "replaced" ? [{ template: "all", profiles: {}, taskMode: "native" }]
+          : outcome === "invalid" ? [{ template: "broken" }] : submitted } })
+      return route.fulfill({ status: 503, json: { error: "Write response lost" } })
+    })
+    const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
+    await mode.selectOption("independent")
+    if (outcome === "unreadable") {
+      await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).waitFor()
+    } else {
+      await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    }
+    const alert = page.getByRole("alert").filter({ hasText: await text(page, "missions.defaults.error") })
+    if (outcome === "accepted") {
+      await page.waitForFunction(() => !document.querySelector<HTMLSelectElement>(".mission-preferences-scope select")?.disabled)
+      assert.equal(await alert.count(), 0, "the saved choice clears the false failure")
+      assert.equal(await mode.inputValue(), "independent")
+    } else {
+      await alert.waitFor()
+      if (outcome === "replaced") assert.equal(await mode.inputValue(), "native", "the other client's current choice wins")
+    }
+    assert.equal(writes, 1, "recovery never repeats a write")
+    assert.equal(reads, outcome === "unreadable" ? 3 : 1)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
 test("failed UI-owner reads stay fenced despite general readiness and server/state updates, then explicit reload recovers", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   let fail = true

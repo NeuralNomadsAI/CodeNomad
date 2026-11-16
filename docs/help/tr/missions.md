@@ -38,6 +38,8 @@ Proje derinliği kaydetmek, alt ajanların bu derinlikte kendi işlerini devretm
 
 Dişli, tüm görevlerin veya bir rehberin varsayılanlarını açar; Tercihler her değişikliği hemen kaydeder. Model listeleri konuşma seçicisinin görünürlük ve favorilerini izler. Liste dışındaki kayıtlı seçim korunur.
 
+Kaydetme başarısız olursa kayıtlı tercihler yeniden okunur; eşleşen seçimler uyarıyı kaldırır. Ajan/model kataloğu yüklenemezse **Yeniden yükle** seçimlerinizi koruyarak kataloğu tekrar okur.
+
 **İki modeli karşılaştır**, A ve B için farklı modeller gerektirir; yalnızca Düşünme farkı yetmez. Hakem ayrıca seçilmezse koordinatörün modelini kullanır. A veya B'nin hakem olması yanlılık yaratabilir.
 
 Takvim tabanlı zamanlama, koordinatör ve rehberin her rolü için açık bir ajan ve model gerektirir.
