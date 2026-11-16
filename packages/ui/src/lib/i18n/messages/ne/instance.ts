@@ -214,7 +214,7 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.status.timeout": "समय समाप्त",
   "instanceShell.backgroundProcesses.status.killed": "रोकियो",
   "instanceShell.backgroundProcesses.pid": "PID {pid}",
-  "instanceShell.backgroundProcesses.exitCode": "Exit {code}",
+  "instanceShell.backgroundProcesses.exitCode": "समाप्ति कोड {code}",
   "instanceShell.backgroundProcesses.actions.stopRemove": "रोक्नुहोस् र हटाउनुहोस्",
   "instanceShell.backgroundProcesses.actions.remove": "हटाउनुहोस्",
   "instanceShell.backgroundProcesses.actions.output": "आउटपुट हेर्नुहोस्",

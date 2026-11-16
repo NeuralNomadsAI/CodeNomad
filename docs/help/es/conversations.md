@@ -108,7 +108,7 @@ Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones em
 ## Bifurcar, deshacer y recuperar una ejecución fallida {#fork-errors}
 
 1. En un mensaje, elige **Bifurcar después de este mensaje** para crear una conversación después de ese punto sin reemplazar la original.
-2. Para deshacer, revisa cuidadosamente **Deshacer cambios hasta aqui (elimina mensajes)**. La paleta ofrece **Deshacer último mensaje** y **Rehacer último mensaje** para la operación de deshacer preparada. Deshacer se desactiva si no hay un mensaje de usuario que se pueda deshacer; Rehacer se desactiva si no hay una operación de deshacer preparada.
+2. Para deshacer, revisa cuidadosamente **Deshacer cambios hasta aquí (elimina mensajes)**. La paleta ofrece **Deshacer último mensaje** y **Rehacer último mensaje** para la operación de deshacer preparada. Deshacer se desactiva si no hay un mensaje de usuario que se pueda deshacer; Rehacer se desactiva si no hay una operación de deshacer preparada.
 3. Si la ejecución falla, inspecciona **Error de sesión**, el error de la respuesta y los detalles de **Error al enviar** antes de volver a enviar.
 
 La bifurcación copia el contexto de la conversación hasta el punto seleccionado; no crea un worktree de Git ni aísla los archivos. Revertir no es simplemente navegar. Revisa los efectos sobre los archivos y el límite de lo que se deshace antes de continuar; usa una bifurcación cuando quieras una discusión alternativa sin reescribir el recorrido original.

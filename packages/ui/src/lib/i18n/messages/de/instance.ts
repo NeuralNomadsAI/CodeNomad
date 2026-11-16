@@ -214,7 +214,7 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.status.timeout": "Zeitüberschreitung",
   "instanceShell.backgroundProcesses.status.killed": "Abgebrochen",
   "instanceShell.backgroundProcesses.pid": "PID {pid}",
-  "instanceShell.backgroundProcesses.exitCode": "Exit {code}",
+  "instanceShell.backgroundProcesses.exitCode": "Beendigungscode {code}",
   "instanceShell.backgroundProcesses.actions.stopRemove": "Stoppen und entfernen",
   "instanceShell.backgroundProcesses.actions.remove": "Entfernen",
   "instanceShell.backgroundProcesses.actions.output": "Ausgabe anzeigen",
