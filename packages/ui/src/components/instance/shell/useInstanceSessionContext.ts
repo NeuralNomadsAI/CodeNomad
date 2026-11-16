@@ -7,8 +7,8 @@ import {
   getSessionInfo,
   getSessionThreads,
   sessions,
-  setActiveSession,
-  setActiveSessionFromList,
+  selectActiveSession,
+  selectSessionFromList,
 } from "../../../stores/sessions"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import type { SessionUsageState } from "../../../stores/message-v2/types"
@@ -92,12 +92,12 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
   const handleSessionSelect = (sessionId: string) => {
     const instanceId = options.instanceId()
     if (sessionId === "info") {
-      setActiveSession(instanceId, sessionId)
+      selectActiveSession(instanceId, sessionId)
       return
     }
 
     if (!allInstanceSessions().has(sessionId)) return
-    setActiveSessionFromList(instanceId, sessionId)
+    selectSessionFromList(instanceId, sessionId)
   }
 
   return {

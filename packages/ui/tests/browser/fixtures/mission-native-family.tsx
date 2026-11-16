@@ -48,7 +48,7 @@ const emit = (event: V2Event) => (serverEvents as unknown as { dispatchBatch(eve
 ])
 const snapshot = () => ({ session: activeSessionId().get(id), root: activeParentSessionId().get(id),
   heightPreference: promptInputHeight(id),
-  selectedMission: missionProjectView(scope).selected, drafts: Object.fromEntries(initial.map(session => [session.id, getSessionDraftPrompt(id, session.id)])) })
+  selectedMission: missionProjectView(id).selected, drafts: Object.fromEntries(initial.map(session => [session.id, getSessionDraftPrompt(id, session.id)])) })
 async function measureComposer() {
   await document.fonts.ready
   // Drawer transforms do not resize the textbox; wait for those too before

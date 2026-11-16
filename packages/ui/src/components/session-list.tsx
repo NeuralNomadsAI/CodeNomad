@@ -1,5 +1,6 @@
 import { Component, For, Show, batch, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
 import { focusInterruption } from "../stores/interruption-navigation"
+import { beginGesture } from "../stores/session-surface"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { observeListEnd } from "../lib/list-end-observer"
 import { preserveListFocus } from "../lib/preserve-list-focus"
@@ -354,7 +355,7 @@ const SessionList: Component<SessionListProps> = (props) => {
  
   const handleDeleteSession = async (sessionId: string) => {
     if (isSessionDeleting(sessionId)) return
-
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
     const confirmed = await showConfirmDialog(
       t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) }),
       {
@@ -403,7 +404,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     try {
       await deleteSession(props.instanceId, sessionId)
       if (fallbackSessionId) {
-        setActiveSessionFromList(props.instanceId, fallbackSessionId)
+        setActiveSessionFromList(props.instanceId, fallbackSessionId, intent)
       }
     } catch (error) {
       log.error(`Failed to delete session ${sessionId}:`, error)
@@ -528,7 +529,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const handleBulkDelete = async () => {
     const selected = Array.from(selectedSessionIds())
     if (selected.length === 0) return
-
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
     const confirmed = await showConfirmDialog(
       t(selected.length === 1 ? "sessionList.bulkDelete.confirmMessage.one" : "sessionList.bulkDelete.confirmMessage.other", { count: selected.length }),
       {
@@ -583,7 +584,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     setSelectedSessionIds(new Set<string>())
 
     if (fallbackSessionId) {
-      setActiveSessionFromList(props.instanceId, fallbackSessionId)
+      setActiveSessionFromList(props.instanceId, fallbackSessionId, intent)
     }
 
     if (failed > 0) {

@@ -15,6 +15,8 @@ Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderu
 | Globale/projektbezogene OpenCode-Einstellungen | Native Plugin-/Konfigurationsänderungen im angezeigten Umfang. Projektsteuerung benötigt ein aktives Projekt/eine Location. |
 | Desktop-Datenprofil | Native Fenster, Wiederherstellungszustand und Browserspeicher, unabhängig von Konfigurationsdatei und gemeinsamem OpenCode-Dienst. Siehe [Desktop-Fenster und Daten](desktop.md). |
 
+Der ausgewählte Tab im rechten Panel und der Dateien-Modus werden für jeden Projekt-Tab getrennt gespeichert. Ihre letzten ausdrücklichen Auswahlen liefern die Vorgaben für neue Tabs; Panel-Größen, Tab-Reihenfolge, Anpassung und Erscheinungsbild bleiben gemeinsame Layout- und Einstellungsvorgaben.
+
 **Statistik** umfasst den gesamten verbundenen OpenCode-Dienst (alle Projekte, unabhängige Klone und Untersitzungen), nicht nur den geöffneten Ordner, für die letzten 7, 30, 90 oder 365 Tage. Sie benötigt ein geöffnetes Projekt und zeigt die von OpenCode erfassten Tokens und Kosten, keine Anbieterrechnungen oder Abonnementkontingente; während der Aktualisierung können zuvor gespeicherte Summen erscheinen. Plankontingente gehören in den Statusabschnitt **Nutzung**.
 
 ## Sprache und Darstellung {#language-appearance}

@@ -14,6 +14,8 @@ Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın
 
 Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** görünen adı değiştirir; **Son kullanılanlardan kaldır** dosyaları veya konuşmaları değil, kısayolu kaldırır. Zaten açık olan bir son kullanılan projeye tıklamak yeni bir sekme açar; mevcut sekmeyi seçmek için bunun yerine projenin **Aç** düğmesini (**Açık projeye geç**) kullanın.
 
+Aynı klasörü iki kez açıp her iki sekmede de aynı konuşmayı seçerek birinde sohbeti, diğerinde web önizlemesini, dosyayı veya Görev raporunu tutun. Her sekme kendi görünümünü, konuşmanın kaydırma konumunu, sağ panel seçimini ve Dosyalar modunu korur; iletiler, yürütme ve proje verileri ortak kalır.
+
 ## Yeni örnek başlatıcıyı kullanın {#new-instance-launcher}
 
 1. `+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
@@ -35,6 +37,8 @@ Normal bir tıklama yine de tam ana sayfayı açar. Başlatıcı, yönetim yüze
 Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de kapanır ve o pencere bir bildirim gösterir. Kapatılan sekmenin gönderilmemiş taslakları ve ekleri, aynı klasörü o pencerede yeniden açtığınızda geri gelir; pencere bunları yeniden yüklenene veya kapanana kadar en son kapatılan 16 proje için tutar. Başlangıç geri yüklemesine dahil değildir.
 
 Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını kapatmaz; normal başlangıç geri yüklemesi yine uygulanır. Yürütmenin bittiğini doğrulamak istiyorsanız ilgili çalıştırmaları açıkça durdurun. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz; paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
+
+Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, Görev seçimini ve okuyucusunu, kayıtlı tarayıcı URL'sini ve geçmişini geri yükler. Kaydedilen tarayıcı sayfaları açıkça yeniden açıldığında yüklenir. Bir örneği kapatmak yalnızca o örneğin kayıtlı görünümünü kaldırır; klasörü yeniden açmak yeni bir örnek oluşturur.
 
 ## Geçici çalışma alanları {#temporary-workspaces}
 

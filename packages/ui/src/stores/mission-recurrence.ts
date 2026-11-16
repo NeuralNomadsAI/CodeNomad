@@ -164,7 +164,11 @@ function useRecurrenceRead(props: ReadDemand) {
     && a.active === b.active && a.client === b.client && a.generation === b.generation) })
   createEffect(() => {
     const identity = binding()
-    if (!identity.active) return
+    // Multiple consumers can rebind before the instance's Location metadata.
+    // Acquire demand only once that identity is readable, so their handoff
+    // cannot keep an unread entry's demand above zero and skip its first read.
+    if (!identity.active || identity.actualDirectory !== identity.directory
+      || identity.projectID && identity.actualProjectID && identity.projectID !== identity.actualProjectID) return
     const entry = untrack(() => {
       const key = cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID, identity.owner)
       let value = cache.get(key)

@@ -44,8 +44,8 @@ function mission(id: string, projectID = "fixture"): MissionMap {
     createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 const frames = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-// The view scope is the instance folder, or its ID for the store-less visibility fixture.
-const select = (page: Page, id: string, scope = "/fixture") => page.evaluate(async ({ id, scope }) => {
+// View selection belongs to the occurrence in both navigation and visibility fixtures.
+const select = (page: Page, id: string, scope = "fixture") => page.evaluate(async ({ id, scope }) => {
   const view = "/src/stores/mission-view-state.ts"
   ;(await import(view)).updateMissionProjectView(scope, { selected: id })
 }, { id, scope })

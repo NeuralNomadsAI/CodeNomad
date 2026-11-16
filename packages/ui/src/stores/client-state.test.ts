@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { encodeClientSnapshotV2 } from "./client-state-partitions.ts"
 import { normalizePersistedOutline } from "./session-outline-persistence.ts"
+import { compactMissionKey } from "./tab-view-state-migration.ts"
+import { normalizeRestorableSession } from "./client-state-codec.ts"
 type ClientState = typeof import("./client-state.ts")
 type NativeApi = Record<string, (...args: any[]) => any>; type TransactionKind = "clear" | "disable"
 const layoutKey = "opencode-session-sidebar-width-v8"; let moduleId = 0
@@ -37,6 +39,53 @@ const boot = async (api?: NativeApi, storage?: MemoryStorage) => {
 const transact = (state: ClientState, kind: TransactionKind) => kind === "clear"
   ? state.clearRestoredClientState() : state.setRestorePreviousStateEnabled(false)
 describe("client state ownership and persistence", () => {
+  it("publishes migrated descriptor views before retiring legacy preview entries; failed publication retains the source", async () => {
+    const key = "opencode-session-previews-v1"
+    const source = JSON.stringify({ '[\"/same\",\"session\"]': { targetUrl: "https://example.com/", mode: "preview" } })
+    const storage = new MemoryStorage(), saved: any[] = []
+    storage.setItem(key, source)
+    const workspace = { kind: "workspace", folder: "/same", activeSessionId: "session",
+      drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} }
+    let fail = true
+    const state = await boot({
+      loadClientState: async () => loadResult({ ...snapshot("unused", { [key]: source }),
+        session: { tabs: [workspace, { ...workspace, occurrence: 1 }], activeTabIndex: 0 } }),
+      saveClientState: async (_token, value) => {
+        saved.push(value)
+        assert.ok(value.session.tabs.every((tab: any) => tab.viewState.previews.session.targetUrl === "https://example.com/"))
+        if (fail) throw new Error("publication failed")
+        return true
+      },
+    }, storage)
+    await assert.rejects(state.flushClientState(), /publication failed/)
+    assert.equal(storage.getItem(key), source)
+    fail = false
+    await state.flushClientState()
+    assert.equal(saved.find(value => value.layout[key] === source)?.session.tabs.length, 2)
+    assert.equal(saved.at(-1).layout[key], "{}")
+    assert.equal(storage.getItem(key), "{}")
+  })
+  it("preserves a concurrent legacy preview write during migration publication", async () => {
+    const key = "opencode-session-previews-v1", storage = new MemoryStorage()
+    const source = JSON.stringify({ '[\"/same\",\"session\"]': { targetUrl: "https://example.com/a", mode: "preview" } })
+    const concurrent = JSON.stringify({ '[\"/same\",\"session\"]': { targetUrl: "https://example.com/b", mode: "chat" } })
+    const workspace = { kind: "workspace", folder: "/same", activeSessionId: "session",
+      drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} }
+    storage.setItem(key, source)
+    const saved: any[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult({ ...snapshot("unused", { [key]: source }),
+        session: { tabs: [workspace], activeTabIndex: 0 } }),
+      saveClientState: async (_token, value) => {
+        saved.push(value)
+        storage.setItem(key, concurrent)
+        return true
+      },
+    }, storage)
+    await state.flushClientState()
+    assert.equal(storage.getItem(key), concurrent)
+    assert.equal(saved.at(-1).layout[key], concurrent)
+  })
   it("removes layout entries from native and legacy storage, freeing the bounded budget", async () => {
     const entries = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`entry-${i}`, "saved"]))
     const saved: any[] = [], storage = new MemoryStorage()
@@ -308,6 +357,50 @@ describe("plain web tab session", () => {
     await state.initializeClientState()
     return state
   }
+  for (const concurrent of [false, true]) it(`migrates occurrence views into the web snapshot, retaining shared layout and ${concurrent ? "concurrent sources" : "retiring accepted sources"}`, async () => {
+    const tab = new MemoryStorage(), storage = new MemoryStorage()
+    const previewKey = "opencode-session-previews-v1", missionKey = `mission-project-${compactMissionKey("/same")}`
+    const source = JSON.stringify({ '["/same","session"]': { targetUrl: "https://example.com/", mode: "preview" } })
+    const mission = JSON.stringify({ selected: "mission", reader: { missionId: "mission", kind: "report", itemId: "report", instanceId: "old" } })
+    const workspace = { kind: "workspace", folder: "/same", activeSessionId: "session",
+      drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} }
+    tab.setItem(SNAPSHOT_KEY, JSON.stringify({ ...snapshot("unused"), session: { tabs: [
+      workspace, { ...workspace, occurrence: 1 }, { ...workspace, occurrence: 2, viewState: { version: 1 } },
+    ], activeTabIndex: 0 } }))
+    storage.setItem(previewKey, source)
+    storage.setItem(missionKey, mission)
+    storage.setItem(layoutKey, "420")
+    const write = tab.setItem.bind(tab)
+    let fail = true
+    tab.setItem = (key, value) => {
+      if (fail) throw new Error("QuotaExceededError")
+      if (concurrent) {
+        storage.setItem(previewKey, "{}")
+        storage.setItem(missionKey, JSON.stringify({ selected: "newer" }))
+      }
+      write(key, value)
+    }
+    const state = await bootWeb(tab, storage)
+    await assert.rejects(state.flushClientState(), /refused the client snapshot/)
+    assert.equal(storage.getItem(previewKey), source)
+    assert.equal(storage.getItem(missionKey), mission)
+    fail = false
+    await state.flushClientState()
+    const saved = JSON.parse(tab.getItem(SNAPSHOT_KEY)!)
+    assert.deepEqual(saved.layout, {})
+    const views = saved.session.tabs.map((tab: any) => tab.viewState)
+    assert.equal(views[0].missions.selected, "mission")
+    assert.equal(views[1].missions, undefined)
+    assert.equal(views[0].previews.session.targetUrl, "https://example.com/")
+    assert.equal(views[1].previews.session.targetUrl, "https://example.com/")
+    assert.deepEqual(views[2], { version: 1 })
+    assert.equal(storage.getItem(previewKey), "{}")
+    assert.equal(storage.getItem(missionKey), concurrent ? JSON.stringify({ selected: "newer" }) : null)
+    assert.equal(storage.getItem(layoutKey), "420")
+    const reloaded = await bootWeb(tab, storage)
+    assert.deepEqual(reloaded.loadedRestorableSession(), normalizeRestorableSession(saved.session))
+    await reloaded.flushClientState()
+  })
   it("restores the tab's own snapshot after a reload and saves changes back to sessionStorage only", async () => {
     const tab = new MemoryStorage(), storage = new MemoryStorage()
     tab.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot("saved")))

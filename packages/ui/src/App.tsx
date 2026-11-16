@@ -69,7 +69,7 @@ import {
   getSessions,
   getSessionRoot,
   activeSessionId,
-  clearActiveParentSession,
+  clearSelectedSession,
   fetchSessions,
   loadMessages,
   setActiveSessionFromList,
@@ -78,6 +78,7 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 import { openSessionPreview } from "./stores/session-previews"
+import { beginGesture } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -261,7 +262,8 @@ const App: Component = () => {
       }
     }, 30_000)
     const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
-      const findOwners = () => [...instances().values()].filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
+      const findOwners = () => appTabs().flatMap(tab => tab.kind === "instance"
+        && getSessions(tab.instance.id).some(session => session.id === sessionID) ? [tab.instance] : [])
       let owners = findOwners()
       if (owners.length === 0) {
         await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
@@ -280,17 +282,19 @@ const App: Component = () => {
         })
         return
       }
-      if (!await claimNativeBrowserOpen(requestID)) return
+      const intent = beginGesture({ instanceId: owner.id, sessionId: sessionID })
       try {
+        if (!await claimNativeBrowserOpen(requestID)) return
         const instance = owner
-        await openSessionPreview(sessionID, url, instance.folder, async () => !disposed && await claimNativeBrowserOpen(requestID))
-        if (disposed) {
+        const stillOwned = () => !disposed && findOwners().some(candidate => candidate.id === instance.id)
+        await openSessionPreview(sessionID, url, instance.id, async () => stillOwned() && await claimNativeBrowserOpen(requestID) && stillOwned(), intent)
+        if (!stillOwned() || !intent.current()) {
           await releaseNativeBrowserOpen(requestID)
           return
         }
         setShowFolderSelection(false)
         selectInstanceTab(instance.id)
-        setActiveSessionFromList(instance.id, sessionID)
+        setActiveSessionFromList(instance.id, sessionID, intent)
       } catch (error) {
         await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
           log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
@@ -607,7 +611,7 @@ const App: Component = () => {
     const parentSession = getSessionRoot(instanceId, sessionId)
     if (!parentSession) return
 
-    clearActiveParentSession(instanceId)
+    clearSelectedSession(instanceId)
 
     try {
       await fetchSessions(instanceId, { reset: true })

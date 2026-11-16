@@ -10,7 +10,7 @@ import { createCommandRegistry, resolveResolvable, type Command } from "../comma
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import type { ClientPart } from "../../types/message"
-import { getSessions, getVisibleSessionIds, setActiveSessionFromList } from "../../stores/sessions"
+import { getSessions, getVisibleSessionIds, selectSessionFromList } from "../../stores/sessions"
 import { showAlertDialog, showConfirmDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
@@ -277,7 +277,7 @@ export function useCommands(options: UseCommandsOptions) {
 
         const targetSessionId = ids[targetIndex]
         if (targetSessionId) {
-          setActiveSessionFromList(instanceId, targetSessionId)
+          selectSessionFromList(instanceId, targetSessionId)
           emitSessionSidebarRequest({ instanceId, action: "show-session-list" })
         }
       },
@@ -303,7 +303,7 @@ export function useCommands(options: UseCommandsOptions) {
 
         const targetSessionId = ids[targetIndex]
         if (targetSessionId) {
-          setActiveSessionFromList(instanceId, targetSessionId)
+          selectSessionFromList(instanceId, targetSessionId)
           emitSessionSidebarRequest({ instanceId, action: "show-session-list" })
         }
       },

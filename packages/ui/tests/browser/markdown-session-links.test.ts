@@ -53,6 +53,10 @@ test("session links route to the preview and the file reader", { timeout: 60_000
     const loopbackClick = await page.evaluate(() => (window as any).fixture.clicks().at(-1))
     assert.equal(loopbackClick.href, "http://localhost:3000/x")
     assert.equal(loopbackClick.prevented, true)
+    const webSurface = { kind: "web", sessionId: "ses_link" }
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.surface()), webSurface)
+    assert.equal(await page.evaluate(() => (window as any).fixture.targetFull()), null,
+      "opening the browser replaces the central file target")
 
     // Not intercepted: escapes, external URLs and modified clicks keep default behavior.
     const clicksBefore = await page.evaluate(() => (window as any).fixture.clicks().length)
@@ -62,8 +66,9 @@ test("session links route to the preview and the file reader", { timeout: 60_000
     await page.click('#main-root a[href="./README.md"]', { modifiers: ["Control"] })
     await page.click('#main-root a[href="http://localhost:3000/x"]', { modifiers: ["Control"] })
     await page.waitForFunction(count => (window as any).fixture.clicks().length === count, clicksBefore + 4)
-    assert.deepEqual(await page.evaluate(() => (window as any).fixture.targetFull()),
-      { path: "README.md", directory: "/fixture-root/wt-b" })
+    assert.equal(await page.evaluate(() => (window as any).fixture.targetFull()), null)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.surface()), webSurface,
+      "external and modified links preserve the foreground browser")
     assert.equal(await page.evaluate(() => (window as any).fixture.previews().length), previewsBefore)
     for (const click of await page.evaluate(() => (window as any).fixture.clicks().slice(-4))) {
       assert.equal(click.prevented, false, click.href)

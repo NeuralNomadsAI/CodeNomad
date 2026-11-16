@@ -86,6 +86,8 @@ Kendi kontrollerini ve saat dilimini korurlar. Hizmet yeniden başlayınca kesin
 
 Göz, merkezi özeti açar ve seçimi izler. Konuşmayı aç, ilgili koordinatöre veya işe gider. ⋯ menüsü uygun güncelleme, kesinti, yapılandırma ve düzenleme işlemlerini içerir.
 
+Seçim, genişletilmiş bölümler ve okuyucu her proje sekmesine aittir ve onunla birlikte geri yüklenir. Aynı projeye ait sekmeler farklı raporları okuyabilir veya birinde raporu, diğerinde konuşmayı, dosyayı ya da web önizlemesini tutabilir. Okuyucuyu açmak veya kapatmak yalnızca o sekmeyi değiştirir; Görev çalışmaları ve tamamlanan sonuçların okundu onayları pencere içinde ortak kalır.
+
 Liste sonuna yaklaşınca yeni kayıtlar ve işler otomatik yüklenir. İşler yüklenemezse devam etmek için **Tekrar dene** kullanın.
 
 ### Renkler ve durumlar {#status-colours}

@@ -34,6 +34,8 @@ Los borradores de código fuente modificados se conservan en la memoria del rend
 
 Cerrar el lector con su botón de cierre final devuelve a la conversación; el editor de mensajes permanece disponible debajo del lector. Ocultar el panel con **Panel derecho**, o una ventana demasiado estrecha para él, deja el lector abierto con el ancho liberado; volver a mostrar el panel lo conserva tal cual. Cambiar de sesión/worktree borra el lector seleccionado, lo que no implica que se guarde su borrador. Abrir una vista previa de navegador reemplaza el lector; abrir un archivo devuelve esa vista al modo de chat.
 
+Reemplazar o cerrar el lector afecta solo a la pestaña de proyecto actual. Las pestañas duplicadas pueden leer archivos distintos o mantener un archivo junto al chat, la web o el contenido de una Misión. La elección entre fuente y vista renderizada, la selección del editor y el desplazamiento se conservan al cambiar de pestaña mientras su destino y modelo sigan en memoria; guarda los borradores importantes antes de recargar. El modo de Archivos se restaura por pestaña; las preferencias de diff y ajuste de línea siguen compartidas.
+
 ## Vistas previas de solo lectura y acotadas {#preview-limits}
 
 1. Abre una imagen, un archivo binario o un cambio histórico con la acción del ojo.

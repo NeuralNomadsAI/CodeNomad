@@ -8,6 +8,7 @@ import { serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/session-api"
 import { requestComposerFocus } from "../../stores/composer-focus"
 import { resolveImagesConversation, showImagesConversation } from "../../stores/images-conversation"
+import { beginGesture } from "../../stores/session-surface"
 import type { PromptInputApi } from "../prompt-input/types"
 import { assertThumbnailBounds } from "./image-bounds"
 import { thumbnail } from "./assets-channel"
@@ -151,6 +152,7 @@ export function useApi4Channel(props: {
   }) as Array<[keyof typeof grants, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>]>)
 
   async function conversation(mode: "open" | "new", signal: AbortSignal): Promise<Answer> {
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.sessionId ?? null })
     const result = await resolveImagesConversation(props.instanceId, mode,
       (_instance, request) => panelExtensionsApi4.conversation(authority, request, signal))
     if (result.status !== "found") return { result: mode === "new" ? { opened: false } : { opened: false, created: false } }
@@ -158,8 +160,8 @@ export function useApi4Channel(props: {
     // the user selects during hydration wins: navigation needs the mount's selection unchanged.
     const selected = props.sessionId
     return { result: mode === "new" ? { opened: true } : { opened: true, created: result.created }, after: () => {
-      void showImagesConversation(props.instanceId, result, () => (props.host.activeSessionId() ?? null) === selected)
-      if (props.host.isPhoneLayout()) props.host.closePanel()
+      void showImagesConversation(props.instanceId, result, () => !signal.aborted && (props.host.activeSessionId() ?? null) === selected, intent)
+      if (intent.current() && props.host.isPhoneLayout()) props.host.closePanel()
     } }
   }
 
@@ -213,6 +215,7 @@ export function useApi4Channel(props: {
       // task, so the frame handles its answer first. Only host functions, never a string.
       if (answer({ result }) && typeof after === "function") setTimeout(() => after(), 0)
     } catch {
+      controller.abort()
       answer({ error: true })
     }
   }

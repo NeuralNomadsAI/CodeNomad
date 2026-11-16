@@ -9,6 +9,7 @@ import { seedRestoredSessionSelection } from "./session-state"
 import { seedSessionOutlineIndexes } from "./session-outline"
 import { seedSessionCatalog } from "./session-catalog-hydration"
 import { hydrateSeenInterruptions } from "./session-interruption-seen"
+import { seedTabViewState } from "./tab-view-state"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
   hydrateRestoredSessionChain, hydrateSessionExpansion, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
@@ -20,6 +21,7 @@ export function seedRestoredWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
 ): void {
+  seedTabViewState(instanceId, snapshot.viewState)
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
     .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_STREAM_SCROLL_SCOPE, snapshot: scrollSnapshot }))
   messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
@@ -50,8 +52,10 @@ export async function hydrateRestoredWorkspaceState(
   if (!isCurrentBinding()) return null
   let sessions = getSessions(instanceId)
   let selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  const hydrateSelection = () => hydrateActiveSessionSelection(instanceId, snapshot.activeParentSessionId ?? null,
+    snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null, () => !signal.aborted && isCurrentBinding())
   if (!hasAuthoritativeSessionSelection(instanceId)) {
-    hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
+    hydrateSelection()
   }
   hydrateWorkspacePromptState(
     instanceId,
@@ -83,6 +87,6 @@ export async function hydrateRestoredWorkspaceState(
     ? getSessionAncestorIdsFromMap(new Map(sessions.map((session) => [session.id, session])), selection.activeSessionId)
     : [])
   hydrateSessionExpansion(instanceId, expandedSessionIds)
-  if (!hasAuthoritativeSessionSelection(instanceId)) hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
+  if (!hasAuthoritativeSessionSelection(instanceId)) hydrateSelection()
   return unavailable
 }

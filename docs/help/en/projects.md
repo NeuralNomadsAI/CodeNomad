@@ -14,6 +14,8 @@ Cloning writes a repository to the destination. **Remove the destination folder 
 
 Recent entries are shortcuts. **Rename workspace** changes its displayed name; **Remove from recent** removes the shortcut, not its files or conversations. Clicking an already-open recent project opens a new tab; its **Open** button (**Switch to open project**) selects the existing tab instead.
 
+Open the same folder twice and select the same conversation in both tabs to keep chat in one and a web preview, file or Mission report in the other. Each tab keeps its own view, conversation scroll position, right-panel selection and Files mode; messages, execution and project data stay shared.
+
 ## Use the new-instance launcher {#new-instance-launcher}
 
 1. Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
@@ -35,6 +37,8 @@ A normal click still opens the full home page. The launcher is a shortcut, not t
 If another window displays the same project connection, its tab closes too and that window shows a notification. Unsent drafts and attachments of the closed tab return when you reopen the same folder in that window; the window keeps them for its 16 most recently closed projects until it reloads or closes. They are not part of startup restoration.
 
 Closing a whole window, quitting or reloading does not close its project connections; normal startup restoration still applies. Stop relevant runs explicitly if you need to verify execution ended. CodeNomad never unloads native Locations; shared-service maintenance is described in [OpenCode setup](opencode.md).
+
+With startup restoration enabled, each remaining tab restores its own panel choices, Mission selection/reader and saved browser URL/history. Saved browser pages load on explicit reopening. Closing one occurrence removes only its saved view; reopening the folder creates a new occurrence.
 
 ## Temporary workspaces {#temporary-workspaces}
 

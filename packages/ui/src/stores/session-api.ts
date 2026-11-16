@@ -1374,16 +1374,11 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
     return next
   })
 
-  const selectedParentId = activeParentSessionId().get(instanceId)
-  const selectedSessionId = activeSessionId().get(instanceId)
-  if (selectedParentId === sessionId) {
-    clearActiveParentSession(instanceId)
-  } else if (selectedSessionId === sessionId) {
-    if (selectedParentId && sessions().get(instanceId)?.has(selectedParentId)) {
-      setActiveSession(instanceId, selectedParentId)
-    } else {
-      clearActiveSession(instanceId)
-    }
+  const parent = activeParentSessionId().get(instanceId), active = activeSessionId().get(instanceId)
+  if (sessionId === parent) clearActiveParentSession(instanceId)
+  else if (sessionId === active) {
+    if (parent && sessions().get(instanceId)?.has(parent)) setActiveSession(instanceId, parent)
+    else clearActiveSession(instanceId)
   }
 }
 

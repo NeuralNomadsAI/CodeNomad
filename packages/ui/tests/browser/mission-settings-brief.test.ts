@@ -58,7 +58,7 @@ async function setup(page: Page, preferences: "accept" | "reject", initial: Reco
   await page.evaluate(async () => {
     const instances = "/src/stores/instances.ts", view = "/src/stores/mission-view-state.ts"
     ;(await import(instances)).setActiveInstanceId("fixture")
-    ;(await import(view)).updateMissionProjectView("/fixture", { selected: "msn_done" })
+    ;(await import(view)).updateMissionProjectView("fixture", { selected: "msn_done" })
   })
   return { errors, writes, missionWrites }
 }

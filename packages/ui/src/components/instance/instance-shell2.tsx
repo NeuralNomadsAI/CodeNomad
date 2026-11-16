@@ -63,7 +63,8 @@ import {
   showSessionChat,
   showSessionPreview,
 } from "../../stores/session-previews"
-import { clearActiveParentSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { beginGesture } from "../../stores/session-surface"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
@@ -443,7 +444,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? getSessionPreview(sessionId, props.instance.folder) : null
+    return sessionId ? getSessionPreview(sessionId, props.instance.id) : null
   })
 
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
@@ -461,11 +462,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleOpenPreview() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
+    const intent = beginGesture({ instanceId: props.instance.id, sessionId })
     try {
-      const restored = await restoreSessionPreview(sessionId, props.instance.folder)
-      if (restored) showSessionPreview(restored.storageKey)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.folder)
+      const restored = await restoreSessionPreview(sessionId, props.instance.id)
+      if (!intent.current()) return
+      if (restored) showSessionPreview(restored.storageKey, intent)
+      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.id, undefined, intent)
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return
+      if (props.isActiveInstance === false || activeSessionIdForInstance() !== sessionId) return
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
         detail: error instanceof Error ? error.message : String(error),
@@ -720,7 +725,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // still unmount and remain subject to the existing transcript memory budget.
   const mountedSessionIds = createMemo<string[]>((previous) => {
     const wanted = new Set([
-      ...getPreviewSessionIds(props.instance.folder).filter((id) => allInstanceSessions().has(id)),
+      ...getPreviewSessionIds(props.instance.id).filter((id) => allInstanceSessions().has(id)),
       ...cachedSessionIds(),
     ])
     // Reordering an Electron webview in the DOM can recreate its guest.
@@ -908,7 +913,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   // Readers that need no conversation: schedules and playbook details.
   const readingWithoutConversation = () => Boolean(props.isActiveInstance)
-    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.folder).reader?.kind ?? "")
+    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()
@@ -986,6 +991,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   function createAndActivateDraftSession() {
     if (draftSessionCreation) return draftSessionCreation
+    const intent = beginGesture({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() ?? null })
     const creation = (async () => {
       const agent = draftAgent()
       const model = draftModel()
@@ -996,10 +1002,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       if (model.providerId && model.modelId) {
         await updateSessionModel(props.instance.id, session.id, model)
       }
-      if (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches) {
+      if (intent.current() && (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches)) {
         setFocusConversationSessionId(session.id)
       }
-      setActiveParentSession(props.instance.id, session.id)
+      setActiveParentSession(props.instance.id, session.id, intent)
       return session
     })()
     draftSessionCreation = creation
@@ -1052,7 +1058,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (sessionIds.length > 0) {
       handleSessionSelect(sessionIds[0])
     } else {
-      clearActiveParentSession(props.instance.id)
+      clearSelectedSession(props.instance.id)
     }
   }
 
@@ -1188,7 +1194,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
           class="content-area"
         >
-              <Show when={cachedSessionIds().length === 0 || !activeSessionIdForInstance()}>
+              <Show when={props.isActiveInstance !== false && (cachedSessionIds().length === 0 || !activeSessionIdForInstance())}>
                   <Show when={!activeSessionIdForInstance()} fallback={
                     <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
                       <MessageSection

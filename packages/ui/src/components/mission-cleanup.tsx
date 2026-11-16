@@ -63,7 +63,7 @@ export function MissionCleanupPanel(props: {
     } finally { if (alive && operation === attempt) setPending("") }
   }
 
-  return <Show when={props.cleanups.length}><MissionDisclosure missionId={`cleanup:${props.instanceId}`} name="cleanup"
+  return <Show when={props.cleanups.length}><MissionDisclosure instanceId={props.instanceId} missionId="cleanup" name="cleanup"
     title={t(props.cleanups.some(missionCleanupPending) ? "missions.cleanup.title" : "missions.progress.cleanupHistory")}
     defaultOpen={defaultOpen()} class="mission-cleanup">
     <For each={[...rows().keys()]}>{key => <Show when={rows().get(key)}>{item => <MissionListItem text={item().objective} title={item().objective}

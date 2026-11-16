@@ -1,5 +1,5 @@
 import { createEffect, createMemo, on, onCleanup, type Accessor } from "solid-js"
-import { closeFilePreview, getFilePreview } from "../../../stores/files-preview"
+import { reconcileFilePreviewLifetime as closeFilePreview, getFilePreview } from "../../../stores/files-preview"
 import { getDefaultWorktreeSlug, getWorktrees, getWorktreeSlugForSession } from "../../../stores/worktrees"
 
 export const sessionWorktreeSlug = (instanceId: string, sessionId: string | null) =>
@@ -16,7 +16,8 @@ export function useFilePreviewLifetime(instanceId: string, activeSessionId: Acce
     const target = getFilePreview(instanceId)
     const worktrees = getWorktrees(instanceId)
     // A removed worktree must never silently turn into a root-file read.
-    if (target && worktrees.length && !worktrees.some(entry => entry.slug === target.slug)) closeFilePreview(instanceId)
+    if (target && worktrees.length && !worktrees.some(entry => entry.slug === target.slug))
+      closeFilePreview(instanceId)
   })
   onCleanup(() => closeFilePreview(instanceId))
 }
