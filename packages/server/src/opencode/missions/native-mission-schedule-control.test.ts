@@ -8,7 +8,7 @@ import { nativeMissionScheduleControlExecution } from "./native-mission-schedule
 import { missionDocumentChanges } from "../../missions/mission-document-state"
 
 test("exact completed calendar controls return read-only receipts for human and agent entries", async t => {
-  for (const action of ["play", "pause", "stop", "resume", "configure", "check"] as const) {
+  for (const action of ["play", "pause", "stop", "resume", "configure"] as const) {
     const f = await ownerFixture(t)
     if (action !== "play") await f.control("play")
     if (action === "resume") await f.control("pause")

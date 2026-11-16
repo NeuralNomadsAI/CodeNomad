@@ -15,7 +15,7 @@ for (const action of ["pause", "stop", "play", "resume"] as const) {
   for (const linked of [true, false]) {
     for (const principal of [{ kind: "human" as const, sessionID: "cookie" },
       { kind: "agent" as const, author: { coordinatorSessionID: "ses_agent" } }]) {
-      test(`${principal.kind} Check replay resolves ${linked ? "linked" : "latest"} ${action} actor proof before read-only completion`, async t => {
+      test(`${principal.kind} Check always reconciles ${linked ? "linked" : "latest"} ${action}, including evicted proof`, async t => {
         const f = await ownerFixture(t)
         await f.control("play")
         let doc = await f.read()
@@ -44,7 +44,8 @@ for (const action of ["pause", "stop", "play", "resume"] as const) {
               ...(keys.length > limit ? { next: page.at(-1) } : {}) }
           },
         }
-        const ctx = { ...f.ctx, storage: { ...f.ctx.storage,
+        const ctx = { ...f.ctx, agent: { ...f.ctx.agent, list: () => Effect.die(new Error("reconciliation-acquired")) },
+          storage: { ...f.ctx.storage,
           scan: (input: Parameters<MissionStorage["scan"]>[0]) => Effect.promise(() => storage.scan(input)) } }
         const read = () => nativeMissionScheduleResult(ctx, doc, Effect.runPromise, false, input.requestID)
         const replay = (control = input as typeof input | typeof original) => {
@@ -58,8 +59,8 @@ for (const action of ["pause", "stop", "play", "resume"] as const) {
         assert.deepEqual([...f.values], saved, "status reads never reconcile")
         // The fixture has no native service graph: recovery reaches acquisition
         // instead of returning the calendar-only receipt as confirmed.
-        await assert.rejects(replay())
-        await assert.rejects(replay(original))
+        await assert.rejects(replay(), /reconciliation-acquired/)
+        await assert.rejects(replay(original), /reconciliation-acquired/)
         assert.deepEqual([...f.values], saved)
 
         const passage = missionDocumentPassage(storage, doc, f.current)
@@ -73,8 +74,9 @@ for (const action of ["pause", "stop", "play", "resume"] as const) {
           requestID: original.requestID, expectedRevision: 1, action: actorAction,
           targets: [{ sessionID: passage.coordinatorSessionID, location: { directory: f.directory } }] })
         assert.equal((await read()).pending, true, "partial actor receipt stays unknown")
-        await assert.rejects(replay())
-        await assert.rejects(replay(original))
+        await assert.rejects(replay(), /reconciliation-acquired/)
+        await assert.rejects(replay(original), /reconciliation-acquired/)
+        const partial = structuredClone([...f.values])
         const resume = missionActorResumeInput(passage.missionID, operationID, passage.coordinatorSessionID, passage.coordinatorSessionID, "")
         const identity = { missionID: passage.missionID, operationID, sessionID: passage.coordinatorSessionID }
         await passage.journal.append({ ...base, id: controlReceiptID(operationID, passage.coordinatorSessionID),
@@ -88,16 +90,38 @@ for (const action of ["pause", "stop", "play", "resume"] as const) {
         assert.ok(!snapshot.controlUnavailable)
         assert.deepEqual(snapshot.missions[0].control?.pending, [])
         const complete = structuredClone([...f.values]), calls = [...f.calls]
-        const result = await replay()
+        const result = await read()
         assert.equal(result.pending, false)
         assert.equal(result.document?.control?.requestID, input.requestID, "public receipt keeps Check identity")
         assert.equal(result.document?.control?.action, "check")
         assert.equal(result.document?.revision, doc.revision)
-        assert.deepEqual([...f.values], complete, "proven replay writes neither journal nor document")
-        assert.deepEqual(f.calls, calls, "proven replay sends no calendar effects")
+        await assert.rejects(replay(), /reconciliation-acquired/, "Check reconciles even with complete actor proof")
+        assert.deepEqual([...f.values], complete, "passive reads and failed acquisition preserve storage")
+        assert.deepEqual(f.calls, calls)
         assert.equal((await replay(original)).pending, false, "original actor control also replays read-only")
         assert.deepEqual([...f.values], complete)
         assert.deepEqual(f.calls, calls)
+
+        for (let i = 0; i < 17; i++) await f.control("check", `evict_${i}`)
+        doc = await f.read()
+        assert.ok(!doc.calendarOwner!.receipts.some(item => item.requestID === original.requestID))
+        const latest = doc.calendarOwner!.operation.requestID
+        const evictedReplay = () => replay({ missionID: doc.id, requestID: latest,
+          expectedRevision: doc.calendarOwner!.operation.expectedRevision, action: "check" })
+        const evictedRead = () => nativeMissionScheduleResult(ctx, doc, Effect.runPromise, false, latest)
+        // Restore absent, partial, then complete actor evidence independently of
+        // the bounded calendar receipts. None can substitute for an evicted binding.
+        for (const evidence of [saved, partial, complete]) {
+          // Document and carrier values stay current; replace only the passage journal.
+          for (const key of [...f.values.keys()]) if (key.includes(passage.missionID)) f.values.delete(key)
+          for (const [key, value] of evidence) if (key.includes(passage.missionID)) f.values.set(key, structuredClone(value))
+          const before = structuredClone([...f.values])
+          assert.equal((await evictedRead()).pending, true, "evicted actor binding stays unknown")
+          await assert.rejects(evictedReplay(), /reconciliation-acquired/, "Check retains recovery after eviction")
+          assert.equal((await read()).pending, true, "an evicted Check's own receipt stays unknown")
+          await assert.rejects(replay(), /reconciliation-acquired/)
+          assert.deepEqual([...f.values], before)
+        }
       })
     }
   }

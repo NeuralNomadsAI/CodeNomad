@@ -241,12 +241,14 @@ for status and explicit controls. Requests pin the native directory, signed huma
 profile source, request ID and document revision through the existing signed bridge.
 `scheduleRead({missionID,requestID})` reads an exact retained control receipt;
 missing or evicted proof stays unknown. Passive reads send no controls.
-An exact completed human or agent control replay reads that receipt without a
-document write or revision change. Completion includes the actor-family control
-and original passage admission proofs. Check resolves its linked original control,
-or the latest retained actor control, before checking actor-family completion.
-Partial or missing proofs keep their
-original reconciliation path.
+Exact completed human or agent Play, Pause, Stop, Resume, Run now, configure and
+delete replays read their own retained receipt without a document write or revision
+change. Completion includes the actor-family control and original passage admission
+proofs. Check always reconciles under its original request identity. Its receipt
+read resolves the linked original control, or the latest retained actor control,
+and checks actor-family completion; an evicted actor binding stays uncertain while
+the passage is pending. Missing, evicted or partial proofs keep their original
+reconciliation path and uncertainty.
 
 Serialized calendar validation returns an identity/payload-bound refusal for an
 expired first-Play date or a revision conflict before its first write. The initial

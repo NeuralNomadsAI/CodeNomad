@@ -487,9 +487,10 @@ creation/request/digest scope. Mutation dispatch requires the native document's 
 `agentScheduleControl` capability. The shared `executeScheduledMission` admission owns the
 same physical holds, payload identity, native CAS, receipt settlement and single-passage
 Run now as public human controls. Play/Resume share settings preparation and preserve
-explicit OFF. Exact completed replays read their original receipt with no document
-write or revision change; partial calendar, actor or admission proofs retain their
-original reconciliation path. Changed inputs
+explicit OFF. Exact completed Play, Pause, Stop, Resume, Run now, configure and delete
+replays read their own retained receipt with no document write or revision change.
+Check always reconciles. Missing, evicted or partial calendar, actor or admission
+proofs retain their original reconciliation path and uncertainty. Changed inputs
 conflict. Lost acknowledgements retain the original hold: read that request's receipt
 without resending or choosing another identity. Deletion replays read the tombstone.
 Public HTTP mutations authenticate their human principal before admission.

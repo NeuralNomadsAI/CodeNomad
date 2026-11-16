@@ -43,7 +43,7 @@ export async function nativeMissionScheduleResult(ctx: Plugin.Context, doc: Miss
   if (!doc.pending) return { ...view, pending: unresolved || forcePending }
   const actorControl = nativeMissionScheduleActorControl(doc, requestID)
   const actorInitial = actorControl?.action === "play" ? nativeImmediatePlayPassage(doc, actorControl.requestID) : undefined
-  let actorPending = false
+  let actorPending = control?.action === "check" && !actorControl
   if (actorControl && (["pause", "stop", "resume", "delete"].includes(actorControl.action)
     || actorControl.action === "play" && !actorInitial && doc.pending.createdAt < actorControl.startedAt)) {
     try {

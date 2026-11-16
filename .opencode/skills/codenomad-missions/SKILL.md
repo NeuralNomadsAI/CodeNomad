@@ -65,8 +65,9 @@ exclude this caller and its followed/trigger sources. Play/Resume preserve expli
 OFF; Stop is terminal. Delete keeps conversations unless `deleteManagedSessions`
 is explicitly true. After uncertainty, use `read` with the original `requestID`;
 never resend or choose a replacement identity to evade the shared hold. Exact
-completed requests read their original receipt without changing the document revision;
-partial proofs keep their original recovery path. Changed inputs conflict. Keep exactly one
+completed Play/Pause/Stop/Resume/Run now/configure/delete requests read their own retained
+receipt without changing the document revision. Check always reconciles; missing, evicted
+or partial proofs retain uncertainty and their original recovery path. Changed inputs conflict. Keep exactly one
 owning CodeNomad backend available.
 
 `mission.control` controls any one-time project Mission from any owned conversation:

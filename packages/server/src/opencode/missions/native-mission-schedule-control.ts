@@ -81,8 +81,9 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
         deleteManagedSessions: request.deleteManagedSessions ?? false }), 64))) return conflict()
   // A completed calendar receipt still needs its actor/admission proof. Unknown
   // or partial results retain the original reconciliation path after a lost reply.
-  if (receipt && !receipt.pending && doc.pending?.admittedAt !== null
-    || manual && (manual.admittedAt !== null || "reason" in manual && manual.reason === "not-started")) {
+  // Check always reconciles, including an exact completed request replay.
+  if (action !== "check" && (receipt && !receipt.pending && doc.pending?.admittedAt !== null
+    || manual && (manual.admittedAt !== null || "reason" in manual && manual.reason === "not-started"))) {
     const result = yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))
     current()
     if (!result.pending) { admitControl(doc); return result }
