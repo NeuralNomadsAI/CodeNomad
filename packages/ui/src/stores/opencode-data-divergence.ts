@@ -1,6 +1,6 @@
 import type { OpenCodeEvent } from "@opencode/client"
 import type { Data } from "@opencode/client/solid"
-import { holdsEventTarget } from "./opencode-data-fragments"
+import { eventFragmentKey, holdsEventTarget, type PageFragments } from "./opencode-data-fragments"
 
 /** Repair reads one reducer may owe its watched session per execution; the
  * settlement read of a still-diverged transcript is owed beyond it. */
@@ -31,10 +31,26 @@ export function isDiverged(holder: { divergence?: TranscriptDivergence }, entry:
 }
 
 /** After an authoritative page reseeded the reducer: settle the targets it
- * now holds (and a reducer failure); the rest stay owed. */
-export function settleHeldTargets(divergence: TranscriptDivergence | undefined, data: Data): void {
+ * now holds (and a reducer failure); the rest stay owed. A text or reasoning
+ * fragment settles only once the page installed it committed (`fragments`):
+ * holding the ordinal proves nothing about its text. Its own ending settles
+ * it too (`fitLiveEvent`). */
+export function settleHeldTargets(divergence: TranscriptDivergence | undefined, data: Data, fragments: PageFragments | undefined): void {
   if (!divergence) return
   for (const [key, event] of divergence.targets) {
-    if (!event || holdsEventTarget(data, event)) divergence.targets.delete(key)
+    const fragment = eventFragmentKey(event)
+    if (!event || (fragment !== undefined ? fragments?.get(fragment) === "closed" : holdsEventTarget(data, event))) {
+      divergence.targets.delete(key)
+    }
   }
+}
+
+/** Fragments whose live text an authoritative page's committed content replaces. */
+export function owedFragments(divergence: TranscriptDivergence | undefined): Set<string> {
+  const owed = new Set<string>()
+  for (const event of divergence?.targets.values() ?? []) {
+    const fragment = eventFragmentKey(event)
+    if (fragment !== undefined) owed.add(fragment)
+  }
+  return owed
 }

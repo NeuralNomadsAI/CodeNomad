@@ -19,9 +19,9 @@ import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
 import { hasTranscriptProjectionGates, isTranscriptWatched, scheduleTranscriptProjection } from "./opencode-projection-frame"
 import { cancelTranscriptProjections, flushTranscriptProjections } from "./opencode-projection-frame"
 import {
-  divergenceFor, isDiverged, MAX_DIVERGENCE_REPAIRS, settleHeldTargets, type TranscriptDivergence,
+  divergenceFor, isDiverged, MAX_DIVERGENCE_REPAIRS, owedFragments, settleHeldTargets, type TranscriptDivergence,
 } from "./opencode-data-divergence"
-import { fitLiveEvent, recordPageFragments, type PageFragments } from "./opencode-data-fragments"
+import { fitLiveEvent, recordPageFragments, restoreOwedFragments, type PageFragments } from "./opencode-data-fragments"
 
 const log = getLogger("session")
 
@@ -232,7 +232,8 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   compactionDeltas.flush(instanceId, input.sessionID)
                   if ((destructiveRevisions.get(input.sessionID) ?? 0) !== revision) continue
                   const live = data.session.message.list(input.sessionID)
-                  const merged = mergePageWithSnapshot(live, response.data, since)
+                  const merged = restoreOwedFragments(mergePageWithSnapshot(live, response.data, since), response.data,
+                    owedFragmentsOf(instanceId, input.sessionID, data))
                   pageFragments.set(input.sessionID, recordPageFragments(response.data, merged))
                   return { ...response, data: merged }
                 }
@@ -284,9 +285,13 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         return pageFragments.get(sessionId)
       },
       async syncMessages(sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean, fetched?: SessionMessageInfo[]) {
-        // Only an authoritative page records provenance; a rotation replays the
-        // reducer's own rows and keeps the record it had.
-        if (fetched) pageFragments.set(sessionId, recordPageFragments(fetched, messages))
+        // Only an authoritative page records provenance and restores owed
+        // fragments; a rotation replays the reducer's own rows and keeps the
+        // record it had.
+        if (fetched) {
+          messages = restoreOwedFragments(messages, fetched, owedFragmentsOf(instanceId, sessionId, data))
+          pageFragments.set(sessionId, recordPageFragments(fetched, messages))
+        }
         messageSnapshots.set(sessionId, messages)
         try {
           data.session.message.invalidate(sessionId)
@@ -322,6 +327,20 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       },
     }
   })
+}
+
+/** Fragments the transcript owning reducer `data` still owes, for its reads to restore. */
+function owedFragmentsOf(instanceId: string, sessionId: string, data: Data): Set<string> {
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  return transcript?.entry.data === data && transcript.divergence?.entry === transcript.entry
+    ? owedFragments(transcript.divergence)
+    : new Set()
+}
+
+/** After an authoritative page installed: settle what it now holds. */
+function settleInstalledPage(sessionId: string, transcript: TranscriptEntry, entry: DataEntry): void {
+  if (transcript.entry !== entry || transcript.divergence?.entry !== entry) return
+  settleHeldTargets(transcript.divergence, entry.data, entry.pageFragments(sessionId))
 }
 
 function ensureData(instanceId: string, directory: string) {
@@ -1001,7 +1020,7 @@ export async function seedOpenCodeSessionMessages(
   const merged = live.length ? mergePageWithSnapshot(live, [...seed].reverse(), snapshotRows(live)).reverse() : seed
   try {
     await entry.syncMessages(sessionId, merged, () => true, fetched)
-    if (transcript.entry === entry && transcript.divergence?.entry === entry) settleHeldTargets(transcript.divergence, entry.data)
+    settleInstalledPage(sessionId, transcript, entry)
   } catch (error) {
     log.warn("Failed to seed OpenCode session messages", { instanceId, sessionId, error })
   }
@@ -1085,8 +1104,9 @@ function repairDivergedTranscript(instanceId: string, sessionId: string, transcr
     divergence.pending = false
     if (transcript.entry !== entry || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
     // Misses the page healed are settled (a missed part only once the page
-    // holds that part); the rest wait for a later miss or settlement.
-    settleHeldTargets(divergence, entry.data)
+    // holds that part, a fragment only once installed committed); the rest
+    // wait for a later miss, their ending or settlement.
+    settleInstalledPage(sessionId, transcript, entry)
     const owed = divergence.settlementOwed
     divergence.settlementOwed = false
     if (owed) repairDivergedTranscript(instanceId, sessionId, transcript, true)
@@ -1235,6 +1255,7 @@ function completeSettlementRead(
       transcript.settlementReadEntry = undefined
       transcript.settlementReadPromise = undefined
       transcript.settlementReadChain = undefined
+      settleInstalledPage(sessionId, transcript, entry)
       // Publish unless an execution newer than every recorded demand
       // superseded this settlement: same-round activity (a late terminal tool
       // event) must not suppress the repair.

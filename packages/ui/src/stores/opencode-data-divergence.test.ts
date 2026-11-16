@@ -268,10 +268,81 @@ describe("live transcript divergence repair", () => {
     } finally { f.dispose() }
   })
 
+  it("keeps streaming text that a later reasoning part follows on an open page", async () => {
+    const f = fixture("divergence-open-text-before-reasoning")
+    try {
+      // Text may stay open while reasoning or tool parts follow it.
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", ""), content: [{ type: "text", text: "" }, { type: "reasoning", text: "", time: { created: 6 } }] }])
+      await loadMessages("divergence-open-text-before-reasoning", "s")
+      await settle()
+      f.native("session.text.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: "New" })
+      assert.equal(f.text("msg_a1"), "New", "a later part closed the open text and dropped its delta")
+      f.native("session.execution.succeeded", {})
+      await settle()
+      assert.equal(f.text("msg_a1"), "New")
+    } finally { f.dispose() }
+  })
+
+  it("keeps a repaired fragment owed until committed content replaces it at settlement", async () => {
+    const f = fixture("divergence-owed-fragment")
+    try {
+      f.pages.set("s", [user("msg_u1")])
+      await loadMessages("divergence-owed-fragment", "s")
+      await settle()
+      f.native("session.step.started", { assistantMessageID: "msg_a1", agent: "build", model, started: 5 })
+      // Fragment 0's start is lost, so its first delta is dropped; the repair
+      // page holds the native empty, unfinished fragment.
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", ""), content: [{ type: "text", text: "" }] }])
+      f.native("session.text.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: "Hello" })
+      await settle()
+      assert.equal(f.reads.length, 2)
+      f.native("session.text.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: "!" })
+      assert.equal(f.text("msg_a1"), "!")
+      // Its ending is lost; the settlement read races a late event that changes the row.
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", "", true), content: [{ type: "text", text: "Hello!" }] }])
+      f.setDuringFetch(() => {
+        f.setDuringFetch(undefined)
+        f.native("session.step.first-token", { assistantMessageID: "msg_a1" })
+      })
+      f.native("session.execution.succeeded", {})
+      await settle()
+      assert.equal(f.reads.length, 3, "the unresolved fragment owes the settlement read")
+      assert.equal(f.text("msg_a1"), "Hello!", "committed page content must replace the unproven live fragment")
+    } finally { f.dispose() }
+  })
+
+  it("keeps an ambiguous fragment owed through a repair that races delayed deltas", async () => {
+    const f = fixture("divergence-owed-race")
+    try {
+      f.pages.set("s", [user("msg_u1"), assistant("msg_a1", "Hel")])
+      await loadMessages("divergence-owed-race", "s")
+      await settle()
+      f.native("session.text.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: "Hel" })
+      assert.equal(f.text("msg_a1"), "HelHel")
+      // An unrelated miss repairs the transcript while a late event changes the row.
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", ""), content: [{ type: "text", text: "Hel" },
+        { type: "tool", id: "tool_x", name: "read", time: { created: 6 }, state: { status: "completed", input: {}, metadata: {}, content: [] } }] }])
+      f.setDuringFetch(() => {
+        f.setDuringFetch(undefined)
+        f.native("session.step.first-token", { assistantMessageID: "msg_a1" })
+      })
+      f.native("session.tool.success", { assistantMessageID: "msg_a1", id: "tool_x", metadata: {}, content: [] })
+      await settle()
+      assert.equal(f.reads.length, 2)
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", "", true), content: [{ type: "text", text: "Hello" },
+        { type: "tool", id: "tool_x", name: "read", time: { created: 6 }, state: { status: "completed", input: {}, metadata: {}, content: [] } }] }])
+      f.native("session.execution.succeeded", {})
+      await settle()
+      assert.equal(f.reads.length, 3, "the ambiguity survives the racing repair")
+      assert.equal(f.text("msg_a1"), "Hello")
+    } finally { f.dispose() }
+  })
+
   it("drops a delayed delta for a fragment the page holds complete", async () => {
     const f = fixture("divergence-closed-fragment")
     try {
-      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", ""), content: [{ type: "text", text: "Done", native: { item: "t1" } }] }])
+      // Only the message's completion proves the fragment closed.
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", "", true), content: [{ type: "text", text: "Done" }] }])
       await loadMessages("divergence-closed-fragment", "s")
       await settle()
       // The page already committed the fragment; its delayed delta arrives and its ending is lost.

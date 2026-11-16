@@ -105,7 +105,8 @@ export function fitLiveEvent(data: Data, fragments: PageFragments | undefined, e
 }
 
 /** Whether a page now holds what a missed event targeted: its message and, for
- * part events, that part (the tool by ID, the fragment by ordinal). */
+ * part events, that part (the tool by ID; a fragment without an ordinal by
+ * kind). Fragments with an ordinal settle by provenance instead. */
 export function holdsEventTarget(data: Data, event: OpenCodeEvent): boolean {
   const { payload, row } = assistantOf(data, event)
   if (!row) return false
@@ -117,28 +118,67 @@ export function holdsEventTarget(data: Data, event: OpenCodeEvent): boolean {
   return countOf(row, kind) > (typeof payload.ordinal === "number" ? payload.ordinal : 0)
 }
 
+/** The fragment key of a text or reasoning event with an ordinal: what a
+ * fragment obligation is recorded under. */
+export function eventFragmentKey(event: OpenCodeEvent | undefined): string | undefined {
+  const kind = event ? fragmentKind(event.type) : undefined
+  const payload = event?.data as Payload | undefined
+  if (!kind || typeof payload?.assistantMessageID !== "string" || typeof payload.ordinal !== "number") return undefined
+  return fragmentKey(payload.assistantMessageID, kind, payload.ordinal)
+}
+
+type Fragment = { type?: unknown; text?: unknown; time?: { completed?: unknown } }
+
+/** Positive closure evidence only: the message completed, or (reasoning) the
+ * fragment's own completion. Text stays open while reasoning or tool parts
+ * follow it, so a later part proves nothing. */
+const isCommitted = (row: Assistant, kind: Kind, part: Fragment) =>
+  row.time.completed !== undefined || (kind === "reasoning" && part.time?.completed !== undefined)
+
+/** Committed page content for owed fragments replaces the live fragment even
+ * where the read merge kept a live-changed row: an owed fragment's live text
+ * is unproven. Rows without such a fragment are returned unchanged. */
+export function restoreOwedFragments(
+  installed: SessionMessageInfo[],
+  fetched: readonly SessionMessageInfo[],
+  owed: ReadonlySet<string>,
+): SessionMessageInfo[] {
+  if (!owed.size) return installed
+  const fetchedById = new Map(fetched.map((row) => [row.id, row]))
+  return installed.map((row) => {
+    const page = fetchedById.get(row.id)
+    if (row.type !== "assistant" || page?.type !== "assistant") return row
+    const ordinals = new Map<string, number>()
+    const pageFragments = (kind: Kind) => page.content.filter((item) => item.type === kind) as Fragment[]
+    let replaced = false
+    const content = row.content.map((item) => {
+      if (item.type !== "text" && item.type !== "reasoning") return item
+      const ordinal = ordinals.get(item.type) ?? 0
+      ordinals.set(item.type, ordinal + 1)
+      const authoritative = pageFragments(item.type)[ordinal]
+      if (!owed.has(fragmentKey(row.id, item.type, ordinal)) || !authoritative || !isCommitted(page, item.type, authoritative)) return item
+      replaced = true
+      return authoritative as typeof item
+    })
+    return replaced ? { ...row, content } : row
+  })
+}
+
 /** The provenance of fragments a page installed (`installed`, after the read
  * merge) exactly as fetched: a fragment the merge kept live belongs to the
- * stream. A text fragment is committed once its row completed, it carries the
- * provider's metadata or another part follows it; a reasoning fragment once
- * it or its row completed. An open fragment holding text is partial; an empty
- * open one simply streams. */
+ * stream. A committed fragment (`isCommitted`) is closed; an open fragment
+ * holding text is partial; an empty open one simply streams. */
 export function recordPageFragments(fetched: readonly SessionMessageInfo[], installed: readonly SessionMessageInfo[]): PageFragments {
   const fragments: PageFragments = new Map()
   const installedById = new Map(installed.map((row) => [row.id, row]))
   for (const row of fetched) {
     const live = installedById.get(row.id)
     if (row.type !== "assistant" || live?.type !== "assistant") continue
-    const completed = row.time.completed !== undefined
     for (const kind of ["text", "reasoning"] as const) {
-      type Fragment = { text?: unknown; native?: unknown; time?: { completed?: unknown } }
       const installedParts = live.content.filter((item) => item.type === kind) as Fragment[]
       ;(row.content.filter((item) => item.type === kind) as Fragment[]).forEach((part, ordinal) => {
         if (installedParts[ordinal]?.text !== part.text) return
-        const closed = completed || (kind === "text"
-          ? part.native != null || row.content.at(-1) !== part
-          : part.time?.completed !== undefined)
-        if (closed) fragments.set(fragmentKey(row.id, kind, ordinal), "closed")
+        if (isCommitted(row, kind, part)) fragments.set(fragmentKey(row.id, kind, ordinal), "closed")
         else if (part.text !== "") fragments.set(fragmentKey(row.id, kind, ordinal), "partial")
       })
     }
