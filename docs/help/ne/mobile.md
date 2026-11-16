@@ -42,3 +42,5 @@ navigation र tool खोल्न **बायाँ प्यानल** र *
 | offline काम | offline backend वा cached API history छैन। static UI asset cache हुन सक्छन्, तर document र API response offline workspace होइनन्। |
 
 backend पहुँचयोग्य राख्नुहोस्। mobile OS suspension वा network switch ले event stream छुटाउन सक्छ; फर्कँदा reconnect र current state refetch हुन्छ, सुनिश्चित event replay हुँदैन। retry अघि कार्य सकियो कि जाँच्नुहोस्। PWA बन्द गर्दा standalone backend रोकिँदैन; host desktop app र backend quit हुँदा अर्को launch सम्म Remote Control अनुपलब्ध हुन्छ।
+
+स्थापना गरिएको PWA सहित प्रत्येक ब्राउजर ट्याबले त्यही ट्याबका लागि खुला परियोजनाहरू, चयन गरिएका कुराकानीहरू, नपठाइएका ड्राफ्टहरू र स्क्रोल स्थिति राख्छ: पृष्ठ पुनः लोड हुँदा, वा एप बदलेपछि वा स्क्रिन लक भएपछि मोबाइल OS ले पुनः लोड गर्दा ती फर्किन्छन्। नयाँ ट्याब, वा OS ले पूर्ण रूपमा बन्द गरेको PWA, गृह पृष्ठमा खुल्छ। यो ट्याबका लागि बन्द गर्न **सेटिङ → सामान्य → अघिल्लो अवस्था पुनर्स्थापना गर्नुहोस्** प्रयोग गर्नुहोस्।

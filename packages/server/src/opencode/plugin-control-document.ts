@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto"
 import { constants } from "node:fs"
 import { access, chmod, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { isDeepStrictEqual } from "node:util"
 import { applyEdits, modify, parse, parseTree, type FormattingOptions, type Node as JsonNode, type ParseError } from "jsonc-parser"
 
 export const PLUGIN_CONTROL_MAX_CONFIG_BYTES = 4 * 1024 * 1024
@@ -105,6 +106,50 @@ export function appendPluginControlRule(document: PluginControlDocument, rule: s
   }
   if (!updated.endsWith("\n")) updated += formattingOptions.eol
   return document.byteOrderMark ? `\uFEFF${updated}` : updated
+}
+
+/**
+ * Deletes the string entries at `removeIndexes`, which must still read `expected`, then appends `rule` when given.
+ * The result must parse to the original document with exactly those changes to `plugins`; comments, other entries,
+ * line endings and the BOM stay untouched.
+ */
+export function replacePluginControlRules(
+  document: PluginControlDocument,
+  removeIndexes: readonly number[],
+  expected: ReadonlySet<string>,
+  rule?: string,
+): string {
+  const removed = [...new Set(removeIndexes)].sort((left, right) => right - left)
+  if (removed.length === 0) {
+    if (rule === undefined) throw new PluginControlDocumentError("OpenCode plugins edit is empty", "invalid")
+    return appendPluginControlRule(document, rule)
+  }
+  for (const index of removed) {
+    const entry = document.plugins[index]
+    if (!Number.isSafeInteger(index) || typeof entry !== "string" || !expected.has(entry)) {
+      throw new PluginControlDocumentError("OpenCode plugin entry changed since it was read", "conflict")
+    }
+  }
+  const formattingOptions = inferPluginControlFormatting(document.text)
+  let updated = document.text
+  try {
+    for (const index of removed) updated = applyEdits(updated, modify(updated, ["plugins", index], undefined, { formattingOptions }))
+    if (rule !== undefined) {
+      updated = applyEdits(updated, modify(updated, ["plugins", document.plugins.length - removed.length], rule, { formattingOptions }))
+    }
+  } catch (error) {
+    throw new PluginControlDocumentError("Unable to update OpenCode plugins without replacing the document", "invalid", { cause: error })
+  }
+  const original = parse(document.text, [], { allowTrailingComma: true }) as Record<string, unknown>
+  const plugins = (original.plugins as unknown[]).filter((_, at) => !removed.includes(at))
+  const target = { ...original, plugins: rule === undefined ? plugins : [...plugins, rule] }
+  const errors: ParseError[] = []
+  const result = parse(updated, errors, { allowTrailingComma: true })
+  if (errors.length || !isDeepStrictEqual(result, target)) {
+    throw new PluginControlDocumentError("Unable to update OpenCode plugins without changing other settings", "invalid")
+  }
+  if (!updated.endsWith("\n")) updated += formattingOptions.eol
+  return document.byteOrderMark ? `﻿${updated}` : updated
 }
 
 export async function replacePluginControlDocument(

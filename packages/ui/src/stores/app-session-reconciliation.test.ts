@@ -12,6 +12,16 @@ describe("app session reconciliation", () => {
     ["does not match one live workspace to duplicate descriptors", [
       { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 0 }, { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 0 },
     ], [{ id: "only", folderPath: "/code/nomad" }], ["only", null]],
+    ["prefers a saved record that still exists when a closed sibling shifted occurrences", [
+      { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 1, workspaceId: "b" },
+    ], [{ id: "b", folderPath: "/code/nomad" }], ["b"]],
+    ["keeps a record matched by id away from occurrence matching", [
+      { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 0, workspaceId: "gone" },
+      { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 1, workspaceId: "a" },
+    ], [{ id: "a", folderPath: "/code/nomad" }, { id: "b", folderPath: "/code/nomad" }], [null, "a"]],
+    ["matches a saved id only within the same folder", [
+      { kind: "workspace" as const, folderPath: "/code/other", occurrence: 0, workspaceId: "a" },
+    ], [{ id: "a", folderPath: "/code/nomad" }, { id: "c", folderPath: "/code/other" }], ["c"]],
   ] as const
   for (const [label, saved, live, expected] of workspaceCases) it(label, () => assert.deepEqual(
     reconcileWorkspaceTabs([...saved], [...live]).map(({ existingWorkspaceId }) => existingWorkspaceId), expected,

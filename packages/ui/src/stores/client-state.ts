@@ -33,6 +33,9 @@ let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
 let partitionProtocolVersion: 1 | undefined
 const layoutMigrations = new Map<string, { source: string; remaining: string | null }>()
+// Browser tabs restore their session from sessionStorage while layout values keep
+// their shared localStorage entries, written and read immediately.
+let snapshotOwnsLayout = true
 const transactionLayoutWrites = new Set<string>()
 function useLocalStorage<T>(fallback: T, operation: (storage: Storage) => T): T {
   try {
@@ -128,7 +131,7 @@ function enqueuePendingSave(): Promise<void> {
       if (layoutMigrations.size && normalizedSnapshot.session?.tabs.some(tab => tab.kind === "workspace" && tab.viewState)) {
         const migrations = [...layoutMigrations]
         layoutMigrations.clear()
-        for (const [key, migration] of migrations) if (layout[key] === migration.source) {
+        for (const [key, migration] of migrations) if ((snapshotOwnsLayout ? layout[key] : readLegacyLayoutValue(key)) === migration.source) {
           const concurrent = readLegacyLayoutValue(key)
           const remaining = concurrent !== null && concurrent !== migration.source ? concurrent : migration.remaining
           if (remaining === null) removeClientLayoutValue(key)
@@ -181,7 +184,7 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
       if (loseOwnershipOnRejection) setClientStateIsPrimary(false)
       throw new Error(rejectedMessage)
     }
-    useLocalStorage(undefined, (storage) => {
+    if (snapshotOwnsLayout) useLocalStorage(undefined, (storage) => {
       for (const key of legacyLayoutKeys(storage)) storage.removeItem(key)
     })
     resetLoadedState()
@@ -220,7 +223,7 @@ export function updateRestorableSession(state: RestorableSessionState | null): v
 
 export function readClientLayoutValue(key: string): string | null {
   if (!isValidLayoutKey(key)) return null
-  if (!clientStateIsPrimary()) return readLegacyLayoutValue(key)
+  if (!clientStateIsPrimary() || !snapshotOwnsLayout) return readLegacyLayoutValue(key)
   if (!restorePreviousStateEnabled() || writeBlock) return null
   if (hasLayoutKey(key)) return layout[key] ?? null
   const legacyValue = readLegacyLayoutValue(key)
@@ -232,7 +235,7 @@ export function readClientLayoutValue(key: string): string | null {
 
 export function writeClientLayoutValue(key: string, value: string): void {
   if (!isValidLayoutKey(key) || value.length > MAX_LAYOUT_VALUE_LENGTH) return
-  if (!clientStateIsPrimary()) return writeLegacyLayoutValue(key, value)
+  if (!clientStateIsPrimary() || !snapshotOwnsLayout) return writeLegacyLayoutValue(key, value)
   if (writeBlock === "transaction") {
     if (!hasLayoutKey(key) && layoutIsFull()) return
     dirty ||= layout[key] !== value
@@ -250,7 +253,7 @@ export function writeClientLayoutValue(key: string, value: string): void {
 
 export function removeClientLayoutValue(key: string): void {
   if (!isValidLayoutKey(key)) return
-  if (!clientStateIsPrimary()) return removeLegacyLayoutValue(key)
+  if (!clientStateIsPrimary() || !snapshotOwnsLayout) return removeLegacyLayoutValue(key)
   if (writeBlock === "transaction") {
     dirty ||= hasLayoutKey(key)
     delete layout[key]
@@ -327,6 +330,7 @@ export function initializeClientState(): Promise<void> {
     try {
       const loaded = await loadNativeClientState()
       partitionProtocolVersion = loaded.partitionProtocolVersion
+      snapshotOwnsLayout = loaded.webSession !== true
       setClientStateIsPrimary(loaded.isPrimary)
       setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
       resetLoadedState(null, true)
@@ -355,13 +359,13 @@ export function initializeClientState(): Promise<void> {
         snapshot = decodeClientSnapshot(loaded.snapshot)
         writeBlock = loaded.snapshot !== null && snapshot === null ? "snapshot" : false
       }
-      resetLoadedState(snapshot, true)
+      resetLoadedState(snapshot && !snapshotOwnsLayout ? { ...snapshot, layout: {} } : snapshot, true)
       if (!writeBlock) {
-        const migratedLayout = migrateLegacyLayoutValues()
-        const source = layout[LEGACY_SESSION_PREVIEWS_KEY]
+        const migratedLayout = snapshotOwnsLayout && migrateLegacyLayoutValues()
+        const source = readClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY)
         const migration = migrateLegacyTabPreviews(loadedRestorableSession(), source ?? null, readClientLayoutValue)
         if (migration) {
-          if (source !== undefined) layoutMigrations.set(LEGACY_SESSION_PREVIEWS_KEY, { source, remaining: migration.remaining })
+          if (source !== null) layoutMigrations.set(LEGACY_SESSION_PREVIEWS_KEY, { source, remaining: migration.remaining })
           for (const { key, source } of migration.missions) layoutMigrations.set(key, { source, remaining: null })
           setLoadedRestorableSession(migration.state)
         }

@@ -73,7 +73,7 @@ Electron र Windows Tauri मा mobile template ले स्वामित�
 
 SideCar sandbox गरिएको पूर्वावलोकन होइन, CodeNomad को विश्वसनीय विस्तार हो: यसको पृष्ठ CodeNomad कै origin मा चल्छ, त्यसैले यसका script ले तपाईंको sign-in भएको पहुँचसहित CodeNomad प्रयोग गर्न सक्छन्। जसको code मा विश्वास छ ती सेवा मात्र दर्ता गर्नुहोस्। CodeNomad ले आफ्नै sign-in cookie सेवामा पठाउँदैन, तर सेवाका आफ्नै cookie राखिन्छन्।
 
-SideCar सामग्री (`/sidecars/`) र SideCar WebSocket लाई होस्टमा loopback जडान चाहिन्छ। `/api/sidecars` मार्फत दर्ता जोडी बनाइएका उपकरण र प्रमाणीकृत प्रत्यक्ष LAN क्लाइन्टलाई उपलब्ध छ। सक्रिय पूर्वावलोकन सामग्री (`/previews/`) वैध क्षमता टोकनसहित प्रत्यक्ष LAN पहुँचमा उपलब्ध छ; [Remote Control](remote-control.md#remote-surface) का वेब पूर्वावलोकन सक्षम रहँदा आफ्नो क्षमता टोकनसहित उपलब्ध रहन्छन्। प्रत्यक्ष पहुँचका आवश्यकताका लागि [स्तरोन्नति](remote-access.md#upgrading) हेर्नुहोस्।
+SideCar सामग्री (`/sidecars/`) र SideCar WebSocket लाई होस्टमा loopback जडान चाहिन्छ। अरू उपकरणबाट पनि खोल्न होस्टमा **सेटिङहरू → SideCars** मा **HTTPS मार्फत SideCars खोल्नुहोस्** सक्रिय गर्नुहोस्: यो सर्भरका HTTPS ठेगाना वा `CODENOMAD_ALLOWED_ORIGINS` को HTTPS origin, जस्तै TLS रिभर्स प्रोक्सी, बाट साइन इन गरिएका ब्राउजरले त्यसपछि SideCars खोल्न सक्छन्। सामान्य HTTP, `localhost` ठेगाना र Remote Control होस्टमा मात्र सीमित रहन्छन्। `/api/sidecars` मार्फत दर्ता जोडी बनाइएका उपकरण र प्रमाणीकृत प्रत्यक्ष LAN क्लाइन्टलाई उपलब्ध छ। सक्रिय पूर्वावलोकन सामग्री (`/previews/`) वैध क्षमता टोकनसहित प्रत्यक्ष LAN पहुँचमा उपलब्ध छ; [Remote Control](remote-control.md#remote-surface) का वेब पूर्वावलोकन सक्षम रहँदा आफ्नो क्षमता टोकनसहित उपलब्ध रहन्छन्। प्रत्यक्ष पहुँचका आवश्यकताका लागि [स्तरोन्नति](remote-access.md#upgrading) हेर्नुहोस्।
 
 ## OpenVSCode Server विधि {#openvscode}
 

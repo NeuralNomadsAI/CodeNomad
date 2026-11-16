@@ -81,7 +81,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
   }
   if (signal.aborted) return Promise.all(sidecars).then(() => undefined)
   const matches = reconcileWorkspaceTabs(snapshot.tabs.map((tab) => tab.kind === "workspace"
-    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence }
+    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence, workspaceId: tab.workspaceId }
      : { kind: tab.kind }), Array.from(instances().values())
        .map(({ id, folder, status }) => ({ id, folderPath: folder, status })))
     .filter(match => !retryIndexes || (retryIndexes.get(match.tabIndex)?.() && !hasLocalRestoredTab(capture, match.tabIndex)))

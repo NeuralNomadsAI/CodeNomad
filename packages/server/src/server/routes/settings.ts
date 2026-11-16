@@ -8,6 +8,8 @@ import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-co
 import { resolveDefaultInstallation } from "../../opencode-update/shared-installation"
 import { applyConditionalMissionPreferences, MissionPreferenceConflictError } from "../../settings/mission-preference-condition"
 import { SettingsReadError } from "../../settings/yaml-doc-store"
+import { HostOnlySettingError, hostOnlyServerCheck } from "../../settings/host-only-settings"
+import { isLocalRequest } from "../../remote-control/request-origin"
 
 interface RouteDeps {
   settings: SettingsService
@@ -76,13 +78,13 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
           }
           body = bodyObj
         }
-        return deps.settings.mergePatchDoc("config", body)
+        return deps.settings.mergePatchDoc("config", body, hostOnlyServerCheck(isLocalRequest(request)))
       })
       if (body && typeof body === "object" && "server" in body && body.server && typeof body.server === "object"
         && "opencodeBinary" in body.server) await refreshLoginStart(deps)
       return sanitizeConfigDoc(saved)
     } catch (error) {
-      reply.code(400)
+      reply.code(error instanceof HostOnlySettingError ? 403 : error instanceof SettingsReadError ? 503 : 400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
     }
   })
@@ -116,13 +118,14 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         const processed = request.params.owner === "server"
           ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
           : request.body ?? {}
-        return deps.settings.mergePatchOwner("config", request.params.owner, processed)
+        return deps.settings.mergePatchOwner("config", request.params.owner, processed, hostOnlyServerCheck(isLocalRequest(request)))
       })
       if (request.params.owner === "server" && request.body && typeof request.body === "object" && "opencodeBinary" in request.body)
         await refreshLoginStart(deps)
       return sanitizeConfigOwner(request.params.owner, saved)
     } catch (error) {
-      reply.code(error instanceof MissionPreferenceConflictError ? 409 : error instanceof SettingsReadError ? 503 : 400)
+      reply.code(error instanceof MissionPreferenceConflictError ? 409 : error instanceof SettingsReadError ? 503
+        : error instanceof HostOnlySettingError ? 403 : 400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
     }
   })

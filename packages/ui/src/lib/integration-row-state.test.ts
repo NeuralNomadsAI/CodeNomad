@@ -3,11 +3,10 @@ import { describe, it } from "node:test"
 import type { IntegrationView } from "../../../server/src/integration-types"
 import {
   integrationAttachChoice,
-  integrationAttention,
-  integrationChainAction,
   integrationConnection,
   integrationConnectionMessage,
   integrationLink,
+  integrationStateLine,
   integrationSummary,
 } from "./integration-row-state"
 
@@ -31,15 +30,6 @@ describe("integration Plugins row state", () => {
     assert.equal(integrationLink(native("unsupported"), { state: "none" }), undefined)
   })
 
-  it("asks for attention only for a missing, outdated or incompatible application part", () => {
-    assert.equal(integrationAttention(native("absent")), "hostAbsent")
-    assert.equal(integrationAttention(native("outdated")), "hostOutdated")
-    assert.equal(integrationAttention(native("incompatible")), "incompatible")
-    for (const host of ["ok", "unknown", "unsupported"] as const) assert.equal(integrationAttention(native(host)), undefined, host)
-    assert.equal(integrationAttention(native("absent", 0, { state: "inactive" })), undefined, "only a fresh status answer counts")
-    assert.equal(integrationAttention({ family: "api", state: "ok", status: { version: "1.0.0" } }), undefined)
-  })
-
   it("describes the connection of every family", () => {
     assert.deepEqual(integrationConnection(native("ok", 2)), { state: "offers", count: 2 })
     assert.deepEqual(integrationConnection(native("ok", 0)), { state: "noOffer" })
@@ -58,12 +48,38 @@ describe("integration Plugins row state", () => {
     assert.deepEqual(integrationConnectionMessage({ state: "hostClosed" }, "Blender"), ["integrations.connection.hostClosed", { app: "Blender" }])
   })
 
-  it("the chain button detaches when attached, else attaches unless a reason is shown", () => {
-    assert.equal(integrationChainAction({ state: "attached", label: "Scene" }, undefined), "detach")
-    assert.equal(integrationChainAction({ state: "attached", label: "Scene" }, "Blender closed"), "detach", "an attached conversation can always detach")
-    assert.equal(integrationChainAction({ state: "none" }, undefined), "attach")
-    assert.equal(integrationChainAction({ state: "unknown" }, undefined), "attach", "the attach outcome tells when the state was unknown")
-    assert.equal(integrationChainAction({ state: "none" }, "Blender: no open document"), "unavailable")
+  it("shows one state line, the most important, with its action", () => {
+    const app = { name: "Blender" }
+    const doc = (offerID: string, document: string, protocol: "ok" | "incompatible" = "ok") => ({ offerID, label: `Blender: ${document}`, document, protocol })
+    const line = (entry: Entry, extra: Partial<Parameters<typeof integrationStateLine>[0]> = {}) =>
+      integrationStateLine({ entry: { ...entry, app }, conversation: true, canInstall: true, ...extra })
+    // Native, by priority: the application part first, then attachment.
+    assert.deepEqual(line(native("absent", 1), { link: { state: "attached", label: "x" } }),
+      { key: "integrations.line.install", vars: { app: "Blender" }, tone: "action", action: "install" })
+    assert.deepEqual(line(native("outdated")), { key: "integrations.line.update", vars: { app: "Blender" }, tone: "action", action: "update" })
+    assert.deepEqual(line(native("absent"), { canInstall: false }), { key: "integrations.attention.hostAbsent", vars: { app: "Blender" }, tone: "info" },
+      "without a fresh installable status the state only informs")
+    assert.deepEqual(line(native("incompatible")), { key: "integrations.attention.incompatible", vars: { app: "Blender" }, tone: "warning" })
+    assert.deepEqual(line(native("ok"), { link: { state: "attached", label: "Blender: western_ia.blend" }, offers: [doc("o1", "western_ia.blend")] }),
+      { key: "integrations.line.attached", vars: { document: "western_ia.blend" }, tone: "action", action: "detach" })
+    assert.deepEqual(line(native("ok"), { link: { state: "attached", label: "Blender: scene" } }).vars, { document: "Blender: scene" },
+      "the binding's label until the documents are read")
+    assert.deepEqual(line(native("unknown", 0)), { key: "integrations.connection.hostClosed", vars: { app: "Blender" }, tone: "info" })
+    assert.deepEqual(line(native("ok", 0)), { key: "integrations.connection.noOffer", vars: { app: "Blender" }, tone: "info" })
+    assert.deepEqual(line(native("ok"), { conversation: false }), { key: "integrations.link.noConversation", tone: "info" })
+    assert.deepEqual(line(native("ok"), { link: { state: "none" }, offers: [doc("o1", "western_ia.blend"), doc("o2", "old.blend", "incompatible")] }),
+      { key: "integrations.line.attachOne", vars: { document: "western_ia.blend" }, tone: "action", action: "attach", offerID: "o1" })
+    assert.deepEqual(line(native("ok", 2), { offers: [doc("o1", "a.blend"), doc("o2", "b.blend")] }), { key: "integrations.line.attachMany", tone: "action", action: "attach" })
+    assert.deepEqual(line(native("ok")), { key: "integrations.line.attachMany", tone: "action", action: "attach" }, "documents not read yet")
+    assert.deepEqual(line(native("unsupported")), { key: "integrations.line.unsupported", tone: "info" })
+    // Not loaded.
+    assert.deepEqual(line(native("ok", 1, { state: "inactive", status: undefined })), { key: "integrations.line.inactive", tone: "info" })
+    assert.deepEqual(line(native("ok", 1, { state: "failed", status: undefined })), { key: "integrations.line.failed", tone: "warning" })
+    // Editor MCP and API families.
+    assert.deepEqual(line({ family: "vendor-mcp", state: "ok", status: { version: "1", connection: { state: "connected" } } }), { key: "integrations.connection.detected", tone: "info" })
+    assert.deepEqual(line({ family: "vendor-mcp", state: "ok", status: { version: "1" } }), { key: "integrations.connection.absent", tone: "info" })
+    assert.deepEqual(line({ family: "api", state: "ok", status: { version: "1", connection: { state: "connected" } } }), { key: "integrations.connection.connected", tone: "info" })
+    assert.deepEqual(line({ family: "api", state: "ok", status: { version: "1" } }), { key: "integrations.connection.disconnected", tone: "info" })
   })
 
   it("attaches the only compatible document, offers the choice between several, or none", () => {

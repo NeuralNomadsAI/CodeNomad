@@ -17,13 +17,13 @@ before(async () => {
 after(async () => { await browser?.close() })
 
 for (const remote of [false, true]) for (const exactFirst of [false, true]) {
-  test(`${remote ? "remote" : "web"} legacy session adoption merges sequential sessions, exact first=${exactFirst}`, async () => {
+  test(`${remote ? "desktop remote" : "storage-unavailable web"} legacy session adoption merges sequential sessions, exact first=${exactFirst}`, async () => {
     const page = await browser.newPage()
     try {
       await page.addInitScript(({ remote, exactFirst }) => {
         const w = window as any
         w.__name = (value: unknown) => value
-        w.__CODENOMAD_RUNTIME_HOST__ = "web"
+        w.__CODENOMAD_RUNTIME_HOST__ = remote ? "electron" : "web"
         w.__CODENOMAD_WINDOW_CONTEXT__ = remote ? "remote" : "local"
         w.EventSource = class extends EventTarget { close() {} }
         if (sessionStorage.getItem("legacy-seeded")) return
@@ -53,7 +53,7 @@ for (const remote of [false, true]) for (const exactFirst of [false, true]) {
   })
 }
 
-for (const remote of [false, true]) test(`${remote ? "remote" : "web"} duplicate opened during held DELETE keeps its compacted view after reload`, async () => {
+for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage-unavailable web"} duplicate opened during held DELETE keeps its compacted view after reload`, async () => {
   const page = await browser.newPage()
   let release!: () => void, reached!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), arrival = new Promise<void>(resolve => { reached = resolve })
@@ -61,7 +61,7 @@ for (const remote of [false, true]) test(`${remote ? "remote" : "web"} duplicate
     await page.addInitScript(remote => {
       const w = window as any
       w.__name = (value: unknown) => value
-      w.__CODENOMAD_RUNTIME_HOST__ = "web"; w.__CODENOMAD_WINDOW_CONTEXT__ = remote ? "remote" : "local"
+      w.__CODENOMAD_RUNTIME_HOST__ = remote ? "electron" : "web"; w.__CODENOMAD_WINDOW_CONTEXT__ = remote ? "remote" : "local"
       w.EventSource = class extends EventTarget { close() {} }
     }, remote)
     await page.route("**/api/**", async route => {
@@ -98,13 +98,13 @@ for (const remote of [false, true]) test(`${remote ? "remote" : "web"} duplicate
   } finally { release(); await page.close() }
 })
 
-for (const remote of [false, true]) test(`${remote ? "remote" : "web"} previews persist through the production lifecycle and adopt legacy URLs`, async () => {
+for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage-unavailable web"} previews persist through the production lifecycle and adopt legacy URLs`, async () => {
   const page = await browser.newPage()
   try {
     await page.addInitScript(({ remote }) => {
       const w = window as any
       w.__name = (value: unknown) => value
-      w.__CODENOMAD_RUNTIME_HOST__ = "web"
+      w.__CODENOMAD_RUNTIME_HOST__ = remote ? "electron" : "web"
       w.__CODENOMAD_WINDOW_CONTEXT__ = remote ? "remote" : "local"
       w.EventSource = class extends EventTarget { close() {} }
     }, { remote })
@@ -158,30 +158,37 @@ for (const remote of [false, true]) test(`${remote ? "remote" : "web"} previews 
   } finally { await page.close() }
 })
 
-for (const close of [false, true]) test(`production capture/restore binds recreated duplicate UUIDs after ${close ? "closure" : "reorder"}, without loading saved pages`, async () => {
+for (const web of [false, true]) for (const close of [false, true]) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"}, without loading saved pages`, async () => {
   const page = await browser.newPage()
   const errors: string[] = [], loads: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await page.addInitScript(() => {
+  await page.addInitScript(web => {
     const w = window as any
     w.__name = (value: unknown) => value
-    w.__CODENOMAD_RUNTIME_HOST__ = "electron"; w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
+    w.__CODENOMAD_RUNTIME_HOST__ = web ? "web" : "electron"; w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
     w.EventSource = class extends EventTarget { close() {} }
     const boot = Number(sessionStorage.getItem("boot") ?? 0) + 1
     sessionStorage.setItem("boot", String(boot)); w.boot = boot
     const initial = { version: 1, revision: 1, savedAt: 1, layout: {
+      "mission-project-HhdJiAYMjxA": JSON.stringify({ selected: "legacy-mission" }),
       "opencode-session-previews-v1": JSON.stringify(Object.fromEntries(["one", "two"].map(id =>
         [JSON.stringify(["/same", id]), { mode: "chat", targetUrl: `https://example.com/${id}` }]))),
     }, session: { activeTabIndex: 0,
-      tabs: [0, 1].map(occurrence => ({ kind: "workspace", folder: "/same", occurrence,
+      tabs: [0, 1].map(occurrence => ({ kind: "workspace", folder: "/same", occurrence, ...(web ? { workspaceId: `web-${occurrence}` } : {}),
         activeSessionId: "same", activeParentSessionId: "same", drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} })) } }
-    w.electronAPI = {
+    if (web) {
+      if (boot === 1) {
+        for (const [key, value] of Object.entries(initial.layout)) localStorage.setItem(key, value)
+        sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify(initial))
+      }
+    } else w.electronAPI = {
       claimClientStateAccess: async () => true,
       loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: JSON.parse(sessionStorage.getItem("snapshot") ?? "null") ?? initial }),
       saveClientState: async (_token: string, snapshot: unknown) => { sessionStorage.setItem("snapshot", JSON.stringify(snapshot)); return true },
     }
-  })
+  }, web)
   let sequence = 0
+  let inventory = ["web-0", "web-1"]
   await page.route(/\/(?:api|workspaces)\//, async route => {
     const path = new URL(route.request().url()).pathname
     let body: any = {}
@@ -190,7 +197,10 @@ for (const close of [false, true]) test(`production capture/restore binds recrea
         const input = route.request().postDataJSON()
         body = { id: `uuid-${++sequence}`, path: input.path, status: "ready", port: 1234, proxyPath: `/workspaces/uuid-${sequence}/instance`,
           binaryId: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), requestId: input.requestId }
-      } else body = []
+      } else body = web ? inventory.map(id => ({ id, path: "/same", status: "ready", port: 1234, proxyPath: `/workspaces/${id}/instance`,
+        binaryId: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() })) : []
+    } else if (web && path.startsWith("/api/workspaces/") && route.request().method() === "DELETE") {
+      inventory = inventory.filter(id => id !== path.split("/").at(-1))
     } else if (path === "/api/previews") {
       const input = route.request().postDataJSON()
       loads.push(input.url)
@@ -208,11 +218,13 @@ for (const close of [false, true]) test(`production capture/restore binds recrea
     await page.locator('[data-restoring="false"]').waitFor()
     await page.waitForFunction(() => (window as any).tabViews.ids().length === 2)
     const ids = await page.evaluate(() => (window as any).tabViews.ids()) as string[]
+    assert.deepEqual(await page.evaluate(ids => ids.map((id: string) => (window as any).tabViews.view(id).missions?.selected), ids),
+      ["legacy-mission", undefined], "folder Mission selection adopts into the first descriptor only")
     const legacyUrls = await page.evaluate(async id => {
       const f = (window as any).tabViews
       return [(await f.restore("one", id)).targetUrl, (await f.restore("two", id)).targetUrl]
     }, ids[0])
-    assert.deepEqual(legacyUrls, ["https://example.com/one", "https://example.com/two"], "native migration restores both sessions sequentially in one occurrence")
+    assert.deepEqual(legacyUrls, ["https://example.com/one", "https://example.com/two"], "descriptor migration restores both sessions sequentially in one occurrence")
     assert.deepEqual(await page.evaluate(id => Object.keys((window as any).tabViews.view(id).previews), ids[0]), ["one", "two"])
     await page.evaluate(async ([a, b]) => {
       const f = (window as any).tabViews
@@ -221,8 +233,14 @@ for (const close of [false, true]) test(`production capture/restore binds recrea
       f.reorder(b, a)
     }, ids)
     if (close) await page.evaluate(id => (window as any).tabViews.close(id), ids[0])
-    await page.evaluate(() => (window as any).__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__())
-    const captured = await page.evaluate(() => JSON.parse(sessionStorage.getItem("snapshot")!).session.tabs)
+    if (web) {
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")))
+      await page.waitForFunction(close => {
+        const tabs = JSON.parse(sessionStorage.getItem("codenomad.client-state.v1")!).session.tabs
+        return tabs.length === (close ? 1 : 2) && tabs[0].viewState?.missions?.reader?.missionId === "debug"
+      }, close)
+    } else await page.evaluate(() => (window as any).__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__())
+    const captured = await page.evaluate(web => JSON.parse(sessionStorage.getItem(web ? "codenomad.client-state.v1" : "snapshot")!).session.tabs, web)
     assert.equal(captured.length, close ? 1 : 2)
     assert.equal(captured[0].viewState.missions.reader.kind, "playbook")
     assert.equal(captured[0].viewState.missions.reader.missionId, "debug")
@@ -231,7 +249,10 @@ for (const close of [false, true]) test(`production capture/restore binds recrea
     await page.reload(); await page.locator('[data-restoring="false"]').waitFor()
     const restored = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
     assert.equal(restored.length, captured.length)
-    assert.ok(restored.every((v: any) => !ids.includes(v.id)), "backend recreation changes every instance UUID")
+    if (web) {
+      assert.deepEqual(restored.map((v: any) => v.id), captured.map((v: any) => v.workspaceId), "web restoration reuses each saved backend record")
+      assert.equal(sequence, 0, "web restoration never creates workspaces")
+    } else assert.ok(restored.every((v: any) => !ids.includes(v.id)), "backend recreation changes every instance UUID")
     assert.deepEqual(restored.map((v: any) => v.view), captured.map((v: any) => v.viewState))
     assert.equal(loads.length, count, "restoration allocates zero preview records and loads zero saved pages")
     assert.deepEqual(errors, [])

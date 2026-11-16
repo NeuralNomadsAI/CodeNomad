@@ -56,7 +56,7 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 アップグレード後は再度ログインしてください。ホスト名の別名、リバースプロキシ、別途ホストする UI を使う場合は、バックエンドの `CODENOMAD_ALLOWED_ORIGINS` に信頼する UI のオリジン（スキーム、ホスト名、ポート）を設定します。LAN 上のネイティブクライアントは、変更リクエストに許可された `Origin` ヘッダーを付ける必要があります。
 
-ホスト専用の操作にはループバック接続を使ってください。対象は SideCar のコンテンツ（`/sidecars/`）と WebSocket、リモートコントロールの管理（`/api/remote-control/`）、プラグインブリッジ（`/api/opencode-plugin/`）、リモートプロキシ（`/api/remote-proxy/`）、保存済みサーバーの管理（`/api/remote-servers/`）、パスワード変更、トークンによる初期設定です。LAN からの直接アクセスでログイン済みでも、これらにはループバックが必要です。有効なケイパビリティトークンがあれば、アクティブなプレビューのコンテンツ（`/previews/`）は LAN からの直接アクセスで利用できます。
+ホスト専用の操作にはループバック接続を使ってください。対象は SideCar のコンテンツ（`/sidecars/`）と WebSocket、リモートコントロールの管理（`/api/remote-control/`）、プラグインブリッジ（`/api/opencode-plugin/`）、リモートプロキシ（`/api/remote-proxy/`）、保存済みサーバーの管理（`/api/remote-servers/`）、パスワード変更、トークンによる初期設定です。LAN からの直接アクセスでログイン済みでも、これらにはループバックが必要です。例外は SideCar だけです。ホストの **HTTPS で SideCar を開く** 設定を有効にすると、信頼された HTTPS オリジンからサインインしたブラウザーにそのコンテンツと WebSocket が開放されます（[SideCar](browser-sidecars.md#register-sidecar)）。有効なケイパビリティトークンがあれば、アクティブなプレビューのコンテンツ（`/previews/`）は LAN からの直接アクセスで利用できます。
 
 `/api/sidecars` 登録 API は、認証済みの LAN 直接接続クライアントとペアリング済み端末で引き続き利用できます。リモートコントロールの Web プレビューは、ホストで有効な間、ケイパビリティトークンで利用できます。
 

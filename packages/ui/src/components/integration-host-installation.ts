@@ -15,9 +15,11 @@ export function createIntegrationHostInstallation(props: {
   const [pending, setPending] = createSignal(false)
   const identity = createMemo(() => JSON.stringify([props.instanceId, props.directory, props.sessionId, props.active !== false]))
   const epoch = createMemo(() => integrationEpoch(props.instanceId, props.sessionId))
+  // Without an expected action the part can still be reinstalled, the application open or closed.
   const eligible = (id: string) => props.active !== false ? props.entries().find(entry => entry.id === id
-    && entry.family === "native" && entry.state === "ok" && entry.status?.host?.state !== "unsupported"
-    && entry.status?.host?.state !== "unknown" && entry.status?.host?.action && entry.status.version) : undefined
+    && entry.family === "native" && entry.state === "ok" && entry.status?.host && entry.status.host.state !== "unsupported"
+    && entry.status.version) : undefined
+  const actionOf = (entry: IntegrationView): "install" | "update" | "reinstall" => entry.status?.host?.action ?? "reinstall"
   const signature = (id: string) => JSON.stringify(eligible(id))
   let confirmation: AbortController | undefined
   let disposed = false
@@ -40,7 +42,7 @@ export function createIntegrationHostInstallation(props: {
     target = captured
     confirmation = new AbortController()
     const signal = confirmation.signal
-    const action = entry.status!.host!.action!
+    const action = actionOf(entry)
     const accepted = await confirmIntegrationAction(t("integrations.installHost.warning", { app: entry.app.name, name: entry.displayName, version: entry.status!.version }), {
       title: t(`integrations.installHost.${action}`),
       confirmLabel: t(`integrations.installHost.${action}`), variant: "warning",
@@ -65,5 +67,5 @@ export function createIntegrationHostInstallation(props: {
         error instanceof HttpResponseError && error.code === "unsupported" ? "integrations.installHost.unsupported" : "integrations.installHost.error") })
     } finally { setPending(false); void integrations.refreshDemanded(instanceId) }
   }
-  return { pending, action: (id: string) => !pending() ? eligible(id)?.status?.host?.action : undefined, open }
+  return { pending, action: (id: string) => { const entry = !pending() ? eligible(id) : undefined; return entry ? actionOf(entry) : undefined }, open }
 }

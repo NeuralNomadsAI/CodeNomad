@@ -240,8 +240,6 @@ export interface ProviderUsageResponse {
   unavailableAction?: ProviderUsageUnavailableAction
   console?: import("./api-types-provider-usage").OpenCodeConsoleUsage
   freeEstimate?: import("./api-types-provider-usage").OpenCodeFreeEstimate
-  /** The allowance or reset is a local reference; request counts can come from Console. */
-  estimated?: true
 }
 
 export type WorktreeKind = "root" | "worktree"
@@ -949,6 +947,8 @@ export interface SupportMeta {
 export interface ServerMeta {
   /** Whether this request has host-local privileges (loopback, outside Remote Control). */
   localRequest?: boolean
+  /** Whether this request may open SideCars: local, or a verified direct HTTPS origin the host opted in. */
+  sidecarsAllowed?: boolean
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
   localUrl: string
   /** URL direct remote clients should use (prefers HTTPS when enabled). */

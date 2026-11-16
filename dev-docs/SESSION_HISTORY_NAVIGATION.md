@@ -72,8 +72,11 @@ The old transcript stays visible during a jump. A newer target supersedes the
 pending request, including when the new target is already resident. Cancellation,
 leaving the view and manual transcript scrolling reject late navigation. Failed
 jumps keep the visible page and retry the requested destination. Historical
-windows remain isolated from live append events; returning to latest uses the
-native latest-page loader.
+windows remain isolated from live append events; returning to the latest window
+from history pages the native latest loader, while the latest control inside the
+latest window is a local bottom jump (an authoritative reload would race every
+live event and its bounded retries can give up, leaving the control without
+effect while the session streams).
 
 `session-outline.ts` owns metadata independently of resident transcript windows.
 It refreshes on activation, terminal status, undo/content mutation and reconnect;
@@ -338,7 +341,9 @@ One bottom loop (`bottomPin`) keeps the bottom, and only while following: leavin
 follow ends it. Ordinary following re-pins for two frames after each bottom write;
 an explicit pin (send intent, latest paging, restoration at the bottom) lasts until
 enough rows exist and the bottom stays put, within a frame deadline, then hands the
-bottom back to ordinary following. Layout changes apply restoration, then an explicit
+bottom back to ordinary following. That hand-over leaves the long-reply hold alone
+for its settling frames — the reader just asked for this bottom — and the next
+content growth re-evaluates it. Layout changes apply restoration, then an explicit
 pin, then the long-reply hold, then follow. A restoration requested during a pin
 supersedes it (the pin settles `interrupted`), except that a restoration to the
 bottom joins an active explicit pin and keeps its row count; it reports `onApplied`
@@ -380,8 +385,9 @@ A hold whose reply grows while its pane is hidden lands at the top only
 in the switch fixture: native events for an inactive session invalidate its message
 load, and that fixture's `message.list` omits the in-flight reply, so the reload drops
 the hold's anchor and restoration waits `ANCHOR_RESTORE_MAX_FRAMES` before its pixel
-fallback. With the reply listed, the hold returns exactly; but the latest button's
-reload then re-engages the long-reply hold at once, a product decision left open.
+fallback. With the reply listed, the hold returns exactly; the latest control's
+settled hand-over to follow then exempts the hold for its settling frames, and the
+next content growth re-evaluates it.
 A following list shown again after `display:none` is pinned before its first painted
 frame: a gap read in the animation frame that shows it predates layout and the
 ResizeObserver-driven pin, and a browser check measures 0 px once painted.

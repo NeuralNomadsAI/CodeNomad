@@ -7,14 +7,7 @@ import type {
   IntegrationView,
 } from "../../../server/src/integration-types"
 import { useI18n } from "../lib/i18n"
-import {
-  integrationAttachChoice,
-  integrationChainAction,
-  integrationConnection,
-  integrationConnectionMessage,
-  integrationLink,
-  type IntegrationLink,
-} from "../lib/integration-row-state"
+import { integrationAttachChoice, integrationLink, type IntegrationLink } from "../lib/integration-row-state"
 import { integrationAttachmentRequest } from "../lib/integrations-api"
 import { showToastNotification } from "../lib/notifications"
 import { integrationBindings, integrationEpoch } from "../stores/integrations"
@@ -26,8 +19,8 @@ const OUTCOMES = new Set(["busy", "gone", "refused"])
 interface AttachIntent { target: IntegrationBindingTarget; epoch: string; controller: AbortController }
 
 /**
- * The displayed conversation's attachment to one integration of a Plugins row: its authoritative read, demanded
- * while the row is shown, and the user's explicit attach and detach. The integration also attaches a conversation
+ * The displayed conversation's attachment to one integration of a Plugins row: its authoritative read and the open
+ * documents, both demanded while the row is shown, and the user's explicit attach and detach. The integration also attaches a conversation
  * itself at its first use. Every request is sent once and the binding is read again afterwards.
  */
 export function createIntegrationRowBinding(options: {
@@ -70,16 +63,22 @@ export function createIntegrationRowBinding(options: {
   const fail = (value: IntegrationBindingTarget, key = "integrations.error.retry", vars?: Record<string, string>) => {
     if (!disposed && options.active() && sameTarget(target(), value)) showToastNotification({ category: "opencode", variant: "error", message: t(key, vars) })
   }
-  /** Why the conversation cannot be attached now, or undefined when it can. */
-  const unavailable = createMemo(() => {
-    const entry = options.integration()
-    if (!entry || link()?.state === "attached") return undefined
-    if (!options.sessionId()) return t("integrations.link.noConversation")
-    const connection = integrationConnection(entry)
-    if (connection.state === "offers") return undefined
-    const [key, vars] = integrationConnectionMessage(connection, entry.app.name)
-    return t(key, vars)
+  /** The open documents, read while the row is shown with at least one offer; a native event reads them again. */
+  const [offers, setOffers] = createSignal<IntegrationHostOffer[]>()
+  const offersKey = createMemo(() => {
+    const value = target(), entry = options.integration(), count = entry?.status?.connection?.offers ?? 0
+    return value && options.active() && count > 0 && entry?.status?.host?.state !== "unsupported"
+      ? JSON.stringify([value.instanceId, value.directory, value.integrationId, count, epoch()]) : undefined
   })
+  createEffect(on(offersKey, key => {
+    const value = target()
+    if (!key || !value) { setOffers(undefined); return }
+    const controller = new AbortController()
+    onCleanup(() => controller.abort())
+    void integrationAttachmentRequest<IntegrationHostsResponse>(value.instanceId, value.directory, value.integrationId, "hosts", controller.signal)
+      .then(result => { if (!controller.signal.aborted) setOffers(Array.isArray(result?.offers) ? result.offers : undefined) })
+      .catch(() => { if (!controller.signal.aborted) setOffers(undefined) })
+  }))
 
   /** At most one `detachHost` for the displayed conversation. */
   const detach = async () => {
@@ -95,7 +94,7 @@ export function createIntegrationRowBinding(options: {
   }
   /** At most one `attachHost` of the displayed conversation to the chosen offer. */
   const attach = async (captured: AttachIntent, offerID: string) => {
-    if (!owns(captured) || busy() || chainAction() !== "attach") return
+    if (!owns(captured) || busy() || link()?.state === "attached") return
     const value = captured.target
     await integrationBindings.run(value, async () => {
       if (!owns(captured)) return
@@ -110,13 +109,13 @@ export function createIntegrationRowBinding(options: {
       } catch { fail(value) }
     })
   }
-  /** What the chain button does now. */
-  const chainAction = () => { const value = link(); return value ? integrationChainAction(value, unavailable()) : "unavailable" }
-  /** The chain button: detach when attached; else read the offers, attach the only one or offer the choice. */
-  const activate = async () => {
-    if (chainAction() === "detach") return detach()
+  /**
+   * Attach from the state line: read the documents afresh, attach the shown one when it is still the only one,
+   * otherwise offer the choice.
+   */
+  const activate = async (expectedOfferID?: string) => {
     const value = target(), entry = options.integration()
-    if (disposed || !value || !entry || chainAction() !== "attach" || busy() || !options.active()) return
+    if (disposed || !value || !entry || link()?.state === "attached" || busy() || !options.active()) return
     const captured: AttachIntent = { target: value, epoch: epoch(), controller: new AbortController() }
     intent = captured
     setReading(true)
@@ -127,12 +126,13 @@ export function createIntegrationRowBinding(options: {
       if (!Array.isArray(result?.offers)) throw new Error("Invalid hosts result")
       const choice = integrationAttachChoice(result.offers)
       if (choice.kind === "none") { fail(value, "integrations.connection.noOffer", { app: entry.app.name }); revoke() }
-      else if (choice.kind === "attach") { setReading(false); await attach(captured, choice.offerID) }
+      else if (choice.kind === "attach" && (!expectedOfferID || choice.offerID === expectedOfferID)) { setReading(false); await attach(captured, choice.offerID) }
+      else if (choice.kind === "attach") setChoices(result.offers.filter(offer => offer.protocol === "ok").map(offer => ({ ...offer, attach: () => void attach(captured, offer.offerID) })))
       else setChoices(choice.offers.map(offer => ({ ...offer, attach: () => void attach(captured, offer.offerID) })))
     } catch { if (owns(captured)) { fail(value); revoke() } }
     finally { if (intent === captured) setReading(false) }
   }
-  return { link, busy, unavailable, chainAction, choices, closeChoices: () => { if (choices()) revoke() }, activate, detach }
+  return { link, offers, busy, choices, closeChoices: () => { if (choices()) revoke() }, activate, detach }
 }
 
 export type IntegrationRowBinding = ReturnType<typeof createIntegrationRowBinding>

@@ -17,7 +17,8 @@ serverApi.fetchServerMeta = (async () => {
   const mode = query.get("mode")
   if (mode === "failure") throw new Error("Unavailable")
   const meta = { localUrl: "http://localhost:3000", listeningMode: "all", addresses: [] }
-  return mode === "missing" ? meta : { ...meta, localRequest: mode === "local" }
+  // "sidecars": a non-local client the host lets open SideCars over direct HTTPS.
+  return mode === "missing" ? meta : { ...meta, localRequest: mode === "local", ...(mode === "sidecars" ? { sidecarsAllowed: true } : {}) }
 }) as typeof serverApi.fetchServerMeta
 serverApi.fetchAuthStatus = async () => ({ authenticated: true, username: "codenomad", passwordUserProvided: true })
 serverApi.fetchSidecars = async () => ({ sidecars: [{ id: "fixture", name: "Fixture SideCar", kind: "port", port: 3000,

@@ -18,6 +18,7 @@ const workspace = (occurrence: number, draft: string): RestorableWorkspaceTabSta
   folder: "/same-folder",
   occurrence,
   projectName: "same-project",
+  ...(occurrence === 1 ? { workspaceId: "record-b" } : {}),
   activeParentSessionId: "parent",
   activeSessionId: "session-1",
   expandedSessionIds: ["parent", "session-1"],
