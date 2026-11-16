@@ -8,6 +8,7 @@ export interface RemoteRestoreTab {
   snapshot: RestorableWorkspaceTabState
   instanceId?: string
   retry(): Promise<void>
+  open?(): Promise<void>
   remove(): void
 }
 

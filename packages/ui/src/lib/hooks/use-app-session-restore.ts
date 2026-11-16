@@ -99,7 +99,7 @@ function reconcileRestoredWorkspaces({ snapshot, capture }: RestoreContext) {
         ?? (match.existingWorkspaceId && !reserved.has(match.existingWorkspaceId) ? match.existingWorkspaceId : null) }
     })
 }
-async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<number, () => boolean>): Promise<void> {
+async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<number, () => boolean>, explicitlyOpenedIndex?: number): Promise<void> {
   const { snapshot, signal, capture } = context
   const sidecars = retryIndexes ? [] : snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
   let localInventoryReady = true
@@ -168,8 +168,9 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
             else void closeWorkspace(id).catch(() => {})
           },
         })
-        if (remote && !reusableId && !isWebHost()) context.attemptedRemoteCreates.add(match.tabIndex)
-        const creation = reusableId || isWebHost() ? null : await create()
+        const mayCreate = !isWebHost() || explicitlyOpenedIndex === match.tabIndex
+        if (remote && !reusableId && mayCreate) context.attemptedRemoteCreates.add(match.tabIndex)
+        const creation = reusableId || !mayCreate ? null : await create()
         if (creation && finishCreateCommit) await waitForWorkspaceMountAdoption()
         finishCreateCommit?.()
         if (remote && !canCommitCreation()) return null
@@ -231,7 +232,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
       })
     } catch (error) {
       if (error instanceof HttpResponseError && error.status >= 400 && error.status < 500
-        && error.status !== 408 && error.status !== 429) context.attemptedRemoteCreates.delete(match.tabIndex)
+        && error.status !== 408 && error.status !== 499) context.attemptedRemoteCreates.delete(match.tabIndex)
       // Only a definitive runtime refusal before a tab was bound is retryable.
       // Timeouts, lost replies and later hydration failures are never replayed.
       if (backendIdOf(tab) === LOCAL_BACKEND_ID && !signal.aborted && !workspaceOpened && !hasLocalRestoredTab(capture, match.tabIndex)
@@ -274,9 +275,9 @@ export function useAppSessionRestore(): void {
   let unregisterRecovery = () => {}
   const remoteRecoveries = new Map<string, Promise<void>>()
   let startupComplete = false
-  const retryRemote = (backendId: string): Promise<void> => {
+  const retryRemote = (backendId: string, explicitlyOpenedIndex?: number): Promise<void> => {
     const pending = remoteRecoveries.get(backendId)
-    if (pending) return pending
+    if (pending) return explicitlyOpenedIndex === undefined ? pending : pending.then(() => retryRemote(backendId, explicitlyOpenedIndex))
     const flight = (async () => {
       await initialRestore
       if (!context || disposed || !clientStateIsPrimary() || preferences().multiBackend !== true) return
@@ -289,7 +290,7 @@ export function useAppSessionRestore(): void {
         const current = capture.createRestoredTabCommitGuard(index)
         return [[index, () => current() && remoteRestoreTabs().includes(placeholder)] as const]
       }))
-      await restoreTabs({ ...context, signal: controller.signal }, indexes)
+      await restoreTabs({ ...context, signal: controller.signal }, indexes, explicitlyOpenedIndex)
     })().finally(() => { if (remoteRecoveries.get(backendId) === flight) remoteRecoveries.delete(backendId) })
     remoteRecoveries.set(backendId, flight)
     return flight
@@ -298,6 +299,7 @@ export function useAppSessionRestore(): void {
     capture.recordRestoredTab(index, id)
     addRemoteRestoreTab({ id, kind: "remote-restore", snapshot: tab, instanceId,
       retry: () => retryRemote(backendIdOf(tab)),
+      ...(isWebHost() ? { open: () => retryRemote(backendIdOf(tab), index) } : {}),
       remove() {
         const binding = capture.restoredTabIds()[index]
         const workspaceId = binding?.startsWith("instance:") ? binding.slice("instance:".length) : instanceId

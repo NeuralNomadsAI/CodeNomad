@@ -6,6 +6,8 @@
 
 **Remote opening ownership boundaries**
 
+- Browser/PWA restoration admits each saved backend and reuses its saved record before its backend/folder occurrence. Reload and Retry only bind existing records. A compatible remote placeholder exposes explicit Open through the same inventory, commit, draft and uncertain-creation fences; it creates only that missing occurrence.
+
 `openRemoteProject` receives an opaque `WorkspaceCreationOwnership` through signal-scoped `createInstance.onCreation` before dispatch. Every untransferred exit runs its idempotent discard, including rejected or resolved-but-obsolete creation. Explicit commits retire older claims for the same UI key; passive observations enrich their current claim. Cleanup and failed-settlement restoration retain the exact request/API/attachment and current occurrence.
 
 | Boundary | Owner | Stale or cancelled outcome |

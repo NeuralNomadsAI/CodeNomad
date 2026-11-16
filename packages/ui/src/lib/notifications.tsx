@@ -382,7 +382,9 @@ function sendSystemNotification(payload: ToastPayload): void {
   if (typeof document === "undefined") return
   const focused = document.visibilityState === "visible" && document.hasFocus()
   if (!untrack(() => preferences().osNotificationsAllowWhenVisible) && focused) return
-  void sendOsNotification({ title: payload.title ?? "CodeNomad", body: payload.message, signal: payload.signal }).catch((error) => {
+  const action = payload.action
+  void sendOsNotification({ title: payload.title ?? "CodeNomad", body: payload.message, signal: payload.signal,
+    onClick: action ? () => runToastAction(action) : undefined }).catch((error) => {
     console.warn("[notifications] failed to send system notification", error)
   })
 }

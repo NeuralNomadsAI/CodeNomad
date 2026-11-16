@@ -1,4 +1,5 @@
 import { render } from "solid-js/web"
+import { createSignal, Show } from "solid-js"
 import { Toaster } from "solid-toast"
 import { ImageSettingsCard } from "../../../src/components/settings/image-settings-card"
 import { WebSearchSettingsCard } from "../../../src/components/settings/websearch-settings-card"
@@ -12,11 +13,16 @@ import { getToastHistory, runToastAction } from "../../../src/lib/notifications"
 import { addInstance, activeInstanceId } from "../../../src/stores/instances"
 import { activeSessionId, setProviders, setSessions } from "../../../src/stores/session-state"
 import { resolveImagesConversation } from "../../../src/stores/images-conversation"
+import { SettingsScreen } from "../../../src/components/settings-screen"
+import { openSettings } from "../../../src/stores/settings-screen"
+import { selectInstanceTab } from "../../../src/stores/app-tabs"
+import { setActiveSessionId } from "../../../src/stores/session-selection-state"
+import { remoteServerSelection } from "../../../src/stores/remote-project-open"
 import "../../../src/stores/sessions"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
-const calls: { owner: string; path: string; method: string; body?: any }[] = []
+const calls: { owner: string; path: string; method: string; body?: any; directory?: string | null }[] = []
 const violations: string[] = []
 const outcomes: { owner: string; status: string }[] = []
 const pending: (() => void)[] = []
@@ -27,7 +33,7 @@ function transport(owner: string) {
   return async (input: any, init?: RequestInit) => {
     const url = new URL(String(input)), path = url.pathname, method = init?.method ?? "GET"
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
-    calls.push({ owner, path, method, body })
+    calls.push({ owner, path, method, body, directory: url.searchParams.get("directory") })
     const data = state.get(owner)!
     if (hold && owner === "A") await new Promise<void>(resolve => pending.push(resolve))
     if (fail && owner === "A" && method !== "GET") return new Response("{}", { status: 503 })
@@ -38,7 +44,9 @@ function transport(owner: string) {
       return new Response(null, { status: 204 })
     }
     const location = { directory: `/${owner}` }
-    const result = path.endsWith("images-conversation") ? { status: "found", sessionID: "ses_homonym", created: false }
+    const result = path.endsWith("subagent-depth") ? { location: { directory: url.searchParams.get("directory") },
+        capability: { minimum: 1, maximum: 10 }, project: { depth: null, path: "/opencode.json", expectation: {} }, effectiveDepth: 2 }
+      : path.endsWith("images-conversation") ? { status: "found", sessionID: "ses_homonym", created: false }
       : path.endsWith("image-settings") ? { location, generation: { global: data.generation, effective: data.generation, models: [] },
           mediaStorage: { global: data.mediaStorage, effective: data.mediaStorage } }
       : path.endsWith("websearch-settings") ? { location, effective: data.project ?? data.global,
@@ -50,7 +58,7 @@ function transport(owner: string) {
 // The local API is a sentinel: even a remote key stripped before transport must
 // fail through its remote directory. Other backends use real HTTP adapters.
 const localApi = createServerApi({ id: "local", url: path => new URL(path, location.origin).href, fetch: transport("local") } as any)
-for (const method of ["getImageSettings", "setImageSettings", "getWebSearchSettings", "setWebSearchSettings", "imagesConversation"] as const) {
+for (const method of ["getImageSettings", "setImageSettings", "getWebSearchSettings", "setWebSearchSettings", "imagesConversation", "getSubagentDepth"] as const) {
   ;(localBackend.api[method] as any) = (...args: any[]) => {
     const directory = typeof args[1] === "string" ? args[1] : args[1]?.directory ?? args[1]?.location?.directory
     if (args[0].includes("~") || directory !== "/local") {
@@ -91,6 +99,7 @@ for (const owner of ["local", "A", "B"]) {
   setProviders(previous => new Map(previous).set(id, [{ id: "test", name: "Test", defaultModelId: "model",
     models: [{ id: "model", providerId: "test", name: "Model", limit: { context: 1000, output: 100 }, cost: { input: 0, output: 0 } }] }]))
 }
+const [showSettings, setShowSettings] = createSignal(false)
 render(() => <ConfigProvider><I18nProvider>
   {["local", "A", "B"].map(owner => {
     const id = owner === "local" ? "same" : `${owner}~same`
@@ -103,6 +112,7 @@ render(() => <ConfigProvider><I18nProvider>
     </section>
   })}
   <Toaster />
+  <Show when={showSettings()}><SettingsScreen /></Show>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 let retainedAction: any
 ;(window as any).parity = {
@@ -124,5 +134,28 @@ let retainedAction: any
     if (action) { retainedAction ??= action; await runToastAction(action) }
   },
   staleAction: () => retainedAction && runToastAction(retainedAction),
+  systemRouting: () => applyUiSettings({ multiBackend: true, osNotificationsAllowWhenVisible: true, notificationRouting: {
+    sessions: { screen: false, history: false, system: true },
+  } as never }),
+  openServers: async () => {
+    await applyUiSettings({ multiBackend: true })
+    setShowSettings(true)
+    await openSettings("servers")
+  },
+  serverSelection: remoteServerSelection,
+  addServer: () => host.saveRemoteServerProfile({ name: "LAN server", baseUrl: "http://lan.invalid" }),
+  openMissions: async (owner: string) => {
+    const id = `${owner}~same`
+    setSessions(previous => {
+      const next = new Map(previous), entries = new Map(next.get(id))
+      entries.set("ses_homonym", { ...entries.get("ses_homonym")!, location: { directory: `/${owner}/worktree` } })
+      next.set(id, entries)
+      return next
+    })
+    setActiveSessionId(previous => new Map(previous).set(id, "ses_homonym"))
+    selectInstanceTab(id)
+    setShowSettings(true)
+    await openSettings("missions")
+  },
   selected: () => ({ instance: activeInstanceId(), sessionA: activeSessionId().get("A~same"), sessionB: activeSessionId().get("B~same") }),
 }

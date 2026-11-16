@@ -18,7 +18,7 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
   const [error, setError] = createSignal("")
   const controller = new AbortController()
   onCleanup(() => controller.abort())
-  const run = async (connect: boolean) => {
+  const run = async (connect: boolean, open = false) => {
     if (busy()) return
     setBusy(true)
     setError("")
@@ -33,7 +33,8 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
         backendRegistry.detach(id())
         setConnecting(false)
       }
-      await props.tab.retry()
+      if (open) await props.tab.open?.()
+      else await props.tab.retry()
     } catch { if (!controller.signal.aborted) setError("folderSelection.servers.dialog.errorConnect") }
     finally { setPassword(""); setPairingLink(""); setBusy(false) }
   }
@@ -52,6 +53,9 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
       </form>
     </Show>
     <div class="flex gap-3">
+      <Show when={props.tab.open && backendRegistry.state(id()) === "compatible"}>
+        <button class="selector-button" disabled={busy() || !profile()} onClick={() => void run(false, true)}>{t("directoryBrowser.openCurrent")}</button>
+      </Show>
       <button class="selector-button" disabled={busy() || !profile()} onClick={() => void run(false)}>{t("filesystemBrowser.actions.retry")}</button>
       <button class="selector-button" disabled={busy() || !profile()} onClick={() => setConnecting(value => !value)}>{t("folderSelection.servers.dialog.connect")}</button>
     </div>

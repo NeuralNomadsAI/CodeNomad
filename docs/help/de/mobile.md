@@ -4,6 +4,8 @@ Verwenden Sie die Browseroberfläche auf Telefon oder Tablet, um Arbeit auf dem 
 
 ## Mit Telefon oder Tablet verbinden {#connect}
 
+Bei aktiviertem Mehrserverbetrieb auf dem Host sind gespeicherte Server über die Startseite und Einstellungen → Server verfügbar. Remote-Projekttabs stellen nach dem Neuladen Server, Entwürfe und Ansichten wieder her. Ein nicht verfügbares Projekt behält seinen Tab: **Wiederholen** verbindet mit einem vorhandenen Datensatz; **Öffnen** öffnet ein fehlendes Projekt ausdrücklich.
+
 1. Öffnen Sie auf dem Host **Einstellungen → Remote-Zugriff → Fernsteuerung** und wählen Sie **Fernsteuerung starten**.
 2. Scannen Sie den Kopplungs-QR-Code mit Ihrem Mobilgerät und öffnen Sie den Link im Browser, den Sie weiterverwenden möchten.
 3. Alternativ konfigurieren Sie [Direktzugriff](remote-access.md), öffnen die erreichbare vertrauenswürdige HTTPS-URL des Hosts und melden sich mit dessen Serverpasswort an.

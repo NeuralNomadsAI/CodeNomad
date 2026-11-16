@@ -5,6 +5,7 @@ import { getPermissionSessionId, mergePermissionRequest } from "../types/permiss
 import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
+import { generateUUID } from "../lib/client-identity"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
@@ -532,7 +533,6 @@ const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreW
     })
   },
 })
-let restoreCreationRequestSequence = 0
 const restoreCreationCommitGates = new RestoreWorkspaceCommitGates<RestoreWorkspaceDescriptor>()
 
 const connectionResyncs = new TrailingResyncCoordinator(
@@ -654,11 +654,7 @@ serverEvents.on("instance.eventStatus", (event) => {
 })
 
 function createRestoreCreationRequestId(): string {
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return `restore-${globalThis.crypto.randomUUID()}`
-  }
-  restoreCreationRequestSequence += 1
-  return `restore-${Date.now().toString(36)}-${restoreCreationRequestSequence.toString(36)}`
+  return `restore-${generateUUID()}`
 }
 
 type InstanceReadyWaiter = {
