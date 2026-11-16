@@ -173,6 +173,9 @@ export function MissionProfileControls(props: {
   return <section class="mission-profiles" aria-label={t("missions.control.profiles.title")}>
     <Show when={props.template === "debug"}><span class="sr-only">{t("missions.control.profiles.debug")}</span></Show>
     <For each={props.roles ?? ["coordinator", ...missionProfileRoles[props.template]]}>{row}</For>
-    <Show when={failed()}><p role="status" title={failure() || undefined}>{t("missions.control.profiles.error")}</p></Show>
+    <Show when={failed()}>
+      <p role="status" title={failure() || undefined}>{t("missions.control.profiles.error")}</p>
+      <button type="button" class="window-action" disabled={!demanded() || loading()} onClick={invalidate}>{t("missions.preferences.reload")}</button>
+    </Show>
   </section>
 }

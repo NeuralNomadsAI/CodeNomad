@@ -654,6 +654,10 @@ but unreconciled save leaves creation fenced until a reload succeeds: Settings i
 one read-only reload by itself and offers an explicit Reload only if that read fails,
 while the creation form and the saved-configuration library keep their explicit Reload.
 Earlier GETs/ACKs never substitute stale cached defaults as authoritative creation input.
+Settings also rereads after failed default writes, clearing the save alert only when
+the valid stored defaults match the encoded submitted document. Changed or invalid
+values retain the alert. Agent/model catalog failures offer Reload through the same
+demand-gated invalidation as configuration and reconnection events.
 
 ### Parallel workstreams and context reuse
 

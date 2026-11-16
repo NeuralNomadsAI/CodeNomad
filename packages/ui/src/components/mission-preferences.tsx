@@ -4,7 +4,7 @@ import type { MissionProfiles } from "../../../server/src/missions/playbook-prof
 import { sameExecution, type MissionExecution } from "../../../server/src/missions/execution"
 import { changeMissionProfile, setMissionProfileRole } from "./mission-profile-controls-data"
 import { useI18n } from "../lib/i18n"
-import { globalMissionTaskMode, normalizeMissionDefaults, missionDefaultsFor, missionTaskModeFor, type MissionDefaultScope, type MissionProfileDefault, type MissionTaskMode } from "../lib/mission-defaults"
+import { encodeMissionDefaults, globalMissionTaskMode, normalizeMissionDefaults, missionDefaultsFor, missionTaskModeFor, type MissionDefaultScope, type MissionProfileDefault, type MissionTaskMode } from "../lib/mission-defaults"
 import { useConfig } from "../stores/preferences"
 import { MissionProfileControls } from "./mission-profile-controls"
 import { MissionProfileSummary } from "./mission-profile-summary"
@@ -14,6 +14,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { MissionModelLibrary } from "./mission-model-library"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { canonicalJson } from "../stores/client-state-partition-json"
 
 /** The next document, or undefined when the stored value this edit was made from has changed. */
 type DefaultsEdit = (defaults: MissionProfileDefault[]) => MissionProfileDefault[] | undefined
@@ -61,14 +62,19 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
   const commit = (edit: DefaultsEdit, repair = false) => {
     setFailed(false); setQueued(edits => [...edits, edit])
     writes = writes.then(async () => {
+      let next: MissionProfileDefault[] | undefined
       try {
-        const next = edit(normalizeMissionDefaults(config.preferences().missionProfileDefaults))
+        next = edit(normalizeMissionDefaults(config.preferences().missionProfileDefaults))
         if (!next) throw new Error("Mission defaults changed since this edit")
         await config.saveMissionDefaults(next, config.missionPreferenceSnapshot("missionProfileDefaults"), repair)
       } catch (error) {
         // Show what is actually stored (read-only). Later edits recheck what they were made from.
         if (!(error instanceof ConfigOwnerReconciliationPendingError)) setFailed(true)
-        await config.reloadMissionPreferences().catch(() => {})
+        try {
+          await config.reloadMissionPreferences()
+          setFailed(!next || !config.missionDefaultsValid()
+            || canonicalJson(config.preferences().missionProfileDefaults) !== canonicalJson(encodeMissionDefaults(next)))
+        } catch {}
       } finally { setQueued(edits => edits.slice(1)) }
     })
   }
