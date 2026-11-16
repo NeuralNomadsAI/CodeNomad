@@ -130,11 +130,12 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   const inspect = tools.find((tool) => tool.name === "inspect")!
   assert.match(description("inspect"), /attaching THIS root conversation as coordinator/)
   assert.match(description("prepare"), /NEW coordinator conversation; the calling conversation stays unchanged/)
-  assert.match(description("prepare"), /Outside an active mission use the Missions editor/)
+  assert.match(description("prepare"), /owned ordinary root outside a mission and active one-time coordinators/)
+  assert.match(description("prepare"), /descendants, task actors and scheduled passages are refused/)
   assert.equal((inspect as any).input.properties.start.properties.title.maxLength, 60)
   const validateInspect = new Ajv().compile((inspect as any).input)
   const validatePrepare = new Ajv().compile((tools.find(tool => tool.name === "prepare") as any).input)
-  for (const field of ["autoStart", "launch", "schedule", "recurrence"]) {
+  for (const field of ["autoStart", "startOnCreation", "launch", "schedule", "recurrence"]) {
     assert.equal(validateInspect({ start: { objective: "Brief", template: "custom", [field]: true } }), false)
     assert.equal(validatePrepare({ requestID: "reserved", objective: "Brief", template: "custom", [field]: true }), false)
   }

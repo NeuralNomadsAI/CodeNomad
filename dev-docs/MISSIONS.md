@@ -112,8 +112,8 @@ questions and decisions).
 Coordinator actions that need native reads or effects outside the plugin's
 Promise API cross the authenticated desktop bridge (`sendMissionInput`, fixed error
 codes in `missions/recovery-error.ts`), so they work only with backend presence and
-refuse otherwise. Only one-time coordinators are offered and told about
-`mission.interrupt` and `mission.prepare`.
+refuse otherwise. One-time coordinators have `mission.interrupt` and `mission.prepare`;
+owned ordinary roots outside a mission also have `mission.prepare`.
 
 - `mission.inspect({ taskKey })` adds the task's observed native conversations
   (`server/routes/mission-task-native.ts`): the coordinator's direct children
@@ -130,11 +130,16 @@ refuse otherwise. Only one-time coordinators are offered and told about
   honestly, and an empty result notes that only canonical assignments are visible.
 - `mission.prepare` creates a paused one-time hand-off through the same
   `prepareMissionCreation` pipeline, holds and fences as the editor, at the
-  coordinator's Location. The user starts it with Play. The trusted `preparedBy`
-  (`{ missionId, coordinatorSessionId }`) gives that coordinator read-only
-  visibility (`inspect({ missionID })`, `inspect({ list: true })`). An active
-  one-time coordinator can prepare hand-offs; a caller outside an active mission
-  receives `mission-not-found` with guidance to use the Missions editor. Follow
+  author's Location. The user starts it with Play. The trusted `preparedBy`
+  (`{ coordinatorSessionId, missionId? }`) gives its author read-only
+  visibility (`inspect({ missionID })`, `inspect({ list: true })`). The stable
+  `coordinatorSessionId` field names the author session, including an ordinary root;
+  `missionId` records an active source mission when present. Stored provenance with
+  both fields uses the same journal, index and RPC readers. An owned ordinary root
+  outside a mission or an active one-time coordinator can prepare hand-offs.
+  Native control and the backend independently refuse descendants, current or historical
+  non-coordinator actors, persisted passage provenance and ambiguous ownership.
+  The calling conversation stays unchanged. Follow
   the [creation and retry discipline](#mission-profile-selection-and-creation-recovery).
 
 The human-answer gate's `discover` finds fresh children of the expected parent
@@ -262,7 +267,9 @@ provenance, preparation requires the backend's positive `missionCreationDefaults
 capability. Missing support returns the update-required refusal before dispatch
 and releases only newly reserved choices; previous uncertain outcomes remain retained.
 
-The requestID is scoped to the coordinator and mission. Preparations with the
+For active coordinators the requestID is scoped to the coordinator and mission;
+ordinary authors use a distinct stable `outside-mission` domain scoped to their session.
+Preparations with the
 same requestID are serialized. Reuse that requestID and the original inputs:
 a retry first reads the saved creation event/document and returns the saved
 mission or a conflict. `mission.prepare` alone reserves a standalone durable

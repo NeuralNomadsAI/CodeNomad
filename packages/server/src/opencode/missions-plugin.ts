@@ -513,7 +513,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "prepare",
-        description: "Coordinator only: prepare a separate paused one-time mission with a NEW coordinator conversation; the calling conversation stays unchanged. inspect with start instead attaches THIS conversation as coordinator. Supply an objective, optional title and notes, a template, profiles and task mode. Keep the owning CodeNomad backend available. Read selection for saved requested profiles, taskMode and explicit/preference/opencode-default origins; inspection includes that saved selection when creation metadata exists. The user starts it with Play; you cannot control it. Reuse the same requestID and original inputs to retry; saved choices stay frozen if preferences change. Outside an active mission use the Missions editor. Find it with mission.inspect({ list: true }) and read it with mission.inspect({ missionID }).",
+        description: "Prepare a separate paused one-time mission with a NEW coordinator conversation; the calling conversation stays unchanged. Available to an owned ordinary root outside a mission and active one-time coordinators; descendants, task actors and scheduled passages are refused. inspect with start instead attaches THIS conversation as coordinator. Supply an objective, optional title and notes, a template, profiles and task mode. Keep exactly one owning CodeNomad backend available. Read selection for saved requested profiles, taskMode and explicit/preference/opencode-default origins; inspection includes that saved selection when creation metadata exists. The user starts it with Play; the author has read-only access. Reuse the same requestID and original inputs to retry; saved choices stay frozen if preferences change. Find it with mission.inspect({ list: true }) and read it with mission.inspect({ missionID }).",
         input: prepareSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -613,7 +613,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
   }
 }
 
-/** Topology and hand-off tools only the coordinator itself may see. */
+/** Within a Mission, topology and hand-off tools belong to its coordinator. */
 const COORDINATOR_TOOLS = ["delegate", "revise", "briefing", "interrupt", "prepare"] as const
 /** Native nesting levels walked to find a paused Mission actor, and sessions whose parent is remembered. */
 const MAX_PAUSE_ANCESTRY = 32
@@ -891,7 +891,7 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
     coordinatorSessionID: optionalText(value.coordinatorSessionID, "coordinatorSessionID", 240),
     ...(value.expectedCoordinatorLocation === undefined ? {} : { expectedCoordinatorLocation: readLocationRef(value.expectedCoordinatorLocation) }),
     ...(value.preparedBy === undefined ? {} : { preparedBy: (preparedBy => ({
-      missionID: requiredText(preparedBy.missionID, "preparedBy.missionID", 100),
+      ...(preparedBy.missionID === undefined ? {} : { missionID: requiredText(preparedBy.missionID, "preparedBy.missionID", 100) }),
       coordinatorSessionID: requiredText(preparedBy.coordinatorSessionID, "preparedBy.coordinatorSessionID", 240),
     }))(object(value.preparedBy)) }),
   }

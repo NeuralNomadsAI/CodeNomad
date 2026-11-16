@@ -34,7 +34,7 @@ function fixture(options: { transport?: Partial<MissionInputTransport>; humanGat
   const adapter: MissionSessionAdapter = {
     get: async ({ sessionID }) => { const session = sessions.get(sessionID); if (!session) throw new Error("not found"); return session },
     create: async input => {
-      const session = { id: input.id, projectID: "project-1", title: input.title, location: input.location }
+      const session = { ...input, projectID: "project-1" }
       sessions.set(session.id, session)
       return session
     },
@@ -184,7 +184,7 @@ test("prepare creates a paused hand-off through the backend; its coordinator may
   assert.deepEqual(mission.preparedBy, { missionId: source.id, coordinatorSessionId: coordinator })
   assert.notEqual(mission.coordinatorSessionId, coordinator)
   assert.equal((await control.prepare(coordinator, request)).mission.id, mission.id, "the same requestID replays the same mission")
-  assert.match((requests[0] as { requestID: string }).requestID, /^prepare_/)
+  assert.equal((requests[0] as { requestID: string }).requestID, `prepare_${stableToken(`${source.id}\0${coordinator}\0pilot`, 24)}`)
   const read = await control.inspect(coordinator, { missionID: mission.id }, "read")
   assert.deepEqual([read.mission?.id, read.actor], [mission.id, null])
   assert.deepEqual((await control.listMissions(coordinator)).map(entry => [entry.missionID, entry.relation]),
@@ -198,7 +198,7 @@ test("prepare creates a paused hand-off through the backend; its coordinator may
   await assert.rejects(plain.control.prepare(coordinator, request), /unavailable here/)
 })
 
-test("a prepare retry after a lost reply returns the saved hand-off without another backend call", async () => {
+for (const outside of [false, true]) test(`a prepare retry after a lost reply returns the saved hand-off without another backend call (outside: ${outside})`, async () => {
   let control!: MissionControl, calls = 0, reads = 0
   let preferences: unknown = [{ template: "all", profiles: { roles: { specialist: { agent: "worker" } } }, taskMode: "independent" }]
   const transport: Partial<MissionInputTransport> = {
@@ -212,7 +212,7 @@ test("a prepare retry after a lost reply returns the saved hand-off without anot
   } }
   const f = fixture({ transport })
   control = f.control
-  await f.start()
+  if (!outside) await f.start()
   const request = { requestID: "pilot", objective: "Run the pilot", template: "custom" as const }
   await assert.rejects(control.prepare(coordinator, request), (error: any) => error.code === "prepare-uncertain")
   const before = structuredClone([...f.storage.values])
@@ -317,14 +317,99 @@ test("inspect Compare freezes the known coordinator model for an omitted judge a
   assert.equal(reads, 1)
 })
 
-test("prepare outside a mission points to the editor without resolving preferences or creating anything", async () => {
-  const f = fixture({ transport: {
-    resolveCreationDefaults: async () => assert.fail("No preference read outside a mission"),
-    prepare: async () => assert.fail("No preparation outside a mission"),
-  } })
-  await assert.rejects(f.control.prepare(coordinator, { requestID: "pilot", objective: "Pilot", template: "custom" }), /Missions editor.*do not create a mission only to prepare others/)
-  assert.equal(f.storage.values.size, 0)
+test("an ordinary root prepares once across concurrent calls and restart, remains outside, and reads only its own hand-off", async () => {
+  let control!: MissionControl, calls = 0
+  const transport: Partial<MissionInputTransport> = {
+    resolveCreationDefaults: async (_id, input) => resolveMissionCreationDefaults({ ...input, preferences: [] }),
+    prepare: async (id, input) => {
+      calls++
+      assert.equal(input.missionID, undefined)
+      assert.equal(input.requestID, `prepare_${stableToken(`outside-mission\0${coordinator}\0pilot`, 24)}`)
+      return control.create({ ...input, prepared: true, preparedBy: { coordinatorSessionID: id } })
+    },
+  }
+  const f = fixture({ transport })
+  control = f.control
+  const original = structuredClone(f.sessions.get(coordinator))
+  const request = { requestID: "pilot", objective: "Pilot", title: "Separate pilot", notes: " \n ", template: "custom" as const }
+  const [first, second] = await Promise.all([control.prepare(coordinator, request), control.prepare(coordinator, request)])
+  assert.equal(calls, 1)
+  assert.equal(first.mission.id, second.mission.id)
+  assert.equal(first.mission.runState, "prepared")
+  assert.deepEqual(first.mission.preparedBy, { coordinatorSessionId: coordinator })
+  assert.notEqual(first.mission.coordinatorSessionId, coordinator)
+  assert.deepEqual(f.sessions.get(coordinator), original)
+  assert.equal((await control.inspect(coordinator, {}, "plain")).mission, null)
+  control = fixture({ transport, storage: f.storage, sessions: f.sessions }).control
+  assert.equal((await control.prepare(coordinator, request)).mission.id, first.mission.id)
+  assert.equal(calls, 1)
+  assert.deepEqual((await control.listMissions(coordinator)).map(entry => [entry.missionID, entry.relation]), [[first.mission.id, "prepared"]])
+  assert.equal((await control.inspect(coordinator, { missionID: first.mission.id }, "owned")).actor, null)
+  await assert.rejects(control.declare(coordinator, { missionID: first.mission.id, taskKey: "work", title: "Work", brief: "No", role: "specialist", blockedBy: [] }), /not visible/)
+  for (const changed of [{ objective: "Other" }, { title: "Other" }, { notes: "" }, { taskMode: "native" as const }]) {
+    await assert.rejects(control.prepare(coordinator, { ...request, ...changed }), (error: any) => error.code === "prepare-conflict")
+  }
+  f.sessions.set("ses_other", { ...original!, id: "ses_other" })
+  assert.deepEqual(await control.listMissions("ses_other"), [])
+  await assert.rejects(control.inspect("ses_other", { missionID: first.mission.id }, "foreign"), /not visible/)
+})
+
+test("author provenance is rechecked after creation preference/catalog reads before dispatch", async () => {
+  let f!: ReturnType<typeof fixture>
+  f = fixture({
+    validateProfiles: async () => {
+      f.sessions.get(coordinator)!.metadata = { "codenomad.mission": { kind: "coordinator", missionID: "old",
+        recurrence: { scheduleID: "schedule", passageID: "old" } } }
+    },
+    transport: {
+      resolveCreationDefaults: async (_id, input) => resolveMissionCreationDefaults({ ...input, preferences: [] }),
+      prepare: async () => assert.fail("Changed author must not dispatch"),
+    },
+  })
+  await assert.rejects(f.control.prepare(coordinator, { requestID: "changed", objective: "No effects", template: "custom" }),
+    (error: any) => error.code === "prepare-refused")
+  assert.equal([...f.storage.values.values()].some(value => value && typeof value === "object" && "type" in value), false)
   assert.equal(f.sessions.size, 1)
+})
+
+test("preparation refuses descendants, foreign roots, and persisted scheduled/actor provenance before preferences or effects", async () => {
+  const changes: Partial<NativeMissionSession>[] = [
+    { parentID: "ses_parent" }, { projectID: "foreign" },
+    { metadata: { "codenomad.mission": { version: 1, kind: "coordinator", missionID: "old", recurrence: { scheduleID: "schedule", passageID: "old" } } } },
+    { metadata: { "codenomad.mission": { version: 1, kind: "coordinator", missionID: "old", document: { missionID: "schedule", passageID: "old" } } } },
+    { metadata: { "codenomad.mission": { version: 1, kind: "task", missionID: "old", role: "specialist" } } },
+    { metadata: { "codenomad.mission": { version: 1, kind: "coordinator", missionID: "unknown" } } },
+  ]
+  for (const changed of changes) {
+    const f = fixture({ transport: {
+      resolveCreationDefaults: async () => assert.fail("Ineligible author cannot read preferences"),
+      prepare: async () => assert.fail("Ineligible author cannot dispatch"),
+    } })
+    f.sessions.set(coordinator, { ...f.sessions.get(coordinator)!, ...changed })
+    await assert.rejects(f.control.prepare(coordinator, { requestID: "pilot", objective: "Pilot", template: "custom" }),
+      (error: any) => ["prepare-refused", "child-session", "foreign-session"].includes(error.code))
+    assert.equal(f.storage.values.size, 0)
+    assert.equal(f.sessions.size, 1)
+  }
+})
+
+test("an ended independent task actor is refused even with its native metadata absent", async () => {
+  const f = fixture({ transport: { prepare: async () => assert.fail("Historical actor must not dispatch") } })
+  const source = await f.start("custom")
+  const { mission: dispatched } = await f.control.delegate(coordinator, { taskKey: "work", title: "Work", brief: "Work", role: "specialist", blockedBy: [],
+    delivery: "queue", executionMode: { kind: "independent", reason: "lifetime", explanation: "An independently owned root for this test" } })
+  const task = dispatched.tasks[0]
+  const activeBytes = structuredClone([...f.storage.values])
+  await assert.rejects(f.control.prepare(task.actorSessionId!, { requestID: "pilot", objective: "Pilot", template: "custom" }),
+    (error: any) => error.code === "prepare-refused")
+  assert.deepEqual([...f.storage.values], activeBytes)
+  await f.control.report(task.actorSessionId!, { outcome: "completed", summary: "Done", evidence: [], next: [], final: false })
+  await f.control.report(coordinator, { missionID: source.id, outcome: "completed", summary: "Done", evidence: [], next: [], final: true })
+  f.sessions.get(task.actorSessionId!)!.metadata = undefined
+  const before = structuredClone([...f.storage.values])
+  await assert.rejects(f.control.prepare(task.actorSessionId!, { requestID: "pilot", objective: "Pilot", template: "custom" }),
+    (error: any) => error.code === "prepare-refused")
+  assert.deepEqual([...f.storage.values], before)
 })
 
 test("128 definite preparation refusals leave capacity available for the next request", async () => {

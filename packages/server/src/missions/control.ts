@@ -34,9 +34,9 @@ import { isMissionTaskSession, missionCoordinatorSessionID, missionTaskSessionID
 import { nativeDecisionProvenance, resolveDebuggingImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
 import type { HumanDecisionDiscovery, NativeHumanAnswerGate } from "./human-answer"
 import { liveContinuations, missionListEntry, missionRelation, taskInterruptionSchema, taskObservationSchema,
-  type MissionTaskInterruption, type MissionTaskObservation } from "./coordinator-actions"
+  missionPreparationSource, type MissionTaskInterruption, type MissionTaskObservation } from "./coordinator-actions"
 
-const BACKEND_ACTION_UNAVAILABLE = "This action is unavailable here: it needs a one-time mission with the CodeNomad app running"
+const BACKEND_ACTION_UNAVAILABLE = "This action is unavailable here: it needs the owning CodeNomad app running"
 /** An empty result is not proof that nothing runs: only canonical assignments are recognized. */
 export const NO_TASK_CONVERSATION = "No conversation carrying this task's canonical assignment was found among the coordinator's direct children; a conversation launched with another prompt is not visible here."
 import { runMissionExclusive } from "./exclusive"
@@ -1165,17 +1165,16 @@ export class MissionControl {
   }
 
   private async prepareCurrent(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap }> {
-    await this.ownedRootSession(sessionID)
+    const caller = await this.ownedRootSession(sessionID)
     try { input.profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, input.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
     const originalInput = structuredClone(input)
-    const source = this.membership(await this.snapshot(), sessionID)
-    if (!source || source.status !== "active") throw new MissionControlError("No active mission is associated with this session. Use the Missions editor in CodeNomad to prepare a mission; do not create a mission only to prepare others.", "mission-not-found")
-    this.assertCoordinator(source, sessionID)
+    const source = missionPreparationSource(await this.snapshot(), caller)
     if (!this.options.transport?.prepare) throw new MissionControlError(BACKEND_ACTION_UNAVAILABLE, "prepare-unavailable")
     const sendPreparation = this.options.transport.prepare.bind(this.options.transport)
-    // Scoped to this coordinator and mission: another coordinator's requestID never replays into it.
-    const requestID = `prepare_${stableToken(`${source.id}\0${sessionID}\0${input.requestID}`, 24)}`
+    // Keep coordinator identities stable; ordinary authors have a distinct domain.
+    const requestID = `prepare_${stableToken(source ? `${source.id}\0${sessionID}\0${input.requestID}`
+      : `outside-mission\0${sessionID}\0${input.requestID}`, 24)}`
     // A retry after a lost or uncertain reply finds the saved creation instead of asking the backend again.
     const missionID = `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}`
     const created = await this.journal.event(missionID, this.eventID(missionID, "created"))
@@ -1184,7 +1183,7 @@ export class MissionControl {
       if (created.type !== "mission.created" || created.prepared !== true || created.objective !== input.objective
         || created.title !== input.title || created.notes !== input.notes || created.template !== input.template
         || !sameChoices
-        || created.preparedBy?.missionID !== source.id || created.preparedBy.coordinatorSessionID !== sessionID) {
+        || created.preparedBy?.missionID !== source?.id || created.preparedBy?.coordinatorSessionID !== sessionID) {
         throw missionRecoveryControlError("prepare-conflict")
       }
       const saved = (await this.snapshot()).missions.find(mission => mission.id === missionID)
@@ -1218,8 +1217,12 @@ export class MissionControl {
           input = await this.retainCreationInput(input, missionID, "prepare-conflict")
         }
         this.assertActive()
+        const fresh = await this.ownedRootSession(sessionID)
+        const freshSource = missionPreparationSource(await this.snapshot(), fresh)
+        if (!sameLocation(caller.location, fresh.location) || freshSource?.id !== source?.id) throw missionRecoveryControlError("prepare-refused")
         dispatched = true
-        result = await sendPreparation(sessionID, { ...structuredClone(input), requestID, missionID: source.id })
+        result = await sendPreparation(sessionID, { ...structuredClone(input), requestID,
+          ...(source ? { missionID: source.id } : {}) })
       } catch (error) {
         if (error instanceof MissionControlError && ["prepare-conflict", "request-conflict"].includes(error.code)
           && !(error instanceof MissionCreateNoEffectError)) throw error
@@ -1234,7 +1237,7 @@ export class MissionControl {
       }
       const returnedID = (result as { mission?: { id?: unknown } } | undefined)?.mission?.id
       const mission = returnedID === missionID ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
-      if (!mission || mission.preparedBy?.coordinatorSessionId !== sessionID || mission.preparedBy.missionId !== source.id) {
+      if (!mission || mission.preparedBy?.coordinatorSessionId !== sessionID || mission.preparedBy.missionId !== source?.id) {
         throw missionRecoveryControlError("prepare-uncertain")
       }
       return { mission }

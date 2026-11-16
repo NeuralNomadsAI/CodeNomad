@@ -10,6 +10,7 @@ import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuat
 import { prepareMissionCreation } from "./mission-creation-pipeline"
 import { missionRecoveryControlError, missionRecoveryError } from "../../missions/recovery-error"
 import { MissionControlError } from "../../missions/control-error"
+import { prepareCoordinatorMission } from "./mission-prepare"
 
 const directory = "C:/private-fixture/worktree"
 const physical = "C:/private-fixture/physical"
@@ -364,6 +365,55 @@ test("a coordinator prepares a paused hand-off through the bridge's fenced creat
     try { await assert.rejects(tool("prepare", { requestID: "fenced", objective: "Blocked", template: "custom" }), /nothing was created/) }
     finally { held.resolve(); await deletion }
     assert.equal(f.rpcCreates, 1)
+  } finally { await f.close() }
+})
+
+test("an ordinary author prepares through the bridge without joining the separate paused mission or sending a prompt", async () => {
+  const f = await fixture()
+  try {
+    const author = { id: "ses_ordinary", projectID, location: { directory }, title: "Ordinary discussion", metadata: { custom: true } }
+    f.sessions.set(author.id, structuredClone(author))
+    f.context.session.prompt = async () => assert.fail("Preparation cannot send a prompt")
+    f.context.session.synthetic = async () => assert.fail("Preparation cannot send a synthetic input")
+    const tool = (name: string, input: unknown) => f.tools.get(name).execute(input, { sessionID: author.id, id: `ordinary-${name}`, progress: async () => {} })
+    const request = { requestID: "ordinary", objective: "Separate mission", title: "Pilot", notes: " \n ", template: "custom",
+      profiles: { coordinator: { agent: "fixture" }, roles: { specialist: {} } }, taskMode: "native" }
+    const [one, two] = await Promise.all([tool("prepare", request), tool("prepare", request)])
+    const result = JSON.parse(one.content)
+    assert.deepEqual(JSON.parse(two.content), result)
+    const mission = (await f.handlers.snapshot()).missions[0]
+    assert.deepEqual(mission.preparedBy, { coordinatorSessionId: author.id })
+    assert.equal(mission.runState, "prepared")
+    assert.notEqual(mission.coordinatorSessionId, author.id)
+    assert.deepEqual(f.sessions.get(author.id), author)
+    assert.equal(JSON.parse((await tool("inspect", {})).content).mission, null)
+    assert.deepEqual(JSON.parse((await tool("inspect", { list: true })).content).missions.map((item: any) => item.missionID), [mission.id])
+    assert.equal(JSON.parse((await tool("inspect", { missionID: mission.id })).content).actor, null)
+    assert.equal(f.rpcCreates, 1)
+    assert.equal(f.creates, 1)
+    await assert.rejects(tool("prepare", { ...request, notes: "" }), /different mission/)
+    assert.equal(f.rpcCreates, 1)
+  } finally { await f.close() }
+})
+
+test("backend preparation rechecks persisted author provenance after physical admission and before native creation", async () => {
+  const f = await fixture()
+  try {
+    const author = { id: "ses_ordinary", projectID, location: { directory }, metadata: {} as Record<string, unknown> }
+    f.sessions.set(author.id, author)
+    const physicalIdentity = f.manager.getWorktreeIdentityForPath
+    f.manager.getWorktreeIdentityForPath = async (...args: any[]) => {
+      author.metadata = { "codenomad.mission": { kind: "coordinator", missionID: "old",
+        document: { missionID: "schedule", passageID: "old" } } }
+      return physicalIdentity(...args)
+    }
+    await assert.rejects(prepareCoordinatorMission(f.manager, f.fence, author.id, { kind: "prepare",
+      input: { requestID: "changed-author", objective: "Never create", template: "custom" } }, new AbortController().signal),
+    (error: any) => error.code === "prepare-refused")
+    assert.equal(f.rpcCreates, 0)
+    assert.equal(f.creates, 0)
+    assert.equal(f.storage.size, 0)
+    assert.equal(await f.fence.run(physical, [physical], async () => "released"), "released")
   } finally { await f.close() }
 })
 

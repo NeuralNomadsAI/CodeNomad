@@ -10,6 +10,8 @@ Remote connections use the same form and controls. Prefer HTTPS to protect netwo
 
 Choose **Create mission**. The form replaces the tree until you create or cancel. A confirmed creation selects the Mission; a refused creation leaves the form editable.
 
+You can also ask an agent in an ordinary root conversation to prepare a separate paused Mission with a new coordinator conversation. Your discussion stays unchanged; review the Mission in the panel and start it yourself.
+
 ### Configuration {#saved-briefs}
 
 **Configuration** optionally loads a saved objective, notes, playbook, agents/models and task-session choices. Its name supplies the editable title. Check the filled fields before creating.

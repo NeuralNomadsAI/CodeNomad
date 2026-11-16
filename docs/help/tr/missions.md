@@ -10,6 +10,8 @@ Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak 
 
 **Görev oluştur**, oluşturana veya iptal edene kadar ağacın yerine formu gösterir. Oluşturma doğrulanınca görev seçilir; reddedilince form düzenlenebilir kalır.
 
+Normal bir kök konuşmada bir ajandan yeni koordinatör konuşmasıyla ayrı ve duraklatılmış bir Görev hazırlamasını da isteyebilirsiniz. Konuşmanız değişmez; Görevi panelde inceleyip kendiniz başlatın.
+
 ### Yapılandırma {#saved-briefs}
 
 **Yapılandırma**, kayıtlı hedefi, notları, rehberi, profilleri ve görev oturumlarını yükler; adı düzenlenebilir başlık olur. Alanları kontrol edin.

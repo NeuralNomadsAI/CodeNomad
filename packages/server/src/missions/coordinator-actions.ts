@@ -1,5 +1,8 @@
 import { z } from "zod"
-import type { MissionMap, MissionTask } from "./model"
+import type { MissionMap, MissionSnapshot, MissionTask } from "./model"
+import type { NativeMissionSession } from "./control-types"
+import { MissionControlError } from "./control-error"
+import { isReservedMissionScheduleSessionID } from "./mission-schedule-carrier-identity"
 
 /** Bridge replies are revalidated before they reach a model: bounded and credential-free. */
 const sessionID = z.string().min(1).max(240)
@@ -46,6 +49,26 @@ export function missionRelation(mission: MissionMap, sessionID: string): "member
   if (mission.actors.some(actor => actor.sessionId === sessionID)) return "member"
   if (mission.preparedBy?.coordinatorSessionId === sessionID) return "prepared"
   return undefined
+}
+
+/** Author admission shared by native tools and the authenticated backend. Session
+ * metadata retains passage/actor provenance after its journal stops being active. */
+export function missionPreparationSource(snapshot: MissionSnapshot, session: NativeMissionSession): MissionMap | undefined {
+  const refuse = (): never => { throw new MissionControlError("This session cannot prepare a separate mission", "prepare-refused") }
+  if (session.parentID || session.projectID !== snapshot.projectID || snapshot.discardedEvents
+    || snapshot.controlUnavailable || isReservedMissionScheduleSessionID(session.id)) return refuse()
+  const marker = session.metadata?.["codenomad.mission"]
+  if (marker !== undefined) {
+    if (!marker || typeof marker !== "object" || Array.isArray(marker)
+      || marker.recurrence !== undefined || marker.document !== undefined
+      || marker.kind !== "coordinator" || typeof marker.missionID !== "string"
+      || !snapshot.missions.some(mission => mission.id === marker.missionID && mission.coordinatorSessionId === session.id)) return refuse()
+  }
+  const memberships = snapshot.missions.filter(mission => mission.actors.some(actor => actor.sessionId === session.id))
+  if (memberships.some(mission => mission.coordinatorSessionId !== session.id)) return refuse()
+  const active = memberships.filter(mission => mission.status === "active")
+  if (active.length > 1) return refuse()
+  return active[0]
 }
 
 export function missionListEntry(mission: MissionMap, relation: "member" | "prepared") {

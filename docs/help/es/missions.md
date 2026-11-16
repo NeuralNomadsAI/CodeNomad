@@ -10,6 +10,8 @@ Las conexiones remotas usan el mismo formulario y los mismos controles. Usa pref
 
 **Crear misión** sustituye el árbol por el formulario hasta crear o cancelar. Una creación confirmada selecciona la misión; una creación rechazada deja el formulario editable.
 
+También puedes pedir a un agente en una conversación raíz normal que prepare una Misión separada y pausada con una nueva conversación del coordinador. Tu conversación no cambia; revisa la Misión en el panel e iníciala tú.
+
 ### Configuración {#saved-briefs}
 
 **Configuración** carga opcionalmente objetivo, notas, guion, perfiles y sesiones guardados. Su nombre proporciona el título editable. Revisa los campos.

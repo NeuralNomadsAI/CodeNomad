@@ -41,8 +41,8 @@ export async function prepareMissionCreation(input: {
   request: unknown; signal: AbortSignal; wait?<T>(operation: Promise<T>): Promise<T>
   /** Trusted expected project for protected composition, never HTTP input. */
   expectedProjectID?: string
-  /** Trusted coordinator hand-off from the authenticated plugin bridge, never HTTP input. */
-  preparedBy?: { missionID: string; coordinatorSessionID: string }
+  /** Trusted author session and optional source mission from the authenticated plugin bridge. */
+  preparedBy?: { missionID?: string; coordinatorSessionID: string }
   creationDefaults?: MissionCreationMetadata
 }) {
   const { manager, workspaceID, signal } = input

@@ -80,7 +80,7 @@ const mission = {
     projectCanonical: { type: "string" },
     title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
     preparedBy: { type: "object", properties: { missionId: { type: "string" }, coordinatorSessionId: { type: "string" } },
-      required: ["missionId", "coordinatorSessionId"], additionalProperties: false },
+      required: ["coordinatorSessionId"], additionalProperties: false },
     objective: { type: "string" },
     notes: { type: "string" },
     template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
@@ -267,7 +267,7 @@ const creationInput = {
     expectedCoordinatorLocation: location, prepared: { type: "boolean" },
     preparedBy: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
       coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 } },
-      required: ["missionID", "coordinatorSessionID"], additionalProperties: false },
+      required: ["coordinatorSessionID"], additionalProperties: false },
     profiles: missionProfilesSchema, creationDefaults: missionCreationDefaultsWire, taskMode: missionTaskModeSchema,
   }, required: ["requestID", "objective", "template"], additionalProperties: false,
 } as const
