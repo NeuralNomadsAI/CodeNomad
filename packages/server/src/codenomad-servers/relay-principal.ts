@@ -50,5 +50,27 @@ export function createRelayPrincipalBinding(deps: {
       releaseSession = deps.auth.onSessionInvalidated(principal.sessionId, abort)
     }
   }
-  return { bind, signal: (request: FastifyRequest) => principals.get(request) }
+  /**
+   * A principal's lifetime beyond one request, for resources such as preview capabilities.
+   * Devices also end when `alive` turns false (checked with device validity).
+   */
+  const lifetime = (request: FastifyRequest, alive: () => boolean = () => true) => {
+    const principal = deps.auth.getSessionFromRequest(request)
+    if (!principal) return null
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setInterval> | undefined
+    let releaseSession = () => {}
+    const release = () => { clearInterval(timer); releaseSession() }
+    const end = () => { release(); controller.abort() }
+    if (principal.sessionId.startsWith("remote-device:")) {
+      const id = principal.sessionId.slice("remote-device:".length)
+      const check = () => { if (!deps.devices.isDeviceAuthorized(id) || !alive()) end() }
+      check()
+      if (!controller.signal.aborted) { timer = setInterval(check, 250); timer.unref() }
+    } else {
+      releaseSession = deps.auth.onSessionInvalidated(principal.sessionId, end)
+    }
+    return { key: principal.sessionId, signal: controller.signal, release }
+  }
+  return { bind, lifetime, signal: (request: FastifyRequest) => principals.get(request) }
 }

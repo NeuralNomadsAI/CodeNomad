@@ -285,6 +285,9 @@ export function isBackendUiRoute(pathname: string, method: string): boolean {
     || /^\/api\/remote-servers\/[A-Za-z0-9_-]{1,64}\/(?:browse|connect|forget)$/.test(pathname))) return true
   const target = pathname.match(/^\/api\/backends\/[A-Za-z0-9_-]{1,64}(\/.+)$/)?.[1]
   if (!target) return false
+  // Principal-bound host path capabilities; generation-wide detachment stays local.
+  if (verb === "POST" && target === "/preview-capabilities") return true
+  if (verb === "DELETE" && /^\/preview-capabilities\/[0-9a-f-]{36}$/.test(target)) return true
   if (isMemoryRelayRoute(target, method)) return true
   if (verb === "POST" && ["/api/auth/login", "/api/auth/logout"].includes(target)) return true
   return !isHostOnlyPath(target, method) && target !== "/api/remote-control/status"

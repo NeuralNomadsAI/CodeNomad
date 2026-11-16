@@ -65,6 +65,7 @@ export const exemptions: Record<string, string> = {
   "provider-usage.test.ts": "Vite config diverges from the canonical daemon config",
   "remote-control-settings.test.ts": "Vite config diverges from the canonical daemon config",
   "remote-preview-origin-isolation.test.ts": "real preview-origin HTTP/WS servers; no Vite fixture",
+  "remote-preview-path-isolation.test.ts": "real host path-proxy and remote HTTP/WS servers; no Vite fixture",
   "remote-server-pairing.test.ts": "Vite config diverges from the canonical daemon config",
   "render-cost.test.ts": "custom Vite transform/load hook",
   "reveal-truncated-text.test.ts": "upstream repairs this test separately; borrow migration deferred to that change",

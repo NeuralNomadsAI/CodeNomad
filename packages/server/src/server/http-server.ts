@@ -103,7 +103,8 @@ import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/serv
 import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
 import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
-import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import { isLocalRequest, isRemoteRequest, isRemoteSocket } from "../remote-control/request-origin"
+import type { RemotePreviewCapabilities } from "../codenomad-servers/preview-capabilities"
 import { registerDirectOriginPolicy } from "./direct-origin"
 import { verifiedDirectHttpsOrigin } from "../remote-control/direct-https"
 import { createSideCarDirectHttpsAccess, isSideCarContentPath, sidecarsOverDirectHttpsEnabled } from "./sidecar-direct-https"
@@ -297,7 +298,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     const pathname = routedPath(request.raw.url ?? "/")
     const token = parsePreviewCapabilityHost(request.headers.host) ?? pathname?.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
     if (!token) return false
-    try { return Boolean(deps.previewManager.get(decodeURIComponent(token))) } catch { return false }
+    try { return Boolean(deps.previewManager.get(decodeURIComponent(token))) || remotePreviews.servesPath(token) } catch { return false }
   }
   app.addHook("onRequest", (request, reply, done) => {
     if (isLocalRequest(request) || isRemoteRequest(request)) return done()
@@ -491,7 +492,13 @@ export function createHttpServer(deps: HttpServerDeps) {
     guardSecret: backendUiAccess.guardSecret, principalSignal: remotePrincipals.signal })
   registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard,
     guardSecret: backendUiAccess.guardSecret, principalSignal: remotePrincipals.signal })
-  registerRemotePreviewCapabilityRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, logger: deps.logger })
+  const remotePreviews = registerRemotePreviewCapabilityRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, logger: deps.logger,
+    remote: { local: backendUiAccess.localUiRequest, guard: backendUiAccess.guard, principal: request => {
+      const host = request.headers.host
+      // The Web previews switch governs paired devices, at creation and for every later request.
+      const lifetime = host ? remotePrincipals.lifetime(request, remotePreviewsAllowed) : null
+      return lifetime && { ...lifetime, ingress: isRemoteSocket(request.raw.socket), host: host! }
+    } } })
   const reconcileBackends = () => remoteServerBrowse.reconcile()
   if (!deps.remoteServerBrowseManager) deps.eventBus.on("storage.stateChanged", reconcileBackends)
   app.addHook("onClose", async () => {
@@ -535,7 +542,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.panelExtensions) registerPanelExtensionWorkItemRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, forge: forgeWorkItems })
   if (deps.panelExtensions) registerPanelExtensionApi4Routes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence, imageSettings })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger, authManager: deps.authManager })
-  registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
+  registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, remotePreviews, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
     sidecarManager: deps.sidecarManager,
     authManager: deps.authManager,
@@ -545,6 +552,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   const previewUpgrade = setupPreviewWebSocketProxy(app, {
     previewManager: deps.previewManager,
+    remotePreviews,
     authManager: deps.authManager,
     logger: proxyLogger,
   })
@@ -569,6 +577,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   return {
     instance: app,
     previewUpgrade,
+    /** Remote Control admits these remote-client path capabilities beside local previews. */
+    servesRemotePreview: (token: string) => remotePreviews.servesPath(token),
     start: async (): Promise<HttpServerStartResult> => {
       const attemptListen = async (requestedPort: number) => {
         const dualStackWildcard = isWildcardHost(deps.bindHost) && isIP(stripHostBrackets(deps.bindHost)) === 6
@@ -661,6 +671,7 @@ interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
 
 interface PreviewProxyDeps {
   previewManager: PreviewManager
+  remotePreviews: Pick<RemotePreviewCapabilities, "servesPath" | "servePath" | "upgradePath">
   logger: Logger
 }
 
@@ -731,12 +742,21 @@ function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps
     }
 
     const config = { previewCapability: true }
+    // Remote clients' capabilities share this path chain through the remote-content adapter.
+    const remote = (request: FastifyRequest, reply: FastifyReply) => {
+      if (deps.previewManager.get((request.params as { token: string }).token) || !deps.remotePreviews.servesPath((request.params as { token: string }).token)) return false
+      reply.hijack()
+      if (!deps.remotePreviews.servePath(request.raw, reply.raw)) reply.raw.writeHead(404, { connection: "close", "content-length": "0" }).end()
+      return true
+    }
     previewApp.all("/", { config, constraints: { host: capabilityHost } }, hostHandler)
     previewApp.all("/*", { config, constraints: { host: capabilityHost } }, hostHandler)
     previewApp.all("/previews/:token", { config }, async (request: FastifyRequest<{ Params: { token: string } }>, reply) => {
+      if (remote(request, reply)) return
       await proxyPreviewRequest({ request, reply, previewManager: deps.previewManager, logger: deps.logger, pathSuffix: "" })
     })
     previewApp.all("/previews/:token/*", { config }, async (request: FastifyRequest<{ Params: { token: string; "*": string } }>, reply) => {
+      if (remote(request, reply)) return
       await proxyPreviewRequest({
         request,
         reply,
@@ -838,11 +858,13 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
     if (!parsed) {
       return
     }
+    if (!capabilityToken && !deps.previewManager.get(parsed.token) && deps.remotePreviews.upgradePath(request, socket as Socket, head)) return
     proxy(request, socket as Socket, head, parsed)
   })
   return (request, socket, head) => {
     const parsed = parsePreviewUpgradePath(request.url ?? "/")
     if (!parsed) return false
+    if (!deps.previewManager.get(parsed.token) && deps.remotePreviews.upgradePath(request, socket, head)) return true
     proxy(request, socket, head, parsed)
     return true
   }

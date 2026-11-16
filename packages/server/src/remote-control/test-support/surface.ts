@@ -73,7 +73,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     registry: new RemoteDeviceRegistry(path.join(directory, "remote-control-devices.json"), options.now),
     router: () => (app ? (request, response) => app!.routing(request, response) : null),
     previewUpgrade: () => previewUpgrade,
-    hasPreview: (token) => previewManager.get(token) !== undefined,
+    hasPreview: (token) => previewManager.get(token) !== undefined || server.servesRemotePreview(token),
     logger,
     openTunnel: async (tunnelOptions) => {
       target = tunnelOptions.target

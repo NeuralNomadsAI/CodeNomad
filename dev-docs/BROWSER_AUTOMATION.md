@@ -155,12 +155,57 @@ retains the trusted UI's storage. A worker-synthesized response can bypass
 network headers, so registration prevention and fresh capability origins own
 the authority boundary.
 
+### Remote-client path capabilities
+
+Remote clients (Remote Control devices, verified direct HTTPS, admitted LAN HTTP
+and their PWAs) cannot resolve `preview.localhost`. Under `multiBackend`, the
+same creation route issues them a host path capability instead:
+`contentUrl` is `/previews/<capability>/…` on the page's own origin, and the
+remote token stays private. Creation uses the authenticated UI guard
+(`isBackendUiRoute()` admits only POST of the collection and DELETE of one
+capability; generation-wide detachment stays local) and binds the capability to
+its issuing principal (`relay-principal.ts` `lifetime()`), its channel (ingress
+socket or direct listener) and exact public `Host`. Logout, idle/absolute expiry,
+password replacement, device revocation or expiry, Remote Control Stop for tunnel
+devices, the host's **Web previews** switch for paired devices, server
+remove/retarget/Forget and owner deletion revoke it and close its HTTP and WS
+transfers within the 250 ms device check or synchronously. Only the issuing
+principal can delete it.
+
+Content is cookie-free. `/previews/:token` routes and the preview upgrade handler
+hand capabilities they do not own locally to `RemotePreviewCapabilities.servePath()`
+/ `upgradePath()`, which reuse the generation owner's pinned transport and the
+isolated listener's header filtering. They accept only absent or `null` Origin,
+the issuing channel and Host, and refuse service-worker script requests. Responses
+carry `sandbox` without `allow-same-origin` plus `frame-ancestors 'self'`,
+`Referrer-Policy: no-referrer` and `Access-Control-Allow-Origin: null`; same-origin
+CORP is omitted because the opaque document's own no-CORS loads would fail it.
+HTML, CSS and JavaScript bodies (bounded at 16 MiB) and `Location` replace the
+remote prefix with the host capability prefix, which also retargets the remote
+runtime bridge's fetch/XHR/WS/SSE rewriting.
+
+`remotePreviewContent()` (`lib/remote-preview-address.ts`) resolves either form;
+`BrowserFrame`'s `opaqueSource` keeps the iframe sandbox without
+`allow-same-origin` and expects `null` message origins, while the logical
+address and history mapping stay as for isolated sources. Previews sharing the
+public hostname have distinct opaque origins: they cannot script, frame or
+store into each other, reach application APIs or register workers. Chromium
+sends no Referer or Fetch Metadata from these documents, so HTTP/WS reads between
+previews are bounded by capability secrecy: no Referer, `Location`, saved history
+or log record carries a capability.
+
 `preview-capabilities.test.ts` covers content-origin reservation, equal remote
 tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
 destination ownership, revocation and the real remote CodeNomad path proxy.
 `tests/browser/remote-preview-origin-isolation.test.ts` drives Chromium against identical remote
 tokens to qualify fetch/XHR/WS, no-CORS scripts/images/fetch, iframe embedding,
 opaque callers and legitimate own-origin resources.
+`remote-control/remote-client-previews.test.ts` drives two controlled A/B remotes
+with identical tokens through Remote Control, a TLS reverse proxy and a real LAN
+interface: rewriting, fetch/preflight/redirect/SSE/WS, hostile refusals and each
+revocation row. `tests/browser/remote-preview-path-isolation.test.ts` qualifies
+the opaque path documents in Chromium, including UI embedding and sibling,
+application, worker and Referer probes.
 
 ## Design constraints
 

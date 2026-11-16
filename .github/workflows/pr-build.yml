@@ -411,6 +411,7 @@ jobs:
         run: >-
           node --import tsx --test --test-force-exit
           packages/ui/src/components/browser-frame-security.test.ts
+          packages/ui/src/lib/remote-preview-address.test.ts
           packages/ui/src/components/panel-extensions/work-items-channel.test.ts
           packages/ui/src/components/message-history-pagination.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts

@@ -79,6 +79,8 @@ interface BrowserFrameProps {
   initialUrl: string
   initialAddress?: string
   isolatedSource?: boolean
+  /** An isolated source on the application's own origin (a host path capability): its documents stay opaque. */
+  opaqueSource?: boolean
   sourceAddress?: (source: string) => string | undefined
   proxyBasePath: string
   /**
@@ -233,7 +235,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
-  const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin, isolatedOrigin: props.isolatedSource })
+  const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin, isolatedOrigin: props.isolatedSource && !props.opaqueSource })
   const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
   const viewport = createMemo(() => VIEWPORT_PRESETS[viewportPreset()])
   const isResponsiveViewport = createMemo(() => viewportPreset() === "responsive")
@@ -358,7 +360,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (props.commentBridge && !framePolicy.canInspectDom) {
       frameWindow.postMessage({ type: "codenomad-preview-comment-mode", enabled: Boolean(props.commentMode) }, "*")
       const handleMessage = (event: MessageEvent) => {
-        if (event.source !== frameWindow || event.origin !== (props.isolatedSource ? new URL(props.initialUrl).origin : "null")) return
+        if (event.source !== frameWindow || event.origin !== (props.isolatedSource && !props.opaqueSource ? new URL(props.initialUrl).origin : "null")) return
         if (event.data?.type === "codenomad-preview-location") {
           const path = event.data.path
           if (typeof path !== "string" || path.length > 4_096 || !path.startsWith("/")) return

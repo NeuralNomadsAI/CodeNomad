@@ -4,7 +4,7 @@ import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import type { PreviewSession } from "../../../server/src/api-types"
 import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
-import { remotePreviewSource } from "../lib/remote-preview-address"
+import { remotePreviewContent, remotePreviewSource } from "../lib/remote-preview-address"
 import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
 import { adoptLegacyTabPreview, getTabViewState, updateTabViewState, type RestorableTabPreview } from "./tab-view-state"
 import { parseLegacySessionPreviews } from "./tab-view-state-codec"
@@ -116,10 +116,7 @@ async function createPreview(sessionId: string, url: string, version: PreviewOpe
     if (new URL(url).hostname.endsWith(".preview.localhost")) throw new TypeError(tGlobal("sessionPreview.open.invalidUrl"))
     const preview = await version.client.api.createPreviewCapability({ sessionId, url })
     try {
-      const source = new URL(preview.contentUrl)
-      if (source.protocol !== "http:" || source.hostname !== `${preview.capability}.preview.localhost`
-        || source.username || source.password || !source.port || preview.token === preview.capability
-        || preview.sessionId !== sessionId || !remotePreviewSource(preview, preview.targetUrl)) throw new TypeError()
+      if (!remotePreviewContent(preview) || preview.sessionId !== sessionId || !remotePreviewSource(preview, preview.targetUrl)) throw new TypeError()
       return preview
     } catch {
       await releasePreview(version.client, preview)
