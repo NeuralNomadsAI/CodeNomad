@@ -28,6 +28,8 @@ Altta İptal ve Oluştur yanındaki **Yapılandırmayı kaydet**, yeniden kullan
 
 **Alt ajan derinliği**, projenin tüm OpenCode konuşmalarını etkiler. **Devral** veya 1–10 seçimi hemen kaydedilir. Etkin derinlik ve izinler gözlenen yapılandırmaya bağlıdır.
 
+Alt ajan derinliği bilgileri etkin kaynağı **OpenCode yapılandırma dosyası:** altında gösterir.
+
 Proje derinliği kaydetmek, alt ajanların bu derinlikte kendi işlerini devretmesine de izin verir ve desteklenen diğer dosya General kısıtlamalarından öncelikli olur. **Devral** eklenen kuralı kaldırır. Kaydetmek OpenCode'u yeniden yüklemez ve çalışan konuşmaları değiştirmez.
 
 ### Ajanlar ve modeller {#agents-models}

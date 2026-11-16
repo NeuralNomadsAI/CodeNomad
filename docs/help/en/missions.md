@@ -32,6 +32,8 @@ The playbook guides the agents within their native permissions. Commits, pushes,
 
 **Subagent depth** is a project setting for all its OpenCode conversations. Choose **Inherit** or a depth from 1 to 10; this choice is saved immediately. Its **ⓘ** shows the observed effective depth, nesting permissions and configuration paths.
 
+The subagent-depth information identifies its effective source under **OpenCode configuration file:**.
+
 Saving a project depth also enables subagents to delegate within that depth, overriding General restrictions from other configuration files where supported. **Inherit** removes the added rule. Saving does not reload OpenCode or change running conversations.
 
 ### Agents and models {#agents-models}

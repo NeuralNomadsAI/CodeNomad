@@ -28,6 +28,8 @@ Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Ve
 
 **Tiefe der Unteragenten** gilt für alle OpenCode-Unterhaltungen des Projekts. **Erben** oder 1–10 wird sofort gespeichert. Das **ⓘ** zeigt beobachtete effektive Tiefe, Berechtigungen und Konfigurationspfade.
 
+Die Informationen zur Unteragententiefe nennen die wirksame Quelle unter **OpenCode-Konfigurationsdatei:**.
+
 Eine Projekttiefe erlaubt außerdem Unteragenten, innerhalb dieser Tiefe selbst zu delegieren, und überschreibt dabei unterstützte General-Beschränkungen anderer Konfigurationsdateien. **Erben** entfernt die hinzugefügte Regel. Speichern lädt OpenCode nicht neu und ändert keine laufenden Unterhaltungen.
 
 ### Agenten und Modelle {#agents-models}

@@ -28,6 +28,8 @@ Las conexiones remotas usan el mismo formulario y los mismos controles. Usa pref
 
 **Profundidad de subagentes** afecta a todas las conversaciones OpenCode del proyecto. **Heredar** o 1–10 se guarda inmediatamente. El **ⓘ** muestra profundidad efectiva observada, permisos y archivos de configuración.
 
+La información de profundidad de subagentes identifica su origen efectivo en **Archivo de configuración de OpenCode:**.
+
 Guardar una profundidad de proyecto también permite que los subagentes deleguen dentro de ese límite, prevaleciendo sobre restricciones compatibles de General en otros archivos. **Heredar** quita la regla añadida. Guardar no recarga OpenCode ni cambia conversaciones en curso.
 
 ### Agentes y modelos {#agents-models}

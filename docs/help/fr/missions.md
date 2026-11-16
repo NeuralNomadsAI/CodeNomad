@@ -32,6 +32,8 @@ Le scénario guide les agents dans leurs permissions natives. Un commit, push, u
 
 **Profondeur des sous-agents** est un réglage de projet pour toutes ses conversations OpenCode. Choisissez **Hériter** ou une profondeur de 1 à 10 ; ce choix est enregistré immédiatement. Le **ⓘ** indique la profondeur effective observée, les permissions d’imbrication et les fichiers de configuration.
 
+Les informations de profondeur des sous-agents indiquent leur source effective sous **Fichier de configuration OpenCode :**.
+
 Enregistrer une profondeur de projet autorise aussi les sous-agents à déléguer dans cette limite, en primant sur les restrictions de General d’autres fichiers lorsque le réglage est compatible. **Hériter** retire la règle ajoutée. Enregistrer ne recharge pas OpenCode et ne modifie pas les conversations en cours.
 
 ### Agents et modèles {#agents-models}
