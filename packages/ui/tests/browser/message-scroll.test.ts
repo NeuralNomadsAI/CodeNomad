@@ -1927,6 +1927,68 @@ for (const gesture of ["none", "same", "tap", "click", "horizontal", "newer"] as
   }, { history: 620, hasTouch: gesture === "tap" })
 })
 
+/** Replays an Android fast flick whose passive touchmove stream was throttled away during the scroll: the finger reaches the list only through its unthrottled touch pointer stream, and the touch ends where it lifted. */
+async function replayThrottledTouchFlick(page: Page, travel: number) {
+  await page.evaluate(travel => {
+    const el = document.querySelector(".message-stream") as HTMLElement
+    const bounds = el.getBoundingClientRect()
+    const x = bounds.left + el.clientWidth / 2, y0 = bounds.top + el.clientHeight / 2
+    const touch = (type: "touchstart" | "touchend", y: number | null) => {
+      const point = y === null ? [] : [new Touch({ identifier: 1, target: el, clientX: x, clientY: y })]
+      el.dispatchEvent(new TouchEvent(type, { touches: type === "touchstart" ? point : [], changedTouches: point, bubbles: true, cancelable: true }))
+    }
+    const pointer = (type: "pointerdown" | "pointermove" | "pointerup", y: number) =>
+      el.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: "touch", isPrimary: true, button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: x, clientY: y, bubbles: true, cancelable: true }))
+    touch("touchstart", y0)
+    pointer("pointerdown", y0)
+    for (let step = 1; step <= 6; step++) pointer("pointermove", y0 + travel * step / 6)
+    pointer("pointerup", y0 + travel)
+    touch("touchend", y0 + travel)
+  }, travel)
+}
+
+/** Momentum after the finger lifts: unowned upward movement every frame, outliving the 600ms user-intent window. */
+function fling(page: Page, frames = 45) {
+  return page.evaluate(frames => new Promise(resolve => {
+    const el = document.querySelector<HTMLElement>(".message-stream")!
+    const next = () => { el.scrollTop -= 24; if (--frames) requestAnimationFrame(next); else resolve(null) }
+    requestAnimationFrame(next)
+  }), frames)
+}
+
+test("a throttled touch flick escapes follow for its whole fling", async () => {
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    const stream = page.locator(".message-stream")
+    await bottom(page)
+    await trace.enable()
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following")
+    const tracedFrom = trace.entries.length
+    await replayThrottledTouchFlick(page, 24)
+    await fling(page)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped", "A flick's fling must escape follow")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap > 200, `The fling must keep its distance from the bottom: ${gap}`)
+    const repins = trace.entries.slice(tracedFrom).filter(entry => entry.kind === "write" && (entry.reason === "observe" || entry.reason === "content-grew"))
+    assert.deepEqual(repins, [], "A fling must not be repinned to the bottom")
+  }, { hasTouch: true })
+})
+
+test("a late fling scroll after the intent window must not be repinned", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    await bottom(page)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following")
+    await replayThrottledTouchFlick(page, 30)
+    // Momentum chained from a nested scroller reaches the transcript only after the flick's intent window expired.
+    await page.waitForTimeout(650)
+    await fling(page)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped", "A late fling still belongs to the user's flick")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap > 200, `The late fling must keep its distance from the bottom: ${gap}`)
+  }, { hasTouch: true })
+})
+
 type FrameSample = { frame: number; time: number; top: number; gap: number; mode?: string; anchorOffset: number | null }
 
 /**

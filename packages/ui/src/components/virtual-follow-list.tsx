@@ -16,6 +16,10 @@ const FOLLOW_BOTTOM_PIN_FRAMES = 2
 const MEASUREMENT_PROBE_COUNT = 8
 const TOP_SCROLL_EPSILON_PX = 0
 const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
+// A lifted flick keeps owning its fling: momentum (or momentum chained from a
+// nested scroller) scrolls with scroll events alone, past the intent window.
+const TOUCH_FLING_ARM_SLOP_PX = 8
+const TOUCH_FLING_CLAIM_MS = 2500
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
 const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
 const ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX = 48
@@ -223,6 +227,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let nativeScrollbarDragging = false
   // The block `scrollToKey` holds instead of its row, during that dispatch only.
   let keyJumpSelect: (() => HTMLElement | null) | undefined
+  // Until when an unowned upward scroll still belongs to a lifted flick's fling.
+  let touchFlingClaimUntil = 0
 
   function invalidateScrollRestore() {
     restoreToken.invalidate()
@@ -623,6 +629,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
     const programmatic = hasProgrammaticScrollIntent()
     if (scrollTraceEnabled()) traceObservation(offset, metrics.scrollHeight, programmatic, now)
+    // A lifted flick's fling scrolls with unowned scroll events; keep them
+    // user-owned so a late fling escapes follow instead of being repinned.
+    if (now < touchFlingClaimUntil && !programmatic && !nativeScrollbarDragging) {
+      const previous = scrollController.snapshot()
+      if (now > previous.userIntentUntil && offset < previous.lastObservedOffset - 1) {
+        scrollController.setUserIntent(null, now + USER_SCROLL_INTENT_WINDOW_MS)
+      }
+    }
     const observed = scrollController.observeViewport(metrics, now, programmatic)
     const result = nativeScrollbarDragging ? scrollController.setFollow(false) : observed
     const restoring = result.state.restoring
@@ -1006,7 +1020,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         markUserScrollIntent("up")
         return
       }
-      if (event.button === 0) lastPrimaryPointerY = event.clientY
+      // A touch or pen pan moves the finger with the content's inverse; its
+      // scroll intent comes from the touch path, never this mouse-drag mapping.
+      if (event.button === 0 && event.pointerType === "mouse") lastPrimaryPointerY = event.clientY
       if (event.target !== element) return
       const rect = element.getBoundingClientRect()
       const scale = rect.width / element.offsetWidth
@@ -1023,6 +1039,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       markUserScrollIntent(null)
     }
     const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse") {
+        lastPrimaryPointerY = null
+        return
+      }
       const previousY = lastPrimaryPointerY
       if (previousY === null) return
       lastPrimaryPointerY = event.clientY
@@ -1040,8 +1060,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
     }
     let lastTouchY: number | null = null
+    let touchStartY: number | null = null
     const handleTouchStart = (event: TouchEvent) => {
       lastTouchY = event.touches[0]?.clientY ?? null
+      touchStartY = lastTouchY
       markUserScrollIntent(null)
     }
     const handleTouchMove = (event: TouchEvent) => {
@@ -1056,7 +1078,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (direction && nestedScrollerConsumes(event.target, direction)) return
       markUserScrollIntent(direction, (previousY - nextY) / getElementZoom(element))
     }
-    const handleTouchEnd = () => {
+    const handleTouchEnd = (event: TouchEvent) => {
+      // A flick that moved the finger owns the fling that follows its lift,
+      // including momentum that reaches this list late from a nested scroller.
+      const startY = touchStartY
+      const endY = event.changedTouches[0]?.clientY ?? null
+      if (startY !== null && endY !== null && Math.abs(endY - startY) >= TOUCH_FLING_ARM_SLOP_PX) {
+        touchFlingClaimUntil = performance.now() + TOUCH_FLING_CLAIM_MS
+      }
+      touchStartY = null
       lastTouchY = null
     }
     const handleKeyIntent = (event: KeyboardEvent) => {

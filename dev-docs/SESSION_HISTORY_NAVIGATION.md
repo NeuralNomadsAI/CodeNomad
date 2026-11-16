@@ -284,6 +284,13 @@ and compensated, when it is shown again. Follow-mode changes go through
 `syncControllerResult` with a reason as well. Outside it remain user gestures
 (including wheel re-emission and middle-button autoscroll), Virtua's own size
 compensation, browser clamping and search-result reveals inside nested scrollers.
+Touch panning marks intent only from the touch path; the pointer drag mapping is
+mouse-only (an unthrottled touch pointer stream moves with the finger, the
+inverse of a drag-select). A touchend whose finger moved owns the fling that
+follows for a bounded claim: with no fresh intent and no programmatic write,
+upward movement renews the user intent, so momentum that reaches the list late
+— chained from a nested scroller past the intent window — escapes follow
+instead of being repinned. A tap arms nothing.
 List positions are read from the DOM, never from Virtua's `scrollOffset`, which lags a write
 until its scroll event; a following list is captured at the bottom (without an
 anchor) wherever its pin's latest write stands.
