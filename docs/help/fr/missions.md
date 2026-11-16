@@ -151,8 +151,6 @@ Une Mission ponctuelle interrompue ou échouée peut proposer **Reprendre la mis
 
 ## Modifier, supprimer et nettoyer les conversations {#cleanup}
 
-En cas de conflit de suppression, CodeNomad relit la demande d’origine. Si la Mission a changé, annulez et resélectionnez-la avant de supprimer ; si la demande diffère ou qu’un contrôle est en cours, vérifiez l’opération d’origine avant de réessayer. Les nouvelles tentatives conservent la demande, la révision et l’option de nettoyage d’origine.
-
 Le nettoyage des conversations de tâches est une option des Missions ponctuelles. Supprimer un programme natif conserve ses conversations.
 
 **Modifier la mission sélectionnée**, sous Plus d’actions, ouvre le formulaire commun. Avant le premier lancement, les champs de préparation se modifient lorsqu’ils sont déverrouillés. Après lancement, instructions et Notes restent modifiables là où c’est permis ; les champs verrouillés indiquent leur restriction.

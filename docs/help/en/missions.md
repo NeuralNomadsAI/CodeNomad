@@ -157,6 +157,4 @@ Task-conversation cleanup is a one-time Mission option. Native schedule deletion
 
 Stop work before deleting it. **Delete selected mission…** removes a one-time Mission at once. Schedule deletion closes future launches first.
 
-If deletion conflicts, CodeNomad rereads the original request. A changed Mission requires cancelling and selecting it again before deleting; a different request or pending control requires checking the original operation before retrying. Retries keep the original request, revision and cleanup option.
-
 To also remove eligible task conversations, enable **Deleting a mission also deletes its task conversations** in Missions Preferences. Coordinators, reused or shared conversations and conversations whose ownership cannot be established are kept. **Conversation cleanup** shows remaining cleanup and explicit retries. Removing a saved configuration does not delete a Mission.

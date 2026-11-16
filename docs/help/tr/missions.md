@@ -128,8 +128,6 @@ Doğrulanmamış asıl isteği koruyun. Yerine başka işlem göndermek yerine d
 
 ## Düzenleme, silme ve konuşma temizliği {#cleanup}
 
-Silme çakışırsa CodeNomad asıl isteği yeniden okur. Görev değiştiyse silmeden önce iptal edip yeniden seçin; istek farklıysa veya bekleyen bir kontrol varsa yeniden denemeden önce asıl işlemi kontrol edin. Yeniden denemeler asıl isteği, revizyonu ve temizleme seçeneğini korur.
-
 İş konuşması temizliği tek seferlik Görevlerin seçeneğidir. Yerel programları silmek konuşmalarını korur.
 
 ⋯ düzenleme aynı formu açar. İlk başlatmadan önce kilitsiz hazırlık alanları, sonra izin verilen talimat ve Notlar düzenlenebilir. Kilitli alanlar nedenini belirtir.
