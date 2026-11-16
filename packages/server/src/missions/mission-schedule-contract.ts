@@ -66,8 +66,7 @@ const proof = { type: "object", properties: { sessionID: text, principal: schedu
   configDigest: text, digest: text, issuedAt: counter, proof: text,
   profileSource: { type: "object", properties: { profileID: text, executionHost: text, configYamlPath: text },
     required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
-}, oneOf: [{ required: ["sessionID"], not: { required: ["principal"] } }, { required: ["principal"], not: { required: ["sessionID"] } }],
-  required: ["workspaceID", "requestID", "location", "scheduleID", "expectedRevision", "action", "digest", "issuedAt", "proof", "profileSource"], additionalProperties: false } as const
+}, required: ["workspaceID", "requestID", "location", "scheduleID", "expectedRevision", "action", "digest", "issuedAt", "proof", "profileSource"], additionalProperties: false } as const
 const wake = { type: "object", properties: { scheduleID: text, run: counter, messageID: text, dueAt: counter },
   required: ["scheduleID", "run", "messageID", "dueAt"], additionalProperties: false } as const
 const missionScheduleHistoryWire = { type: "object", properties: { id: text, missionID: text, coordinatorSessionID: text, messageID: text,

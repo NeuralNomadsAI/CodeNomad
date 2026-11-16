@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Ajv from "ajv"
+import { Schema, SchemaRepresentation } from "effect"
 import { authorityDigest } from "./authority-protocol"
 import { recurrenceControlProofSchema, recurrenceControlRequestDigest, recurrenceSchedulePrincipal,
   signNativeRecurrenceControl, type SchedulePrincipal } from "./recurrence-control-proof"
@@ -37,8 +38,26 @@ test("signed principal preserves explicit human compatibility and refuses mixed 
   const wire = new Ajv().compile(missionScheduleRpcMethods.scheduleControl.input)
   assert.equal(wire(request()), true, JSON.stringify(wire.errors))
   const mixed = { ...request(), transport: { ...agent, sessionID: author.coordinatorSessionID } }
-  assert.equal(wire(mixed), false)
+  assert.equal(wire(mixed), true, "principal exclusivity is enforced by the domain parser")
   assert.equal(missionScheduleRequestSchema.safeParse(mixed).success, false)
+})
+
+test("portable wire keeps strict principal validation before authentication or effects", async () => {
+  const wire = Schema.decodeUnknownSync(Schema.toType(SchemaRepresentation.fromJsonSchemaDocument({
+    dialect: "draft-2020-12", schema: missionScheduleRpcMethods.scheduleControl.input, definitions: {},
+  })), { onExcessProperty: "error" })
+  assert.deepEqual(wire(request()), request())
+  for (const transport of [
+    { ...proof(), sessionID: author.coordinatorSessionID },
+    (({ principal: _principal, ...rest }) => rest)(proof()),
+    { ...proof(), principal: { ...principal, author: { ...author, missionID: "bad mission" } } },
+    { ...proof(), principal: { ...principal, creationDigest: "z".repeat(64) } },
+  ]) {
+    const value = { ...request(), transport }
+    assert.deepEqual(wire(value), value)
+    assert.equal(missionScheduleRequestSchema.safeParse(value).success, false)
+    await assert.rejects(assertRecurrenceBridgeProof(transport, { allowAgent: true }), { name: "ZodError" })
+  }
 })
 
 test("agent controls stop at exact own creation and unconsumed first Play", async () => {

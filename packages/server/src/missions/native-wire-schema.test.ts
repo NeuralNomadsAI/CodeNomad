@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { SchemaRepresentation } from "effect"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
 import { lifecycleOperationSchema } from "./lifecycle-schema"
 import { taskExecutionModeSchema, taskExecutionModeRpcSchema } from "./native-wire-schema"
@@ -17,6 +18,21 @@ test("Missions native RPC schemas avoid unsupported not and pattern keywords", (
     }
   }
   visit(CODENOMAD_MISSIONS_RPC)
+})
+
+test("every Missions RPC schema converts through the native schema representation", () => {
+  for (const [name, method] of Object.entries(CODENOMAD_MISSIONS_RPC.methods)) {
+    for (const side of ["input", "output"] as const) {
+      assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaDocument({
+        dialect: "draft-2020-12", schema: method[side], definitions: {},
+      }), `${name}.${side}`)
+    }
+  }
+  for (const [name, event] of Object.entries(CODENOMAD_MISSIONS_RPC.events)) {
+    assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaDocument({
+      dialect: "draft-2020-12", schema: event.schema, definitions: {},
+    }), `events.${name}`)
+  }
 })
 
 test("native snapshot decoder admits coordinator business readout as distinct delivery", () => {

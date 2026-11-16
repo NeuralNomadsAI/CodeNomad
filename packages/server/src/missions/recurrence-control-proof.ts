@@ -12,14 +12,15 @@ export const schedulePrincipalSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("agent"), author: preparationAuthorSchema,
     creationRequestID: z.string().min(1).max(128), creationDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
 ])
+// Native wire supports bounded strings; the domain schema validates their format.
 export const schedulePrincipalWire = { oneOf: [
   { type: "object", properties: { kind: { const: "human" }, sessionID: { type: "string", minLength: 1, maxLength: 256 } },
     required: ["kind", "sessionID"], additionalProperties: false },
   { type: "object", properties: { kind: { const: "agent" },
     author: { type: "object", properties: { coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
-      missionID: { type: "string", pattern: "^[A-Za-z0-9_-]{3,100}$" } }, required: ["coordinatorSessionID"], additionalProperties: false },
+      missionID: { type: "string", minLength: 3, maxLength: 100 } }, required: ["coordinatorSessionID"], additionalProperties: false },
     creationRequestID: { type: "string", minLength: 1, maxLength: 128 },
-    creationDigest: { type: "string", pattern: "^[a-f0-9]{64}$" } },
+    creationDigest: { type: "string", minLength: 64, maxLength: 64 } },
     required: ["kind", "author", "creationRequestID", "creationDigest"], additionalProperties: false },
 ] } as const
 type PrincipalIdentity = { sessionID: string; principal?: never } | { principal: SchedulePrincipal; sessionID?: never }

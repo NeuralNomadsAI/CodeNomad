@@ -29,6 +29,10 @@ the execution journal retains its task, report and lifecycle contracts.
 The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`,
 `mission.report`, `mission.briefing`, `mission.interrupt` and `mission.prepare`.
 The coordinator is the topology writer.
+Native RPC schemas use the decoder's portable primitives; strict server codecs
+validate principal exclusivity and identifier/digest formats before authentication
+or effects. `missions/native-wire-schema.test.ts` converts every Missions RPC input,
+output and event through the native schema representation.
 Native task declaration returns the canonical assignment for ordinary OpenCode
 subagent calls. Native helpers return through their actual parent; the coordinator
 alone records the declared task's business readout. Explicit independent actors
