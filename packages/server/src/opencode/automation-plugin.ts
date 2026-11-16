@@ -679,9 +679,9 @@ export async function readMissionConfigurations(sessionID: string): Promise<unkn
 }
 
 export async function sendMissionInput(sessionID: string,
-  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
+  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "schedule" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
   let targets: DiscoveredBridgeRegistration[]
-  const requiresDefaults = kind === "prepare"
+  const requiresDefaults = kind === "prepare" || kind === "schedule"
   try {
     // A backend without native browsers can still claim the session for dispatch.
     targets = await probeBrowserBridges(await registrations({ strict: requiresDefaults }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS,

@@ -193,6 +193,7 @@ export interface MissionReviseInput {
 }
 
 export interface MissionInputTransport {
+  schedule?(sessionID: string, input: import("./schedule-tool").ScheduleToolInput): Promise<unknown>
   readConfigurations?(sessionID: string): Promise<unknown>
   resolveCreationDefaults?(sessionID: string, input: MissionCreationChoices & { template: MissionTemplateId; coordinatorModel?: MissionExecution["model"] }): Promise<unknown>
   lifecycle?(coordinatorID: string, input: { missionID: string; operationID: string; sessionID: string;

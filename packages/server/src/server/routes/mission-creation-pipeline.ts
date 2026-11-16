@@ -89,7 +89,7 @@ export async function prepareMissionCreation(input: {
   try {
     const capability = await wait(client.rpc(CODENOMAD_MISSIONS_RPC).documentCapabilities({}, { location, ...locationRequestOptions(location), signal }))
     const parsed = z.object({ version: z.literal(1), automaticStart: z.literal(true).optional(),
-      agentSchedulePreparation: z.literal(true).optional() }).strict().parse(capability)
+      agentSchedulePreparation: z.literal(true).optional(), agentScheduleControl: z.literal(true).optional() }).strict().parse(capability)
     if (input.startOnCreation !== undefined && parsed.automaticStart !== true) throw new Error("Automatic start capability unavailable")
   } catch { throw new MissionCreationPreparationError(503, "Unified Mission documents unavailable") }
   signal.throwIfAborted(); connection.assertCurrent()

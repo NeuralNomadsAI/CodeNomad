@@ -50,6 +50,7 @@ import type { MissionJournalIndex } from "../missions/journal-index"
 import type { MissionDocumentAccess } from "../missions/mission-document-one-time"
 import { NativeMissionDocumentStore } from "../missions/mission-document-store"
 import type { MissionBusinessControl } from "../missions/business-control"
+import { scheduleToolInput, scheduleToolWire } from "../missions/schedule-tool"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
@@ -158,7 +159,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
 // Opt-in native continuity seam. The desktop setup keeps its existing defaults.
 export interface MissionsPluginPolicy {
   configure(control: MissionControl): Promise<void>
-  beforeTool(name: "inspect" | "declare" | "delegate" | "revise" | "report" | "briefing" | "interrupt" | "prepare", input: unknown, sessionID: string): Promise<void>
+  beforeTool(name: "inspect" | "declare" | "delegate" | "revise" | "report" | "briefing" | "interrupt" | "prepare" | "schedule", input: unknown, sessionID: string): Promise<void>
   beforeJournalWrite(event: MissionEvent): Promise<void | (() => void)>
   authorizeNativeReport?: MissionNativeReportAuthorization
 }
@@ -331,7 +332,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     if (business) registrations.push({ dispose: await setupMissionsBusiness(context, async sessionID => ({
       control, readSessionID: sessionID, current: assertActive,
       beforeTool: (name, input) => policy?.beforeTool(name, input, sessionID) ?? Promise.resolve(),
-    })) })
+    }), transport?.schedule) })
     notificationOutbox = new MissionNotificationOutbox(
       `${context.location.project.id}\0${context.location.project.canonical}`,
       (isActive, after) => writer.run(() => control.retryPendingNotifications(isActive, after)),
@@ -365,7 +366,8 @@ const executeMissionBusiness = <T>(selected: MissionBusinessRoute, use: (control
 
 /** One set of native names. Selection is invocation-scoped, never model-provided storage. */
 export async function setupMissionsBusiness(context: MissionsPluginContext,
-  select: (sessionID: string, name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown) => Promise<MissionBusinessRoute | undefined>): Promise<() => Promise<void>> {
+  select: (sessionID: string, name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown) => Promise<MissionBusinessRoute | undefined>,
+  schedule?: MissionInputTransport["schedule"]): Promise<() => Promise<void>> {
   let active = true
   const writer = createMissionWriterRetirement(), registrations: Registration[] = []
   const assertActive = () => { if (!active) throw new Error("CodeNomad Missions is no longer available") }
@@ -524,7 +526,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "prepare",
-        description: "Prepare a separate Mission; this conversation stays unchanged. Any owned project session may prepare. launch is the editor's ordered criteria list: adjacent same-kind cards mean OR, schedule→event IF, event→schedule ELSE. Absent, empty or sole now is one-time; calendars require explicit complete agent/model profiles after preference resolution. A new coordinator is the default; coordinatorSessionID explicitly selects an eligible idle root for scheduling only, excluding this author and source conversations. watchedConversationIDs adds followed context. startOnCreation defaults false; true requires the user's explicit automatic first-Play request. Only a fresh creation acknowledgement may continue; recovery never sends Play. Pause, Stop, Resume, Run now, Check, configure and delete remain human controls. Results separate prepared, activated, refused and uncertain; retain original requestID and all inputs on retries. Keep one owning CodeNomad backend available. The author can inspect its target or list preparations. inspect with start instead attaches THIS root as coordinator.",
+        description: "Prepare a separate Mission; this conversation stays unchanged. Any owned project session may prepare. launch is the editor's ordered criteria list: adjacent same-kind cards mean OR, schedule→event IF, event→schedule ELSE. Absent, empty or sole now is one-time; calendars require explicit complete agent/model profiles after preference resolution. A new coordinator is the default; coordinatorSessionID explicitly selects an eligible idle root for scheduling only, excluding this author and source conversations. watchedConversationIDs adds followed context. startOnCreation defaults false; true requires the user's explicit automatic first-Play request. Only a fresh creation acknowledgement may continue; recovery never sends Play. mission.schedule controls project schedules. Results separate prepared, activated, refused and uncertain; retain original requestID and all inputs on retries. Keep one owning CodeNomad backend available. The author can inspect its target or list preparations. inspect with start instead attaches THIS root as coordinator.",
         input: prepareSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -555,6 +557,25 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
             status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }), revision: mission.revision,
             ...(mission.creationDefaults ? { selection: missionCreationSelection(mission) } : {}),
           } } })
+        },
+      })
+      add({
+        name: "schedule",
+        description: "List, read or control any schedule in this project, including human-created schedules. Any owned project session may call. list pages by after/limit; read takes missionID and optional requestID for the exact original receipt. Mutations require missionID, a stable requestID per action and expectedRevision from a fresh read. configure replaces the editor configuration with explicit frozen agent/model profiles and ordered launch criteria. Play/Resume preserve explicit scheduling OFF. Adoption requires an idle root excluding the caller and followed/trigger conversations. Run now uses ordinary single-passage admission. On uncertainty read the original requestID; never resend or substitute a fresh identity to evade a hold. Identical completed requests replay without effects; changed inputs conflict. Stop is terminal. delete preserves conversations unless deleteManagedSessions is explicitly true. Keep exactly one owning CodeNomad backend available.",
+        input: scheduleToolWire,
+        options: { namespace: "mission", codemode: false },
+        execute: async (input, tool) => {
+          assertActive()
+          if (!schedule) throw new Error("Mission schedule controls are unavailable")
+          const request = scheduleToolInput.parse(input)
+          const selected = await route(tool.sessionID, "schedule", input)
+          selected.current()
+          try { return textResult(await schedule(tool.sessionID, request)) }
+          catch (error) {
+            if (request.action === "list" || request.action === "read") throw error
+            return textResult({ status: 503, pending: true, missionID: request.missionID,
+              requestID: request.requestID, action: request.action, code: "schedule-unconfirmed" })
+          }
         },
       })
     })
@@ -603,10 +624,11 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
         try {
           const selected = await select(event.sessionID, "inspect", {})
           if (!selected) {
-            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report", "prepare"]) delete event.tools[`mission_${name}`]
+            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report", "prepare", "schedule"]) delete event.tools[`mission_${name}`]
             return
           }
           selected.current()
+          if (!schedule) delete event.tools.mission_schedule
           const backendActions = await executeMissionBusiness(selected, async control => control.backendActions)
           if (!selected.preparationAvailable && !backendActions) delete event.tools.mission_prepare
           // One hinted membership read per turn: the instruction and the coordinator check share it.

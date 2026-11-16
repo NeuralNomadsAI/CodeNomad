@@ -10,7 +10,7 @@ Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Ve
 
 **Mission erstellen** öffnet das Formular anstelle des Baums. Eine bestätigte Erstellung wählt die Mission aus; bei einer abgelehnten Erstellung bleibt das Formular bearbeitbar.
 
-Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder geplanten Lauf, eine separate einmalige oder geplante Mission vorzubereiten. Seine Unterhaltung bleibt unverändert; standardmäßig wird eine neue Koordinator-Unterhaltung erstellt. Halten Sie das zuständige CodeNomad-Backend verfügbar. Die ausdrückliche Anforderung **Automatisch starten** erlaubt nur den ersten Start dieser neuen Mission; eine Wiederherstellung liest das ursprüngliche Ergebnis ohne erneuten Start. Pausieren, Stoppen, Fortsetzen, sofortiges Ausführen, Prüfen, Bearbeiten und Löschen bleiben Ihre Aktionen im Panel.
+Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder geplanten Lauf, eine separate einmalige oder geplante Mission vorzubereiten. Seine Unterhaltung bleibt unverändert; standardmäßig wird eine neue Koordinator-Unterhaltung erstellt. Halten Sie das zuständige CodeNomad-Backend verfügbar. **Automatisch starten** erlaubt den ersten Start dieser neuen Mission; die Wiederherstellung liest das ursprüngliche Ergebnis. Agenten können außerdem alle Zeitpläne dieses Projekts auflisten, prüfen, starten, pausieren, stoppen, fortsetzen, sofort ausführen, bearbeiten und löschen, auch die im Editor erstellten. Dieselben Revisions- und Zulassungsprüfungen gelten; eine ausdrücklich deaktivierte Zeitplanung bleibt deaktiviert. Unbestätigte Aktionen behalten ihre ursprüngliche Anfrage zur schreibgeschützten Statusabfrage.
 
 ### Konfiguration {#saved-briefs}
 

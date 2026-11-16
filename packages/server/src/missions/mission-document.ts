@@ -191,8 +191,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   const textEdit = doc.calendarOwner?.operation.textEdit
   if (textEdit) {
     const passage = passages.find(item => item.id === textEdit.passageID)
-    const { objective: _objective, notes: _notes, ...structure } = textEdit.configuration
-    const { objective: _oldObjective, notes: _oldNotes, ...oldStructure } = doc.configuration
+    const { objective: _objective, notes: _notes, coordinatorSelectionAuthor: _author, ...structure } = textEdit.configuration
+    const { objective: _oldObjective, notes: _oldNotes, coordinatorSelectionAuthor: _oldAuthor, ...oldStructure } = doc.configuration
     if (!passage || passage.admittedAt === null || passage.missionID !== textEdit.missionID
       || passage.coordinatorSessionID !== textEdit.coordinatorSessionID || textEdit.createdAt < passage.createdAt
       || canonicalAuthority(structure) !== canonicalAuthority(oldStructure)

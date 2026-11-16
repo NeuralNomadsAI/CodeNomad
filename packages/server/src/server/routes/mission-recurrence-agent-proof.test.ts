@@ -96,3 +96,20 @@ test("agent controls and forged identities refuse before ownership, cookie or in
   assert.deepEqual(f.stats(), { cookieReads: 0, ownerReads: 0, intentReads: 0 })
   f.moved(); await assert.rejects(f.verify(), /agent owner unavailable/)
 })
+
+test("project agent principals admit every control on human or agent documents without cookies", async () => {
+  for (const createdByAgent of [false, true]) {
+    const f = fixture()
+    if (!createdByAgent) delete (f.document as { creation?: unknown }).creation
+    f.document.firstPlayedAt = 2
+    for (const action of ["play", "pause", "resume", "stop", "run-now", "check", "configure", "delete"] as const) {
+      const body = f.sign({ action, principal: { kind: "agent", author: f.author } })
+      assert.deepEqual(await f.verify(body), { admitted: true }, `${createdByAgent}:${action}`)
+    }
+    f.moved()
+    assert.deepEqual(await f.verify(f.sign({ principal: { kind: "agent", author: f.author } })), { admitted: true })
+    f.foreign()
+    await assert.rejects(f.verify(f.sign({ principal: { kind: "agent", author: f.author } })), /agent owner unavailable/)
+    assert.equal(f.stats().cookieReads, 0)
+  }
+})

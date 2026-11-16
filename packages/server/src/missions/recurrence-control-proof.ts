@@ -4,13 +4,14 @@ import { authorityDigest, canonicalAuthority } from "./authority-protocol"
 import { preparationAuthorSchema, type PreparationAuthor } from "./preparation-input"
 
 export type SchedulePrincipal = { kind: "human"; sessionID: string }
-  | { kind: "agent"; author: PreparationAuthor; creationRequestID: string; creationDigest: string }
+  | { kind: "agent"; author: PreparationAuthor; creationRequestID?: string; creationDigest?: string }
 
 const sessionID = z.string().min(1).max(256)
 export const schedulePrincipalSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("human"), sessionID }).strict(),
   z.object({ kind: z.literal("agent"), author: preparationAuthorSchema,
-    creationRequestID: z.string().min(1).max(128), creationDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+    creationRequestID: z.string().min(1).max(128).optional(), creationDigest: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict()
+      .refine(value => (value.creationRequestID === undefined) === (value.creationDigest === undefined)),
 ])
 // Native wire supports bounded strings; the domain schema validates their format.
 export const schedulePrincipalWire = { oneOf: [
@@ -21,7 +22,7 @@ export const schedulePrincipalWire = { oneOf: [
       missionID: { type: "string", minLength: 3, maxLength: 100 } }, required: ["coordinatorSessionID"], additionalProperties: false },
     creationRequestID: { type: "string", minLength: 1, maxLength: 128 },
     creationDigest: { type: "string", minLength: 64, maxLength: 64 } },
-    required: ["kind", "author", "creationRequestID", "creationDigest"], additionalProperties: false },
+    required: ["kind", "author"], additionalProperties: false },
 ] } as const
 type PrincipalIdentity = { sessionID: string; principal?: never } | { principal: SchedulePrincipal; sessionID?: never }
 interface RecurrenceControlProofFields {
@@ -57,7 +58,9 @@ export function recurrenceSchedulePrincipal(input: Pick<RecurrenceControlProofBo
   throw new Error("Recurrence principal differs")
 }
 export function assertSchedulePrincipalAction(principal: SchedulePrincipal, action: RecurrenceControlProofBody["action"]): void {
-  if (principal.kind === "agent" && action !== "create" && action !== "play") throw new Error("Recurrence agent control refused")
+  if (principal.kind !== "agent") return
+  if (principal.creationRequestID ? action !== "create" && action !== "play" : action === "create")
+    throw new Error("Recurrence agent control refused")
 }
 
 export function recurrenceControlRequestDigest(input: Omit<RecurrenceControlProofFields, "digest"> & PrincipalIdentity): string {

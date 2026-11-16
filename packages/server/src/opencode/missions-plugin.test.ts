@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import Ajv from "ajv"
 
-import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput, setupMissionsPlugin } from "./missions-plugin"
+import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput, setupMissionsPlugin, setupMissionsBusiness } from "./missions-plugin"
 import { buildAssignmentPrompt } from "../missions/recipes"
 import type { MissionJsonValue, MissionMap } from "../missions/model"
 import type { MissionsPluginContext } from "./missions-plugin"
@@ -69,7 +69,42 @@ test("inspect start accepts bounded titles and verbatim notes and refuses an exi
   }
 })
 
-test("registers seven tools, typed snapshot RPC, and role context", async () => {
+test("schedule tools preserve the actual caller for roots, descendants, actors and passages", async t => {
+  const tools = new Map<string, any>(), calls: unknown[] = [], registration = { dispose: async () => {} }
+  let loseACK = false
+  const cleanup = await setupMissionsBusiness({
+    tool: { transform: async (configure: any) => {
+      configure({ namespace() {}, add: (tool: any) => tools.set(tool.name, tool) }); return registration
+    } },
+    session: { hook: async () => registration },
+  } as never, async (sessionID, name) => {
+    assert.equal(name, "schedule")
+    return { control: {} as never, readSessionID: sessionID, current() {}, beforeTool: async () => {} }
+  }, async (sessionID, input) => {
+    calls.push({ sessionID, input })
+    if (loseACK) throw new Error("Lost bridge ACK")
+    return { schedules: [] }
+  })
+  t.after(cleanup)
+  const schedule = tools.get("schedule")
+  const validate = new Ajv().compile(schedule.input)
+  assert.equal(validate({ action: "list" }), true)
+  assert.equal(validate({ action: "delete", missionID: "owned_schedule", requestID: "delete_once", expectedRevision: 5 }), true)
+  for (const sessionID of ["ses_root", "ses_descendant", "ses_actor", "ses_passage"]) {
+    assert.deepEqual(JSON.parse((await schedule.execute({ action: "list" }, { sessionID })).content), { schedules: [] })
+  }
+  assert.deepEqual(calls.map((call: any) => call.sessionID), ["ses_root", "ses_descendant", "ses_actor", "ses_passage"])
+  await assert.rejects(schedule.execute({ action: "delete", missionID: "owned_schedule" }, { sessionID: "ses_actor" }))
+  assert.equal(calls.length, 4)
+  loseACK = true
+  const input = { action: "pause", missionID: "owned_schedule", requestID: "lost_ack", expectedRevision: 4 }
+  const result = JSON.parse((await schedule.execute(input, { sessionID: "ses_actor" })).content)
+  assert.deepEqual(result, { status: 503, pending: true, missionID: input.missionID, requestID: input.requestID,
+    action: input.action, code: "schedule-unconfirmed" })
+  assert.equal(calls.length, 5, "lost ACK returns the original identity without retry")
+})
+
+test("registers eight tools, typed snapshot RPC, and role context", async () => {
   const values = new Map<string, unknown>()
   const tools: Array<{ name: string; execute(input: unknown, context: any): Promise<{ content: string }> }> = []
   let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
@@ -117,7 +152,7 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
     },
   } as never)
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare"])
+  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule"])
   const description = (name: string) => (tools.find((tool) => tool.name === name) as unknown as { description: string }).description
   for (const name of ["report", "briefing"]) {
     assert.match(description(name), /plain language in the user's language[:,] 3-5 short sentences, outcome first/)
@@ -133,7 +168,8 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   assert.match(description("prepare"), /new coordinator is the default/)
   assert.match(description("prepare"), /Any owned project session may prepare/)
   assert.match(description("prepare"), /coordinatorSessionID explicitly selects an eligible idle root for scheduling only/)
-  assert.match(description("prepare"), /Pause, Stop, Resume, Run now, Check, configure and delete remain human controls/)
+  assert.match(description("prepare"), /mission.schedule controls project schedules/)
+  assert.match(description("schedule"), /including human-created schedules/)
   assert.equal((inspect as any).input.properties.start.properties.title.maxLength, 60)
   const validateInspect = new Ajv().compile((inspect as any).input)
   const validatePrepare = new Ajv().compile((tools.find(tool => tool.name === "prepare") as any).input)

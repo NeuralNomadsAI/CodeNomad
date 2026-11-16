@@ -36,8 +36,10 @@ type Validation = Pick<NativeScheduledPassageContext, "native" | "observation" |
 export const acquireAgentScheduledCoordinatorValidation = Effect.fn("missions.validateAgentScheduledCoordinator")(function* (
   ctx: Plugin.Context, run: MissionNativeRunner, document: AdoptionDocument, current: () => true, signal: AbortSignal,
 ) {
-  assertAgentScheduledCoordinatorSelection(document.pending?.configuration ?? document.configuration, document.creation?.author)
-  if (!document.creation?.author || !(document.pending?.configuration ?? document.configuration).coordinatorSessionID) return current
+   const configuration = document.pending?.configuration ?? document.configuration
+   const author = configuration.coordinatorSelectionAuthor ?? document.creation?.author
+   assertAgentScheduledCoordinatorSelection(configuration, author)
+   if (!author || !configuration.coordinatorSessionID) return current
   const native = yield* acquireMissionNativeService(current, run).pipe(Effect.scoped)
   const observation = yield* acquireNativePassageObservation(undefined, run)
   const fences = yield* acquireNativeSourceFence(current)
@@ -60,7 +62,8 @@ export const prevalidateAgentScheduledCoordinatorCreation = Effect.fn("missions.
 /** Read-only prevalidation. Its native fence is also consumed inside CAS/effects;
  * the caller's current guard owns the document being changed. */
 export async function prepareAgentScheduledCoordinator(input: Validation): Promise<() => true> {
-  const doc = input.document, author = doc.creation?.author, config = doc.pending?.configuration ?? doc.configuration
+   const doc = input.document, config = doc.pending?.configuration ?? doc.configuration
+   const author = config.coordinatorSelectionAuthor ?? doc.creation?.author
   assertAgentScheduledCoordinatorSelection(config, author)
   const id = config.coordinatorSessionID
   if (!author || !id) return input.current

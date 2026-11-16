@@ -7,6 +7,7 @@ import { taskExecutionModeSchema, taskExecutionModeRpcSchema } from "./native-wi
 import { parseExecutionMode } from "./task-execution-mode"
 import { parseNativeBinding } from "./native-report-provenance"
 import { MISSION_BRIEFING_RESPONSES_MAX, missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
+import { scheduleToolWire } from "./schedule-tool"
 
 test("Missions native RPC schemas avoid unsupported not and pattern keywords", () => {
   const visit = (value: unknown, path = "rpc") => {
@@ -18,9 +19,13 @@ test("Missions native RPC schemas avoid unsupported not and pattern keywords", (
     }
   }
   visit(CODENOMAD_MISSIONS_RPC)
+  visit(scheduleToolWire, "mission.schedule")
 })
 
 test("every Missions RPC schema converts through the native schema representation", () => {
+  assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaDocument({
+    dialect: "draft-2020-12", schema: scheduleToolWire, definitions: {},
+  }), "mission.schedule")
   for (const [name, method] of Object.entries(CODENOMAD_MISSIONS_RPC.methods)) {
     for (const side of ["input", "output"] as const) {
       assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaDocument({

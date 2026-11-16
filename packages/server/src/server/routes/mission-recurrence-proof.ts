@@ -73,8 +73,8 @@ export async function verifyRecurrenceRequest(input: unknown, deps: {
   if (principal.kind === "agent") {
     const authorCurrent = async () => {
       const author = await connection.client.session.get({ sessionID: principal.author.coordinatorSessionID }, { signal })
-      if (author.id !== principal.author.coordinatorSessionID || author.projectID !== location.project.id
-        || !sameLocation(author.location, body.location)
+       if (author.id !== principal.author.coordinatorSessionID || author.projectID !== location.project.id
+         || principal.creationRequestID && !sameLocation(author.location, body.location)
         || !await deps.manager.ownsLocation(body.workspaceID, author.location, connection.client, { signal }))
         throw new Error("Recurrence agent owner unavailable")
     }
@@ -92,7 +92,7 @@ export async function verifyRecurrenceRequest(input: unknown, deps: {
         if (!result.binding || canonicalAuthority(result.binding) !== canonicalAuthority(expected))
           throw new Error("Recurrence agent creation unavailable")
       }
-    } else {
+    } else if (principal.creationRequestID) {
       const result = await connection.client.rpc(CODENOMAD_MISSIONS_RPC).scheduleRead({ missionID: body.scheduleID },
         { location: { directory: body.location.directory }, signal }) as { document?: {
           firstPlayedAt: number | null; revision: number; state: string; creation?: { requestID: string; digest: string; author?: unknown;

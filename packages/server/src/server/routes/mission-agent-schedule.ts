@@ -1,0 +1,135 @@
+import { z } from "zod"
+import { isSessionNotFoundError } from "@opencode/client"
+import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
+import { scheduleToolInput } from "../../missions/schedule-tool"
+import { requiresMissionCalendar } from "../../missions/launch-policy"
+import type { MissionScheduleRead } from "../../missions/mission-schedule-view"
+import type { MissionScheduleList } from "../../missions/mission-schedule-list"
+import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
+import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
+import { executeScheduledMission, type ScheduledMissionDeps } from "./mission-scheduled"
+import type { ScheduledPreparationDeps } from "./mission-prepare-scheduled"
+import { prepareMissionMapMutation } from "./mission-map-mutation"
+import { missionScheduleActivationJournal } from "./mission-schedule-activation-journal"
+import { prepareMissionScheduleSettings } from "./mission-schedule-settings"
+import { scheduledMissionHold } from "./mission-scheduled-holds"
+import type { WorkspaceManager } from "../../workspaces/manager"
+
+const commandSchema = z.object({ kind: z.literal("schedule"), input: scheduleToolInput }).strict()
+type Deps = ScheduledMissionDeps & Pick<ScheduledPreparationDeps, "scheduleSettingsActivation">
+  & { workspaceManager: ScheduledMissionDeps["workspaceManager"] & Pick<WorkspaceManager, "list"> }
+
+/** Private bridge entry: native caller identity, never an HTTP-supplied principal. */
+export async function controlAgentMissionSchedule(deps: Deps, sessionID: string, command: unknown, signal: AbortSignal) {
+  const { input } = commandSchema.parse(command), manager = deps.workspaceManager
+  if (!deps.worktreeDeletionFence || isReservedMissionScheduleSessionID(sessionID)) throw new Error("Mission schedule owner unavailable")
+  const candidates = await Promise.all(manager.list().map(async workspace => {
+    const connection = await manager.getSharedServiceConnection(workspace.id)
+    if (!connection) throw new Error("Mission schedule ownership unavailable")
+    const session = await connection.client.session.get({ sessionID }, { signal }).catch(error => {
+      if (isSessionNotFoundError(error)) return undefined
+      throw error
+    })
+    if (!session) return undefined
+    const owned = await manager.ownsLocation(workspace.id, session.location, connection.client, { signal, strict: true })
+    return owned && session.id === sessionID ? { connection, workspace, session } : undefined
+  }))
+  const owners = candidates.filter(value => value !== undefined)
+  if (!owners.length || new Set(owners.map(value => value.connection)).size !== 1) throw new Error("Mission schedule owner ambiguous")
+  const { connection, workspace, session } = owners[0], client = connection.client
+  const current = () => {
+    signal.throwIfAborted(); connection.assertCurrent()
+    if (manager.get(workspace.id) !== workspace) throw new Error("Mission schedule owner changed")
+  }
+  const refresh = async () => {
+    current()
+    const fresh = await client.session.get({ sessionID }, { signal })
+    if (fresh.id !== sessionID || fresh.projectID !== session.projectID || !sameLocation(fresh.location, session.location)
+      || !await manager.ownsLocation(workspace.id, fresh.location, client, { signal, strict: true }))
+      throw new Error("Mission schedule author changed")
+    current()
+  }
+  await refresh()
+  const options = { location: { directory: session.location.directory }, ...locationRequestOptions(session.location), signal }
+  const rpc = client.rpc(CODENOMAD_MISSIONS_RPC)
+  const nativeLocation = await client.location.get({ location: options.location }, { signal })
+  if (nativeLocation.project.id !== session.projectID) throw new Error("Mission schedule project differs")
+  if (input.action !== "list" && input.action !== "read") {
+    const capability = await rpc.documentCapabilities({}, options) as { version?: number; agentScheduleControl?: boolean }
+    await refresh()
+    if (capability.version !== 1 || capability.agentScheduleControl !== true)
+      return { status: 503, pending: true, missionID: input.missionID, requestID: input.requestID, code: "schedule-control-unavailable" }
+  }
+  if (input.action === "list") {
+    const owned = await prepareMissionMapMutation({ manager, fence: deps.worktreeDeletionFence, workspaceID: workspace.id,
+      directory: session.location.directory, signal })
+    return owned.run(async (native, nativeOptions) => {
+      const page = await native.scheduleList({ after: input.after, limit: input.limit ?? 8 }, { ...nativeOptions, signal }) as MissionScheduleList
+      await owned.refresh(); await refresh()
+      if (page.projectID !== session.projectID) throw new Error("Foreign Mission schedule list")
+      return { ...page, schedules: page.schedules.map(document => ({
+        missionID: document.id, title: document.configuration.title, kind: document.kind, revision: document.revision,
+        state: document.state, observation: document.observation, availableActions: document.availableActions, blockReason: document.blockReason,
+      })) }
+    })
+  }
+  const point = await rpc.scheduleRead({ missionID: input.missionID! }, options) as MissionScheduleRead
+  await refresh()
+  const document = point.document
+  if (document && document.kind !== "schedule") throw new Error("Use this Mission's owning controls")
+  const directory = document?.configuration.roots.find(root => root.directory === session.location.directory)?.directory
+    ?? document?.configuration.roots[0]?.directory ?? session.location.directory
+  if (!await manager.ownsLocation(workspace.id, { directory }, client, { signal, strict: true })) throw new Error("Foreign Mission schedule Location")
+  const principal = { kind: "agent" as const, author: { coordinatorSessionID: sessionID } }
+  let expectedRevision = input.expectedRevision
+  const held = scheduledMissionHold(deps.worktreeDeletionFence, input.missionID!)
+  // Ready activation retains the original user-facing revision. Exact control
+  // receipts and held permits retain the post-activation native CAS revision.
+  const activation = document?.scheduleActivation
+  const sameActivation = !!activation && activation.requestID === input.requestID && activation.expectedRevision === input.expectedRevision
+  if (input.action === "play" || input.action === "resume") {
+    if (!document) throw new Error("Mission schedule unavailable")
+    if (held && held.binding.requestID === input.requestID && (sameActivation || held.binding.expectedRevision === input.expectedRevision))
+      expectedRevision = held.binding.expectedRevision
+    else {
+      const exact = await rpc.scheduleRead({ missionID: input.missionID!, requestID: input.requestID! }, options) as MissionScheduleRead
+      await refresh()
+      const control = exact.document?.control
+      if (control && control.requestID === input.requestID
+        && (sameActivation || control.expectedRevision === input.expectedRevision))
+        expectedRevision = control.expectedRevision
+      else if (sameActivation && !held) {
+        // An earlier activation crossed the native boundary. Recovery observes
+        // that original request only, even when settings became ready meanwhile.
+        return { status: 503, missionID: input.missionID, requestID: input.requestID, pending: true, code: "schedule-pending" }
+      }
+      else if (!held && document.state === "paused" && requiresMissionCalendar(document.configuration.launch)) {
+        if (!deps.scheduleSettingsActivation) throw new Error("Mission schedule activation unavailable")
+        const owned = await prepareMissionMapMutation({ manager, fence: deps.worktreeDeletionFence, workspaceID: workspace.id, directory, signal })
+        expectedRevision = await owned.run(async (native, nativeOptions) => {
+          const guarded = { documentActivation: async (...params: Parameters<typeof native.documentActivation>) => {
+            await owned.refresh(); await refresh()
+            return native.documentActivation(...params)
+          } }
+          const adapter = missionScheduleActivationJournal(guarded, nativeOptions, { missionID: input.missionID!,
+            requestID: input.requestID!, expectedRevision: input.expectedRevision! }, current)
+          const after = await prepareMissionScheduleSettings({ adapter, activation: deps.scheduleSettingsActivation!,
+            workspaceID: workspace.id, location: nativeOptions.location, requestID: input.requestID!, expectedRevision: input.expectedRevision!,
+            refresh: async () => { await owned.refresh(); await refresh() } })
+          if (after.scheduleActivation?.state !== "ready") throw new Error("Mission schedule activation remains uncertain")
+          return after.revision
+        })
+      }
+    }
+  }
+  const { action, missionID, requestID, configuration, deleteManagedSessions } = input
+  const result = await executeScheduledMission(deps, {
+    selected: { id: workspace.id, missionID }, query: { directory, ...(requestID ? { requestID } : {}) },
+    value: action === "read" ? undefined : { action, requestID: requestID!, expectedRevision: expectedRevision!, directory,
+      ...(configuration ? { configuration } : {}), ...(deleteManagedSessions === undefined ? {} : { deleteManagedSessions }) },
+    method: action === "read" ? "GET" : "POST", creating: false,
+    lifetime: { signal, wait: promise => Promise.resolve(promise) }, principal, currentPrincipal: current, checkPrincipal: refresh,
+  })
+  await refresh()
+  return { status: result.status, ...(result.body as object) }
+}

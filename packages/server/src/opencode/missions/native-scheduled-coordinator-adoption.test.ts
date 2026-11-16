@@ -66,9 +66,14 @@ test("creation Effect prevalidation is read-only, guards native state and foreig
   db.exec("INSERT INTO session_inbox VALUES('msg_queued','ses_root',1,'user')")
   assert.throws(guard, /changed during preparation/)
   await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, input)), /coordinator-busy/)
+  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined,
+    configuration: { ...configuration, coordinatorSelectionAuthor: input.author } })), /coordinator-busy/,
+  "agent configuration retains idle-root safeguards on human-created documents")
   const human = await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined }))
   assert.equal(human(), true, "explicit human adoption remains allowed while busy")
   await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: { coordinatorSessionID: "ses_root" } })), /coordinator-is-author/)
+  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined,
+    configuration: { ...configuration, coordinatorSelectionAuthor: { coordinatorSessionID: "ses_root" } } })), /coordinator-is-author/)
   db.exec("DELETE FROM session_inbox")
   const creation = await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, input))
   const prefix = `${MISSION_DOCUMENT_PREFIX}/project/${stableToken("project\0/project", 24)}/missions/`

@@ -189,10 +189,10 @@ the Missions metadata key. Existing transcript, title, permissions and unrelated
 remain. The user's choice authorizes ordinary Mission controls over that conversation
 and its work, including Stop cancellation of existing queued user/synthetic inputs.
 For human-authored choices, never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
-Agent-authored preparations restrict explicit adoption to an idle eligible root:
+Agent-authored preparations and configurations restrict explicit adoption to an idle eligible root:
 the author, followed/event sources, active family work, queued inputs, durable claims,
 open requests and active or uncertain ownership by another Mission refuse adoption.
-Preparation and every authoritative adoption revalidate this boundary before native
+Preparation, configuration and every authoritative adoption revalidate this boundary before native
 profile, metadata, environment or input effects; the current passage's own marker is allowed.
 A missing chosen root stays missing; attempted admission retains its original proof rules.
 
@@ -237,7 +237,7 @@ wake joins the exact existing service.
 
 The authenticated product seam is `POST /api/workspaces/:id/missions/scheduled`
 for paused creation, and `GET|POST /api/workspaces/:id/missions/:missionID/schedule`
-for status and explicit controls. Requests pin the native directory, human principal,
+for status and explicit controls. Requests pin the native directory, signed human or project-agent principal,
 profile source, request ID and document revision through the existing signed bridge.
 `scheduleRead({missionID,requestID})` reads an exact retained control receipt;
 missing or evicted proof stays unknown. Passive reads send no controls.
@@ -537,15 +537,19 @@ that is still authorized; the bridge callback revalidates the same principal and
 never treats a device as a cookie. Any other principal is refused before a
 deletion permit or control hold exists, so a refusal is definitive, never uncertain.
 
-Agents may create their own unified schedule and request its first activation through
-`mission.prepare`. An explicit user request passed as `startOnCreation` authorizes
-only that fresh creation's first Play. A signed agent
-principal binds the actual owned author, original request and creation digest; live
-bridge verification and document CAS enforce that scope. Recovered acknowledgements
-only read the original result. Public HTTP controls retain their authenticated human
-principal. Pause, Stop, Resume, Run now, Check, configure, delete and another Play stay human-only.
-Never expose Pause, Stop, Resume, Run now, Check, configure, delete or another Play
-as model tools. Validate project/Location ownership,
+Agents create unified schedules through `mission.prepare` and control every unified
+project schedule through `mission.schedule`, including human-created documents.
+Its list/read actions expose project pages and exact receipts. Play, Pause, Stop,
+Resume, Run now, Check, configure and delete use the shared human business operations,
+physical holds and native admission. Every owned project session qualifies, including
+descendants, actors and scheduled passages. Signed project-agent principals bind the
+actual native caller and are revalidated through the private bridge and native fences.
+The creation-scoped principal used by `prepare.startOnCreation` binds its author,
+original request and creation digest to fresh first Play. Recovered preparations read
+their original result. Public HTTP controls authenticate their human principal.
+Agent configuration uses the editor codec, explicit frozen profiles and idle-root
+adoption guards, retained in `coordinatorSelectionAuthor` for passage admission.
+Validate project/Location ownership,
 connection identity, inputs and frozen execution profiles at the existing boundary.
 Each control has `requestID` idempotency and `expectedRevision` CAS.
 A duplicate request must not start a second Job, passage or coordinator message.
@@ -620,7 +624,7 @@ Everything else (including an unprovable profile change) stays unknown.
 If a reply is lost, retain that request identity and reread its status.
 Refresh, reconnect, remount and status reads never automatically resend it.
 An uncertain control must not be replaced with a fresh request to evade the hold.
-Resume is only ever an explicit user action. Stopped schedules cannot be played, resumed or run now.
+Resume is an explicit human or agent control. Stopped schedules cannot be played, resumed or run now.
 
 A schedule document keeps at most 64 control records. Admitting a new control
 evicts the oldest completed record; unresolved records are never evicted, and an

@@ -34,8 +34,9 @@ export type NativeSchedulePendingResumeProof = { passageID: string; messageID: s
 /** Emitted only by serialized validation before this control's first write. */
 export class NativeScheduleControlRefusal extends Error {
   readonly refusal
-  constructor(input: NativeScheduleOwnerControl, reason: "revision-conflict" | "date-passed") {
-    super(reason === "revision-conflict" ? "Mission document revision conflict" : "Mission date has passed")
+  constructor(input: NativeScheduleOwnerControl, reason: "revision-conflict" | "control-conflict" | "date-passed") {
+    super(reason === "revision-conflict" ? "Mission document revision conflict"
+      : reason === "control-conflict" ? "Mission calendar request conflict" : "Mission date has passed")
     this.refusal = { missionID: input.missionID, requestID: input.requestID, expectedRevision: input.expectedRevision,
       action: input.action, payloadDigest: missionSchedulePayloadDigest(input), reason }
   }
@@ -141,7 +142,8 @@ export class NativeScheduleCalendarOwner {
       const previous = doc.calendarOwner?.operation
       const replay = nativeScheduleOwnerControlReceipt(doc, input.requestID)
       if (replay) {
-        if (replay.expectedRevision !== input.expectedRevision || replay.fingerprint !== fingerprint) throw new Error("Mission calendar request conflict")
+        if (replay.expectedRevision !== input.expectedRevision || replay.fingerprint !== fingerprint)
+          throw new NativeScheduleControlRefusal(input, "control-conflict")
         if (doc.calendarOwner?.operation.requestID === input.requestID && doc.calendarOwner.operation.textEdit)
           doc = await this.finishTextEdit(locked, doc, true)
         return replay.pending && processAfterCommit ? this.process(locked, doc) : doc
@@ -266,6 +268,8 @@ export class NativeScheduleCalendarOwner {
     return locked.change(doc.id, doc.revision, this.options.current, value => {
       // The original H9-validated edit changes only future text, even after archive.
       value.configuration.objective = intent.configuration.objective
+      if (intent.configuration.coordinatorSelectionAuthor) value.configuration.coordinatorSelectionAuthor = intent.configuration.coordinatorSelectionAuthor
+      else delete value.configuration.coordinatorSelectionAuthor
       if (intent.configuration.notes === undefined) delete value.configuration.notes
       else value.configuration.notes = intent.configuration.notes
       delete value.calendarOwner!.operation.textEdit

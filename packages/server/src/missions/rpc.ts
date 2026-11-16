@@ -300,7 +300,7 @@ export const CODENOMAD_MISSIONS_RPC = {
     documentCapabilities: {
       input: { type: "object", properties: {}, additionalProperties: false },
       output: { type: "object", properties: { version: { type: "integer", const: 1 }, automaticStart: { const: true },
-        agentSchedulePreparation: { const: true } }, required: ["version"], additionalProperties: false },
+        agentSchedulePreparation: { const: true }, agentScheduleControl: { const: true } }, required: ["version"], additionalProperties: false },
     },
     documentActivation: {
       input: { type: "object", properties: { missionID: { type: "string", minLength: 3, maxLength: 100 }, requestID,

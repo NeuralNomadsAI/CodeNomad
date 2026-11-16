@@ -27,7 +27,7 @@ the execution journal retains its task, report and lifecycle contracts.
 | Developer feedback | Separate `codenomad.automation` plugin and its visible-session fence |
 
 The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`,
-`mission.report`, `mission.briefing`, `mission.interrupt` and `mission.prepare`.
+`mission.report`, `mission.briefing`, `mission.interrupt`, `mission.prepare` and `mission.schedule`.
 The coordinator is the topology writer.
 Native RPC schemas use the decoder's portable primitives; strict server codecs
 validate principal exclusivity and identifier/digest formats before authentication
@@ -204,7 +204,9 @@ template and requested choices even after human edits.
 Repository activity, GitHub account events, local branch commits, new conversation
 messages, file changes and another Mission's success use the shared
 [launch-criteria contract](MISSIONS_RECURRING.md#launch-criteria).
-Pause, Resume, Stop, Run now, Check, configuration edits and deletion stay human controls.
+`mission.schedule` lists, reads and controls every calendar-backed document in the
+caller's project, including documents created in the editor. Any owned project session
+may Play, Pause, Stop, Resume, Run now, Check, configure or delete.
 
 `mission.inspect({ configurations: true })` lists the owning backend's saved
 configuration IDs, names and templates. `configurations: "<id>"` reads one complete
@@ -342,7 +344,30 @@ Document recovery reads the backend's exact retained receipt to release its phys
 permit; its internal observation-only path keeps absent or partial receipts uncertain.
 Before first scheduled dispatch, preparation reads document existence without a
 request selector; held and observation-only recovery reads the exact original receipt.
-Pause, Resume, Stop, Run now, Check, configure and delete remain human actions.
+Project controls use `mission.schedule` independently of preparation provenance.
+
+### Agent schedule controls
+
+`mission.schedule({ action: "list", after?, limit? })` reads a bounded project page
+(at most eight entries); `read` takes `missionID` and optional `requestID` for its exact
+receipt. Every mutation takes `missionID`, `action`, a stable `requestID` and
+`expectedRevision` from the current read. `configure` supplies the editor's complete
+configuration, with `missionCriteriaLaunchPolicySchema`, explicit frozen profiles,
+task mode and followed conversations; the backend supplies execution roots and profile
+identity. Its persisted `coordinatorSelectionAuthor` applies the idle-root adoption
+guards at configuration and passage admission, including for human-created documents.
+
+The private bridge discovers exactly one owning backend and revalidates the native
+caller, project, Location, connection and physical checkout. Its signed project-agent
+principal carries the actual session; preparation continuations retain their separate
+creation/request/digest scope. Mutation dispatch requires the native document's positive
+`agentScheduleControl` capability. The shared `executeScheduledMission` admission owns the
+same physical holds, payload identity, native CAS, receipt settlement and single-passage
+Run now as public human controls. Play/Resume share settings preparation and preserve
+explicit OFF. Exact completed replays return their original result; changed inputs
+conflict. Lost acknowledgements retain the original hold: read that request's receipt
+without resending or choosing another identity. Deletion replays read the tombstone.
+Public HTTP mutations authenticate their human principal before admission.
 
 Preparation requestIDs are scoped to the actual author and native source mission
 when present; authors outside a mission use their stable `outside-mission` domain.

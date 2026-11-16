@@ -4,7 +4,7 @@ import { missionConfigurationSchema, requiresMissionCalendar } from "../../missi
 import { missionScheduleActions, missionScheduleID, missionSchedulePayloadDigest, missionScheduleRefusalSchema } from "../../missions/mission-schedule-contract"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
-import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../../missions/recurrence-control-proof"
+import { recurrenceControlRequestDigest, signNativeRecurrenceControl, type SchedulePrincipal } from "../../missions/recurrence-control-proof"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { requestAdmission } from "../request-admission"
 import { prepareMissionMapMutation, MissionMapMutationError } from "./mission-map-mutation"
@@ -17,7 +17,7 @@ import type { registerMissionRecurrenceCreate } from "./mission-recurrence-creat
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { scheduledMissionProfileSource } from "./mission-scheduled-admission"
 
-type Deps = Parameters<typeof registerMissionRecurrenceCreate>[1] & {
+export type ScheduledMissionDeps = Parameters<typeof registerMissionRecurrenceCreate>[1] & {
   workspaceManager: Parameters<typeof registerMissionRecurrenceCreate>[1]["workspaceManager"] & Partial<Pick<WorkspaceManager, "getServicePathStyle">>
 }
 type Owned = Awaited<ReturnType<typeof prepareMissionMapMutation>>
@@ -29,9 +29,11 @@ type Options = { location: { directory: string }; signal?: AbortSignal; headers?
 const id = z.string().regex(/^[A-Za-z0-9_-]{3,100}$/)
 const directory = z.string().min(1).max(4096).refine(value => !value.includes("\0"))
 const params = z.object({ id: z.string().min(1).max(200), missionID: id.optional(), requestID: id.optional() }).strict()
-const userConfiguration = z.object(missionConfigurationSchema.shape).strict().omit({ roots: true, profileID: true, executionHost: true })
+const scheduleUserConfiguration = z.object(missionConfigurationSchema.shape).strict().omit({
+  roots: true, profileID: true, executionHost: true, coordinatorSelectionAuthor: true,
+})
 const body = z.object({ requestID: id, expectedRevision: z.number().int().nonnegative().safe(), action: z.enum(missionScheduleActions),
-  configuration: userConfiguration.optional(), deleteManagedSessions: z.boolean().optional(), retry: z.boolean().optional(), directory: directory.optional(),
+  configuration: scheduleUserConfiguration.optional(), deleteManagedSessions: z.boolean().optional(), retry: z.boolean().optional(), directory: directory.optional(),
 }).strict().refine(value => ["create", "configure"].includes(value.action) === !!value.configuration
   && (value.deleteManagedSessions === undefined || value.action === "delete") && (value.action !== "create" || value.expectedRevision === 0)
   && !(value.action === "create" && value.configuration && !requiresMissionCalendar(value.configuration.launch)))
@@ -41,7 +43,7 @@ const resultSchema = z.object({ pending: z.boolean(), deleted: z.boolean().optio
 
 /** Physical permits survive unknown native outcomes. Exact completed receipts or
  * proven initial pre-write refusals settle them; reads never retry or arm work. */
-export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
+export function registerMissionScheduled(app: FastifyInstance, deps: ScheduledMissionDeps) {
   for (const method of ["GET", "POST"] as const) for (const creating of [false, true]) {
     app.route({ method, url: creating ? method === "POST" ? "/api/workspaces/:id/missions/scheduled"
       : "/api/workspaces/:id/missions/scheduled/requests/:requestID" : "/api/workspaces/:id/missions/:missionID/schedule",
@@ -50,13 +52,40 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
         const query = z.object({ directory: directory.optional(), requestID: id.optional() }).strict().safeParse(request.query)
         if (!selected.success || !query.success || method === "POST" && (!input?.success || creating !== (input.data.action === "create")))
           return reply.code(400).send({ error: "Invalid Mission schedule request", code: "schedule-input-invalid" })
-        const lifetime = requestAdmission(request, reply), value = input?.success ? input.data : undefined
+        const lifetime = requestAdmission(request, reply)
         const auth = deps.auth, human = auth && recurrenceHumanSession(request, { auth, remoteDevices: deps.remoteDevices })
+        try {
+          const result = await executeScheduledMission(deps, { selected: selected.data, query: query.data,
+            value: input?.success ? input.data : undefined, method, creating, lifetime,
+            principal: human && { kind: "human", sessionID: human.sessionId },
+            currentPrincipal: () => {
+              if (human && recurrenceHumanSession(request, { auth: auth!, remoteDevices: deps.remoteDevices })?.sessionId !== human.sessionId)
+                throw new Error("Mission schedule principal changed")
+            } })
+          return reply.code(result.status).send(result.body)
+        } finally { lifetime.dispose() }
+      },
+    })
+  }
+}
+
+/** Shared human/agent business admission. Only the private bridge supplies an agent principal. */
+export async function executeScheduledMission(deps: ScheduledMissionDeps, args: {
+  selected: z.infer<typeof params>; query: { directory?: string; requestID?: string }
+  value?: z.infer<typeof body>; method: "GET" | "POST"; creating: boolean
+  lifetime: Pick<ReturnType<typeof requestAdmission>, "signal" | "wait">
+  principal?: SchedulePrincipal; currentPrincipal(): void; checkPrincipal?(): Promise<void>
+}): Promise<{ status: number; body: unknown }> {
+        const { method, creating, lifetime, principal, value } = args
+        const selected = { data: args.selected }, query = { data: args.query }
+        let status = 200
+        const reply = { code(value: number) { status = value; return this }, send(body: unknown) { return { status, body } } }
         let missionID = selected.data.missionID, held: Hold | undefined, ownsHold = false
         const pending = (result: object = {}) => reply.code(503).send({ ...result, missionID, pending: true,
           error: "Mission schedule action remains unconfirmed", code: "schedule-pending" })
         try {
-          if (method === "POST" && (!human || !auth || !deps.bridgeToken || !deps.settings?.configYamlPathForAuthority))
+          args.currentPrincipal(); await args.checkPrincipal?.()
+          if (method === "POST" && (!principal || !deps.bridgeToken || !deps.settings?.configYamlPathForAuthority))
             return reply.code(401).send({ error: "Human authentication required", code: "schedule-human-required" })
           const settings = deps.settings, manager = deps.workspaceManager, scope = settings?.getProfileScope()
           const distro = manager.getServiceWslDistro(selected.data.id), executionHost = distro ? `wsl:${distro}` : "local"
@@ -74,19 +103,21 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
             : scheduledMissionHold(deps.worktreeDeletionFence, missionID!)
           const check = (owned: Scope) => {
             owned.current(); lifetime.signal.throwIfAborted()
-            if (human && recurrenceHumanSession(request, { auth: auth!, remoteDevices: deps.remoteDevices })?.sessionId !== human.sessionId
-              || canonicalAuthority(settings?.getProfileScope() ?? null) !== profile
+            args.currentPrincipal()
+            if (canonicalAuthority(settings?.getProfileScope() ?? null) !== profile
               || settings?.configYamlPathForAuthority?.() !== yaml || manager.getServiceWslDistro(selected.data.id) !== distro)
               throw new Error("Mission schedule principal changed")
           }
           const configurationFor = (location: { directory: string }) => value?.configuration && missionConfigurationSchema.parse({ ...value.configuration,
+            ...(principal?.kind === "agent" ? { coordinatorSelectionAuthor: { coordinatorSessionID: principal.author.coordinatorSessionID } } : {}),
             profileID: scope!.key, executionHost, roots: [{ mode: "directory-only", directory: location.directory }] })
           const digestFor = (configuration: ReturnType<typeof configurationFor>) => missionCreationDigest([
             value!.requestID, value!.expectedRevision, value!.action, missionSchedulePayloadDigest({ configuration, deleteManagedSessions: value!.deleteManagedSessions }),
           ])
           const effect = async (owned: Scope, rpc: Rpc, options: Options, retain?: Owned["retain"]) => {
             check(owned)
-            if (!value || !human || !auth || !deps.bridgeToken || !settings?.configYamlPathForAuthority || !scope || !yaml || !deps.worktreeDeletionFence)
+            await args.checkPrincipal?.()
+            if (!value || !principal || !deps.bridgeToken || !settings?.configYamlPathForAuthority || !scope || !yaml || !deps.worktreeDeletionFence)
               throw new Error("Mission schedule admission unavailable")
             const owner = await readRecurrenceHoldOwner(manager, selected.data.id, owned.workspace, owned.location.directory, owned.client, lifetime.signal)
             check(owned)
@@ -103,8 +134,9 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
             const profileSource = await scheduledMissionProfileSource({ manager, settings, workspaceID: selected.data.id,
               owned, owner, scope, yaml, executionHost, check: () => check(owned) })
             if (!held) retain!(release => { held = holdScheduledMission(deps.worktreeDeletionFence!, binding, release); ownsHold = true })
-            await owned.refresh(); check(owned)
-            const identity = { sessionID: human.sessionId, workspaceID: selected.data.id, requestID: value.requestID,
+            await owned.refresh(); check(owned); await args.checkPrincipal?.()
+            const identity = { ...(principal.kind === "human" ? { sessionID: principal.sessionID } : { principal }),
+              workspaceID: selected.data.id, requestID: value.requestID,
               location: options.location, scheduleID: missionID, action: value.action, expectedRevision: value.expectedRevision,
               profileSource, issuedAt: Date.now(), ...(["create", "configure", "delete"].includes(value.action)
                 ? { configDigest: missionSchedulePayloadDigest({ configuration, deleteManagedSessions: value.deleteManagedSessions }) } : {}) }
@@ -133,12 +165,12 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
               result = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID, requestID: binding.requestID }, options)))
               await owned.refresh(); check(owned)
             }
-            return held!.settle(binding, result) ? result : pending(result)
+            return held!.settle(binding, result) ? reply.send(result) : pending(result)
           }
           let retryReceipt: unknown
           if (existing) {
             held = existing; missionID = existing.binding.missionID
-            if (!human || !auth || !settings || !scope || !yaml || existing.preparing)
+            if (!principal || !settings || !scope || !yaml || existing.preparing)
               return pending()
             if (query.data.requestID && query.data.requestID !== existing.binding.requestID)
               throw new ScheduledHoldError(409, "Exact held Mission request required")
@@ -171,7 +203,7 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
             retryReceipt = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID, requestID: existing.binding.requestID }, options)))
             await owned.refresh(); check(owned)
             const binding = { ...existing.binding, connection }
-            if (existing.settle(binding, retryReceipt)) return retryReceipt
+            if (existing.settle(binding, retryReceipt)) return reply.send(retryReceipt)
             if (value?.action === "check" && value.requestID !== existing.binding.requestID || value?.retry && value.action !== "check") {
               if (existing.connection === connection) return await effect(owned, rpc, options)
               // A retired connection's permit remains held until a fresh physical
@@ -200,13 +232,10 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
             const result = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID: missionID!,
               ...((creationRequestID ?? query.data.requestID) ? { requestID: creationRequestID ?? query.data.requestID } : {}) }, { ...options, signal: lifetime.signal })))
             await owned.refresh(); check(owned)
-            return result.pending ? pending(result) : result
+            return result.pending ? pending(result) : reply.send(result)
           })
         } catch (error) {
           const status = error instanceof MissionMapMutationError || error instanceof ScheduledHoldError ? error.status : 503
           return reply.code(status).send({ missionID, pending: true, error: "Mission schedule action remains unconfirmed", code: "schedule-unconfirmed" })
-        } finally { if (ownsHold) held?.dispose(); lifetime.dispose() }
-      },
-    })
-  }
+        } finally { if (ownsHold) held?.dispose() }
 }

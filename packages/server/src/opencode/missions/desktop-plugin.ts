@@ -34,7 +34,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
         // Separate preparations always belong to the project journal, including
         // when their actual author executes inside an isolated passage journal.
         const input = raw as { list?: boolean; missionID?: string; configurations?: true | string; content?: { kind?: string } }
-        if (name === "prepare" || name === "inspect" && (input.configurations !== undefined || input.content?.kind === "configuration")) return author
+         if (name === "prepare" || name === "schedule" || name === "inspect" && (input.configurations !== undefined || input.content?.kind === "configuration")) return author
         const own = author && name === "inspect" && (input.list || input.missionID)
           ? await author.control.listMissions(sessionID) : undefined
         if (author && own?.some(mission => mission.missionID === input.missionID && mission.relation === "prepared")) return author
@@ -50,7 +50,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           } }
         }
         return selected ? { ...selected, preparationAvailable: Boolean(author) } : author
-      })
+       }, (sessionID, input) => sendMissionInput(sessionID, "schedule", input))
       const promptHook = await ctx.session.hook("prompt", async event => {
         if (!await documentBusiness?.prepare(event.sessionID)) await prepareNativePassageSession(ctx, event.sessionID, humanGate)
       })
@@ -62,7 +62,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           prompt: (coordinatorID, input) => sendMissionInput(coordinatorID, "prompt", input),
           synthetic: (coordinatorID, input) => sendMissionInput(coordinatorID, "synthetic", input),
           lifecycle: (coordinatorID, input) => sendMissionInput(coordinatorID, "lifecycle", input),
-          prepare: (coordinatorID, input) => sendMissionInput(coordinatorID, "prepare", input),
+           prepare: (coordinatorID, input) => sendMissionInput(coordinatorID, "prepare", input),
+           schedule: (sessionID, input) => sendMissionInput(sessionID, "schedule", input),
           resolveCreationDefaults: resolveMissionProfileDefaults,
           readConfigurations: readMissionConfigurations,
           observeTask: (coordinatorID, input) => sendMissionInput(coordinatorID, "task-sessions", input),

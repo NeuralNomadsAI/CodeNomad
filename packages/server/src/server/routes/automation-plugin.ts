@@ -11,6 +11,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
+import { controlAgentMissionSchedule } from "./mission-agent-schedule"
 import type { ScheduledPreparationDeps } from "./mission-prepare-scheduled"
 import { readMissionConfigurations, readMissionProfileDefaults } from "./mission-profile-defaults"
 import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
@@ -121,7 +122,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return reply.code(503).send({ error: failure.message, code: failure.code })
     }
     const notOwner = (error: string) => reply.code(404).send({ error, ...(preferenceProbe ? { code: "mission-not-owner" } : {}) })
-    const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt"
+     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule"
     const signal = body.mode === "mission-input"
       ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
 
@@ -160,10 +161,14 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         // Journal-keyed creation capability of the owning backend. Durable
         // admission does not use this bridge or gain a new native API fallback.
         const fence = deps.worktreeDeletionFence
-        const result = commandKind === "create-root"
+         const result = commandKind === "create-root"
           ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal)
           : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal,
-            { settings: deps.settings, bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation })
+             { settings: deps.settings, bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation })
+           : commandKind === "schedule" ? await controlAgentMissionSchedule({
+             workspaceManager: deps.workspaceManager, worktreeDeletionFence: fence, settings: deps.settings,
+             bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation,
+           }, body.sessionID, body.command, signal)
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)
           : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory)

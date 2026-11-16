@@ -30,11 +30,12 @@ export function nativeMissionScheduleAgentCreationVerifier(ctx: Pick<Plugin.Cont
   run: NativeMissionDocumentRunner): NativeMissionScheduleAgentCreationVerifier {
   return request => Effect.gen(function* () {
     const principal = recurrenceSchedulePrincipal(request.transport)
-    if (principal.kind !== "agent" || request.action !== "create") throw new Error("Mission schedule agent creation differs")
+    if (principal.kind !== "agent" || !principal.creationRequestID || request.action !== "create") throw new Error("Mission schedule agent creation differs")
+    const creationRequestID = principal.creationRequestID
     const fence = (yield* acquireNativeSourceFence(() => true))()
     const binding = yield* Effect.tryPromise(() => readMissionPreparationBinding({
       get: key => { fence.document(key); return run(ctx.storage.get(key)) },
-    }, ctx.location.project, principal.creationRequestID))
+    }, ctx.location.project, creationRequestID))
     const { kind: _kind, ...expected } = principal
     if (canonicalAuthority(missionPreparationBindingSchema.parse(binding)) !== canonicalAuthority(expected))
       throw new Error("Mission schedule agent creation binding differs")
@@ -43,11 +44,12 @@ export function nativeMissionScheduleAgentCreationVerifier(ctx: Pick<Plugin.Cont
   })
 }
 
-/** Agent authority ends at its immutable creation and its unconsumed first Play. */
+/** Preparation continuations retain their creation scope; project controls use owned-session authority. */
 export function assertMissionScheduleAgentRequest(request: MissionScheduleRequest, document?: MissionDocument | null): void {
   const principal = recurrenceSchedulePrincipal(request.transport)
   assertSchedulePrincipalAction(principal, request.action)
   if (principal.kind !== "agent") return
+  if (!principal.creationRequestID) return
   const creation = request.action === "create" ? request.creation : document?.creation
   if (request.retry || request.action === "create" && request.requestID !== principal.creationRequestID
     || !creation || creation.requestID !== principal.creationRequestID
@@ -117,7 +119,7 @@ export const acquireNativeMissionScheduleAuthority = Effect.fn("missions.acquire
   if (principal.kind === "agent") {
     const author = yield* ctx.session.get({ sessionID: Session.ID.make(principal.author.coordinatorSessionID) })
     if (author.id !== principal.author.coordinatorSessionID || author.projectID !== location.project.id
-      || author.location.directory !== location.directory || author.location.workspaceID !== location.workspaceID)
+      || principal.creationRequestID && (author.location.directory !== location.directory || author.location.workspaceID !== location.workspaceID))
       throw new Error("Mission schedule agent owner differs")
     const fence = (yield* acquireNativeSourceFence(() => {
       if (!sameLocation()) throw new Error("Mission schedule Location changed")

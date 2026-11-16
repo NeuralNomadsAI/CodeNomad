@@ -37,7 +37,7 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
   let agentCurrent: (() => true) | undefined
   const effectCurrent = (): true => { current(); agentCurrent?.(); return input.authority(doc, "initial") }
   const validateCoordinator = async () => {
-    if (!doc.creation?.author || !pending.coordinatorReused) return
+     if (!(pending.configuration.coordinatorSelectionAuthor ?? doc.creation?.author) || !pending.coordinatorReused) return
     const fence = input.settlementFence?.()
     if (!fence) throw new Error("Agent coordinator validation unavailable")
     agentCurrent = await prepareAgentScheduledCoordinator({ ...input, current, fence })

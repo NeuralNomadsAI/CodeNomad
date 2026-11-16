@@ -45,7 +45,7 @@ export const missionSchedulePayloadDigest = (input: Pick<MissionScheduleRequest,
     : { configuration: input.configuration, creation: input.creation }), 64)
 export const missionScheduleRefusalSchema = z.object({ missionID: documentID, requestID: documentID,
   expectedRevision: documentCounter, action: z.enum(missionScheduleActions), payloadDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  reason: z.enum(["revision-conflict", "date-passed"]),
+  reason: z.enum(["revision-conflict", "control-conflict", "date-passed"]),
 }).strict()
 
 const text = { type: "string" } as const
@@ -58,6 +58,7 @@ export const missionConfigurationWire = { type: "object", properties: {
   profiles: missionProfilesSchema, taskMode: missionTaskModeSchema,
   profileID: { type: ["string", "null"] }, executionHost: { type: ["string", "null"] },
   coordinatorSessionID: text,
+  coordinatorSelectionAuthor: { type: "object", properties: { coordinatorSessionID: text }, required: ["coordinatorSessionID"], additionalProperties: false },
   roots: { type: "array", minItems: 1, maxItems: 32, items: root },
   watchedConversationIDs: { type: "array", maxItems: 64, items: text }, launch: missionDocumentSummaryWire.properties.launch,
 }, required: ["title", "objective", "template", "taskMode", "profileID", "executionHost", "roots", "watchedConversationIDs", "launch"], additionalProperties: false } as const
@@ -118,7 +119,7 @@ const result = { type: "object", properties: { document: { ...summary, type: ["o
   acknowledgement: { type: "string", enum: ["fresh", "recovered"] },
   refusal: { type: "object", properties: { missionID: text, requestID: text, expectedRevision: counter,
     action: { type: "string", enum: missionScheduleActions }, payloadDigest: text,
-    reason: { type: "string", enum: ["revision-conflict", "date-passed"] } },
+    reason: { type: "string", enum: ["revision-conflict", "control-conflict", "date-passed"] } },
     required: ["missionID", "requestID", "expectedRevision", "action", "payloadDigest", "reason"], additionalProperties: false },
   deletionReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, deleteManagedSessions: { type: "boolean" } },
     required: ["id", "requestID", "expectedRevision", "deleteManagedSessions"], additionalProperties: false },

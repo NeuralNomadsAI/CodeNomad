@@ -32,8 +32,22 @@ including after source completion. Another caller has its own identity and visib
 A changed flag conflicts. A recovered creation
 never continues Play: an unattempted automatic start stays prepared, an attempted
 one exposes its original acknowledgement or uncertainty. Inspect the saved target;
-never replace an uncertain request or emulate controls. Pause, Resume, Stop, Run now,
-Check, configure and delete remain human actions.
+never replace an uncertain request or emulate controls.
+
+`mission.schedule` controls every schedule in the project, including human-created
+documents, from any owned session (actors, descendants and scheduled passages included).
+Use `action: "list"` with optional `after`/`limit` (at most eight), then
+`{ action: "read", missionID }`. Mutations (`play`, `pause`, `stop`, `resume`,
+`run-now`, `check`, `configure`, `delete`) require `missionID`, a stable `requestID`
+per action and the read's `expectedRevision`. `configure` replaces the complete
+editor configuration with explicit frozen agent/model profiles, task mode, followed
+sources and ordered launch criteria. Existing-coordinator selection must be idle and
+exclude this caller and its followed/trigger sources. Play/Resume preserve explicit
+OFF; Stop is terminal. Delete keeps conversations unless `deleteManagedSessions`
+is explicitly true. After uncertainty, use `read` with the original `requestID`;
+never resend or choose a replacement identity to evade the shared hold. Exact
+completed requests replay idempotently; changed inputs conflict. Keep exactly one
+owning CodeNomad backend available.
 
 `prepare.launch?: { when: [...] }` accepts the editor's ordered criteria: same-kind
 cards are OR, schedule→event is IF, event→schedule is ELSE. Absent, empty or sole
@@ -43,8 +57,8 @@ profiles after preference resolution. Keep launch order, followed sources
 `coordinatorSessionID` selects an eligible idle root for scheduling only; a new root
 is the default. The author, source conversations and roots with active or uncertain
 Mission ownership are ineligible. Native validation rechecks adoption before effects.
-Explicit OFF and unavailable scheduling capabilities refuse activation. An agent can
-create its own calendar-backed document and continue only its fresh first-Play request.
+Explicit OFF and unavailable scheduling capabilities refuse activation. Preparation
+continues only its fresh first-Play request; separate controls use `mission.schedule`.
 
 The mission `role` is independent of `execution.agent`. To pin execution, pass
 `execution: { agent: "catalog-agent-id", model: { providerID: "catalog-provider", id: "catalog-model", variant: "optional-catalog-variant" } }`.
