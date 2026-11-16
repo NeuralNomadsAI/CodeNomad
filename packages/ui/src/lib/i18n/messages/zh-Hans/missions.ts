@@ -342,4 +342,7 @@ export const missionMessages = {
   "missions.recurrence.refused.notSent": "请查看日程的当前状态，如有需要再重试。",
   "missions.recurrence.reader": "定期计划 {id}",
   "missions.recurrence.section": "第 {section} 节，共 {total} 节",
+  "missions.cleanup.error.revisionConflict": "任务已更改。请取消并重新选择后再删除。",
+  "missions.cleanup.error.requestConflict": "删除请求不同。请先检查原始请求再重试。",
+  "missions.cleanup.error.controlPending": "控制操作尚未完成。请先检查再重试删除。",
 } as const

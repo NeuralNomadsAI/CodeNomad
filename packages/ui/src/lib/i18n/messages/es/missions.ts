@@ -342,4 +342,7 @@ export const missionMessages = {
   "missions.recurrence.refused.notSent": "Revisa el estado actual de la programación y vuelve a intentarlo si hace falta.",
   "missions.recurrence.reader": "Programa recurrente {id}",
   "missions.recurrence.section": "Sección {section} de {total}",
+  "missions.cleanup.error.revisionConflict": "La misión cambió. Cancela y vuelve a seleccionarla antes de eliminarla.",
+  "missions.cleanup.error.requestConflict": "La solicitud de eliminación difiere. Revisa la solicitud original antes de reintentar.",
+  "missions.cleanup.error.controlPending": "Hay un control pendiente. Revísalo antes de reintentar la eliminación.",
 } as const

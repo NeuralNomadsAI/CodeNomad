@@ -342,4 +342,7 @@ export const missionMessages = {
   "missions.recurrence.refused.notSent": "Проверьте текущее состояние расписания и при необходимости повторите попытку.",
   "missions.recurrence.reader": "Повторяющееся расписание {id}",
   "missions.recurrence.section": "Раздел {section} из {total}",
+  "missions.cleanup.error.revisionConflict": "Миссия изменилась. Отмените и выберите её заново перед удалением.",
+  "missions.cleanup.error.requestConflict": "Запрос удаления отличается. Проверьте исходный запрос перед повтором.",
+  "missions.cleanup.error.controlPending": "Действие управления ожидает завершения. Проверьте его перед повторным удалением.",
 } as const

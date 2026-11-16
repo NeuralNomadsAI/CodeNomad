@@ -342,4 +342,7 @@ export const missionMessages = {
   "missions.recurrence.refused.notSent": "Vérifiez l’état actuel du programme, puis réessayez si nécessaire.",
   "missions.recurrence.reader": "Programme récurrent {id}",
   "missions.recurrence.section": "Section {section} sur {total}",
+  "missions.cleanup.error.revisionConflict": "Mission modifiée. Annulez et resélectionnez-la avant de supprimer.",
+  "missions.cleanup.error.requestConflict": "Demande de suppression différente. Vérifiez la demande d’origine avant de réessayer.",
+  "missions.cleanup.error.controlPending": "Un contrôle est en cours. Vérifiez-le avant de réessayer la suppression.",
 } as const

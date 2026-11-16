@@ -342,4 +342,7 @@ export const missionMessages = {
   "missions.recurrence.refused.notSent": "スケジュールの現在の状態を確認し、必要に応じて再試行してください。",
   "missions.recurrence.reader": "定期スケジュール {id}",
   "missions.recurrence.section": "セクション {section} / {total}",
+  "missions.cleanup.error.revisionConflict": "ミッションが変更されました。キャンセルして選択し直してから削除してください。",
+  "missions.cleanup.error.requestConflict": "削除リクエストが異なります。再試行する前に元のリクエストを確認してください。",
+  "missions.cleanup.error.controlPending": "制御操作が保留中です。削除を再試行する前に確認してください。",
 } as const

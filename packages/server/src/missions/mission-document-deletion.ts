@@ -7,7 +7,7 @@ import { missionDeletionSynchronizationID, missionDocumentChanges } from "./miss
 function exact(input: MissionDeleteInput, saved: { requestID: string; expectedRevision: number; deleteManagedSessions: boolean }) {
   if (saved.requestID !== input.requestID || saved.expectedRevision !== input.expectedRevision
     || saved.deleteManagedSessions !== (input.deleteManagedSessions ?? false))
-    throw new MissionControlError("Delete request ID was already used with a different request", "request-conflict")
+    throw new MissionControlError("Deletion request differs from the saved intent", "request-conflict")
 }
 function unresolved(doc: MissionDocument): boolean {
   const synchronization = doc.synchronization

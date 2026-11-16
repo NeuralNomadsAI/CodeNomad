@@ -1,7 +1,7 @@
 import { For, Show, createComputed, createMemo, createSignal, onCleanup } from "solid-js"
 import type { MissionCleanup } from "../../../server/src/missions/model"
 import { serverApi } from "../lib/api-client"
-import { deletionErrorKey, missionCleanupPending } from "../lib/mission-cleanup"
+import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "../lib/mission-cleanup"
 import { useI18n } from "../lib/i18n"
 import { MissionDisclosure } from "./mission-disclosure"
 import { MissionListItem } from "./mission-list-item"
@@ -59,7 +59,19 @@ export function MissionCleanupPanel(props: {
       })
       if (current()) await props.refresh()
     } catch (failure) {
-      if (current()) { setError(t(deletionErrorKey(failure))); await props.refresh() }
+      if (!current()) return
+      const key = deletionErrorKey(failure)
+      if (failure instanceof MissionDeletionError && failure.status === 409) {
+        try {
+          const snapshot = await serverApi.fetchMission(instanceId, saved.missionID)
+          if (!current()) return
+          const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.deletionID === saved.deletionID
+            && item.missionID === saved.missionID && item.requestID === saved.requestID
+            && item.expectedRevision === saved.expectedRevision && item.deleteManagedSessions === saved.deleteManagedSessions)
+          if (intent && !missionCleanupPending(intent)) { await props.refresh(); return }
+        } catch { /* Keep the original intent when its receipt cannot be read. */ }
+      }
+      if (current()) { setError(t(key)); await props.refresh() }
     } finally { if (alive && operation === attempt) setPending("") }
   }
 
