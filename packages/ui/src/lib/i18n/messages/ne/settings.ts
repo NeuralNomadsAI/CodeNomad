@@ -128,7 +128,7 @@ export const settingsMessages = {
   "settings.opencode.setup.progress.reload": "OpenCode कन्फिगरेसन पुनः लोड हुँदैछ…",
   "settings.opencode.setup.actionFailed": "OpenCode कार्य पूरा गर्न सकिएन। माथिको हालको स्थिति जाँचेर फेरि प्रयास गर्नुहोस्।",
   "settings.opencode.setup.reload": "OpenCode कन्फिगरेसन पुनः लोड गर्नुहोस्",
-  "settings.opencode.setup.reloadDescription": "पुनः लोड गर्दा सबै जडित क्लाइन्टको सक्रिय काम रोकिन्छ, विचाराधीन अनुमति अनुरोध र फारमहरू रद्द हुन्छन् र टर्मिनल तथा पृष्ठभूमि आदेशहरू बन्द हुन्छन्। सत्रको इतिहास सुरक्षित रहन्छ।",
+  "settings.opencode.setup.reloadDescription": "पुनः लोड गर्दा सबै जडित क्लाइन्टको सक्रिय काम रोकिन सक्छ। विचाराधीन अनुमति अनुरोध र फारमहरू रद्द हुन्छन् र टर्मिनल तथा पृष्ठभूमि आदेशहरू बन्द हुन्छन्। सत्रको इतिहास सुरक्षित रहन्छ।",
   "settings.opencode.setup.missing": "OpenCode स्थापना गरिएको छैन।",
   "settings.opencode.setup.update_required": "यो OpenCode संस्करण यस CodeNomad संस्करणमा समर्थित छैन।",
   "settings.opencode.setup.ready": "OpenCode कार्यान्वयन फाइल उपलब्ध छ।",

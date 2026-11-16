@@ -128,7 +128,7 @@ export const settingsMessages = {
   "settings.opencode.setup.progress.reload": "Reloading OpenCode configuration…",
   "settings.opencode.setup.actionFailed": "The OpenCode action could not be completed. Check the current status above and retry.",
   "settings.opencode.setup.reload": "Reload OpenCode configuration",
-  "settings.opencode.setup.reloadDescription": "Reloading interrupts active work in all connected clients, cancels pending permissions and forms, and closes terminals and background commands. Session history is kept.",
+  "settings.opencode.setup.reloadDescription": "Reloading can interrupt active work in all connected clients. It cancels pending permissions and forms and closes terminals and background commands. Session history is kept.",
   "settings.opencode.setup.missing": "OpenCode is not installed.",
   "settings.opencode.setup.update_required": "This OpenCode version is not supported by this CodeNomad release.",
   "settings.opencode.setup.ready": "The OpenCode executable is available.",

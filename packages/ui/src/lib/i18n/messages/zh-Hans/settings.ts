@@ -128,7 +128,7 @@ export const settingsMessages = {
   "settings.opencode.setup.progress.reload": "正在重新加载 OpenCode 配置…",
   "settings.opencode.setup.actionFailed": "无法完成 OpenCode 操作。请检查上方的当前状态，然后重试。",
   "settings.opencode.setup.reload": "重新加载 OpenCode 配置",
-  "settings.opencode.setup.reloadDescription": "重新加载会中断所有已连接客户端的当前工作，取消待处理的权限请求和表单，并关闭终端和后台命令。会话历史将保留。",
+  "settings.opencode.setup.reloadDescription": "重新加载可能中断所有已连接客户端的当前工作。这会取消待处理的权限请求和表单，并关闭终端和后台命令。会话历史将保留。",
   "settings.opencode.setup.missing": "尚未安装 OpenCode。",
   "settings.opencode.setup.update_required": "此 CodeNomad 版本不支持当前 OpenCode 版本。",
   "settings.opencode.setup.ready": "OpenCode 可执行文件可用。",

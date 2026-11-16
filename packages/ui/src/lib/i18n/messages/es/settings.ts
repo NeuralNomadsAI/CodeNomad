@@ -128,7 +128,7 @@ export const settingsMessages = {
   "settings.opencode.setup.progress.reload": "Recargando la configuración de OpenCode…",
   "settings.opencode.setup.actionFailed": "No se pudo completar la acción de OpenCode. Comprueba el estado actual arriba y vuelve a intentarlo.",
   "settings.opencode.setup.reload": "Recargar la configuración de OpenCode",
-  "settings.opencode.setup.reloadDescription": "La recarga interrumpe el trabajo activo de todos los clientes conectados, cancela los permisos y formularios pendientes y cierra los terminales y comandos en segundo plano. El historial de sesiones se conserva.",
+  "settings.opencode.setup.reloadDescription": "La recarga puede interrumpir el trabajo activo de todos los clientes conectados. Cancela los permisos y formularios pendientes y cierra los terminales y comandos en segundo plano. El historial de sesiones se conserva.",
   "settings.opencode.setup.missing": "OpenCode no está instalado.",
   "settings.opencode.setup.update_required": "Esta versión de OpenCode no es compatible con esta versión de CodeNomad.",
   "settings.opencode.setup.ready": "El ejecutable de OpenCode está disponible.",

@@ -50,9 +50,9 @@ La désactivation retire seulement cette tâche, ce LaunchAgent ou ce service ; 
 | --- | --- |
 | Mettre à jour la CLI | Change l’exécutable installé pris en charge ; ne redémarre pas implicitement le démon actif. |
 | Redémarrer le service | Remplace le processus partagé et interrompt le travail actif de tous les clients OpenCode connectés ; l’historique reste. |
-| Recharger la configuration OpenCode | Conserve le processus. Pour tous les clients connectés, annule les permissions/Forms en attente, ferme terminaux/commandes en arrière-plan et interrompt le travail actif. |
+| Recharger la configuration OpenCode | Conserve le processus. Pour tous les clients connectés, annule les permissions/Forms en attente, ferme terminaux/commandes en arrière-plan et peut interrompre le travail actif. |
 
-Utilisez **Recharger la configuration OpenCode**, sous **Dépannage** lorsque le service actif le prend en charge, lorsqu’une configuration enregistrée ou un plugin installé reste indisponible. Lisez puis confirmez l’avertissement : le rechargement interrompt le travail actif de tous les clients connectés. CodeNomad n’utilisera pas une CLI sélectionnée plus ancienne pour rétrograder un démon actif plus récent.
+Utilisez **Recharger la configuration OpenCode**, sous **Dépannage** lorsque le service actif le prend en charge, lorsqu’une configuration enregistrée ou un plugin installé reste indisponible. Lisez puis confirmez l’avertissement : le rechargement peut interrompre le travail actif de tous les clients connectés. CodeNomad n’utilisera pas une CLI sélectionnée plus ancienne pour rétrograder un démon actif plus récent.
 
 ## Environnement de session {#session-environment}
 

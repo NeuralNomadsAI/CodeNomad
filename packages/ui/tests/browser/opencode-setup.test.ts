@@ -276,7 +276,7 @@ for (const surface of ["settings", "recovery"]) test(`${surface} configuration r
     await page.getByRole("button", { name: "Reload OpenCode configuration" }).click()
     const confirm = page.getByRole("dialog", { name: "Reload OpenCode configuration", exact: true })
     await confirm.getByText(/cancels pending permissions and forms/).waitFor()
-    await confirm.getByText(/interrupts active work in all connected clients/).waitFor()
+    await confirm.getByText(/can interrupt active work in all connected clients/).waitFor()
     assert.equal(reloads, 0)
     await page.keyboard.press("Enter")
     await confirm.waitFor({ state: "hidden" })

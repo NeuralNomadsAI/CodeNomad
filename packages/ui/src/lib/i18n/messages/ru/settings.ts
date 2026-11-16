@@ -128,7 +128,7 @@ export const settingsMessages = {
   "settings.opencode.setup.progress.reload": "Перезагрузка конфигурации OpenCode…",
   "settings.opencode.setup.actionFailed": "Не удалось завершить действие OpenCode. Проверьте текущее состояние выше и повторите попытку.",
   "settings.opencode.setup.reload": "Перезагрузить конфигурацию OpenCode",
-  "settings.opencode.setup.reloadDescription": "Перезагрузка прерывает активную работу всех подключённых клиентов, отменяет ожидающие запросы разрешений и формы, закрывает терминалы и фоновые команды. История сессий сохраняется.",
+  "settings.opencode.setup.reloadDescription": "Перезагрузка может прервать активную работу всех подключённых клиентов. Она отменяет ожидающие запросы разрешений и формы, закрывает терминалы и фоновые команды. История сессий сохраняется.",
   "settings.opencode.setup.missing": "OpenCode не установлен.",
   "settings.opencode.setup.update_required": "Эта версия OpenCode не поддерживается текущим выпуском CodeNomad.",
   "settings.opencode.setup.ready": "Исполняемый файл OpenCode доступен.",
