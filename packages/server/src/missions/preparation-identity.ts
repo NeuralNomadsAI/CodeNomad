@@ -2,7 +2,7 @@ import type { MissionSnapshot } from "./model"
 import type { MissionJournal, MissionStorage } from "./journal"
 import type { MissionCreationIntents } from "./creation-intent"
 import type { MissionDocumentAccess } from "./mission-document-one-time"
-import { readMissionSchedulePage } from "./mission-schedule-list"
+import { readMissionDocumentPage } from "./mission-schedule-list"
 import { missionScheduleID } from "./mission-schedule-contract"
 import { missionRecoveryControlError } from "./recovery-error"
 import { stableToken } from "./receipt-identity"
@@ -27,8 +27,8 @@ export async function missionPreparationIdentity(args: {
   if (args.documents) {
     let after: string | undefined
     do {
-      const page = await readMissionSchedulePage(args.storage, project, { after })
-      for (const doc of page.schedules) {
+      const page = await readMissionDocumentPage(args.storage, project, { after })
+      for (const doc of page.documents) {
         if (doc.creation?.author?.coordinatorSessionID === sessionID) sources.add(doc.creation.author.missionID)
       }
       after = page.next

@@ -346,7 +346,10 @@ journal, paged documents and retained preparation bindings for existing identiti
 multiple existing identities refuse as a conflict. Documents with an extended creation
 binding compare its frozen inputs; historical one-time documents use their original
 journal inputs and available creation choices. Each author retains its own
-read-only visibility.
+read-only visibility. Compaction keeps the original author/source, creation request and
+input digest in the existing bounded document tombstone. Preparation identity reads
+include these tombstones, so deletion refuses replay after source release and restart
+for both scheduled and one-time targets; display inventories omit them.
 Preparations with the
 same requestID are serialized. Reuse that requestID and the original inputs:
 a retry first reads the saved creation event/document and returns the saved

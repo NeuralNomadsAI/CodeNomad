@@ -171,7 +171,8 @@ export class NativeMissionDocumentStore {
       const reservation = await this.reserveDeletionSlot(doc, current)
       const tombstone = missionTombstoneSchema.parse({ version: 1, id, projectID: this.projectID, projectCanonical: this.projectCanonical,
         revision: expectedRevision + 1, requestID: doc.deletion.requestID, expectedRevision: doc.deletion.expectedRevision,
-        deleteManagedSessions: doc.deletion.deleteManagedSessions, deletedAt: reservation.deletedAt, timeGeneration: doc.timeGeneration })
+        deleteManagedSessions: doc.deletion.deleteManagedSessions, deletedAt: reservation.deletedAt, timeGeneration: doc.timeGeneration,
+        ...(doc.creation?.author ? { creation: { requestID: doc.creation.requestID, digest: doc.creation.digest, author: doc.creation.author } } : {}) })
       await this.commit(this.key(id), tombstone, expectedRevision, current)
       return tombstone
   }
