@@ -1,5 +1,7 @@
 # Acceso remoto directo
 
+Los avisos en segundo plano requieren HTTPS de confianza o Control remoto. Activa **En segundo plano en este dispositivo** en [Notificaciones](settings.md#notifications); HTTP en la red local muestra la acción para usar una conexión segura.
+
 El acceso directo conecta a los listeners HTTP/HTTPS de CodeNomad usando su contraseña de servidor. Es independiente de [Control remoto](remote-control.md): el emparejamiento no necesita escucha en LAN ni puerto entrante, y ninguna vía recurre silenciosamente a la otra.
 
 ## Elegir una vía de acceso {#access-paths}

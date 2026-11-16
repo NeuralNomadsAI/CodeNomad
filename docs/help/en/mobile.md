@@ -14,6 +14,8 @@ Remote Control requires device pairing; direct connections require routing, a re
 
 ## Install the PWA {#install-pwa}
 
+For alerts after closing the page, enable **Settings → Notifications → In the background on this device**. Use trusted HTTPS or Remote Control; on iPhone/iPad, install and open the Home Screen app first. Alerts contain generic text only and open an existing project after authentication; an unavailable tab keeps its explicit **Retry** action.
+
 1. Open the working CodeNomad URL over trusted HTTPS in a browser that supports installation.
 2. In Chrome/Edge and similar browsers, use the address-bar install action or the browser's **Install CodeNomad** action when offered. On iPhone/iPad Safari, use **Share → Add to Home Screen**; the exact wording depends on the OS/browser.
 3. Open the new launcher and complete sign-in or pairing there if its browser storage is separate.

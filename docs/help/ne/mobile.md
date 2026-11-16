@@ -14,6 +14,8 @@ Remote Control लाई device pairing चाहिन्छ; direct connection
 
 ## PWA स्थापना {#install-pwa}
 
+पृष्ठ बन्द हुँदा सूचनाका लागि **सेटिङ → सूचनाहरू → यस उपकरणमा पृष्ठभूमिमा** सक्षम गर्नुहोस्। विश्वसनीय HTTPS वा रिमोट कन्ट्रोल प्रयोग गर्नुहोस्; iPhone/iPad मा पहिले गृह स्क्रिन एप स्थापना गरी खोल्नुहोस्। सामान्य सूचनाले प्रमाणीकरणपछि विद्यमान परियोजना खोल्छ; अनुपलब्ध ट्याबमा स्पष्ट **पुनः प्रयास** कार्य रहन्छ।
+
 1. installation समर्थन गर्ने browser मा trusted HTTPS बाट काम गर्ने CodeNomad URL खोल्नुहोस्।
 2. Chrome/Edge र समान browser मा address-bar install वा उपलब्ध हुँदा browser को **Install CodeNomad** प्रयोग गर्नुहोस्। iPhone/iPad Safari मा **Share → Add to Home Screen**; शब्द OS/browser अनुसार फरक हुन्छ।
 3. नयाँ launcher खोली यसको browser storage अलग भए त्यहाँ sign-in वा pairing पूरा गर्नुहोस्।

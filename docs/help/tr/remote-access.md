@@ -1,5 +1,7 @@
 # Doğrudan uzaktan erişim
 
+Arka plan bildirimleri güvenilir HTTPS veya Uzaktan Kontrol gerektirir. [Bildirimler](settings.md#notifications) altında **Bu cihazda arka planda** seçeneğini açın; düz LAN HTTP güvenli bağlantı yönergesini gösterir.
+
 Doğrudan erişim, sunucu şifresini kullanarak CodeNomad'in HTTP/HTTPS dinleyicilerine bağlanır. [Uzaktan Kontrol](remote-control.md)'den farklıdır: eşleştirme için LAN bağlantısı veya gelen bağlantı noktası gerekmez ve her iki yol da sessizce diğerine geri dönmez.
 
 ## Bir erişim yolu seçin {#access-paths}

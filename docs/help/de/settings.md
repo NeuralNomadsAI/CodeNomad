@@ -87,6 +87,8 @@ Die Eingabehöhe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtas
 
 ## Benachrichtigungen und Abzeichen {#notifications}
 
+Im Browser ist **Im Hintergrund auf diesem Gerät** anfangs aus. Aktivieren erlaubt allgemeine Hinweise für offene Projekte des Hauptservers bei geschlossener Seite; Ereignisse folgen **System**. Der Schalter zeigt Host-, Speicher- oder Browserbeschränkungen. Desktop-Apps behalten native Benachrichtigungen.
+
 Bei einem Projekt-Tab auf einem anderen CodeNomad-Server enthalten Benachrichtigungen den Servernamen. **Unterhaltung anzeigen** öffnet genau dieses Projekt und diese Unterhaltung; beim Trennen des Servers werden seine Hinweise entfernt. Die Einstellungen für Bilder und Websuche gelten für den Server des Projekts, einschließlich seiner globalen Vorgaben.
 
 1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste, in der macOS-Desktop-App in der Titelleiste, aufbewahrt) und **System** (eine Betriebssystembenachrichtigung). Ziehen Sie über eine Zeile oder Spalte von Kästchen, um mehrere auf einmal einzustellen.

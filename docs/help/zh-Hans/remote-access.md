@@ -1,5 +1,7 @@
 # 直接远程访问
 
+后台通知需要可信 HTTPS 或远程控制。在[通知](settings.md#notifications)中开启 **在此设备上后台通知**；局域网 HTTP 会显示安全连接提示。
+
 直接访问使用服务器密码连接 CodeNomad 的 HTTP/HTTPS 监听器。它与[远程控制](remote-control.md)分开：配对不需要局域网绑定或入站端口，两条路径都不会静默回退到另一条。
 
 ## 选择访问路径 {#access-paths}

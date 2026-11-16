@@ -1,5 +1,7 @@
 # Direct remote access
 
+Background alerts need trusted HTTPS or Remote Control. Enable **In the background on this device** in [Notifications](settings.md#notifications); plain LAN HTTP shows the secure-connection action instead.
+
 Direct access connects to CodeNomad's HTTP/HTTPS listeners using its server password. It is separate from [Remote Control](remote-control.md): pairing needs no LAN binding or inbound port, and neither path silently falls back to the other.
 
 ## Choose an access path {#access-paths}

@@ -2,6 +2,8 @@
 
 ## Agent conventions
 
+- Browser Notifications exposes the device-local **In the background on this device** switch, off until explicit permission and subscription registration succeed. `background-push.ts` synchronizes the open primary-backend project IDs and the existing System-column session choices; the imported root worker persists only generic localized copy in its separate IndexedDB settings store. Confirmed subscribed projects keep screen/history delivery and suppress renderer OS delivery. Electron and Tauri retain native delivery. Worker clicks carry a bounded opaque reference through `/#push=` or a same-origin worker message, consumed after authentication and restore; selection uses existing workspace records or placeholders, retains intent while initial inventory arrives and verifies session ownership.
+
 - Background-push subscriptions store the device's System-column choices for `needsInput` and `sessionDone` in versioned preferences (`v: 1`). Explicit browser consent initializes the private VAPID key; updates carry current local projects and System choices. The host API and local producer require `multiBackend` and obey `CODENOMAD_WEB_PUSH`; browser activation and service-worker integration belong to the device UI. See [REMOTE_CONTROL.md](REMOTE_CONTROL.md#background-push-host-capability) for protocol, storage and revocation.
 
 - Embedded Missions settings resolve the active qualified project's selected catalog Location before its opened root folder, matching the explicit Location supplied by native Preferences.

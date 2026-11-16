@@ -5,6 +5,7 @@ import { useConfig } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { NotificationRoutingTable } from "./notification-routing-table"
 import { SettingsChoiceRow } from "./settings-switch"
+import { BackgroundPushRow } from "./background-push-row"
 
 export const NotificationsSettingsSection: Component = () => {
   const { t } = useI18n()
@@ -55,6 +56,7 @@ export const NotificationsSettingsSection: Component = () => {
         </div>
 
         <div class="settings-stack">
+          <BackgroundPushRow />
           <Show when={permissionMissing()}>
             <div class="settings-toggle-row settings-toggle-row-compact">
               <button

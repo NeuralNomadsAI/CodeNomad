@@ -49,6 +49,7 @@ export class PushService {
   private watches = new Map<string, () => void>()
   private routes = new Map<string, Route>()
   private seen = new Map<string, number>()
+  private focused = new Map<string, Map<string, number>>()
   private queue: Array<() => Promise<void>> = []
   private active = new Map<string, Set<AbortController>>()
   private running = 0
@@ -169,6 +170,17 @@ export class PushService {
     return { publicKey: this.keys.publicKey }
   }
   unsubscribe(principal: PushPrincipal) { this.requireStorage(); this.removeOwner(ownerOf(principal)) }
+  focus(principal: PushPrincipal, value: { endpoint: string; viewId: string; focused: boolean }) {
+    const id = hash(value.endpoint), entry = this.entries.get(id)
+    if (!this.options.enabled() || !entry || entry.owner !== ownerOf(principal)
+      || this.options.authority(principal) !== "active") return
+    const views = this.focused.get(id) ?? new Map<string, number>()
+    for (const [view, expiry] of views) if (expiry <= Date.now()) views.delete(view)
+    if (value.focused && (views.has(value.viewId) || views.size < 32)) views.set(value.viewId, Date.now() + 30_000)
+    else views.delete(value.viewId)
+    if (views.size) this.focused.set(id, views)
+    else this.focused.delete(id)
+  }
   revoke(id?: string, channel?: "tunnel") {
     if (!this.loaded) return
     for (const [owner, p] of this.principals) {
@@ -222,6 +234,7 @@ export class PushService {
     this.active.set(entry.owner, controllers)
     const current = () => !signal.aborted && !this.closed && this.options.enabled()
       && this.entries.get(id) === entry && Date.now() < expiresAt
+      && ![...(this.focused.get(id)?.values() ?? [])].some(expiry => expiry > Date.now())
       && this.options.projects().includes(event.instanceId)
       && this.options.authority(this.principals.get(entry.owner)!) === "active"
     try {
@@ -258,7 +271,7 @@ export class PushService {
   private hasOwner(owner: string) { return [...this.entries.values()].some(e => e.owner === owner) }
   private removeOwner(owner: string, persist = true) {
     for (const controller of this.active.get(owner) ?? []) controller.abort()
-    for (const [id, entry] of this.entries) if (entry.owner === owner) this.entries.delete(id)
+    for (const [id, entry] of this.entries) if (entry.owner === owner) { this.entries.delete(id); this.focused.delete(id) }
     for (const [token, route] of this.routes) if (route.owner === owner) this.routes.delete(token)
     this.principals.delete(owner)
     this.watches.get(owner)?.()
@@ -266,6 +279,10 @@ export class PushService {
     if (persist) this.persist()
   }
   private prune() {
+    for (const [key, views] of this.focused) {
+      for (const [view, expiry] of views) if (expiry <= Date.now()) views.delete(view)
+      if (!views.size) this.focused.delete(key)
+    }
     for (const [key, expiry] of this.seen) if (expiry <= Date.now()) this.seen.delete(key)
     for (const [token, route] of this.routes) if (route.expiresAt <= Date.now()) this.routes.delete(token)
     while (this.routes.size > 1024) this.routes.delete(this.routes.keys().next().value!)

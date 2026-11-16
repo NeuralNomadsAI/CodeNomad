@@ -14,6 +14,8 @@ Le Contrôle à distance exige un appairage ; les connexions directes nécessite
 
 ## Installer la PWA {#install-pwa}
 
+Pour les alertes après fermeture, activez **Paramètres → Notifications → En arrière-plan sur cet appareil**. Utilisez HTTPS de confiance ou le contrôle à distance ; sur iPhone/iPad, installez et ouvrez d’abord l’application de l’écran d’accueil. Le texte reste générique et ouvre un projet existant après authentification ; un onglet indisponible conserve son action explicite **Réessayer**.
+
 1. Ouvrez l’URL CodeNomad fonctionnelle en HTTPS de confiance dans un navigateur acceptant l’installation.
 2. Dans Chrome/Edge et les navigateurs similaires, utilisez l’action d’installation de la barre d’adresse ou l’action **Install CodeNomad** du navigateur si proposée. Sur Safari iPhone/iPad, utilisez **Share → Add to Home Screen** ; le libellé exact dépend du système/navigateur.
 3. Ouvrez le nouveau lanceur et effectuez la connexion ou l’appairage si son stockage navigateur est séparé.

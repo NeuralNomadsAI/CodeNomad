@@ -87,6 +87,8 @@ Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, 
 
 ## Bildirimler ve rozetler {#notifications}
 
+Tarayıcıda **Bu cihazda arka planda** başlangıçta kapalıdır. Sayfa kapalıyken ana sunucudaki açık projeler için genel bildirimleri almak üzere açın; olaylar **Sistem** sütununu izler. Denetim ana makine, depolama veya tarayıcı kısıtlamalarını gösterir. Masaüstü uygulamaları yerel bildirimleri kullanır.
+
 Başka bir CodeNomad sunucusundaki proje sekmesinin bildirimleri sunucu adını içerir. **Sohbeti görüntüle** tam olarak o projeyi ve konuşmayı açar; sunucuyu ayırmak bildirimlerini temizler. Görseller ve Web araması ayarları, genel varsayılanlar dahil projenin sunucusuna aittir.
 
 1. **Bildirimler** öğesini açın. Her bildirim türü için nerede görüneceğini işaretleyin: **Ekranda** (geçici bir baloncuk), **Geçmiş** (sekme çubuğundaki, macOS masaüstü uygulamasında başlık çubuğundaki zilin bildirim geçmişinde saklanır) ve **Sistem** (işletim sistemi bildirimi). Birkaçını tek seferde ayarlamak için bir kutu satırı veya sütunu üzerinde sürükleyin.

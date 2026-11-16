@@ -5,6 +5,7 @@ import { isTauriHost } from "./runtime-env"
 import { notificationTargets, type NotificationCategory } from "./notification-routing"
 import { sendOsNotification } from "./os-notifications"
 import { preferences } from "../stores/preferences"
+import { backgroundPushCovers } from "./background-push-state"
 
 export type ToastVariant = "info" | "success" | "warning" | "error"
 
@@ -28,6 +29,7 @@ export type ToastPayload = {
   variant: ToastVariant
   /** Settings → Notifications routes each category to screen, history and/or system. */
   category: NotificationCategory
+  instanceId?: string
   /** Live feedback replaced as it changes (progress, retry countdowns, "up to date"):
    *  always on screen, never in the history or the system. */
   transient?: boolean
@@ -380,6 +382,7 @@ const noToast: ToastHandle = { id: "", dismiss: () => {} }
  */
 function sendSystemNotification(payload: ToastPayload): void {
   if (typeof document === "undefined") return
+  if (payload.instanceId && backgroundPushCovers(payload.instanceId, payload.category)) return
   const focused = document.visibilityState === "visible" && document.hasFocus()
   if (!untrack(() => preferences().osNotificationsAllowWhenVisible) && focused) return
   const action = payload.action

@@ -77,6 +77,8 @@ export default defineConfig({
         theme_color: "#1a1a1a",
       },
       workbox: {
+        importScripts: ["/push-v1.js"],
+        cleanupOutdatedCaches: true,
         // Workbox defaults to 2 MiB; our main bundle can slightly exceed that.
         // This is a build-time limit for the precache manifest, not a hard runtime cap.
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
@@ -96,16 +98,17 @@ export default defineConfig({
         // Only cache static UI assets; never cache API traffic.
         runtimeCaching: [
           {
-            urlPattern: ({ url, request }) => {
-              if (url.pathname.startsWith("/api/")) return false
-              if (request.destination === "document") return false
-              return ["script", "style", "image", "font"].includes(request.destination)
+            urlPattern: ({ url, request, sameOrigin }) => {
+              if (!sameOrigin || url.search || request.destination === "document") return false
+              // Positive UI asset namespaces, never arbitrary authenticated images/scripts.
+              return (url.pathname.startsWith("/assets/") || url.pathname.startsWith("/monaco/vs/"))
+                && ["script", "style", "image", "font"].includes(request.destination)
             },
             handler: "CacheFirst",
             options: {
-              cacheName: "asset-cache",
+              cacheName: "ui-static-v2",
               expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              cacheableResponse: { statuses: [0, 200] },
+              cacheableResponse: { statuses: [200] },
             },
           },
         ],

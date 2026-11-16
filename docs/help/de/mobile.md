@@ -14,6 +14,8 @@ Fernsteuerung erfordert Gerätekopplung; Direktverbindungen benötigen Routing, 
 
 ## PWA installieren {#install-pwa}
 
+Für Hinweise bei geschlossener Seite aktivieren Sie **Einstellungen → Benachrichtigungen → Im Hintergrund auf diesem Gerät**. Verwenden Sie vertrauenswürdiges HTTPS oder Fernsteuerung; auf iPhone/iPad zuerst die Home-Bildschirm-App installieren und öffnen. Allgemeine Hinweise öffnen nach Anmeldung ein vorhandenes Projekt; ein nicht verfügbarer Tab behält **Erneut versuchen**.
+
 1. Öffnen Sie die funktionierende CodeNomad-URL über vertrauenswürdiges HTTPS in einem Browser mit Installationsunterstützung.
 2. Verwenden Sie in Chrome/Edge und ähnlichen Browsern die Installationsaktion in der Adressleiste oder die angebotene Browseraktion **Install CodeNomad**. Verwenden Sie auf iPhone/iPad in Safari **Share → Add to Home Screen**; der genaue Wortlaut hängt von OS/Browser ab.
 3. Öffnen Sie den neuen Starter und schließen Sie dort Anmeldung/Kopplung ab, falls dessen Browserspeicher separat ist.

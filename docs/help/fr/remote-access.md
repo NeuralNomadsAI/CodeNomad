@@ -1,5 +1,7 @@
 # Accès distant direct
 
+Les alertes en arrière-plan nécessitent HTTPS de confiance ou le contrôle à distance. Activez **En arrière-plan sur cet appareil** dans les [Notifications](settings.md#notifications) ; en HTTP sur le réseau local, le contrôle demande une connexion sécurisée.
+
 L’accès direct se connecte aux écoutes HTTP/HTTPS de CodeNomad avec son mot de passe serveur. Il est distinct du [Contrôle à distance](remote-control.md) : l’appairage ne nécessite ni écoute LAN ni port entrant, et aucun chemin ne bascule silencieusement vers l’autre.
 
 ## Choisir un chemin d’accès {#access-paths}

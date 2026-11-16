@@ -1,5 +1,7 @@
 # Direkter Fernzugriff
 
+Hintergrundhinweise erfordern vertrauenswürdiges HTTPS oder Fernsteuerung. Aktivieren Sie **Im Hintergrund auf diesem Gerät** unter [Benachrichtigungen](settings.md#notifications); LAN-HTTP zeigt die Aufforderung zur sicheren Verbindung.
+
 Direktzugriff verbindet sich über das Serverpasswort mit CodeNomads HTTP-/HTTPS-Listenern. Er ist von der [Fernsteuerung](remote-control.md) getrennt: Kopplung benötigt weder LAN-Bindung noch eingehenden Port, und keiner der Wege weicht stillschweigend auf den anderen aus.
 
 ## Zugriffsweg wählen {#access-paths}

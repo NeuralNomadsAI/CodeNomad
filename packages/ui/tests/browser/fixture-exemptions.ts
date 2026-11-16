@@ -3,6 +3,10 @@
  * wiring checker and the tiered local runner. Each name maps to its reason;
  * heavyServers marks entries that still run a full private Vite server. */
 export const exemptions: Record<string, string> = {
+  "background-push-worker.test.ts": "real service worker on an owned HTTP origin; no Vite server",
+  "background-push-settings.test.ts": "served by a harness that borrows from the daemon",
+  "background-push-navigation.test.ts": "served by a harness that borrows from the daemon",
+  "background-push-pwa.test.ts": "built generateSW on an owned HTTP server; no Vite dev server",
   "auth-recovery.test.ts": "stateful SSE middleware driven by the test",
   "backend-relay-eventsource.test.ts": "real Fastify relay and test-driven upstream SSE; no Vite server",
   "backend-registry.test.ts": "two real relay destinations with test-controlled metadata and persistent SSE; private Vite proxy",

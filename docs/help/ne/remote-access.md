@@ -1,5 +1,7 @@
 # प्रत्यक्ष रिमोट पहुँच
 
+पृष्ठभूमि सूचनालाई विश्वसनीय HTTPS वा रिमोट कन्ट्रोल चाहिन्छ। [सूचनाहरू](settings.md#notifications) मा **यस उपकरणमा पृष्ठभूमिमा** सक्षम गर्नुहोस्; स्थानीय नेटवर्कको HTTP मा सुरक्षित जडान प्रयोग गर्ने निर्देशन देखिन्छ।
+
 प्रत्यक्ष पहुँचले server password प्रयोग गरी CodeNomad को HTTP/HTTPS listener मा जोड्छ। यो [Remote Control](remote-control.md) भन्दा अलग हो: pairing लाई LAN binding वा inbound port चाहिँदैन, र कुनै मार्ग चुपचाप अर्कोमा फर्कँदैन।
 
 ## पहुँच मार्ग रोज्नुहोस् {#access-paths}

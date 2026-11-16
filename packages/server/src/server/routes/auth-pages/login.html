@@ -120,7 +120,8 @@
             return
           }
           // Replace history entry so Back doesn't return to /login.
-          window.location.replace("/")
+          const push = /^#push=[A-Za-z0-9_-]{32,128}$/.test(window.location.hash) ? window.location.hash : ""
+          window.location.replace("/" + push)
         } catch (e) {
           showError(e && e.message ? e.message : String(e))
         }

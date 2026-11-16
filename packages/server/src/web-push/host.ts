@@ -9,7 +9,7 @@ import { attachLocalPushEvents } from "./local-events"
 import { validateSubject } from "./transport"
 
 // HTTP, HTTPS and ingress borrow one host producer and one private queue.
-type PushApi = Pick<PushService, "status" | "consent" | "subscribe" | "unsubscribe" | "resolve" | "publish" | "interested">
+type PushApi = Pick<PushService, "status" | "consent" | "subscribe" | "unsubscribe" | "resolve" | "publish" | "interested" | "focus">
 const hosts = new WeakMap<AuthManager, { push: PushApi; users: number; dispose(): void }>()
 
 export function readPushPolicy(env: NodeJS.ProcessEnv = process.env) {
@@ -74,6 +74,7 @@ export function acquirePushHost(deps: {
     const push: PushApi = {
       status: principal => getService()?.status(principal) ?? { enabled: false, subscribed: false },
       consent: principal => required().consent(principal),
+      focus: (principal, value) => service?.focus(principal, value),
       subscribe: (principal, value) => required().subscribe(principal, value),
       unsubscribe: principal => { invalidateDevice(principal.id); service?.unsubscribe(principal) },
       resolve: async (principal, token) => getService()?.resolve(principal, token),

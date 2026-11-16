@@ -87,6 +87,8 @@ La hauteur de saisie suit la conversation visible, y compris le clavier logiciel
 
 ## Notifications et badges {#notifications}
 
+Dans le navigateur, **En arrière-plan sur cet appareil** est désactivé au départ. Activez-le pour autoriser des alertes génériques sur les projets ouverts du serveur principal après fermeture de la page ; les événements suivent la colonne **Système**. Le contrôle indique les refus de l’hôte, du stockage ou du navigateur. Les applications desktop conservent les notifications natives.
+
 Pour un onglet de projet sur un autre serveur CodeNomad, les notifications indiquent le nom du serveur. **Voir la conversation** ouvre ce projet et cette conversation précis ; détacher le serveur efface ses notifications. Les réglages Images et Recherche web suivent le serveur du projet, y compris ses valeurs globales.
 
 1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation). Faites glisser le pointeur sur une ligne ou une colonne de cases pour en régler plusieurs d'un coup.

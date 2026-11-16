@@ -28,6 +28,7 @@ import { reloadWorktrees } from "./stores/worktrees"
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
+import { useBackgroundPush } from "./lib/hooks/use-background-push"
 import { loadedRestorableSession } from "./stores/client-state"
 import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
@@ -148,6 +149,7 @@ const App: Component = () => {
   })
   onMount(() => onCleanup(startNotificationIconBadge()))
   useAppSessionRestore()
+  useBackgroundPush()
   const { t } = useI18n()
   const {
     preferences,

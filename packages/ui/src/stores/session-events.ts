@@ -380,6 +380,7 @@ function getInstanceDisplayName(instanceId: string, detail?: string): string {
 
 /** Keep navigation and displayed notices on the exact event attachment. */
 function showInstanceToast(instanceId: string, sessionId: string | undefined | null, payload: ToastPayload): ToastHandle {
+  payload = { ...payload, instanceId }
   if (parseInstanceKey(instanceId).backendId === "local") return showToastNotification(payload)
   const authority = captureEventAuthority(instanceId)
   const target = { backendId: parseInstanceKey(instanceId).backendId, instanceId, ...(sessionId ? { sessionId } : {}) }

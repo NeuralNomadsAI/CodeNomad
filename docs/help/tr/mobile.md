@@ -14,6 +14,8 @@ Uzaktan Kontrol, cihaz eşleştirmeyi gerektirir; doğrudan bağlantılar yönle
 
 ## PWA kurun {#install-pwa}
 
+Sayfa kapalıyken bildirim almak için **Ayarlar → Bildirimler → Bu cihazda arka planda** seçeneğini açın. Güvenilir HTTPS veya Uzaktan Kontrol kullanın; iPhone/iPad’de önce Ana Ekran uygulamasını kurup açın. Genel bildirimler kimlik doğrulamasından sonra mevcut projeyi açar; kullanılamayan sekmede açık **Yeniden dene** işlemi korunur.
+
 1. Kurulumu destekleyen bir tarayıcıda güvenilir HTTPS üzerinden çalışan CodeNomad URL'sini açın.
 2. Chrome/Edge ve benzeri tarayıcılarda, adres çubuğu yükleme işlemini veya sunulduğunda tarayıcının **Install CodeNomad** işlemini kullanın. iPhone/iPad Safari'de **Share → Add to Home Screen** öğesini kullanın; tam ifade işletim sistemine/tarayıcıya bağlıdır.
 3. Yeni başlatıcıyı açın ve tarayıcı depolama alanı ayrıysa orada oturum açmayı veya eşleştirmeyi tamamlayın.

@@ -87,6 +87,8 @@ La altura del editor sigue la conversación visible, incluido el teclado en pant
 
 ## Notificaciones e indicadores {#notifications}
 
+En el navegador, **En segundo plano en este dispositivo** empieza desactivado. Actívalo para permitir avisos genéricos de los proyectos abiertos del servidor principal con la página cerrada; los eventos siguen **Sistema**. El control indica restricciones del anfitrión, almacenamiento o navegador. Las aplicaciones de escritorio mantienen las notificaciones nativas.
+
 Para una pestaña de proyecto en otro servidor CodeNomad, las notificaciones incluyen el nombre del servidor. **Ver conversación** abre ese proyecto y esa conversación exactos; desconectar el servidor elimina sus avisos. Los ajustes de Imágenes y Búsqueda web corresponden al servidor del proyecto, incluidos sus valores globales.
 
 1. Abre **Notificaciones**. Para cada tipo de notificación, marca dónde aparece: **En pantalla** (una burbuja temporal), **Historial** (se conserva en el historial de notificaciones de la campana de la barra de pestañas, o de la barra de título en la aplicación de escritorio de macOS) y **Sistema** (una notificación del sistema operativo). Arrastra sobre una fila o columna de casillas para ajustar varias a la vez.

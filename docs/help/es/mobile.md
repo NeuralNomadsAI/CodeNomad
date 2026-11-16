@@ -14,6 +14,8 @@ Control remoto requiere emparejar el dispositivo; las conexiones directas requie
 
 ## Instalar la PWA {#install-pwa}
 
+Para avisos con la página cerrada, activa **Configuración → Notificaciones → En segundo plano en este dispositivo**. Usa HTTPS de confianza o Control remoto; en iPhone/iPad, instala y abre primero la aplicación de la pantalla de inicio. Los avisos genéricos abren un proyecto existente tras autenticarte; una pestaña no disponible conserva **Reintentar**.
+
 1. Abre la URL operativa de CodeNomad por HTTPS de confianza en un navegador que admita instalación.
 2. En Chrome/Edge y navegadores similares, usa la acción de instalación de la barra de direcciones o **Install CodeNomad** del navegador cuando se ofrezca. En Safari de iPhone/iPad, usa **Share → Add to Home Screen**; la redacción exacta depende del sistema operativo/navegador.
 3. Abre el nuevo acceso directo y completa allí el inicio de sesión o el emparejamiento si usa un almacenamiento de navegador separado.

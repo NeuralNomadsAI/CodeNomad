@@ -42,6 +42,7 @@ async function fixture(t: test.TestContext, skipAuth = false, realPush = false) 
   })
   const calls: Array<{ method: string; principal: unknown; value?: unknown }> = []
   const pushMock = {
+    focus(principal: unknown, value: unknown) { calls.push({ method: "focus", principal, value }) },
     consent(principal: unknown) { calls.push({ method: "consent", principal }); return { publicKey: "public" } },
     status(principal: unknown) { calls.push({ method: "status", principal }); return { enabled: true, subscribed: true, publicKey: "public" } },
     subscribe(principal: unknown, value: unknown) { calls.push({ method: "subscribe", principal, value }); return { publicKey: "public" } },
@@ -127,6 +128,21 @@ test("push refuses missing authentication, HTTP, explicit server protocol and di
   assert.equal(f.calls.length, 0)
   const skipped = await fixture(t, true)
   assert.equal((await skipped.request(skipped.local, "/api/push/status", "GET", good)).status, 403)
+})
+
+test("focus hint uses the same HTTPS principal, strict body and no-store boundary", async t => {
+  const f = await fixture(t)
+  const headers = { host: new URL(origin).host, origin, cookie: f.cookie }
+  const hint = { endpoint: body.subscription.endpoint, viewId: "view", focused: true }
+  const result = await f.request(f.local, "/api/push/focus", "PUT", headers, hint)
+  assert.equal(result.status, 204)
+  assert.equal(result.headers["cache-control"], "no-store")
+  assert.deepEqual(f.calls, [{ method: "focus", principal: {
+    id: f.cookie.split("=")[1], channel: "https", origin,
+  }, value: hint }])
+  assert.equal((await f.request(f.local, "/api/push/focus", "PUT", headers, { ...hint, ttl: 999999 })).status, 400)
+  assert.equal((await f.request(f.local, "/api/push/focus", "PUT", { ...headers, cookie: "" }, hint)).status, 401)
+  assert.equal((await f.request(f.local, "/api/push/focus", "PUT", { ...headers, origin: "https://foreign.test" }, hint)).status, 403)
 })
 
 test("physical tunnel ingress and direct HTTPS devices retain their distinct principals", async (t) => {

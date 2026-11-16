@@ -87,6 +87,8 @@ Composer height follows the visible conversation, including the software keyboar
 
 ## Notifications and badges {#notifications}
 
+In a browser, **In the background on this device** starts off. Enable it explicitly to allow generic alerts for open primary-server projects after closing the page; events follow the existing **System** column. The control reports host policy, storage or browser refusal. Desktop apps keep native delivery.
+
 For a project tab on another CodeNomad server, notifications include the server name. **View conversation** opens that exact project and conversation; detaching the server clears its notices. Images and Web search settings follow the project's server, including that server's global defaults.
 
 1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar, or the title bar in the macOS desktop app) and **System** (an operating-system notification). Drag across a row or column of boxes to set several at once.

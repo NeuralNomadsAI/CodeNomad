@@ -14,6 +14,8 @@
 
 ## 安装 PWA {#install-pwa}
 
+若要在关闭页面后接收通知，请开启 **设置 → 通知 → 在此设备上后台通知**。请使用可信 HTTPS 或远程控制；iPhone/iPad 需先安装并打开主屏幕应用。通知仅显示通用文字，认证后打开现有项目；不可用的标签仍需手动 **重试**。
+
 1. 在支持安装的浏览器中，通过受信任 HTTPS 打开可正常使用的 CodeNomad URL。
 2. 在 Chrome/Edge 等浏览器中，使用地址栏安装操作或出现时的 **Install CodeNomad** 浏览器操作。在 iPhone/iPad Safari 上使用 **Share → Add to Home Screen**；具体措辞取决于操作系统/浏览器。
 3. 打开新启动入口，如果其浏览器存储独立，请在其中完成登录或配对。

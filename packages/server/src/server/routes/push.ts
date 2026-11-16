@@ -6,7 +6,7 @@ import { isRemoteSocket } from "../../remote-control/request-origin"
 import { PushInputError, type PushPrincipal, type PushService } from "../../web-push/service"
 
 interface RouteDeps {
-  push: Pick<PushService, "status" | "consent" | "subscribe" | "unsubscribe" | "resolve">
+  push: Pick<PushService, "status" | "consent" | "subscribe" | "unsubscribe" | "resolve" | "focus">
   auth: AuthManager
   remoteControl: RemoteControlManager
   httpsOrigin(request: FastifyRequest): string | null
@@ -82,6 +82,14 @@ export function registerPushRoutes(app: FastifyInstance, deps: RouteDeps) {
       await deps.push.unsubscribe(principal)
       return reply.code(204).send()
     } catch (error) { return serviceError(error, reply) }
+  })
+  app.put("/api/push/focus", { bodyLimit: 8192 }, async (request, reply) => {
+    const principal = principalFor(request, reply)
+    if (!principal) return
+    const parsed = z.object({ endpoint: z.string().url().max(4096), viewId: z.string().min(1).max(128), focused: z.boolean() }).strict().safeParse(request.body)
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid focus hint" })
+    deps.push.focus(principal, parsed.data)
+    return reply.code(204).send()
   })
   app.get<{ Params: { token: string } }>("/api/push/routes/:token", async (request, reply) => {
     const principal = principalFor(request, reply)
