@@ -497,6 +497,48 @@ test("a schedule-only background read uses the same top-right indicator after pa
   } finally { release?.(); await f.close() }
 })
 
+test("a native refresh straddling header and task revisions keeps the selected display through its coalesced retry", async () => {
+  const f = await open(), id = "msn_inventory_59"
+  let release!: () => void, entered!: () => void, headers = 0, skew = true
+  const gate = new Promise<void>(resolve => { release = resolve }), retry = new Promise<void>(resolve => { entered = resolve })
+  try {
+    await f.page.evaluate(async id => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: id }), id)
+    await showSelection(f.page)
+    await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
+    const node = await f.page.locator(".mission-detail").elementHandle()
+    const before = await f.page.evaluate(() => (window as any).missionFixture.snapshot().missions[0].revision)
+    await f.finish(id, "before-skew", 10000)
+    await f.page.route("**/missions/panel-page", async route => {
+      const input = route.request().postDataJSON()
+      if (input.missionID === id && input.header && ++headers === 2) { entered(); await gate }
+      if (input.missionID === id && input.source === "tasks" && skew) {
+        skew = false; await f.finish(id, "during-skew", 11000)
+      }
+      return route.fallback()
+    })
+    await f.page.evaluate(() => {
+      ;(window as any).skewStatuses = []
+      const observer = new MutationObserver(() => (window as any).skewStatuses.push((window as any).missionFixture.snapshot().status))
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true })
+      ;(window as any).stopSkewObservation = () => observer.disconnect()
+      for (let index = 0; index < 3; index++) (window as any).missionFixture.refresh()
+    })
+    await retry
+    assert.equal(await f.page.evaluate(() => (window as any).missionFixture.snapshot().status), "ready")
+    assert.equal(await f.page.evaluate(() => (window as any).missionFixture.snapshot().missions[0].revision), before)
+    assert.equal(await f.page.locator(".mission-detail").evaluate((current, old) => current === old, node), true)
+    release()
+    await f.page.waitForFunction(before => {
+      const store = (window as any).inventoryStore
+      return !store.reading("fixture") && store.state("fixture").missions[0].revision > before
+    }, before)
+    assert.equal(headers, 2)
+    assert.equal(await f.page.evaluate(() => (window as any).skewStatuses.includes("error")), false)
+    await f.page.evaluate(() => (window as any).stopSkewObservation())
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.close() }
+})
+
 test("cleanup discovery keeps a failed middle window through a passive first-window refresh and retries without a control effect", async () => {
   const f = await open()
   try {

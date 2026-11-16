@@ -904,8 +904,12 @@ The coordinator is one exact copied actor, including its Location, for full-ACK 
 Wanted headers publish independently of directory reads; an explicit refresh awaits its
 owned header reconciliation. Last-owner release fences pending work while retaining a
 last-good header for a later selection. Task-source versions suppress unrelated expanded
-task rereads. Actors, all compact reports, history and claims use independently selected
-field windows. Lifecycle receipt/pending collections use `field:"control"` with
+task rereads.
+Header/task revision skew retains the last coherent display and coalesces one header
+retry under the original deadline; continued skew waits for fresh native or explicit
+demand. Read failures retain their ordinary error and recovery state.
+Actors, all compact reports, history and claims use independently selected field
+windows. Lifecycle receipt/pending collections use `field:"control"` with
 `part:"receipts"|"pending"`; lifecycle identity and counts stay in compact control.
 Field lanes retain the root field and part separately; the owning root descriptor
 invalidates structured and raw part windows together, and Retry preserves the exact part.
