@@ -77,12 +77,14 @@ export class PushService {
 
   private load() {
     if (this.loaded || this.closed || !this.options.enabled() || Date.now() < this.nextLoadAt) return
+    let parsed = false
     try {
       const doc = z.object({
         v: z.literal(1), epoch: z.string(), keys: z.object({ publicKey: z.string(), privateKey: z.string() }),
         entries: z.array(EntrySchema).max(128),
         routes: z.array(z.tuple([z.string(), z.object({ owner: z.string(), instanceId: z.string(), sessionId: z.string(), expiresAt: z.number() })])).max(1024),
       }).parse(JSON.parse(fs.readFileSync(this.options.file, "utf8")))
+      parsed = true
       const entries = new Map<string, Entry>(), principals = new Map<string, PushPrincipal>(), routes = new Map<string, Route>()
       for (const raw of doc.epoch === (this.options.epoch?.(doc.keys.publicKey) ?? "") ? doc.entries : []) {
         // Password sessions live in memory. Device identity is revalidated before any IO.
@@ -101,9 +103,10 @@ export class PushService {
       this.entries = entries
       this.principals = principals
       this.routes = routes
+      if (entries.size !== doc.entries.length) this.persist()
       this.loaded = true
     } catch (error: any) {
-      if (error.code === "ENOENT") this.loaded = true
+      if (error.code === "ENOENT" && !parsed) this.loaded = true
       else this.nextLoadAt = Date.now() + 5000
     }
   }

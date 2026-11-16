@@ -4,6 +4,8 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { PushService, type PushPrincipal } from "./service"
+import { AuthManager } from "../auth/manager"
+import { createLogger } from "../logger"
 
 const principal: PushPrincipal = { id: "session-secret-sentinel", channel: "https", origin: "https://code.example" }
 const subscription = { endpoint: "https://fcm.googleapis.com/push/test", keys: {
@@ -198,4 +200,74 @@ test("Stop epoch prevents tunnel-consent resurrection after Start despite failed
   const restarted = new PushService(options as any)
   t.after(() => restarted.close())
   assert.equal(restarted.status(device).subscribed, false)
+})
+
+test("load durably purges startup-password X consent through Y and back to X", t => {
+  let credential!: AuthManager
+  const { options, push } = fixture(t, { epoch: (key: string) => credential.pushCredentialEpoch(key) })
+  const logger = createLogger({ level: "silent" } as never)
+  const auth = (password: string) => new AuthManager({
+    configPath: path.join(path.dirname(options.file), "config.yaml"), username: "user", password, generateToken: false,
+  }, logger)
+  const device: PushPrincipal = { id: "remote-device:device", channel: "https", origin: principal.origin }
+  credential = auth("startup-password-X")
+  push.subscribe(device, consent())
+  const publicKey = push.status(device).publicKey!
+  push.close()
+  const writes = t.mock.method(fs, "renameSync")
+  credential = auth("startup-password-Y")
+  const underY = new PushService(options as any)
+  t.after(() => underY.close())
+  assert.equal(underY.status(device).subscribed, false)
+  const filtered = JSON.parse(fs.readFileSync(options.file, "utf8"))
+  assert.deepEqual(filtered.entries, [])
+  assert.equal(filtered.epoch, credential.pushCredentialEpoch(publicKey))
+  underY.status(device)
+  assert.equal(writes.mock.callCount(), 1, "filtered consent is rewritten once")
+  underY.close()
+  credential = auth("startup-password-X")
+  const underX = new PushService(options as any)
+  t.after(() => underX.close())
+  assert.equal(underX.status(device).subscribed, false)
+  assert.equal(underX.status(device).publicKey, publicKey)
+  assert.equal(writes.mock.callCount(), 1, "an empty document needs no further rewrite")
+})
+
+test("load durably drops channel/device-epoch consent before an old epoch returns", t => {
+  let epoch = "channel-or-device-X"
+  const { options, push } = fixture(t, { channelEpoch: () => epoch })
+  const device: PushPrincipal = { id: "remote-device:device", channel: "https", origin: principal.origin }
+  push.subscribe(device, consent())
+  push.close()
+  epoch = "channel-or-device-Y"
+  const underY = new PushService(options as any)
+  t.after(() => underY.close())
+  assert.equal(underY.status(device).subscribed, false)
+  assert.deepEqual(JSON.parse(fs.readFileSync(options.file, "utf8")).entries, [])
+  underY.close()
+  epoch = "channel-or-device-X"
+  const underX = new PushService(options as any)
+  t.after(() => underX.close())
+  assert.equal(underX.status(device).subscribed, false)
+})
+
+test("a failed filtered rewrite keeps push unavailable until the purge is durable", t => {
+  let epoch = "X", now = Date.now()
+  t.mock.method(Date, "now", () => now)
+  const { options, push } = fixture(t, { epoch: () => epoch })
+  const device: PushPrincipal = { id: "remote-device:device", channel: "https", origin: principal.origin }
+  push.subscribe(device, consent())
+  push.close()
+  const before = fs.readFileSync(options.file, "utf8")
+  epoch = "Y"
+  const blocked = t.mock.method(fs, "renameSync", () => { throw Object.assign(new Error("Temporary missing target"), { code: "ENOENT" }) })
+  const restarted = new PushService(options as any)
+  t.after(() => restarted.close())
+  assert.equal(restarted.status(device).enabled, false)
+  assert.equal(fs.readFileSync(options.file, "utf8"), before)
+  blocked.mock.restore()
+  now += 5001
+  assert.equal(restarted.status(device).enabled, true)
+  assert.equal(restarted.status(device).subscribed, false)
+  assert.deepEqual(JSON.parse(fs.readFileSync(options.file, "utf8")).entries, [])
 })

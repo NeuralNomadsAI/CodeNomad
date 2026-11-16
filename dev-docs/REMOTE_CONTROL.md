@@ -242,6 +242,7 @@ only with the feature and administrator policy enabled, after all listener metad
 and direct HTTPS origins are published. Restored devices are then revalidated;
 revoked devices are purged by the ordinary sweep. Device logout rotates a private
 registry consent epoch, including while push is dormant.
+After a successful load, any dropped entry causes one atomic rewrite of the filtered document, making credential and channel/device-epoch purges durable across restarts.
 
 Unreadable or invalid private push storage disables push alone: status reports
 `enabled: false, unavailable: true`, consent/subscription writes return 503, and
