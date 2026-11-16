@@ -4,6 +4,47 @@ import * as sessionModule from "./session-manager"
 
 const { SessionManager, sessionTimeoutMs } = sessionModule
 
+test("session invalidation observers expire without sliding activity and isolate principals", t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  let now = 0
+  const sessions = new SessionManager({ idleMs: 10, absoluteMs: 25, now: () => now })
+  const first = sessions.createSession("alice"), other = sessions.createSession("bob")
+  const ended: string[] = []
+  sessions.onInvalidated(first.id, () => ended.push("first"))
+  const releaseOther = sessions.onInvalidated(other.id, () => ended.push("other"))
+  now = 9
+  assert.ok(sessions.getSession(other.id))
+  t.mock.timers.tick(9)
+  now = 10
+  t.mock.timers.tick(1)
+  assert.deepEqual(ended, ["first"])
+  assert.ok(sessions.getSession(other.id))
+  releaseOther()
+  sessions.revoke(other.id)
+  assert.deepEqual(ended, ["first"])
+  sessions.onInvalidated(first.id, () => ended.push("already-ended"))
+  assert.deepEqual(ended, ["first", "already-ended"])
+})
+
+test("revocation and absolute expiry invalidate every observer once", t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  let now = 0
+  const sessions = new SessionManager({ idleMs: 100, absoluteMs: 25, now: () => now })
+  const session = sessions.createSession("alice")
+  let ended = 0
+  sessions.onInvalidated(session.id, () => { ended++; throw new Error("observer") })
+  sessions.onInvalidated(session.id, () => { ended++ })
+  now = 25
+  t.mock.timers.tick(25)
+  assert.equal(ended, 2)
+  sessions.revokeUser("alice")
+  assert.equal(ended, 2)
+  const next = sessions.createSession("alice")
+  sessions.onInvalidated(next.id, () => { ended++ })
+  sessions.revokeUser("alice")
+  assert.equal(ended, 3)
+})
+
 test("sessions slide until idle or absolute expiry and revocation isolates principals", () => {
   let now = 0
   const sessions = new SessionManager({ idleMs: 10, absoluteMs: 25, now: () => now })

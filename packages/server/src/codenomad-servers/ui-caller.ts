@@ -85,5 +85,5 @@ export function createBackendUiAccess(deps: {
     if (localUiRequest(request)) return false
     return guard(request, reply)
   }
-  return { guard, guardProfiles, guardSecret, capabilities }
+  return { guard, guardProfiles, guardSecret, capabilities, localUiRequest }
 }

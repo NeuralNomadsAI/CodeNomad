@@ -93,7 +93,7 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 ## Save a remote server {#saved-servers}
 
-Experimental `multiBackend` is off by default and has no visible activation control. When enabled, authenticated remote clients can use and manage all servers saved on the host; Home and **Settings → Servers** show the actions allowed by the host's capabilities. Enter new server passwords or pairing links only through Remote Control or HTTPS; plain LAN HTTP can use saved connections.
+Experimental `multiBackend` is off by default and has no visible activation control. When enabled, authenticated remote clients can use and manage all servers saved on the host; Home and **Settings → Servers** show the actions allowed by the host's capabilities. Plain LAN HTTP disables new server password and pairing-link entry: “Use HTTPS or Remote Control to enter credentials.” Connections using saved credentials and adding, editing or removing profiles without secrets remain available.
 
 For an SSH-only destination in experimental **Settings → Servers**, choose **Add server**, enter its **URL** and **SSH host (optional)**, then **Save**. The profile saves offline; its connection uses the backend's SSH relay.
 

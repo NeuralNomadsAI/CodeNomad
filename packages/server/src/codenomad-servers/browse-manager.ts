@@ -224,14 +224,15 @@ export class RemoteServerBrowseManager {
       return entry
   }
 
-  async relay(id: string, target: string, init: RequestInit, proof?: unknown): Promise<Response> {
+  async relay(id: string, target: string, init: RequestInit, proof?: unknown, observeStatus = false): Promise<Response> {
     const bootstrap = proof === RELAY_BOOTSTRAP
     const method = init.method ?? "GET"
     const metadata = target === "/api/meta" && method === "GET"
     if (bootstrap && !metadata && !(target === "/api/auth/status" && method === "GET")) throw new CodeNomadServerError("unreachable")
     const authority = proof === undefined || bootstrap ? this.capture(id) : this.assertProof(id, proof)
     const client = this.client(authority).client
-    const mode = proof === undefined ? undefined : "observe-status"
+    // Remote principals borrow the existing shared auth flight independently of their request signals.
+    const mode = proof === undefined && !observeStatus ? undefined : "observe-status"
     if (proof === undefined || !metadata) return client.fetch(target, init, mode)
     // Reuse the bounded JSON reader: identity is observed before a local proof is published.
     const result = await client.json<{ serverId?: unknown }>(target, init, mode)

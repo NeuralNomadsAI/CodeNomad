@@ -21,6 +21,8 @@ function integrationLogRoute(request: FastifyRequest): string | undefined {
   const parts = pathname.replace(/^\/+/, "/").split("/").map(part => {
     try { return decodeURIComponent(part) } catch { return part }
   })
+  if (parts[1] === "api" && parts[2] === "backends") return "/api/backends/:id/*"
+  if (parts[1] === "api" && parts[2] === "remote-servers") return "/api/remote-servers/:id/*"
   if (parts[1] === "api" && parts[2] === "workspaces" && parts[4] === "integrations") return `${integrationRoute}/*`
   if (parts[1] === "api" && parts[2] === "workspaces" && parts[4] === "plugin-sources") return "/api/workspaces/:id/plugin-sources/*"
 }

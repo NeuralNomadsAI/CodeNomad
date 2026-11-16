@@ -6,6 +6,7 @@ import { RemoteServerProbeError, remoteServerErrorKey, useRelayServerProfiles } 
 import type { RemoteServerProfile } from "../../../server/src/api-types"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { captureRequestFocus } from "../lib/request-focus"
+import { secretEntryAllowed } from "../lib/server-meta"
 
 interface ServerAddFieldProps {
   disabled?: boolean
@@ -38,6 +39,9 @@ export default function ServerAddField(props: ServerAddFieldProps) {
   }
   function changed(value: string) {
     invalidate()
+    if (classifyCodeNomadLink(value)?.kind === "pairing" && !secretEntryAllowed()) {
+      setAddress(""); setError("remoteBrowse.secretEntryForbidden"); return
+    }
     setAddress(value); setError(undefined); setDiagnostic(undefined); setErrorServer("")
     if (classifyCodeNomadLink(value)?.baseUrl !== tlsFailedFor()) { setTlsFailedFor(undefined); setSkipTls(false) }
   }
@@ -46,6 +50,9 @@ export default function ServerAddField(props: ServerAddFieldProps) {
     if (!value || busy() || props.disabled || !enabled()) return
     setError(undefined); setDiagnostic(undefined); setErrorServer("")
     const link = classifyCodeNomadLink(value)
+    if (link?.kind === "pairing" && !secretEntryAllowed()) {
+      setAddress(""); setError("remoteBrowse.secretEntryForbidden"); return
+    }
     if (!link) {
       setError(carriesCredentials(value) ? "folderSelection.browseMenu.errorCredentials" : "folderSelection.browseMenu.errorInvalid")
       if (carriesCredentials(value)) setAddress("")
@@ -99,19 +106,20 @@ export default function ServerAddField(props: ServerAddFieldProps) {
           aria-label={t(props.pairingProfile ? "remoteBrowse.pairingLink" : "folderSelection.browseMenu.addField")}
           placeholder={t(props.pairingProfile ? "remoteBrowse.pairingLink" : "folderSelection.browseMenu.addField")}
           aria-describedby={error() ? errorId : undefined} aria-invalid={error() ? "true" : undefined}
-          value={address()} disabled={busy() || props.disabled}
+          value={address()} disabled={busy() || props.disabled || !!props.pairingProfile && !secretEntryAllowed()}
           onKeyDown={event => { if (event.isComposing && event.key === "Enter") event.preventDefault() }}
-          onInput={event => changed(event.currentTarget.value)}
+          onInput={event => { changed(event.currentTarget.value); event.currentTarget.value = address() }}
           onPaste={event => {
             const pasted = event.clipboardData?.getData("text") ?? ""
             if (!classifyCodeNomadLink(pasted)) return
             event.preventDefault(); changed(pasted.trim()); void add(pasted)
           }} />
-        <button type="submit" class="window-icon-button" disabled={busy() || props.disabled || !address().trim()}
+        <button type="submit" class="window-icon-button" disabled={busy() || props.disabled || !address().trim() || !!props.pairingProfile && !secretEntryAllowed()}
           aria-label={t("folderSelection.browseMenu.add")} title={t("folderSelection.browseMenu.add")}>
           <Show when={busy()} fallback={<Plus class="w-4 h-4" aria-hidden="true" />}><Loader2 class="w-4 h-4 animate-spin" aria-hidden="true" /></Show>
         </button>
       </form>
+      <Show when={props.pairingProfile && !secretEntryAllowed()}><p class="server-add-field-error" role="alert">{t("remoteBrowse.secretEntryForbidden")}</p></Show>
       <Show when={error()}>{message => <p id={errorId} class="server-add-field-error" role="alert"><Show when={errorServer() && message() !== "remoteBrowse.pairAgain"}><bdi>{errorServer()}</bdi>{" — "}</Show><span>{t(message(), { name: errorServer() })}</span> <Show when={diagnostic()}>{detail => <SettingsInfoTip text={detail()} />}</Show></p>}</Show>
       <Show when={tlsFailedFor()}><label class="server-add-field-option">
         <input type="checkbox" checked={skipTls()} disabled={busy()} onChange={event => setSkipTls(event.currentTarget.checked)} />

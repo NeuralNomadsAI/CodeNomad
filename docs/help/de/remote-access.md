@@ -93,7 +93,7 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 ## Remote-Server speichern {#saved-servers}
 
-Das experimentelle `multiBackend` ist standardmäßig aus und hat keinen sichtbaren Aktivierungsschalter. Bei Aktivierung können authentifizierte Remote-Clients alle auf dem Host gespeicherten Server nutzen und verwalten; Startseite und **Einstellungen → Server** zeigen die vom Host erlaubten Aktionen. Neue Serverpasswörter oder Kopplungslinks können nur über Fernsteuerung oder HTTPS eingegeben werden; unverschlüsseltes LAN-HTTP kann gespeicherte Verbindungen nutzen.
+Das experimentelle `multiBackend` ist standardmäßig aus und hat keinen sichtbaren Aktivierungsschalter. Bei Aktivierung können authentifizierte Remote-Clients alle auf dem Host gespeicherten Server nutzen und verwalten; Startseite und **Einstellungen → Server** zeigen die vom Host erlaubten Aktionen. Unverschlüsseltes LAN-HTTP deaktiviert die Eingabe neuer Serverpasswörter und Kopplungslinks: „Verwenden Sie HTTPS oder Remote Control, um Zugangsdaten einzugeben.“ Verbindungen mit gespeicherten Zugangsdaten sowie das Hinzufügen, Bearbeiten und Entfernen von Profilen ohne Geheimnisse bleiben verfügbar.
 
 Für ein ausschließlich über SSH erreichbares Ziel wählen Sie in den experimentellen **Einstellungen → Server** die Aktion **Server hinzufügen**, geben **URL** und **SSH-Host (optional)** ein und wählen **Speichern**. Das Profil wird offline gespeichert; die Verbindung nutzt das SSH-Relay des Backends.
 

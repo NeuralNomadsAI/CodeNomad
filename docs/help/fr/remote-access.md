@@ -93,7 +93,7 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
-L’option expérimentale `multiBackend` est désactivée par défaut et n’a aucun contrôle d’activation visible. Lorsqu’elle est active, les clients distants authentifiés peuvent utiliser et gérer tous les serveurs enregistrés sur l’hôte ; l’accueil et **Paramètres → Serveurs** affichent les actions autorisées par les capacités de l’hôte. Saisissez de nouveaux mots de passe de serveur ou liens d’appairage uniquement via le Contrôle à distance ou HTTPS ; le HTTP simple sur le réseau local permet d’utiliser les connexions enregistrées.
+L’option expérimentale `multiBackend` est désactivée par défaut et n’a aucun contrôle d’activation visible. Lorsqu’elle est active, les clients distants authentifiés peuvent utiliser et gérer tous les serveurs enregistrés sur l’hôte ; l’accueil et **Paramètres → Serveurs** affichent les actions autorisées par les capacités de l’hôte. Le HTTP simple sur le réseau local désactive la saisie de nouveaux mots de passe de serveur et liens d’appairage : « Utilisez HTTPS ou Remote Control pour saisir les identifiants. » Les connexions utilisant des identifiants enregistrés et l’ajout, la modification ou la suppression de profils sans secrets restent disponibles.
 
 Pour une destination accessible uniquement par SSH dans les **Paramètres → Serveurs** expérimentaux, choisissez **Ajouter le serveur**, saisissez son **URL** et son **Hôte SSH (facultatif)**, puis **Enregistrer**. Le profil s’enregistre hors ligne ; sa connexion passe par le relais SSH du backend.
 

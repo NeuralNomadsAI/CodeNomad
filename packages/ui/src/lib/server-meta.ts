@@ -1,6 +1,8 @@
 import { createSignal } from "solid-js"
 import type { ServerMeta } from "../../../server/src/api-types"
 import { serverApi, type ServerApi } from "./api-client"
+import { setHostServerMeta } from "./host-server-meta"
+export { secretEntryAllowed } from "./host-server-meta"
 
 /** One backend's cached `/api/meta`, with its previews availability signals. */
 export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
@@ -33,6 +35,7 @@ export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
       signal?.throwIfAborted()
       snapshot.cached = meta
       snapshot.setMeta(meta)
+      if (api === serverApi && !signal) setHostServerMeta(meta)
       setPreviewsUnavailable(meta.previewsUnavailable === true)
       setPreviewsAvailabilityResolved(true)
       return meta

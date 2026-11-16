@@ -115,6 +115,7 @@ it("server capabilities follow only host metadata, with explicit denial and loca
         await getServerMeta(true)
         assert.equal(hostMeta.serversUsable(), allowed ?? local)
         assert.equal(hostMeta.serversManageable(), allowed ?? local)
+        assert.equal(hostMeta.secretEntryAllowed(), allowed ?? local)
         assert.equal(localRequest(), local)
       }
     }
@@ -124,5 +125,6 @@ it("server capabilities follow only host metadata, with explicit denial and loca
     await remote.getServerMeta()
     assert.equal(hostMeta.serversUsable(), false)
     assert.equal(hostMeta.serversManageable(), false)
+    assert.equal(hostMeta.secretEntryAllowed(), false)
   } finally { serverApi.fetchServerMeta = original }
 })

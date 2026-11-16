@@ -18,10 +18,13 @@ import { createInstance, refreshWorkspaceList } from "../../../src/stores/instan
 import InstanceTabs from "../../../src/components/instance-tabs"
 import RemoteRestoreView from "../../../src/components/remote-restore-view"
 import AlertDialog from "../../../src/components/alert-dialog"
+import { getServerMeta } from "../../../src/lib/server-meta"
 import "../../../src/index.css"
 
 await preferencesForBackend("local").ensureLoaded()
 await preloadLocaleMessages(preferences().locale)
+// Match App's release-notification host metadata bootstrap before rendering restore controls.
+await getServerMeta()
 await initializeClientState()
 function close(id: string) {
   const tab = appTabs().find(tab => tab.id === id)

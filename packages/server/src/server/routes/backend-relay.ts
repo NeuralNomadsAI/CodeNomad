@@ -30,22 +30,36 @@ function relayAuthority(request: FastifyRequest, target = request.raw.url ?? "")
 export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
   manager: RemoteServerBrowseManager; getSelfOrigins(): Set<string>; guardCaller?: BackendCallerGuard
   guardSecret?: (request: FastifyRequest, reply: FastifyReply, body: unknown) => boolean
+  bindPrincipal?: (request: FastifyRequest, reply: FastifyReply) => AbortSignal | undefined
 }) {
   const guard = deps.guardCaller ?? ((request: FastifyRequest, reply: FastifyReply) => guardLocalBackendCaller(request, reply, deps.getSelfOrigins()))
+  const principals = new WeakMap<FastifyRequest, AbortSignal>()
+  const requestSignal = (request: FastifyRequest, controller: AbortController) => {
+    const principal = principals.get(request)
+    return principal ? AbortSignal.any([principal, controller.signal]) : controller.signal
+  }
   void app.register(async scope => {
-    scope.addHook("onRequest", async (request, reply) => { guard(request, reply) })
+    scope.addHook("onRequest", async (request, reply) => {
+      if (guard(request, reply)) return
+      const principal = deps.bindPrincipal?.(request, reply)
+      if (principal) principals.set(request, principal)
+    })
     scope.post<{ Params: { id: string } }>("/api/backends/:id/api/auth/login", { bodyLimit: 24 * 1024 }, async (request, reply) => {
       if (!profileId.test(request.params.id)) return reply.code(404).send({ error: "unknown_server" })
       const controller = new AbortController()
       const abort = () => controller.abort()
       reply.raw.once("close", abort)
       try {
+        const signal = requestSignal(request, controller)
+        signal.throwIfAborted()
         const { proof } = relayAuthority(request)
         // Login/status bootstrap is needed to authenticate a candidate before metadata admission.
         if (proof !== undefined && proof !== RELAY_BOOTSTRAP) deps.manager.assertProof(request.params.id, proof)
         if (deps.guardSecret?.(request, reply, request.body)) return
         const body = ConnectBody.parse(request.body ?? {})
-        return await deps.manager.connect(request.params.id, body, controller.signal)
+        const result = await deps.manager.connect(request.params.id, body, signal)
+        signal.throwIfAborted()
+        return result
       }
       catch { return reply.code(401).send({ error: "auth" }) }
       finally { reply.raw.off("close", abort) }
@@ -53,6 +67,7 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
     scope.post<{ Params: { id: string } }>("/api/backends/:id/api/auth/logout", async (request, reply) => {
       if (!profileId.test(request.params.id)) return reply.code(404).send({ error: "unknown_server" })
       try {
+        principals.get(request)?.throwIfAborted()
         const { proof } = relayAuthority(request)
         if (proof !== undefined) deps.manager.assertProof(request.params.id, proof)
         return deps.manager.forget(request.params.id)
@@ -86,6 +101,8 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
         reply.raw.once("finish", cleanup)
         reply.raw.once("close", cleanup)
         try {
+          const signal = requestSignal(request, controller)
+          signal.throwIfAborted()
           const authority = relayAuthority(request, target)
           const { proof } = authority
           if (isMemoryRelayRoute(pathname, request.method)) deps.manager.assertProof(id, proof)
@@ -97,8 +114,9 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
             if (typeof value === "string") headers.set(name, value)
           }
           const body = ["GET", "HEAD"].includes(request.method) ? undefined : Readable.toWeb(request.raw) as ReadableStream<Uint8Array>
-          const response = await deps.manager.relay(id, target, { method: request.method, headers, body, signal: controller.signal, duplex: "half" } as RequestInit, proof)
-          controller.signal.throwIfAborted()
+          const response = await deps.manager.relay(id, target, { method: request.method, headers, body, signal, duplex: "half" } as RequestInit,
+            proof, principals.has(request))
+          signal.throwIfAborted()
           reply.code(response.status)
           for (const [name, value] of response.headers) if (responseHeaders.has(name)) reply.header(name, value)
           if (proof !== undefined && target === "/api/meta" && request.method === "GET") {

@@ -93,7 +93,7 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
-La opción experimental `multiBackend` está desactivada de forma predeterminada y no tiene un control de activación visible. Cuando está activa, los clientes remotos autenticados pueden usar y administrar todos los servidores guardados en el anfitrión; el inicio y **Configuración → Servidores** muestran las acciones permitidas por las capacidades del anfitrión. Introduce nuevas contraseñas de servidor o enlaces de vinculación solo mediante Control remoto o HTTPS; HTTP sin cifrar en la LAN permite usar conexiones guardadas.
+La opción experimental `multiBackend` está desactivada de forma predeterminada y no tiene un control de activación visible. Cuando está activa, los clientes remotos autenticados pueden usar y administrar todos los servidores guardados en el anfitrión; el inicio y **Configuración → Servidores** muestran las acciones permitidas por las capacidades del anfitrión. HTTP sin cifrar en la LAN desactiva la entrada de nuevas contraseñas de servidor y enlaces de vinculación: «Usa HTTPS o Control remoto para introducir credenciales.» Las conexiones con credenciales guardadas y la adición, edición o eliminación de perfiles sin secretos siguen disponibles.
 
 Para un destino accesible solo por SSH en **Ajustes → Servidores** experimental, elija **Añadir servidor**, introduzca su **URL** y **Host SSH (opcional)** y pulse **Guardar**. El perfil se guarda sin conexión; la conexión utiliza el relé SSH del backend.
 

@@ -102,6 +102,7 @@ import type { RemoteControlManager } from "../remote-control/manager"
 import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
+import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
 import { registerDirectOriginPolicy } from "./direct-origin"
 import { verifiedDirectHttpsOrigin } from "../remote-control/direct-https"
@@ -313,6 +314,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     publicHost: () => remoteGate.publicHost(),
     directHttpsOrigins: () => remoteGate.directHttpsOrigins?.() ?? [],
   })
+  const bindRelayPrincipal = createRelayPrincipalBinding({
+    auth: deps.authManager, devices: deps.remoteControlManager, local: backendUiAccess.localUiRequest,
+  })
 
   app.register(replyFrom, {
     contentTypesToEncode: [],
@@ -458,7 +462,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerRemoteServerRoutes(app, { logger: apiLogger, guardCaller: backendUiAccess.guard })
   const remoteServerBrowse = deps.remoteServerBrowseManager ?? new RemoteServerBrowseManager(deps.settings)
   registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard, guardSecret: backendUiAccess.guardSecret })
-  registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard, guardSecret: backendUiAccess.guardSecret })
+  registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard,
+    guardSecret: backendUiAccess.guardSecret, bindPrincipal: bindRelayPrincipal })
   registerRemotePreviewCapabilityRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, logger: deps.logger })
   const reconcileBackends = () => remoteServerBrowse.reconcile()
   if (!deps.remoteServerBrowseManager) deps.eventBus.on("storage.stateChanged", reconcileBackends)

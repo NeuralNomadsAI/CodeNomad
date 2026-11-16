@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.secretEntryForbidden": "יש להשתמש ב־HTTPS או בשליטה מרחוק להזנת פרטי התחברות.",
   "remoteBrowse.incompatible": "שרת CodeNomad אינו תואם.",
   "remoteBrowse.unreachable": "השרת אינו נגיש.",
   "remoteBrowse.pairAgain": "{name}: יש להדביק קישור צימוד חדש.",

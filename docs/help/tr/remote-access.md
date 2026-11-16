@@ -93,7 +93,7 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
-Deneysel `multiBackend` varsayılan olarak kapalıdır ve görünür bir etkinleştirme denetimi yoktur. Etkinken kimliği doğrulanmış uzak istemciler ana bilgisayarda kayıtlı tüm sunucuları kullanabilir ve yönetebilir; ana sayfa ve **Ayarlar → Sunucular**, ana bilgisayarın yeteneklerinin izin verdiği eylemleri gösterir. Yeni sunucu parolalarını veya eşleştirme bağlantılarını yalnızca Uzaktan Kontrol ya da HTTPS üzerinden girin; düz LAN HTTP kayıtlı bağlantıları kullanabilir.
+Deneysel `multiBackend` varsayılan olarak kapalıdır ve görünür bir etkinleştirme denetimi yoktur. Etkinken kimliği doğrulanmış uzak istemciler ana bilgisayarda kayıtlı tüm sunucuları kullanabilir ve yönetebilir; ana sayfa ve **Ayarlar → Sunucular**, ana bilgisayarın yeteneklerinin izin verdiği eylemleri gösterir. Düz LAN HTTP, yeni sunucu parolası ve eşleştirme bağlantısı girişini devre dışı bırakır: “Kimlik bilgilerini girmek için HTTPS veya Uzaktan Kontrol kullanın.” Kayıtlı kimlik bilgileriyle bağlantı kurma ve gizli bilgi içermeyen profilleri ekleme, düzenleme veya kaldırma kullanılabilir.
 
 Yalnızca SSH üzerinden erişilen bir hedef için deneysel **Ayarlar → Sunucular** bölümünde **Sunucu ekle** seçeneğini açın, **URL** ve **SSH sunucusu (isteğe bağlı)** alanlarını doldurup **Kaydet** seçeneğini kullanın. Profil çevrimdışı kaydedilir; bağlantı backend'in SSH aktarımını kullanır.
 

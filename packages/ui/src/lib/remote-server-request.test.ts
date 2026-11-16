@@ -3,8 +3,13 @@ import { test } from "node:test"
 import { createServerApi } from "./api-client"
 import { createBackendTransport } from "./backend-transport"
 import { RemoteServerRequestError } from "./remote-server-request"
+import { hostServerMeta, setHostServerMeta } from "./host-server-meta"
+import type { ServerMeta } from "../../../server/src/api-types"
 
-test("connect/forget are host-only, cancellable and return only reviewed errors", async () => {
+test("connect/forget are host-only, cancellable and return only reviewed errors", async t => {
+  const previous = hostServerMeta()
+  setHostServerMeta({ localRequest: true } as ServerMeta)
+  t.after(() => setHostServerMeta(previous))
   const calls: Array<{ path: string; init?: RequestInit }> = []
   let status = 200, body: unknown = { ok: true, cookie: "must-not-leak" }
   const fetcher: typeof fetch = async (url, init) => { calls.push({ path: String(url), init }); return Response.json(body, { status }) }

@@ -7,6 +7,7 @@ import { ServerEvents, serverEvents } from "./server-events"
 import { ServerStorage, storage } from "./storage"
 import { parseInstanceKey } from "./backend-identity"
 import { bindBackendRelayAuthority } from "./backend-relay-authority"
+import { assertRemoteServerCredentials } from "./remote-server-request"
 
 export type { BackendId }
 
@@ -51,7 +52,7 @@ export function createBackendClient(options: BackendClientOptions): BackendClien
   const authority = options.bindRelayAuthority ? bindBackendRelayAuthority(rawTransport, options.fetcher) : undefined
   const transport = authority?.transport ?? rawTransport
   const fetcher = authority?.fetch ?? options.fetcher
-  const auth = createAuthRecovery(transport, fetcher)
+  const auth = createAuthRecovery(transport, fetcher, options.relayProfileId === undefined ? undefined : assertRemoteServerCredentials)
   const fetch = createAuthenticatedFetch(auth, fetcher)
   const api = createServerApi({ ...transport, fetch })
   const events = new ServerEvents({ api, auth })

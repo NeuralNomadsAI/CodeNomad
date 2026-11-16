@@ -110,6 +110,10 @@ export class AuthManager {
     if (session) this.sessionManager.revoke(session.sessionId)
   }
 
+  onSessionInvalidated(sessionId: string, listener: () => void): () => void {
+    return this.authEnabled ? this.sessionManager.onInvalidated(sessionId, listener) : () => {}
+  }
+
   /** From this machine's own listeners; tunnelled Remote Control traffic never qualifies. */
   isLoopbackRequest(request: FastifyRequest): boolean {
     return isLocalRequest(request)

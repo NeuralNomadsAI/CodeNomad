@@ -14,7 +14,7 @@ import { RemoteControlManager } from "../manager"
 
 export const FAKE_TUNNEL_HOST = "codenomad-test.device.tunnel.test"
 // Each logger pipes to stdout, so fixtures share one.
-const logger = createLogger({ level: "silent" } as never)
+const defaultLogger = createLogger({ level: "silent" } as never)
 
 /**
  * The real CodeNomad HTTP application behind a Remote Control manager, with
@@ -22,6 +22,10 @@ const logger = createLogger({ level: "silent" } as never)
  * ingress target directly; tests then speak plain HTTP as the TLS terminator does.
  */
 export async function startRemoteSurface(t: TestContext, options: {
+  logger?: typeof defaultLogger
+  sessionIdleMs?: number
+  sessionAbsoluteMs?: number
+  password?: string | null
   skipAuth?: boolean
   now?: () => number
   browse?: boolean
@@ -37,6 +41,7 @@ export async function startRemoteSurface(t: TestContext, options: {
   /** Declares extra test routes on the application before it starts. */
   routes?: (app: ReturnType<typeof createHttpServer>["instance"]) => void
 } = {}) {
+  const logger = options.logger ?? defaultLogger
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-surface-"))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   const uiDir = path.join(directory, "ui")
@@ -46,9 +51,11 @@ export async function startRemoteSurface(t: TestContext, options: {
   const authManager = new AuthManager({
     configPath: path.join(directory, "config.yaml"),
     username: "codenomad",
-    password: "local-password",
+    password: options.password === null ? undefined : options.password ?? "local-password",
     generateToken: true,
     dangerouslySkipAuth: options.skipAuth,
+    sessionIdleMs: options.sessionIdleMs,
+    sessionAbsoluteMs: options.sessionAbsoluteMs,
   }, logger)
 
   let target = ""
