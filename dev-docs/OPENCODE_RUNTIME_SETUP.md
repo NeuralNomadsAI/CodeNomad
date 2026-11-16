@@ -238,7 +238,8 @@ Mounted Windows discovery directories and Linux aliases are canonicalized throug
 the selected distro, then translated for host filesystem access. Native import
 URLs and lease paths stay Linux-native; canonical outside-root storage is kept.
 Native watchers can miss changes through mounts and symlinks, so the setup card
-offers explicit **Reload OpenCode configuration** recovery. Its copy names every
+offers explicit **Reload OpenCode configuration** recovery. The shared setup panel
+confirms it before dispatch from Settings or startup recovery. Its dialog names every
 effect (all loaded locations rebuilt, pending permissions/Forms cancelled,
 terminals/background commands closed for all clients) and never presents it as a
 process restart or memory reclamation. Conflicting service actions are refused

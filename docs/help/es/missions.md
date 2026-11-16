@@ -2,6 +2,8 @@
 
 Una Misión reúne un objetivo, una conversación del coordinador, tareas y resultados. Abre **Misiones** en el panel derecho.
 
+Si Misiones no está disponible, **Ajustes de OpenCode** abre la recuperación del servicio para un plugin ausente o con errores. **Diagnóstico del servidor** abre el informe de diagnóstico en Configuración → Info cuando el puente local de Misiones del servidor no está disponible.
+
 ## Crear una Misión {#create}
 
 Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.

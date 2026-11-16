@@ -112,6 +112,45 @@ async function closeMissionSettings(page: Page) {
   await settingsShell(page).waitFor({ state: "detached" })
 }
 const settingsFits = (page: Page) => page.locator(".settings-screen-scroll").evaluate(element => element.scrollWidth <= element.clientWidth)
+
+for (const reason of ["plugin-unavailable", "plugin-failed", "host-unavailable", "workspace-unavailable"]) {
+  test(`unavailable Missions routes ${reason} to its useful settings action`, async () => {
+    const page = await browser.newPage({ locale: "en-US", viewport: { width: 1000, height: 850 } })
+    const mutations: string[] = [], errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    try {
+      await setup(page, "remote")
+      await page.route("https://raw.githubusercontent.com/**", route => route.fulfill({ status: 503, body: "" }))
+      await page.route("**/api/meta", route => route.fulfill({ json: {
+        localUrl: "http://127.0.0.1:9899", host: "127.0.0.1", listeningMode: "local", localPort: 9899,
+        workspaceRoot: "/fixture", addresses: [], serverVersion: "1.1.0", ui: { version: "1.1.0", source: "bundled" },
+      } }))
+      await page.route("**/api/workspaces/fixture/missions**", route => {
+        if (route.request().method() !== "GET" && !route.request().url().endsWith("/panel-page")) mutations.push(route.request().url())
+        return route.fulfill({ json: { available: false, reason, missions: [] } })
+      })
+      await page.goto(url)
+      await fixtureCall(page, "connectCatalog")
+      const state = page.locator(".mission-control-state")
+      await state.getByText("Mission Control is unavailable", { exact: true }).waitFor()
+      if (reason === "workspace-unavailable") {
+        assert.equal(await state.getByRole("button").count(), 0)
+      } else {
+        const host = reason === "host-unavailable"
+        await state.getByRole("button", { name: host ? "Server diagnostics" : "OpenCode settings", exact: true }).click()
+        const shell = settingsShell(page)
+        await shell.waitFor()
+        assert.equal(await shell.locator('.settings-nav-button[aria-current="page"]').innerText(), host ? "Info" : "OpenCode")
+        if (host) {
+          await page.waitForFunction(() => document.activeElement?.id === "server-diagnostics")
+          await shell.locator("#server-diagnostics").getByRole("button", { name: "Copy to clipboard", exact: true }).waitFor()
+        } else await shell.locator(".opencode-setup-panel").waitFor()
+      }
+      assert.deepEqual(mutations, [], "opening settings never reloads OpenCode or starts a Mission")
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+}
 /** Plan changes, reports, cleanup history and identifiers are folded at the
  * bottom of the central overview reader; the panel keeps none of them. */
 async function openOverviewFold(page: Page, label: string) {

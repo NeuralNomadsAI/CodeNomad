@@ -128,7 +128,7 @@ export const settingsMessages = {
   "settings.opencode.setup.progress.reload": "OpenCode の設定を再読み込み中…",
   "settings.opencode.setup.actionFailed": "OpenCode の操作を完了できませんでした。上の現在の状態を確認して、もう一度お試しください。",
   "settings.opencode.setup.reload": "OpenCode の設定を再読み込み",
-  "settings.opencode.setup.reloadDescription": "インストール済みプラグインが利用できない場合は設定を再読み込みしてください。接続中のすべてのクライアントで、保留中の権限要求とフォームが取り消され、ターミナルとバックグラウンドコマンドが終了します。進行中の作業が中断される場合があります。",
+  "settings.opencode.setup.reloadDescription": "再読み込みは、接続中のすべてのクライアントの作業を中断し、保留中の権限要求とフォームを取り消し、ターミナルとバックグラウンドコマンドを終了します。セッション履歴は保持されます。",
   "settings.opencode.setup.missing": "OpenCode がインストールされていません。",
   "settings.opencode.setup.update_required": "この OpenCode バージョンは、この CodeNomad リリースではサポートされていません。",
   "settings.opencode.setup.ready": "OpenCode の実行ファイルが利用可能です。",

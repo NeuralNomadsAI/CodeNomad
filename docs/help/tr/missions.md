@@ -2,6 +2,8 @@
 
 Bir Görev; hedefi, koordinatör konuşmasını, işleri ve sonuçlarını birlikte tutar. Sağ panelde **Görevler** bölümünü açın.
 
+Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir eklenti için hizmet kurtarmayı açar. Sunucunun yerel Görevler köprüsü kullanılamıyorsa **Sunucu tanılaması**, Ayarlar → Bilgi bölümündeki tanılama raporunu açar.
+
 ## Görev oluşturma {#create}
 
 Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak için HTTPS tercih edin.

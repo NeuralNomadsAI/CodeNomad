@@ -128,7 +128,7 @@ export const settingsMessages = {
   "settings.opencode.setup.progress.reload": "OpenCode-Konfiguration wird neu geladen…",
   "settings.opencode.setup.actionFailed": "Die OpenCode-Aktion konnte nicht abgeschlossen werden. Prüfen Sie den aktuellen Status oben und versuchen Sie es erneut.",
   "settings.opencode.setup.reload": "OpenCode-Konfiguration neu laden",
-  "settings.opencode.setup.reloadDescription": "Wenn installierte Plugins nicht verfügbar sind, laden Sie die Konfiguration neu. Für alle verbundenen Clients werden ausstehende Berechtigungsanfragen und Formulare abgebrochen sowie Terminals und Hintergrundbefehle geschlossen. Aktive Arbeit kann unterbrochen werden.",
+  "settings.opencode.setup.reloadDescription": "Das Neuladen unterbricht aktive Arbeit in allen verbundenen Clients, bricht ausstehende Berechtigungsanfragen und Formulare ab und schließt Terminals und Hintergrundbefehle. Der Sitzungsverlauf bleibt erhalten.",
   "settings.opencode.setup.missing": "OpenCode ist nicht installiert.",
   "settings.opencode.setup.update_required": "Diese OpenCode-Version wird von dieser CodeNomad-Version nicht unterstützt.",
   "settings.opencode.setup.ready": "Die OpenCode-Programmdatei ist verfügbar.",

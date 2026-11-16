@@ -953,7 +953,9 @@ retains a failed middle selector;
 an obsolete collection order marks that failure changed until an explicit restart succeeds.
 
 Fixed host, plugin and workspace unavailable refusals retain their typed cause through
-the bounded owner and its localized unavailable guidance. Last-good display survives;
+the bounded owner and its localized unavailable guidance. Missing/failed plugins link
+to Settings → OpenCode; a host bridge failure targets Settings → Info's diagnostic
+report through the shared `server-diagnostics` row anchor. Last-good display survives;
 malformed data, transport failures, changed orders and damaged ranges keep distinct errors.
 
 The inventory consumer (`stores/mission-panel-inventory.ts`) uses the task consumer's

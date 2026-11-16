@@ -128,7 +128,7 @@ export const settingsMessages = {
   "settings.opencode.setup.progress.reload": "OpenCode yapılandırması yeniden yükleniyor…",
   "settings.opencode.setup.actionFailed": "OpenCode işlemi tamamlanamadı. Yukarıdaki mevcut durumu kontrol edip yeniden deneyin.",
   "settings.opencode.setup.reload": "OpenCode yapılandırmasını yeniden yükle",
-  "settings.opencode.setup.reloadDescription": "Yüklü eklentiler hâlâ kullanılamıyorsa yapılandırmayı yeniden yükleyin. Bu işlem tüm bağlı istemciler için bekleyen izin istekleriyle formları iptal eder, terminallerle arka plan komutlarını kapatır ve etkin çalışmayı kesintiye uğratabilir.",
+  "settings.opencode.setup.reloadDescription": "Yeniden yükleme, bağlı tüm istemcilerdeki etkin çalışmayı keser, bekleyen izin isteklerini ve formları iptal eder, terminalleri ve arka plan komutlarını kapatır. Oturum geçmişi korunur.",
   "settings.opencode.setup.missing": "OpenCode kurulu değil.",
   "settings.opencode.setup.update_required": "Bu OpenCode sürümü, bu CodeNomad sürümü tarafından desteklenmiyor.",
   "settings.opencode.setup.ready": "OpenCode çalıştırılabilir dosyası kullanılabilir.",

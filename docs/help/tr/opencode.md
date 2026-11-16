@@ -50,9 +50,9 @@ Kapatmak yalnızca o görevi, LaunchAgent'ı veya hizmeti kaldırır; çalışan
 | --- | --- |
 | CLI'yi güncelleyin | Desteklenen yüklü yürütülebilir dosyayı değiştirir; çalışan arka plan programını dolaylı olarak yeniden başlatmaz. |
 | Hizmeti yeniden başlat | Paylaşılan süreci değiştirir ve bağlı tüm OpenCode istemcilerindeki etkin işleri keser; oturum geçmişi kalır. |
-| OpenCode yapılandırmasını yeniden yükle | Süreci korur. Tüm bağlı istemciler için bekleyen izinleri/Formları iptal eder, terminalleri/arka plan komutlarını kapatır ve etkin işleri kesintiye uğratabilir. |
+| OpenCode yapılandırmasını yeniden yükle | Süreci korur. Tüm bağlı istemciler için bekleyen izinleri/Formları iptal eder, terminalleri/arka plan komutlarını kapatır ve etkin işleri keser. |
 
-Kaydedilmiş bir yapılandırma veya yüklü eklenti kullanılamadığında ve kesinti kabul edilebilir olduğunda, çalışan hizmet destekliyorsa **Sorun giderme** altında bulunan **OpenCode yapılandırmasını yeniden yükle** öğesini açıkça kullanın. CodeNomad, daha yeni çalışan bir arka plan programının sürümünü düşürmek için seçilen eski bir CLI'yi kullanmayacaktır.
+Kaydedilmiş bir yapılandırma veya yüklü eklenti kullanılamadığında, çalışan hizmet destekliyorsa **Sorun giderme** altında bulunan **OpenCode yapılandırmasını yeniden yükle** öğesini kullanın. Uyarıyı okuyup onaylayın: yeniden yükleme, bağlı tüm istemcilerdeki etkin çalışmayı keser. CodeNomad, daha yeni çalışan bir arka plan programının sürümünü düşürmek için seçilen eski bir CLI'yi kullanmayacaktır.
 
 ## Oturum ortamı {#session-environment}
 

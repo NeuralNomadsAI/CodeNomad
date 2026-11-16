@@ -59,8 +59,8 @@ export async function openSettings(section?: SettingsSectionId, toggle = false) 
 export const toggleSettings = (section?: SettingsSectionId) => openSettings(section, true)
 
 /** Stable setting-row anchors (the row's `id`), independent of their labels. */
-export type SettingsRowId = "opencode-login-start" | `config-file:${string}`
-const SETTINGS_ROWS = new Set<SettingsRowId>(["opencode-login-start"])
+export type SettingsRowId = "opencode-login-start" | "server-diagnostics" | `config-file:${string}`
+const SETTINGS_ROWS = new Set<SettingsRowId>(["opencode-login-start", "server-diagnostics"])
 const ROW_HINT_KEY = "codenomad.settings.rowTarget", ROW_HINT_MS = 15_000
 const [settingsRowTarget, setSettingsRowTarget] = createSignal<SettingsRowId>()
 const [rowTargetSection, setRowTargetSection] = createSignal<SettingsSectionId>()

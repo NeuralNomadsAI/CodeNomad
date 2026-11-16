@@ -15,6 +15,7 @@ import { buildBugReportUrl, currentBugReportTemplateStatus, readBugReportTemplat
 import { openCodeSetupStatus, refreshOpenCodeSetup } from "../../stores/opencode-setup"
 import { describeClientOs, readClientOsHints, type ClientNavigator } from "./client-os"
 import { SettingsInfoTip } from "./settings-info-tip"
+import { useSettingsRowTarget } from "./settings-row-target"
 import { buildBugReportEnvironment, buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode, getServerOperatingSystem } from "./info-settings-diagnostics"
 
 function downloadTextFile(filename: string, text: string) {
@@ -59,6 +60,8 @@ export const InfoSettingsSection: Component = () => {
   })
   const [copyFeedback, setCopyFeedback] = createSignal<"success" | "error" | null>(null)
   const [osHints] = createResource(() => readClientOsHints())
+  const [diagnostics, setDiagnostics] = createSignal<HTMLElement>()
+  useSettingsRowTarget("server-diagnostics", diagnostics, () => !meta.loading)
 
   const updateInfo = createMemo(() => {
     const m = meta()
@@ -332,7 +335,7 @@ export const InfoSettingsSection: Component = () => {
         </Show>
       </div>
 
-      <div class="settings-card">
+      <div ref={setDiagnostics} id="server-diagnostics" class="settings-card" tabindex="-1">
         <div class="settings-card-header">
           <div>
             <h3 class="settings-card-title">{t("settings.info.diagnostics.title")}</h3>

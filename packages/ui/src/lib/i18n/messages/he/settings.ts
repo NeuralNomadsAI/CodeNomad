@@ -128,7 +128,7 @@ export const settingsMessages = {
   "settings.opencode.setup.progress.reload": "טוען מחדש את תצורת OpenCode…",
   "settings.opencode.setup.actionFailed": "לא ניתן היה להשלים את פעולת OpenCode. בדוק את המצב הנוכחי למעלה ונסה שוב.",
   "settings.opencode.setup.reload": "טעינה מחדש של תצורת OpenCode",
-  "settings.opencode.setup.reloadDescription": "אם התוספים המותקנים עדיין אינם זמינים, טען מחדש את התצורה. בכל הלקוחות המחוברים, פעולה זו מבטלת בקשות הרשאה וטפסים ממתינים, סוגרת מסופים ופקודות ברקע ועלולה לקטוע עבודה פעילה.",
+  "settings.opencode.setup.reloadDescription": "טעינה מחדש מפסיקה עבודה פעילה בכל הלקוחות המחוברים, מבטלת בקשות הרשאה וטפסים ממתינים וסוגרת מסופים ופקודות ברקע. היסטוריית הסשנים נשמרת.",
   "settings.opencode.setup.missing": "OpenCode אינו מותקן.",
   "settings.opencode.setup.update_required": "גרסת OpenCode זו אינה נתמכת בגרסה זו של CodeNomad.",
   "settings.opencode.setup.ready": "קובץ ההפעלה של OpenCode זמין.",

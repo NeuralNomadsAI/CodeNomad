@@ -50,9 +50,9 @@ Ausschalten entfernt nur diese Aufgabe, diesen LaunchAgent oder Dienst; ein lauf
 | --- | --- |
 | CLI aktualisieren | Ändert die unterstützte installierte Programmdatei; startet den laufenden Daemon nicht implizit neu. |
 | Dienst neu starten | Ersetzt den gemeinsamen Prozess und unterbricht aktive Arbeit in allen verbundenen OpenCode-Clients; Sitzungsverlauf bleibt erhalten. |
-| OpenCode-Konfiguration neu laden | Behält den Prozess. Bricht für alle verbundenen Clients offene Berechtigungen/Forms ab und schließt Terminals/Hintergrundbefehle; aktive Arbeit kann unterbrochen werden. |
+| OpenCode-Konfiguration neu laden | Behält den Prozess. Bricht für alle verbundenen Clients offene Berechtigungen/Forms ab, schließt Terminals/Hintergrundbefehle und unterbricht aktive Arbeit. |
 
-Verwenden Sie **OpenCode-Konfiguration neu laden** (unter **Fehlerbehebung**, wenn der laufende Dienst es unterstützt) ausdrücklich, wenn gespeicherte Konfiguration oder installierte Plugins weiter fehlen und die Unterbrechung akzeptabel ist. CodeNomad verwendet keine ältere ausgewählte CLI, um einen neueren laufenden Daemon herunterzustufen.
+Verwenden Sie **OpenCode-Konfiguration neu laden** (unter **Fehlerbehebung**, wenn der laufende Dienst es unterstützt), wenn gespeicherte Konfiguration oder installierte Plugins weiter fehlen. Lesen und bestätigen Sie die Warnung: Das Neuladen unterbricht aktive Arbeit in allen verbundenen Clients. CodeNomad verwendet keine ältere ausgewählte CLI, um einen neueren laufenden Daemon herunterzustufen.
 
 ## Sitzungsumgebung {#session-environment}
 

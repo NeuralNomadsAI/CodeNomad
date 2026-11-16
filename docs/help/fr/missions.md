@@ -2,6 +2,8 @@
 
 Une Mission rassemble un objectif, une conversation de coordination, des tâches et leurs résultats. Ouvrez **Missions** dans le panneau droit.
 
+Si Missions est indisponible, **Paramètres OpenCode** ouvre la récupération du service pour un plugin absent ou en échec. **Diagnostic serveur** ouvre le rapport de diagnostic dans Paramètres → Info lorsque le pont local Missions du serveur est indisponible.
+
 ## Créer une Mission {#create}
 
 Les connexions distantes utilisent le même formulaire et les mêmes commandes. Préférez HTTPS pour protéger les échanges réseau.
