@@ -1,4 +1,7 @@
 import type { SessionMessageInfo } from "@opencode/client"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("session")
 
 /** A session's live rows, serialized when a read starts. */
 export type OpenCodeRowSnapshot = Map<string, string>
@@ -45,10 +48,71 @@ function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, s
   return replaced ? { ...(row as object), content: parts } as SessionMessageInfo : row
 }
 
+/** Text-bearing parts without part identity: a stream only ever appends within
+ * a fragment, and the native persists a fragment's text only when its
+ * full-text ending commits — as the accumulated value or as the provider's
+ * completed-item replacement, which may be shorter, prefixed or empty. An
+ * ending commits before the next part is appended, in a separate step. A
+ * committed text ending stamps the provider's `native` metadata onto the
+ * stored part while an uncommitted text fragment has none; reasoning persists
+ * `native` when it starts and marks its ending with `time.completed`. A
+ * fetched part holding no text is therefore older than the deltas the live
+ * row already displays only when it is the row's last fetched part, not ended
+ * (text without native metadata, reasoning without `time.completed`), on a
+ * step that is open on both sides. Committed finals — any value, an ended
+ * marker, anywhere but last, or beside the row's completion — keep full page
+ * authority. */
+function isUnpersistedOpenFragment(
+  row: SessionMessageInfo,
+  fetched: SessionMessageInfo,
+  live: unknown,
+  fetchedPart: unknown,
+  isLastFetchedPart: boolean,
+): boolean {
+  if (!isLastFetchedPart) return false
+  if ((row as unknown as { time?: { completed?: unknown } }).time?.completed !== undefined) return false
+  if ((fetched as unknown as { time?: { completed?: unknown } }).time?.completed !== undefined) return false
+  if (typeof live !== "string" || live === "") return false
+  if (typeof (fetchedPart as { text?: unknown })?.text !== "string") return false
+  const part = fetchedPart as { type?: unknown; native?: unknown }
+  if (part.type === "text" && part.native !== undefined && part.native !== null) return false
+  const endedReasoning = (fetchedPart as { time?: { completed?: unknown } }).time?.completed
+  return (fetchedPart as { text?: unknown }).text === "" && endedReasoning === undefined
+}
+
+/** An open row keeps the text and reasoning its stream already displayed when
+ * the fetched page still holds those fragments empty; every other field of the
+ * fetched row stays authoritative, and text part shapes that do not pair up
+ * keep full page authority. */
+function mergeOpenFragmentRow(row: SessionMessageInfo, fetched: SessionMessageInfo): SessionMessageInfo {
+  const content = (row as ContentRow).content
+  const fetchedContent = (fetched as ContentRow).content
+  if (!Array.isArray(content) || !Array.isArray(fetchedContent)) return fetched
+  const streamed: unknown[] = content.filter((part) => {
+    const type = (part as { type?: unknown } | null)?.type
+    return type === "text" || type === "reasoning"
+  })
+  let cursor = 0
+  let replaced = false
+  const mergedContent = fetchedContent.map((part, index) => {
+    const type = (part as { type?: unknown } | null)?.type
+    if (type !== "text" && type !== "reasoning") return part
+    const live = streamed[cursor]
+    cursor += 1
+    if (live === undefined || !isUnpersistedOpenFragment(row, fetched, (live as { text?: unknown }).text, part, index === fetchedContent.length - 1)) return part
+    replaced = true
+    return live
+  })
+  if (!replaced || cursor !== streamed.length) return fetched
+  log.warn("Kept a message's streamed text over a fetched page holding its uncommitted fragment empty", { messageId: row.id })
+  return { ...(fetched as object), content: mergedContent } as SessionMessageInfo
+}
+
 /** Merges a fetched page (newest first) with the live rows: the page is the
  * base, a live row that is new or changed since `since` keeps its live version
- * (with unchanged identified parts from the page), and live rows created
- * during the fetch and absent from the page ride along newest-first. */
+ * (with unchanged identified parts from the page), an open row keeps the text
+ * of fragments the page still holds uncommitted, and live rows created during
+ * the fetch and absent from the page ride along newest-first. */
 export function mergePageWithSnapshot(
   live: readonly SessionMessageInfo[],
   page: readonly SessionMessageInfo[],
@@ -60,7 +124,8 @@ export function mergePageWithSnapshot(
     const row = liveById.get(message.id)
     if (row === undefined) return message
     const snapshot = since.get(row.id)
-    return snapshot !== serializeRowForDiff(row) ? mergeChangedRow(row, message, snapshot) : message
+    if (snapshot === serializeRowForDiff(row)) return mergeOpenFragmentRow(row, message)
+    return mergeChangedRow(row, message, snapshot)
   })
   const created = live.filter((message) => !pageIds.has(message.id) && !since.has(message.id)).reverse()
   return [...created, ...merged]
