@@ -67,6 +67,11 @@ export function missionTaskSource(map: MissionPanelMap | undefined): string | un
 export function recordMissionRowRevision(rows: readonly object[], revision: number): void {
   for (const row of rows) observed.set(row, revision)
 }
+/** Whether a value carries the identity-keyed page metadata above: publications that share
+ * unchanged objects keep such a value as itself, since later records target its identity. */
+export function missionPinnedIdentity(value: object): boolean {
+  return observed.has(value) || taskSources.has(value as MissionPanelMap)
+}
 
 /** Stores a page's answer to `request` at `revision`: its rows, reports and reads, each
  * unless the cache holds a later answer; the failures it answers go, and an attention

@@ -46,6 +46,7 @@ import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
+import { connectMissionActivityCache, MissionActivityCache } from "../missions/activity-cache"
 import { replyMissionHumanAnswer } from "./routes/mission-human-answer"
 import { HUMAN_ANSWER_HEADER } from "../missions/human-answer"
 import { registerMissionRecurrenceControl } from "./routes/mission-recurrence-control"
@@ -426,7 +427,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager, freeUsage })
-  registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
+  const missionActivityCache = new MissionActivityCache()
+  const stopMissionActivityCache = connectMissionActivityCache(deps.eventBus, missionActivityCache)
+  app.addHook("onClose", async () => stopMissionActivityCache())
+  registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings, activityCache: missionActivityCache,
     scheduleSettingsActivation: new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager),
     scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,

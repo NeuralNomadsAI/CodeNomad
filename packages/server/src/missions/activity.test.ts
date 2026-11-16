@@ -4,6 +4,7 @@ import test from "node:test"
 import type { OpenCodeClient, ShellInfo } from "@opencode/client"
 
 import { projectMissionActivity } from "./activity"
+import { MISSION_FAMILY_TREE_TTL_MS, MissionActivityCache } from "./activity-cache"
 import { assertNativeMissionRecoveryReady } from "./native-recovery-observation"
 import { observeActiveDescendant } from "./native-session-family"
 import type { MissionActor, MissionMap, MissionSnapshot, MissionTask } from "./model"
@@ -433,7 +434,9 @@ test("currentness rejection at entry performs no client or ownership reads", asy
 test("connection/deletion fences after each awaited phase discard membership and positive actor state", async () => {
   for (const phase of ["get", "ownership", "children", "inbox", "active", "shell", "form", "permission"] as const) {
     let current = true
-    const client = native({ sessions: { specialist: {} }, active: { specialist: { type: "running" } } })
+    // Inboxes are read only for an actor whose queued input would decide its state.
+    const client = phase === "inbox" ? native({ sessions: { specialist: {} }, inbox: { specialist: [{ id: "pending" }] } })
+      : native({ sessions: { specialist: {} }, active: { specialist: { type: "running" } } })
     if (phase === "get") { const read = client.session.get; client.session.get = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
     if (phase === "children") { const read = client.session.list; client.session.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
     if (phase === "inbox") { const read = client.session.inbox.list; client.session.inbox.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
@@ -441,7 +444,7 @@ test("connection/deletion fences after each awaited phase discard membership and
     if (phase === "shell") { const read = client.shell.list; client.shell.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
     if (phase === "form") { const read = client.form.list; client.form.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
     if (phase === "permission") { const read = client.permission.request.list; client.permission.request.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
-    const result = await projectMissionActivity({ client, snapshot: snapshot([actor("specialist")]), workspaceID: "workspace-1",
+    const result = await projectMissionActivity({ client, snapshot: snapshot([actor("specialist")], phase === "inbox" ? [task("specialist")] : []), workspaceID: "workspace-1",
       ownsLocation: async () => { if (phase === "ownership") current = false; return true }, isCurrent: () => current })
     assert.deepEqual(result.missions[0].family, { state: "unknown", members: [] }, phase)
     assert.equal(result.missions[0].actors[0].state, "unknown", phase)
@@ -660,4 +663,75 @@ test("a family beyond the display cap with an active descendant is background, a
   const client = native({ sessions, active })
   await assert.rejects(assertNativeMissionRecoveryReady(client, await client.session.get({ sessionID: "coordinator" }), new AbortController().signal),
     error => Boolean(error && typeof error === "object" && "code" in error && error.code === "recovery-busy"))
+})
+
+/** Counts the native reads of one client by kind. */
+function counted(client: OpenCodeClient) {
+  const counts = { get: 0, list: 0, inbox: 0 }
+  const get = client.session.get, list = client.session.list, inbox = client.session.inbox.list
+  client.session.get = (async (...args: Parameters<typeof get>) => { counts.get++; return get(...args) }) as typeof get
+  client.session.list = (async (...args: Parameters<typeof list>) => { counts.list++; return list(...args) }) as typeof list
+  client.session.inbox.list = (async (...args: Parameters<typeof inbox>) => { counts.inbox++; return inbox(...args) }) as typeof inbox
+  return counts
+}
+
+test("inboxes are read only for actors whose queued input decides their state", async () => {
+  const sessions = { running: {}, done: {}, owed: {}, "owed-child": { parentID: "owed" } }
+  const client = native({ sessions, active: { running: { type: "running" } }, inbox: { "owed-child": [{ id: "pending" }] } })
+  const counts = counted(client)
+  const result = await projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true,
+    snapshot: snapshot([actor("running"), actor("done"), actor("owed")], [task("running"), task("done", true), task("owed")]) })
+  assert.deepEqual(Object.fromEntries(result.missions[0].actors.map(item => [item.sessionId, item.state])),
+    { running: "running", done: "unknown", owed: "queued" })
+  assert.equal(counts.inbox, 2, "only the owed actor's family (root and child), not the running or settled actors")
+})
+
+test("a kept family tree is reused until a structural event, a stream gap or its TTL", async () => {
+  let now = 0
+  const cache = new MissionActivityCache(() => now)
+  const client = native({ sessions: { specialist: {}, child: { parentID: "specialist" } } })
+  const counts = counted(client)
+  const observe = () => projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache,
+    snapshot: snapshot([actor("specialist")]) })
+  const first = await observe()
+  const listed = counts.list
+  assert.ok(listed > 0)
+  const second = await observe()
+  assert.equal(counts.list, listed, "the second read reuses the tree")
+  assert.deepEqual(second.missions[0].family, first.missions[0].family)
+  assert.equal(counts.get, 2, "the actor root itself is read every time")
+  cache.observeEvent({ type: "session.created" })
+  await observe()
+  assert.equal(counts.list, listed * 2, "a structural event reads the tree again")
+  cache.observeEvent({ type: "session.execution.started" })
+  await observe()
+  assert.equal(counts.list, listed * 2, "activity events keep it")
+  cache.observeStatus("workspace-1", "disconnected")
+  await observe(); await observe()
+  assert.equal(counts.list, listed * 4, "nothing is kept while an event stream is down")
+  cache.observeStatus("workspace-1", "connected")
+  await observe(); await observe()
+  assert.equal(counts.list, listed * 5)
+  now += MISSION_FAMILY_TREE_TTL_MS
+  await observe()
+  assert.equal(counts.list, listed * 6, "an expired tree is read again")
+  // Another connection's client starts empty.
+  const other = native({ sessions: { specialist: {} } })
+  const otherCounts = counted(other)
+  await projectMissionActivity({ client: other, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache,
+    snapshot: snapshot([actor("specialist")]) })
+  assert.ok(otherCounts.list > 0)
+})
+
+test("a deleted actor session is read once, then shown missing without native reads", async () => {
+  const cache = new MissionActivityCache()
+  const client = native({ sessions: { specialist: {} } })
+  const counts = counted(client)
+  const observe = () => projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache,
+    snapshot: snapshot([actor("specialist"), actor("deleted")]) })
+  const state = (result: Awaited<ReturnType<typeof observe>>) => result.missions[0].actors.find(item => item.sessionId === "deleted")?.state
+  assert.equal(state(await observe()), "missing")
+  const reads = counts.get
+  assert.equal(state(await observe()), "missing")
+  assert.equal(counts.get, reads + 1, "only the live actor is read again")
 })

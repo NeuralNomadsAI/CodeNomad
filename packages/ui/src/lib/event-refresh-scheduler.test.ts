@@ -3,7 +3,7 @@ import test from "node:test"
 
 import { ACTIVITY_REFRESH_INTERVAL_MS, EVENT_REFRESH_DEBOUNCE_MS, createEventRefreshScheduler } from "./event-refresh-scheduler"
 
-function harness() {
+function harness(options: { urgentIntervalMs?: number } = {}) {
   let now = 0
   const timers = new Map<number, { at: number; callback: () => void }>()
   let nextTimer = 0
@@ -16,6 +16,7 @@ function harness() {
     now: () => now,
     setTimer: (callback, ms) => { timers.set(++nextTimer, { at: now + ms, callback }); return nextTimer as never },
     clearTimer: timer => { timers.delete(timer as never) },
+    ...options,
   })
   const flush = () => new Promise<void>(resolve => setImmediate(resolve))
   const advance = async (ms: number) => {
@@ -49,6 +50,32 @@ test("continuous activity coalesces into one read per interval, measured from se
   for (let index = 0; index < 300; index++) { scheduler.schedule("i", "activity"); await advance(20) }
   assert.equal(runs.length, 2)
   assert.equal(runs[1], settledAt + ACTIVITY_REFRESH_INTERVAL_MS)
+})
+
+test("an urgent interval spaces journal-change reads from the previous settlement", async () => {
+  const { scheduler, runs, advance, settle, time } = harness({ urgentIntervalMs: 1_500 })
+  scheduler.schedule("i", "urgent")
+  await advance(EVENT_REFRESH_DEBOUNCE_MS)
+  assert.deepEqual(runs, [EVENT_REFRESH_DEBOUNCE_MS], "the first read is prompt")
+  await settle()
+  const settledAt = time()
+  // A burst of journal changes after the read: one read, spaced from the previous one.
+  for (let index = 0; index < 80; index++) { scheduler.schedule("i", "urgent"); await advance(25) }
+  assert.deepEqual(runs, [EVENT_REFRESH_DEBOUNCE_MS, settledAt + 1_500])
+  // Changes during that run follow it once, also spaced from its settlement.
+  await advance(200)
+  const secondSettled = time()
+  await settle()
+  await advance(1_499)
+  assert.equal(runs.length, 2)
+  await advance(1)
+  assert.deepEqual(runs.slice(2), [secondSettled + 1_500])
+  // Activity keeps its own, longer interval.
+  await settle()
+  const thirdSettled = time()
+  scheduler.schedule("i", "activity")
+  await advance(ACTIVITY_REFRESH_INTERVAL_MS)
+  assert.equal(runs.at(-1), thirdSettled + ACTIVITY_REFRESH_INTERVAL_MS)
 })
 
 test("urgent invalidations preempt a throttled activity read, and cancel forgets demand", async () => {
