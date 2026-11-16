@@ -450,7 +450,7 @@ test("relay diagnostics omit private request bodies and target queries", async t
   const output = JSON.stringify(f.logs)
   const records = f.logs as Array<Record<string, unknown>>
   assert(records.some(record => record.url === "/api/backends/:id/api/auth/login"))
-  assert(records.some(record => record.url === "<catchall>"))
+  assert(records.some(record => record.url === "/api/backends/:id/*"))
   for (const record of records) {
     assert.deepEqual(Object.keys(record).sort(), ["durationMs", "method", "status", "url"])
   }

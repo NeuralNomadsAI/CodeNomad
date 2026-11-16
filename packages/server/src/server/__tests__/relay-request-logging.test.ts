@@ -68,7 +68,7 @@ test("real application/pino fixes sensitive paths independently of admission and
     .filter(record => record.msg?.startsWith("HTTP request"))
   assert.ok(records.length > 0, "completion logging ran")
   for (const record of records) {
-    assert.ok(["/api/remote-servers/:id/connect", "/api/remote-control/server-pair", "<unmatched>", "<catchall>"].includes(record.url),
+    assert.ok(["/api/backends/:id/*", "/api/remote-servers/:id/connect", "/api/remote-control/server-pair", "<unmatched>", "<catchall>"].includes(record.url),
       "sensitive namespace retains only a fixed diagnostic path")
     assertMetadata(record)
   }
@@ -96,7 +96,10 @@ test("real application/pino logs templates for every namespace and omits wildcar
   const named = records.filter(record => record.url === "/api/test/named/:id/:token/:proof")
   assert.equal(named.length, carriers.length, "named routes retain their template")
   for (const record of named) assertMetadata(record)
+  const wildcard = records.filter(record => record.url === "/api/test/files/*")
+  assert.equal(wildcard.length, carriers.length, "registered wildcard families retain their template")
+  for (const record of wildcard) assertMetadata(record)
   const hidden = records.filter(record => ["<unmatched>", "<catchall>"].includes(record.url))
-  assert.equal(hidden.length, carriers.length * 2, "unknown and wildcard paths use fixed tags")
+  assert.equal(hidden.length, carriers.length, "global fallback paths use fixed tags")
   for (const record of hidden) assertMetadata(record)
 })

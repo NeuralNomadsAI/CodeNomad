@@ -13,7 +13,7 @@ export function registerRequestLogging(app: FastifyInstance, apiLogger: Logger) 
     const start = starts.get(request)
     const durationMs = start === undefined ? undefined : Number((process.hrtime.bigint() - start) / BigInt(1_000_000))
     const route = request.routeOptions.url
-    const url = !route ? "<unmatched>" : route.includes("*") ? "<catchall>" : route
+    const url = !route ? "<unmatched>" : route === "*" || route === "/*" ? "<catchall>" : route
     const base = { method: request.method, url, status: reply.statusCode, durationMs }
     apiLogger.debug(base, "HTTP request completed")
     if (apiLogger.isLevelEnabled("trace")) {
