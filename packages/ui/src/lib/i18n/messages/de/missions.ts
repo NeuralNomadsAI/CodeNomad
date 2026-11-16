@@ -207,7 +207,6 @@ export const missionMessages = {
   "missions.control.unavailable.host": "Dieser CodeNomad-Server konnte seine lokale Verbindung für Missionen (127.0.0.1) nicht öffnen und stellt das Plugin daher nicht bereit. Serverprotokoll prüfen; OpenCode neu zu laden hilft nicht.",
   "missions.control.error.title": "Die Missionskarte konnte nicht aktualisiert werden",
   "missions.control.error.detail": "Arbeitsbereichsverbindung prüfen und erneut versuchen.",
-  "missions.control.error.stale": "Die letzte dauerhafte Karte wird während der Wiederverbindung angezeigt.",
   "missions.control.retry": "Erneut versuchen",
   "missions.control.empty.title": "Noch keine Missionen",
   "missions.control.empty.detail": "Erstellen Sie eine Mission oder bitten Sie Ihren Assistenten, eine zu planen.",

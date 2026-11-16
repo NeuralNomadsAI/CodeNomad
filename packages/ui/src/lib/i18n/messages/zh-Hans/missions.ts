@@ -207,7 +207,6 @@ export const missionMessages = {
   "missions.control.unavailable.host": "此 CodeNomad 服务器无法为任务打开本地连接 (127.0.0.1)，因此不提供该插件。请查看服务器日志；重新加载 OpenCode 无济于事。",
   "missions.control.error.title": "无法刷新任务地图",
   "missions.control.error.detail": "请检查工作区连接，然后重试。",
-  "missions.control.error.stale": "等待重新连接时显示上次保存的持久地图。",
   "missions.control.retry": "重试",
   "missions.control.empty.title": "暂无任务",
   "missions.control.empty.detail": "创建任务，或请助手制定计划。",

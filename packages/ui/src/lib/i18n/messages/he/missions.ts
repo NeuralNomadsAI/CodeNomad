@@ -207,7 +207,6 @@ export const missionMessages = {
   "missions.control.unavailable.host": "שרת CodeNomad זה לא הצליח לפתוח את החיבור המקומי שלו למשימות (127.0.0.1), ולכן אינו מספק את התוסף. יש לבדוק את יומן השרת; טעינה מחדש של OpenCode לא תעזור.",
   "missions.control.error.title": "לא ניתן לרענן את מפת המשימה",
   "missions.control.error.detail": "יש לבדוק את החיבור לסביבת העבודה ולנסות שוב.",
-  "missions.control.error.stale": "המפה המתמשכת האחרונה מוצגת בזמן ההתחברות מחדש.",
   "missions.control.retry": "ניסיון נוסף",
   "missions.control.empty.title": "עדיין אין משימות",
   "missions.control.empty.detail": "צרו משימה או בקשו מהעוזר לתכנן אחת.",
