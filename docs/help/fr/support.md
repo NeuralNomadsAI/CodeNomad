@@ -12,8 +12,6 @@ L’action préremplit les versions de CodeNomad et d’OpenCode (y compris cell
 
 Pour davantage de diagnostics, **Copier dans le presse-papiers** ou **Télécharger .txt** produit un rapport distinct. Ce rapport plus complet peut contenir des chemins locaux et adresses réseau : relisez-le et masquez-les avant de le joindre. Une capture ou un extrait de journal peut encore contenir des secrets même si le diagnostic automatique exclut les secrets d’authentification.
 
-Si le formulaire GitHub contient des champs incompatibles, CodeNomad ouvre un ticket simple avec les mêmes informations. Un échec temporaire de lecture du formulaire n’empêche pas son ouverture. Vous pouvez toujours utiliser manuellement la [liste des tickets](https://github.com/NeuralNomadsAI/CodeNomad/issues).
-
 ## Communauté et versions {#community}
 
 | Ressource | Utilisation |
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Les changements de développement affectent l’hôte de développement, pas la version installée d’un démon OpenCode indépendant actif. La création de paquets natifs nécessite les outils de cible appropriés ; privilégiez une compilation sur le système cible.
+La création de paquets natifs nécessite les outils de cible appropriés ; privilégiez une compilation sur le système cible.
 
 ### Compiler et valider {#build-and-validate}
 

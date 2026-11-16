@@ -7,7 +7,7 @@ export const loadingScreenMessages = {
   "loadingScreen.status.stopped": "השרת נעצר",
   "loadingScreen.errors.missingRoot": "אלמנט השורש לטעינה לא נמצא",
   "loadingScreen.remoteUnavailable.title": "לא ניתן להגיע לשרת הזה",
-  "loadingScreen.remoteUnavailable.message": "CodeNomad לא הצליח לטעון את השרת הזה. ודאו שהוא פועל ונגיש, ונסו שוב.",
+  "loadingScreen.remoteUnavailable.message": "ודאו שהשרת פועל ונגיש, ונסו שוב.",
   "loadingScreen.remoteUnavailable.retry": "נסו שוב",
   "loadingScreen.remoteUnavailable.openLocal": "פתיחת חלון מקומי",
   "loadingScreen.remoteUnavailable.close": "סגירת החלון",

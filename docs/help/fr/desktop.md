@@ -21,7 +21,7 @@ Placez ces arguments après **l’exécutable desktop** (Tauri ou Electron), dan
 | `<path> ...` | Ouvre des dossiers de projet sans écrire `--folder`. **Tauri Windows, si l’application est déjà ouverte :** utilisez `--folder` devant chaque dossier. Mélanger des chemins seuls avec `--folder` annule aussi toute la demande d’ouverture de dossiers. |
 | `--new-window` | Demande une nouvelle fenêtre, même lorsqu’un second lancement devrait normalement sélectionner la fenêtre existante. |
 
-Les formes `--connect-server=<server>` et `--folder=<path>` fonctionnent aussi. Entourez de guillemets les chemins ou noms contenant des espaces. Pour ouvrir uniquement la fenêtre distante, utilisez `--connect-server` seul, sans dossier ni `--new-window` ; la restauration des fenêtres locales est différée sauf si la connexion échoue. L’application conserve son backend auxiliaire local pour la coordination.
+Les formes `--connect-server=<server>` et `--folder=<path>` fonctionnent aussi. Entourez de guillemets les chemins ou noms contenant des espaces. Pour ouvrir uniquement la fenêtre distante, utilisez `--connect-server` seul, sans dossier ni `--new-window` ; la restauration des fenêtres locales est différée sauf si la connexion échoue.
 
 Dans **PowerShell** :
 
@@ -40,13 +40,11 @@ Pour les profils desktop et la configuration, définissez `CODENOMAD_PROFILE` et
 2. Dans **Général**, activez ou désactivez **Restaurer l’état précédent**.
 3. Pour oublier la disposition enregistrée de cette fenêtre, utilisez **Effacer l’état de démarrage enregistré**. L’action s’applique immédiatement, sans confirmation.
 
-Après un plantage, les compteurs coût/tokens restaurés peuvent afficher le dernier point enregistré jusqu’à leur actualisation par OpenCode. Pendant la génération ou la compaction, les changements de compteurs seuls attendent le prochain point de sauvegarde ; une fermeture normale enregistre les compteurs actuels.
-
 La restauration peut rouvrir onglets d’espace de travail/SideCar et sessions actives, texte non envoyé, positions de défilement, panneaux, placement et zoom de fenêtre. C’est un état client par fenêtre, pas une copie de la base de conversations natives. L’effacer retire onglets, brouillons et disposition enregistrés ; cela ne supprime ni configuration CodeNomad ni conversations OpenCode. Enregistrez d’abord ailleurs tout brouillon non envoyé important.
 
 La fenêtre Preferences ne possède pas d’état de restauration séparé : ces commandes ciblent la fenêtre qui l’a ouverte. Si cette fenêtre est fermée, ou inconnue parce que Preferences a été rouvert au lancement, elles suivent la dernière fenêtre utilisée ; une modification préparée pour une autre fenêtre n’est jamais appliquée, les commandes affichent d’abord la valeur de la nouvelle fenêtre. Pour régler une fenêtre précise, ouvrez Preferences depuis celle-ci. Les paramètres propres au projet utilisent aussi la Location d’origine ; ils restent indisponibles sans elle. Quand Preferences se rouvre au lancement, ils se reconnectent une fois ce projet ouvert ; tant que le dossier démarre encore, ou s’il est ouvert dans plusieurs onglets, ils restent indisponibles jusqu’à ce que vous ouvriez Preferences depuis la fenêtre voulue.
 
-Les paramètres navigateur et distants sont intégrés, plutôt qu’un second propriétaire natif de Preferences. Une erreur d’ouverture des préférences natives est signalée ; elle ne permet pas de supposer qu’un écran intégré caché s’est ouvert à la place.
+Les clients navigateur et distants utilisent les paramètres intégrés.
 
 ## Profils de données de bureau {#data-profiles}
 
@@ -80,7 +78,7 @@ Sur Tauri macOS, les profils délimités partagent le stockage WebKit système, 
 
 La suppression retire onglets, brouillons, disposition et stockage web/cache/connexions détenus de ce profil, y compris un profil listé depuis une autre configuration. Elle préserve le profil ouvert, les conversations OpenCode et les fichiers de projet. Un profil ouvert ou dans un état inconnu ne peut pas être supprimé ; fermez les fenêtres CodeNomad concernées, actualisez la liste et réessayez. Le contenu non reconnu est conservé et signalé plutôt que supprimé largement.
 
-Le stockage WebKit partagé de Tauri macOS est conservé, car le supprimer affecterait les autres profils. Ce nettoyage n’est pas annulable : une conversation native survivante ne restaure pas un brouillon non envoyé supprimé. **Effacer l’état de démarrage enregistré** est l’action plus limitée pour seulement réinitialiser la fenêtre actuelle.
+Le stockage web, les connexions et le cache partagés de Tauri sur macOS sont conservés. Ce nettoyage n’est pas annulable : une conversation native survivante ne restaure pas un brouillon non envoyé supprimé. **Effacer l’état de démarrage enregistré** est l’action plus limitée pour seulement réinitialiser la fenêtre actuelle.
 
 ## Zoom et géométrie des panneaux {#zoom-panels}
 

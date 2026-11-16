@@ -45,7 +45,6 @@ export const ChatSettingsSection: Component = () => {
         <div class="settings-card-header">
           <div>
             <h3 class="settings-card-title">{t("settings.behavior.expansionPresets.ariaLabel")}</h3>
-            <p class="settings-card-subtitle">{t("settings.appearance.behavior.subtitle")}</p>
           </div>
         </div>
 
@@ -60,7 +59,6 @@ export const ChatSettingsSection: Component = () => {
                 onClick={() => updatePreferences(transcriptPresetPatch(preset))}
               >
                 <span class="settings-expansion-preset-title">{t(`settings.behavior.expansionPreset.${preset}.title`)}</span>
-                <span class="settings-expansion-preset-copy">{t(`settings.behavior.expansionPreset.${preset}.description`)}</span>
               </button>
             )}
           </For>

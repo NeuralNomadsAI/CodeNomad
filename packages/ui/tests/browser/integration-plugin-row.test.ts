@@ -109,7 +109,7 @@ test("one Plugins row per integration: display name, version and accent switches
     assert.equal(await page.locator('[data-status-section^="integration:"]').count(), 0)
     assert.equal(await page.getByText("Attach…").count(), 0)
     assert.equal(await row(page).getAttribute("data-integration"), "blender")
-    await row(page).getByRole("checkbox", { name: "Change activation rule for OpenCode for Blender — Global" }).waitFor()
+    await row(page).getByRole("checkbox", { name: "Enable or disable OpenCode for Blender — Global" }).waitFor()
 
     // The default accent switch, exactly like Yolo; only plain plugin and MCP rows use the green variant.
     const accent = await resolved(page, "--session-yolo-accent")

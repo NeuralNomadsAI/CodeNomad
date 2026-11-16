@@ -1,9 +1,8 @@
 export const dialogMessages = {
   "authRecovery.title": "Se reconnecter à CodeNomad",
-  "authRecovery.description": "Votre connexion à CodeNomad n’est plus valide. Cela peut arriver après un redémarrage du serveur. Identifiez-vous à nouveau pour vous reconnecter.",
-  "authRecovery.pairing": "Cet appareil n’est plus appairé à CodeNomad. Sur l’hôte, ouvrez Paramètres → Accès distant, créez un nouveau lien d’appairage et ouvrez-le sur cet appareil, puis vérifiez à nouveau.",
+  "authRecovery.pairing": "Sur l’hôte, ouvrez Paramètres → Accès distant, créez un lien d’appairage et ouvrez-le sur cet appareil, puis vérifiez la connexion.",
   "authRecovery.pairingTitle": "Appairer à nouveau cet appareil",
-  "authRecovery.drafts": "Cette page reste ouverte pour conserver vos brouillons. Après la reconnexion, réessayez l’action qui a échoué.",
+  "authRecovery.drafts": "Après la reconnexion, réessayez votre action.",
   "authRecovery.username": "Nom d’utilisateur",
   "authRecovery.password": "Mot de passe",
   "authRecovery.signIn": "Se connecter",

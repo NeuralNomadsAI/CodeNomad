@@ -234,9 +234,9 @@ const depth = (supported: boolean) => ({ json: { location: { directory: "/fixtur
   effectiveDepth: supported ? 1 : null, project: supported ? { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } : null } })
 const HELD_OUTCOMES = [
   { name: "a supported first depth read", held: "depth", response: depth(true), shown: "Inherit (1)" },
-  { name: "an unsupported first depth read", held: "depth", response: depth(false), shown: "This OpenCode connection does not expose an editable depth contract." },
+  { name: "an unsupported first depth read", held: "depth", response: depth(false), shown: "Depth cannot be changed here." },
   { name: "a failed first depth read", held: "depth", response: { status: 503, json: { error: "unavailable" } },
-    shown: "Depth could not be verified. Your value is kept; refresh before changing it." },
+    shown: "Refresh project depth before changing it." },
   { name: "a failed map refresh", held: "map", response: { status: 503, json: { error: "unavailable" } } },
   { name: "a cleanup-unavailable map", held: "cleanups", response: map({ cleanupUnavailable: true }),
     shown: "Deletion could not be confirmed. Refresh before trying again." },

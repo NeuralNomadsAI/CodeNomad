@@ -374,7 +374,7 @@ test("large tool output bounds rendered text but preserves full clipboard source
 
   // A megabyte-scale output reveals in bounded steps rather than all at once.
   const notice = tool.locator(".message-hidden-text")
-  assert.match((await notice.textContent())!, /more characters hidden to keep this message responsive/)
+  assert.match((await notice.textContent())!, /more characters hidden/)
   const stepButton = notice.getByRole("button", { name: /^Show [\d,]+ more$/ })
   const announced = Number((await stepButton.textContent())!.replace(/\D/g, ""))
   // About 250 000: each window's end moves back to a nearby line break.

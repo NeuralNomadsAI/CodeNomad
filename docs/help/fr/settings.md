@@ -6,7 +6,7 @@
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
 
-La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. La voix, les couleurs de palette personnalisées et les fichiers de configuration gardent un **Enregistrer** explicite. Un échec d’enregistrement ne confirme pas que le changement a pris effet ; rouvrez ou actualisez la section concernée avant de réessayer. Survolez ou focalisez le **i** à côté du titre d’un réglage pour une courte explication. S’il mène à l’aide, cliquez, appuyez sur Entrée ou touchez-le pour ouvrir la section pertinente dans la langue de l’interface, dans le navigateur système ou un onglet séparé. Les icônes limitées à une infobulle affichent leur explication au toucher. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
+La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. La voix, les couleurs de palette personnalisées et les fichiers de configuration gardent un **Enregistrer** explicite. Survolez ou focalisez le **i** à côté du titre d’un réglage pour une courte explication. S’il mène à l’aide, cliquez, appuyez sur Entrée ou touchez-le pour ouvrir la section pertinente dans la langue de l’interface, dans le navigateur système ou un onglet séparé. Les icônes limitées à une infobulle affichent leur explication au toucher. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
 
 | État | Ce qu’il contrôle |
 | --- | --- |
@@ -16,8 +16,6 @@ La plupart des choix s’appliquent immédiatement, y compris les préférences 
 | Profil de données de bureau | Fenêtres natives, état de restauration et stockage navigateur, indépendamment du fichier de configuration et du service OpenCode partagé. Voir [Fenêtres de bureau et données](desktop.md). |
 
 **Stats** couvre tout le service OpenCode connecté (tous les projets, clones indépendants et sous-sessions), pas seulement le dossier ouvert, sur les 7, 30, 90 ou 365 derniers jours. Il nécessite un projet ouvert et affiche les tokens et coûts enregistrés par OpenCode, pas les factures des fournisseurs ni les allocations d’abonnement ; les derniers totaux enregistrés peuvent s’afficher pendant l’actualisation. Les quotas de forfait relèvent de la section Statut **Utilisation**.
-
-Changer les préférences d’affichage ne redémarre pas OpenCode et ne rejoue pas de prompt. Configuration native, maintenance du service et identifiants ont des effets distincts : voir [Configuration d’OpenCode](opencode.md), [Fournisseurs](providers.md) et [Intégrations](integrations.md).
 
 ## Langue et apparence {#language-appearance}
 
@@ -32,37 +30,33 @@ Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégr
 
 ## Garder l’ordinateur éveillé {#keep-computer-awake}
 
-Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que CodeNomad tourne** est désactivé par défaut. Activez cette option pour empêcher la mise en veille tant qu’une fenêtre locale CodeNomad est ouverte (même minimisée), même sans session au travail ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille. Le **i** à côté du titre explique ce comportement. Cette option apparaît uniquement dans les fenêtres locales de l’application de bureau et dans Preferences ; elle est masquée dans les vues navigateur et distantes.
+Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que CodeNomad tourne** est désactivé par défaut. Activez cette option pour empêcher la mise en veille tant qu’une fenêtre locale CodeNomad est ouverte (même minimisée), même sans session au travail ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille. Cette option apparaît uniquement dans les fenêtres locales de l’application de bureau et dans Preferences ; elle est masquée dans les vues navigateur et distantes.
 
 ## Mémoire persistante de l’agent {#agent-memory}
 
-L’envoi continue pendant une panne de mémoire. CodeNomad tente de retirer les instructions mémoire périmées de la session ; si ce nettoyage échoue aussi, les instructions précédentes peuvent rester jusqu’à une actualisation réussie. Continuez à vérifier leurs affirmations dans les fichiers et commandes actuels.
+CodeNomad tente de retirer les instructions mémoire périmées de la session ; si ce nettoyage échoue aussi, les instructions précédentes peuvent rester jusqu’à une actualisation réussie.
 
 Ouvrez **Préférences → Général → Mémoire** (ou **Paramètres → Général** dans un navigateur). La mémoire est désactivée par défaut. Activez-la pour que l’agent conserve les faits et préférences utiles entre les conversations. L’interrupteur s’applique à la configuration CodeNomad connectée ; sa désactivation conserve les entrées et leur historique. Tant qu'elle est désactivée, les agents ne reçoivent aucun outil de mémoire ; le changement s'applique aux conversations en cours en quelques secondes, sans redémarrage.
 
 - **À propos de vous** : jusqu’à 60 entrées partagées entre les projets de cette configuration.
-- **Projet** : jusqu’à 200 entrées. Cette interface utilise le projet sélectionné dans les Préférences, ou le projet actif de la fenêtre principale dans les réglages intégrés. L’outil `codenomad_memory` de l’agent et les instructions de session utilisent le dossier de cette session. Le serveur identifie le dépôt par son adresse Git distante normalisée, avec repli sur son chemin local ; les worktrees partagent cette mémoire. Ouvrez un projet pour sélectionner cette portée.
-
-Chaque session, y compris les sous-sessions, reçoit les règles d’enregistrement et une liste bornée des titres et types (bloc d’instructions de 8 000 caractères environ au maximum). L’agent doit lire les entrées pertinentes avec `codenomad_memory` avant d’agir, vérifier leurs affirmations dans les fichiers et commandes actuels et signaler ses enregistrements. Même une mémoire vide reçoit ces règles. Les portées illisibles sont omises comme indisponibles. Si OpenCode ne fournit pas la capacité facultative d’instructions de session, l’intégration reste silencieusement inactive et conserve votre choix.
+- **Projet** : jusqu’à 200 entrées. Cette interface utilise le projet sélectionné dans les Préférences, ou le projet actif de la fenêtre principale dans les réglages intégrés. Le serveur identifie le dépôt par son adresse Git distante normalisée, avec repli sur son chemin local ; les worktrees partagent cette mémoire. Ouvrez un projet pour sélectionner cette portée.
 
 1. Sélectionnez une portée et une entrée. **Nouveau** et **Modifié** signalent les changements depuis la dernière consultation réussie de cette portée dans cette vue navigateur ou bureau ; ils restent visibles pendant la visite en cours.
 2. Modifiez **Titre**, **Type** (**Fait**, **Préférence** ou **Référence**) et **Texte**, puis **Enregistrer**. Le titre accepte 60 caractères et le texte 2 000. **Annuler** rétablit le contenu enregistré de l’entrée. Si elle a été modifiée ailleurs, utilisez **Recharger** et vérifiez avant d’enregistrer à nouveau.
 3. Pour retirer une entrée, ouvrez son menu d’actions et confirmez **Oublier**. Elle sort de la mémoire active ; Git conserve son historique local, ancien texte compris. Oublier retire l’entrée de l’usage de l’agent, sans constituer un effacement sécurisé.
 4. Si la mémoire est pleine, fusionnez ou oubliez des entrées avant de réessayer. Un titre identique ou un texte fortement similaire remplace une entrée existante, dont Git conserve le texte précédent.
 
-**À vérifier** signale des consignes suspectées de contourner les protections ou de divulguer des identifiants. Ces entrées restent modifiables ici, comptent dans le plafond et sont écartées des titres et lectures de l’agent. Les vérifications ont lieu à chaque lecture ; corrigez le contenu et enregistrez, ou utilisez **Oublier**. Une mémoire mal formée ou illisible affiche une erreur plutôt qu’une liste vide ; réparez la cause avant de réessayer.
+**À vérifier** signale des consignes suspectées de contourner les protections ou de divulguer des identifiants. Ces entrées restent modifiables ici, comptent dans le plafond et sont écartées des titres et lectures de l’agent. Les vérifications ont lieu à chaque lecture ; corrigez le contenu et enregistrez, ou utilisez **Oublier**.
 
-**Ranger** demande confirmation, puis ouvre une nouvelle conversation dans le projet affiché dans les Préférences pour vérifier et fusionner la portée sélectionnée. L’agent conserve les entrées invérifiables et les références externes et rend compte des changements. Il faut un projet ouvert et une mémoire activée, lisible, inscriptible, avec au moins une entrée non signalée. Si le lancement reste incertain, vérifiez les conversations du projet avant de réessayer.
+**Ranger** demande confirmation, puis ouvre une nouvelle conversation dans le projet affiché dans les Préférences pour vérifier et fusionner la portée sélectionnée. L’agent conserve les entrées invérifiables et les références externes et rend compte des changements. Il faut un projet ouvert et une mémoire activée, lisible, inscriptible, avec au moins une entrée non signalée.
 
-La mémoire est tenue par l’agent. S’il tient déjà une mémoire ailleurs, par exemple `.claude/…/MEMORY.md`, il enregistre une **Référence** vers ce fichier ; les mémoires externes gardent leur propre gestion. CodeNomad stocke un fichier Markdown par entrée dans `memory/global/` ou `memory/projects/<id>/` sous son dossier de configuration, avec un commit Git local à chaque enregistrement ou suppression. Le stockage reste local, sans synchronisation distante. Voir [Fenêtres et données du bureau](desktop.md) pour les limites entre configuration et profils.
+La mémoire est tenue par l’agent. S’il tient déjà une mémoire ailleurs, par exemple `.claude/…/MEMORY.md`, il enregistre une **Référence** vers ce fichier ; les mémoires externes gardent leur propre gestion. Le stockage reste local, sans synchronisation distante. Voir [Fenêtres et données du bureau](desktop.md) pour les limites entre configuration et profils.
 
 ## Panneaux et sections Statut {#panels-status}
 
 **Statut** est en premier par défaut ; un ordre d’onglets enregistré reste prioritaire. Il reste disponible. Dans **Personnaliser le panneau droit**, son chevron replie ou déplie la liste des cases de ses rubriques sans masquer les rubriques elles-mêmes.
 
-**Tokens** reprend les mêmes indicateurs que les messages. Repliée, la rubrique garde entrée, sortie et coût sur sa ligne d’en-tête ; dépliée, elle y ajoute la réflexion et les indicateurs passent à la ligne si nécessaire. Les totaux incluant les sous-sessions s’affichent en dessous.
-
-Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner. La poignée reste surlignée et garde la capture du pointeur pendant tout le glissement, même si le pointeur dépasse son bord. Relâchez pour terminer.
+Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner.
 
 1. Utilisez **Volet gauche** et **Volet droit** aux coins extérieurs de l’en-tête, ou leurs entrées du menu **Affichage**, pour afficher ou masquer chaque panneau.
 2. Ouvrez **Personnaliser le panneau droit** dans le panneau droit. Utilisez les cases pour choisir les onglets intégrés et sections Statut ; au moins une section Statut reste visible. Faites glisser le pointeur sur ces cases pour en régler plusieurs d'un coup.
@@ -88,20 +82,19 @@ La hauteur de saisie suit la conversation visible, y compris le clavier logiciel
 ## Notifications et badges {#notifications}
 
 1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation). Faites glisser le pointeur sur une ligne ou une colonne de cases pour en régler plusieurs d'un coup.
-2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander** relance la demande tant que l’autorisation manque.
+2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander l'autorisation** relance la demande tant que l’autorisation manque.
 3. Activez **Notifier lorsque l'application est au premier plan** pour garder les notifications système pendant que cette fenêtre est au premier plan. Sinon, elles s’affichent dès qu’elle ne l’est pas, même si elle reste ouverte à l’écran.
 
 Par défaut, **Une session attend votre réponse** et **Une session est terminée** vont uniquement vers Système, afin que les états passagers des sessions ne s’accumulent pas dans l’Historique ; elles concernent les sessions principales, pas les sous-agents, et une session que vous arrêtez vous-même n’est pas annoncée. Les erreurs apparaissent toujours à l’écran et dans l’Historique, quoi qu’indique le tableau, et les courts messages de progression restent uniquement à l’écran.
 
 La permission navigateur/système appartient à l’appareil et à l’origine applicative ; une préférence enregistrée ne peut pas contourner un refus. Si elle est bloquée, activez les notifications dans les paramètres du navigateur ou du système, puis revenez ici. Les environnements non pris en charge gardent la colonne Système désactivée.
 
-Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notifications dirigées vers l’Historique, pilote le point de favicon et le badge de l’application native. Les badges natifs agrègent les fenêtres principales actives ; ils ne comptent pas les sessions en cours et ne prouvent pas qu’une notification système a été livrée. Cette fonctionnalité ne fournit pas de badges de lanceur PWA.
+Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notifications dirigées vers l’Historique, pilote le point de favicon et le badge de l’application native.
 
 ## Options avancées {#advanced}
 
 1. Ouvrez **Avancé**.
 2. Cochez ou décochez seulement les options nécessaires ; chaque changement est enregistré via les préférences CodeNomad. Pour changer l’environnement d’exécution des sessions, dépliez le groupe replié **Variables d'environnement** à la fin.
-3. Vérifiez la vue résultante ou l’envoi suivant plutôt que de redémarrer spéculativement le service partagé.
 
 | Option | Effet et précaution |
 | --- | --- |

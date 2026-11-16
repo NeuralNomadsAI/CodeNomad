@@ -129,8 +129,7 @@
 
 .providers-button-icon,
 .providers-input-icon,
-.providers-instructions-icon,
-.providers-success-icon {
+.providers-instructions-icon {
   width: 1rem;
   height: 1rem;
 }
@@ -171,7 +170,6 @@
 
 .providers-loading-row,
 .providers-waiting-card,
-.providers-success-card,
 .providers-oauth-instructions {
   display: flex;
   align-items: center;
@@ -202,16 +200,6 @@
   margin-inline-start: auto;
   flex-shrink: 0;
   width: auto;
-}
-
-.providers-success-card {
-  border-color: color-mix(in oklab, var(--accent-primary) 34%, var(--border-base));
-  background: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-inset));
-  color: var(--text-primary);
-}
-
-.providers-success-icon {
-  color: var(--accent-primary);
 }
 
 .providers-form-stack {

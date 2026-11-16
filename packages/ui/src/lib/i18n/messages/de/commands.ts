@@ -34,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "Öffnen Sie zuerst ein Projekt.",
 
   "commands.closeInstance.label": "Tab schließen",
-  "commands.closeInstance.description": "Den aktuellen obersten Tab schließen",
   "commands.closeInstance.keywords": "stoppen, beenden, schließen, tab",
 
   "commands.nextInstance.label": "Nächster Tab",
-  "commands.nextInstance.description": "Zum nächsten obersten Tab wechseln",
   "commands.nextInstance.keywords": "wechseln, navigieren, tab",
 
   "commands.previousInstance.label": "Vorheriger Tab",
-  "commands.previousInstance.description": "Zum vorherigen obersten Tab wechseln",
   "commands.previousInstance.keywords": "wechseln, navigieren, tab",
 
   "commands.newSession.label": "Neue Sitzung",
@@ -62,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "info, protokolle, konsole, ausgabe",
 
   "commands.nextSession.label": "Nächste Sitzung",
-  "commands.nextSession.description": "Zum nächsten Sitzungs-Tab wechseln",
   "commands.nextSession.keywords": "wechseln, navigieren",
 
   "commands.previousSession.label": "Vorherige Sitzung",
-  "commands.previousSession.description": "Zum vorherigen Sitzungs-Tab wechseln",
   "commands.previousSession.keywords": "wechseln, navigieren",
 
   "commands.previousUserMessage.label": "Vorherige Benutzernachricht",
-  "commands.previousUserMessage.description": "Zur vorherigen Nachricht springen, die du in dieser Unterhaltung gesendet hast",
   "commands.previousUserMessage.keywords": "springen, Prompt, navigieren, Benutzernachricht",
   "commands.nextUserMessage.label": "Nächste Benutzernachricht",
-  "commands.nextUserMessage.description": "Zur nächsten Nachricht springen, die du in dieser Unterhaltung gesendet hast",
   "commands.nextUserMessage.keywords": "springen, Prompt, navigieren, Benutzernachricht",
 
   "commands.compactSession.label": "Sitzung komprimieren",
@@ -106,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "Vorgemerkte Rücknahme konnte nicht aufgehoben werden",
 
   "commands.openModelSelector.label": "Modellauswahl öffnen",
-  "commands.openModelSelector.description": "Ein anderes Modell wählen",
   "commands.openModelSelector.keywords": "modell, llm, ai",
 
   "commands.selectModelVariant.label": "Modellvariante auswählen",
@@ -114,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "variante, denken, schlussfolgern, aufwand",
 
   "commands.openAgentSelector.label": "Agentenauswahl öffnen",
-  "commands.openAgentSelector.description": "Einen anderen Agenten wählen",
   "commands.openAgentSelector.keywords": "agent, modus",
 
   "commands.clearInput.label": "Eingabe löschen",
-  "commands.clearInput.description": "Den Textbereich des Prompts löschen",
   "commands.clearInput.keywords": "löschen, zurücksetzen",
 
   "commands.thinkingBlocks.label.show": "Denken anzeigen",

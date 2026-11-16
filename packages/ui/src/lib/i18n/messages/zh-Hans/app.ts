@@ -65,15 +65,6 @@ export const appMessages = {
   "app.closeInstance.toast.error": "无法关闭项目。",
   "app.closeInstance.toast.otherWindow": "{project} 已从另一个窗口关闭。",
 
-  "emptyState.logoAlt": "CodeNomad 徽标",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "选择文件夹，开始与 AI 一起编码",
-  "emptyState.actions.selectFolder": "选择文件夹",
-  "emptyState.actions.selecting": "正在选择...",
-  "emptyState.keyboardShortcut": "键盘快捷键：{shortcut}",
-  "emptyState.examples": "示例：{example}",
-  "emptyState.multipleInstances": "同一个文件夹可以同时打开多个实例",
-
   "releases.upgradeRequired.title": "需要升级",
   "releases.desktop.checking": "正在检查 CodeNomad 更新…",
   "releases.desktop.current": "CodeNomad 已是最新版本。",

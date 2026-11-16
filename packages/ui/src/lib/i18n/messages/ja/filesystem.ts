@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "設定された workspace ルート配下のフォルダを参照します。",
   "directoryBrowser.close": "閉じる",
   "directoryBrowser.currentFolder": "フォルダを選択またはパスを入力",
   "directoryBrowser.currentFolder.inputAriaLabel": "フォルダのパス",

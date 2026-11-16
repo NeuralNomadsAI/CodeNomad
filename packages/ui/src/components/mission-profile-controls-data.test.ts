@@ -66,7 +66,7 @@ test("a mission type's role choice keeps explicit native distinct from inherit a
 
 test("all ten locale bundles own every profile label without English fallback", () => {
   const keys = Object.keys(en).filter(key => key.startsWith("missions.control.profiles."))
-  assert.equal(keys.length, 27)
+  assert.equal(keys.length, 26)
   const locales = { en, de, es, fr, he, ja, ne, ru, tr, "zh-Hans": zhHans }
   for (const [locale, bundle] of Object.entries(locales)) for (const key of keys) {
     assert.ok(Object.prototype.hasOwnProperty.call(bundle, key), `${locale} owns ${key}`)

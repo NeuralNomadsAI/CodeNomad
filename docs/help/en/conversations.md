@@ -1,14 +1,12 @@
 # Conversations
 
-CodeNomad presents native OpenCode sessions as conversations, with a hierarchy for delegated work and separate controls for what you send next.
+Messages render Markdown, code, diffs and supported tool-result images. **Message content** changes visibility without deleting stored parts; [History](history.md#operation-reference) distinguishes display controls from cleanup.
 
-Messages render Markdown, code, diffs and supported tool-result images. Text copy, full-history search and speech use text projections, not embedded image bytes. **Message content** changes visibility without deleting stored parts; [History](history.md#operation-reference) distinguishes display controls from cleanup.
-
-Reasoning and tool headers show how long each step took, counting live while it runs; durations under one second are not shown. When **Tokens** is shown in **Message content** (the **Everything** preset shows it), each agent message ends with one token and cost line after its final text. That line adds up the message and the messages holding the tools and reasoning that its **Remove tools and reasoning from this response** action covers, within the loaded transcript; expand it for reasoning and cache counts. Steps that only ran tools have no line of their own.
+Reasoning and tool headers show how long each step took, counting live while it runs; durations under one second are not shown. When **Tokens** is shown in **Message content** (the **Everything** preset shows it), each agent message ends with one token and cost line after its final text. That line adds up the message and the messages holding the tools and reasoning that its **Remove tools and reasoning from this response** action covers, within the loaded transcript; expand it for reasoning and cache counts.
 
 ## Mermaid diagrams {#mermaid}
 
-Fenced `mermaid` and `mmd` blocks render with Mermaid Tiny after streaming finishes. Use **Show source** / **Show diagram** in the code header; Copy keeps the source text. Tiny excludes mindmaps, architecture diagrams and KaTeX. Invalid, unsupported or oversized diagrams keep their source with an error. Rendering is local and network-disabled, with a 50,000-character and 500-edge limit.
+Fenced `mermaid` and `mmd` blocks render with Mermaid Tiny after streaming finishes. Use **Show source** / **Show diagram** in the code header; Copy keeps the source text. Tiny excludes mindmaps, architecture diagrams and KaTeX. Rendering is local and network-disabled, with a 50,000-character and 500-edge limit.
 
 ## Find and navigate conversations {#navigate-conversations}
 
@@ -17,17 +15,17 @@ Fenced `mermaid` and `mmd` blocks render with Mermaid Tiny after streaming finis
 3. Use **Search sessions…**, **Main sessions** / **Subsessions**, the worktree filter and **Activity**, **Name** or **Worktree** sorting to narrow the list. In search results, drag across the rows' checkboxes to select or clear several conversations at once.
 4. Use the sidebar's **Back** and **Forward** to revisit conversations you displayed.
 
-Click an **Idle** or **Interrupted** badge (**Clear**) to acknowledge it without opening the conversation, or press Enter/Space while it is focused. With a mouse or pen, press a badge and drag across others to clear several; touch drags keep scrolling. Working and pending input/permission indicators stay visible. Viewing clears **Idle**; **Interrupted** requires an explicit clear gesture. Acknowledgements are saved with this window's session state; a new interruption shows the badge again. Clearing only changes the indicator; the reload arrow still reloads messages.
+Click an **Idle** or **Interrupted** badge (**Clear**) to acknowledge it without opening the conversation, or press Enter/Space while it is focused. With a mouse or pen, press a badge and drag across others to clear several; touch drags keep scrolling. Working and pending input/permission indicators stay visible. Viewing clears **Idle**; **Interrupted** requires an explicit clear gesture. Acknowledgements are saved with this window's session state; a new interruption shows the badge again.
 
-Normal browsing is hierarchical; search/filter results are flat entries with each conversation's own identity and worktree. In **Settings → General**, **Automatically expand subsessions** is enabled by default. A visible collapsed row opens the paths to its active subsessions when its chevron changes to working, compacting or awaiting input, provided it is selected or belongs to the selected conversation's descendants. The same rule applies at every depth. Scrolling an already active row into view leaves it closed until a new transition. Disable the option to keep activity from opening branches; manual expansion and explicit navigation remain available. Open branches, including automatically opened ones, are saved for restoration.
+Normal browsing is hierarchical; search/filter results are flat entries with each conversation's own identity and worktree. In **Settings → General**, **Automatically expand subsessions** is enabled by default. Visible branches in the selected conversation open when subsessions start working, compacting or awaiting input. Disable the option to keep activity from opening branches; manual expansion and explicit navigation remain available. Open branches, including automatically opened ones, are saved for restoration.
 
-Back/Forward is a per-project-tab, per-window visit history, not list order. It is kept in memory, skips unavailable/deleted conversations and is not restored after restart. Selecting a new conversation after going back replaces the forward path. The palette's **Previous Session** / **Next Session** instead cycle the visible list.
+Back/Forward is a per-project-tab, per-window visit history, not list order. The palette's **Previous Session** / **Next Session** instead cycle the visible list.
 
 ## Archive and restore {#archive}
 
 Choose **Archive session** in a session row's actions to keep its history while removing its idle branch from normal browsing. The selected conversation and conversations with running work or pending questions remain reachable. Archiving does not stop work, delete messages or change subsessions' own archive flags.
 
-Open **Search sessions…** and choose **Archived sessions** or **All sessions** to find archived conversations. Rows show **Archived** and offer **Restore session**. Enable **Subsessions** to find children independently, including children beneath an archived parent. **Unarchived sessions** filters by each conversation's own flag. Restore an archived ancestor to bring its idle branch back into normal browsing. If an action is not confirmed, refresh the session list before trying again.
+Open **Search sessions…** and choose **Archived sessions** or **All sessions** to find archived conversations. Rows show **Archived** and offer **Restore session**. Enable **Subsessions** to find children independently, including children beneath an archived parent. **Unarchived sessions** filters by each conversation's own flag. Restore an archived ancestor to bring its idle branch back into normal browsing.
 
 ## Choose Agent, Model and Thinking {#agent-model-thinking}
 
@@ -54,7 +52,7 @@ These are execution choices for subsequent sends, not edits to earlier responses
 
 Device files must be readable and fit the attachment budget: at most 5 MiB each, 10 files and 20 MiB total. A rejected file is not attached; review the notice instead of assuming the whole selection succeeded.
 
-Choosing a skill removes the `@query` token and adds a chip. Sending clears that composer selection, not the instructions already stored by OpenCode with the sent message. Historical messages retain skill labels. Removing a skill while editing a queued prompt keeps it removed from the replacement send.
+Choosing a skill removes the `@query` token and adds a chip. Sending clears that composer selection, not the instructions already stored by OpenCode with the sent message. Historical messages retain skill labels.
 
 On desktop, sending moves keyboard focus to the conversation, so arrows, paging and Space scroll it; typing a character returns to the composer with that character. **Clear prompt text** in **More actions** (default **Ctrl/Cmd+K**) clears the composer's draft.
 
@@ -72,7 +70,7 @@ Drafts are client-side working state, not shared native messages. Startup restor
 2. For a direct shell command, type `!` at the start of an empty composer to enter **Shell mode**.
 3. Send the command. To leave Shell mode without running it, use Escape, or Backspace in an empty field.
 
-Only known slash-command names take the custom-command route; unknown `/text` is an ordinary prompt. Custom commands use their native definition. File/image attachments are not sent through that command route and remain available for a later prompt; pasted text used in arguments is resolved into the arguments.
+Only known slash-command names take the custom-command route; unknown `/text` is an ordinary prompt. File/image attachments are not sent through that command route and remain available for a later prompt; pasted text used in arguments is resolved into the arguments.
 
 Shell mode runs a native session shell request, not a request for the model to suggest a command. It can change files and start processes on the execution host. Profile environment settings apply before the next prompt, custom command or shell request; they do not restart an existing service. See [Integrations](integrations.md) and [OpenCode setup](opencode.md).
 
@@ -89,17 +87,15 @@ Shell mode runs a native session shell request, not a request for the model to s
 
 At rest, an ordinary send uses the normal immediate route regardless of that switch, and the **More actions** alternative is unavailable. Editing restores a pending prompt and its removable attachments into the composer; **Cancel editing** leaves the edit flow. A prompt already consumed by OpenCode is no longer an editable pending entry. Removing an entry does not undo work already performed.
 
-If a queue update fails, inspect the live queue before trying again. Admission is not proof that the model has consumed a follow-up, and reconnecting is not permission to submit it again.
-
 ## Ask a side question with /btw {#side-question}
 
 1. Send `/btw your question` in an existing conversation, or `/btw` to open the side-question window.
 2. Read the answer, use **Copy answer**, or choose **Cancel question** while it is pending.
 3. Close the window when finished.
 
-This is one separate model request using the session context. It does not run a tool loop, take actions or append its question/answer to the conversation. File/image attachments stay in the composer; pasted text used in the question is included as text. It is not a new durable conversation or an alternate way to dispatch work.
+This is one separate model request using the session context. It does not run a tool loop, take actions or append its question/answer to the conversation. File/image attachments stay in the composer; pasted text used in the question is included as text.
 
-Closing cancels the pending side request without interrupting the main session. Leaving the active conversation clears this ephemeral window; copy anything you need first. Empty/error responses appear here rather than becoming transcript messages.
+Closing cancels the pending side request without interrupting the main session. Leaving the active conversation clears this ephemeral window; copy anything you need first.
 
 ## Keep working toward a goal with /goal {#goal}
 
@@ -107,7 +103,7 @@ Closing cancels the pending side request without interrupting the main session. 
 2. While the conversation has a goal, **Status** shows it on one line above **Tokens**: its state (**Active**, **Paused** or **Complete**), the objective and the rounds used out of the allowed maximum. Hover or focus the objective to read it whole, with the reason for the last change, such as why the goal paused or was met.
 3. Use **Pause goal** or **Resume goal** on that line, or send `/goal pause` or `/goal resume`. Use **Clear goal** or `/goal clear` to remove the goal.
 
-A goal belongs to its conversation: subsessions and forks start without one. OpenCode also pauses a goal itself when you stop the session, when a run fails, when it stops making progress, at its round limit or when the service restarts; resume it to continue. Pausing or clearing does not undo work already done. A command that does not apply, such as pausing without an active goal, shows OpenCode's message. Without a goal, or with an OpenCode service that has no goal support, the line does not appear.
+A goal belongs to its conversation: subsessions and forks start without one. OpenCode also pauses a goal itself when you stop the session, when a run fails, when it stops making progress, at its round limit or when the service restarts; resume it to continue. Pausing or clearing does not undo work already done. Without a goal, or with an OpenCode service that has no goal support, the line does not appear.
 
 ## Fork, undo and recover a failed run {#fork-errors}
 
@@ -117,4 +113,4 @@ A goal belongs to its conversation: subsessions and forks start without one. Ope
 
 Forking copies conversation context through the selected point; it does not create a Git worktree or isolate files. Revert is not merely navigation. Review file effects and the undo boundary before continuing; use a fork when you want an alternative discussion without rewriting the original path.
 
-A **Retrying** status with a countdown means OpenCode is retrying a provider error on its own; wait for it or stop the session rather than sending again. A failed send restores the attempted draft and attachments when doing so would not overwrite newer typing. A failed run may already have executed tools: inspect [Files](files.md), pending [requests](permissions.md) and native activity before retrying. **Reload messages** or **Reload session** reads state; neither is an instruction to repeat a mutation. **Stop session** interrupts execution, not a rollback of file or external-service changes.
+A **Retrying** status with a countdown means OpenCode is retrying a provider error on its own; wait for it or stop the session rather than sending again. A failed run may already have executed tools: inspect [Files](files.md), pending [requests](permissions.md) and native activity before retrying. **Stop session** interrupts execution, not a rollback of file or external-service changes.

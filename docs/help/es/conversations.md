@@ -1,14 +1,12 @@
 # Conversaciones
 
-CodeNomad presenta las sesiones nativas de OpenCode como conversaciones, con una jerarquía para el trabajo delegado y controles independientes para lo que envías a continuación.
+Los mensajes muestran Markdown, código, diferencias e imágenes compatibles de resultados de herramientas. **Contenido de los mensajes** cambia la visibilidad sin eliminar las partes almacenadas; [Historial](history.md#operation-reference) distingue los controles de visualización de la limpieza.
 
-Los mensajes muestran Markdown, código, diferencias e imágenes compatibles de resultados de herramientas. La copia de texto, la búsqueda en todo el historial y la voz usan proyecciones de texto, no los bytes de las imágenes incrustadas. **Contenido de los mensajes** cambia la visibilidad sin eliminar las partes almacenadas; [Historial](history.md#operation-reference) distingue los controles de visualización de la limpieza.
-
-Los encabezados de razonamiento y de herramientas muestran cuánto duró cada paso, con un contador en vivo mientras se ejecuta; no se muestran duraciones inferiores a un segundo. Cuando **Tokens** se muestra en **Contenido de los mensajes** (el preajuste **Todo** lo muestra), cada mensaje del agente termina con una línea de tokens y coste después de su texto final. Esa línea suma el mensaje y los mensajes que contienen las herramientas y el razonamiento que cubre su acción **Eliminar herramientas y razonamientos de esta respuesta**, dentro de la transcripción cargada; despliégala para ver los recuentos de razonamiento y de caché. Los pasos que solo ejecutaron herramientas no tienen línea propia.
+Los encabezados de razonamiento y de herramientas muestran cuánto duró cada paso, con un contador en vivo mientras se ejecuta; no se muestran duraciones inferiores a un segundo. Cuando **Tokens** se muestra en **Contenido de los mensajes** (el preajuste **Todo** lo muestra), cada mensaje del agente termina con una línea de tokens y coste después de su texto final. Esa línea suma el mensaje y los mensajes que contienen las herramientas y el razonamiento que cubre su acción **Eliminar herramientas y razonamientos de esta respuesta**, dentro de la transcripción cargada; despliégala para ver los recuentos de razonamiento y de caché.
 
 ## Diagramas Mermaid {#mermaid}
 
-Los bloques `mermaid` y `mmd` se representan con Mermaid Tiny al terminar la transmisión. Usa **Mostrar código fuente** / **Mostrar diagrama** en la cabecera del código; Copiar conserva el texto fuente. Tiny excluye mapas mentales, diagramas de arquitectura y KaTeX. Los diagramas inválidos, no compatibles o demasiado grandes conservan su código con un error. El renderizado es local, sin red, con un límite de 50.000 caracteres y 500 aristas.
+Los bloques `mermaid` y `mmd` se representan con Mermaid Tiny al terminar la transmisión. Usa **Mostrar código fuente** / **Mostrar diagrama** en la cabecera del código; Copiar conserva el texto fuente. Tiny excluye mapas mentales, diagramas de arquitectura y KaTeX. El renderizado es local, sin red, con un límite de 50.000 caracteres y 500 aristas.
 
 ## Buscar y recorrer conversaciones {#navigate-conversations}
 
@@ -17,17 +15,17 @@ Los bloques `mermaid` y `mmd` se representan con Mermaid Tiny al terminar la tra
 3. Usa **Buscar sesiones…**, **Sesiones principales** / **Subsesiones**, el filtro de worktree y la ordenación por **Actividad**, **Nombre** o **Worktree** para acotar la lista. En los resultados de búsqueda, arrastra sobre las casillas de las filas para seleccionar o deseleccionar varias conversaciones a la vez.
 4. Usa **Atrás** y **Adelante** en la barra lateral para volver a conversaciones que hayas mostrado.
 
-Haz clic en una insignia **Inactiva** o **Interrumpido** (**Descartar**) para reconocerla sin abrir la conversación, o pulsa Intro/Espacio cuando tenga el foco. Con ratón o lápiz, mantén pulsada una insignia y arrastra sobre otras para descartar varias; el gesto táctil sigue desplazando la lista. Los indicadores de trabajo y de entrada/permisos pendientes permanecen visibles. Ver la sesión descarta **Inactiva**; **Interrumpido** requiere un gesto explícito de descarte. Los reconocimientos se guardan con el estado de sesiones de esta ventana; una nueva interrupción vuelve a mostrar la insignia. Descartar solo cambia el indicador; la flecha de recarga sigue recargando mensajes.
+Haz clic en una insignia **Inactiva** o **Interrumpido** (**Descartar**) para reconocerla sin abrir la conversación, o pulsa Intro/Espacio cuando tenga el foco. Con ratón o lápiz, mantén pulsada una insignia y arrastra sobre otras para descartar varias; el gesto táctil sigue desplazando la lista. Los indicadores de trabajo y de entrada/permisos pendientes permanecen visibles. Ver la sesión descarta **Inactiva**; **Interrumpido** requiere un gesto explícito de descarte. Los reconocimientos se guardan con el estado de sesiones de esta ventana; una nueva interrupción vuelve a mostrar la insignia.
 
-La exploración normal es jerárquica; los resultados de búsqueda/filtro son entradas planas con la identidad y el worktree propios de cada conversación. En **Ajustes → General**, **Expandir subsesiones automáticamente** está activado por defecto. Una fila visible y contraída abre las rutas a sus subsesiones activas cuando su flecha pasa a trabajar, compactar o esperar una respuesta, si está seleccionada o desciende de la conversación seleccionada. La regla se aplica a cualquier profundidad. Desplazarse hasta una fila ya activa la deja cerrada hasta una nueva transición. Desactiva la opción para que la actividad no abra ramas; la expansión manual y la navegación explícita siguen disponibles. Las ramas abiertas, incluidas las abiertas automáticamente, se guardan para restaurarlas.
+La exploración normal es jerárquica; los resultados de búsqueda/filtro son entradas planas con la identidad y el worktree propios de cada conversación. En **Ajustes → General**, **Expandir subsesiones automáticamente** está activado por defecto. Las ramas visibles de la conversación seleccionada se abren cuando las subsesiones empiezan a trabajar, compactar o esperar una respuesta. Desactiva la opción para que la actividad no abra ramas; la expansión manual y la navegación explícita siguen disponibles. Las ramas abiertas, incluidas las abiertas automáticamente, se guardan para restaurarlas.
 
-Atrás/Adelante es un historial de visitas por pestaña de proyecto y ventana, no el orden de la lista. Se conserva en memoria, omite conversaciones no disponibles/eliminadas y no se restaura tras reiniciar. Seleccionar una conversación nueva después de retroceder reemplaza la ruta hacia delante. En cambio, **Sesión anterior** / **Siguiente sesión** en la paleta recorren cíclicamente la lista visible.
+Atrás/Adelante es un historial de visitas por pestaña de proyecto y ventana, no el orden de la lista. En cambio, **Sesión anterior** / **Siguiente sesión** en la paleta recorren cíclicamente la lista visible.
 
 ## Archivar y restaurar {#archive}
 
 Elige **Archivar sesión** en las acciones de una fila para conservar su historial y ocultar su rama inactiva de la navegación normal. La conversación seleccionada y las que tienen trabajo en curso o preguntas pendientes siguen accesibles. Archivar no detiene el trabajo, no elimina mensajes ni cambia el estado de archivo propio de las subsesiones.
 
-Abre la búsqueda de sesiones y elige **Sesiones archivadas** o **Todas las sesiones**. Las filas muestran **Archivada** y ofrecen **Restaurar sesión**. Activa las subsesiones para encontrar hijos de forma independiente, incluso bajo un padre archivado. **Sesiones sin archivar** filtra por el estado propio de cada conversación. Restaura un antecesor archivado para volver a mostrar su rama inactiva en la navegación normal. Si una acción no se confirma, actualiza la lista antes de reintentar.
+Abre la búsqueda de sesiones y elige **Sesiones archivadas** o **Todas las sesiones**. Las filas muestran **Archivada** y ofrecen **Restaurar sesión**. Activa las subsesiones para encontrar hijos de forma independiente, incluso bajo un padre archivado. **Sesiones sin archivar** filtra por el estado propio de cada conversación. Restaura un antecesor archivado para volver a mostrar su rama inactiva en la navegación normal.
 
 ## Elegir Agente, Modelo y Razonamiento {#agent-model-thinking}
 
@@ -54,7 +52,7 @@ Son elecciones de ejecución para los envíos posteriores, no modificaciones de 
 
 Los archivos del dispositivo deben poder leerse y ajustarse al límite de adjuntos: como máximo 5 MiB cada uno, 10 archivos y 20 MiB en total. Un archivo rechazado no se adjunta; revisa el aviso en lugar de suponer que toda la selección se adjuntó correctamente.
 
-Elegir una habilidad retira el token `@query` y añade una etiqueta. Enviar borra esa selección del editor, no las instrucciones ya almacenadas por OpenCode con el mensaje enviado. Los mensajes históricos conservan las etiquetas de habilidades. Quitar una habilidad al editar un mensaje en cola la mantiene fuera del envío que lo reemplaza.
+Elegir una habilidad retira el token `@query` y añade una etiqueta. Enviar borra esa selección del editor, no las instrucciones ya almacenadas por OpenCode con el mensaje enviado. Los mensajes históricos conservan las etiquetas de habilidades.
 
 En el escritorio, enviar mueve el foco del teclado a la conversación, de modo que las flechas, las teclas de página y Espacio la desplazan; escribir un carácter vuelve al editor con ese carácter. **Borrar el texto del prompt** en **Más acciones** (por defecto **Ctrl/Cmd+K**) borra el borrador del editor.
 
@@ -72,7 +70,7 @@ Los borradores son estado de trabajo del cliente, no mensajes nativos compartido
 2. Para un comando de shell directo, escribe `!` al principio de un editor vacío para entrar en **Modo shell**.
 3. Envía el comando. Para salir del modo shell sin ejecutarlo, usa Escape o Retroceso con el campo vacío.
 
-Solo los nombres conocidos de comandos con barra usan la ruta de comandos personalizados; un `/text` desconocido es un mensaje normal. Los comandos personalizados usan su definición nativa. Los adjuntos de archivo/imagen no se envían por esa ruta de comandos y quedan disponibles para un mensaje posterior; el texto pegado usado en los argumentos se resuelve dentro de ellos.
+Solo los nombres conocidos de comandos con barra usan la ruta de comandos personalizados; un `/text` desconocido es un mensaje normal. Los adjuntos de archivo/imagen no se envían por esa ruta de comandos y quedan disponibles para un mensaje posterior; el texto pegado usado en los argumentos se resuelve dentro de ellos.
 
 El modo shell ejecuta una solicitud shell nativa de la sesión, no una petición para que el modelo sugiera un comando. Puede modificar archivos e iniciar procesos en el equipo de ejecución. Los ajustes de entorno del perfil se aplican antes del siguiente mensaje, comando personalizado o solicitud shell; no reinician un servicio existente. Consulta [Integraciones](integrations.md) y [configuración de OpenCode](opencode.md).
 
@@ -89,17 +87,15 @@ El modo shell ejecuta una solicitud shell nativa de la sesión, no una petición
 
 En reposo, un envío normal usa la ruta inmediata habitual independientemente de ese interruptor, y la alternativa de **Más acciones** no está disponible. Editar restaura un mensaje pendiente y sus adjuntos removibles en el editor; **Cancelar edición** sale del proceso de edición. Un mensaje ya consumido por OpenCode deja de ser una entrada pendiente editable. Eliminar una entrada no deshace el trabajo ya realizado.
 
-Si falla una actualización de la cola, inspecciona la cola actual antes de reintentar. La admisión no demuestra que el modelo haya consumido un seguimiento, y reconectar no autoriza a enviarlo de nuevo.
-
 ## Hacer una pregunta aparte con /btw {#side-question}
 
 1. Envía `/btw your question` en una conversación existente, o `/btw` para abrir la ventana de pregunta aparte.
 2. Lee la respuesta, usa **Copiar respuesta** o elige **Cancelar pregunta** mientras esté pendiente.
 3. Cierra la ventana cuando termines.
 
-Es una solicitud de modelo independiente que usa el contexto de la sesión. No ejecuta un bucle de herramientas, no realiza acciones ni añade su pregunta/respuesta a la conversación. Los adjuntos de archivo/imagen permanecen en el editor; el texto pegado usado en la pregunta se incluye como texto. No es una conversación duradera nueva ni una forma alternativa de asignar trabajo.
+Es una solicitud de modelo independiente que usa el contexto de la sesión. No ejecuta un bucle de herramientas, no realiza acciones ni añade su pregunta/respuesta a la conversación. Los adjuntos de archivo/imagen permanecen en el editor; el texto pegado usado en la pregunta se incluye como texto.
 
-Cerrar cancela la solicitud aparte pendiente sin interrumpir la sesión principal. Salir de la conversación activa borra esta ventana efímera; copia primero lo que necesites. Las respuestas vacías/con error aparecen aquí en lugar de convertirse en mensajes de la transcripción.
+Cerrar cancela la solicitud aparte pendiente sin interrumpir la sesión principal. Salir de la conversación activa borra esta ventana efímera; copia primero lo que necesites.
 
 ## Seguir trabajando hacia un objetivo con /goal {#goal}
 
@@ -107,7 +103,7 @@ Cerrar cancela la solicitud aparte pendiente sin interrumpir la sesión principa
 2. Mientras la conversación tiene un objetivo, **Estado** lo muestra en una línea encima de **Tokens**: su estado (**Activo**, **En pausa** o **Cumplido**), el objetivo y las rondas usadas sobre el máximo permitido. Pasa el puntero por el objetivo o dale el foco para leerlo completo, con el motivo del último cambio, como por qué el objetivo se pausó o se cumplió.
 3. Usa **Pausar objetivo** o **Reanudar objetivo** en esa línea, o envía `/goal pause` o `/goal resume`. Usa **Borrar objetivo** o `/goal clear` para quitar el objetivo.
 
-Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones empiezan sin ninguno. OpenCode también pausa un objetivo por sí mismo cuando detienes la sesión, cuando una ejecución falla, cuando deja de avanzar, al llegar a su límite de rondas o cuando el servicio se reinicia; reanúdalo para continuar. Pausar o borrar no deshace el trabajo ya hecho. Un comando que no aplica, como pausar sin un objetivo activo, muestra el mensaje de OpenCode. Sin objetivo, o con un servicio de OpenCode sin soporte de objetivos, la línea no aparece.
+Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones empiezan sin ninguno. OpenCode también pausa un objetivo por sí mismo cuando detienes la sesión, cuando una ejecución falla, cuando deja de avanzar, al llegar a su límite de rondas o cuando el servicio se reinicia; reanúdalo para continuar. Pausar o borrar no deshace el trabajo ya hecho. Sin objetivo, o con un servicio de OpenCode sin soporte de objetivos, la línea no aparece.
 
 ## Bifurcar, deshacer y recuperar una ejecución fallida {#fork-errors}
 
@@ -117,4 +113,4 @@ Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones em
 
 La bifurcación copia el contexto de la conversación hasta el punto seleccionado; no crea un worktree de Git ni aísla los archivos. Revertir no es simplemente navegar. Revisa los efectos sobre los archivos y el límite de lo que se deshace antes de continuar; usa una bifurcación cuando quieras una discusión alternativa sin reescribir el recorrido original.
 
-Un estado **Reintentando** con cuenta atrás significa que OpenCode está reintentando por sí mismo tras un error del proveedor; espera o detén la sesión en lugar de volver a enviar. Un envío fallido restaura el borrador y los adjuntos intentados cuando no sobrescribe texto más reciente. Una ejecución fallida puede haber ejecutado ya herramientas: inspecciona [Archivos](files.md), las [solicitudes](permissions.md) pendientes y la actividad nativa antes de reintentar. **Recargar mensajes** o **Recargar sesión** lee el estado; ninguna indica que se repita una modificación. **Detener sesión** interrumpe la ejecución, no revierte los cambios en archivos o servicios externos.
+Un estado **Reintentando** con cuenta atrás significa que OpenCode está reintentando por sí mismo tras un error del proveedor; espera o detén la sesión en lugar de volver a enviar. Una ejecución fallida puede haber ejecutado ya herramientas: inspecciona [Archivos](files.md), las [solicitudes](permissions.md) pendientes y la actividad nativa antes de reintentar. **Detener sesión** interrumpe la ejecución, no revierte los cambios en archivos o servicios externos.

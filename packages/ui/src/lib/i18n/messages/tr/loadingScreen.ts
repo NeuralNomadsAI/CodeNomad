@@ -7,7 +7,7 @@ export const loadingScreenMessages = {
   "loadingScreen.status.stopped": "Sunucu durduruldu",
   "loadingScreen.errors.missingRoot": "Yükleme kök elemanı bulunamadı",
   "loadingScreen.remoteUnavailable.title": "Bu sunucuya ulaşılamıyor",
-  "loadingScreen.remoteUnavailable.message": "CodeNomad bu sunucuyu yükleyemedi. Çalıştığından ve erişilebilir olduğundan emin olup yeniden deneyin.",
+  "loadingScreen.remoteUnavailable.message": "Sunucunun çalıştığından ve erişilebilir olduğundan emin olup yeniden deneyin.",
   "loadingScreen.remoteUnavailable.retry": "Yeniden dene",
   "loadingScreen.remoteUnavailable.openLocal": "Yerel pencere aç",
   "loadingScreen.remoteUnavailable.close": "Pencereyi kapat",

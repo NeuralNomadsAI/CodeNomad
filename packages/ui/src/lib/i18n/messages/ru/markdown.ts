@@ -2,7 +2,7 @@ export const markdownMessages = {
   "markdown.mermaid.diagram": "Диаграмма Mermaid",
   "markdown.mermaid.preview": "Показать диаграмму",
   "markdown.mermaid.source": "Показать исходный код",
-  "markdown.mermaid.failed": "Диаграмма недоступна. Проверьте исходный код и форматы, поддерживаемые Mermaid Tiny.",
+  "markdown.mermaid.failed": "Проверьте исходный код и поддерживаемые форматы диаграмм.",
   "markdown.codeBlock.copy.label": "Копировать",
   "markdown.codeBlock.copy.copied": "Скопировано!",
   "markdown.codeBlock.copy.failed": "Не удалось",

@@ -434,9 +434,9 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
             <div class="directory-browser-header">
               <div class="directory-browser-heading">
                 <h3 class="directory-browser-title">{props.title}</h3>
-                <p class="directory-browser-description">
-                  {props.description || t("directoryBrowser.defaultDescription")}
-                </p>
+                <Show when={props.description}>
+                  {(description) => <p class="directory-browser-description">{description()}</p>}
+                </Show>
               </div>
               <button type="button" class="directory-browser-close" aria-label={t("directoryBrowser.close")} onClick={props.onClose}>
                 <X class="w-5 h-5" />

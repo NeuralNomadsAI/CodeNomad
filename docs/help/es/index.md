@@ -2,8 +2,6 @@
 
 La cabina de mando de programación con IA para OpenCode: un espacio de trabajo de escritorio y navegador para desarrolladores que ejecutan muchos agentes en varios proyectos, conversaciones largas y worktrees de Git.
 
-OpenCode te da el motor. CodeNomad te da la cabina de mando. Se conecta al servicio compartido en segundo plano de OpenCode: tus sesiones pertenecen a OpenCode, otros clientes de ese servicio pueden usarlas y cerrar CodeNomad no las detiene.
-
 [Descargar CodeNomad](download.md)
 
 {{tour-video}}
@@ -21,8 +19,6 @@ Control remoto empareja un teléfono, una tableta u otro ordenador con tu backen
 Busca en todo el historial almacenado de una conversación, o clasifica los resultados del proyecto abierto y sus worktrees, incluidos la salida de las herramientas y el razonamiento cuando los necesites. La línea de tiempo de mensajes salta por sesiones largas sin cargar todos los mensajes intermedios. Consulta [Historial, búsqueda y limpieza](history.md).
 
 ## Lee esto primero {#read-this-first}
-
-Esta guía cubre el espacio de trabajo actual de CodeNomad, en escritorio o navegador, con tu servicio OpenCode: los controles de CodeNomad, los límites de ejecución y la recuperación, no tutoriales de configuración de OpenCode ni un archivo de versiones.
 
 CodeNomad conecta tu espacio de trabajo a un servicio compartido de OpenCode en segundo plano. Las sesiones y los mensajes pertenecen a OpenCode; las pestañas, los borradores del editor de mensajes y la disposición pertenecen al cliente CodeNomad. Cerrar una pestaña de proyecto cierra el proyecto en CodeNomad; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto. Cerrar CodeNomad no detiene OpenCode.
 
@@ -89,9 +85,9 @@ La raíz del espacio de trabajo limita qué carpetas abre CodeNomad; no es un en
 El panel Estado muestra el uso del proveedor de la sesión activa y los Shells nativos en segundo plano. El estado de las conversaciones y la actividad de sus descendientes identifican sesiones que están trabajando, compactándose o esperando entrada. Supervisar un Shell en segundo plano es distinto de enviar una solicitud Shell desde el editor de mensajes o usar un SideCar de terminal alojado por separado.
 
 1. Abre **Estado → Shells en segundo plano** para la Location de la conversación seleccionada (o el espacio de trabajo abierto si no hay una conversación seleccionada).
-2. Solo se muestran los comandos en ejecución enviados explícitamente al segundo plano, uno por línea. Al pasar el cursor se muestran el shell, la carpeta y el PID; el icono **Ver salida** abre la salida nativa. Sin la API de tareas en segundo plano de OpenCode, aparece un error de carga.
+2. Solo se muestran los comandos en ejecución enviados explícitamente al segundo plano, uno por línea. Al pasar el cursor se muestran el shell, la carpeta y el PID; el icono **Ver salida** abre la salida nativa.
 3. Usa el icono **Detener y eliminar** de la línea y confirma el objetivo.
 
-Eliminar un Shell en ejecución detiene ese proceso; cerrar su ventana de salida no lo detiene. Actualizar/reconectar lee el estado nativo actual en lugar de reconstruir los eventos de salida perdidos.
+Eliminar un Shell en ejecución detiene ese proceso; cerrar su ventana de salida no lo detiene.
 
-Las instantáneas de visualización se actualizan tras cambios nativos, al reconectar y cuando una vista visible las necesita. No son registros con reproducción garantizada. Si un resultado es incierto, actualiza el estado autoritativo antes de reintentar una modificación; no vuelvas a enviarla solo porque se haya perdido una notificación o un evento.
+Si un resultado es incierto, actualiza el estado autoritativo antes de reintentar una modificación; no vuelvas a enviarla solo porque se haya perdido una notificación o un evento.

@@ -42,6 +42,6 @@ Download only from this page or the [official releases](https://github.com/Neura
 
 ## Support development {#support-development}
 
-CodeNomad is free and maintained by volunteers in their own time. If it is useful to you or your team, sponsoring helps keep it maintained and compatible with new OpenCode releases. The [Support CodeNomad](sponsor.md) page explains what sponsorship pays for.
+The [Support CodeNomad](sponsor.md) page explains what sponsorship pays for.
 
 {{funding}}

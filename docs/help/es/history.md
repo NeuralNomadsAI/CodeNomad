@@ -1,7 +1,5 @@
 # Historial, búsqueda y limpieza
 
-La búsqueda, la cronología, la galería de imágenes y la limpieza técnica admiten también el almacenamiento experimental `part_rows` de OpenCode y los mensajes con partes separadas e integradas. Las partes ya separadas siguen siendo compatibles tras desactivar la opción.
-
 El historial almacenado, lo que muestra actualmente la transcripción y el contexto compactado del modelo son cosas distintas. Elige navegar o filtrar antes de eliminar nada.
 
 ## Buscar en todo el historial {#full-history-search}
@@ -15,11 +13,9 @@ El historial almacenado, lo que muestra actualmente la transcripción y el conte
 
 Las páginas de conversación muestran **Esta página: … resultados · … mensajes examinados** al llegar los lotes. El proyecto muestra **Mejores resultados: …** y avisos compactos de búsqueda parcial o directorios excluidos. Si la búsqueda clasificada no está disponible en el entorno, usa **Toda la sesión**. Se indican los mensajes omitidos; inicia otra búsqueda para incluir mensajes nuevos.
 
-Abrir una búsqueda vacía no analiza el historial. Cambiar la consulta/el ámbito, cerrar la ventana o salir de la sesión cancela el trabajo de búsqueda obsoleto. Si falla una lectura, usa **Reintentar**; no envía un mensaje ni modifica el historial.
-
 La búsqueda empieza por hasta 16 384 mensajes guardados más recientes por ubicación. **Buscar más atrás** sustituye la lista por los mejores resultados de la siguiente ventana anterior. La nota indica el intervalo examinado, del más nuevo al más antiguo por ubicación del proyecto. La clasificación corresponde solo a esa ventana. Cambiar consulta, ámbito o contenido técnico, cerrar la búsqueda o salir de la sesión reinicia la ventana. Una búsqueda nueva incluye los mensajes nuevos.
 
-Si una ventana de búsqueda caduca o su historial cambia, **Iniciar búsqueda nueva** vuelve a los mensajes más recientes con la misma consulta y opciones. Un aviso explica la recuperación. Ante errores de lectura normales, **Reintentar** vuelve a leer la ventana actual.
+Si una ventana de búsqueda caduca o su historial cambia, **Iniciar búsqueda nueva** vuelve a los mensajes más recientes con la misma consulta y opciones.
 
 ## Abrir resultados y usar la línea de tiempo {#timeline-navigation}
 
@@ -30,8 +26,6 @@ Si una ventana de búsqueda caduca o su historial cambia, **Iniciar búsqueda nu
 La línea de tiempo representa la estructura completa de la sesión aunque la transcripción solo contenga un pasaje acotado. Los saltos cargan el destino en lugar de obtener todos los mensajes intermedios. Las vistas previas de resultados de otras sesiones no cargan toda su transcripción ni las seleccionan; solo **Abrir en la sesión** cambia de conversación.
 
 Los marcadores de herramientas siguen **Contenido de los mensajes**: un tipo de herramienta oculto allí no tiene marcador (ninguno con **Nada**), salvo una herramienta que espera un permiso. Un paso que solo ejecutó herramientas muestra únicamente sus marcadores de herramientas, sin un marcador de agente vacío.
-
-Mientras se carga un salto, el pasaje anterior permanece visible. Un salto más reciente o una interacción manual con la transcripción sustituye la navegación obsoleta; un salto fallido deja intacto el pasaje visible. Reintenta el destino en lugar de recargar todo el proyecto repetidamente. Leer el historial no cambia la selección de agente/modelo del editor de mensajes.
 
 La línea de tiempo se oculta cuando la conversación es demasiado estrecha (menos de 420 píxeles CSS); usa allí la búsqueda y los controles de la transcripción. Ese cambio adaptable no borra su preferencia de visibilidad guardada.
 
@@ -65,8 +59,6 @@ La compactación cambia el contexto que OpenCode usa para continuar la sesión. 
 Solo se eliminan herramientas y razonamientos completados aptos. No se depura contenido activo/incompleto, ni un mensaje de más de 16 MB tal como lo lee OpenCode (archivos adjuntos incluidos), que cuenta como contenido omitido; el contenido cambiado se rechaza en lugar de ampliar silenciosamente lo que confirmaste. El texto final y los metadatos de mensajes/sesión permanecen, pero la salida técnica eliminada no se puede recuperar. Conserva lo que necesites antes de confirmar.
 
 La limpieza de una sesión no es atómica para toda ella. Las eliminaciones anteriores correctas permanecen si un mensaje posterior entra en conflicto o falla. **La cancelación detiene los lotes futuros; no revierte un lote ya enviado**, que aún puede confirmarse.
-
-Ante un error de almacenamiento ocupado, espera a que terminen la ejecución y el trabajo de almacenamiento actuales. Ante un error de mensaje cambiado, recarga y selecciona de nuevo. Si un plugin no está disponible, reconecta/vuelve a abrir CodeNomad e inspecciona el error antes de reintentar. Tras una respuesta incierta, actualiza y evalúa el contenido restante; no supongas que no ocurrió nada ni que se limpió toda la sesión.
 
 ## Eliminar y depurar sesiones {#delete-scrub}
 

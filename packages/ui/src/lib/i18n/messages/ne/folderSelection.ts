@@ -9,7 +9,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "CodeNomad Discord",
 
   "folderSelection.empty.title": "कुनै भर्खरका फोल्डरहरू छैनन्",
-  "folderSelection.empty.description": "सुरु गर्न फोल्डरको लागि ब्राउज गर्नुहोस्",
 
   "folderSelection.recent.title": "भर्खरका फोल्डरहरू",
   "folderSelection.recent.subtitle.one": "{count} फोल्डर उपलब्ध छ",
@@ -41,7 +40,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.destination.title": "क्लोन गन्तव्य चयन गर्नुहोस्",
   "folderSelection.clone.destination.description": "क्लोन राख्ने फोल्डर छान्नुहोस्; रिपोजिटरीको फोल्डर त्यसभित्र बनाइन्छ।",
   "folderSelection.clone.dialog.title": "Git रिपोजिटरी क्लोन गर्नुहोस्",
-  "folderSelection.clone.dialog.description": "Git रिपोजिटरीलाई स्थानीय फोल्डरमा क्लोन गर्नुहोस्, त्यसपछि यसलाई आफ्नो कार्यस्थानको रूपमा खोल्नुहोस्।",
   "folderSelection.clone.dialog.repositoryUrl": "रिपोजिटरी URL",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "गन्तव्य फोल्डर",
@@ -63,10 +61,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "ब्राउज",
 
   "folderSelection.loading.title": "उदाहरण सुरु गर्दै...",
-  "folderSelection.loading.subtitle": "हामीले तपाईंको कार्यस्थान तयार गर्दा कृपया धैर्य गर्नुहोस्।",
 
   "folderSelection.drop.title": "खोल्नको लागि फोल्डर यहाँ छोड्नुहोस्",
-  "folderSelection.drop.subtitle": "छोडिएको फोल्डरमा नयाँ उदाहरण सुरु गर्नुहोस्।",
   "folderSelection.drop.invalidTitle": "छोडिएको वस्तु खोल्न सकिएन",
   "folderSelection.drop.invalidMessage": "नयाँ उदाहरण सुरु गर्न फोल्डर छोड्नुहोस्।",
 
@@ -79,7 +75,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "नयाँ विन्डोमा सुरक्षित गरिएको रिमोट CodeNomad सर्भर खोल्नुहोस्",
   "folderSelection.servers.count": "{count} सर्भरहरू",
   "folderSelection.servers.empty.title": "कुनै बचत गरिएका सर्भरहरू छैनन्",
-  "folderSelection.servers.empty.description": "यो उपकरणबाट छिटो पुन: जडान गर्न रिमोट सर्भर थप्नुहोस्",
   "folderSelection.servers.connectTitle": "सर्भरमा जडान गर्नुहोस्",
   "folderSelection.servers.connectSubtitle": "रिमोट CodeNomad सर्भर बचत गर्नुहोस् र यसलाई नयाँ विन्डोमा खोल्नुहोस्",
   "folderSelection.servers.connectButton": "सर्भरमा जडान गर्नुहोस्",
@@ -87,7 +82,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "स्व-हस्ताक्षरित TLS",
   "folderSelection.servers.errorTitle": "रिमोट जडान असफल भयो",
   "folderSelection.servers.dialog.title": "सर्भरमा जडान गर्नुहोस्",
-  "folderSelection.servers.dialog.description": "रिमोट CodeNomad सर्भर थप्नुहोस् र वैकल्पिक रूपमा यसलाई तुरुन्तै खोल्नुहोस्।",
   "folderSelection.servers.dialog.name": "सर्भरको नाम",
   "folderSelection.servers.dialog.namePlaceholder": "उत्पादन सर्भर",
   "folderSelection.servers.dialog.url": "सर्भर URL",

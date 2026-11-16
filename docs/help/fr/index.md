@@ -2,8 +2,6 @@
 
 Le cockpit de codage IA pour OpenCode : un espace de travail sur ordinateur et dans le navigateur pour les développeurs qui exécutent de nombreux agents entre projets, longues conversations et worktrees Git.
 
-OpenCode vous donne le moteur. CodeNomad vous donne le cockpit. Il se connecte au service OpenCode partagé en arrière-plan : vos sessions appartiennent à OpenCode, d’autres clients de ce service peuvent les utiliser, et fermer CodeNomad ne les arrête pas.
-
 [Télécharger CodeNomad](download.md)
 
 {{tour-video}}
@@ -21,8 +19,6 @@ Le Contrôle à distance appaire un téléphone, une tablette ou un autre ordina
 Recherchez dans tout l’historique enregistré d’une conversation, ou classez les résultats sur le projet ouvert et ses worktrees, y compris la sortie des outils et les réflexions si vous en avez besoin. La chronologie des messages permet de naviguer par sauts dans les longues sessions sans charger tous les messages intermédiaires. Voir [Historique, recherche et nettoyage](history.md).
 
 ## À lire en premier {#read-this-first}
-
-Ce guide couvre l’espace de travail CodeNomad actuel, sur ordinateur ou dans un navigateur, avec votre service OpenCode : les commandes de CodeNomad, les limites d’exécution et la récupération, et non les tutoriels de configuration d’OpenCode ou un historique des versions.
 
 CodeNomad relie votre espace de travail à un service OpenCode partagé en arrière-plan. Les sessions et les messages appartiennent à OpenCode ; les onglets, brouillons de saisie et dispositions appartiennent au client CodeNomad. Fermer un onglet de projet ferme le projet dans CodeNomad ; les sessions continuent dans OpenCode et se retrouvent en rouvrant le projet. Fermer CodeNomad n’arrête pas OpenCode.
 
@@ -89,9 +85,9 @@ La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce 
 Le panneau Statut expose l’utilisation du fournisseur de la session active et les Shells natifs en arrière-plan. Le statut des conversations et l’activité des enfants indiquent les sessions actives, en compactage ou en attente de saisie. Surveiller un Shell en arrière-plan est distinct de l’envoi d’une demande Shell depuis la zone de saisie ou de l’utilisation d’un SideCar terminal hébergé séparément.
 
 1. Ouvrez **Statut → Shells en arrière-plan** pour la Location de la conversation sélectionnée (ou l’espace de travail ouvert si aucune conversation n’est sélectionnée).
-2. Seules les commandes en cours explicitement passées en arrière-plan sont listées, une par ligne. Survolez une ligne pour voir le shell, le dossier et le PID ; son icône **Afficher la sortie** ouvre la sortie native. Si OpenCode ne fournit pas l’API des tâches en arrière-plan, une erreur de chargement s’affiche.
+2. Seules les commandes en cours explicitement passées en arrière-plan sont listées, une par ligne. Survolez une ligne pour voir le shell, le dossier et le PID ; son icône **Afficher la sortie** ouvre la sortie native.
 3. Utilisez l’icône **Arrêter et supprimer** de la ligne et confirmez la cible.
 
-Supprimer un Shell en cours arrête ce processus ; fermer sa fenêtre de sortie ne l’arrête pas. L’actualisation ou la reconnexion lit l’état natif actuel au lieu de reconstruire les événements de sortie manqués.
+Supprimer un Shell en cours arrête ce processus ; fermer sa fenêtre de sortie ne l’arrête pas.
 
-Les instantanés d’affichage s’actualisent après les changements natifs, la reconnexion et à la demande des vues visibles. Ce ne sont pas des journaux de rejeu garantis. Si un résultat est incertain, actualisez l’état faisant autorité avant de réessayer une modification ; ne renvoyez pas la demande simplement parce qu’une notification ou un événement a été manqué.
+Si un résultat est incertain, actualisez l’état faisant autorité avant de réessayer une modification ; ne renvoyez pas la demande simplement parce qu’une notification ou un événement a été manqué.

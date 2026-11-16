@@ -1,14 +1,14 @@
 # Servidor independiente
 
-Ejecuta CodeNomad donde estén tus proyectos y herramientas y usa después su interfaz de navegador local o remotamente. El backend proporciona acceso al sistema de archivos, operaciones Git, autenticación y entrega de eventos. El servicio compartido de OpenCode es propietario de las conversaciones y la ejecución; no es un servidor hijo que deba detenerse cuando se desconecta un navegador.
+Ejecuta CodeNomad donde estén tus proyectos y herramientas y usa después su interfaz de navegador local o remotamente.
 
-La misma interfaz admite [varias pestañas de proyecto y worktrees](projects.md), [familias de conversaciones y actividad en segundo plano](conversations.md), [carga acotada de historial, búsqueda y navegación por línea de tiempo](history.md), una [paleta de comandos y atajos](shortcuts.md) y [Misiones](missions.md). El acceso desde navegador y tableta no traslada la ejecución fuera del anfitrión.
+El acceso desde navegador y tableta no traslada la ejecución fuera del anfitrión.
 
 ## Preparar el equipo anfitrión {#prerequisites}
 
-1. Instala Node.js 24 LTS y npm; el repositorio fija su entorno de compilación en `.node-version`. Los paquetes de escritorio proporcionan su propio entorno: Electron usa su Node integrado, Tauri incluye Node y ambos incluyen npm.
+1. Instala Node.js 24 LTS y npm.
 2. Pon Git en el **PATH del proceso del backend**. Git solo dentro de WSL no satisface a un backend Windows.
-3. Instala o selecciona OpenCode: **2.3.0** es el mínimo requerido y **2.3.0**, el objetivo recomendado de verificación. Las compilaciones más nuevas o personalizadas pasan comprobaciones de compatibilidad, no una lista de versiones probadas permitidas. Consulta [configuración de OpenCode](opencode.md).
+3. Instala o selecciona OpenCode: **2.3.0** es el mínimo requerido. Consulta [configuración de OpenCode](opencode.md).
 4. Elige la carpeta desde la que iniciar el servidor o pasa `--workspace-root` explícitamente.
 
 Sin Git, las conversaciones siguen disponibles solo en la carpeta física abierta explícitamente; las operaciones Git y worktree fallan. Instala Git y reinicia el backend tras cambiar PATH. Una raíz de espacio de trabajo limita la apertura/exploración, no la ejecución del agente: consulta [Seguridad](security.md).
@@ -45,15 +45,13 @@ npx codenomad --generate-token --launch
 
 Los comandos se ejecutan en primer plano. Cerrar la terminal o enviar Ctrl+C detiene ese backend y su conexión de Control remoto. `--launch` solo abre un navegador; no convierte el servidor en un daemon. Para disponibilidad desatendida, ejecuta el mismo comando bajo el gestor de procesos/servicios del sistema operativo con configuración, directorio de trabajo, entorno y política de reinicio explícitos. No pongas secretos en registros de servicio ni en un archivo público de unidad.
 
-Cerrar un navegador no detiene un backend independiente que se ejecuta por separado. Cerrar una pestaña de proyecto retira la conexión de CodeNomad de ese proyecto, pero las sesiones siguen en OpenCode; vuelve a abrir el proyecto para encontrarlas. CodeNomad nunca descarga su Location nativa. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas. Apagar el backend también deja el servicio OpenCode en ejecución. Las funciones dependientes del backend no están disponibles hasta que vuelva CodeNomad; consulta [Misiones](missions.md) para la duración separada de la programación nativa.
+Cerrar un navegador no detiene un backend independiente que se ejecuta por separado. Cerrar una pestaña de proyecto retira la conexión de CodeNomad de ese proyecto, pero las sesiones siguen en OpenCode; vuelve a abrir el proyecto para encontrarlas. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas. Apagar el backend también deja el servicio OpenCode en ejecución. Las funciones dependientes del backend no están disponibles hasta que vuelva CodeNomad; consulta [Misiones](missions.md) para la duración separada de la programación nativa.
 
 ## Direcciones y puertos {#addresses}
 
 Al iniciar se indica **Local Connection URL**, y **Remote Connection URL** cuando hay una disponible, además de **Other Accessible URLs** cuando corresponde. Usa el esquema y el puerto indicados, no una dirección adivinada. Una URL loopback solo es accesible en ese equipo; una dirección LAN indicada sigue requiriendo enrutamiento y acceso del cortafuegos.
 
 HTTPS prefiere el puerto **9898** y HTTP, **9899**. Sin un valor de puerto explícito, un puerto preferido ocupado se sustituye por uno asignado por el sistema operativo. Un puerto explícito distinto de cero no cambia a otro; `0` solicita un puerto asignado por el sistema operativo. Los puertos aceptan enteros de 0 a 65535.
-
-El backend también puede abrir un listener HTTP autenticado y no anunciado en un puerto aleatorio de `127.0.0.1` para sus propios plugins de OpenCode, como Misiones. No se muestra y no es una dirección de cliente.
 
 Para exposición de listeners, certificados, VPN/SSH y proxies inversos, usa [Acceso remoto directo](remote-access.md). Para acceso sin puerto entrante, usa [Control remoto](remote-control.md).
 
@@ -96,8 +94,6 @@ Las opciones prevalecen sobre sus equivalentes del entorno. Las opciones con val
 | `--launch` | `CLI_LAUNCH` | `false`; abre la interfaz local en un navegador tras iniciar. |
 | `--upgrade [version]` | — | Sin actualización por defecto. Si se solicita, instala globalmente `@neuralnomads/codenomad@latest` o la versión proporcionada y sale. |
 
-La referencia pública enumera las opciones para usuarios; los anfitriones de escritorio gestionan su propia coordinación privada de inicio.
-
 ### Entorno adicional de despliegue {#deployment-environment}
 
 | Variable | Valor predeterminado y ámbito |
@@ -107,8 +103,6 @@ La referencia pública enumera las opciones para usuarios; los anfitriones de es
 | `CODENOMAD_REMOTE_CONTROL` | Sin definir: los usuarios pueden iniciar el control remoto. `disabled`: desactivado por un administrador ([política](remote-control.md#administrator-policy)); sin definir o vacía no aplica ninguna política, cualquier otro valor (incluidos espacios) impide el inicio. |
 | `CODENOMAD_LOCKED_HOST` | Sin definir o vacía: se aplica `--host`; solo espacios impide el inicio. Una dirección: el servidor escucha en ella sin importar `--host`, `CLI_HOST` ni el interruptor de escucha ([política](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Archivo CA adicional opcional de Node; se pasa con el entorno de inicio permitido al iniciar un daemon OpenCode ausente. No cambia un daemon ya en ejecución. |
-
-Las credenciales de uso específicas de proveedores se cubren en [Proveedores](providers.md). La selección del perfil de datos de escritorio se cubre en [Escritorio](desktop.md); no la controla el canal de versiones.
 
 ## Configuración y propiedad del almacenamiento {#storage}
 
@@ -128,13 +122,11 @@ Las rutas predeterminadas siguientes usan el directorio personal del usuario del
 | Conversaciones OpenCode, mensajes, registro de servicio y conexiones de proveedores | Almacenamiento global propio de OpenCode en el equipo de ejecución, no el directorio de instancias de CodeNomad. |
 | Estado de restauración de escritorio | Por defecto `~/.codenomad/client-state/v2/`; consulta [Escritorio](desktop.md) para el ámbito de perfil/ventana. |
 
-CodeNomad se conecta al daemon compartido existente o lo inicia si falta. El entorno de inicio solo afecta a un daemon recién iniciado. Por separado, el entorno completo de sesión configurado se aplica antes de cada mensaje, comando personalizado o solicitud shell de sesión, no al simplemente ver o editar preferencias. Consulta [configuración de OpenCode](opencode.md).
+El entorno de inicio solo afecta a un daemon recién iniciado. Por separado, el entorno completo de sesión configurado se aplica antes de cada mensaje, comando personalizado o solicitud shell de sesión, no al simplemente ver o editar preferencias. Consulta [configuración de OpenCode](opencode.md).
 
 ## Eventos y reconexiones {#events}
 
-El backend consume un flujo compartido de eventos nativos de OpenCode y multiplexa eventos del espacio de trabajo y de CodeNomad a clientes de navegador mediante Server-Sent Events. La entrega es en vivo y volátil: **no hay reproducción garantizada de eventos**.
-
-Tras reconectar, la interfaz vuelve a obtener el estado autoritativo de sesiones y solicitudes pendientes; las invalidaciones de archivos/configuración también provocan lecturas nuevas. Reconectar no autoriza a repetir un envío, eliminación, respuesta u otra modificación cuya respuesta se perdió. Comprueba primero el estado resultante. Las solicitudes pendientes conocidas y los borradores se conservan cuando la recuperación es incompleta; consulta [Permisos](permissions.md) y [Solución de problemas](troubleshooting.md).
+Reconectar no autoriza a repetir un envío, eliminación, respuesta u otra modificación cuya respuesta se perdió. Comprueba primero el estado resultante. Las solicitudes pendientes conocidas y los borradores se conservan cuando la recuperación es incompleta; consulta [Permisos](permissions.md) y [Solución de problemas](troubleshooting.md).
 
 ## Paquetes preliminares y mantenimiento {#maintenance}
 

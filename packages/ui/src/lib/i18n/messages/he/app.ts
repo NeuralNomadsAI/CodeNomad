@@ -65,15 +65,6 @@ export const appMessages = {
   "app.closeInstance.toast.error": "סגירת הפרויקט נכשלה.",
   "app.closeInstance.toast.otherWindow": "{project} נסגר מחלון אחר.",
 
-  "emptyState.logoAlt": "לוגו CodeNomad",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "בחר תיקייה כדי להתחיל לתכנת עם AI",
-  "emptyState.actions.selectFolder": "בחר תיקייה",
-  "emptyState.actions.selecting": "בוחר...",
-  "emptyState.keyboardShortcut": "קיצור מקלדת: {shortcut}",
-  "emptyState.examples": "דוגמאות: {example}",
-  "emptyState.multipleInstances": "ניתן לפתוח מספר מופעים של אותה תיקייה",
-
   "releases.upgradeRequired.title": "נדרש שדרוג",
   "releases.desktop.checking": "בודק עדכון עבור CodeNomad…",
   "releases.desktop.current": "CodeNomad מעודכן.",

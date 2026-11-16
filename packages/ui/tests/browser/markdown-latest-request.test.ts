@@ -176,7 +176,7 @@ test("latest bounded render reveals the rest in place, keeping the rendered pref
   assert.ok(!(await page.locator(".markdown-body").textContent())!.includes("END-SOURCE"))
   assert.equal(await page.locator(".markdown-source-copy").count(), 0, "the copy-only workaround is gone")
   const notice = page.locator(".message-hidden-text")
-  assert.match((await notice.textContent())!, /14,029 more characters hidden to keep this message responsive/)
+  assert.match((await notice.textContent())!, /14,029 more characters hidden/)
   assert.equal(await page.evaluate(() => (window as any).fixture.cached()), undefined, "a bounded window never caches as the whole part version")
 
   await page.evaluate(() => { (window as any).fixture.audit.holdResults = true })

@@ -1,6 +1,6 @@
 export const missionCreateMessages = {
   "missions.create.objective": "उद्देश्य",
-  "missions.create.objectivePlaceholder": "तपाईंले चाहेको नतिजा वर्णन गर्नुहोस्। दैनिक मिसनमा, यी निर्देशनहरू हरेक चलाइमा लागू हुन्छन्।",
+  "missions.create.objectivePlaceholder": "तपाईंले चाहेको नतिजा वर्णन गर्नुहोस्।",
   "missions.create.title": "शीर्षक",
   "missions.create.options": "विकल्पहरू",
   "missions.create.agents": "एजेन्ट र मोडेलहरू",

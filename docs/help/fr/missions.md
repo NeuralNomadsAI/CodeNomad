@@ -30,9 +30,11 @@ Le scénario guide les agents dans leurs permissions natives. Un commit, push, u
 
 **Sessions des tâches** choisit des **Sous-agents natifs** sous le coordinateur, ou des **Sessions indépendantes**. Les deux restent soumis aux permissions et limites d’imbrication d’OpenCode.
 
-**Profondeur des sous-agents** est un réglage de projet pour toutes ses conversations OpenCode. Choisissez **Hériter** ou une profondeur de 1 à 10 ; ce choix est enregistré immédiatement. Le **ⓘ** indique la profondeur effective observée, les permissions d’imbrication et les fichiers de configuration. Un enregistrement échoué ou non confirmé conserve son avertissement et propose une actualisation explicite.
+**Profondeur des sous-agents** est un réglage de projet pour toutes ses conversations OpenCode. Choisissez **Hériter** ou une profondeur de 1 à 10 ; ce choix est enregistré immédiatement. Le **ⓘ** indique la profondeur effective observée, les permissions d’imbrication et les fichiers de configuration.
 
-Enregistrer une profondeur de projet autorise aussi les sous-agents à déléguer dans cette limite, en primant sur les restrictions de General d’autres fichiers lorsque le réglage est compatible. Une règle de projet incompatible conserve son avertissement. **Hériter** retire la règle ajoutée. Enregistrer ne recharge pas OpenCode et ne modifie pas les conversations en cours.
+Les informations de profondeur des sous-agents indiquent leur source effective sous **Fichier de configuration OpenCode :**.
+
+Enregistrer une profondeur de projet autorise aussi les sous-agents à déléguer dans cette limite, en primant sur les restrictions de General d’autres fichiers lorsque le réglage est compatible. **Hériter** retire la règle ajoutée. Enregistrer ne recharge pas OpenCode et ne modifie pas les conversations en cours.
 
 ### Agents et modèles {#agents-models}
 
@@ -48,13 +50,11 @@ Une programmation gérée par calendrier nécessite un agent et un modèle expli
 
 **Démarrer automatiquement** se trouve hors de Programmation et reste décoché par défaut. Laissez-le décoché pour créer une Mission en pause, puis utilisez ▶ **Démarrer** dans l’en-tête. Cochez-le pour demander le démarrage après confirmation de la création, avec les contrôles habituels et la préparation automatique de la programmation.
 
-Si l’accusé de création est perdu, lire le reçu laisse le démarrage manuel. Une création non confirmée garde sa requête d’origine ; vérifiez la liste et la conversation avant de créer à nouveau.
-
 ## Programmation {#daily-schedules}
 
 ### Critères {#native-scheduling}
 
-Les informations de profondeur des sous-agents indiquent leur source effective sous **Fichier de configuration OpenCode :**.
+Le bouton **i** ouvre [l’aide de programmation](missions.md#native-scheduling).
 
 Le premier critère est **Une fois, maintenant**. **Ajouter un critère** en ajoute un autre ; choisissez son type, retirez-le avec × ou réordonnez les cartes par leur poignée. Alt+Haut/Bas déplace la poignée ayant le focus.
 
@@ -62,25 +62,25 @@ Les horaires proposent Une fois, maintenant, Toutes les N heures, Tous les jours
 
 **Une fois, maintenant** prend son instant au démarrage, pas à l’ouverture du formulaire. Il offre une seule occasion, qu’une condition peut consommer sans lancement. Choisissez une récurrence pour des occasions ultérieures. La programmation fonctionne tant que son service OpenCode et son hôte d’exécution sont disponibles.
 
-Le démarrage ou la reprise prépare automatiquement la programmation dans la configuration OpenCode du projet. Un OFF explicite est conservé : **Ouvrir les réglages de programmation**, lorsque proposé, ouvre le fichier responsable ; le **i** révèle sa provenance ou les détails d’environnement. Le bouton sollicité affiche le chargement pendant la requête seulement. Un résultat non confirmé propose une vérification ; l’activation récupérée laisse le démarrage explicite.
+Le démarrage ou la reprise prépare automatiquement la programmation dans la configuration OpenCode du projet. Un OFF explicite est conservé : **Ouvrir les réglages de programmation**, lorsque proposé, ouvre le fichier responsable ; le **i** révèle sa provenance ou les détails d’environnement.
 
 ### Événements et combinaisons {#scheduling-conditions}
 
 Choisissez **Activité du dépôt → Événement**, puis les filtres éventuels dans la même carte. Les commits Git partagent ce menu avec les événements du dépôt GitHub, GitLab ou Gitea détecté automatiquement, comme dans Contribute (`upstream`, puis `origin`). Les trois proposent les nouvelles PR/MR, les PR/MR fusionnées et les nouvelles issues, avec un **Auteur (facultatif)**, y compris `dependabot[bot]`. Choisir un événement fixe son dépôt ; les critères enregistrés conservent leur cible.
 
-Les contrôles de forge utilisent `gh`, `glab` ou `tea` sur l’hôte OpenCode, même avec CodeNomad fermé ; les dépôts publics peuvent être lus anonymement. Une forge auto-hébergée exige une CLI connectée à cet hôte. **github.com** propose aussi les notifications du compte et les alertes Dependabot via `gh` connecté, avec accès aux [notifications](https://docs.github.com/en/rest/activity/notifications) ou aux [alertes en lecture](https://docs.github.com/en/rest/dependabot/alerts). Les notifications conservent leur état de lecture ; les alertes incluent celles corrigées ou ignorées. Les notifications enregistrées avec un **Dépôt GitHub** vide couvrent le compte. Le premier démarrage fixe la référence. Chaque contrôle lit au plus quatre pages de 50 éléments en dix secondes ; accès manquant, limite API ou fenêtre incomplète rendent la source indisponible. Les résumés entrent dans le passage et sont consommés après réussite.
+Les contrôles de forge utilisent `gh`, `glab` ou `tea` sur l’hôte OpenCode, même avec CodeNomad fermé ; les dépôts publics peuvent être lus anonymement. Une forge auto-hébergée exige une CLI connectée à cet hôte. **github.com** propose aussi les notifications du compte et les alertes Dependabot via `gh` connecté, avec accès aux [notifications](https://docs.github.com/en/rest/activity/notifications) ou aux [alertes en lecture](https://docs.github.com/en/rest/dependabot/alerts). Les notifications conservent leur état de lecture ; les alertes incluent celles corrigées ou ignorées. Les notifications enregistrées avec un **Dépôt GitHub** vide couvrent le compte. Le premier démarrage fixe la référence.
 
-Un événement peut suivre la réussite d’un autre programme, une Mission ponctuelle terminée, des commits sur une branche locale, de nouveaux messages ou des changements de fichiers explicites. Choisissez la source dans ce critère. Sans recherche, le sélecteur charge la suite au défilement ; en cas d’échec, **Réessayer** apparaît au même endroit. La recherche ignore les majuscules et minuscules, y compris pour les lettres accentuées. Pendant une recherche, utilisez **Charger d’autres sources** dans le sélecteur pour poursuivre, même si la page contient déjà des résultats. La conversation choisie pour les nouveaux messages fournit aussi du contexte au passage. Changer le type de critère efface sa source. La modification conserve le contexte de conversation déjà enregistré.
+Un événement peut suivre la réussite d’un autre programme, une Mission ponctuelle terminée, des commits sur une branche locale, de nouveaux messages ou des changements de fichiers explicites. Choisissez la source dans ce critère. La recherche ignore les majuscules et minuscules, y compris pour les lettres accentuées. Pendant une recherche, utilisez **Charger d’autres sources** dans le sélecteur pour poursuivre, même si la page contient déjà des résultats. La conversation choisie pour les nouveaux messages fournit aussi du contexte au passage. Changer le type de critère efface sa source. La modification conserve le contexte de conversation déjà enregistré.
 
 - **ou** combine des horaires voisins, ou des événements voisins.
 - **si** : les événements après des horaires sont leurs conditions. À chaque horaire, l’un d’eux doit avoir changé depuis le dernier passage réussi.
 - **sinon** : les horaires après des événements sont un repli. Ils lancent seulement si les critères au-dessus n’ont lancé aucun passage depuis leur créneau précédent, ou leur activation. Les événements placés après ce repli le conditionnent.
 
-Les événements en tête peuvent lancer un passage à chaque nouvelle occurrence ; ils sont vérifiés toutes les 15 minutes. Le premier démarrage fixe la référence des sources. Un passage réussi la fait avancer ; un échec la conserve. Une source absente ou illisible bloque avec une explication. Les passages ne se chevauchent pas.
+Les événements en tête peuvent lancer un passage à chaque nouvelle occurrence ; ils sont vérifiés toutes les 15 minutes. Le premier démarrage fixe la référence des sources. Un passage réussi la fait avancer ; un échec la conserve. Les passages ne se chevauchent pas.
 
 ### Compteurs et historique {#scheduling-limits}
 
-**Session du coordinateur** utilise par défaut une **Nouvelle session** à chaque passage. Avec un horaire ou événement, **Session existante** permet de choisir une conversation racine du projet et de la même Location d’exécution. Chaque passage y continue avec l’agent et le modèle configurés, en conservant le transcript, le titre et les permissions. Les contrôles de la mission affectent aussi les travaux qui s’y trouvent. Chaque passage garde son résultat et son journal dans les **Exécutions passées** ; une conversation choisie disparue demande votre intervention.
+**Session du coordinateur** utilise par défaut une **Nouvelle session** à chaque passage. Avec un horaire ou événement, **Session existante** permet de choisir une conversation racine du projet et de la même Location d’exécution. Chaque passage y continue avec l’agent et le modèle configurés, en conservant le transcript, le titre et les permissions. Les contrôles de la mission affectent aussi les travaux qui s’y trouvent. Chaque passage garde son résultat et son journal dans les **Exécutions passées** .
 
 Sélectionnez un programme pour lire son état, le prochain réveil ou contrôle, les nombres de passages lancés et réussis et les **Exécutions passées**. L’historique conserve 30 résultats ; les compteurs cumulés restent. **Lancer maintenant** compte comme passage lancé une fois admis.
 
@@ -96,7 +96,7 @@ Le chevron déplie ou replie les tâches. Cliquer une ligne sélectionne la Miss
 
 L’œil active **Résumé** dans le lecteur central et suit la sélection tant qu’il est enfoncé. **Ouvrir la conversation** mène au coordinateur ou à la tâche sélectionnée. **Plus d’actions** (⋯) contient les commandes applicables de point d’avancement, interruption, enregistrement de configuration et modification.
 
-Les missions et tâches suivantes se chargent à l’approche de la fin. Les pages de tâches restent en cache indépendamment des lignes affichées. Un échec de lecture conserve l’affichage et propose **Réessayer**. Le chargement utilise l’indicateur d’actualisation de l’en-tête. Lire ou réessayer une lecture ne démarre aucun travail.
+Les missions et tâches suivantes se chargent à l’approche de la fin. Si le chargement des tâches échoue, utilisez **Réessayer** pour continuer.
 
 ### Couleurs et états {#status-colours}
 
@@ -113,9 +113,9 @@ Le drapeau indique l’état de la Mission ; son chevron porte l’attention de 
 | Icône d’accent seule | Mission préparée ou tâche qui n’a pas commencé. |
 | Neutre | Fin consultée, programmation arrêtée ou **État non confirmé** ; lisez le texte d’état. |
 
-Sélectionnez une Mission ou tâche verte, cliquez ou balayez les icônes vertes des tâches, ou choisissez **Marquer comme lu** dans le menu du chevron. Pour **Passage réussi à consulter**, sélectionnez explicitement la ligne récurrente dans la fenêtre active ou utilisez **Marquer comme lu** pour acquitter ce passage. L’icône revient à l’attente si la programmation reste active, sinon au neutre. La sélection restaurée et les résultats reçus sur une ligne déjà sélectionnée gardent le nouveau résultat à consulter. Les succès historiques présents au premier chargement commencent comme lus.
+Sélectionnez une Mission ou tâche verte, cliquez ou balayez les icônes vertes des tâches, ou choisissez **Marquer comme lu** dans le menu du chevron. Pour **Passage réussi à consulter**, sélectionnez explicitement la ligne récurrente dans la fenêtre active ou utilisez **Marquer comme lu**. L’icône revient à l’attente si la programmation reste active, sinon au neutre. Les nouveaux résultats reçus sur une ligne déjà sélectionnée restent à consulter.
 
-Le texte d’état distingue Affectée, Active, En attente, Bloquée, Terminée, Échouée et Retirée. Un blocage signalé n’est pas nécessairement une question pour vous. Un résultat enregistré ne prouve pas que chaque opération native est arrêtée. Retirer une tâche conserve son historique.
+Retirer une tâche conserve son historique.
 
 ### Questions et décisions {#questions}
 
@@ -123,13 +123,11 @@ Le coordinateur a pour consigne de résoudre ce qu’il peut et de vous demander
 
 ### Points d’avancement {#briefings}
 
-Le coordinateur a pour consigne de publier des points aux étapes importantes. C’est son évaluation, pas un compteur d’activité en direct. **Demander un point**, sous Plus d’actions, en demande un autre ; lisez-le via Résumé. Si l’envoi n’est pas confirmé, vérifiez la conversation avant une nouvelle demande séparée.
+Le coordinateur a pour consigne de publier des points aux étapes importantes. C’est son évaluation, pas un compteur d’activité en direct. **Demander un point**, sous Plus d’actions, en demande un autre ; lisez-le via Résumé.
 
 ## Contexte et résultats {#context-flow}
 
-Le plan durable conserve objectif, Notes, consignes des tâches, dépendances, résultats et changements de plan. Le coordinateur reçoit l’objectif, les Notes et les instructions du scénario. Une tâche native reçoit l’affectation de son parent ; une tâche indépendante reçoit aussi ses affectations ouvertes. Les assistants reçoivent ce que leur parent leur transmet. Le juge aveugle reçoit les éléments anonymisés de comparaison plutôt que l’objectif et les Notes.
-
-Une nouvelle Mission ou un passage programmé possède son propre plan. Placez les résultats antérieurs utiles dans Objectif ou Notes, ou demandez au coordinateur de les retrouver. OpenCode peut compacter le contexte présenté au modèle tout en conservant l’historique enregistré.
+Une nouvelle Mission ou un passage programmé possède son propre plan. Placez les résultats antérieurs utiles dans Objectif ou Notes, ou demandez au coordinateur de les retrouver.
 
 ### Rechercher les conversations antérieures {#context-search}
 
@@ -139,22 +137,22 @@ Lorsque CodeNomad fonctionne, les agents peuvent rechercher les conversations en
 
 Fermer un projet ou CodeNomad n’arrête pas le travail natif OpenCode. Les programmes natifs activés peuvent fonctionner avec CodeNomad fermé tant que le service et l’hôte d’exécution sont disponibles. Un programme natif sain reprend son calendrier après redémarrage du service ; pauses, arrêts et résultats incertains conservent leurs blocages. Les entrées quotidiennes existantes demandent Reprendre après redémarrage.
 
-Certaines actions de coordination et de récupération nécessitent le serveur CodeNomad. Si Missions est indisponible, suivez l’erreur de connexion ou de plugin du panneau sans supposer que le travail enregistré a disparu.
+Certaines actions de coordination et de récupération nécessitent le serveur CodeNomad.
 
 ## Pause, arrêt et actions non confirmées {#controls-recovery}
 
 La **Pause** ponctuelle laisse les étapes en cours finir sans en démarrer de nouvelles. **Interrompre maintenant** demande une interruption immédiate. **Arrêter** est définitif et demande confirmation. La pause d’un programme natif ferme les lancements futurs et demande l’interruption du passage en cours. Des effets d’outils peuvent continuer après interruption ; vérifiez les résultats partiels.
 
-Conservez la requête d’origine d’une action non confirmée. Utilisez **Vérifier l’état**, **Actualiser la requête enregistrée** ou le réessai proposé ; ne créez pas de remplacement pour contourner l’incertitude. Actualisation passive et reconnexion ne la renvoient pas. Après confirmation, les nouvelles actions peuvent attendre l’arrivée d’un affichage à jour.
+Conservez la requête d’origine d’une action non confirmée. Utilisez **Vérifier l’état**, **Actualiser la requête enregistrée** ou le réessai proposé ; ne créez pas de remplacement pour contourner l’incertitude.
 
-Une Mission ponctuelle interrompue ou échouée peut proposer **Reprendre la mission interrompue**. Les tâches admissibles proposent la récupération d’un rapport manquant. Ces actions vérifient l’activité native et les demandes en attente avant d’autoriser du travail.
+Une Mission ponctuelle interrompue ou échouée peut proposer **Reprendre la mission interrompue**. Les tâches admissibles proposent la récupération d’un rapport manquant.
 
 ## Modifier, supprimer et nettoyer les conversations {#cleanup}
 
 Le nettoyage des conversations de tâches est une option des Missions ponctuelles. Supprimer un programme natif conserve ses conversations.
 
-**Modifier la mission sélectionnée**, sous Plus d’actions, ouvre le formulaire commun. Avant le premier lancement, les champs de préparation se modifient lorsqu’ils sont déverrouillés. Après lancement, instructions et Notes restent modifiables là où c’est permis ; les champs verrouillés indiquent leur restriction. En cas de conflit, rechargez la configuration actuelle et consultez **Ancien brouillon pour comparaison**.
+**Modifier la mission sélectionnée**, sous Plus d’actions, ouvre le formulaire commun. Avant le premier lancement, les champs de préparation se modifient lorsqu’ils sont déverrouillés. Après lancement, instructions et Notes restent modifiables là où c’est permis ; les champs verrouillés indiquent leur restriction.
 
-Arrêtez le travail avant de le supprimer. **Supprimer la mission sélectionnée…** retire immédiatement une Mission ponctuelle ; une suppression échouée ou non confirmée garde son **Réessayer** d’origine. Supprimer un programme ferme d’abord ses futurs lancements.
+Arrêtez le travail avant de le supprimer. **Supprimer la mission sélectionnée…** retire immédiatement une Mission ponctuelle . Supprimer un programme ferme d’abord ses futurs lancements.
 
 Pour retirer aussi les conversations de tâches admissibles, activez **Supprimer une mission supprime aussi les conversations de ses tâches** dans les Préférences Missions. Coordinateurs, conversations réutilisées ou partagées et celles dont la propriété ne peut pas être établie sont conservés. **Nettoyage des conversations** indique le travail restant et les réessais explicites. Supprimer une configuration enregistrée ne supprime pas de Mission.

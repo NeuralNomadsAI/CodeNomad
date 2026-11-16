@@ -434,7 +434,7 @@ for (const [reason, message] of [
   ["cursor-token-expired", "Cursor token expired. Update CURSOR_ACCESS_TOKEN or CURSOR_TOKEN and restart the backend."],
   ["cursor-team-unavailable", "Cursor team unavailable. Check your team membership."],
   ["cursor-access-denied", "Cursor denied access to team usage. Check your team permissions."],
-  ["cursor-usage-unavailable", "Cursor did not provide readable usage or limits."],
+  ["cursor-usage-unavailable", "Cursor usage and limits unavailable."],
 ]) test(`Cursor ${reason} revokes meters with its distinct actionable status`, async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {

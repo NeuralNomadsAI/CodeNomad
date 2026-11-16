@@ -15,7 +15,7 @@ L’onglet **Fichiers** du panneau droit réunit la navigation dans les copies d
 | Changements | Changements de l’index et de la copie de travail | Modifications Git uniquement par des actions explicites |
 | Commits | Historique paginé des commits et contenu des révisions | Historique en lecture seule ; aucune extraction |
 
-Les dossiers développés le restent lors des changements de mode. Les listes/statuts/historiques utilisent des instantanés en cache et sont revalidés après les changements de fichiers pertinents, à l’activation ou sur actualisation explicite ; focaliser le panneau ne garantit pas une nouvelle lecture. Les dossiers visibles du Workspace reflètent d’eux-mêmes les fichiers créés, modifiés, renommés ou supprimés sur l’hôte du backend, au plus une fois toutes les cinq secondes pendant une activité continue ; les dossiers repliés et les autres worktrees ne sont relus que lorsque vous les affichez.
+Les dossiers développés le restent lors des changements de mode. Les dossiers visibles du Workspace reflètent d’eux-mêmes les fichiers créés, modifiés, renommés ou supprimés sur l’hôte du backend, au plus une fois toutes les cinq secondes pendant une activité continue ; les dossiers repliés et les autres worktrees ne sont relus que lorsque vous les affichez.
 
 Les actions de ligne incluent **Copier le chemin** et, lorsque le client peut ouvrir les chemins du backend, des actions de gestionnaire de fichiers/éditeur/terminal comme **Ouvrir avec l'application par défaut**, **Afficher dans le dossier**, **Ouvrir dans le gestionnaire de fichiers** et **Ouvrir un terminal ici**. Les actions peuvent passer dans **Plus d'actions pour {name}** si l’espace manque ; le nom du fichier ou dossier remplace `{name}`. Un navigateur distant ne peut pas supposer qu’un chemin serveur est local à l’appareil ; voir [Contrôle à distance](remote-control.md).
 
@@ -28,9 +28,9 @@ Les fichiers `.mmd` du Workspace s’ouvrent en diagramme. **Afficher la source*
 3. Modifiez et choisissez **Enregistrer**, ou appuyez sur **Ctrl/Cmd+S** lorsque l’éditeur a le focus.
 4. Si le fichier a changé à l’extérieur, examinez la confirmation d’écrasement ; choisissez **Annuler** pour conserver votre brouillon sans écraser ce changement.
 
-L’enregistrement écrit le fichier réel dans la copie parcourue, y compris un worktree lié ; il n’envoie pas de prompt et n’indexe/ne valide pas la modification. Il relit d’abord le fichier faisant autorité. Le dialogue de conflit indique **Le fichier a été modifié par l'agent. Écraser les modifications de l'agent ?** ; traitez les changements de tout auteur externe avec la même prudence.
+L’enregistrement écrit le fichier réel dans la copie parcourue, y compris un worktree lié ; il n’envoie pas de prompt et n’indexe/ne valide pas la modification. Le dialogue de conflit indique **Le fichier a été modifié par l'agent. Écraser les modifications de l'agent ?** ; traitez les changements de tout auteur externe avec la même prudence.
 
-Les brouillons source modifiés restent en mémoire du moteur de rendu par instance de projet, répertoire et chemin lorsque les lecteurs sont fermés ou changés. Les actualisations du système de fichiers ne les remplacent pas silencieusement. Ce n’est pas un stockage durable : enregistrez ou copiez les modifications importantes avant de redémarrer/recharger le client. Les échecs de lecture/écriture conservent le brouillon. **Actualiser** explicitement avertit avant d’abandonner les modifications non enregistrées.
+Les brouillons source modifiés restent en mémoire du moteur de rendu par instance de projet, répertoire et chemin lorsque les lecteurs sont fermés ou changés. Les actualisations du système de fichiers ne les remplacent pas silencieusement. Ce n’est pas un stockage durable : enregistrez ou copiez les modifications importantes avant de redémarrer/recharger le client. **Actualiser** explicitement avertit avant d’abandonner les modifications non enregistrées.
 
 Fermer le lecteur avec son bouton de fermeture final revient à la conversation ; la zone de saisie reste disponible sous le lecteur. Masquer le volet avec **Volet droit**, ou une fenêtre trop étroite pour lui, laisse le lecteur ouvert avec la largeur libérée ; réafficher le volet le conserve tel quel. Changer de session/worktree efface le lecteur sélectionné, sans promettre d’enregistrer son brouillon. Ouvrir un aperçu navigateur remplace le lecteur ; ouvrir un fichier remet cette vue en mode chat.
 
@@ -48,7 +48,7 @@ Fermer le lecteur avec son bouton de fermeture final revient à la conversation 
 | Diff texte Changements/Commits | Comparaison en lecture seule, pas un éditeur pour l’un ou l’autre côté |
 | Diff d’image Git | Images avant/après provenant exactement des révisions comparées |
 
-Les lectures d’aperçu sont bornées ; un contenu volumineux/non pris en charge peut être indisponible plutôt que chargé sans limite. Les images historiques ne sont jamais remplacées par le fichier du worktree actuel. Un échec d’aperçu ne signifie pas que le fichier sous-jacent est absent. Ouvrez-le avec une application externe appropriée si disponible, sans changer sa révision uniquement pour obtenir un aperçu.
+Les lectures d’aperçu sont bornées ; un contenu volumineux/non pris en charge peut être indisponible plutôt que chargé sans limite. Les images historiques ne sont jamais remplacées par le fichier du worktree actuel. Ouvrez-le avec une application externe appropriée si disponible, sans changer sa révision uniquement pour obtenir un aperçu.
 
 ## Indexer, retirer de l’index et valider {#stage-commit}
 
@@ -58,7 +58,7 @@ Les lectures d’aperçu sont bornées ; un contenu volumineux/non pris en charg
 
 Les en-têtes de sections repliées restent des cibles de dépôt. Replier les sections ou changer de mode conserve leur état et le brouillon de message de commit. Une longue section affiche ses 200 premiers fichiers, puis une ligne comme **480 fichiers non affichés** avec **Afficher 200 de plus** pour révéler les suivants sur place ; les comptes des sections restent des totaux complets, et les fichiers courant, prévisualisé et sélectionnés restent affichés. Les plages Maj+clic ne couvrent que les lignes affichées, si bien qu’une action groupée n’inclut jamais un fichier que vous ne voyez pas. L’indexation/le retrait modifie l’index du worktree parcouru ; le commit enregistre seulement le contenu indexé. Retirer de l’index n’abandonne pas la modification du worktree.
 
-Vérifiez les fichiers indexés avant de valider, surtout si des agents ou un autre client y écrivent aussi. Un commit échoué n’est pas rejoué automatiquement. Actualisez le statut/l’historique et consultez l’erreur avant de réessayer, car une réponse perdue ne prouve pas qu’aucun commit n’a été créé.
+Vérifiez les fichiers indexés avant de valider, surtout si des agents ou un autre client y écrivent aussi.
 
 ## Lire l’historique des commits {#commit-history}
 
@@ -74,7 +74,7 @@ L’historique texte compare le commit à son premier parent (ou une base vide p
 2. Désactivez ce réglage pour examiner les modifications non indexées portant uniquement sur les espaces, omises de Changements.
 3. Vérifiez le diff réel et le contenu indexé avant de valider.
 
-Le réglage est activé par défaut. Il masque principalement les modifications admissibles de texte suivi non indexé dans la liste Changements, les comptes, la sélection, l’indexation en masse et le glisser-déposer. Les fichiers masqués restent non indexés. Les fichiers indexés restent visibles, ainsi que les fichiers non suivis, ajoutés/supprimés/renommés et binaires. Une détection échouée/non prise en charge laisse les fichiers visibles au lieu de deviner.
+Le réglage est activé par défaut. Il masque principalement les modifications admissibles de texte suivi non indexé dans la liste Changements, les comptes, la sélection, l’indexation en masse et le glisser-déposer. Les fichiers masqués restent non indexés. Les fichiers indexés restent visibles, ainsi que les fichiers non suivis, ajoutés/supprimés/renommés et binaires.
 
 La détection des listes Git peut ignorer les espaces internes, les changements CRLF seuls et l’ajout/le retrait du saut de ligne final. La comparaison des espaces du lecteur de diff est plus restreinte : indentation et espaces/tabulations de fin, pas tous les espaces internes. Indexer et Valider agissent toujours sur le contenu exact, quelle que soit la préférence d’affichage.
 
@@ -86,4 +86,4 @@ Les différences de fin de ligne et de marque d’ordre des octets peuvent produ
 2. Choisissez **Initialiser Git** ; l’action est immédiate, sans confirmation.
 3. Attendez l’actualisation projet/session, puis indexez et validez explicitement lorsque vous êtes prêt.
 
-L’initialisation crée `.git` dans le dossier explicitement ouvert ; elle n’initialise pas un parent et ne crée pas de premier commit. Si Git manque sur le backend, les conversations limitées au répertoire et la navigation Workspace restent possibles, mais l’initialisation et les opérations Git sont indisponibles. En cas d’échec incertain, actualisez avant de réessayer ; aucune demande d’initialisation n’est rejouée automatiquement. Voir [Projets](projects.md).
+L’initialisation crée `.git` dans le dossier explicitement ouvert ; elle n’initialise pas un parent et ne crée pas de premier commit. Si Git manque sur le backend, les conversations limitées au répertoire et la navigation Workspace restent possibles, mais l’initialisation et les opérations Git sont indisponibles. Voir [Projets](projects.md).

@@ -297,7 +297,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const details = () => [
       ...(integration() ? [t("instanceServiceStatus.plugins.kind.integration", { id: integration()!.displayName })] : []),
       t("instanceServiceStatus.plugins.source.package", { source: target }),
-      t(state() === "pending" ? "instanceServiceStatus.plugins.sources.pending" : "instanceServiceStatus.plugins.sources.unconfirmed"),
+      ...(state() === "unconfirmed" ? [t("instanceServiceStatus.plugins.sources.unconfirmed")] : []),
       ...declarationsFor(source => source.target === target).map(source => source.scope === "global" || source.scope === "project"
         ? `${scopeLabel(source.scope)} — ${source.path ?? ""}` : source.path ?? ""),
     ].map(bidi).join("\n")
