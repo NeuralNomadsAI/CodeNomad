@@ -135,8 +135,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.time": "有効な時刻を入力してください。",
   "missions.scheduling.error.count": "条件が多すぎます。スケジュールは最大8件（イベントを別途確認する場合は7件）、イベントは最大8件です。",
   "missions.scheduling.error.duplicate": "重複した条件を削除してください。",
-  "missions.scheduling.immediateFollowed": "追跡中の会話のコンテキストは Play 時に読み取り固定されます。不完全なソースや容量を超えるコンテキストは起動をブロックします。",
-  "missions.scheduling.immediateCreationFollowed": "追跡中の会話を保持するにはスケジュール付きで作成し、Play 前に即時起動へ変更してください。",
   "missions.scheduling.once": "1回、今すぐ",
   "missions.scheduling.frequency.at": "1回、日時を指定",
   "missions.scheduling.frequency.in": "1回、一定時間後",

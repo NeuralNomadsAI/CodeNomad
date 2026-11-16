@@ -135,8 +135,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.time": "Geben Sie eine gültige Uhrzeit ein.",
   "missions.scheduling.error.count": "Zu viele Kriterien: höchstens acht Zeitpläne (sieben bei separat geprüften Ereignissen) und acht Ereignisse.",
   "missions.scheduling.error.duplicate": "Entfernen Sie das doppelte Kriterium.",
-  "missions.scheduling.immediateFollowed": "Der Kontext verfolgter Unterhaltungen wird bei Play gelesen und festgehalten. Unvollständige Quellen oder zu großer Kontext blockieren den Start.",
-  "missions.scheduling.immediateCreationFollowed": "Erstellen Sie die Mission mit einer Zeitplanung, um verfolgte Unterhaltungen zu behalten, und ändern Sie sie vor Play auf sofortigen Start.",
   "missions.scheduling.once": "Einmal, sofort",
   "missions.scheduling.frequency.at": "Einmal, an einem Datum",
   "missions.scheduling.frequency.in": "Einmal, nach einer Wartezeit",

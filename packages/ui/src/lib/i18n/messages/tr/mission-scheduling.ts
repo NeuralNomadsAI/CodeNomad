@@ -135,8 +135,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.time": "Geçerli bir saat girin.",
   "missions.scheduling.error.count": "Çok fazla ölçüt: en fazla sekiz zamanlama (olaylar ayrıca denetleniyorsa yedi) ve sekiz olay.",
   "missions.scheduling.error.duplicate": "Yinelenen ölçütü kaldırın.",
-  "missions.scheduling.immediateFollowed": "Takip edilen konuşmaların bağlamı Play sırasında okunup sabitlenir. Eksik kaynaklar veya kapasiteyi aşan bağlam başlatmayı engeller.",
-  "missions.scheduling.immediateCreationFollowed": "Takip edilen konuşmaları korumak için zamanlanmış bir politikayla oluşturun, ardından Play öncesinde anında başlatmaya değiştirin.",
   "missions.scheduling.once": "Bir kez, hemen",
   "missions.scheduling.frequency.at": "Bir kez, belirli tarihte",
   "missions.scheduling.frequency.in": "Bir kez, gecikmeyle",

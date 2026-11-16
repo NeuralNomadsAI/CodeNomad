@@ -435,7 +435,10 @@ The owning editor retains revision/request fencing and performs authenticated wr
 documents open through `MissionEditorAction.scheduleID`, read their exact configuration
 and retain the loaded document revision in `MissionEditorDraft`. Title, instructions,
 notes, playbook, requested agent/model/variant profiles, task mode and
-scheduling use the same controls. Stored followed inputs remain in the draft and payload.
+scheduling use the same controls. Followed conversations have editable selector rows with
+Add and Remove actions; drafts and retained creation requests keep their exact IDs.
+Immediate creation stores those IDs in its initial document and shares first-Play source
+reading with converted preparations.
 Structural/template guards and their explanations
 come from the document; incomplete native observation also fences editing. The
 execution-journal format exposes objective/notes edits. A unified immediate preparation

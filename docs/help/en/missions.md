@@ -88,6 +88,8 @@ Select a schedule to read its state, next wake or check, launched and successful
 
 A saved policy that the editor cannot represent stays under **Stored scheduling policy** until you explicitly replace it. Review any retained end or launch limit before editing.
 
+In **Followed conversations**, use **Add conversation** and choose a conversation, including for an immediate Mission. Before Play, change a selection or use its × button to remove it.
+
 ### Existing daily schedules {#existing-daily-schedules}
 
 Existing daily entries keep their own controls and saved time zone. After a service restart they show **Interrupted** and require **Resume**. They catch up the latest eligible day rather than running every missed day. Read their retained results through the selected entry.

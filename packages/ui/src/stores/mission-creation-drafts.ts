@@ -13,6 +13,7 @@ export interface UncertainMissionCreation {
   directory?: string
   profiles?: MissionProfiles
   taskMode?: MissionTaskMode
+  watchedConversationIDs?: readonly string[]
   /** Display-only draft choice; recovered creation never continues Play. */
   startOnCreation?: boolean
 }
@@ -27,6 +28,7 @@ const held = new Map<string, Map<string, HeldCreation>>()
 const [version, setVersion] = createSignal(0)
 const freeze = (operation: UncertainMissionCreation): Readonly<UncertainMissionCreation> => Object.freeze({
   ...operation, ...(operation.profiles === undefined ? {} : { profiles: copyMissionProfiles(operation.profiles) }),
+  ...(operation.watchedConversationIDs === undefined ? {} : { watchedConversationIDs: Object.freeze([...operation.watchedConversationIDs]) }),
 })
 
 /** Register the exact intent BEFORE dispatch so a closed/remounted editor in the
@@ -88,6 +90,7 @@ export function missionCreationPayloadIdentity(operation: Omit<UncertainMissionC
     value.model ? [value.model.providerID, value.model.id, value.model.variant ?? null] : null]
   const profiles = operation.profiles
   return JSON.stringify([operation.title ?? null, operation.objective, operation.notes, operation.template, operation.directory ?? null, operation.taskMode ?? null,
+    operation.watchedConversationIDs ?? null,
     profiles === undefined ? null : [execution(profiles.coordinator), profiles.roles === undefined ? null
       : Object.keys(profiles.roles).sort().map(role => [role, execution(profiles.roles![role])])]])
 }

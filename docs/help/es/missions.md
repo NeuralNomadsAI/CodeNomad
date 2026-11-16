@@ -78,6 +78,8 @@ Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la re
 
 La programación seleccionada muestra estado, próximo despertar o comprobación, pasadas lanzadas/exitosas e historial. Se conservan 30 resultados y los contadores acumulados. **Ejecutar ahora** cuenta al admitirse. Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
 
+En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, también para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
+
 ### Programaciones diarias existentes {#existing-daily-schedules}
 
 Conservan controles y zona. Tras reiniciar el servicio requieren **Reanudar** desde el estado interrumpido. Recuperan el último día válido, no todos los perdidos. La entrada seleccionada permite leer resultados.

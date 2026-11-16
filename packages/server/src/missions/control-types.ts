@@ -145,6 +145,7 @@ export interface MissionCreateInput extends MissionStartInput {
   prepared?: boolean
   requestID: string
   coordinatorSessionID?: string
+  watchedConversationIDs?: string[]
   expectedCoordinatorLocation?: NativeMissionSession["location"]
   /** Trusted backend hand-off identity, never HTTP input. */
   preparedBy?: { missionID: string; coordinatorSessionID: string }

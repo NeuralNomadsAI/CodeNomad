@@ -459,6 +459,8 @@ export const CODENOMAD_MISSIONS_RPC = {
           notes: { type: "string", maxLength: 20_000 },
           template: { type: "string", enum: ["custom", "wayfinder", "debug", "delivery", "compare"] },
           coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
+          watchedConversationIDs: { type: "array", maxItems: 32, uniqueItems: true,
+            items: { type: "string", minLength: 1, maxLength: 240 } },
           expectedCoordinatorLocation: location,
           prepared: { type: "boolean" },
           preparedBy: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },

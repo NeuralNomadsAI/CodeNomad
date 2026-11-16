@@ -21,6 +21,7 @@ import { parseMissionEvent } from "../missions/journal"
 import { parseMissionCreationDefaults, missionCreationSelection } from "../missions/creation-defaults"
 import { missionPausedInstruction } from "../missions/lifecycle-model"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
+import { nativeDocumentID } from "../missions/launch-policy"
 import { executionSchema, parseExecution } from "../missions/execution"
 import { readMissionCatalog, validateNativeExecution, type MissionCatalogClient } from "../missions/native-catalog"
 import { MissionNotificationOutbox } from "../missions/notification-outbox"
@@ -869,6 +870,7 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
     taskMode: parseMissionTaskMode(value.taskMode),
     ...(value.creationDefaults === undefined ? {} : { creationDefaults: parseMissionCreationDefaults(template, value.creationDefaults) }),
     ...(value.profiles === undefined ? {} : { profiles: parseMissionProfiles(value.profiles) }),
+    ...(value.watchedConversationIDs === undefined ? {} : { watchedConversationIDs: nativeDocumentID.array().max(32).parse(value.watchedConversationIDs) }),
     coordinatorSessionID: optionalText(value.coordinatorSessionID, "coordinatorSessionID", 240),
     ...(value.expectedCoordinatorLocation === undefined ? {} : { expectedCoordinatorLocation: readLocationRef(value.expectedCoordinatorLocation) }),
     ...(value.preparedBy === undefined ? {} : { preparedBy: (preparedBy => ({

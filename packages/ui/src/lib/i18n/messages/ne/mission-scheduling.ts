@@ -135,8 +135,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.time": "मान्य समय लेख्नुहोस्।",
   "missions.scheduling.error.count": "धेरै मापदण्डहरू: बढीमा आठ समयतालिका (घटना छुट्टै जाँचिँदा सात) र आठ घटना।",
   "missions.scheduling.error.duplicate": "दोहोरिएको मापदण्ड हटाउनुहोस्।",
-  "missions.scheduling.immediateFollowed": "पछ्याइएका कुराकानीको सन्दर्भ Play मा पढेर स्थिर गरिन्छ। अपूर्ण स्रोत वा क्षमताभन्दा ठूलो सन्दर्भले सुरुवात रोक्छ।",
-  "missions.scheduling.immediateCreationFollowed": "पछ्याइएका कुराकानी राख्न निर्धारित नीतिसहित सिर्जना गर्नुहोस्, त्यसपछि Play अघि तत्काल सुरुवातमा बदल्नुहोस्।",
   "missions.scheduling.once": "एक पटक, तुरुन्तै",
   "missions.scheduling.frequency.at": "एक पटक, तोकिएको मितिमा",
   "missions.scheduling.frequency.in": "एक पटक, केही समयपछि",

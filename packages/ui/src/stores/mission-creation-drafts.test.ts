@@ -61,3 +61,13 @@ test("logical retry identity includes profiles and variant but not role insertio
   assert.notEqual(missionCreationPayloadIdentity(base), missionCreationPayloadIdentity({ ...base, taskMode: "native" }))
   assert.notEqual(missionCreationPayloadIdentity({ ...base, taskMode: "native" }), missionCreationPayloadIdentity({ ...base, taskMode: "independent" }))
 })
+
+test("followed source identity and immutable draft survive lost creation replies", () => {
+  const original = { requestId: "followed-original", objective: "Read", notes: "", template: "custom" as const, watchedConversationIDs: ["ses_one"] }
+  const identity = missionCreationPayloadIdentity(original)
+  retainUncertainMissionCreation("followed/scope", original)
+  original.watchedConversationIDs[0] = "ses_changed"
+  assert.deepEqual(uncertainMissionCreation("followed/scope")!.watchedConversationIDs, ["ses_one"])
+  assert.notEqual(identity, missionCreationPayloadIdentity(original))
+  assert.notEqual(identity, missionCreationPayloadIdentity({ ...original, watchedConversationIDs: undefined }))
+})

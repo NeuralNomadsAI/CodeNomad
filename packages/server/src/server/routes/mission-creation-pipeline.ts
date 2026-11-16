@@ -14,12 +14,14 @@ import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchr
 import { admitMissionCreationLocations } from "./mission-creation-admission"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
 import type { MissionCreationMetadata } from "../../missions/creation-defaults"
+import { nativeDocumentID } from "../../missions/launch-policy"
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
   template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
   directory: z.string().trim().min(1).max(4_096).optional(), requestId: z.string().trim().min(1).max(128),
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
+  watchedConversationIDs: z.array(nativeDocumentID).max(32).refine(ids => new Set(ids).size === ids.length).optional(),
 }).strict()
 
 export type MissionCreationPipelineManager = Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection"
@@ -106,6 +108,7 @@ export async function prepareMissionCreation(input: {
     ...(request.title === undefined ? {} : { title: request.title }),
     ...(request.notes === undefined ? {} : { notes: request.notes }), template: request.template, taskMode: request.taskMode ?? "native",
     ...(request.profiles === undefined ? {} : { profiles: request.profiles }),
+    ...(request.watchedConversationIDs === undefined ? {} : { watchedConversationIDs: request.watchedConversationIDs }),
     ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),
     ...(request.coordinatorSessionId ? { coordinatorSessionID: request.coordinatorSessionId } : {}),
     expectedCoordinatorLocation: locations.at(-1)!,
