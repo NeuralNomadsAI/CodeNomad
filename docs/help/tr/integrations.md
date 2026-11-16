@@ -51,7 +51,7 @@ Bir eklentiyi kaldırmak için adının yanındaki menüyü açıp **Genel kapsa
 
 Eklentinin kodu OpenCode içinde sizin izinlerinizle çalışır. Bir **Proje** girdisi, o klasör OpenCode'da her açıldığında çalışır ve OpenCode masaüstü uygulaması bölümleri olan paketler bunları yalnızca **Genel** kapsamdan yükler; böyle bir paket başka yerde bildirildiğinde araç ipucu bunu belirtir. Yerel yollar, yapılandırma değişkenleri ve eklenti kimlikleri burada reddedilir: yerel eklentileri yapılandırma dosyasında bildirin. Bu Location için geçerli bir yapılandırmada zaten bildirilmiş bir paket, sürümü, aralığı veya biçimi ne olursa olsun reddedilir.
 
-Bir eklentinin sürümünü, **Güncelleme mevcut** bilgisini ve başarısız bir kurulumda hatayı OpenCode günlüğündeki referansıyla görmek için adının üzerine gelin veya odaklanın.
+Kurulu paketin sürümü eklenti adının yanında görünür. Git eklentilerinde ayrıntılar commit'i içerir; sürüm kullanılamıyorsa adın yanında yedi karakterlik commit görünür. Ayrıntıları, **Güncelleme mevcut** bilgisini ve başarısız bir kurulumda hatayı OpenCode günlüğündeki referansıyla görmek için adın üzerine gelin veya odaklanın.
 
 ## Becerileri ekleyin {#skills}
 

@@ -36,6 +36,7 @@ import {
 import { createWslPluginControlDocumentFileSystem } from "./plugin-control-document-wsl"
 import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
+import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 
 export interface NativeConfigEdit { scope: PluginControlScope; path: string; expectation: string; updated: string }
 export type NativeConfigDocuments = { location: PluginControlLocation; entries: ConfigEntry[];
@@ -69,6 +70,7 @@ interface ReadContext {
   targets: ResolvedTarget[]
   fileSystem: PluginControlDocumentFileSystem
   managedPlugins: ManagedDesktopPlugin[]
+  packageVersions: Map<string, { revision: string; version: string }>
 }
 
 interface ResolvedTarget extends PluginControlTarget {
@@ -391,8 +393,18 @@ export class PluginControls {
       hostPath: nativePath => this.options.workspaceManager.getHostPathForServicePath(workspaceId, nativePath),
       assertCurrent: () => { assertCurrentConnection(connection); signal?.throwIfAborted() },
     })
+    const packageVersions = new Map<string, { revision: string; version: string }>()
+    if (runtime.some(entry => entry?.source?.type === "package" && gitPluginRevision(entry.source.target, entry.source.version))) {
+      try {
+        const response = await connection.client.rpc.call({ rpcID: PLUGIN_VERSIONS_RPC_ID, method: "list", input: {}, location: requestLocation },
+          { ...requestOptions, signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(2500)]) })
+        const parsed = pluginVersionsSchema.safeParse(response.output)
+        if (parsed.success) for (const entry of parsed.data) packageVersions.set(entry.target, entry)
+      } catch { /* Optional display metadata: the native commit remains available. */ }
+    }
     assertCurrentConnection(connection)
-    return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem, managedPlugins }
+    signal?.throwIfAborted()
+    return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem, managedPlugins, packageVersions }
   }
 
   private async resolveTargets(
@@ -484,7 +496,7 @@ interface SnapshotBase {
 const controlIdCollator = new Intl.Collator("en", { sensitivity: "variant" })
 
 function snapshotBase(context: ReadContext): SnapshotBase {
-  const runtime = context.runtime.map(normalizeRuntimeEntry).map(entry => entry.source.type === "local"
+  const runtime = context.runtime.map((entry, index) => normalizeRuntimeEntry(entry, index, context.packageVersions)).map(entry => entry.source.type === "local"
     && managedDesktopPluginForSource(context.managedPlugins, entry.source.path, context.paths)
     ? { ...entry, managedBy: "codenomad" as const } : entry)
   const runtimeIds = new Set<string>()
@@ -830,11 +842,11 @@ function selectTarget(
   return { scope, path: selected.servicePath, ioPath: selected.ioPath, exists }
 }
 
-function normalizeRuntimeEntry(plugin: PluginInfo, index: number): PluginRuntimeInventoryEntry {
+function normalizeRuntimeEntry(plugin: PluginInfo, index: number, packageVersions: ReadContext["packageVersions"]): PluginRuntimeInventoryEntry {
   if (!isRecord(plugin) || !isRecord(plugin.state)) {
     throw new PluginControlsError("OpenCode returned an invalid plugin inventory", "unavailable")
   }
-  const source = normalizeRuntimeSource(plugin.source)
+  const source = normalizeRuntimeSource(plugin.source, packageVersions)
   const id = typeof plugin?.id === "string" && validPluginId(plugin.id) ? plugin.id : undefined
   const features = isRecord(plugin?.features) ? {
     ...(plugin.features.server === true ? { server: true as const } : {}),
@@ -852,17 +864,23 @@ function normalizeRuntimeEntry(plugin: PluginInfo, index: number): PluginRuntime
   return { key: id ?? `${source.type}:${sourceDetail(source)}:${index}`, ...(id ? { id } : {}), source, features, state }
 }
 
-function normalizeRuntimeSource(source: unknown): PluginRuntimeSource {
+function normalizeRuntimeSource(source: unknown, packageVersions: ReadContext["packageVersions"]): PluginRuntimeSource {
   if (!isRecord(source)) throw new PluginControlsError("OpenCode returned an invalid plugin source", "unavailable")
   if (source.type === "builtin") return { type: "builtin" }
   if (source.type === "sdk") return { type: "sdk" }
   if (source.type === "local" && typeof source.path === "string" && source.path) return { type: "local", path: source.path }
-  if (source.type === "package" && typeof source.target === "string" && source.target) return {
-    type: "package",
-    target: source.target,
-    ...(typeof source.version === "string" ? { version: source.version } : {}),
-    ...(source.outdated === true ? { outdated: true as const } : {}),
-    ...(source.updating === true ? { updating: true as const } : {}),
+  if (source.type === "package" && typeof source.target === "string" && source.target) {
+    const revision = gitPluginRevision(source.target, typeof source.version === "string" ? source.version : undefined)
+    const installed = packageVersions.get(source.target)
+    const version = revision ? (installed?.revision === revision ? installed.version : revision.slice(0, 7)) : source.version
+    return {
+      type: "package",
+      target: source.target,
+      ...(typeof version === "string" ? { version } : {}),
+      ...(revision ? { revision } : {}),
+      ...(source.outdated === true ? { outdated: true as const } : {}),
+      ...(source.updating === true ? { updating: true as const } : {}),
+    }
   }
   throw new PluginControlsError("OpenCode returned an invalid plugin source", "unavailable")
 }

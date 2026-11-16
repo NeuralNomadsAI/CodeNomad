@@ -51,7 +51,7 @@ Pour retirer un plugin, ouvrez le menu à côté de son nom et choisissez **Reti
 
 Le code du plugin s’exécute avec vos droits dans OpenCode. Une entrée **Projet** s’exécute chaque fois que ce dossier est ouvert dans OpenCode, et les paquets qui ont des parties pour l’application de bureau d’OpenCode ne les chargent que depuis **Global** ; l’infobulle le signale quand un tel paquet est déclaré ailleurs. Les chemins locaux, les variables de configuration et les ID de plugin sont refusés ici : déclarez les plugins locaux dans le fichier de configuration. Un paquet déjà déclaré dans une configuration qui s’applique à cette Location est refusé, quelle que soit sa version, sa plage ou sa forme.
 
-Survolez ou ciblez le nom d’un plugin pour voir sa version, **Mise à jour disponible** et, pour une installation en échec, l’erreur avec sa référence dans le journal d’OpenCode.
+La version du paquet installé apparaît à côté du nom du plugin. Pour les plugins Git, les détails indiquent le commit ; si la version est indisponible, le commit sur sept caractères apparaît à côté du nom. Survolez ou ciblez le nom pour voir les détails, **Mise à jour disponible** et, pour une installation en échec, l’erreur avec sa référence dans le journal d’OpenCode.
 
 ## Joindre des compétences {#skills}
 

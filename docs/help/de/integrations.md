@@ -51,7 +51,7 @@ Zum Entfernen öffnen Sie das Menü neben dem Namen und wählen **Aus Global ent
 
 Der Code des Plugins läuft mit Ihren Rechten in OpenCode. Ein **Projekt**-Eintrag läuft jedes Mal, wenn dieser Ordner in OpenCode geöffnet wird, und Pakete mit Teilen für die OpenCode-Desktop-App laden diese nur aus **Global**; der Tooltip weist darauf hin, wenn ein solches Paket anderswo deklariert ist. Lokale Pfade, Konfigurationsvariablen und Plugin-IDs werden hier abgelehnt: Deklarieren Sie lokale Plugins in der Konfigurationsdatei. Ein Paket, das bereits in einer für diese Location geltenden Konfiguration deklariert ist, wird abgelehnt, unabhängig von Version, Bereich oder Form.
 
-Zeigen Sie auf den Namen eines Plugins oder fokussieren Sie ihn, um Version, **Update verfügbar** und bei einer fehlgeschlagenen Installation den Fehler mit seiner Referenz im OpenCode-Protokoll zu sehen.
+Die installierte Paketversion erscheint neben dem Plugin-Namen. Bei Git-Plugins enthalten die Details den Commit; ist die Version nicht verfügbar, erscheint der siebenstellige Commit neben dem Namen. Zeigen Sie auf den Namen oder fokussieren Sie ihn, um Details, **Update verfügbar** und bei einer fehlgeschlagenen Installation den Fehler mit seiner Referenz im OpenCode-Protokoll zu sehen.
 
 ## Skills anhängen {#skills}
 

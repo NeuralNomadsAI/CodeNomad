@@ -25,6 +25,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.remove": "{scope} बाट हटाउनुहोस्",
   "instanceServiceStatus.plugins.sources.actions": "{name} का कार्यहरू",
   "instanceServiceStatus.plugins.sources.version": "संस्करण {version}",
+  "instanceServiceStatus.plugins.sources.commit": "कमिट {commit}",
   "instanceServiceStatus.plugins.sources.outdated": "अपडेट उपलब्ध छ",
   "instanceServiceStatus.plugins.sources.failureRef": "OpenCode लगमा त्रुटि सन्दर्भ: {ref}",
   "instanceServiceStatus.plugins.sources.guiGlobalOnly": "यो प्याकेजमा डेस्कटप एपका भाग छन्, जुन विश्वव्यापी कन्फिगरेसनबाट मात्र लोड हुन्छन्।",

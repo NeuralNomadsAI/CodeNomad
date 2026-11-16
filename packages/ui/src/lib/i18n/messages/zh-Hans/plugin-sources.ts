@@ -25,6 +25,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.remove": "从{scope}移除",
   "instanceServiceStatus.plugins.sources.actions": "{name} 的操作",
   "instanceServiceStatus.plugins.sources.version": "版本 {version}",
+  "instanceServiceStatus.plugins.sources.commit": "提交 {commit}",
   "instanceServiceStatus.plugins.sources.outdated": "有可用更新",
   "instanceServiceStatus.plugins.sources.failureRef": "OpenCode 日志中的错误编号：{ref}",
   "instanceServiceStatus.plugins.sources.guiGlobalOnly": "此软件包包含桌面应用部分，这些部分只从全局配置加载。",

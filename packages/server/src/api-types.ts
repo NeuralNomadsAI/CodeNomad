@@ -526,7 +526,7 @@ export interface SubagentDepthSnapshot {
 
 export type PluginRuntimeSource =
   | { type: "builtin" }
-  | { type: "package"; target: string; version?: string; outdated?: true; updating?: true }
+  | { type: "package"; target: string; version?: string; revision?: string; outdated?: true; updating?: true }
   | { type: "local"; path: string }
   | { type: "sdk" }
 

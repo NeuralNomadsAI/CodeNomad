@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 import { registerPendingSnapshot } from "./pending-snapshot"
 import { loadDesignContent } from "../design/content"
 import { registerDesign } from "../design/register"
+import { registerPluginPackageVersions } from "../plugin-package-versions"
 
 // The bundled factory is wrapped by a tiny auto-discovered native entry.
 // Backend presence owns the history/pruning RPCs and the Code Mode session_search tool.
@@ -32,6 +33,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
           if (!Effect.isEffect(setup)) throw new Error("Unsupported native Promise plugin adapter effect")
           await run(setup)
           await run(registerPendingSnapshot(ctx))
+          await run(registerPluginPackageVersions(ctx))
         } catch (error) {
           await close()
           throw error

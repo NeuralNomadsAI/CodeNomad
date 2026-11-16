@@ -153,6 +153,9 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     if (entry.source.type === "package" && entry.source.version) {
       lines.push(t("instanceServiceStatus.plugins.sources.version", { version: entry.source.version }))
     }
+    if (entry.source.type === "package" && entry.source.revision) {
+      lines.push(t("instanceServiceStatus.plugins.sources.commit", { commit: entry.source.revision }))
+    }
     if (entry.source.type === "package" && entry.source.outdated) lines.push(t("instanceServiceStatus.plugins.sources.outdated"))
     if (entry.state.status === "failed") {
       lines.push(`${t("instanceServiceStatus.plugins.runtime.failed")} — ${entry.state.error}`)

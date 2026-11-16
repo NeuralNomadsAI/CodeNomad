@@ -25,6 +25,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.remove": "{scope} kapsamından kaldır",
   "instanceServiceStatus.plugins.sources.actions": "{name} için işlemler",
   "instanceServiceStatus.plugins.sources.version": "Sürüm {version}",
+  "instanceServiceStatus.plugins.sources.commit": "Commit {commit}",
   "instanceServiceStatus.plugins.sources.outdated": "Güncelleme mevcut",
   "instanceServiceStatus.plugins.sources.failureRef": "OpenCode günlüğündeki hata referansı: {ref}",
   "instanceServiceStatus.plugins.sources.guiGlobalOnly": "Bu paketin masaüstü uygulaması bölümleri var; bunlar yalnızca Genel yapılandırmadan yüklenir.",
