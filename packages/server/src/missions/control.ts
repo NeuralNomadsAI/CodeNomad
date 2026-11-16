@@ -1,6 +1,6 @@
 import path from "node:path"
 import { isDeepStrictEqual } from "node:util"
-import type { JsonValue, SessionMetadata } from "@opencode/client"
+import { isSessionNotFoundError, type JsonValue, type SessionMetadata } from "@opencode/client"
 
 import { MissionJournal, stableToken, type MissionStorage, type MissionView } from "./journal"
 import { missionToolInspection, type MissionToolInspectInput } from "./tool-inspection"
@@ -100,6 +100,8 @@ export interface MissionNotificationRetryResult {
 export class MissionControl {
   private readonly journal: MissionJournal
   private readonly creationIntents: MissionCreationIntents
+  /** Coordinators the session store answered deleted: their reports can never be delivered. */
+  private readonly deletedCoordinators = new Set<string>()
   private lastTimestamp = 0
 
   constructor(private readonly options: {
@@ -1430,7 +1432,7 @@ export class MissionControl {
       const open = await this.hintedMissions(hints => hints.openIDs())
       if (open.notificationUnavailable || open.controlUnavailable) throw new Error("Mission notification evidence unavailable; damaged journal")
       const pending = open.missions
-        .filter(mission => missionIsRunning(mission) && !mission.control?.pending.length)
+        .filter(mission => missionIsRunning(mission) && !mission.control?.pending.length && !this.deletedCoordinators.has(mission.coordinatorSessionId))
         .flatMap((mission) => mission.reports
           .filter((report) => isCoordinatorNotificationReport(report) && report.notificationStatus !== "admitted")
           .map((report) => ({ mission, report, cursor: `${mission.id}\0${report.id}` })))
@@ -1819,8 +1821,17 @@ export class MissionControl {
       || !isCoordinatorNotificationReport(currentReport) || currentReport.notificationStatus === "admitted" || !isActive()) return
     const notification = reportInput(currentMission, currentReport)
     const admissionID = notification.id
-    if (this.options.transport) await this.options.transport.synthetic(currentMission.coordinatorSessionId, notification)
-    else await this.options.sessions.synthetic(notification)
+    try {
+      if (this.options.transport) await this.options.transport.synthetic(currentMission.coordinatorSessionId, notification)
+      else await this.options.sessions.synthetic(notification)
+    } catch (error) {
+      // A deleted coordinator can never take the notification: stop offering it.
+      if (await this.sessionDeleted(currentMission.coordinatorSessionId)) {
+        this.deletedCoordinators.add(currentMission.coordinatorSessionId)
+        return
+      }
+      throw error
+    }
     if (!isActive()) return
     const snapshot = await this.snapshot()
     if (snapshot.notificationUnavailable || snapshot.controlUnavailable) throw new Error("Mission notification evidence unavailable; damaged journal")
@@ -1840,6 +1851,12 @@ export class MissionControl {
     // Only the change event's revision, which is the mission's own.
     const { mission: updated } = await this.journal.missionView(mission.id)
     await this.notifyChanged(mission.id, updated?.revision ?? 0)
+  }
+
+  /** Whether the native session store answers that `sessionID` no longer exists (deletion is final). */
+  private async sessionDeleted(sessionID: string): Promise<boolean> {
+    try { await this.options.sessions.get({ sessionID }); return false }
+    catch (error) { return isDeletedSession(error) }
   }
 
   private reportTask(mission: MissionMap, sessionID: string, taskKey?: string) {
@@ -2051,4 +2068,11 @@ function assertAcyclicDependencies(tasks: ReadonlyMap<string, { blockedBy: strin
     visited.add(key)
   }
   for (const key of tasks.keys()) visit(key)
+}
+
+/** The native session store's "no such session", over HTTP or in process. */
+function isDeletedSession(error: unknown): boolean {
+  if (isSessionNotFoundError(error)) return true
+  const tag = error && typeof error === "object" && "_tag" in error ? (error as { _tag?: unknown })._tag : undefined
+  return tag === "Session.NotFoundError" || tag === "SessionNotFoundError"
 }

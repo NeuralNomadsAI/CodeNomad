@@ -5,6 +5,7 @@ import type { MissionCleanup, MissionUnavailableReason } from "../../../server/s
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "../../../server/src/missions/mission-summary"
 import { MISSION_TASK_PAGE, type MissionTaskPageResponse, type MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import { MissionTaskPageReadError, type MissionTaskPageFailure } from "../lib/mission-task-page-read"
+import { shareUnchanged } from "../lib/structural-share"
 import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS } from "../lib/mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "../lib/mission-task-page-schema"
 import { answerTaskRequest, coverAttention, createTaskPageCache, failTaskRequest, mergeTaskPages, recordTaskRequest, recordMissionRowRevision, missionTaskSource, reorderTaskPageCache, taskRequestsOf,
@@ -131,10 +132,14 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   const missing = (value: MissionViewState, instanceId: string) => bounded || value.summariesVersion !== undefined
     ? wanted(instanceId).filter(id => (bounded || value.summaries.some(row => row.id === id)) && !value.missions.some(mission => mission.id === id)) : []
 
+  // Publications keep every unchanged part of the previous state (maps, rows, activity
+  // entries): keyed lists and memos then update only the missions that changed.
   const update = (instanceId: string, value: MissionViewState): void => {
     setStates((current) => {
+      const previous = current.get(instanceId), shared = shareUnchanged(previous, value)
+      if (shared === previous) return current
       const next = new Map(current)
-      next.set(instanceId, value)
+      next.set(instanceId, shared)
       return next
     })
   }
