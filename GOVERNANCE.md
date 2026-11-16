@@ -23,7 +23,7 @@ A contributor with a sustained record of quality contributions can be invited by
 
 ## Funding
 
-All sponsorship goes to Pascal André, through the channels listed on the help site's [Support CodeNomad](docs/help/en/sponsor.md) page and in [`.github/FUNDING.yml`](.github/FUNDING.yml); today this is Pascal André's [GitHub Sponsors](https://github.com/sponsors/pascalandr). A sponsorship is a contribution, not a purchase: it buys no features, roadmap influence, support priority or license rights, and sponsors get the same CodeNomad as everyone else.
+All sponsorship goes to Pascal André, through the channels listed on the help site's [Support CodeNomad](docs/help/en/sponsor.md) page and in [`.github/FUNDING.yml`](.github/FUNDING.yml). A sponsorship is a contribution, not a purchase: it buys no features, roadmap influence, support priority or license rights, and sponsors get the same CodeNomad as everyone else.
 
 ## Succession
 
