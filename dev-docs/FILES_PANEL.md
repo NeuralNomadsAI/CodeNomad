@@ -22,8 +22,7 @@ switches and refreshes keep both disclosure states.
 
 ### Large inventories
 
-Frequent `filesystem.changed` refreshes (agents fire them, including from nested
-worktrees) over thousands of changes are bounded by three rules:
+Large `filesystem.changed` inventories, including nested worktrees, use three rules:
 
 - **Unchanged refreshes publish nothing.** `reuseUnchanged`
   (`git-changes-model.ts`) returns the previous status array when a read is
@@ -57,8 +56,7 @@ worktrees) over thousands of changes are bounded by three rules:
   updates the rows whose state changed.
 
 The Changes body stays mounted (hidden) in Workspace/Commits modes to keep its
-disclosure state; with the bound and the unchanged-refresh rule that costs at
-most a few hundred idle rows.
+disclosure state.
 
 ## Folders without a repository
 
@@ -95,7 +93,7 @@ refresh on filesystem invalidation, while commit contents remain immutable.
 
 ### Hide whitespace-only changes
 
-Stored with the UI settings; the rules are in Agent conventions. Beyond them:
+Preference and filtering rules: Agent conventions. Additional read semantics:
 
 - The `-w` read compares worktree with index in one process, never per file.
   Because it starts after the unstaged numstat, a write between the two reads
@@ -220,7 +218,7 @@ opaque device/inode identity distinct from mtime.
   a click and its compact … menu; focus after a bulk unstage (nearest surviving
   row, scroll kept), unstage/refresh removal and never on the commit box; sticky
   rows kept across a hidden-mode discard, pruned with their file and cleared on a
-  worktree change. It logs DOM/time measurements for each refresh.
+  worktree change.
 - `git-change-window.test.ts`; `git-changes-model.test.ts` / `useGitChanges.test.ts`:
   identity reuse, unchanged refresh and windowing, the option in the read, staged
   rows kept, bulk targets, live toggling and stale-option responses;

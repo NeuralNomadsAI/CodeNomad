@@ -36,7 +36,7 @@ metadata:
 
 Use this recipe with `design-core`. File names start with `ui-mockup-`, for example `.codenomad/design/<subject>/ui-mockup-technical-a.png`.
 
-A mockup is an exploration reference that a developer can read: layout, hierarchy, spacing, type scale, colour and component style. It is not a specification and its text is not final copy.
+A mockup explores layout, hierarchy, spacing, type scale, colour and component style for developers. Never treat it as a specification or its text as final copy.
 
 ## Framing questions
 

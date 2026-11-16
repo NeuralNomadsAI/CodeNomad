@@ -1,7 +1,7 @@
 # Remote Control
 
 Remote Control reaches CodeNomad from another device without an inbound port.
-It is separate from direct `--host` access; neither falls back to the other.
+Keep it independent of direct `--host` access; never fall back between them.
 
 ```text
 browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SDK in the backend (TLS ends here)
@@ -18,8 +18,8 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   device's shared `default` identity. OpenCode's `opencode pair --remote` and
   the OpenTunnel CLI use the same identity with their own routes. Stopping
   closes CodeNomad's bridge only and never calls `tunnel.remove()`.
-- The relay can observe hostnames, connection timing and sizes. It cannot read
-  traffic. Impersonating the host requires a misissued certificate for the
+- The relay observes hostnames, connection timing and sizes; TLS keeps traffic encrypted.
+  Impersonating the host requires a misissued certificate for the
   tunnel hostname, which would appear in Certificate Transparency logs.
   `opentunnel.xyz` is on the Public Suffix List, so other users' tunnels are
   cross-site; OpenCode's route on the same device is same-site, so mutations

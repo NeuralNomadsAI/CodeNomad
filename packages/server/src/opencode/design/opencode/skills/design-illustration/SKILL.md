@@ -28,4 +28,4 @@ Ask only what the brief and the project leave open, 2 to 4 questions at most, ea
 
 ## Review
 
-Judge whether the focal point is clear at a small size, whether the style matches the page and the direction, and whether any accidental text or artefact appeared. Say which image fits the page best and what to adjust.
+Check the focal point at small size, the style's fit with the page and direction, and accidental text or artefacts. Recommend the best fit and adjustments.

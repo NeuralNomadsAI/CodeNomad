@@ -88,7 +88,7 @@ The loading, sign-in (`/login`, `/auth/*`) and pairing documents have no menu
 listener: Get Updates opens the release page while the focused local window
 shows one of them. Every other server path serves the application, whose
 listener registers when it mounts.
-See `packages/tauri-app/vendor/README.md` for provenance.
+Vendored plugin contract: `packages/tauri-app/vendor/README.md`.
 
 ## Build and publication
 
@@ -247,4 +247,4 @@ hardware are required for their respective real-device evidence.
 
 ## Agent conventions
 
-- The update feed (`server.updateFeed`: `stable`/`preview`, chosen in Settings → Info → Updates) only selects offered releases. It is read on every refresh in `releases/dev-release-monitor.ts`, never from `CODENOMAD_UPDATE_CHANNEL`, and must not touch desktop data scopes, singletons, backends or OpenCode state. Preview offers use publication order (dev builds carry the previous release number) and, like the native updater, consider only releases whose complete `latest.json` exists: release creation precedes the builds, and the manifest is uploaded after every platform build, so a notification is never shown before the release is installable. When the installed release is older than the fetched page, the server looks it up by tag before falling back to version order, and Settings → Info never substitutes a SemVer-ranked stable release on the preview feed. The native Tauri updater follows the same feed (`update_releases.rs`); Electron, remote, unsigned and unsupported installations open the release page.
+- The update feed (`server.updateFeed`: `stable`/`preview`, chosen in Settings → Info → Updates) only selects offered releases. Read it on every refresh in `releases/dev-release-monitor.ts`, never from `CODENOMAD_UPDATE_CHANNEL`; preserve desktop data scopes, singletons, backends and OpenCode state. Server notifications follow the native feed and complete-`latest.json` rules above. When the installed release is older than the fetched page, look it up by tag before falling back to version order; never substitute a SemVer-ranked stable release on the preview feed in Settings → Info. Native Tauri uses the same feed (`update_releases.rs`); Electron, remote, unsigned and unsupported installations open the release page.

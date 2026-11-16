@@ -11,7 +11,7 @@ Desktop host -> CodeNomad server -> one shared OpenCode service
                     +------ UI clients through /workspaces/:id/instance/api/*
 ```
 
-CodeNomad's bundled native plugins (automation, see [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md); session pruning; Missions) load through native V2 discovery; none owns the daemon.
+CodeNomad's bundled native plugins (automation, see [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md); session pruning; Missions) load through native V2 discovery.
 
 ## Shared Service And Locations
 
@@ -54,7 +54,7 @@ Plain-browser and remote-view previews use unguessable capabilities for HTTP and
 
 ## API Boundaries
 
-CodeNomad control APIs live under `/api/*`. Important routes include:
+CodeNomad control routes under `/api/*` include:
 
 - `/api/workspaces` and `/api/workspaces/:id/worktrees/*`
 - `/api/workspaces/:id/worktrees/:slug/git-status|git-diff|git-stage|git-unstage|git-commit`
@@ -101,7 +101,7 @@ Native events include session lifecycle/output events (`session.created`, `sessi
 | Desktop inspection, CDP feedback and browser previews | CodeNomad desktop host/browser controllers and the bundled automation plugin |
 | Remote Control transport, pairing and admission | OpenTunnel SDK route plus `packages/server/src/remote-control/` ([REMOTE_CONTROL.md](REMOTE_CONTROL.md)) |
 
-Session Shell and conversation instructions are native features. Session Shell is separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows removal. The proxy verifies Shell `cwd` ownership before ID-scoped operations and preserves native output cursor pagination.
+The Status panel refreshes background Shells on Shell events/reconnect and allows removal. The proxy verifies Shell `cwd` ownership before ID-scoped operations and preserves native output cursor pagination.
 
 ## Persistence
 

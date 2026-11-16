@@ -2,10 +2,9 @@
 
 ## Contract
 
-`scripts/test-missions-native.mjs` also runs this reconciliation against a private
-native session: `succeeded` clears a saved working marker; a queued `resume:false`
-synthetic keeps the historical outcome and does not resolve pending admission;
-resuming it yields a newer `time.idle` boundary that does.
+`scripts/test-missions-native.mjs` checks a private native session: `succeeded`
+clears saved work; a queued `resume:false` synthetic preserves the last outcome
+and pending admission; resuming it yields the newer `time.idle` boundary that settles admission.
 
 Never infer interruption from a saved `working` marker plus idle activity (work can
 finish while the desktop is absent); saved `interrupted` markers are revalidated

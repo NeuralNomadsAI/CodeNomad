@@ -1,7 +1,5 @@
 # Composer
 
-The prompt composer: context selectors, height, focus after send, alternate delivery, attachments, `@` mentions, overlays and `/btw`.
-
 ## Agent conventions
 
 - Default model resolution retains configured agent models, saved agent choices and recent choices while the instance's provider catalog is absent. Catalog absence is loading state; native creation and prompt dispatch keep the explicit model identity. Once published, the catalog supplies the existing availability checks. Regression: `stores/session-default-model.test.ts`.

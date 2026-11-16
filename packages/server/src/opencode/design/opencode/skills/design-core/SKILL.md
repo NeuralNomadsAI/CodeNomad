@@ -77,7 +77,7 @@ Add the direction's modifiers to part 3 and to the mood. Keep the prompt specifi
 
 - `experimental_image_generate` runs in the background. Wait for its completion notice; never poll or check for the file.
 - After each completion notice, `read` the image file in your next response. Every generated image is read, even when several finish together.
-- Review each image briefly and honestly:
+- Review each image:
   - legibility at 16, 32 and 64 px: does the main shape survive at that size?
   - contrast between the subject and its background;
   - text: is any text in the image spelled and drawn reliably? Image models often break letters, so say when text is unreliable;

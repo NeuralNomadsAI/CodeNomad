@@ -1,7 +1,5 @@
 # Application shell
 
-Panel toggles, floating drawers, project/right-panel tabs, the session sidebar and native application menus.
-
 ## Agent conventions
 
 - Status is the first right-panel tab by default (`core-plugin.tsx`); saved tab orders take precedence. In `RightPanelCustomizationPopover`, its always-available row has a chevron in place of a visibility checkbox. That chevron folds only the customization's section checkboxes, preserving the sections' visibility and order; it starts expanded each time the customization opens.

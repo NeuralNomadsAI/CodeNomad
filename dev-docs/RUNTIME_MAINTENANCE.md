@@ -17,8 +17,7 @@
   from `registry.npmjs.org`, requires the registry's canonical tarball URL and a
   matching sha512 `dist.integrity` from the same registry's metadata, and checks
   the extracted name, version, `bin/npm-cli.js` and every bundled dependency.
-  That proves the bytes are what the registry publishes for that version (npm
-  never reuses a published version), not an independent publisher signature.
+  Treat this as registry-byte integrity only.
   Extraction is the same system `tar` that unpacks POSIX Node archives
   (Windows' own `System32\tar.exe`, never a GNU tar from PATH); it refuses `..`
   members and strips a leading `/`, and the extracted tree is refused unless it holds
@@ -188,9 +187,8 @@
   Electron's release index (`releases.electronjs.org/releases.json`). The npm
   proposal also requires those two files unchanged on the default branch.
   Otherwise the job warns and names the rejected runtime; updating that runtime
-  first unblocks the proposal. `engines.node` is npm's declaration only: the
-  proposal and the job summary state that it does not validate CodeNomad's
-  behaviour, which the PR build and the maintainer's checklist establish. Major
+  first unblocks the proposal. `engines.node` declares runtime compatibility;
+  behavioural validation requires the PR build and maintainer's checklist. Major
   npm releases are proposed too, because npm ships fixes on its current major
   only, but never adopted from the engines check: their title and body say
   "maintainer qualification needed", and the body lists the breaking-change,
