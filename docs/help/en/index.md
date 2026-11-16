@@ -85,8 +85,9 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 The Status panel exposes the active session's provider usage and native background Shells. Conversation status and child activity identify working, compacting and input-waiting sessions. Monitoring a background Shell is distinct from sending a composer Shell request or using a separately hosted terminal SideCar.
 
 1. Open **Status → Background Shells** for the selected conversation's Location (or the open workspace when no conversation is selected).
-2. Only running commands explicitly moved to the background are listed, one per row. Hover a row for the shell, directory and PID; use its **View output** icon for the native output.
-3. Use the row’s **Stop and remove** icon and confirm the target.
+2. Running commands explicitly moved to the background appear on a single line with a discreet status indicator; long commands are truncated. Click the command, or focus it and press Enter or Space, to open its output window.
+3. Hover or focus the command, or long-press it on a touch screen, for its full command and status, plus the folder, shell, PID, exit code and start/end dates when available. Press Escape or tap outside to close these details.
+4. The trash button sits to the right, outside the command field. For a running shell, choose **Stop and remove** and confirm; if a finished entry is still shown, choose **Remove** and confirm. The trash button acts on the shell without opening its output.
 
 Removing a running Shell stops that process; closing its output window does not.
 

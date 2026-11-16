@@ -85,8 +85,9 @@ La raíz del espacio de trabajo limita qué carpetas abre CodeNomad; no es un en
 El panel Estado muestra el uso del proveedor de la sesión activa y los Shells nativos en segundo plano. El estado de las conversaciones y la actividad de sus descendientes identifican sesiones que están trabajando, compactándose o esperando entrada. Supervisar un Shell en segundo plano es distinto de enviar una solicitud Shell desde el editor de mensajes o usar un SideCar de terminal alojado por separado.
 
 1. Abre **Estado → Shells en segundo plano** para la Location de la conversación seleccionada (o el espacio de trabajo abierto si no hay una conversación seleccionada).
-2. Solo se muestran los comandos en ejecución enviados explícitamente al segundo plano, uno por línea. Al pasar el cursor se muestran el shell, la carpeta y el PID; el icono **Ver salida** abre la salida nativa.
-3. Usa el icono **Detener y eliminar** de la línea y confirma el objetivo.
+2. Los comandos en ejecución enviados explícitamente al segundo plano ocupan una sola línea cada uno, con un indicador de estado discreto; los comandos largos se truncan. Haz clic en el comando, o dale el foco y pulsa Entrar o Espacio, para abrir su ventana de salida.
+3. Pasa el cursor sobre el comando, dale el foco con el teclado o mantenlo pulsado en una pantalla táctil para ver el comando completo y su estado, además de la carpeta, el shell, el PID, el código de salida y las fechas de inicio y fin disponibles. Pulsa Escape o toca fuera para cerrar estos detalles.
+4. La papelera está a la derecha, fuera del campo del comando. Para un shell en ejecución, elige **Detener y eliminar** y confirma; si aún se muestra una entrada finalizada, elige **Eliminar** y confirma. La papelera actúa sobre el shell sin abrir su salida.
 
 Eliminar un Shell en ejecución detiene ese proceso; cerrar su ventana de salida no lo detiene.
 
