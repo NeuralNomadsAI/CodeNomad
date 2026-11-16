@@ -12,8 +12,6 @@ La acción rellena las versiones de CodeNomad y OpenCode (incluido el servicio O
 
 Si necesitas más diagnósticos, **Copiar al portapapeles** o **Descargar .txt** produce un informe separado. Ese informe más completo puede contener rutas locales y direcciones de red: revísalo y oculta datos antes de adjuntarlo. Una captura o fragmento de registro puede contener secretos aunque el informe automático de diagnóstico excluya los secretos de autenticación.
 
-Si el formulario de GitHub tiene campos incompatibles, CodeNomad abre una incidencia sencilla con la misma información del informe. Un fallo temporal al leer el formulario no impide abrirlo. Siempre puedes usar manualmente [la lista de incidencias](https://github.com/NeuralNomadsAI/CodeNomad/issues).
-
 ## Comunidad y versiones {#community}
 
 | Recurso | Uso |
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Los cambios de desarrollo afectan al anfitrión de desarrollo, no a la versión instalada de un daemon OpenCode en ejecución independiente. El empaquetado nativo necesita las herramientas adecuadas del destino; prefiere compilar en el sistema operativo de destino.
+El empaquetado nativo necesita las herramientas adecuadas del destino; prefiere compilar en el sistema operativo de destino.
 
 ### Compilar y validar {#build-and-validate}
 

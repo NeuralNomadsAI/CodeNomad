@@ -7,7 +7,7 @@ export const loadingScreenMessages = {
   "loadingScreen.status.stopped": "Servidor detenido",
   "loadingScreen.errors.missingRoot": "No se encontró el elemento raíz de carga",
   "loadingScreen.remoteUnavailable.title": "No se puede acceder a este servidor",
-  "loadingScreen.remoteUnavailable.message": "CodeNomad no pudo cargar este servidor. Comprueba que esté en ejecución y sea accesible, y vuelve a intentarlo.",
+  "loadingScreen.remoteUnavailable.message": "Comprueba que el servidor esté en ejecución y sea accesible, y vuelve a intentarlo.",
   "loadingScreen.remoteUnavailable.retry": "Reintentar",
   "loadingScreen.remoteUnavailable.openLocal": "Abrir una ventana local",
   "loadingScreen.remoteUnavailable.close": "Cerrar ventana",

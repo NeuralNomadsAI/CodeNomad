@@ -9,7 +9,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "CodeNomad Discord",
 
   "folderSelection.empty.title": "Keine letzten Ordner",
-  "folderSelection.empty.description": "Suchen Sie nach einem Ordner, um zu beginnen",
 
   "folderSelection.recent.title": "Letzte Ordner",
   "folderSelection.recent.subtitle.one": "{count} Ordner verfügbar",
@@ -41,7 +40,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.destination.title": "Klon-Ziel auswählen",
   "folderSelection.clone.destination.description": "Wählen Sie den Ordner, der den Klon enthalten soll; der Ordner des Repositorys wird darin erstellt.",
   "folderSelection.clone.dialog.title": "Git-Repository klonen",
-  "folderSelection.clone.dialog.description": "Klonen Sie ein Git-Repository in einen lokalen Ordner und öffnen Sie ihn als Arbeitsbereich.",
   "folderSelection.clone.dialog.repositoryUrl": "Repository-URL",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/benutzer/repo.git",
   "folderSelection.clone.dialog.destinationPath": "Zielordner",
@@ -63,10 +61,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "Durchsuchen",
 
   "folderSelection.loading.title": "Instanz wird gestartet...",
-  "folderSelection.loading.subtitle": "Bitte warten Sie, während wir Ihren Arbeitsbereich vorbereiten.",
 
   "folderSelection.drop.title": "Ordner hier ablegen zum Öffnen",
-  "folderSelection.drop.subtitle": "Neue Instanz im abgelegten Ordner starten.",
   "folderSelection.drop.invalidTitle": "Abgelegtes Element konnte nicht geöffnet werden",
   "folderSelection.drop.invalidMessage": "Legen Sie einen Ordner ab, um eine neue Instanz zu starten.",
 
@@ -79,7 +75,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "Einen gespeicherten CodeNomad-Remote-Server in einem neuen Fenster öffnen",
   "folderSelection.servers.count": "{count} Server",
   "folderSelection.servers.empty.title": "Keine gespeicherten Server",
-  "folderSelection.servers.empty.description": "Fügen Sie einen Remote-Server hinzu, um sich von diesem Gerät aus schnell wieder zu verbinden",
   "folderSelection.servers.connectTitle": "Mit Server verbinden",
   "folderSelection.servers.connectSubtitle": "Einen CodeNomad-Remote-Server speichern und in einem neuen Fenster öffnen",
   "folderSelection.servers.connectButton": "Mit Server verbinden",
@@ -87,7 +82,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "Selbstsigniertes TLS",
   "folderSelection.servers.errorTitle": "Remote-Verbindung fehlgeschlagen",
   "folderSelection.servers.dialog.title": "Mit Server verbinden",
-  "folderSelection.servers.dialog.description": "Fügen Sie einen CodeNomad-Remote-Server hinzu und öffnen Sie ihn optional sofort.",
   "folderSelection.servers.dialog.name": "Servername",
   "folderSelection.servers.dialog.namePlaceholder": "Produktionsserver",
   "folderSelection.servers.dialog.url": "Server-URL",

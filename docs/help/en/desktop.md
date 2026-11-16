@@ -21,7 +21,7 @@ Pass these arguments after the **desktop executable** (Tauri or Electron), in a 
 | `<path> ...` | Open project directories without spelling out `--folder`. **Windows Tauri, when already running:** use `--folder` for every directory. Mixing positional paths with `--folder` also drops the entire folder request. |
 | `--new-window` | Request a new application window, including when another launch would normally focus the existing window. |
 
-`--connect-server=<server>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`; local window restoration is then deferred unless connecting fails. The desktop keeps its local helper backend for coordination.
+`--connect-server=<server>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`; local window restoration is then deferred unless connecting fails.
 
 In **PowerShell**:
 
@@ -40,15 +40,13 @@ For desktop profiles and configuration, set `CODENOMAD_PROFILE` and `CLI_CONFIG`
 2. In **General**, turn **Restore previous state** on or off.
 3. To forget that window's saved layout, use **Clear saved startup state**. It applies immediately, without a confirmation.
 
-After a crash, restored cost/token counters can show the last saved checkpoint until OpenCode refreshes them. During generation or compaction, counter-only changes wait for the next checkpoint; normal close flushes current counters.
-
 Restore can reopen workspace/SideCar tabs and active sessions, unsent text, scroll positions, panels, window placement and zoom. It is per-window client state, not a copy of the native conversation database. Clearing it removes saved tabs, drafts and layout; it does not delete CodeNomad configuration or OpenCode conversations. Save any important unsent draft elsewhere first.
 
 Each project tab restores its own right-panel selection, Files mode and Mission reader/selection, including duplicate tabs for the same conversation. Saved browser URLs/history reopen on demand; see [Browser previews and SideCars](browser-sidecars.md#session-browser).
 
 The Preferences window does not own a separate restore state: these controls target the window that opened it. When that window has closed, or is unknown because Preferences reopened at launch, they follow the most recently used window instead; a change prepared for another window is never applied, and the controls first show the new window's value. To configure a specific window, open Preferences from it. Project-scoped settings likewise use the opener's Location; they stay unavailable without one. When Preferences reopens at launch, they reconnect once that project has finished opening; while the folder is still starting, or open in several tabs, they stay unavailable until you open Preferences from the intended window.
 
-Browser and remote settings are embedded rather than a second native Preferences owner. A native Preferences opening error is reported; it is not a reason to assume a hidden embedded settings screen was opened instead.
+Browser and remote clients use embedded settings.
 
 ## Desktop data profiles {#data-profiles}
 
@@ -82,7 +80,7 @@ On macOS Tauri, scoped profiles share system WebKit storage, sign-ins and cache;
 
 Deletion removes that profile's saved tabs, drafts, layout and owned web storage/cache/sign-ins, including a listed profile from another configuration. It preserves the open profile, OpenCode conversations and project files. A profile that is open or in an unknown state cannot be deleted; close the relevant CodeNomad windows, refresh the list and retry. Unrecognized content is retained and reported rather than broadly deleted.
 
-macOS Tauri's shared WebKit store is kept because deleting it would affect other profiles. This is not an undoable cleanup: a surviving native conversation does not restore a deleted unsent draft. **Clear saved startup state** is the smaller action when you only want to reset the current window.
+macOS Tauri's shared web storage, sign-ins and cache are kept. This is not an undoable cleanup: a surviving native conversation does not restore a deleted unsent draft. **Clear saved startup state** is the smaller action when you only want to reset the current window.
 
 ## Zoom and panel geometry {#zoom-panels}
 

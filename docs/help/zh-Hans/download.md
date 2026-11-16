@@ -42,6 +42,6 @@ npx @neuralnomads/codenomad --generate-token --launch
 
 ## 支持开发 {#support-development}
 
-CodeNomad 免费，由志愿者利用业余时间维护。如果它对你或你的团队有用，赞助有助于持续维护它，并保持与新版 OpenCode 的兼容。[赞助 CodeNomad](sponsor.md)页面说明了赞助的用途。
+[赞助 CodeNomad](sponsor.md)页面说明了赞助的用途。
 
 {{funding}}

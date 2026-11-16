@@ -546,18 +546,16 @@ test("queued agent/model edits touch only their role and are refused when that s
   } finally { release(); await page.close() }
 })
 
-test("Settings info tips open on tap for touch screens", async () => {
+test("Mission scope stays directly available without a duplicate explanation", async () => {
   const page = await browser.newPage({ locale: "en-US", hasTouch: true })
   try {
     await setup(page)
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
-    const tip = page.locator(".mission-preferences-scope .settings-info-tip"), content = page.locator(".section-info-tooltip")
-    await tip.tap()
-    await content.filter({ hasText: await text(page, "missions.defaults.priority") }).waitFor()
-    assert.equal(await page.locator(".mission-preferences-scope select").evaluate(element => element === document.activeElement), false, "the tap never activates the row's control")
-    await tip.tap()
-    await content.waitFor({ state: "hidden" })
+    assert.equal(await page.locator(".mission-preferences-scope .settings-info-tip").count(), 0)
+    assert.equal(await page.getByLabel(await text(page, "missions.defaults.scope"), { exact: true }).isEnabled(), true)
+    await page.locator(".mission-preferences > header .settings-info-tip").focus()
+    await page.locator(".section-info-tooltip").filter({ hasText: await text(page, "missions.defaults.hint") }).waitFor()
   } finally { await page.close() }
 })
 

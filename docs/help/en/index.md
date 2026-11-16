@@ -2,8 +2,6 @@
 
 The AI coding cockpit for OpenCode: a desktop and browser workspace for developers who run many agents across projects, long conversations and Git worktrees.
 
-OpenCode gives you the engine. CodeNomad gives you the cockpit. It connects to OpenCode's shared background service: your sessions belong to OpenCode, other clients of that service can use them, and closing CodeNomad does not stop them.
-
 [Download CodeNomad](download.md)
 
 {{tour-video}}
@@ -21,8 +19,6 @@ Remote Control pairs a phone, tablet or another computer with your running CodeN
 Search a conversation's full stored history, or rank results across the opened project and its worktrees, including tool output and thinking when you need them. The message timeline jumps through long sessions without loading every message in between. See [History, search and cleanup](history.md).
 
 ## Read this first {#read-this-first}
-
-This guide covers the current CodeNomad desktop or browser workspace with your OpenCode service: CodeNomad's controls, execution boundaries and recovery, not OpenCode configuration tutorials or a version archive.
 
 CodeNomad connects your workspace to one shared OpenCode background service. Sessions and messages belong to OpenCode; tabs, composer drafts and layout belong to the CodeNomad client. Closing a project tab closes that project in CodeNomad, while sessions continue in OpenCode. Reopen the project to find them again. Closing CodeNomad does not stop OpenCode.
 
@@ -89,9 +85,9 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 The Status panel exposes the active session's provider usage and native background Shells. Conversation status and child activity identify working, compacting and input-waiting sessions. Monitoring a background Shell is distinct from sending a composer Shell request or using a separately hosted terminal SideCar.
 
 1. Open **Status → Background Shells** for the selected conversation's Location (or the open workspace when no conversation is selected).
-2. Only running commands explicitly moved to the background are listed, one per row. Hover a row for the shell, directory and PID; use its **View output** icon for the native output. An OpenCode runtime without the background-job inventory API reports a loading error.
+2. Only running commands explicitly moved to the background are listed, one per row. Hover a row for the shell, directory and PID; use its **View output** icon for the native output.
 3. Use the row’s **Stop and remove** icon and confirm the target.
 
-Removing a running Shell stops that process; closing its output window does not. Refresh/reconnect reads current native state rather than reconstructing missed output events.
+Removing a running Shell stops that process; closing its output window does not.
 
-Display snapshots refresh after native changes, reconnect and visible demand. They are not guaranteed replay logs. If a result is uncertain, refresh authoritative state before retrying a mutation; do not submit again merely because a notification or event was missed.
+If a result is uncertain, refresh authoritative state before retrying a mutation; do not submit again merely because a notification or event was missed.

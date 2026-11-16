@@ -6,7 +6,7 @@
 2. **Güncelleme akışı** öğesini **Kararlı sürümler** veya **Önizleme ve kararlı sürümler** olarak ayarlayın.
 3. Kurulumu kabul etmeden önce güncellemeleri yenileyin/kontrol edin ve sunulan sürümü inceleyin.
 
-Akış, CodeNomad sunucu yapılandırmasına kaydedilir ve yalnızca hangi sürümlerin sunulduğu değişir. Masaüstü veri profillerini, taslakları, pencereleri, OpenCode oturumlarını veya hizmet yapılandırmasını değiştirmez. Açık bir seçim olmadan, önizleme etiketli derlemeler varsayılan olarak önizlemelere, diğer derlemeler ise kararlıdır.
+Akış yalnızca sunulan sürümleri değiştirir. Masaüstü veri profilleri, taslaklar, pencereler, OpenCode oturumları ve hizmet yapılandırması değişmeden kalır. Açık bir seçim olmadan, önizleme etiketli derlemeler varsayılan olarak önizlemelere, diğer derlemeler ise kararlıdır.
 
 Kararlı akış en son nihai sürümü seçer. Geliştirme derlemeleri aynı temel sürüm numarasını paylaşabildiğinden önizleme akışı yayımlanma sırasını izler; yalnızca sayısal sürümleri karşılaştırmayın. Bir önizleme sürümü ancak tüm derlemeleri yayımlandıktan sonra sunulur. Önizleme paketleri yayımlanmadan önce davranışı sınamak isteyenler içindir; yeniden başlatmadan önce sürüm notlarını inceleyip önemli taslakları koruyun.
 
@@ -26,13 +26,11 @@ Kararlı akış en son nihai sürümü seçer. Geliştirme derlemeleri aynı tem
 
 Tauri uygulama pencerelerinde ve yerel **Tercihler** pencerelerinde, bir sürüm sunulduğunda Güncellemeler kartı **Güncellemeyi yükle** düğmesini gösterir. Seçilen akışı kontrol eder ve uygulama içi güncelleme mevcutsa **Yükle ve yeniden başlat** seçeneğini sunar; aksi halde kartta gösterilen sürüm sayfasını açar. Electron, web ve uzak pencereler ise yerel güncelleyici kontrolü olmadan **Güncellemeyi indir** bağlantısını gösterir.
 
-Tauri'nin **Yardım → Güncellemeleri denetle…** menüsü güncelleme akışını odaktaki uygulama penceresinde çalıştırır. Tercihler veya uzak bir pencereden kullanıldığında, kontrolü çalıştırmak için en son kullanılan uygulama penceresini öne getirir; uzak pencere üzerinden kurulum yapmaz. Hedeflenen pencerenin yükleme, oturum açma veya eşleştirme ekranı göstermesi dahil, eylemi alabilecek bir uygulama penceresi yoksa menü bunun yerine sürüm sayfasını açar.
+Tauri'nin **Yardım → Güncellemeleri denetle…** menüsü güncelleme akışını odaktaki uygulama penceresinde çalıştırır. Tercihler veya uzak bir pencereden kullanıldığında, kontrolü çalıştırmak için en son kullanılan uygulama penceresini öne getirir; uzak pencere üzerinden kurulum yapmaz.
 
-Tauri yalnızca seçilen akış/hedef için yayınlanmış bir güncelleme bildirimine sahip sürümleri yükler. Duyurulan bir sürüm henüz yüklenemiyorsa bildirim bunun yerine yayın sayfasını açar. Kurulumdan önce yerel imza doğrulaması gereklidir. Güncelleyici imzaları, işletim sistemi noter onayı/kod imzalama güvencelerinden farklıdır.
+Kurulumdan önce yerel imza doğrulaması gereklidir. Güncelleyici imzaları, işletim sistemi noter onayı/kod imzalama güvencelerinden farklıdır.
 
 Kurulum uygulamayı değiştirmeden/yeniden başlatmadan önce tüm uygulama pencerelerinin durumunu diske kaydeder ve kendisine ait CodeNomad arka ucunu durdurur. Bağımsız yönetilen OpenCode daemon'ı bu kapatmaya dahil değildir. CodeNomad kapalıyken dönene kadar arka uca bağlı özellikler kullanılamaz; süren OpenCode oturumundan kesintisiz arayüz hizmeti sonucu çıkarmayın.
-
-Bir kontrol meşgulse diğer pencerenin çalışmasını bekleyin. İndirme, doğrulama veya kapatma hataları için hatayı okuyun ve yeni bir kontrol yapın; eski bir bildirim, eski baytları yeniden yükleme lisansı değildir. Başarısız bir kurulum, arka ucu geri yükleyebilir ve pencereleri yeniden yükleyebilir ve kurulumu otomatik olarak yeniden yürütmez. Yerel kurulum kullanılamıyorsa uygun paketin yayın sayfasını kullanın; bkz. [Kurulum](install.md).
 
 ## Bağımsız bir sunucuyu güncelleme {#standalone-update}
 

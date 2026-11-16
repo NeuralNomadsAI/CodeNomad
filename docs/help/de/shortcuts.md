@@ -6,7 +6,7 @@
 2. Geben Sie einen Aktionsnamen ein. Die Palette enthält Anwendungsaktionen und benutzerdefinierte Befehle der aktuellen Location; Verfügbarkeit hängt von der aktiven Ansicht ab.
 3. Führen Sie **Hilfe öffnen** aus, um diese Anleitung in der aktuellen Oberflächensprache in einem externen Browserkontext zu öffnen. Natives **Hilfe → CodeNomad-Hilfe** öffnet dieselbe Anleitung. **CodeNomad unterstützen** (natives **Hilfe → CodeNomad unterstützen**) öffnet ebenso die Seite [CodeNomad unterstützen](sponsor.md).
 
-Hilfe lässt Anwendungsansicht und Entwurf unangetastet. Scheitert das Öffnen, besuchen Sie [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) direkt. Ein auffindbarer Befehl hat nicht zwangsläufig ein anpassbares Tastenkürzel: Die Verwaltung umfasst einen festen Katalog von 75 Renderer-Aktionen, nicht jede Palette- oder native Menüaktion. Er enthält Palettenbefehle wie **Sitzung komprimieren**, **Letzte Nachricht rückgängig machen** oder **Hilfe öffnen**, die mit **Kein Tastenkürzel** beginnen; Aktionen für Projektordner, Terminal und Editor laufen nur in lokalen Desktop-Fenstern.
+Hilfe lässt Anwendungsansicht und Entwurf unangetastet. Ein auffindbarer Befehl hat nicht zwangsläufig ein anpassbares Tastenkürzel: Die Verwaltung umfasst einen festen Katalog von 75 Renderer-Aktionen, nicht jede Palette- oder native Menüaktion. Er enthält Palettenbefehle wie **Sitzung komprimieren**, **Letzte Nachricht rückgängig machen** oder **Hilfe öffnen**, die mit **Kein Tastenkürzel** beginnen; Aktionen für Projektordner, Terminal und Editor laufen nur in lokalen Desktop-Fenstern.
 
 ## Aufzeichnen, deaktivieren und zurücksetzen {#customize}
 
@@ -16,8 +16,6 @@ Hilfe lässt Anwendungsansicht und Entwurf unangetastet. Scheitert das Öffnen, 
 4. Beheben Sie Warnungen an jeder Konfliktzeile; Konflikte werden gemeldet, nicht stillschweigend deaktiviert.
 
 Belegungen werden in CodeNomads UI-Konfiguration gespeichert und betreffen Clients derselben Konfiguration. Sie bearbeiten weder OpenCodes CLI-/TUI-Belegungen noch native Menü-Tastenkürzel. Aufzeichnen unterdrückt App-Renderer-Kürzel, aber nicht Betriebssystem oder natives Menü. **Abbrechen**, Fokusverlust, Abschnittsschließen oder Verlassen des Fensters beendet die Aufzeichnung. Reine Modifikatortasten und IME-Komposition werden ignoriert; Tab/Shift+Tab ohne weitere Tasten bewegt den Fokus.
-
-Schlägt Speichern fehl, behalten Sie das alte Kürzel verfügbar und prüfen Sie vor dem Wiederholen die angezeigte Belegung. Zurücksetzen ist die sichere Wiederherstellung bei versehentlicher Zuweisung.
 
 ## Renderer-Standards {#renderer-defaults}
 
@@ -74,4 +72,4 @@ Normale Browserfenster behalten ebenfalls ihre Browserkürzel. Erreicht eine Bel
 
 Kürzel der Ziffernreihe und eckigen Klammern verwenden physische Tastenpositionen für Aufzeichnen, Ausführen und Konfliktprüfung, auch bei AZERTY/QWERTZ. Andere Tasten verwenden logische Werte. Zeichnen Sie auf der vorgesehenen Tastatur auf und prüfen Sie das angezeigte Ergebnis.
 
-Während IME-Komposition hat Texteingabe Vorrang. Prompt-Verlauf und Escape-Aktionen hängen ebenfalls von Fokus, Auswahl-/Shell-Zustand und aktuellem Vorgang ab; nehmen Sie nicht an, dass jedes ArrowUp oder Escape bedingungslos global wirkt. Auf dem Desktop verschiebt Senden den Fokus in die Unterhaltung, sodass Pfeiltasten, Bildlauftasten und Leertaste sie scrollen; das Tippen eines Zeichens kehrt mit diesem Zeichen zum Eingabefeld zurück, und **Eingabe fokussieren** kehrt dorthin zurück, bevor Sie den Prompt-Verlauf nutzen. Tooltips nennen das aktuelle Tastenkürzel von Bedienelementen wie Befehlspalette, Suche, Neue Sitzung, Info und den Auswahlfeldern des Eingabefelds; zusammen mit der Kürzelverwaltung zeigen sie die Zuweisungen ohne permanente Tastaturhilfeleiste.
+Während IME-Komposition hat Texteingabe Vorrang. Prompt-Verlauf und Escape-Aktionen hängen ebenfalls von Fokus, Auswahl-/Shell-Zustand und aktuellem Vorgang ab; nehmen Sie nicht an, dass jedes ArrowUp oder Escape bedingungslos global wirkt. Auf dem Desktop verschiebt Senden den Fokus in die Unterhaltung, sodass Pfeiltasten, Bildlauftasten und Leertaste sie scrollen; das Tippen eines Zeichens kehrt mit diesem Zeichen zum Eingabefeld zurück, und **Eingabe fokussieren** kehrt dorthin zurück, bevor Sie den Prompt-Verlauf nutzen.

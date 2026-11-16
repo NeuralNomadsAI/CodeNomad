@@ -21,7 +21,7 @@ Bu argümanları **masaüstü çalıştırılabilir dosyasından** (Tauri veya E
 | `<path> ...` | `--folder` yazmadan proje klasörlerini açar. **Windows Tauri zaten çalışıyorsa:** her klasör için `--folder` kullanın. Konumsal yolları `--folder` ile karıştırmak da tüm klasör açma isteğini düşürür. |
 | `--new-window` | Yeni başlatmanın normalde mevcut pencereyi odaklayacağı durumda bile yeni bir uygulama penceresi ister. |
 
-`--connect-server=<server>` ve `--folder=<path>` da çalışır. Boşluk içeren yol ve adları tırnak içine alın. Yalnızca uzak pencereyi açmak için klasör veya `--new-window` eklemeden `--connect-server` kullanın; bağlantı başarısız olmadıkça yerel pencereler geri yüklenmez. Masaüstü koordinasyonu için yerel yardımcı backend çalışır.
+`--connect-server=<server>` ve `--folder=<path>` da çalışır. Boşluk içeren yol ve adları tırnak içine alın. Yalnızca uzak pencereyi açmak için klasör veya `--new-window` eklemeden `--connect-server` kullanın; bağlantı başarısız olmadıkça yerel pencereler geri yüklenmez.
 
 **PowerShell** içinde:
 
@@ -40,15 +40,13 @@ Masaüstü profili ve yapılandırması için başlatmadan önce `CODENOMAD_PROF
 2. **Genel** bölümünde **Önceki durumu geri yükle** öğesini açın veya kapatın.
 3. Bu pencerenin kayıtlı düzenini unutmak için **Kaydedilen başlangıç durumunu temizle** öğesini kullanın. Onay istemeden hemen uygulanır.
 
-Çökme sonrasında geri yüklenen maliyet/token sayaçları, OpenCode güncelleyene kadar son kayıt noktasını gösterebilir. Üretim veya sıkıştırma sırasında yalnızca sayaç değişiklikleri bir sonraki kayıt noktasını bekler; normal kapatma güncel sayaçları kaydeder.
-
 Geri yükleme, çalışma alanı/SideCar sekmelerini ve etkin oturumları, gönderilmemiş metni, kaydırma konumlarını, panelleri, pencere yerleşimini ve yakınlaştırmayı yeniden açabilir. Bu, yerel konuşma veritabanının bir kopyası değil, pencere başına istemci durumudur. Temizlendiğinde kayıtlı sekmeler, taslaklar ve düzen kaldırılır; CodeNomad yapılandırmasını veya OpenCode konuşmalarını silmez. Gönderilmemiş önemli taslakları önce başka bir yere kaydedin.
 
 Her proje sekmesi, aynı konuşma için açılan birden fazla sekme dahil, kendi sağ panel seçimini, Dosyalar modunu ve Görev okuyucusunu/seçimini geri yükler. Kaydedilen tarayıcı URL'leri ve geçmişi istek üzerine yeniden açılır; bkz. [Tarayıcı önizlemeleri ve SideCars](browser-sidecars.md#session-browser).
 
 Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: bu kontroller, Tercihler'i açan pencereyi hedefler. Bu pencere kapanmışsa veya Tercihler başlangıçta yeniden açıldığı için bilinmiyorsa, kontroller en son kullanılan pencereyi izler; başka bir pencere için hazırlanan değişiklik asla uygulanmaz, kontroller önce yeni pencerenin değerini gösterir. Belirli bir pencereyi yapılandırmak için Tercihler'i o pencereden açın. Proje kapsamlı ayarlar aynı şekilde açıcının Location'sini kullanır; biri olmadan kullanılamaz durumda kalırlar. Tercihler başlangıçta yeniden açıldığında, bu ayarlar ilgili proje açılmayı bitirince yeniden bağlanır; klasör hâlâ başlatılırken veya birkaç sekmede açıkken, Tercihler'i amaçlanan pencereden açana kadar kullanılamaz kalırlar.
 
-Tarayıcı ve uzak istemci ayarları, ikinci bir native Preferences sahibi açmak yerine istemciye gömülüdür. Native Preferences açılış hatası bildirilir; bunun yerine gizli bir gömülü ayar ekranı açıldığını varsaymayın.
+Tarayıcı ve uzak istemciler gömülü ayarları kullanır.
 
 ## Masaüstü veri profilleri {#data-profiles}
 
@@ -82,7 +80,7 @@ macOS Tauri'de kapsamlı profiller sistem WebKit depolama alanını, oturum açm
 
 Silme işlemi, başka bir yapılandırmadan listelenen bir profil de dahil olmak üzere o profilin kayıtlı sekmelerini, taslaklarını, düzenini ve sahip olunan web depolama/önbellek/oturum açma bilgilerini kaldırır. Açık profili, OpenCode konuşmalarını ve proje dosyalarını korur. Açık veya durumu bilinmeyen bir profil silinemez; ilgili CodeNomad pencerelerini kapatın, listeyi yenileyin ve yeniden deneyin. Tanınmayan içerik, genel olarak silinmek yerine saklanır ve raporlanır.
 
-macOS Tauri'nin ortak WebKit deposu korunur; silinmesi diğer profilleri etkilerdi. Bu temizlik geri alınamaz: korunan OpenCode konuşması, silinmiş gönderilmemiş taslağı geri getirmez. Yalnızca güncel pencereyi sıfırlamak istiyorsanız **Kaydedilen başlangıç durumunu temizle** daha dar kapsamlı eylemdir.
+Tauri'nin macOS'taki ortak web depolama alanı, oturum açma bilgileri ve önbelleği korunur. Bu temizlik geri alınamaz: korunan OpenCode konuşması, silinmiş gönderilmemiş taslağı geri getirmez. Yalnızca güncel pencereyi sıfırlamak istiyorsanız **Kaydedilen başlangıç durumunu temizle** daha dar kapsamlı eylemdir.
 
 ## Yakınlaştırma ve panel geometrisi {#zoom-panels}
 

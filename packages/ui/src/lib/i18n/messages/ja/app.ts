@@ -65,15 +65,6 @@ export const appMessages = {
   "app.closeInstance.toast.error": "プロジェクトを閉じられませんでした。",
   "app.closeInstance.toast.otherWindow": "{project} は別のウィンドウから閉じられました。",
 
-  "emptyState.logoAlt": "CodeNomad ロゴ",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "フォルダを選択して AI でコーディングを開始",
-  "emptyState.actions.selectFolder": "フォルダを選択",
-  "emptyState.actions.selecting": "選択中...",
-  "emptyState.keyboardShortcut": "キーボードショートカット: {shortcut}",
-  "emptyState.examples": "例: {example}",
-  "emptyState.multipleInstances": "同じフォルダのインスタンスを複数作成できます",
-
   "releases.upgradeRequired.title": "アップグレードが必要です",
   "releases.desktop.checking": "CodeNomadの更新を確認しています…",
   "releases.desktop.current": "CodeNomadは最新です。",

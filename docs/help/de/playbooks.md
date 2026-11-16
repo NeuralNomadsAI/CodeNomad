@@ -12,20 +12,11 @@ Ein Playbook ist die Arbeitsmethode, der der Koordinator einer Mission folgt: di
 | [Produktumsetzung](#delivery) | eine Produktänderung wie in einem kleinen Team laufen soll: Spezifikation, Bereitschaftsprüfung, Teilstücke, Verifizierung und Dokumentation. |
 | [Zwei Modelle vergleichen](#compare) | zwei verschiedene Modelle dieselbe Aufgabe erledigen und ein blinder Gutachter sie bewerten soll. |
 
-Ein Playbook leitet den Koordinator; es führt keine feste Pipeline aus. CodeNomad startet nie von selbst den nächsten Schritt: Der Koordinator liest jedes Ergebnis und entscheidet, was er als Nächstes erklärt und startet.
-
 ## Regeln für alle Playbooks {#shared-rules}
 
 ### Koordinator und Aufgaben {#coordinator}
 
-Der Koordinator ist die Hauptunterhaltung der Mission. Nur er erklärt Aufgaben, startet sie, ändert den Plan und beendet die Mission. Er erhält in jeder Runde Ziel, Notizen und Playbook-Anweisungen und liest den Plan, wann immer er ihn braucht. Aufgaben erhalten ihre Zuweisung: das Ziel, ihren Titel und Auftrag, die Anweisungen ihrer Rolle und das, wovon sie abhängen (siehe [Wie Kontext durch eine Mission fließt](missions.md#context-flow)). Ergebnisse kommen je nach **Aufgabensitzungen** zurück: Mit **Native Unteragenten** gibt eine Aufgabe ihr Ergebnis an die Unterhaltung zurück, die sie gestartet hat, und der Koordinator erfasst es als Bericht der Aufgabe; mit **Unabhängige Sitzungen** erfasst jede Aufgabe ihren eigenen Bericht, den CodeNomad dem Koordinator zustellt.
-
-Der Koordinator ist angewiesen,
-
-- nur bereits klare Arbeit zu erklären und jeden gewünschten Arbeitsstrang abzudecken, Unklares hält er in den Notizen fest;
-- unabhängige bereite Aufgaben parallel statt nacheinander zu starten und Abhängigkeiten nur für echte Voraussetzungen zu nutzen;
-- unabhängige Arbeit weiterlaufen zu lassen, wenn einem Strang ein Werkzeug oder eine Antwort fehlt oder er scheitert;
-- das tatsächliche Ergebnis jeder Aufgabe zu lesen, bevor er den nächsten Schritt wählt, und es mit Native Unteragenten als Bericht der Aufgabe zu erfassen.
+Der Koordinator ist die Hauptunterhaltung der Mission. Nur er erklärt Aufgaben, startet sie, ändert den Plan und beendet die Mission.
 
 Aufgaben dürfen eigene Hilfs-Unteragenten starten, bei Bedarf parallel, innerhalb der nativen Berechtigungen und der konfigurierten Verschachtelungstiefe. Sie müssen Umfang und Sicherheitsregeln an ihre Helfer weitergeben und dürfen nur tatsächlich erzielte Ergebnisse zurückgeben.
 
@@ -43,25 +34,19 @@ Das sind Anweisungen. Was ein Agent tatsächlich tun kann, bestimmen die OpenCod
 
 ### Fragen an Sie {#questions}
 
-Nur der Koordinator stellt Ihnen Fragen. Aufgaben und ihre Helfer geben ihre an die Unterhaltung zurück, die sie gestartet hat, mit Optionen, Belegen, Folgen, Umkehrbarkeit und einer Empfehlung, und arbeiten an dem weiter, was nicht von der Antwort abhängt. Der Koordinator klärt zuerst, was er kann, und bündelt die übrigen Fragen in einem Formular, das sich über die rote Zeile der Mission öffnet; [Fragen und Entscheidungen](missions.md#questions) erklärt, was er fragt und wie Entscheidungen bezeichnet werden. Jeder Koordinator, einmalig oder geplant, und jede Aufgabenzuweisung erhalten diese Regel als Anweisung; die Erkundung fügt die Entscheidungsprüfungen [weiter unten](#wayfinder-checks) hinzu.
+Nur der Koordinator stellt Ihnen Fragen.
 
 Antworten Sie im Unterbrechungsdock, das sich durch Auswahl der roten Mission oder Aufgabe öffnet: Nur das zählt als Ihre Antwort. Eine im Chat getippte Antwort ist eine gewöhnliche Nachricht.
 
 ### Lageberichte und Abschlussbericht {#briefings}
 
-Der Koordinator ist angewiesen, einen Lagebericht nach seinem ersten Plan, nach jeder abgeschlossenen Aufgabe, immer wenn er auf Sie zu warten beginnt, und vor seinem Abschlussbericht zu veröffentlichen; siehe [Lageberichte und Aktualisierungsanfragen](missions.md#briefings). Lageberichte, Aufgabenzusammenfassungen und der Abschlussbericht sind für Sie geschrieben: in Ihrer Sprache, in wenigen kurzen Sätzen, das Ergebnis zuerst, Kennungen und Befehle bleiben in den Belegen.
+Der Koordinator ist angewiesen, einen Lagebericht nach seinem ersten Plan, nach jeder abgeschlossenen Aufgabe, immer wenn er auf Sie zu warten beginnt, und vor seinem Abschlussbericht zu veröffentlichen; siehe [Lageberichte und Aktualisierungsanfragen](missions.md#briefings).
 
 Der Abschlussbericht nennt, was geliefert wurde, was bleibt und was Ihre Entscheidung braucht. Eine einmalige Mission endet nur als abgeschlossen: Wenn ohne Sie nichts weitergeht, fragt der Koordinator Sie und wartet, statt zu scheitern, und nur Sie stoppen eine Mission. Ein geplanter Durchlauf kann auch als fehlgeschlagen enden.
 
 ### Was CodeNomad in jeder Mission prüft {#common-checks}
 
-- Nur die Koordinator-Unterhaltung kann Aufgaben erklären, den Plan ändern und die Mission beenden.
-- Die Rolle einer Aufgabe muss zum Playbook gehören, außer bei Flexible Mission.
-- Abhängigkeiten müssen bestehende Aufgaben nennen und dürfen keinen Zyklus bilden. Eine wartende Aufgabe wird nie automatisch gestartet, und das Ergebnis einer Aufgabe wird erst erfasst, wenn die Aufgaben, von denen sie abhängt, abgeschlossen sind.
-- Das Beenden wird abgelehnt, solange ein von CodeNomad erfasster nativer Aufgabenaufruf nicht als beendet beobachtet wurde oder eine zurückgezogene Aufgabe, deren Arbeit bereits angenommen war, weder einen Abschlussbericht gesendet hat noch als beendet beobachtet wurde. Diese Prüfungen erfassen nur die Aufrufe und Annahmen, die CodeNomad aufgezeichnet hat: Der Koordinator ist angewiesen, auf echte Ergebnisse zu warten, doch ein Bericht, den er erfasst, beweist nicht, dass die Unterhaltung der Aufgabe beendet ist. Ein erfolgreicher Abschluss verlangt zusätzlich, dass jede Aufgabe abgeschlossen oder zurückgezogen ist. Eine einmalige Mission kann nicht als fehlgeschlagen enden.
 - Jede Aufgabe fordert den bei der Erstellung für ihre Rolle gewählten Agenten und das Modell an, sofern der Koordinator keinen anderen aus dem Katalog des Projekts nennt.
-
-Alles andere auf dieser Seite ist eine Anweisung an das Modell, sofern der Abschnitt **Was CodeNomad prüft** eines Playbooks nichts anderes sagt.
 
 ## Flexible Mission {#custom}
 
@@ -74,11 +59,9 @@ Das Allzweck-Playbook: ein ausdrückliches Ergebnis und ein Koordinator, der den
 3. Nach jedem Ergebnis den Plan lesen und den nächsten Zug wählen.
 4. Erst abschließen, wenn das Ziel und seine Prüfungen erfüllt sind.
 
-| Rolle | Zweck | Liefert |
-| --- | --- | --- |
-| Aufgaben | Einen abgegrenzten Auftrag lösen. | Konkrete Belege, offene Risiken und den kleinsten nützlichen nächsten Schritt. |
-
-Der Koordinator ändert den Plan bewusst und hält unabhängige Arbeitsstränge sichtbar. Er folgt den [gemeinsamen Regeln](#shared-rules); dieses Playbook fügt keine weitere Regel hinzu.
+| Rolle | Zweck |
+| --- | --- |
+| Aufgaben | Einen abgegrenzten Auftrag lösen. |
 
 ### Was CodeNomad prüft {#custom-checks}
 
@@ -103,39 +86,34 @@ Belege zuerst: Fehler und Ursache beweisen, testgetrieben beheben, die Korrektur
 4. **Auflösung**: Beide Prüfungen gehen in die eigene Unterhaltung des Implementierers zurück, die jeden berechtigten harten Befund (*hard*) bearbeitet.
 5. **Validierung**: Ein neuer, nur lesender Validator führt die Prüfungen des Projekts und den Regressionstest aus.
 
-| Rolle | Zweck | Liefert |
-| --- | --- | --- |
-| Diagnostiker | Fehler und Ursache vor jeder Änderung beweisen. Baut eine schnelle, deterministische Reproduktion, ordnet drei bis fünf widerlegbare Hypothesen und testet jeweils eine Variable, ohne Produktcode zu ändern. | Diagnose: der reproduzierende Befehl und seine fehlschlagende Ausgabe, die minimierte Reproduktion, die bestätigte Hypothese mit Belegen und die verworfenen. |
-| Implementierer | Die kleinste belegte Korrektur vornehmen. | Korrektur: geänderte Dateien, der Regressionstest erst fehlschlagend, dann bestanden (oder warum es keine Testnaht gibt), die ursprüngliche Reproduktion bestanden, temporäre Instrumentierung entfernt, und wie sich ein Wiederauftreten verhindern lässt. |
-| Standardprüfer | Nur Repository-Standards und technisches Risiko prüfen, ohne zu ändern. | Prüfung: bestanden oder Änderungen erforderlich, mit Befunden STD-1, STD-2…, jeweils als *hard* (muss behoben werden) oder *judgement* markiert, mit Dateibelegen. |
-| Spezifikationsprüfer | Nur das Verhalten gegen Ziel und Zuweisung prüfen, ohne zu ändern. | Prüfung: bestanden oder Änderungen erforderlich, mit SPEC-Befunden, die die Anforderung zitieren. |
-| Implementierer-Fortsetzung | Die Prüfungen in der Unterhaltung des Implementierers auflösen, ohne spekulative Arbeit. | Auflösung: bearbeitete Befunde, zurückgestellte Befunde mit Grund, ausgeführte gezielte Prüfungen. |
-| Neuer Validator | Beweisen, dass die gesamte Änderung grün ist und die Korrektur noch enthält, ohne zu ändern. | Validierung: Typprüfung, Lint, Tests und Build jeweils bestanden oder nicht konfiguriert, der Regressionstest bestanden, Urteil grün. |
+| Rolle | Zweck |
+| --- | --- |
+| Diagnostiker | Fehler und Ursache vor jeder Änderung beweisen. |
+| Implementierer | Die kleinste belegte Korrektur vornehmen. |
+| Standardprüfer | Nur Repository-Standards und technisches Risiko prüfen, ohne zu ändern. |
+| Spezifikationsprüfer | Nur das Verhalten gegen Ziel und Zuweisung prüfen, ohne zu ändern. |
+| Implementierer-Fortsetzung | Die Prüfungen in der Unterhaltung des Implementierers auflösen, ohne spekulative Arbeit. |
+| Neuer Validator | Beweisen, dass die gesamte Änderung grün ist und die Korrektur noch enthält, ohne zu ändern. |
 
 ### Koordinator und Fragen {#debug-coordinator}
 
 Der Koordinator liest jedes Ergebnis, hält die beiden Prüfachsen getrennt und startet einen Schritt erst, wenn die Belege vorliegen, von denen er abhängt. Er nutzt neue Unterhaltungen für beide Prüfer und den Validator, setzt für die Auflösung die eigene Unterhaltung des Implementierers fort. Mit **Native Unteragenten** erfasst er den strukturierten Bericht jeder Rolle aus dem, was die Aufgabe zurückgegeben hat; mit **Unabhängige Sitzungen** reicht jede Rolle ihren eigenen ein. Er erfindet nie Prüfungen, und seine abschließenden Belege müssen die neueste Implementierung abdecken.
 
-Lässt sich keine fehlschlagende Reproduktion bauen, meldet der Diagnostiker, was fehlt, statt zu raten; der Koordinator fragt Sie dann danach, etwa nach den genauen Schritten, Daten oder der Umgebung, wenn er sie nicht selbst beschaffen kann.
-
 ### Was CodeNomad prüft {#debug-checks}
 
-- Nur die sechs Rollen der Fehlersuche werden akzeptiert.
+- CodeNomad prüft, dass die Korrektur angibt, der Test sei von Rot zu Grün gewechselt, nicht, dass sie ihn ausgeführt hat.
 - Reihenfolge: Ein Implementierer muss von einer Diagnose abhängen, jeder Prüfer von einer Implementierung, die Fortsetzung von beiden Prüfungen und der Validator von der Fortsetzung. Ein Schritt startet erst, wenn der Schritt, von dem er abhängt, abgeschlossen ist.
 - Die Prüfer und der Validator müssen in neuen Unterhaltungen laufen; die Fortsetzung muss die Unterhaltung des abgeschlossenen Implementierers fortsetzen.
-- Jeder abgeschlossene Rollenbericht muss den strukturierten Bericht seiner Rolle im erforderlichen Format enthalten, sonst wird er abgelehnt. Die Korrektur muss zum Beispiel angeben, dass der Regressionstest fehlschlagend und bestanden beobachtet wurde, und die Validierung muss alle vier Prüfarten ohne Fehlschlag auflisten.
 - Die Mission endet nur grün, wenn die neueste Implementierung eine abgeschlossene Diagnose vor sich und zwei Prüfungen, eine Fortsetzung und eine Validierung nach sich hat, alle durch Abhängigkeiten verbunden und mit gültigen strukturierten Berichten.
-
-Nur Anweisungen: die Qualität der Diagnose, dass Prüfer und Validator keine Dateien ändern, und die Wahrheit dessen, was ein Bericht behauptet. CodeNomad prüft, dass die Korrektur angibt, der Test sei von Rot zu Grün gewechselt, nicht, dass sie ihn ausgeführt hat.
 
 ### Ergebnis und Fallstricke {#debug-result}
 
 Sie erhalten die Diagnose, die Korrektur und ihren Regressionstest in Ihrer Arbeitskopie (unkommittiert, sofern Ihr Ziel oder Ihre **Notizen** nicht ausdrücklich einen Commit verlangen), zwei Prüfungen, die Auflösung, die Validierung und einen Abschlussbericht. Fallstricke:
 
 - Geben Sie ein reproduzierbares Symptom an: den Befehl, die Eingabe oder die Schritte, die den Fehler zeigen. Ohne das endet die Mission bei der Diagnose und fragt Sie.
-- Eine Prüfung, die bereits aus einem anderen Grund fehlschlägt, verhindert eine grüne Validierung, sodass die Mission nicht grün enden kann; der Koordinator fragt Sie, wie es weitergehen soll.
-- Ein Projekt ohne Tests, Lint oder Build meldet diese Prüfungen als nicht konfiguriert, was den Beweis schwächt.
 - Prüfer und Validator starten neu, ihre Modelle lesen die Änderung also von Grund auf: Wählen Sie für sie leistungsfähige Modelle unter **Agenten und Modelle**.
+- Eine Prüfung, die bereits aus einem anderen Grund fehlschlägt, verhindert eine grüne Validierung; der Koordinator fragt Sie, wie es weitergehen soll.
+- Ein Projekt ohne Tests, Lint oder Build meldet diese Prüfungen als nicht konfiguriert, was den Beweis schwächt.
 
 ## Erkundung {#wayfinder}
 
@@ -149,13 +127,13 @@ Ein Planungs-Playbook für den Fall, dass das Ziel klar ist, der Weg aber nicht.
 4. Unabhängige Entscheidungen und Recherchen parallel starten.
 5. Jede Entscheidung anhand des Entscheidungspapiers ihres Bearbeiters treffen, festhalten, wer entschieden hat, und dann nur die sichtbar gewordenen Fragen hinzufügen.
 
-| Rolle | Zweck | Liefert |
-| --- | --- | --- |
-| Kartograf | Das Ziel benennen und die aktuelle Front kartieren, in die Breite zuerst. | Entschiedenes Gelände, offene Entscheidungen, Nebel und Arbeit jenseits des Ziels, getrennt gehalten. |
-| Recherchekundschafter | Eine externe Tatsache klären, die eine Entscheidung blockiert. | Quellen, Fakten, verbleibende Unsicherheit und die Entscheidung, die diese Fakten ermöglichen. |
-| Prototypkundschafter | Ein billiges, grobes, umkehrbares Artefakt bauen, das eine Diskussion konkret macht. | Das Artefakt, die Reaktionsfrage an Sie, worauf zu achten ist, und eine Empfehlung. |
-| Entscheidungsbegleiter | Eine Produktentscheidung für Sie vorbereiten. | Fakten aus dem Repository und eine fertige Frage: Optionen mit Belegen, Folgen und Umkehrbarkeit sowie eine Empfehlung. |
-| Entscheidungsbearbeiter | Eine klare Entscheidung vorbereiten, die der Koordinator trifft. | Ein Entscheidungspapier: die Frage, jede Option mit Belegen, Folgen und Umkehrbarkeit, eine Empfehlung sowie neu sichtbaren Nebel oder Folgeentscheidungen, oder was fehlt, um die Optionen zu formulieren. |
+| Rolle | Zweck |
+| --- | --- |
+| Kartograf | Das Ziel benennen und die aktuelle Front kartieren, in die Breite zuerst. |
+| Recherchekundschafter | Eine externe Tatsache klären, die eine Entscheidung blockiert. |
+| Prototypkundschafter | Ein billiges, grobes, umkehrbares Artefakt bauen, das eine Diskussion konkret macht. |
+| Entscheidungsbegleiter | Eine Produktentscheidung für Sie vorbereiten. |
+| Entscheidungsbearbeiter | Eine klare Entscheidung vorbereiten, die der Koordinator trifft. |
 
 ### Koordinator und Fragen {#wayfinder-coordinator}
 
@@ -174,11 +152,7 @@ Er schreibt Ihre Antwort nie selbst und gibt seine eigene Entscheidung nie als I
 
 - Nur die fünf Rollen der Erkundung werden akzeptiert.
 - Eine Entscheidungsaufgabe wird nur mit der eigenen Entscheidung des Koordinators oder mit Ihrer Antwort abgeschlossen. Eine Entscheidung des Koordinators nennt die Frage, die Entscheidung und ihre Begründung und wird nie als Ihre Antwort erfasst.
-- Ihre Antwort zählt nur, wenn Sie sie in der CodeNomad-Oberfläche gegeben haben. CodeNomad ordnet sie über die Markierung der Frage einer Aufgabe zu: Die Frage wurde aus der Unterhaltung des Koordinators gestellt, ihr Text endet mit der Markierung dieser Aufgabe und nennt keine andere Entscheidung, sie wurde nach der Erklärung der Aufgabe beantwortet und hat keine andere Entscheidung geklärt. Jede Frage eines gebündelten Formulars wird für sich zugeordnet; eine Frage, die zwei Entscheidungen nennt, klärt keine davon. Eine Antwort auf eine Frage aus der eigenen Unterhaltung der Entscheidungsaufgabe wird ebenfalls akzeptiert.
-- Der eigene Bericht einer Aufgabe kann nicht angeben, wer entschieden hat. Bevor eine Mission oder ein geplanter Durchlauf erfolgreich endet, prüft CodeNomad jede abgeschlossene Entscheidung erneut, Markierungen eingeschlossen.
 - Diese Prüfungen gelten mit **Native Unteragenten**. Mit **Unabhängige Sitzungen** melden Entscheidungsbearbeiter ihre Papiere selbst, und der Koordinator hält jedes Ergebnis in den Notizen fest und nennt, wer entschieden hat; CodeNomad prüft das nicht.
-
-Nur Anweisungen: wann eine Wahl als leicht umkehrbar gilt, die Qualität von Papieren und Recherche und das Beschränken auf Planung.
 
 ### Ergebnis und Fallstricke {#wayfinder-result}
 
@@ -203,18 +177,14 @@ Führt die Arbeit wie ein kleines Softwareteam, angelehnt an die Methode NomadWo
 6. **Verifizieren**: QA und Tech Lead prüfen das Verhalten und jedes Abnahmekriterium mit Belegen; der UI/UX-Designer kommt bei für Nutzer sichtbaren Änderungen hinzu.
 7. **Abschließen**: die Auswirkungen auf die Dokumentation bestätigen, dann berichten, was geliefert wurde. Die Commits gehören Ihnen, es sei denn, Ihr Ziel oder Ihre **Notizen** verlangen sie ausdrücklich.
 
-Bereitschaftsprüfer nach Komplexität: winzig nutzt Entwickler und Tech Lead, plus Business-Analyst, wenn sich Verhalten, Formulierungen oder Anforderungen ändern; standard nutzt Business-Analyst und technischen Architekten, plus Tech Lead bei hohem technischem Risiko; komplex nutzt alle drei. Der UI/UX-Designer kommt hinzu, sobald Nutzer die Änderung sehen.
-
-| Rolle | Zweck | Liefert |
-| --- | --- | --- |
-| Business-Analyst | Die Produktanforderungen und Abnahmekriterien verantworten. | Den Spezifikationsänderungsantrag mit prüfbaren Abnahmekriterien und offenen Fragen; kein Code. |
-| Technischer Architekt | Die Auswirkungen kartieren und genehmigte Änderungen in Teilstücke zerlegen. | Betroffene Module, Schnittstellen, Daten und Risiken sowie Teilstücke mit Voraussetzungen und Abnahmekriterien; kein Produktcode. |
-| Tech Lead | Die technische Richtung und Verifizierung verantworten. | Vor der Lieferung eine Prüfung von Ansatz und Risiko; danach den gelesenen Diff, ausgeführte gezielte Prüfungen und eine ausdrückliche Freigabe oder geforderte Änderungen. |
-| Entwickler | Ein Teilstück mit seinen Tests umsetzen. | Das Teilstück, seine Tests und codenahe Dokumentation, mit gemeldeter Abweichung von der Spezifikation. |
-| QA-Ingenieur | Das gelieferte Verhalten unabhängig verifizieren. | Testfälle aus den Abnahmekriterien, Prüfergebnisse und Fehlschläge mit Reproduktionsschritten; keine Korrekturen. Übersprungene oder deaktivierte Tests zählen nie als bestanden. |
-| UI/UX-Designer | Interaktion, Gestaltung und Barrierefreiheit gestalten und prüfen. | Gestaltungsbeiträge vor der Lieferung, danach eine Prüfung oder Freigabe mit konkreten Empfehlungen und, wenn möglich, Screenshots. |
-
-Jede Rolle berichtet dieselben Abschnitte: Zusammenfassung, geleistete Arbeit, Abdeckung der Abnahmekriterien, Auswirkungen auf die Dokumentation, offene Risiken und empfohlener nächster Schritt. In einer Bereitschaftsprüfung ändern die Rollen nichts und melden jede Lücke bei Umfang, Prüfbarkeit, Komplexität, Abhängigkeiten oder Genehmigung.
+| Rolle | Zweck |
+| --- | --- |
+| Business-Analyst | Die Produktanforderungen und Abnahmekriterien verantworten. |
+| Technischer Architekt | Die Auswirkungen kartieren und genehmigte Änderungen in Teilstücke zerlegen. |
+| Tech Lead | Die technische Richtung und Verifizierung verantworten. |
+| Entwickler | Ein Teilstück mit seinen Tests umsetzen. |
+| QA-Ingenieur | Das gelieferte Verhalten unabhängig verifizieren. |
+| UI/UX-Designer | Interaktion, Gestaltung und Barrierefreiheit gestalten und prüfen. |
 
 ### Koordinator und Fragen {#delivery-coordinator}
 
@@ -231,9 +201,9 @@ Nur die sechs Rollen der Produktumsetzung werden akzeptiert, dazu die [Prüfunge
 Sie erhalten Spezifikationsänderungsanträge, Bereitschaftsprüfungen, die Implementierung in Ihrer Arbeitskopie (unkommittiert, sofern Ihr Ziel oder Ihre **Notizen** nicht ausdrücklich einen Commit verlangen), Tests, die Verifizierung durch QA und Tech Lead, aktualisierte Dokumentation und einen Abschlussbericht. Fallstricke:
 
 - Ein Ziel, das das Verhalten offenlässt, führt vor jedem Code zu einer Genehmigungsfrage: Nennen Sie, was sich ändert, für wen und wie es zu prüfen ist, wenn die Lieferung direkt beginnen soll.
+- Viele Spezialisten bedeuten viele Unterhaltungen: Wählen Sie die Modelle je Rolle unter **Agenten und Modelle**.
 - Auch eine winzige Verhaltensänderung braucht einen Spezifikationsänderungsantrag.
 - Nur eine Implementierungsaufgabe zur Zeit hält die Arbeitskopie konsistent, macht die Lieferung aber sequenziell.
-- Viele Spezialisten bedeuten viele Unterhaltungen: Wählen Sie die Modelle je Rolle unter **Agenten und Modelle**.
 
 ## Zwei Modelle vergleichen {#compare}
 
@@ -256,13 +226,10 @@ Der Koordinator vergleicht genau zwei verschiedene Modelle. Er erfasst beide Ver
 
 ### Was CodeNomad prüft {#compare-checks}
 
+- Das Anonymisieren der Ausgaben im Auftrag des Gutachters und die Fairness von Protokoll und Kriterien bleiben Anweisungen.
 - Bei der Erstellung sind **Modell A** und **Modell B** erforderlich und müssen verschiedene Modelle sein; eine andere **Denken**-Stufe allein ist kein anderes Modell. Sofern Sie keinen wählen, verwendet der Gutachter das Modell des Koordinators, festgelegt bei der Erstellung.
-- Nur die drei Rollen von Zwei Modelle vergleichen werden akzeptiert. Jeder Lauf und der Gutachter müssen in einer neuen Unterhaltung starten, ein Lauf kann das Modell seiner Rolle nicht ändern, es gibt einen aktiven Lauf je Modell, und beide Aufträge müssen byteidentisch sein.
-- Nur der Gutachter darf einen strukturierten Bericht anhängen; er muss die abgeschlossenen Läufe A und B in dieser Reihenfolge nennen, jedes Kriterium einmal von 0 bis 10 mit mindestens einem Beleg bewerten und eines der vier Urteile geben.
 - Die Mission endet nur mit abgeschlossenen Aufgaben A, B und Gutachter und einem gültigen Vergleich.
 - Zuweisung und Kontext des Gutachters lassen Ziel und Notizen der Mission weg.
-
-Nur Anweisungen: das Anonymisieren der Ausgaben im Auftrag des Gutachters und die Fairness von Protokoll und Kriterien.
 
 ### Ergebnis und Fallstricke {#compare-result}
 

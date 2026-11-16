@@ -21,7 +21,7 @@ Añade estos argumentos después del **ejecutable de escritorio** (Tauri o Elect
 | `<path> ...` | Abre carpetas de proyecto sin escribir `--folder`. **Tauri en Windows, si ya está abierto:** usa `--folder` para cada carpeta. Mezclar rutas posicionales con `--folder` también descarta toda la solicitud de apertura de carpetas. |
 | `--new-window` | Solicita una ventana nueva, incluso si otro inicio normalmente enfocaría la existente. |
 
-También funcionan `--connect-server=<server>` y `--folder=<path>`. Entrecomilla rutas o nombres con espacios. Para abrir solo la ventana remota, usa únicamente `--connect-server`, sin carpetas ni `--new-window`; la restauración local se aplaza salvo que falle la conexión. La aplicación conserva su backend auxiliar local para coordinar el escritorio.
+También funcionan `--connect-server=<server>` y `--folder=<path>`. Entrecomilla rutas o nombres con espacios. Para abrir solo la ventana remota, usa únicamente `--connect-server`, sin carpetas ni `--new-window`; la restauración local se aplaza salvo que falle la conexión.
 
 En **PowerShell**:
 
@@ -40,15 +40,13 @@ Para perfiles y configuración, define `CODENOMAD_PROFILE` y `CLI_CONFIG` antes 
 2. En **General**, activa o desactiva **Restaurar el estado anterior**.
 3. Para olvidar la disposición guardada de esa ventana, usa **Borrar el estado de inicio guardado**. Se aplica de inmediato, sin confirmación.
 
-Tras un cierre inesperado, los contadores restaurados de coste/tokens pueden mostrar el último punto guardado hasta que OpenCode los actualice. Durante la generación o compactación, los cambios solo de contadores esperan al siguiente punto de guardado; el cierre normal guarda los contadores actuales.
-
 La restauración puede reabrir pestañas de espacios de trabajo/SideCar y sesiones activas, texto sin enviar, posiciones de desplazamiento, paneles, posición de ventanas y zoom. Es estado del cliente por ventana, no una copia de la base de datos nativa de conversaciones. Borrarlo elimina pestañas guardadas, borradores y disposición; no elimina la configuración de CodeNomad ni conversaciones OpenCode. Guarda primero cualquier borrador importante sin enviar en otro lugar.
 
 Cada pestaña de proyecto restaura su propia selección del panel derecho, modo de Archivos y lector y selección de Misión, incluidas las pestañas duplicadas de la misma conversación. Las URL y el historial guardados del navegador se reabren a petición; consulta [Vistas previas del navegador y SideCars](browser-sidecars.md#session-browser).
 
 La ventana de Preferencias no tiene un estado de restauración independiente: estos controles apuntan a la ventana que la abrió. Si esa ventana se cerró, o es desconocida porque Preferencias se reabrió al iniciar, siguen la ventana usada más recientemente; un cambio preparado para otra ventana nunca se aplica, y los controles muestran primero el valor de la nueva ventana. Para configurar una ventana concreta, abre Preferencias desde ella. Los ajustes con ámbito de proyecto usan igualmente la Location de origen; sin ella no están disponibles. Cuando Preferencias se reabre al iniciar, se vuelven a conectar en cuanto ese proyecto termina de abrirse; mientras la carpeta sigue iniciándose, o está abierta en varias pestañas, permanecen no disponibles hasta que abras Preferencias desde la ventana deseada.
 
-La configuración del navegador y remota está integrada en lugar de tener un segundo propietario nativo de Preferencias. Se informa de un error al abrir Preferencias nativas; no es motivo para suponer que se abrió una pantalla integrada oculta en su lugar.
+Los clientes de navegador y remotos usan la configuración integrada.
 
 ## Perfiles de datos de escritorio {#data-profiles}
 
@@ -82,7 +80,7 @@ En Tauri para macOS, los perfiles separados comparten almacenamiento WebKit del 
 
 La eliminación borra las pestañas, borradores, disposición y almacenamiento web/caché/inicios de sesión propios de ese perfil, incluido un perfil enumerado de otra configuración. Conserva el perfil abierto, las conversaciones OpenCode y los archivos del proyecto. Un perfil abierto o en estado desconocido no se puede eliminar; cierra las ventanas de CodeNomad relevantes, actualiza la lista y reintenta. El contenido no reconocido se conserva y se notifica en lugar de eliminarse indiscriminadamente.
 
-El almacén WebKit compartido de Tauri en macOS se conserva porque borrarlo afectaría a otros perfiles. Esta limpieza no se puede deshacer: que sobreviva una conversación nativa no restaura un borrador sin enviar eliminado. **Borrar el estado de inicio guardado** es la acción más limitada cuando solo quieres restablecer la ventana actual.
+Se conservan el almacenamiento web, los inicios de sesión y la caché compartidos de Tauri en macOS. Esta limpieza no se puede deshacer: que sobreviva una conversación nativa no restaura un borrador sin enviar eliminado. **Borrar el estado de inicio guardado** es la acción más limitada cuando solo quieres restablecer la ventana actual.
 
 ## Zoom y geometría de paneles {#zoom-panels}
 

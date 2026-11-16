@@ -22,7 +22,7 @@ L’installation est propre à chaque appareil/navigateur et origine. Elle n’i
 
 L’installation PWA distante et l’accès microphone nécessitent un contexte sécurisé reconnu par le navigateur. Utilisez un certificat HTTPS de confiance correspondant exactement au nom d’hôte/à l’IP. Un certificat local généré doit être explicitement approuvé par l’appareil/navigateur client ; une page d’avertissement ou son contournement n’est pas une configuration d’installation fiable. Les exceptions localhost des navigateurs s’appliquent à cet appareil, pas à une adresse HTTP LAN d’un autre hôte.
 
-Si l’installation manque, confirmez d’abord la confiance HTTPS et la prise en charge du navigateur, puis rouvrez la page dans le navigateur complet plutôt qu’un navigateur QR/intégré. Pour les échecs de microphone, vérifiez les permissions de site navigateur/système et [Voix](voice.md). Ne désactivez pas l’authentification ou la vérification TLS pour réparer l’installation.
+Ne désactivez pas l’authentification ou la vérification TLS pour réparer l’installation.
 
 ## Travailler avec les dispositions tactiles {#touch-layout}
 
@@ -41,6 +41,6 @@ La zone de saisie garde Agent, Modèle et Réflexion dans son pied. Le champ se 
 | Microphone, presse-papiers, notifications et proposition d’installation | Dépendent de la prise en charge navigateur/système, du contexte sécurisé et des permissions utilisateur. |
 | Travail hors ligne | Aucun backend hors ligne ni historique API en cache. Les ressources d’interface statiques peuvent être en cache, mais les documents et réponses API ne constituent pas un espace de travail hors ligne. |
 
-Gardez le backend accessible. La suspension par le système mobile ou un changement de réseau peut déconnecter le flux d’événements ; au retour, le client reconnecte et relit l’état actuel, sans rejeu d’événements garanti. Vérifiez si une action s’est terminée avant de réessayer. Fermer la PWA n’arrête pas un backend autonome ; quitter l’application de bureau hôte et son backend rend le Contrôle à distance indisponible jusqu’au prochain lancement.
+Gardez le backend accessible. Vérifiez si une action s’est terminée avant de réessayer. Fermer la PWA n’arrête pas un backend autonome ; quitter l’application de bureau hôte et son backend rend le Contrôle à distance indisponible jusqu’au prochain lancement.
 
 Chaque onglet du navigateur, y compris la PWA installée, garde pour cet onglet ses projets ouverts, ses conversations sélectionnées, ses brouillons non envoyés et ses positions de défilement : ils reviennent quand la page se recharge, ou quand le système mobile la recharge après un changement d'application ou un verrouillage de l'écran. Un nouvel onglet, ou une PWA entièrement fermée par le système, s'ouvre sur l'accueil. Désactivez ce comportement pour l'onglet avec **Paramètres → Général → Restaurer l’état précédent**.

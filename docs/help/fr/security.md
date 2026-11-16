@@ -64,7 +64,7 @@ Utilisez des comptes système, conteneurs/VM et la configuration d’autorisatio
 
 ## Garder identifiants et diagnostics privés {#privacy}
 
-OpenCode possède les connexions fournisseurs et son stockage global de conversations. CodeNomad lit les métadonnées de connexion et les identifiants sélectionnés côté serveur pour les intégrations d’utilisation prises en charge ; les API navigateur ne renvoient pas les secrets fournisseurs. Le rafraîchissement d’une connexion OAuth externe appartient à son propriétaire ; CodeNomad n’échange pas ces jetons de rafraîchissement. Voir [Fournisseurs](providers.md).
+OpenCode possède les connexions fournisseurs et son stockage global de conversations. CodeNomad lit les métadonnées de connexion et les identifiants sélectionnés côté serveur pour les intégrations d’utilisation prises en charge ; les API navigateur ne renvoient pas les secrets fournisseurs. Voir [Fournisseurs](providers.md).
 
 | Élément | Traitement |
 | --- | --- |

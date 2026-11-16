@@ -34,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "先にプロジェクトを開いてください。",
 
   "commands.closeInstance.label": "タブを閉じる",
-  "commands.closeInstance.description": "現在のトップレベルタブを閉じる",
   "commands.closeInstance.keywords": "閉じる, タブ, stop, quit, close",
 
   "commands.nextInstance.label": "次のタブ",
-  "commands.nextInstance.description": "次のトップレベルタブへ切り替え",
   "commands.nextInstance.keywords": "切り替え, 移動, タブ, switch, navigate",
 
   "commands.previousInstance.label": "前のタブ",
-  "commands.previousInstance.description": "前のトップレベルタブへ切り替え",
   "commands.previousInstance.keywords": "切り替え, 移動, タブ, switch, navigate",
 
   "commands.newSession.label": "新しいセッション",
@@ -62,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "情報, ログ, コンソール, 出力, info, logs, console, output",
 
   "commands.nextSession.label": "次のセッション",
-  "commands.nextSession.description": "次のセッションタブへ切り替え",
   "commands.nextSession.keywords": "切り替え, 移動, switch, navigate",
 
   "commands.previousSession.label": "前のセッション",
-  "commands.previousSession.description": "前のセッションタブへ切り替え",
   "commands.previousSession.keywords": "切り替え, 移動, switch, navigate",
 
   "commands.previousUserMessage.label": "前のユーザーメッセージ",
-  "commands.previousUserMessage.description": "この会話で送信した前のメッセージへ移動",
   "commands.previousUserMessage.keywords": "移動, ジャンプ, プロンプト, jump, prompt, navigate",
   "commands.nextUserMessage.label": "次のユーザーメッセージ",
-  "commands.nextUserMessage.description": "この会話で送信した次のメッセージへ移動",
   "commands.nextUserMessage.keywords": "移動, ジャンプ, プロンプト, jump, prompt, navigate",
 
   "commands.compactSession.label": "セッションをコンパクト化",
@@ -106,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "準備された取り消しを解除できませんでした",
 
   "commands.openModelSelector.label": "モデルセレクターを開く",
-  "commands.openModelSelector.description": "別のモデルを選択",
   "commands.openModelSelector.keywords": "モデル, LLM, AI, model, llm, ai",
 
   "commands.selectModelVariant.label": "モデルバリアントを選択",
@@ -114,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "バリアント, 思考, 推論, 努力, variant, thinking, reasoning, effort",
 
   "commands.openAgentSelector.label": "エージェントセレクターを開く",
-  "commands.openAgentSelector.description": "別のエージェントを選択",
   "commands.openAgentSelector.keywords": "エージェント, モード, agent, mode",
 
   "commands.clearInput.label": "入力をクリア",
-  "commands.clearInput.description": "プロンプト入力欄をクリア",
   "commands.clearInput.keywords": "クリア, リセット, clear, reset",
 
   "commands.thinkingBlocks.label.show": "思考を表示",

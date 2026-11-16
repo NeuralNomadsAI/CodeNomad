@@ -64,7 +64,7 @@ Gerçek yalıtım gerekiyorsa işletim sistemi hesapları, kapsayıcılar/VM'ler
 
 ## Kimlik bilgilerini ve teşhis bilgilerini gizli tutun {#privacy}
 
-Sağlayıcı bağlantıları ve genel konuşma deposu OpenCode'a aittir. CodeNomad desteklenen kullanım entegrasyonları için bağlantı meta verilerini ve seçili kimlik bilgilerini sunucuda okur; tarayıcı API'leri sağlayıcının gizli değerlerini döndürmez. Haricen yönetilen OAuth girişinin yenilenmesi sahibine aittir; CodeNomad bu yenileme belirteçlerini takas etmez. Bkz. [Sağlayıcılar](providers.md).
+Sağlayıcı bağlantıları ve genel konuşma deposu OpenCode'a aittir. CodeNomad desteklenen kullanım entegrasyonları için bağlantı meta verilerini ve seçili kimlik bilgilerini sunucuda okur; tarayıcı API'leri sağlayıcının gizli değerlerini döndürmez. Bkz. [Sağlayıcılar](providers.md).
 
 | Veri | Nasıl ele alınmalı |
 | --- | --- |

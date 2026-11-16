@@ -34,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "Abre primero un proyecto.",
 
   "commands.closeInstance.label": "Cerrar pestaña",
-  "commands.closeInstance.description": "Cerrar la pestaña superior actual",
   "commands.closeInstance.keywords": "detener, salir, cerrar, pestaña",
 
   "commands.nextInstance.label": "Siguiente pestaña",
-  "commands.nextInstance.description": "Cambiar a la siguiente pestaña superior",
   "commands.nextInstance.keywords": "cambiar, navegar, pestaña",
 
   "commands.previousInstance.label": "Pestaña anterior",
-  "commands.previousInstance.description": "Cambiar a la pestaña superior anterior",
   "commands.previousInstance.keywords": "cambiar, navegar, pestaña",
 
   "commands.newSession.label": "Nueva sesión",
@@ -62,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "info, logs, consola, salida",
 
   "commands.nextSession.label": "Siguiente sesión",
-  "commands.nextSession.description": "Cambiar a la siguiente pestaña de sesión",
   "commands.nextSession.keywords": "cambiar, navegar",
 
   "commands.previousSession.label": "Sesión anterior",
-  "commands.previousSession.description": "Cambiar a la pestaña de sesión anterior",
   "commands.previousSession.keywords": "cambiar, navegar",
 
   "commands.previousUserMessage.label": "Mensaje de usuario anterior",
-  "commands.previousUserMessage.description": "Ir al mensaje anterior que enviaste en esta conversación",
   "commands.previousUserMessage.keywords": "saltar, ir, prompt, navegar, mensaje de usuario",
   "commands.nextUserMessage.label": "Siguiente mensaje de usuario",
-  "commands.nextUserMessage.description": "Ir al siguiente mensaje que enviaste en esta conversación",
   "commands.nextUserMessage.keywords": "saltar, ir, prompt, navegar, mensaje de usuario",
 
   "commands.compactSession.label": "Compactar sesión",
@@ -106,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "No se pudo cancelar la reversión preparada",
 
   "commands.openModelSelector.label": "Abrir selector de modelo",
-  "commands.openModelSelector.description": "Elegir un modelo diferente",
   "commands.openModelSelector.keywords": "modelo, llm, IA",
 
   "commands.selectModelVariant.label": "Seleccionar variante del modelo",
@@ -114,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "variante, pensamiento, razonamiento, esfuerzo",
 
   "commands.openAgentSelector.label": "Abrir selector de agente",
-  "commands.openAgentSelector.description": "Elegir un agente diferente",
   "commands.openAgentSelector.keywords": "agente, modo",
 
   "commands.clearInput.label": "Limpiar entrada",
-  "commands.clearInput.description": "Borrar el área de texto del prompt",
   "commands.clearInput.keywords": "limpiar, reiniciar",
 
   "commands.thinkingBlocks.label.show": "Mostrar pensamiento",

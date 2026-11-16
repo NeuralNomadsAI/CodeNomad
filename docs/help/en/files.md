@@ -15,7 +15,7 @@ The **Files** right-panel tab combines checkout browsing, local changes and comm
 | Changes | Index and working-tree changes | Git mutations happen only through explicit actions |
 | Commits | Paginated commit history and revision contents | Read-only history; no checkout |
 
-Expanded folders survive mode changes. Listings/status/history use cached snapshots and revalidate after relevant filesystem changes, activation or explicit refresh; focusing the panel is not a guarantee of a new read. Visible Workspace folders pick up files created, edited, renamed or deleted on the backend host by themselves, at most once every five seconds during continuous activity; collapsed folders and other worktrees are reread only when you show them.
+Expanded folders survive mode changes. Visible Workspace folders pick up files created, edited, renamed or deleted on the backend host by themselves, at most once every five seconds during continuous activity; collapsed folders and other worktrees are reread only when you show them.
 
 Row actions include **Copy path** and, where the client supports opening backend paths, file-manager/editor/terminal actions such as **Open with default application**, **Show in folder**, **Open in file manager** and **Open terminal here**. Actions can move into **More actions for {name}** when space is limited; the file or folder name replaces `{name}`. A remote browser cannot assume a server path is a local-device path; see [Remote Control](remote-control.md).
 
@@ -28,9 +28,9 @@ Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show 
 3. Edit and choose **Save**, or press **Ctrl/Cmd+S** while the editor has focus.
 4. If the file changed externally, review the overwrite confirmation; choose **Cancel** to keep your draft without overwriting that change.
 
-Save writes the actual file in the browsed checkout, including a linked worktree; it does not send a prompt or stage/commit the edit. Saving rereads the authoritative file first. The conflict dialog says **File was modified by the agent. Overwrite agent's changes?**; treat any external writer's changes with the same care.
+Save writes the actual file in the browsed checkout, including a linked worktree; it does not send a prompt or stage/commit the edit. The conflict dialog says **File was modified by the agent. Overwrite agent's changes?**; treat any external writer's changes with the same care.
 
-Dirty source drafts are retained in renderer memory by project instance, directory and path when readers are closed or switched. Filesystem refreshes do not silently replace them. This is not durable file storage: save or copy important edits before restarting/reloading the client. Read/write failures retain the draft. Explicit **Refresh** warns before discarding unsaved edits.
+Dirty source drafts are retained in renderer memory by project instance, directory and path when readers are closed or switched. Filesystem refreshes do not silently replace them. This is not durable file storage: save or copy important edits before restarting/reloading the client. Explicit **Refresh** warns before discarding unsaved edits.
 
 Closing the reader with its trailing close button returns to the conversation; the composer remains available below the reader. Hiding the panel with **Right panel**, or a window too narrow for it, leaves the reader open with the freed width; showing the panel again keeps it as it was. Changing session/worktree clears the selected reader, not a promise to save its draft. Opening a browser preview replaces the reader; opening a file returns that view to chat mode.
 
@@ -50,7 +50,7 @@ Reader replacement and closure affect only the current project tab. Duplicate ta
 | Changes/Commits text diff | Read-only comparison, not an editor for either side |
 | Git image diff | Before/After images from the exact compared revisions |
 
-Preview reads are bounded; large/unsupported content may be unavailable rather than loaded without limit. Historical images never substitute the current worktree file. A preview failure does not mean the underlying file is absent. Open the file with an appropriate external application where available, without changing its revision just to obtain a preview.
+Preview reads are bounded; large/unsupported content may be unavailable rather than loaded without limit. Historical images never substitute the current worktree file. Open the file with an appropriate external application where available, without changing its revision just to obtain a preview.
 
 ## Stage, unstage and commit {#stage-commit}
 
@@ -60,7 +60,7 @@ Preview reads are bounded; large/unsupported content may be unavailable rather t
 
 Collapsed section headers remain drop targets. Collapsing sections or changing modes preserves their state and the commit-message draft. A long section shows its first 200 files, then a line such as **480 files not shown** with **Show 200 more** to reveal the next ones in place; section counts remain full totals, and the current, previewed and selected files stay shown. Shift-click ranges cover shown rows only, so a bulk action never includes a file you cannot see. Staging/unstaging changes the index in the browsed worktree; committing records staged content only. Unstaging does not discard the worktree edit.
 
-Review staged files before committing, especially when agents or another client also write there. A failed commit is not automatically replayed. Refresh status/history and inspect the error before retrying, because a lost reply is not proof that no commit was created.
+Review staged files before committing, especially when agents or another client also write there.
 
 ## Read commit history {#commit-history}
 
@@ -76,7 +76,7 @@ Text history compares the commit with its first parent (or an empty base for a r
 2. Turn it off if you need to inspect unstaged whitespace-only edits omitted from Changes.
 3. Review the actual diff and staged content before committing.
 
-The setting is on by default. Its main effect is hiding qualifying unstaged tracked text modifications from the Changes list, counts, selection, bulk staging and drag actions. Hidden files remain unstaged. Staged files remain visible, as do untracked, added/deleted/renamed and binary files. A failed/unsupported detection keeps files visible rather than guessing.
+The setting is on by default. Its main effect is hiding qualifying unstaged tracked text modifications from the Changes list, counts, selection, bulk staging and drag actions. Hidden files remain unstaged. Staged files remain visible, as do untracked, added/deleted/renamed and binary files.
 
 Git's list detection can ignore inner whitespace, CRLF-only changes and added/removed final newlines. The diff reader's whitespace comparison is narrower: indentation and trailing spaces/tabs, not all inner whitespace. Stage and Commit always act on exact content, regardless of the display preference.
 
@@ -88,4 +88,4 @@ Line-ending and byte-order-mark differences may produce a factual note instead o
 2. Choose **Initialize Git**; it runs immediately without confirmation.
 3. Wait for the project/session refresh, then stage and commit explicitly when ready.
 
-Initialization creates `.git` in the explicitly opened folder; it does not initialize a parent directory or create a first commit. If Git is missing on the backend, directory-only conversations and Workspace browsing remain possible, but initialization and Git operations are unavailable. For an uncertain failure, refresh before retrying; no initialization request is automatically replayed. See [Projects](projects.md).
+Initialization creates `.git` in the explicitly opened folder; it does not initialize a parent directory or create a first commit. If Git is missing on the backend, directory-only conversations and Workspace browsing remain possible, but initialization and Git operations are unavailable. See [Projects](projects.md).

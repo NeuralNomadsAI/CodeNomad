@@ -26,9 +26,11 @@ Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Ve
 
 **Aufgabensitzungen** wählt native Unteragenten des Koordinators oder unabhängige Sitzungen. Beide unterliegen OpenCodes Berechtigungen und Verschachtelungsgrenzen.
 
-**Tiefe der Unteragenten** gilt für alle OpenCode-Unterhaltungen des Projekts. **Erben** oder 1–10 wird sofort gespeichert. Das **ⓘ** zeigt beobachtete effektive Tiefe, Berechtigungen und Konfigurationspfade. Bei einem fehlgeschlagenen oder unbestätigten Speichern bleibt die Warnung mit expliziter Aktualisierung erhalten.
+**Tiefe der Unteragenten** gilt für alle OpenCode-Unterhaltungen des Projekts. **Erben** oder 1–10 wird sofort gespeichert. Das **ⓘ** zeigt beobachtete effektive Tiefe, Berechtigungen und Konfigurationspfade.
 
-Eine Projekttiefe erlaubt außerdem Unteragenten, innerhalb dieser Tiefe selbst zu delegieren, und überschreibt dabei unterstützte General-Beschränkungen anderer Konfigurationsdateien. Bei inkompatiblen Projektregeln bleibt eine Warnung. **Erben** entfernt die hinzugefügte Regel. Speichern lädt OpenCode nicht neu und ändert keine laufenden Unterhaltungen.
+Die Informationen zur Unteragententiefe nennen die wirksame Quelle unter **OpenCode-Konfigurationsdatei:**.
+
+Eine Projekttiefe erlaubt außerdem Unteragenten, innerhalb dieser Tiefe selbst zu delegieren, und überschreibt dabei unterstützte General-Beschränkungen anderer Konfigurationsdateien. **Erben** entfernt die hinzugefügte Regel. Speichern lädt OpenCode nicht neu und ändert keine laufenden Unterhaltungen.
 
 ### Agenten und Modelle {#agents-models}
 
@@ -44,13 +46,11 @@ Kalenderbasierte Zeitplanung benötigt einen expliziten Agenten und ein Modell f
 
 **Automatisch starten** steht außerhalb der Zeitplanung und ist standardmäßig aus. Ausgeschaltet erstellt es eine pausierte Mission für späteres ▶ Starten. Eingeschaltet fordert es den Start nach bestätigter Erstellung mit den üblichen Prüfungen und automatischer Vorbereitung der Zeitplanung an.
 
-Bei verlorener Bestätigung bleibt der Start nach Lesen der Quittung manuell. Behalten Sie die ursprüngliche unbestätigte Anfrage und prüfen Sie Liste und Unterhaltung vor einer erneuten Erstellung.
-
 ## Zeitplanung {#daily-schedules}
 
 ### Kriterien {#native-scheduling}
 
-Die Informationen zur Unteragententiefe nennen die wirksame Quelle unter **OpenCode-Konfigurationsdatei:**.
+Die Schaltfläche **i** öffnet die [Zeitplanungshilfe](missions.md#native-scheduling).
 
 Erstes Kriterium ist **Einmal, jetzt**. **Kriterium hinzufügen** ergänzt ein weiteres. Wählen Sie den Typ, entfernen Sie eine Karte mit × oder verschieben Sie sie am Griff; Alt+Auf/Ab bewegt den fokussierten Griff.
 
@@ -58,23 +58,23 @@ Verfügbar sind einmal jetzt, alle N Stunden, täglich, ausgewählte Wochentage,
 
 Einmal jetzt erhält seinen Zeitpunkt beim Start und bietet nur eine Gelegenheit; eine nicht erfüllte Bedingung kann diese verbrauchen. Zeitplanung benötigt den verfügbaren OpenCode-Dienst und Ausführungshost.
 
-Beim Starten oder Fortsetzen wird die Zeitplanung automatisch in der OpenCode-Projektkonfiguration vorbereitet. Ein ausdrückliches OFF bleibt erhalten: **Zeitplanungseinstellungen öffnen** öffnet, wenn angeboten, die zuständige Datei; **i** zeigt Herkunft oder Umgebungsdetails. Nur während der Anfrage zeigt die betätigte Schaltfläche den Ladevorgang. Ein unbestätigtes Ergebnis bietet eine Prüfung; nach wiederhergestellter Aktivierung starten Sie ausdrücklich selbst.
+Beim Starten oder Fortsetzen wird die Zeitplanung automatisch in der OpenCode-Projektkonfiguration vorbereitet. Ein ausdrückliches OFF bleibt erhalten: **Zeitplanungseinstellungen öffnen** öffnet, wenn angeboten, die zuständige Datei; **i** zeigt Herkunft oder Umgebungsdetails.
 
 ### Ereignisse und Kombinationen {#scheduling-conditions}
 
 Wählen Sie **Repository-Aktivität → Ereignis**, danach optionale Filter in derselben Karte. Git-Commits teilen dieses Menü mit Ereignissen des automatisch erkannten GitHub-, GitLab- oder Gitea-Repositorys, wie in Contribute (`upstream`, dann `origin`). Alle drei unterstützen neue und zusammengeführte PRs/MRs sowie neue Issues mit optionalem **Autor**, einschließlich `dependabot[bot]`. Die Ereignisauswahl legt das Repository fest; gespeicherte Kriterien behalten ihr Ziel.
 
-Forge-Prüfungen verwenden `gh`, `glab` oder `tea` auf dem OpenCode-Host, auch bei geschlossenem CodeNomad; öffentliche Repositorys erlauben anonymen Zugriff. Selbst gehostete Forges erfordern eine dort angemeldete CLI. **github.com** bietet außerdem Kontobenachrichtigungen und Dependabot-Warnungen über angemeldetes `gh` mit [Benachrichtigungszugriff](https://docs.github.com/en/rest/activity/notifications) oder [Lesezugriff auf Warnungen](https://docs.github.com/en/rest/dependabot/alerts). Benachrichtigungen behalten ihren Lesestatus; Warnungen umfassen behobene oder verworfene Einträge. Gespeicherte Benachrichtigungen mit leerem **GitHub-Repository** umfassen das Konto. Der erste Start setzt die Referenz. Jede Prüfung liest höchstens vier Seiten mit je 50 Einträgen in zehn Sekunden; fehlende Rechte, API-Limits oder unvollständige Fenster machen die Quelle unverfügbar. Zusammenfassungen gehen in die Eingabe ein und werden nach Erfolg verbraucht.
+Forge-Prüfungen verwenden `gh`, `glab` oder `tea` auf dem OpenCode-Host, auch bei geschlossenem CodeNomad; öffentliche Repositorys erlauben anonymen Zugriff. Selbst gehostete Forges erfordern eine dort angemeldete CLI. **github.com** bietet außerdem Kontobenachrichtigungen und Dependabot-Warnungen über angemeldetes `gh` mit [Benachrichtigungszugriff](https://docs.github.com/en/rest/activity/notifications) oder [Lesezugriff auf Warnungen](https://docs.github.com/en/rest/dependabot/alerts). Benachrichtigungen behalten ihren Lesestatus; Warnungen umfassen behobene oder verworfene Einträge. Gespeicherte Benachrichtigungen mit leerem **GitHub-Repository** umfassen das Konto. Der erste Start setzt die Referenz.
 
-Ereignisse beziehen sich auf erfolgreiche andere Missionen/Zeitpläne, lokale Commits, neue Nachrichten oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Ohne Suche lädt die Auswahl beim Scrollen weitere Quellen; bei Lesefehlern erscheint dort **Erneut versuchen**. Die Suche ignoriert Groß- und Kleinschreibung, auch bei Buchstaben mit Akzenten. Während einer Suche setzen Sie mit **Weitere Quellen laden** fort, auch wenn die Seite bereits Treffer enthält. Die für neue Nachrichten gewählte Unterhaltung liefert auch Kontext für den Durchlauf. Ein anderer Kriteriumstyp leert die Quelle. Gespeicherter Unterhaltungskontext bleibt beim Bearbeiten erhalten.
+Ereignisse beziehen sich auf erfolgreiche andere Missionen/Zeitpläne, lokale Commits, neue Nachrichten oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Die Suche ignoriert Groß- und Kleinschreibung, auch bei Buchstaben mit Akzenten. Während einer Suche setzen Sie mit **Weitere Quellen laden** fort, auch wenn die Seite bereits Treffer enthält. Die für neue Nachrichten gewählte Unterhaltung liefert auch Kontext für den Durchlauf. Ein anderer Kriteriumstyp leert die Quelle. Gespeicherter Unterhaltungskontext bleibt beim Bearbeiten erhalten.
 
 **oder** verbindet benachbarte Zeitpläne oder Ereignisse. **wenn** macht Ereignisse nach Zeitplänen zu Bedingungen: seit dem letzten erfolgreichen Durchlauf muss eines eingetreten sein. **sonst** macht nachfolgende Zeitpläne zum Rückfall: seit ihrem vorherigen Termin beziehungsweise ihrer Aktivierung darf oben kein Durchlauf gestartet sein. Ereignisse danach bedingen diesen Rückfall.
 
-Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die Referenz, Erfolg schreibt sie fort, Fehlschlag erhält sie. Unlesbare Quellen blockieren mit Erklärung. Durchläufe überlappen nicht.
+Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die Referenz, Erfolg schreibt sie fort, Fehlschlag erhält sie. Durchläufe überlappen nicht.
 
 ### Zähler und Verlauf {#scheduling-limits}
 
-**Koordinator-Sitzung** verwendet standardmäßig für jeden Durchlauf eine **Neue Sitzung**. Mit einem Zeitplan oder Ereignis können Sie unter **Vorhandene Sitzung** eine Stamm-Unterhaltung dieses Projekts und derselben Ausführungs-Location wählen. Jeder Durchlauf setzt sie mit dem konfigurierten Agenten und Modell fort; Verlauf, Titel und Berechtigungen bleiben erhalten. Missionssteuerungen betreffen auch vorhandene Arbeit darin. Jeder Durchlauf behält sein eigenes Ergebnis und Journal im Verlauf; eine verschwundene ausgewählte Unterhaltung erfordert Ihren Eingriff.
+**Koordinator-Sitzung** verwendet standardmäßig für jeden Durchlauf eine **Neue Sitzung**. Mit einem Zeitplan oder Ereignis können Sie unter **Vorhandene Sitzung** eine Stamm-Unterhaltung dieses Projekts und derselben Ausführungs-Location wählen. Jeder Durchlauf setzt sie mit dem konfigurierten Agenten und Modell fort; Verlauf, Titel und Berechtigungen bleiben erhalten. Missionssteuerungen betreffen auch vorhandene Arbeit darin. Jeder Durchlauf behält sein eigenes Ergebnis und Journal im Verlauf.
 
 Der ausgewählte Zeitplan zeigt Zustand, nächsten Termin beziehungsweise Prüfung, gestartete/erfolgreiche Durchläufe und frühere Ergebnisse. Der Verlauf hält 30 Ergebnisse; Gesamtzähler bleiben. Ein zugelassenes **Jetzt ausführen** zählt mit. Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
 
@@ -90,7 +90,7 @@ Das Auge schaltet die zentrale Zusammenfassung um und folgt der Auswahl. **Unter
 
 Auswahl, aufgeklappte Abschnitte und Leseansicht gehören zu jedem Projekt-Tab und werden mit ihm wiederhergestellt. Mehrere Tabs desselben Projekts können unterschiedliche Berichte lesen oder in einem einen Bericht und im anderen die Unterhaltung, eine Datei oder eine Webvorschau bereithalten. Das Öffnen oder Schließen einer Leseansicht ändert nur diesen Tab; Missionsarbeit und Lesebestätigungen abgeschlossener Ergebnisse bleiben innerhalb des Fensters gemeinsam.
 
-Weitere Einträge und Aufgaben laden am Listenende automatisch. Aufgabenseiten bleiben unabhängig von dargestellten Zeilen im Cache. Lesefehler erhalten das letzte Bild und bieten einen expliziten neuen Versuch. Lesen startet keine Arbeit; der Kopf zeigt Hintergrundlesen an.
+Weitere Einträge und Aufgaben laden am Listenende automatisch. Schlägt das Laden der Aufgaben fehl, wählen Sie **Erneut versuchen**, um fortzufahren.
 
 ### Farben und Zustände {#status-colours}
 
@@ -98,7 +98,7 @@ Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufga
 
 Ein Akzentsymbol mit einem kleinen statischen neutralen Strich darunter bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse, gestoppte Zeitpläne und **Status unbestätigt** sind neutral; lesen Sie den Statustext.
 
-Auswahl oder Klick/Streichen über grüne Aufgabensymbole bestätigt Ergebnisse; das Chevron-Menü bietet **Als gelesen markieren**. Bei **Erfolgreicher Durchlauf zum Ansehen** bestätigt eine ausdrückliche Auswahl der wiederkehrenden Zeile im aktiven Fenster oder **Als gelesen markieren** genau diesen Durchlauf. Bei aktiver Zeitplanung kehrt das Symbol zum Warten zurück, sonst zu neutral. Wiederhergestellte Auswahl und neue Ergebnisse in einer bereits ausgewählten Zeile bleiben ungelesen. Historische Erfolge beim ersten Laden gelten als gelesen. Zurückgezogene Aufgaben bleiben im Verlauf.
+Auswahl oder Klick/Streichen über grüne Aufgabensymbole bestätigt Ergebnisse; das Chevron-Menü bietet **Als gelesen markieren**. Bei **Erfolgreicher Durchlauf zum Ansehen** wählen Sie die wiederkehrende Zeile im aktiven Fenster ausdrücklich aus oder nutzen **Als gelesen markieren**. Bei aktiver Zeitplanung kehrt das Symbol zum Warten zurück, sonst zu neutral. Neue Ergebnisse in einer bereits ausgewählten Zeile bleiben ungelesen. Zurückgezogene Aufgaben bleiben im Verlauf.
 
 ### Fragen und Entscheidungen {#questions}
 
@@ -106,13 +106,11 @@ Der Koordinator soll selbst klären, was möglich ist, und verbleibende Entschei
 
 ### Fortschrittsberichte {#briefings}
 
-Berichte an Meilensteinen sind Einschätzungen des Koordinators. Fordern Sie über ⋯ ein Update an und lesen Sie die Zusammenfassung. Bei unbestätigter Zustellung zuerst die Unterhaltung prüfen.
+Berichte an Meilensteinen sind Einschätzungen des Koordinators. Fordern Sie über ⋯ ein Update an und lesen Sie die Zusammenfassung.
 
 ## Kontext und Ergebnisse {#context-flow}
 
-Der dauerhafte Plan hält Ziel, Notizen, Aufträge, Abhängigkeiten und Ergebnisse. Der Koordinator erhält Ziel, Notizen und Playbook. Native Aufgaben erhalten den Auftrag ihres Elternteils, unabhängige Aufgaben außerdem offene Zuweisungen; Helfer erhalten übergebenen Kontext. Der blinde Gutachter erhält anonymisierte Vergleichsdaten.
-
-Neue Missionen und Durchläufe haben eigene Pläne. Übertragen Sie nützliche Ergebnisse ins Ziel oder in Notizen. OpenCode kann Modellkontext verdichten und den gespeicherten Verlauf behalten.
+Neue Missionen und Durchläufe haben eigene Pläne. Übertragen Sie nützliche Ergebnisse ins Ziel oder in Notizen.
 
 ### Frühere Unterhaltungen suchen {#context-search}
 
@@ -122,18 +120,18 @@ Bei laufendem CodeNomad können Agenten gespeicherte Projektunterhaltungen suche
 
 CodeNomad zu schließen stoppt native Arbeit nicht. Aktivierte native Zeitpläne können bei verfügbarem Dienst/Host weiterlaufen; gesunde Kalender werden nach Dienstneustart fortgesetzt. Pausen, Stopps und ungewisse Ergebnisse behalten ihre Sperren. Bestehende tägliche Einträge brauchen Fortsetzen.
 
-Einige Koordinations- und Wiederherstellungsaktionen benötigen den CodeNomad-Server. Folgen Sie Verbindungs-/Pluginfehlern im Panel.
+Einige Koordinations- und Wiederherstellungsaktionen benötigen den CodeNomad-Server.
 
 ## Pause, Stopp und unbestätigte Aktionen {#controls-recovery}
 
 Einmalige Pause lässt aktuelle Schritte ohne neue Arbeit enden; sofortiges Unterbrechen fordert Unterbrechung an. Stopp ist endgültig und benötigt Bestätigung. Zeitplan-Pause sperrt neue Starts und fordert Unterbrechung des aktuellen Durchlaufs an. Werkzeugwirkungen können weiterlaufen.
 
-Behalten Sie unbestätigte Originalanfragen. Nutzen Sie Statusprüfung, Quittungsaktualisierung oder den angebotenen Wiederholungsversuch statt einer Ersatzaktion. Passive Aktualisierung sendet nicht erneut. Bestätigte Aktionen können bis zur aktualisierten Anzeige gesperrt bleiben. Wiederherstellung prüft native Aktivität und offene Anfragen zuerst.
+Behalten Sie unbestätigte Originalanfragen. Nutzen Sie Statusprüfung, Quittungsaktualisierung oder den angebotenen Wiederholungsversuch statt einer Ersatzaktion.
 
 ## Bearbeiten, löschen und Unterhaltungen bereinigen {#cleanup}
 
 Die Aufgabenunterhaltungs-Bereinigung ist eine Option einmaliger Missionen. Das Löschen nativer Zeitpläne erhält ihre Unterhaltungen.
 
-Die Bearbeitungsaktion im ⋯-Menü öffnet dasselbe Formular. Vor erstem Start sind entsperrte Vorbereitungsfelder bearbeitbar, danach Anweisungen und Notizen soweit erlaubt. Gesperrte Felder erklären warum. Bei Konflikten aktuelle Konfiguration laden und den vorherigen Entwurf vergleichen.
+Die Bearbeitungsaktion im ⋯-Menü öffnet dasselbe Formular. Vor erstem Start sind entsperrte Vorbereitungsfelder bearbeitbar, danach Anweisungen und Notizen soweit erlaubt. Gesperrte Felder erklären warum.
 
-Arbeit vor dem Löschen stoppen. Eine einmalige Mission wird sofort entfernt; unbestätigtes Löschen behält seine ursprüngliche Wiederholung. Zeitplan-Löschen schließt zuerst zukünftige Starts. Die Missions-Einstellung zum Löschen von Aufgabenunterhaltungen betrifft nur zulässige Gespräche; Koordinatoren, wiederverwendete/geteilte oder nicht eindeutig zugeordnete bleiben erhalten. Die Bereinigung zeigt verbleibende Arbeit und explizite Wiederholungen.
+Arbeit vor dem Löschen stoppen. Eine einmalige Mission wird sofort entfernt. Zeitplan-Löschen schließt zuerst zukünftige Starts. Die Missions-Einstellung zum Löschen von Aufgabenunterhaltungen betrifft nur zulässige Gespräche; Koordinatoren, wiederverwendete/geteilte oder nicht eindeutig zugeordnete bleiben erhalten. Die Bereinigung zeigt verbleibende Arbeit und explizite Wiederholungen.

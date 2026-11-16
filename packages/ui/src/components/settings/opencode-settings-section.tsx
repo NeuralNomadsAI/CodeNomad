@@ -41,7 +41,6 @@ export const OpenCodeSettingsSection: Component = () => {
           <div class="settings-toggle-row settings-toggle-row-compact">
             <div>
               <div class="settings-toggle-title">{t("settings.opencode.logLevel.selector.title")}</div>
-              <div class="settings-toggle-caption">{t("settings.opencode.logLevel.selector.subtitle")}</div>
             </div>
             <Select<LogLevelOption>
               value={selectedLogLevel()}

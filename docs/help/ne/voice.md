@@ -2,7 +2,7 @@
 
 ## वाचन कन्फिगर गर्नुहोस् {#configure}
 
-1. **सेटिङहरू → वाचन (Speech)** खोल्नुहोस्। **वाचन (Speech)** card ले कुराकानीको model provider बाट स्वतन्त्र OpenAI-compatible server-side adapter प्रयोग गर्छ।
+1. कुराकानीको मोडेल प्रदायकभन्दा छुट्टै OpenAI-संगत वाचन प्रदायक कन्फिगर गर्न **सेटिङहरू → वाचन (Speech)** खोल्नुहोस्।
 2. **API कुञ्जी**, ऐच्छिक **आधार URL**, **ट्रान्सक्रिप्शन मोडेल**, **वाचन मोडेल (TTS)** र **पूर्वनिर्धारित आवाज** भर्नुहोस्।
 3. input र output लाई फरक सेवा चाहिँदा **इनपुट र आउटपुटका लागि छुट्टाछुट्टै प्रदायक** सक्षम गरी input/output key, base URL र model field भर्नुहोस्।
 4. **प्लेब्याक मोड** र **आउटपुट ढाँचा**, अनि **बचत गर्नुहोस्** (नबचाइएका परिवर्तन हुँदा उपलब्ध) रोज्नुहोस्। परीक्षणअघि परीक्षण बटनछेउको अवस्था, **कन्फिगर गरियो**, **आंशिक रूपमा कन्फिगर** वा **API कुञ्जी हराइरहेको छ**, जाँच्नुहोस्; save असफल भए **बचत गर्न असफल भयो** देखिन्छ।
@@ -21,7 +21,7 @@ backend ले साझा default का लागि `OPENAI_API_KEY` र `OP
 | Buffered | बजाउनुअघि पूरा audio response पर्खन्छ। |
 | Output format | `mp3`, `wav`, `opus` वा `aac`; default `mp3`। अनुकूलता browser/provider अनुसार फरक हुन्छ। |
 
-यी कन्फिगर सेवामा अनुरोध हुन्, हरेक compatible endpoint ले हरेक model, voice वा format समर्थन गर्छ भन्ने प्रत्याभूति होइन। save असफल भए त्रुटि देखिन्छ; अर्को परिवर्तनअघि configuration जाँच्नुहोस्।
+यी कन्फिगर सेवामा अनुरोध हुन्, हरेक compatible endpoint ले हरेक model, voice वा format समर्थन गर्छ भन्ने प्रत्याभूति होइन।
 
 ## input र output परीक्षण {#test}
 
@@ -30,8 +30,6 @@ backend ले साझा default का लागि `OPENAI_API_KEY` र `OP
 3. नमूना सुन्न **प्लेब्याक परीक्षण गर्नुहोस्** रोज्नुहोस्; **नमूना रोक्नुहोस्** ले अन्त्य गर्छ।
 
 playback परीक्षणले चयनित मोड/format तुरुन्त प्रयोग गर्छ, तर endpoint, key, model र voice सुरक्षित सेटिङबाट आउँछन्। input परीक्षणले कुराकानी prompt पठाउँदैन। परीक्षणले पनि कन्फिगर speech provider लाई audio/text पठाउँछन् र शुल्क लाग्न सक्छ।
-
-streaming असफल भए **बफर्ड** चयन गरी `mp3` प्रयास गर्नुहोस्, बचत र पुनःपरीक्षण गर्नुहोस्। “Configured” ले सेटिङ पुष्टि गर्छ, सफल provider authentication वा codec playback होइन। पुनःप्रयासअघि server host बाट endpoint उपलब्धता, provider model/voice नाम र quota जाँच्नुहोस्।
 
 ## बोलेर prompt लेख्नुहोस् {#dictate}
 
@@ -42,7 +40,7 @@ streaming असफल भए **बफर्ड** चयन गरी `mp3` प�
 
 transcription ले हालको selection मा पाठ राख्छ; स्वतः OpenCode लाई बुझाउँदैन। STT कन्फिगर र क्लाइन्टले recording समर्थन गर्दा मात्र मेनु प्रविष्टि देखिन्छ। CodeNomad remote server मा चले पनि recording क्लाइन्ट उपकरणकै microphone बाट हुन्छ।
 
-प्रविष्टि नभए toggle र STT configuration जाँच्नुहोस्। permission त्रुटिमा browser/OS दुवै privacy सेटिङमा microphone अनुमति दिनुहोस्। remote browser recording लाई सुरक्षित सन्दर्भ, सामान्यतः trusted HTTPS, चाहिन्छ; [मोबाइल पहुँच](mobile.md) र [प्रत्यक्ष रिमोट पहुँच](remote-access.md) हेर्नुहोस्। कम्पोजर छोड्दा वा बन्द गर्दा recording lifecycle सकिन्छ; नपठाएको audio फर्कन्छ भन्ने भर नपर्नुहोस्। नतिजा समीक्षा गर्ने ठाउँ टाइप गरिएको मस्यौदा नै हो।
+remote browser recording लाई सुरक्षित सन्दर्भ, सामान्यतः trusted HTTPS, चाहिन्छ; [मोबाइल पहुँच](mobile.md) र [प्रत्यक्ष रिमोट पहुँच](remote-access.md) हेर्नुहोस्। कम्पोजर छोड्दा वा बन्द गर्दा recording lifecycle सकिन्छ; नपठाएको audio फर्कन्छ भन्ने भर नपर्नुहोस्।
 
 ## सन्देश वाचन {#playback}
 
@@ -50,7 +48,7 @@ transcription ले हालको selection मा पाठ राख्छ;
 2. अन्त्य गर्न उही नियन्त्रणमा **वाचन रोक्नुहोस्** प्रयोग गर्नुहोस्; अर्को वाचन सुरु गर्दा हालको रोकिन्छ।
 3. पछिका अनुरोधका लागि **वाचन (Speech)** मा सुरक्षित voice, model, mode वा format बदल्नुहोस्।
 
-playback ले CodeNomad को text projection प्रयोग गर्छ, screenshot को वर्णन होइन: binary/image byte र permission receipt speech सामग्री होइनन्। prompt चलाउँदैन वा चयनित OpenCode model बदल्दैन। format चयनयोग्य भए पनि browser audio समर्थन र provider response ले playback रोक्न सक्छन्।
+playback ले CodeNomad को text projection प्रयोग गर्छ, screenshot को वर्णन होइन: binary/image byte र permission receipt speech सामग्री होइनन्। prompt चलाउँदैन वा चयनित OpenCode model बदल्दैन।
 
 स्वचालित conversation speech का लागि कम्पोजरको **थप कार्यहरू** मेनुमा **कुराकानी मोड सक्षम गर्नुहोस्** प्रयोग गर्नुहोस्; यो त्यही परियोजना ट्याबमा लागू हुन्छ र reload पछि रहँदैन। यो चालू हुँदा, तपाईंले पठाउने हरेक prompt सँग CodeNomad ले agent लाई जवाफ छोटो fenced `spoken` सारांशबाट सुरु गर्न भन्छ। सक्रिय मुख्य सत्रमा त्यो पूरा भएको block मात्र पढिन्छ; हरेक reply वा subagent को स्वचालित वाचन होइन। **कुराकानी मोड अक्षम गर्नुहोस्** ले लाम रोक्छ र सारांश माग्न छोड्छ। microphone input सुरु गर्दा पनि सक्रिय conversation speech रोकिन्छ। toggle voice input सँग वा conversation mode पहिले नै enabled हुँदा देखिन्छ र सक्षम गर्न काम गर्ने TTS चाहिन्छ।
 

@@ -4,7 +4,7 @@ export const toolCallMessages = {
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "嵌套工具调用",
   "toolCall.execute.more": "已省略另外 {count} 个调用。",
-  "toolCall.execute.truncated": "原生输出已截断。完整输出：",
+  "toolCall.execute.truncated": "输出已截断。完整输出：",
   "toolCall.pending.waitingToRun": "等待运行...",
   "toolCall.error.label": "错误：",
 
@@ -62,9 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "正在列出目录...",
 
   "toolCall.renderer.bash.title.timeout": "超时：{timeout}",
-  "toolCall.output.truncated": "[输出已截断以便显示；复制即可访问完整输出]",
-  "toolCall.output.tooLarge": "结构化输出过大，已省略显示。",
-  "toolCall.task.steps.truncated": "正在显示最近的 {count} 个步骤；更早的步骤已省略。",
+  "toolCall.output.truncated": "输出已截断。复制可获取完整输出。",
+  "toolCall.output.tooLarge": "内容过大，无法显示。",
+  "toolCall.task.steps.truncated": "正在显示最近的 {count} 个步骤。",
   "toolCall.renderer.read.detail.offset": "偏移：{offset}",
   "toolCall.renderer.read.detail.limit": "限制：{limit}",
 
@@ -157,7 +157,6 @@ export const toolCallMessages = {
   "toolCall.status.error": "错误",
   "toolCall.status.unknown": "未知",
 
-  "toolCall.applyPatch.action.preparing": "正在准备 apply_patch...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool}（{count} 个文件）",
   "toolCall.applyPatch.title.withFileCount.other": "{tool}（{count} 个文件）",
   "toolCall.applyPatch.fileFallback": "文件 {number}",

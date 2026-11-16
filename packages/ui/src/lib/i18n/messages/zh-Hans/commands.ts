@@ -34,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "请先打开一个项目。",
 
   "commands.closeInstance.label": "关闭标签页",
-  "commands.closeInstance.description": "关闭当前顶层标签页",
   "commands.closeInstance.keywords": "stop, quit, close, 停止, 退出, 关闭, 标签",
 
   "commands.nextInstance.label": "下一个标签页",
-  "commands.nextInstance.description": "切换到下一个顶层标签页",
   "commands.nextInstance.keywords": "switch, navigate, 切换, 导航, 标签",
 
   "commands.previousInstance.label": "上一个标签页",
-  "commands.previousInstance.description": "切换到上一个顶层标签页",
   "commands.previousInstance.keywords": "switch, navigate, 切换, 导航, 标签",
 
   "commands.newSession.label": "新建会话",
@@ -62,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "info, logs, console, output, 信息, 日志, 控制台, 输出",
 
   "commands.nextSession.label": "下一个会话",
-  "commands.nextSession.description": "切换到下一个会话标签页",
   "commands.nextSession.keywords": "switch, navigate, 切换, 导航",
 
   "commands.previousSession.label": "上一个会话",
-  "commands.previousSession.description": "切换到上一个会话标签页",
   "commands.previousSession.keywords": "switch, navigate, 切换, 导航",
 
   "commands.previousUserMessage.label": "上一条用户消息",
-  "commands.previousUserMessage.description": "跳到你在此对话中发送的上一条消息",
   "commands.previousUserMessage.keywords": "jump, prompt, navigate, 跳转, 导航, 用户消息",
   "commands.nextUserMessage.label": "下一条用户消息",
-  "commands.nextUserMessage.description": "跳到你在此对话中发送的下一条消息",
   "commands.nextUserMessage.keywords": "jump, prompt, navigate, 跳转, 导航, 用户消息",
 
   "commands.compactSession.label": "压缩会话",
@@ -106,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "无法清除已暂存的撤销",
 
   "commands.openModelSelector.label": "打开模型选择器",
-  "commands.openModelSelector.description": "选择其他模型",
   "commands.openModelSelector.keywords": "model, llm, ai, 模型",
 
   "commands.selectModelVariant.label": "选择模型变体",
@@ -114,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "variant, thinking, reasoning, effort, 变体, 思考, 推理, 强度",
 
   "commands.openAgentSelector.label": "打开智能体选择器",
-  "commands.openAgentSelector.description": "选择其他智能体",
   "commands.openAgentSelector.keywords": "agent, mode, 智能体, 模式",
 
   "commands.clearInput.label": "清空输入",
-  "commands.clearInput.description": "清空 prompt 输入框",
   "commands.clearInput.keywords": "clear, reset, 清空, 重置",
 
   "commands.thinkingBlocks.label.show": "显示思考",

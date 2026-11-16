@@ -230,7 +230,7 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     await page.locator("section.mission-detail.mission-schedule-detail").waitFor()
     assert.equal(await missionToolbarAction(page, "Start mission").count(), 0, "one-time controls stay with their Mission")
     assert.equal(await detail.count(), 1, "one detail at a time")
-    await detail.locator(".mission-schedule-notice").getByText("This passage's start could not be confirmed. It is reconciled automatically under its original identity.", { exact: true }).waitFor()
+    await detail.locator(".mission-schedule-notice").getByText("Passage start unconfirmed. Checking automatically.", { exact: true }).waitFor()
     await page.getByText(/^The last scheduled check failed at Oct 9, 2026/).waitFor()
     const items = detail.locator("button.mission-past-run")
     assert.match(await items.nth(0).innerText(), /^Oct 8, 2026, 8:15 AM · Not started$/)
@@ -348,7 +348,7 @@ test("proven no-effect refusals release the control and refresh the row; uncerta
     await selectMission(page, schedule.title)
     await missionToolbarAction(page, PAUSE).waitFor()
 
-    const STALE = "The schedule changed before this action arrived, so nothing was applied. Review its current state and try again."
+    const STALE = "Review the updated schedule, then try again."
     replies.push({ status: 409, json: { error: "refused", code: "recurrence-revision-conflict" } })
     let before = snapshots
     await clickMissionAction(page, PAUSE)
@@ -366,7 +366,7 @@ test("proven no-effect refusals release the control and refresh the row; uncerta
     replies.push({ status: 409, json: { error: "refused", code: "recurrence-control-conflict" } })
     before = snapshots
     await clickMissionAction(page, RUN_NOW)
-    await released("This action is not available in the schedule's current state, so nothing was applied.", before)
+    await released("Action unavailable in the schedule's current state.", before)
     assert.equal(posts[2].path.endsWith("/run-now"), true)
 
     // An uncertain failure stays held; only the explicit exact status read proves the refusal.
@@ -385,7 +385,7 @@ test("proven no-effect refusals release the control and refresh the row; uncerta
   } catch (error) { console.error(errors, posts, replies, await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
-const NOT_SENT = "This action was not sent, so nothing was applied. Review the schedule's current state, then try again if needed."
+const NOT_SENT = "Review the schedule's current state, then try again if needed."
 const notDispatched = (status: 409 | 503) => ({ status, json: { error: "Recurrence request refused before dispatch; nothing was sent", code: "recurrence-not-dispatched" } })
 const variants = [
   { action: "play", state: "paused", actions: ["play", "stop", "run-now"], label: `Play schedule ${TITLE}`, status: 503 },

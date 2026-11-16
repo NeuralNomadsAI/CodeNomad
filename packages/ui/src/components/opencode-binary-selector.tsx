@@ -221,7 +221,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
         <div class="panel-header flex items-center justify-between gap-3">
           <div>
             <h3 class="panel-title">{t("opencodeBinarySelector.title")}</h3>
-            <p class="panel-subtitle">{t("opencodeBinarySelector.subtitle")}</p>
           </div>
           <Show when={validating()}>
             <div class="selector-loading text-xs">
@@ -314,9 +313,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                         </Show>
                         <Show when={!isDefault && binary.lastUsed}>
                           <span class="selector-badge-time">{formatRelativeTime(binary.lastUsed)}</span>
-                        </Show>
-                        <Show when={isDefault}>
-                          <span class="selector-badge-time">{t("opencodeBinarySelector.badge.systemPath")}</span>
                         </Show>
                       </div>
                     </div>

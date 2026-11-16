@@ -9,7 +9,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "Discord CodeNomad",
 
   "folderSelection.empty.title": "Нет недавних папок",
-  "folderSelection.empty.description": "Выберите папку, чтобы начать",
 
   "folderSelection.recent.title": "Недавние папки",
   "folderSelection.recent.subtitle.one": "Доступна {count} папка",
@@ -41,7 +40,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.destination.title": "Выберите папку для клонирования",
   "folderSelection.clone.destination.description": "Выберите папку, в которой будет клон; папка репозитория создаётся внутри неё.",
   "folderSelection.clone.dialog.title": "Клонировать Git-репозиторий",
-  "folderSelection.clone.dialog.description": "Клонируйте Git-репозиторий в локальную папку, затем откройте ее как рабочее пространство.",
   "folderSelection.clone.dialog.repositoryUrl": "URL репозитория",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "Папка назначения",
@@ -63,10 +61,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "Обзор",
 
   "folderSelection.loading.title": "Запуск экземпляра…",
-  "folderSelection.loading.subtitle": "Подождите, пока мы подготовим рабочее пространство.",
 
   "folderSelection.drop.title": "Перетащите папку, чтобы открыть ее",
-  "folderSelection.drop.subtitle": "Запустите новый экземпляр в перетащенной папке.",
   "folderSelection.drop.invalidTitle": "Не удалось открыть перетащенный элемент",
   "folderSelection.drop.invalidMessage": "Перетащите папку, чтобы запустить новый экземпляр.",
 
@@ -79,7 +75,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "Откройте сохраненный удаленный сервер CodeNomad в новом окне",
   "folderSelection.servers.count": "{count} серверов",
   "folderSelection.servers.empty.title": "Нет сохраненных серверов",
-  "folderSelection.servers.empty.description": "Добавьте удаленный сервер, чтобы быстро подключаться к нему с этого устройства",
   "folderSelection.servers.connectTitle": "Подключиться к серверу",
   "folderSelection.servers.connectSubtitle": "Сохраните удаленный сервер CodeNomad и откройте его в новом окне",
   "folderSelection.servers.connectButton": "Подключиться к серверу",
@@ -87,7 +82,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "Самоподписанный TLS",
   "folderSelection.servers.errorTitle": "Ошибка удаленного подключения",
   "folderSelection.servers.dialog.title": "Подключиться к серверу",
-  "folderSelection.servers.dialog.description": "Добавьте удаленный сервер CodeNomad и при желании сразу откройте его.",
   "folderSelection.servers.dialog.name": "Имя сервера",
   "folderSelection.servers.dialog.namePlaceholder": "Продакшн сервер",
   "folderSelection.servers.dialog.url": "URL сервера",

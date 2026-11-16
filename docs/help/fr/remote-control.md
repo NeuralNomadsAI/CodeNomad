@@ -21,7 +21,7 @@ Pour appairer un autre CodeNomad de bureau, choisissez **Se connecter au serveur
 
 La révocation termine les connexions HTTP/SSE actuelles de cet appareil ainsi que son accès futur. Appairez-le à nouveau avec un nouveau lien pour rétablir l’accès. Un appareil expire après **30 jours sans utilisation**. À la **limite de 32 appareils**, un nouvel appairage remplace l’appareil vu le moins récemment et ferme ses connexions.
 
-Le backend conserve des hachages d’identifiants, pas les identifiants d’appareil bruts, dans `remote-control-devices.json` sous sa base de configuration. Le client détient un cookie d’appareil limité à l’hôte, `Secure`, `HttpOnly`, `SameSite=Lax`. Sa durée côté navigateur peut dépasser la limite serveur de 30 jours d’inactivité ; le registre fait autorité. Effacer les données de site, changer de profil navigateur ou utiliser la navigation privée peut nécessiter un nouvel appairage.
+Effacer les données de site, changer de profil navigateur ou utiliser la navigation privée peut nécessiter un nouvel appairage.
 
 Changer le mot de passe d’accès direct ne révoque **pas** les appareils. **Arrêter le contrôle à distance** déconnecte le tunnel mais conserve la liste des appareils ; utilisez **Révoquer** pour retirer une autorisation.
 
@@ -42,7 +42,6 @@ La récupération préserve la page ouverte et les brouillons ; elle ne rejoue p
 | Arrêter le contrôle à distance | Déconnecte l’accès et efface la reprise automatique au lancement ; conserve les appareils enregistrés. |
 | Arrêt du backend / fermeture de la dernière fenêtre de bureau et sortie de l’application | Le Contrôle à distance passe hors ligne. Le service OpenCode partagé peut rester actif, mais ne peut pas servir cette interface via un backend arrêté. |
 | Lancement après avoir laissé le Contrôle à distance démarré | Reconnecte en arrière-plan sans émettre de nouveau lien. Les installations jamais démarrées ne s’activent pas d’elles-mêmes. |
-| Reprise échouée ou erreur fatale du tunnel | Le choix mémorisé reste et l’hôte affiche l’erreur ; l’icône d’actualisation de la carte Contrôle à distance relit son état. **Démarrer le contrôle à distance** réessaie aussitôt ; **Arrêter le contrôle à distance** efface le choix. Sinon, un lancement ultérieur réessaie. |
 
 La reprise automatique au lancement se limite à un backend par répertoire de configuration. Ne démarrez pas d’hôtes concurrents avec la même configuration pour obtenir une capacité de tunnel supplémentaire. Pour un hôte devant rester accessible après la fermeture du bureau, déployez un [serveur autonome](server.md) géré séparément ; le Contrôle à distance n’est pas un démon indépendant.
 
@@ -65,7 +64,7 @@ Utilisez une connexion en boucle locale sur l’hôte pour les proxys/WebSockets
 
 ## Relais et confidentialité {#relay-privacy}
 
-CodeNomad utilise [OpenTunnel](https://github.com/anomalyco/opentunnel) et réserve une route aléatoire sur l’identité de tunnel par défaut partagée de la machine. L’arrêt libère le pont CodeNomad, pas l’identité partagée utilisée par d’autres applications.
+CodeNomad utilise [OpenTunnel](https://github.com/anomalyco/opentunnel) et réserve une route aléatoire sur l’identité de tunnel par défaut partagée de la machine.
 
 TLS se termine dans le backend CodeNomad. Le relais transfère du texte chiffré et ne peut pas lire le contenu applicatif, mais peut observer les noms d’hôte, horaires de connexion et volumes de trafic. Le certificat/la clé privée du tunnel restent sur l’hôte. Protégez le stockage du tunnel et la configuration CodeNomad comme des identifiants ; une adresse impossible à deviner n’est pas une autorisation.
 

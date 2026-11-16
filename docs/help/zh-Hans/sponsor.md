@@ -1,7 +1,5 @@
 # 赞助 CodeNomad
 
-CodeNomad 免费且开源，由志愿者维护。赞助用于支付修复、发布和改进它所需的时间。
-
 ## 为什么赞助 CodeNomad {#why}
 
 CodeNomad 以 [MIT 许可证](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE)发布，下载和使用均免费。Pascal André 和 Shantur Rathore 利用业余时间维护它，社区也参与贡献。OpenCode 独立更新，因此在开发任何新功能之前，CodeNomad 仅为保持兼容就需要持续投入。
@@ -12,8 +10,6 @@ CodeNomad 以 [MIT 许可证](https://github.com/NeuralNomadsAI/CodeNomad/blob/d
 - **发布**：构建、测试并发布 Windows、macOS 和 Linux 应用。
 - **语言**：以十种语言保持界面和本帮助网站内容最新。
 - **新功能**，例如[任务](missions.md)、[远程控制](remote-control.md)和[历史记录搜索](history.md)背后的工作。
-
-长期目标是让 CodeNomad 的开发由使用它的个人和公司资助。
 
 ## 资助政策 {#policy}
 

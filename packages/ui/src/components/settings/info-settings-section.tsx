@@ -14,6 +14,7 @@ import { helpUrl } from "../../lib/help-url"
 import { buildBugReportUrl, currentBugReportTemplateStatus, readBugReportTemplateStatus } from "../../lib/bug-report"
 import { openCodeSetupStatus, refreshOpenCodeSetup } from "../../stores/opencode-setup"
 import { describeClientOs, readClientOsHints, type ClientNavigator } from "./client-os"
+import { SettingsInfoTip } from "./settings-info-tip"
 import { buildBugReportEnvironment, buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode, getServerOperatingSystem } from "./info-settings-diagnostics"
 
 function downloadTextFile(filename: string, text: string) {
@@ -202,7 +203,6 @@ export const InfoSettingsSection: Component = () => {
             <Info class="settings-card-heading-icon" />
             <div>
               <h3 class="settings-card-title">{t("settings.section.info.title")}</h3>
-              <p class="settings-card-subtitle">{t("settings.section.info.subtitle")}</p>
             </div>
           </div>
         </div>
@@ -245,7 +245,6 @@ export const InfoSettingsSection: Component = () => {
         <div class="settings-card-header">
           <div>
             <h3 class="settings-card-title">{t("settings.info.updates.title")}</h3>
-            <p class="settings-card-subtitle">{t("settings.info.updates.subtitle")}</p>
           </div>
         </div>
 
@@ -295,13 +294,15 @@ export const InfoSettingsSection: Component = () => {
 
         <div class="settings-info-grid">
           <div class="settings-info-row">
-            <label class="settings-info-label" for="settings-update-feed">{t("settings.info.updates.feed")}</label>
+            <div class="settings-info-label">
+              <label for="settings-update-feed">{t("settings.info.updates.feed")}</label>
+              <SettingsInfoTip text={t("settings.info.updates.feed.help")} help={{ page: "updates", anchor: "feed" }} />
+            </div>
             <select
               id="settings-update-feed"
               class="selector-input w-full max-w-xs"
               value={meta()?.updateFeed ?? ""}
               disabled={!meta()?.updateFeed || feedSaving()}
-              aria-describedby="settings-update-feed-help"
               onChange={(event) => void handleFeedChange(event.currentTarget.value as UpdateFeed)}
             >
               <option value="stable">{t("settings.info.updates.feed.stable")}</option>
@@ -309,7 +310,6 @@ export const InfoSettingsSection: Component = () => {
             </select>
           </div>
         </div>
-        <p id="settings-update-feed-help" class="settings-help-text">{t("settings.info.updates.feed.help")}</p>
         <Show when={feedSaveFailed()}>
           <div class="settings-error-message" role="alert">{t("settings.info.updates.feed.saveFailed")}</div>
         </Show>
@@ -319,7 +319,6 @@ export const InfoSettingsSection: Component = () => {
         <div class="settings-card-header">
           <div>
             <h3 class="settings-card-title">{t("settings.info.support.title")}</h3>
-            <p class="settings-card-subtitle">{t("settings.info.support.subtitle")}</p>
           </div>
         </div>
 
@@ -337,7 +336,6 @@ export const InfoSettingsSection: Component = () => {
         <div class="settings-card-header">
           <div>
             <h3 class="settings-card-title">{t("settings.info.diagnostics.title")}</h3>
-            <p class="settings-card-subtitle">{t("settings.info.diagnostics.subtitle")}</p>
           </div>
         </div>
 
@@ -384,7 +382,6 @@ export const InfoSettingsSection: Component = () => {
             <Network class="settings-card-heading-icon" />
             <div>
               <h3 class="settings-card-title">{t("settings.info.connectivity.title")}</h3>
-              <p class="settings-card-subtitle">{t("settings.info.connectivity.subtitle")}</p>
             </div>
           </div>
         </div>

@@ -40,7 +40,7 @@ export function MissionOverviewDetails(props: {
   const cleanups = () => props.recurrence ? [] : missionStore.state(props.instanceId).cleanups ?? []
   return <div class="mission-overview-details">
     <Show when={props.mission.status === "active" && props.mission.reports.some(report => report.notificationStatus === "pending" && report.delivery !== "native-return")}>
-      <p role="status">{t("missions.control.report.notificationPending")}</p>
+      <p role="status">{t("missions.control.report.notification.pending")}</p>
     </Show>
     <Show when={history().length || props.mission.panelCollections?.history?.total}>
       <details class="mission-report-technical" open={historyOpen()} onToggle={event => {

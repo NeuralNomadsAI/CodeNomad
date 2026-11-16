@@ -1,8 +1,8 @@
 export const logMessages = {
   "settings.opencode.logs.title": "OpenCode logs",
   "settings.opencode.logs.open": "View OpenCode logs",
-  "settings.opencode.logs.info": "Global logs on the selected OpenCode host. They may contain private data. Opening reads the last 128 KiB; Refresh reads again.",
-  "settings.opencode.logs.failed": "Cannot read OpenCode logs. Check the executable and file access, then refresh.",
+  "settings.opencode.logs.info": "Global logs on the selected OpenCode host. They may contain private data.",
+  "settings.opencode.logs.failed": "Check the executable and file access, then refresh.",
   "settings.opencode.logs.empty": "The log is empty.",
   "settings.opencode.logs.truncated": "Showing the end of the log (128 KiB maximum).",
   "logsView.title": "Server Logs",

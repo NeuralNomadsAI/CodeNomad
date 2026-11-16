@@ -54,7 +54,7 @@ Installieren Sie unter Windows [Git for Windows](https://gitforwindows.org/) mit
 
 Beenden Sie nach einer Änderung von `PATH` die Desktop-App vollständig und starten Sie sie neu, oder starten Sie das eigenständige Backend unter dem vorgesehenen Konto neu. Ein Browser-Neuladen aktualisiert die Backend-Umgebung nicht. Nur innerhalb von WSL verfügbares Git erfüllt die Git-Anforderung eines Windows-Backends nicht.
 
-Ohne Git können Sie weiterhin einen physischen Ordner öffnen und verzeichnisgebundene Unterhaltungen führen, einschließlich einer Bitte an den Agenten um Installationshilfe. Repository-/Worktree-Vorgänge bleiben nicht verfügbar; der Sitzungszugriff bleibt auf genau diesen Ordner begrenzt. CodeNomad informiert den Agenten vor Prompts/benutzerdefinierten Befehlen über die Git-Verfügbarkeit im Backend und entfernt diesen Hinweis nach der Wiederherstellung. Der Ausführungshost des Agenten kann vom Backend-Host abweichen: Installieren Sie Git für das Backend, nicht nur für die Shell des Agenten.
+Ohne Git können Sie weiterhin einen physischen Ordner öffnen und verzeichnisgebundene Unterhaltungen führen, einschließlich einer Bitte an den Agenten um Installationshilfe. Repository-/Worktree-Vorgänge bleiben nicht verfügbar; der Sitzungszugriff bleibt auf genau diesen Ordner begrenzt. Der Ausführungshost des Agenten kann vom Backend-Host abweichen: Installieren Sie Git für das Backend, nicht nur für die Shell des Agenten.
 
 ## OpenCode beim ersten Start auswählen {#first-launch}
 

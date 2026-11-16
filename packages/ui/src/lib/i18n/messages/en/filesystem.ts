@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "Browse folders under the configured workspace root.",
   "directoryBrowser.close": "Close",
   "directoryBrowser.currentFolder": "Select folder or enter path",
   "directoryBrowser.currentFolder.inputAriaLabel": "Folder path",

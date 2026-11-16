@@ -1,7 +1,5 @@
 # CodeNomad'i destekleyin
 
-CodeNomad ücretsiz ve açık kaynaklıdır; gönüllüler tarafından sürdürülür. Sponsorluk, onu düzeltmek, yayımlamak ve iyileştirmek için gereken zamanı finanse eder.
-
 ## Neden CodeNomad'e sponsor olunmalı {#why}
 
 CodeNomad, [MIT lisansı](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) altında yayımlanır; indirmek ve kullanmak ücretsizdir. Pascal André ve Shantur Rathore, topluluğun katkılarıyla onu kendi boş zamanlarında sürdürür. OpenCode bağımsız olarak güncellenir; bu yüzden CodeNomad, herhangi bir yeni özellikten önce yalnızca uyumlu kalmak için bile düzenli çalışma gerektirir.
@@ -12,8 +10,6 @@ CodeNomad, [MIT lisansı](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/L
 - **Sürümler**: Windows, macOS ve Linux uygulamalarını derlemek, test etmek ve yayımlamak.
 - **Diller**: arayüzü ve bu yardım sitesini on dilde güncel tutmak.
 - **Yeni özellikler**, örneğin [Görevler](missions.md), [Uzaktan Kontrol](remote-control.md) ve [geçmiş araması](history.md) arkasındaki çalışma.
-
-Uzun vadeli hedef, CodeNomad'in geliştirilmesinin onu kullanan kişiler ve şirketler tarafından finanse edilmesidir.
 
 ## Finansman politikası {#policy}
 

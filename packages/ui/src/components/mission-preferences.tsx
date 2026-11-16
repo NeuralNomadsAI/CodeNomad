@@ -95,7 +95,8 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     commit(() => [], true); refocus(() => scopeSelect)
   }
   return <div class="mission-preferences">
-    <header><h4 title={t("missions.defaults.hint")}>{t("missions.defaults.title")}</h4></header>
+    <header><div class="flex items-center gap-2"><h4>{t("missions.defaults.title")}</h4>
+      <SettingsInfoTip text={t("missions.defaults.hint")} help={{ page: "missions", anchor: "agents-models" }} /></div></header>
     <Show when={!config.isUiConfigLoaded() && !writing()}>
       <p role={config.uiConfigLoadFailed() ? "alert" : "status"}>{t(config.uiConfigLoadFailed() ? "missions.defaults.unavailable" : "missions.defaults.loading")}</p>
       <Show when={config.uiConfigLoadFailed()}><div class="mission-preferences-actions">
@@ -109,7 +110,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
         <button type="button" class="window-action" aria-label={t("missions.defaults.reload")} disabled={!props.active() || reloading()} onClick={() => void reload()}>{t("missions.preferences.reload")}</button>
       </div>
     </Show>
-    <label class="mission-preferences-scope"><span>{t("missions.defaults.scope")}<SettingsInfoTip text={t("missions.defaults.priority")} /></span>
+    <label class="mission-preferences-scope"><span>{t("missions.defaults.scope")}</span>
       <select ref={scopeSelect} aria-label={t("missions.defaults.scope")} value={template()} disabled={disabled()}
       onChange={event => setTemplate(event.currentTarget.value as MissionDefaultScope)}>
       <option value="all">{t("missions.defaults.allPlaybooks")}</option>

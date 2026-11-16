@@ -137,7 +137,7 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry.register({
       id: "close-instance",
       label: () => tGlobal("commands.closeInstance.label"),
-      description: () => tGlobal("commands.closeInstance.description"),
+      description: "",
       category: "Instance",
       keywords: () => splitKeywords("commands.closeInstance.keywords"),
       shortcutId: "close-instance",
@@ -187,7 +187,7 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry.register({
       id: "instance-next",
       label: () => tGlobal("commands.nextInstance.label"),
-      description: () => tGlobal("commands.nextInstance.description"),
+      description: "",
       category: "Instance",
       keywords: () => splitKeywords("commands.nextInstance.keywords"),
       shortcutId: "instance-next",
@@ -197,7 +197,7 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry.register({
       id: "instance-prev",
       label: () => tGlobal("commands.previousInstance.label"),
-      description: () => tGlobal("commands.previousInstance.description"),
+      description: "",
       category: "Instance",
       keywords: () => splitKeywords("commands.previousInstance.keywords"),
       shortcutId: "instance-prev",
@@ -261,7 +261,7 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry.register({
       id: "session-next",
       label: () => tGlobal("commands.nextSession.label"),
-      description: () => tGlobal("commands.nextSession.description"),
+      description: "",
       category: "Session",
       keywords: () => splitKeywords("commands.nextSession.keywords"),
       shortcutId: "session-next",
@@ -286,7 +286,7 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry.register({
       id: "session-prev",
       label: () => tGlobal("commands.previousSession.label"),
-      description: () => tGlobal("commands.previousSession.description"),
+      description: "",
       category: "Session",
       keywords: () => splitKeywords("commands.previousSession.keywords"),
       shortcutId: "session-prev",
@@ -313,7 +313,7 @@ export function useCommands(options: UseCommandsOptions) {
       commandRegistry.register({
         id,
         label: () => tGlobal(`commands.${key}.label`),
-        description: () => tGlobal(`commands.${key}.description`),
+        description: "",
         category: "Session",
         keywords: () => splitKeywords(`commands.${key}.keywords`),
         shortcutId: id,
@@ -540,7 +540,7 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry.register({
       id: "open-model-selector",
       label: () => tGlobal("commands.openModelSelector.label"),
-      description: () => tGlobal("commands.openModelSelector.description"),
+      description: "",
       category: "Agent & Model",
       keywords: () => splitKeywords("commands.openModelSelector.keywords"),
       shortcutId: "focus-model",
@@ -568,7 +568,7 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry.register({
       id: "open-agent-selector",
       label: () => tGlobal("commands.openAgentSelector.label"),
-      description: () => tGlobal("commands.openAgentSelector.description"),
+      description: "",
       category: "Agent & Model",
       keywords: () => splitKeywords("commands.openAgentSelector.keywords"),
       shortcutId: "open-agent-selector",
@@ -582,7 +582,7 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry.register({
       id: "clear-input",
       label: () => tGlobal("commands.clearInput.label"),
-      description: () => tGlobal("commands.clearInput.description"),
+      description: "",
       category: "Input & Focus",
       keywords: () => splitKeywords("commands.clearInput.keywords"),
       shortcutId: "clear-input",

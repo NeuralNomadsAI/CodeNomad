@@ -248,7 +248,7 @@ test("P3 transient disconnect and failed reconnect keep explicitly stale totals 
     await page.evaluate(() => (window as any).fixture.transport("disconnected"))
     assert.equal(await page.locator(".usage-metrics").count(), 1, "disconnect keeps last known owner's totals")
     assert.equal(await page.locator("meter").count(), 2)
-    await page.getByText("Previous saved statistics · awaiting refresh", { exact: true }).waitFor()
+    await page.getByText("Previous statistics · awaiting refresh", { exact: true }).waitFor()
     await page.evaluate(() => { (window as any).fixture.fail(); (window as any).fixture.connection("connected", 2) })
     await page.clock.runFor(100)
     await page.getByRole("alert").waitFor()
@@ -328,7 +328,7 @@ test("a new Preferences renderer/backend restores totals and charts before a two
     const total = warm.locator(".usage-metrics > div").filter({ has: warm.getByText("Steps", { exact: true }) }).locator("dd")
     assert.equal(await total.innerText(), "42")
     assert.equal(await warm.locator("meter").count(), 1)
-    await warm.getByText("Previous saved statistics · awaiting refresh", { exact: true }).waitFor()
+    await warm.getByText("Previous statistics · awaiting refresh", { exact: true }).waitFor()
     await warm.waitForFunction(() => [...document.querySelectorAll(".usage-metrics dt")].find(el => el.textContent === "Steps")?.nextElementSibling?.textContent === "99")
     fail = true
     await warm.getByRole("button", { name: "Refresh", exact: true }).click()

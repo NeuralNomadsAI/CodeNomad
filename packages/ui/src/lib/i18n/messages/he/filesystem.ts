@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "עיון בתיקיות תחת שורש סביבת העבודה המוגדר.",
   "directoryBrowser.close": "סגור",
   "directoryBrowser.currentFolder": "בחר תיקייה או הזן נתיב",
   "directoryBrowser.currentFolder.inputAriaLabel": "נתיב התיקייה",
