@@ -1,15 +1,14 @@
 # Apoyar a CodeNomad
 
-## Por qué patrocinar CodeNomad {#why}
+{{funding}}
 
-CodeNomad se publica bajo la [licencia MIT](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) y no cuesta nada descargarlo ni usarlo. Pascal André y Shantur Rathore lo mantienen en su tiempo libre, con contribuciones de la comunidad. OpenCode se actualiza de forma independiente, así que CodeNomad necesita trabajo regular solo para seguir siendo compatible, antes de cualquier función nueva.
+CodeNomad es libre y de código abierto, bajo la [licencia MIT](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE). Trabajo en él a tiempo completo, sin ninguna empresa ni inversores detrás. Shantur Rathore creó CodeNomad; hoy soy yo quien lo desarrolla y mantiene, con los comentarios, los informes de errores y las contribuciones de la comunidad.
 
-## Qué financia el patrocinio {#how-it-helps}
+OpenCode avanza rápido, así que buena parte de mi tiempo se dedica a mantener CodeNomad compatible, probado y publicado en Windows, macOS y Linux, además de las funciones nuevas.
 
-- **Mantenimiento**: corregir los errores informados y mantener CodeNomad compatible con las nuevas versiones de OpenCode.
-- **Versiones**: compilar, probar y publicar las aplicaciones para Windows, macOS y Linux.
-- **Idiomas**: mantener al día la interfaz y este sitio de ayuda en diez idiomas.
-- **Funciones nuevas**, como el trabajo detrás de [Misiones](missions.md), [Control remoto](remote-control.md) y la [búsqueda en el historial](history.md).
+El patrocinio es lo que me permite seguir trabajando en él a tiempo completo. Si CodeNomad te ahorra tiempo, patrocinarlo es la forma más directa de que siga adelante.
+
+— Pascal André, mantenedor
 
 ## Política de financiación {#policy}
 
@@ -17,13 +16,7 @@ CodeNomad se publica bajo la [licencia MIT](https://github.com/NeuralNomadsAI/Co
 - Los patrocinadores reciben el mismo CodeNomad que todos los demás. No hay edición de pago ni compilación exclusiva para patrocinadores.
 - Los informes de errores y las solicitudes de funciones se atienden según sus méritos, patrocines o no.
 - Patrocinar nunca es obligatorio para descargar, usar o actualizar CodeNomad.
-- Cada canal indica quién recibe el dinero. El pago se realiza en el propio sitio del canal; este sitio de ayuda nunca ve tus datos de pago.
-
-## Patrocinar {#channels}
-
-La página de cada canal te permite elegir el importe y la frecuencia de tu contribución.
-
-{{funding}}
+- Todo el patrocinio es para Pascal André. El pago se realiza en el propio sitio del canal; este sitio de ayuda nunca ve tus datos de pago.
 
 ## Otras formas de ayudar {#other-ways}
 

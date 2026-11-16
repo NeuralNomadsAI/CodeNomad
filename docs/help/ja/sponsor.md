@@ -1,15 +1,14 @@
 # CodeNomad を支援する
 
-## CodeNomad を支援する理由 {#why}
+{{funding}}
 
-CodeNomad は [MIT ライセンス](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE)で公開されており、ダウンロードも利用も無料です。Pascal André と Shantur Rathore が、コミュニティからの貢献を受けながら自分の時間で保守しています。OpenCode は独立して更新されるため、新機能以前に、互換性を保つだけでも CodeNomad には継続的な作業が必要です。
+CodeNomad は [MIT ライセンス](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE)の無料のオープンソースソフトウェアです。私は企業や投資家の後ろ盾なしに、フルタイムで CodeNomad の開発に取り組んでいます。CodeNomad を作ったのは Shantur Rathore で、現在はコミュニティからのフィードバック、不具合報告、貢献に支えられながら、私が開発と保守を担っています。
 
-## 支援金の使い道 {#how-it-helps}
+OpenCode は変化が速いため、新機能の開発と並行して、CodeNomad の互換性を保ち、テストし、Windows、macOS、Linux 向けにリリースする作業に多くの時間を使っています。
 
-- **保守**：報告された不具合の修正と、新しい OpenCode バージョンとの互換性の維持。
-- **リリース**：Windows、macOS、Linux 向けアプリのビルド、テスト、公開。
-- **言語**：インターフェースとこのヘルプサイトを 10 言語で最新に保つこと。
-- **新機能**：[ミッション](missions.md)、[リモートコントロール](remote-control.md)、[履歴検索](history.md)を支えた作業など。
+フルタイムで開発を続けられるのは、支援があってこそです。CodeNomad で時間を節約できているなら、スポンサーになることが開発を続けるためのいちばん直接的な方法です。
+
+— Pascal André（メンテナー）
 
 ## 資金に関する方針 {#policy}
 
@@ -17,13 +16,7 @@ CodeNomad は [MIT ライセンス](https://github.com/NeuralNomadsAI/CodeNomad/
 - スポンサーが使う CodeNomad は、ほかの全員と同じものです。有料版やスポンサー限定ビルドはありません。
 - 不具合報告や機能要望は、支援の有無にかかわらず、その内容に基づいて扱われます。
 - CodeNomad のダウンロード、利用、更新に支援が必要になることはありません。
-- 各チャネルには、お金を受け取る人が明記されています。支払いは各チャネル自身のサイトで行われ、このヘルプサイトが支払い情報を目にすることはありません。
-
-## スポンサーになる {#channels}
-
-各チャネルのページで、金額と支援の頻度を選べます。
-
-{{funding}}
+- 支援はすべて Pascal André が受け取ります。支払いは各チャネル自身のサイトで行われ、このヘルプサイトが支払い情報を目にすることはありません。
 
 ## その他の協力方法 {#other-ways}
 

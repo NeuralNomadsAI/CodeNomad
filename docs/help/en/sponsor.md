@@ -1,15 +1,14 @@
 # Support CodeNomad
 
-## Why sponsor CodeNomad {#why}
+{{funding}}
 
-CodeNomad is released under the [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) and costs nothing to download or use. Pascal André and Shantur Rathore maintain it in their own time, with contributions from the community. OpenCode is updated independently, so CodeNomad needs regular work just to stay compatible, before any new feature.
+CodeNomad is free and open source under the [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE). I work on it full time, with no company or investors behind it. Shantur Rathore created CodeNomad; I now develop and maintain it, with the community's feedback, bug reports and contributions.
 
-## What sponsorship pays for {#how-it-helps}
+OpenCode moves fast, so much of my time goes into keeping CodeNomad compatible, tested and released on Windows, macOS and Linux, alongside new features.
 
-- **Maintenance**: fixing reported bugs and keeping CodeNomad compatible with new OpenCode versions.
-- **Releases**: building, testing and publishing the Windows, macOS and Linux apps.
-- **Languages**: keeping the interface and this help site current in ten languages.
-- **New features**, like the work behind [Missions](missions.md), [Remote Control](remote-control.md) and [history search](history.md).
+Sponsorship is what lets me keep working on it full time. If CodeNomad saves you time, sponsoring is the most direct way to keep it going.
+
+— Pascal André, maintainer
 
 ## Funding policy {#policy}
 
@@ -17,13 +16,7 @@ CodeNomad is released under the [MIT license](https://github.com/NeuralNomadsAI/
 - Sponsors get the same CodeNomad as everyone else. There is no paid edition and no sponsor-only build.
 - Bug reports and feature requests are handled on their merits, whether or not you sponsor.
 - Sponsoring is never required to download, use or update CodeNomad.
-- Each channel names who receives the money. Payment happens on the channel's own site; this help site never sees your payment details.
-
-## Sponsor {#channels}
-
-Each channel's page lets you choose the amount and how often you contribute.
-
-{{funding}}
+- All sponsorship goes to Pascal André. Payment happens on the channel's own site; this help site never sees your payment details.
 
 ## Other ways to help {#other-ways}
 

@@ -1,15 +1,14 @@
 # CodeNomad'i destekleyin
 
-## Neden CodeNomad'e sponsor olunmalı {#why}
+{{funding}}
 
-CodeNomad, [MIT lisansı](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) altında yayımlanır; indirmek ve kullanmak ücretsizdir. Pascal André ve Shantur Rathore, topluluğun katkılarıyla onu kendi boş zamanlarında sürdürür. OpenCode bağımsız olarak güncellenir; bu yüzden CodeNomad, herhangi bir yeni özellikten önce yalnızca uyumlu kalmak için bile düzenli çalışma gerektirir.
+CodeNomad, [MIT lisansı](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) altında ücretsiz ve açık kaynaklıdır. Arkamda bir şirket ya da yatırımcı olmadan, tam zamanlı olarak CodeNomad üzerinde çalışıyorum. CodeNomad'i Shantur Rathore oluşturdu; bugün topluluğun geri bildirimleri, hata raporları ve katkılarıyla onu ben geliştiriyor ve sürdürüyorum.
 
-## Sponsorluk neleri finanse eder {#how-it-helps}
+OpenCode hızlı ilerliyor; bu yüzden zamanımın büyük kısmı, yeni özelliklerin yanı sıra CodeNomad'i uyumlu, test edilmiş ve Windows, macOS ve Linux için yayımlanmış tutmaya gidiyor.
 
-- **Bakım**: bildirilen hataları düzeltmek ve CodeNomad'i yeni OpenCode sürümleriyle uyumlu tutmak.
-- **Sürümler**: Windows, macOS ve Linux uygulamalarını derlemek, test etmek ve yayımlamak.
-- **Diller**: arayüzü ve bu yardım sitesini on dilde güncel tutmak.
-- **Yeni özellikler**, örneğin [Görevler](missions.md), [Uzaktan Kontrol](remote-control.md) ve [geçmiş araması](history.md) arkasındaki çalışma.
+Tam zamanlı çalışmaya devam etmemi sağlayan şey sponsorluktur. CodeNomad size zaman kazandırıyorsa, sponsor olmak onun sürmesini sağlamanın en doğrudan yoludur.
+
+— Pascal André, CodeNomad'in bakımcısı
 
 ## Finansman politikası {#policy}
 
@@ -17,13 +16,7 @@ CodeNomad, [MIT lisansı](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/L
 - Sponsorlar herkesle aynı CodeNomad'i alır. Ücretli bir sürüm veya yalnızca sponsorlara özel bir derleme yoktur.
 - Hata raporları ve özellik istekleri, sponsor olsanız da olmasanız da kendi değerlerine göre ele alınır.
 - CodeNomad'i indirmek, kullanmak veya güncellemek için sponsorluk asla gerekmez.
-- Her kanal parayı kimin aldığını belirtir. Ödeme kanalın kendi sitesinde gerçekleşir; bu yardım sitesi ödeme bilgilerinizi asla görmez.
-
-## Sponsor olun {#channels}
-
-Her kanalın sayfası, tutarı ve ne sıklıkla katkıda bulunacağınızı seçmenizi sağlar.
-
-{{funding}}
+- Tüm sponsorluk Pascal André'ye gider. Ödeme kanalın kendi sitesinde gerçekleşir; bu yardım sitesi ödeme bilgilerinizi asla görmez.
 
 ## Yardım etmenin diğer yolları {#other-ways}
 

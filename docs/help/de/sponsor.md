@@ -1,15 +1,14 @@
 # CodeNomad unterstützen
 
-## Warum CodeNomad sponsern {#why}
+{{funding}}
 
-CodeNomad steht unter der [MIT-Lizenz](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) und ist kostenlos herunterzuladen und zu nutzen. Pascal André und Shantur Rathore pflegen es in ihrer Freizeit, mit Beiträgen aus der Community. OpenCode wird unabhängig aktualisiert, daher braucht CodeNomad schon für die Kompatibilität regelmäßige Arbeit, noch vor jeder neuen Funktion.
+CodeNomad ist freie Open-Source-Software unter der [MIT-Lizenz](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE). Ich arbeite in Vollzeit daran, ohne Firma oder Investoren im Rücken. Shantur Rathore hat CodeNomad geschaffen; heute entwickle und pflege ich es, mit dem Feedback, den Fehlerberichten und den Beiträgen der Community.
 
-## Was Sponsoring finanziert {#how-it-helps}
+OpenCode entwickelt sich schnell. Neben neuen Funktionen verbringe ich deshalb viel Zeit damit, CodeNomad kompatibel zu halten, zu testen und für Windows, macOS und Linux zu veröffentlichen.
 
-- **Wartung**: gemeldete Fehler beheben und CodeNomad mit neuen OpenCode-Versionen kompatibel halten.
-- **Releases**: die Apps für Windows, macOS und Linux bauen, testen und veröffentlichen.
-- **Sprachen**: die Oberfläche und diese Hilfe in zehn Sprachen aktuell halten.
-- **Neue Funktionen**, etwa die Arbeit hinter [Missionen](missions.md), [Fernsteuerung](remote-control.md) und der [Verlaufssuche](history.md).
+Sponsoring ermöglicht es mir, weiter in Vollzeit daran zu arbeiten. Wenn CodeNomad Ihnen Zeit spart, ist ein Sponsoring der direkteste Weg, es am Laufen zu halten.
+
+— Pascal André, Maintainer
 
 ## Finanzierungsgrundsätze {#policy}
 
@@ -17,13 +16,7 @@ CodeNomad steht unter der [MIT-Lizenz](https://github.com/NeuralNomadsAI/CodeNom
 - Sponsoren erhalten dasselbe CodeNomad wie alle anderen. Es gibt keine kostenpflichtige Edition und keinen Build nur für Sponsoren.
 - Fehlerberichte und Funktionswünsche werden nach ihrer Sache beurteilt, ob Sie sponsern oder nicht.
 - Sponsoring ist nie Voraussetzung, um CodeNomad herunterzuladen, zu nutzen oder zu aktualisieren.
-- Jeder Kanal nennt, wer das Geld erhält. Die Zahlung erfolgt auf der Website des jeweiligen Kanals; diese Hilfe sieht Ihre Zahlungsdaten nie.
-
-## Sponsern {#channels}
-
-Auf der Seite jedes Kanals wählen Sie den Betrag und wie oft Sie beitragen.
-
-{{funding}}
+- Das gesamte Sponsoring geht an Pascal André. Die Zahlung erfolgt auf der Website des jeweiligen Kanals; diese Hilfe sieht Ihre Zahlungsdaten nie.
 
 ## Weitere Möglichkeiten zu helfen {#other-ways}
 

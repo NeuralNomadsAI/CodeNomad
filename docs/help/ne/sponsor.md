@@ -1,15 +1,14 @@
 # CodeNomad लाई आर्थिक सहयोग गर्नुहोस्
 
-## CodeNomad लाई किन प्रायोजन गर्ने {#why}
+{{funding}}
 
-CodeNomad [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) अन्तर्गत प्रकाशित छ र डाउनलोड वा प्रयोग गर्न केही पनि लाग्दैन। Pascal André र Shantur Rathore ले समुदायको योगदानसहित आफ्नै समयमा यसलाई maintain गर्छन्। OpenCode स्वतन्त्र रूपमा update हुन्छ, त्यसैले कुनै नयाँ feature भन्दा पहिले compatible रहन मात्र पनि CodeNomad लाई नियमित काम चाहिन्छ।
+CodeNomad [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) अन्तर्गत निःशुल्क र open source छ। म कुनै कम्पनी वा लगानीकर्ताबिना पूरा समय यसमा काम गर्छु। CodeNomad Shantur Rathore ले बनाउनुभएको हो; अहिले म समुदायको प्रतिक्रिया, bug report र योगदानसहित यसको विकास र maintain गर्छु।
 
-## प्रायोजनले के खर्च बेहोर्छ {#how-it-helps}
+OpenCode छिटो बदलिन्छ, त्यसैले नयाँ feature सँगसँगै CodeNomad लाई compatible, test गरिएको र Windows, macOS तथा Linux मा release भएको राख्न मेरो धेरै समय जान्छ।
 
-- **मर्मतसम्भार**: report गरिएका bug fix गर्ने र CodeNomad लाई नयाँ OpenCode version सँग compatible राख्ने।
-- **रिलिज**: Windows, macOS र Linux एप build, test र publish गर्ने।
-- **भाषा**: interface र यो help site दस भाषामा अद्यावधिक राख्ने।
-- **नयाँ feature**, जस्तै [मिसन](missions.md), [Remote Control](remote-control.md) र [इतिहास खोज](history.md) पछाडिको काम।
+प्रायोजनले नै मलाई पूरा समय यसमा काम गरिरहन सम्भव बनाउँछ। CodeNomad ले तपाईंको समय बचाउँछ भने, प्रायोजन गर्नु यसलाई अघि बढाइराख्ने सबैभन्दा सीधा तरिका हो।
+
+— Pascal André, maintainer
 
 ## आर्थिक सहयोग नीति {#policy}
 
@@ -17,13 +16,7 @@ CodeNomad [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LIC
 - प्रायोजकले अरू सबैले पाउने उही CodeNomad पाउँछन्। कुनै paid edition वा sponsor-only build छैन।
 - तपाईं प्रायोजन गर्नुहोस् वा नगर्नुहोस्, bug report र feature request आफ्नै योग्यताका आधारमा handle गरिन्छन्।
 - CodeNomad डाउनलोड, प्रयोग वा update गर्न प्रायोजन कहिल्यै आवश्यक पर्दैन।
-- हरेक channel ले पैसा कसले पाउँछ भनेर बताउँछ। भुक्तानी channel को आफ्नै site मा हुन्छ; यो help site ले तपाईंको भुक्तानी विवरण कहिल्यै देख्दैन।
-
-## प्रायोजन गर्नुहोस् {#channels}
-
-हरेक channel को पृष्ठमा रकम र कति पटक योगदान गर्ने भन्ने रोज्न सकिन्छ।
-
-{{funding}}
+- सबै प्रायोजन Pascal André लाई जान्छ। भुक्तानी channel को आफ्नै site मा हुन्छ; यो help site ले तपाईंको भुक्तानी विवरण कहिल्यै देख्दैन।
 
 ## सहयोगका अन्य तरिका {#other-ways}
 

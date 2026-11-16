@@ -23,7 +23,10 @@ export const DIRECTIVES = new Set(["release", "download-button", "tour-video", "
 // Directives restricted to some pages; download-button also makes its page load help-download.js.
 const DIRECTIVE_PAGES = new Map([["download-button", ["download"]], ["tour-video", ["index"]], ["funding", ["sponsor", "download"]]])
 // Funding channels accepted in docs/help/funding.json: exact canonical URLs, no credentials, port, query or fragment.
-const FUNDING_URLS = [/^https:\/\/github\.com\/sponsors\/(?=[A-Za-z0-9-]{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*$/]
+const FUNDING_URLS = [
+  /^https:\/\/github\.com\/sponsors\/(?=[A-Za-z0-9-]{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*$/,
+  /^https:\/\/ko-fi\.com\/[A-Za-z0-9_]{1,50}$/,
+]
 // The home tour: a silent loop that plays only on wide screens without reduced motion; elsewhere
 // the poster image replaces it (help.css) and no video is downloaded.
 const TOUR_VIDEO = resolve(root, "docs/screenshots/codenomad-tour.mp4")

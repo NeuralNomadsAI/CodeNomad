@@ -42,6 +42,6 @@ Yalnızca bu sayfadan veya [resmî sürümlerden](https://github.com/NeuralNomad
 
 ## Geliştirmeyi destekleyin {#support-development}
 
-[CodeNomad'i destekleyin](sponsor.md) sayfası sponsorluğun neleri finanse ettiğini açıklar.
+[CodeNomad'i destekleyin](sponsor.md) sayfası sponsorluğun neden önemli olduğunu ve nasıl yürütüldüğünü açıklar.
 
 {{funding}}

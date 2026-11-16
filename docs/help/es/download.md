@@ -42,6 +42,6 @@ Descarga solo desde esta página o desde las [versiones oficiales](https://githu
 
 ## Apoyar el desarrollo {#support-development}
 
-La página [Apoyar a CodeNomad](sponsor.md) explica qué financia el patrocinio.
+La página [Apoyar a CodeNomad](sponsor.md) explica por qué importa el patrocinio y cómo se gestiona.
 
 {{funding}}

@@ -115,8 +115,9 @@ size are escaped before they fill chrome templates. Tests use the offline fixtur
 `docs/help/funding.json` (untranslated, read from this repository even with `--content`) lists
 the funding channels in display order: each entry has exactly `id` (unique kebab-case), `name`
 and `recipient` (non-empty display text, escaped) and `url`. URLs must match an allowlisted
-canonical form, currently only `https://github.com/sponsors/<login>` (a valid GitHub login,
-lowercase host, no credentials, port, query, fragment or trailing path); add a pattern to
+canonical form, currently `https://github.com/sponsors/<login>` (a valid GitHub login) and
+`https://ko-fi.com/<page>` (1-50 letters, digits or underscores), each with a lowercase host and
+no `www`, credentials, port, query, fragment or trailing path; add a pattern to
 `FUNDING_URLS` in `scripts/build-help.mjs`, with tests, before listing another platform.
 Adding a channel needs no retranslation: pages reach channels only through `{{funding}}`.
 Tests may inject channels with `buildHelp({ funding })`, validated like the file. The header
