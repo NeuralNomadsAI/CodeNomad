@@ -280,9 +280,10 @@ try {
   const invoke = async (tool, input, sessionID = coordinator.id, callID = `fixture-${tool}`) => {
     const result = JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
     if (typeof result.fixtureToolError === "string") throw new Error(result.fixtureToolError)
-    if (result.missionID === undefined) return result
+    const missionID = result.missionID ?? (result.target?.kind === "one-time" ? result.target.mission.missionID : undefined)
+    if (missionID === undefined) return result
     const { missions } = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-    const mission = missions.find(mission => mission.id === result.missionID)
+    const mission = missions.find(mission => mission.id === missionID)
     if (mission) delete mission.creationDefaults
     return { ...result, mission }
   }
@@ -319,7 +320,10 @@ try {
     await play(selected.mission)
     const prepared = await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
       caller.id, "preferences-prepare")
-    assert.deepEqual(prepared.selection, selection)
+    assert.equal(prepared.outcome, "prepared")
+    assert.equal(prepared.acknowledgement, "fresh")
+    assert.equal(prepared.target.kind, "one-time")
+    assert.deepEqual(prepared.target.mission.selection, selection)
     assert.equal("creationDefaults" in prepared.mission, false)
     const saved = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
     for (const result of [selected, prepared]) {
@@ -334,8 +338,12 @@ try {
     uiPreferences = {}
     const reads = preferenceReads
     assert.deepEqual((await invoke("inspect", { start }, caller.id, "preferences-create")).selection, selection)
-    assert.deepEqual((await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
-      caller.id, "preferences-prepare")).selection, selection)
+    const recovered = await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
+      caller.id, "preferences-prepare")
+    assert.equal(recovered.outcome, "prepared")
+    assert.equal(recovered.acknowledgement, "recovered")
+    assert.equal(recovered.target.kind, "one-time")
+    assert.deepEqual(recovered.target.mission.selection, selection)
     assert.equal(preferenceReads, reads, "Saved provenance and choices replay without consulting changed preferences")
     const finished = await invoke("report", { missionID: selected.mission.id, outcome: "completed", summary: "Preferences verified", final: true },
       caller.id, "preferences-finish")
