@@ -23,12 +23,15 @@ L’onglet sélectionné du panneau droit et le mode Fichiers sont enregistrés 
 
 1. Dans **Général**, sélectionnez **Langue** : anglais, espagnol, français, russe, japonais, chinois simplifié, hébreu, allemand, népalais ou turc.
 2. Dans **Palette de couleurs**, choisissez **Mode** : **Auto**, **Sombre** ou **Clair**. Auto suit le système d’exploitation.
-3. Choisissez une palette pour l’apparence affichée. Les sélections claire et sombre sont enregistrées indépendamment ; Auto utilise celle qui correspond.
-4. Pour des couleurs personnalisées, utilisez les échantillons et **Enregistrer** ; **Réinitialiser** restaure les couleurs d’une palette intégrée. Utilisez **Nouveau** pour nommer une palette distincte et **Supprimer** pour retirer une palette que vous avez créée.
+3. À côté de **Mode**, choisissez **Contraste** : **Auto** (par défaut) suit la préférence de contraste du système ; **Activé** renforce le contraste de toute palette ; **Désactivé** utilise le contraste normal.
+4. Choisissez une palette pour l’apparence affichée. Les sélections claire et sombre sont enregistrées indépendamment ; Auto utilise celle qui correspond.
+5. Pour des couleurs personnalisées, utilisez les échantillons et **Enregistrer** ; **Réinitialiser** restaure les couleurs d’une palette intégrée. Utilisez **Nouveau** pour nommer une palette distincte et **Supprimer** pour retirer une palette que vous avez créée.
+
+Le contraste s’applique et s’enregistre immédiatement, indépendamment d’**Enregistrer** pour les couleurs. Il adapte le rendu en conservant la palette sélectionnée, les couleurs éditables et le brouillon de conversation. Le **i** indique l’état actuel du contraste en Auto.
 
 L’interface se met à jour sans redémarrer de conversation. L’hébreu utilise une disposition de droite à gauche ; code et valeurs techniques restent lisibles dans leur propre sens. La sélection de langue change les textes d’interface, pas la langue des messages existants ou instructions d’agent. Les menus natifs du bureau passent à la langue de l’interface dès qu’une fenêtre CodeNomad est chargée.
 
-Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégrée ou réinitialisez celle modifiée. Changer de palette peut demander d’abandonner les modifications de couleur non enregistrées ; cela n’abandonne pas un brouillon de conversation.
+Si les couleurs deviennent difficiles à lire, choisissez **Contraste → Activé**. Vous pouvez aussi sélectionner une palette intégrée ou réinitialiser celle modifiée. Changer de palette peut demander d’abandonner les modifications de couleur non enregistrées ; votre brouillon de conversation est conservé.
 
 ## Garder l’ordinateur éveillé {#keep-computer-awake}
 

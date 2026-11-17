@@ -23,12 +23,15 @@ La pestaña seleccionada del panel derecho y el modo de Archivos se guardan por 
 
 1. En **General**, selecciona **Idioma**: inglés, español, francés, ruso, japonés, chino simplificado, hebreo, alemán, nepalí o turco.
 2. En **Esquema de color**, elige **Modo**: **Auto**, **Oscuro** o **Claro**. Auto sigue al sistema operativo.
-3. Elige una paleta para la apariencia mostrada. Las selecciones clara y oscura se guardan por separado; Auto usa la correspondiente.
-4. Para colores personalizados, usa las muestras y **Guardar**; **Restablecer** restaura los colores de una paleta integrada. Usa **Nuevo** para dar nombre a otra paleta y **Eliminar** para quitar una que hayas creado.
+3. Junto a **Modo**, elige **Contraste**: **Auto** (predeterminado) sigue la preferencia de contraste del sistema; **Activado** aumenta el contraste de cualquier paleta; **Desactivado** usa el contraste normal.
+4. Elige una paleta para la apariencia mostrada. Las selecciones clara y oscura se guardan por separado; Auto usa la correspondiente.
+5. Para colores personalizados, usa las muestras y **Guardar**; **Restablecer** restaura los colores de una paleta integrada. Usa **Nuevo** para dar nombre a otra paleta y **Eliminar** para quitar una que hayas creado.
+
+El contraste se aplica y guarda inmediatamente, independientemente de **Guardar** los colores. Adapta la visualización y conserva la paleta seleccionada, los colores editables y el borrador de conversación. La **i** muestra el estado actual del contraste en Auto.
 
 La interfaz se actualiza sin reiniciar una conversación. El hebreo usa disposición de derecha a izquierda; el código y los valores técnicos siguen legibles en su propia dirección. La selección de idioma cambia el texto de la interfaz, no el idioma de los mensajes existentes ni las instrucciones del agente. Los menús nativos de escritorio pasan al idioma de la interfaz en cuanto se ha cargado una ventana de CodeNomad.
 
-Si los colores se vuelven difíciles de leer, selecciona una paleta integrada o restablece la editada. Cambiar de paleta puede pedir que descartes ediciones de color sin guardar; no descarta un borrador de conversación.
+Si los colores se vuelven difíciles de leer, elige **Contraste → Activado**. También puedes seleccionar una paleta integrada o restablecer la editada. Cambiar de paleta puede pedir que descartes ediciones de color sin guardar; el borrador de conversación se conserva.
 
 ## Mantener el ordenador activo {#keep-computer-awake}
 

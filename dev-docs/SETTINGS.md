@@ -2,6 +2,8 @@
 
 ## Agent conventions
 
+- Appearance places Contrast at the inline end of the Mode row. `ui.settings.highContrast` is `auto` (default), `on` or `off`; Auto follows `prefers-contrast: more`. Initial bootstrap awaits the shared authoritative preferences load and applies the resolved palette and contrast before rendering. The control applies immediately, serializes writes independently of palette edits and reconciles failed writes through an authoritative read; its **i** reports Auto's current state and its error stays actionable. Every input sRGB channel uses `c' = clamp(pivot + (c - pivot) * 1.3, 0, 1)`, with mirrored pivots `0.5 - 0.3` for dark palettes and `0.5 + 0.3` for light palettes. Filled-button ink is chosen against the original accent, keeping it stable when switching contrast. See [PALETTE_SOURCES.md](PALETTE_SOURCES.md#contrast-curve).
+
 - `openSettingsConfigFile(id)` opens Configuration files and selects only an ID present in the editor's server catalogue. It shares `openSettingsRow`'s short-lived same-origin hint with native Preferences on Electron and Tauri. A reopened editor preserves its dirty-discard confirmation; unavailable IDs preserve the current file. The editor consumes each target once and focuses its file selector.
 
 - Settings → OpenCode's logging card opens `OpenCodeLogsAction` in the common non-modal `OutputWindow`. Read once on explicit opening and on Refresh; closing, disposal and executable selection changes abort/fence the request. Global log snapshots stay in the mounted settings reader, separate from session state. The `switch-to-info` command/shortcut opens OpenCode settings and keeps existing key overrides. Version, executable, service actions and diagnostics share this global settings scope.

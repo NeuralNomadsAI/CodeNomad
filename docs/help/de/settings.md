@@ -23,12 +23,15 @@ Der ausgewählte Tab im rechten Panel und der Dateien-Modus werden für jeden Pr
 
 1. Wählen Sie unter **Allgemein** die **Sprache**: Englisch, Spanisch, Französisch, Russisch, Japanisch, vereinfachtes Chinesisch, Hebräisch, Deutsch, Nepali oder Türkisch.
 2. Wählen Sie unter **Farbschema** den **Modus**: **Auto**, **Dunkel** oder **Hell**. Auto folgt dem Betriebssystem.
-3. Wählen Sie eine Palette für die angezeigte Darstellung. Helle und dunkle Auswahl werden getrennt gespeichert; Auto verwendet die passende.
-4. Verwenden Sie für eigene Farben die Farbfelder und **Speichern**; **Zurücksetzen** stellt die Farben einer integrierten Palette wieder her. Mit **Neu** benennen Sie eine separate Palette, mit **Löschen** entfernen Sie eine selbst erstellte.
+3. Wählen Sie neben **Modus** den **Kontrast**: **Auto** (Standard) folgt der Kontrasteinstellung des Systems; **Ein** erhöht den Kontrast jeder Palette; **Aus** verwendet normalen Kontrast.
+4. Wählen Sie eine Palette für die angezeigte Darstellung. Helle und dunkle Auswahl werden getrennt gespeichert; Auto verwendet die passende.
+5. Verwenden Sie für eigene Farben die Farbfelder und **Speichern**; **Zurücksetzen** stellt die Farben einer integrierten Palette wieder her. Mit **Neu** benennen Sie eine separate Palette, mit **Löschen** entfernen Sie eine selbst erstellte.
+
+Kontrast wird sofort angewendet und gespeichert, unabhängig vom **Speichern** der Farben. Die Darstellung wird angepasst; ausgewählte Palette, bearbeitbare Farben und Unterhaltungsentwurf bleiben erhalten. Das **i** zeigt bei Auto den aktuellen Kontrastzustand.
 
 Die Oberfläche aktualisiert sich ohne Unterhaltungsneustart. Hebräisch verwendet Rechts-nach-links-Layout; Code und technische Werte bleiben in ihrer eigenen Richtung lesbar. Die Sprachauswahl ändert Oberflächentexte, nicht die Sprache vorhandener Nachrichten oder Agentenanweisungen. Native Desktop-Menüs wechseln in die Oberflächensprache, sobald ein CodeNomad-Fenster geladen ist.
 
-Werden Farben schwer lesbar, wählen Sie eine integrierte Palette oder setzen die bearbeitete zurück. Ein Palettenwechsel kann zum Verwerfen ungespeicherter Farbänderungen auffordern; er verwirft keinen Unterhaltungsentwurf.
+Werden Farben schwer lesbar, wählen Sie **Kontrast → Ein**. Sie können auch eine integrierte Palette wählen oder die bearbeitete zurücksetzen. Ein Palettenwechsel kann zum Verwerfen ungespeicherter Farbänderungen auffordern; Ihr Unterhaltungsentwurf bleibt erhalten.
 
 ## Computer wach halten {#keep-computer-awake}
 

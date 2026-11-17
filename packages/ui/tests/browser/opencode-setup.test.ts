@@ -278,6 +278,7 @@ for (const surface of ["settings", "recovery"]) test(`${surface} configuration r
     await confirm.getByText(/cancels pending permissions and forms/).waitFor()
     await confirm.getByText(/can interrupt active work in all connected clients/).waitFor()
     assert.equal(reloads, 0)
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === "Cancel")
     await page.keyboard.press("Enter")
     await confirm.waitFor({ state: "hidden" })
     assert.equal(reloads, 0, "Cancel has initial focus")

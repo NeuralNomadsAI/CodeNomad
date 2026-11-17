@@ -7,6 +7,7 @@ import { showConfirmDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
 import { registerSettingsDirtyGuard } from "../../stores/settings-dirty-guard"
 import { observePaletteStripFit } from "./palette-strip-fit"
+import { SettingsInfoTip } from "./settings-info-tip"
 import {
   BUILT_IN_COLOR_SCHEMES,
   DEFAULT_CUSTOM_COLORS,
@@ -296,6 +297,12 @@ export const ThemeSchemeSettings: Component = () => {
   }
 
   const colorsFor = (option: PaletteOption) => editingKey() === option.key ? draftColors() : option.colors
+  const contrastInfo = createMemo(() => [
+    t("settings.appearance.contrast.info"),
+    config.highContrastPreference() === "auto"
+      ? t(theme.highContrast() ? "settings.appearance.contrast.current.on" : "settings.appearance.contrast.current.off")
+      : "",
+  ].filter(Boolean).join(" "))
 
   let workbench!: HTMLDivElement, actions!: HTMLDivElement
   const [stripStacked, setStripStacked] = createSignal(false)
@@ -308,18 +315,38 @@ export const ThemeSchemeSettings: Component = () => {
       </div>
 
       <div class="theme-scheme-list">
-        <div class="theme-scheme-mode">
-          <span>{t("settings.appearance.palette.mode")}</span>
-          <div class="theme-scheme-appearance-options" role="group" aria-label={t("settings.appearance.palette.mode")}>
-            <For each={["system", "dark", "light"] as const}>{(mode) => (
-              <button type="button" class="theme-scheme-appearance-option" disabled={saving()}
-                data-selected={config.themePreference() === mode ? "true" : "false"}
-                aria-pressed={config.themePreference() === mode}
-                onClick={() => void changeMode(mode)}
-              >{t(mode === "system" ? "settings.appearance.palette.auto" : `settings.appearance.colorScheme.custom.appearance.${mode}`)}</button>
-            )}</For>
+        <div class="theme-scheme-appearance-row">
+          <div class="theme-scheme-mode">
+            <span>{t("settings.appearance.palette.mode")}</span>
+            <div class="theme-scheme-appearance-options" role="group" aria-label={t("settings.appearance.palette.mode")}>
+              <For each={["system", "dark", "light"] as const}>{(mode) => (
+                <button type="button" class="theme-scheme-appearance-option" disabled={saving()}
+                  data-selected={config.themePreference() === mode ? "true" : "false"}
+                  aria-pressed={config.themePreference() === mode}
+                  onClick={() => void changeMode(mode)}
+                >{t(mode === "system" ? "settings.appearance.palette.auto" : `settings.appearance.colorScheme.custom.appearance.${mode}`)}</button>
+              )}</For>
+            </div>
+          </div>
+          <div class="theme-scheme-contrast">
+            <span class="theme-scheme-contrast-label">
+              {t("settings.appearance.contrast.title")}
+              <SettingsInfoTip text={contrastInfo()} />
+            </span>
+            <div class="theme-scheme-appearance-options" role="group" aria-label={t("settings.appearance.contrast.title")} aria-busy={config.highContrastSavePending()}>
+              <For each={["auto", "on", "off"] as const}>{(contrast) => (
+                <button type="button" class="theme-scheme-appearance-option"
+                  data-selected={config.highContrastPreference() === contrast ? "true" : "false"}
+                  aria-pressed={config.highContrastPreference() === contrast}
+                  onClick={() => void config.setHighContrastPreference(contrast)}
+                >{t(contrast === "auto" ? "settings.appearance.palette.auto" : `settings.appearance.contrast.${contrast}`)}</button>
+              )}</For>
+            </div>
           </div>
         </div>
+        <Show when={config.highContrastSaveFailed()}>
+          <p class="theme-scheme-warning" role="alert">{t("settings.appearance.contrast.saveError")}</p>
+        </Show>
         <div class="theme-scheme-workbench" ref={workbench} data-stacked={stripStacked() ? "true" : "false"}>
           <select
             class="selector-input theme-scheme-picker"
