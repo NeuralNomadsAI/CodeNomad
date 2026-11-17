@@ -5,6 +5,14 @@ type Renderer = { frame: HTMLIFrameElement; port: MessagePort }
 let runtime: Promise<Renderer> | undefined
 let queue: Promise<unknown> = Promise.resolve()
 let pending = 0
+export interface MermaidAppearance {
+  background: string
+  surface: string
+  secondary: string
+  text: string
+  border: string
+  error: string
+}
 
 // One opaque, network-disabled renderer per webview. Only SVG image bytes leave it.
 function startRenderer(): Promise<Renderer> {
@@ -44,11 +52,32 @@ function startRenderer(): Promise<Renderer> {
         if (event.source !== parent || event.data !== 'codenomad-mermaid' || !event.ports[0]) return;
         const port = event.ports[0];
         port.onmessage = async event => {
-          const { code, dark } = event.data;
+          const { code, dark, appearance: a } = event.data;
           try {
             mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', htmlLabels: false,
-              secure: ['secure','securityLevel','startOnLoad','maxTextSize','maxEdges','htmlLabels'],
-              maxTextSize: ${MAX_SOURCE}, maxEdges: 500, theme: dark ? 'dark' : 'default',
+              secure: ['secure','securityLevel','startOnLoad','maxTextSize','maxEdges','htmlLabels','theme','themeVariables'],
+              maxTextSize: ${MAX_SOURCE}, maxEdges: 500, theme: a ? 'base' : dark ? 'dark' : 'default',
+              ...(a ? { themeVariables: {
+                darkMode: dark, background: a.background, primaryColor: a.surface, primaryTextColor: a.text,
+                primaryBorderColor: a.border, secondaryColor: a.secondary, secondaryTextColor: a.text,
+                secondaryBorderColor: a.border, tertiaryColor: a.surface, tertiaryTextColor: a.text,
+                tertiaryBorderColor: a.border, textColor: a.text, titleColor: a.text, lineColor: a.border,
+                mainBkg: a.surface, nodeTextColor: a.text, edgeLabelBackground: a.background,
+                clusterBkg: a.secondary, clusterBorder: a.border, actorBkg: a.surface, actorTextColor: a.text,
+                actorBorder: a.border, actorLineColor: a.border, signalColor: a.text, signalTextColor: a.text,
+                labelBoxBkgColor: a.surface, labelBoxBorderColor: a.border, labelTextColor: a.text,
+                loopTextColor: a.text, noteBkgColor: a.secondary, noteTextColor: a.text, noteBorderColor: a.border,
+                activationBkgColor: a.secondary, activationBorderColor: a.border, sequenceNumberColor: a.background,
+                taskBkgColor: a.surface, taskTextColor: a.text, taskBorderColor: a.border,
+                taskTextDarkColor: a.text, taskTextLightColor: a.text, taskTextOutsideColor: a.text,
+                taskTextClickableColor: a.border,
+                activeTaskBkgColor: a.secondary, activeTaskBorderColor: a.border,
+                doneTaskBkgColor: a.secondary, doneTaskBorderColor: a.border,
+                critBkgColor: a.surface, critBorderColor: a.error, todayLineColor: a.error,
+                vertLineColor: a.border, gridColor: a.border, excludeBkgColor: a.secondary,
+                sectionBkgColor: a.surface, sectionBkgColor2: a.secondary, altSectionBkgColor: a.background,
+                sectionTitleColor: a.text
+              } } : {}),
               fontFamily: 'Arial, sans-serif', flowchart: { htmlLabels: false } });
             const { svg } = await mermaid.render('diagram', code);
             port.postMessage(svg);
@@ -63,7 +92,7 @@ function startRenderer(): Promise<Renderer> {
 }
 
 /** A bounded render; cancellation drops obsolete work without changing source text. */
-export function renderMermaid(code: string, dark: boolean, signal: AbortSignal): Promise<string> {
+export function renderMermaid(code: string, dark: boolean, signal: AbortSignal, appearance?: MermaidAppearance): Promise<string> {
   if (!code.trim() || code.length > MAX_SOURCE || pending >= 16) return Promise.reject(new Error("Mermaid limit"))
   pending++
   // ponytail: serialize Tiny's mutable renderer; separate renderer instances if throughput requires it.
@@ -86,7 +115,7 @@ export function renderMermaid(code: string, dark: boolean, signal: AbortSignal):
         if (typeof value === "string" && value.length <= MAX_SVG && value.includes("<svg")) resolve(value)
         else reject(new Error("Mermaid diagram unavailable"))
       }
-      renderer.port.postMessage({ code, dark })
+      renderer.port.postMessage({ code, dark, appearance })
     })
     signal.throwIfAborted()
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`

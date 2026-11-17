@@ -1,6 +1,10 @@
 import { DARK_IDENTITY_COLORS, LIGHT_IDENTITY_COLORS, SOFT_COLOR_SCHEME_IDS, SOFT_COLOR_SCHEMES, SOFT_SYSTEM_DARK, SOFT_SYSTEM_LIGHT } from "./soft-color-schemes.ts"
 import { classicLightSurfaces } from "./classic-light-surfaces"
 import { classicDarkSurfaces } from "./classic-dark-surfaces"
+import { channel, contrastRatio, isCanonicalHexColor, luminance, mix, textOnColor } from "./color-contrast"
+import { highContrastColors, highContrastProperties } from "./high-contrast"
+
+export { contrastRatio, isCanonicalHexColor, textOnColor } from "./color-contrast"
 
 export const COLOR_SCHEME_IDS = ["system", "light", ...SOFT_COLOR_SCHEME_IDS, "classic", "basalt", "fjord", "lichen", "velvet", "ember", "custom"] as const
 
@@ -251,9 +255,6 @@ const SCHEMES_BY_ID = Object.fromEntries(BUILT_IN_COLOR_SCHEMES.map((scheme) => 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-export const isCanonicalHexColor = (value: unknown): value is string =>
-  typeof value === "string" && /^#[0-9A-F]{6}$/.test(value)
-
 export function isColorSchemeColors(value: unknown): value is ColorSchemeColors {
   return isRecord(value) && COLOR_KEYS.every((key) => isCanonicalHexColor(value[key]))
 }
@@ -316,22 +317,6 @@ export function toColorSchemeMergePatch(preference: NormalizedColorScheme): Omit
   }
 }
 
-const channel = (color: string, offset: number) => Number.parseInt(color.slice(offset, offset + 2), 16)
-
-const luminance = (color: string) => {
-  const linear = (value: number) => {
-    const normalized = value / 255
-    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
-  }
-  return 0.2126 * linear(channel(color, 1)) + 0.7152 * linear(channel(color, 3)) + 0.0722 * linear(channel(color, 5))
-}
-
-export function contrastRatio(first: string, second: string): number {
-  if (!isCanonicalHexColor(first) || !isCanonicalHexColor(second)) return 0
-  const [bright, dark] = [luminance(first), luminance(second)].sort((a, b) => b - a)
-  return (bright + 0.05) / (dark + 0.05)
-}
-
 export function validateColorSchemeColors(value: unknown): value is ColorSchemeColors {
   if (!isColorSchemeColors(value)) return false
   const textPairs: Array<[string, string]> = [
@@ -359,18 +344,8 @@ export function validateColorSchemeColors(value: unknown): value is ColorSchemeC
   )
 }
 
-const mix = (first: string, second: string, firstWeight: number) => {
-  const mixed = [1, 3, 5].map((offset) =>
-    Math.round(channel(first, offset) * firstWeight + channel(second, offset) * (1 - firstWeight)),
-  )
-  return `#${mixed.map((value) => value.toString(16).padStart(2, "0")).join("").toUpperCase()}`
-}
-
 const alpha = (color: string, opacity: number) =>
   `rgba(${channel(color, 1)}, ${channel(color, 3)}, ${channel(color, 5)}, ${opacity})`
-
-export const textOnColor = (color: string): "#000000" | "#FFFFFF" =>
-  contrastRatio("#000000", color) >= contrastRatio("#FFFFFF", color) ? "#000000" : "#FFFFFF"
 
 const APPLIED_PROPERTIES = [
   "--surface-base",
@@ -520,33 +495,44 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
   }
 }
 
+const appliedProperties = new WeakMap<ColorSchemeTarget, string[]>()
+
 export function applyColorScheme(
   scheme: NormalizedColorScheme,
-  options: { target?: ColorSchemeTarget; systemDark?: boolean } = {},
+  options: { target?: ColorSchemeTarget; systemDark?: boolean; highContrast?: boolean; forcedColors?: boolean } = {},
 ): boolean {
   const dark = scheme.appearance === "dark" || (scheme.appearance === "system" && Boolean(options.systemDark))
   const target = options.target ?? (typeof document === "undefined" ? undefined : document.documentElement)
   if (!target) return dark
 
-  for (const property of APPLIED_PROPERTIES) target.style.removeProperty(property)
+  for (const property of new Set([...APPLIED_PROPERTIES, ...appliedProperties.get(target) ?? []])) target.style.removeProperty(property)
   target.dataset.colorScheme = scheme.id
+  const strengthened = options.highContrast === true && !options.forcedColors
+  if (strengthened) target.dataset.contrast = "more"
+  else delete target.dataset.contrast
 
   if (scheme.appearance === "system") target.removeAttribute("data-theme")
   else target.setAttribute("data-theme", dark ? "dark" : "light")
 
-  const colors = scheme.id === "system"
+  const sourceColors = scheme.id === "system"
     ? scheme.colors ?? (dark ? SYSTEM_DARK_COLOR_SCHEME_COLORS : SYSTEM_LIGHT_COLOR_SCHEME_COLORS)
     : scheme.colors
-  if (colors) {
-    for (const [property, value] of Object.entries(derivedProperties(colors, dark))) {
-      target.style.setProperty(property, value)
+  if (sourceColors) {
+    const colors = strengthened ? highContrastColors(sourceColors, dark) : sourceColors
+    let properties: Record<string, string> = {
+      ...derivedProperties(colors, dark),
+      ...(scheme.id === "light" ? classicLightSurfaces(colors) : {}),
+      ...(scheme.id === "classic" ? classicDarkSurfaces(colors) : {}),
     }
-    if (scheme.id === "light") {
-      for (const [property, value] of Object.entries(classicLightSurfaces(colors))) target.style.setProperty(property, value)
-    }
-    if (scheme.id === "classic") {
-      for (const [property, value] of Object.entries(classicDarkSurfaces(colors))) target.style.setProperty(property, value)
-    }
+    properties["--text-on-accent-hover"] = textOnColor(properties["--accent-hover"])
+    if (strengthened) properties = highContrastProperties(properties, { dark,
+      normalProperties: { ...derivedProperties(sourceColors, dark),
+        ...(scheme.id === "light" ? classicLightSurfaces(sourceColors) : {}),
+        ...(scheme.id === "classic" ? classicDarkSurfaces(sourceColors) : {}),
+      },
+    })
+    for (const [property, value] of Object.entries(properties)) target.style.setProperty(property, value)
+    appliedProperties.set(target, Object.keys(properties))
   }
 
   return dark

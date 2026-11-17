@@ -11,6 +11,7 @@ import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { observeHeaderFixture } from "./header-fixture-diagnostics"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { checkExtensionTheme, ignoreExtensionPaletteObserver } from "./fixtures/panel-extension-theme-check"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import Fastify from "fastify"
@@ -397,6 +398,21 @@ test("Extensions is separated, collapsed by default and combines installed/onlin
     await view.evaluate(() => (window as any).extensionFixture.active(false))
     await popup.waitFor({ state: "detached" })
   } finally { await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+})
+
+test("API2/3 republish six effective colors on contrast and forced system changes without remounting", async () => {
+  for (const apiVersion of [2, 3]) {
+    const pkg = await readPanelExtensionArchive(fixtureArchive(example, { apiVersion, permissions: ["session.context",
+      apiVersion === 2 ? "session.assets.read" : "repository.workItems.read"] }))
+    await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
+    const view = await page()
+    try {
+      await ignoreExtensionPaletteObserver(view)
+      await view.getByRole("tab", { name: "Session example", exact: true }).click()
+      await view.frameLocator("iframe[title='Session example']").locator("#context").filter({ hasText: "session-a" }).waitFor()
+      await checkExtensionTheme(view, "extensionFixture")
+    } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  }
 })
 
 test("API2 grants only current-session asset pages and bounded thumbnails; session switches and revocation fence late reads", async () => {
