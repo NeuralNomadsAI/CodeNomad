@@ -232,6 +232,7 @@ test("badges use a frozen server frontier, prefer New and advance only after suc
     const summary = card(page).locator("details.agent-memory-entries > summary")
     await summary.getByText("New", { exact: true }).waitFor()
     await summary.getByText("Modified", { exact: true }).waitFor()
+    assert.match(await summary.innerText(), /2\/200/)
     assert.equal(await card(page).locator(".agent-memory-entry").count(), 0)
     assert.equal(await page.evaluate(() => Number(localStorage.getItem("codenomad.memory.seen.project-a"))), Date.parse("2026-11-01T00:00:00Z"))
     await unfold(page)

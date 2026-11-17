@@ -89,7 +89,6 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
           event.currentTarget.value = review.scope()
           void review.changeScope(value)
         }}><option value="global">{t("settings.memory.global")}</option><option value="project" disabled={!context()}>{t("settings.memory.project")}</option></select>
-        <Show when={review.available() && review.hasSnapshot()}><span class="agent-memory-counter">{t("settings.memory.count", { count: review.entries().length, limit: review.scope() === "global" ? 60 : 200 })}</span></Show>
         <span class="agent-memory-tidy"><button type="button" class="window-action" disabled={!canTidy()} onClick={() => void tidy()}>{t("settings.memory.tidy")}</button><SettingsInfoTip text={t("settings.memory.tidyInfo")} help={{ page: "settings", anchor: "agent-memory" }} /></span>
       </div>
       <Show when={tidyError()}><p role="alert">{t("settings.memory.tidyFailed")}</p></Show>
@@ -103,7 +102,7 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
       <Show when={review.available() && !review.loading() && !review.error() && !review.entries().length}><p role="status">{t("settings.memory.empty")}</p></Show>
       <Show when={review.available() && review.entries().length}>
         <details class="settings-disclosure agent-memory-entries" open={entriesOpen()} onToggle={event => setEntriesOpen(event.currentTarget.open)}>
-          <summary>{t("settings.memory.entries")}<For each={summaryBadges()}>{state => <span class="badge-shape agent-memory-badge">{t(`settings.memory.${state}`)}</span>}</For></summary>
+          <summary><span class="sr-only">{t("settings.memory.entries")} </span>{t("settings.memory.count", { count: review.entries().length, limit: review.scope() === "global" ? 60 : 200 })}<For each={summaryBadges()}>{state => <span class="badge-shape agent-memory-badge">{t(`settings.memory.${state}`)}</span>}</For></summary>
           {/* The rows render only while unfolded; a project holds up to 200 entries. */}
           <Show when={entriesOpen()}>
             <ul class="agent-memory-list"><For each={review.entries()}>{entry => <li>
