@@ -233,6 +233,8 @@ test("badges use a frozen server frontier, prefer New and advance only after suc
     await summary.getByText("New", { exact: true }).waitFor()
     await summary.getByText("Modified", { exact: true }).waitFor()
     assert.match(await summary.innerText(), /2\/200/)
+    // Spaces separate the badges in the summary's accessible name.
+    assert.equal(await summary.evaluate(node => node.textContent), "Entries 2/200 New Modified")
     assert.equal(await card(page).locator(".agent-memory-entry").count(), 0)
     assert.equal(await page.evaluate(() => Number(localStorage.getItem("codenomad.memory.seen.project-a"))), Date.parse("2026-11-01T00:00:00Z"))
     await unfold(page)
@@ -416,6 +418,19 @@ test("a late save cannot erase a newer draft across missing and restored reconne
     assert.equal(f.requests.filter(value => value.operation?.action === "save").length, 1)
     assert.deepEqual(f.errors, [])
   } finally { release?.(); await page.close() }
+})
+test("a dirty draft stays editable after its entry is deleted elsewhere and the list empties", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  try {
+    await open(page); await page.getByRole("button", { name: /Project A/ }).click()
+    await text(page).fill("Unsaved draft")
+    f.data["project-a"] = []
+    await page.evaluate(() => (window as any).fixture.event({ type: "memory.changed" }))
+    await page.getByRole("alert").getByText(en["settings.memory.error.conflict"], { exact: true }).waitFor()
+    assert.equal(await text(page).inputValue(), "Unsaved draft")
+    assert.equal(await card(page).locator(".agent-memory-entry").count(), 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
 })
 test("scope errors are explicit, never empty, and retained snapshots become read-only", async () => {
   const page = await browser.newPage(), f = await setup(page)

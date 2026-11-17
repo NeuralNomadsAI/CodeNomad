@@ -100,9 +100,10 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
         <button type="button" class="window-action" disabled={review.loading()} onClick={() => void (error().code === "conflict" ? review.reload() : review.load())}>{t(error().code === "conflict" ? "settings.memory.reload" : "settings.memory.retry")}</button>
       </div>}</Show>
       <Show when={review.available() && !review.loading() && !review.error() && !review.entries().length}><p role="status">{t("settings.memory.empty")}</p></Show>
-      <Show when={review.available() && review.entries().length}>
+      {/* A draft keeps the fold (and its editor) even after its entry left the list. */}
+      <Show when={review.available() && (review.entries().length || review.draft())}>
         <details class="settings-disclosure agent-memory-entries" open={entriesOpen()} onToggle={event => setEntriesOpen(event.currentTarget.open)}>
-          <summary><span class="sr-only">{t("settings.memory.entries")} </span>{t("settings.memory.count", { count: review.entries().length, limit: review.scope() === "global" ? 60 : 200 })}<For each={summaryBadges()}>{state => <span class="badge-shape agent-memory-badge">{t(`settings.memory.${state}`)}</span>}</For></summary>
+          <summary><span class="sr-only">{t("settings.memory.entries")} </span>{t("settings.memory.count", { count: review.entries().length, limit: review.scope() === "global" ? 60 : 200 })}<For each={summaryBadges()}>{state => <>{" "}<span class="badge-shape agent-memory-badge">{t(`settings.memory.${state}`)}</span></>}</For></summary>
           {/* The rows render only while unfolded; a project holds up to 200 entries. */}
           <Show when={entriesOpen()}>
             <ul class="agent-memory-list"><For each={review.entries()}>{entry => <li>
