@@ -11,14 +11,25 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
-import { readMissionProfileDefaults } from "./mission-profile-defaults"
+import { controlAgentMissionSchedule } from "./mission-agent-schedule"
+import { controlAgentMission, verifyAgentMissionControl } from "./mission-agent-control"
+import { controlAgentMissionSettings } from "./mission-agent-settings"
+import { MissionPreferenceConflictError } from "../../settings/mission-preference-condition"
+import { PluginControlsError } from "../../opencode/plugin-controls"
+import type { SubagentDepthSettings } from "../../opencode/subagent-depth-settings"
+import { z } from "zod"
+import { readAgentMissionProject } from "./mission-agent-read"
+import type { ForgeWorkItems } from "../../forge/work-items"
+import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
+import type { ScheduledPreparationDeps } from "./mission-prepare-scheduled"
+import { readMissionConfigurations, readMissionProfileDefaults } from "./mission-profile-defaults"
 import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
 import { missionRecoveryControlError, missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
-import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
+import { verifyRecurrenceRequest, type VerifyScheduleAgentCreation } from "./mission-recurrence-proof"
 import { BrowserPage } from "../../automation/browser-page"
 import type { SettingsService } from "../../settings/service"
 import type { RemoteControlManager } from "../../remote-control/manager"
@@ -33,9 +44,14 @@ interface AutomationPluginRouteDeps {
   workspaceManager: WorkspaceManager
   developerCdp: DeveloperCdp
   worktreeDeletionFence?: WorktreeDeletionFence
-  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner">>
+  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner" | "mergePatchOwner" | "configYamlPathForAuthority">>
+  subagentDepth?: Pick<SubagentDepthSettings, "read" | "update">
+  scheduleSettingsActivation?: ScheduledPreparationDeps["scheduleSettingsActivation"]
+  scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
+  verifyScheduleAgentCreation?: VerifyScheduleAgentCreation
   memory?: MemoryService
+  forge?: Pick<ForgeWorkItems, "openRepository">
 }
 
 interface DeveloperNativeStatus {
@@ -79,8 +95,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     }
     if (body?.mode === "recurrence-control-verify") {
       try {
-        return reply.send({ result: await verifyHumanRecurrenceRequest(body.command, {
+        return reply.send({ result: await verifyRecurrenceRequest(body.command, {
           auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, remoteDevices: deps.remoteDevices,
+          verifyAgentCreation: deps.verifyScheduleAgentCreation,
         }, lifetime.signal) })
       } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
@@ -111,13 +128,13 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     // subagent families; they stay below the plugin's 95 s bridge timeout.
     const commandKind = body?.command && typeof body.command === "object" && "kind" in body.command ? body.command.kind : undefined
     const preferenceProbe = body.mode === "browser-claim" && (body.purpose === "mission-preferences" || body.purpose === "mission-prepare")
-      || body.mode === "mission-input" && commandKind === "profile-defaults"
+      || body.mode === "mission-input" && (commandKind === "profile-defaults" || commandKind === "configurations" || commandKind === "settings")
     const preferenceUnavailable = () => {
       const failure = missionRecoveryControlError("mission-preferences-unavailable")
       return reply.code(503).send({ error: failure.message, code: failure.code })
     }
     const notOwner = (error: string) => reply.code(404).send({ error, ...(preferenceProbe ? { code: "mission-not-owner" } : {}) })
-    const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt"
+     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule" || commandKind === "project-control"
     const signal = body.mode === "mission-input"
       ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
 
@@ -151,18 +168,34 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     if (body.mode === "mission-input") {
       try {
         if (commandKind === "profile-defaults") return reply.send({ result: readMissionProfileDefaults(deps.settings, body.command) })
+        if (commandKind === "configurations") return reply.send({ result: readMissionConfigurations(deps.settings, body.command) })
+        if (commandKind === "settings") return reply.send({ result: await controlAgentMissionSettings(deps, body.sessionID, body.command, signal) })
         if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
         // Journal-keyed creation capability of the owning backend. Durable
         // admission does not use this bridge or gain a new native API fallback.
         const fence = deps.worktreeDeletionFence
-        const result = commandKind === "create-root"
+         const result = commandKind === "create-root"
           ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal)
-          : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal)
+          : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal,
+             { settings: deps.settings, bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation })
+             : commandKind === "project-read" ? await readAgentMissionProject(deps, body.sessionID, body.command, signal)
+             : commandKind === "project-control" ? await controlAgentMission(deps, body.sessionID, body.command, signal)
+             : commandKind === "project-control-verify" || commandKind === "project-update"
+               ? await verifyAgentMissionControl(deps, body.sessionID, body.command, signal)
+            : commandKind === "schedule" ? await controlAgentMissionSchedule({
+             workspaceManager: deps.workspaceManager, worktreeDeletionFence: fence, settings: deps.settings,
+              bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation,
+              scheduleCapability: deps.scheduleCapability,
+           }, body.sessionID, body.command, signal)
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)
           : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory)
         return reply.send({ result })
       } catch (error) {
+        if (commandKind === "settings" && (error instanceof MissionPreferenceConflictError || error instanceof PluginControlsError || error instanceof z.ZodError)) {
+          return reply.send({ result: { refused: true, code: error instanceof MissionPreferenceConflictError ? "settings-conflict"
+            : error instanceof PluginControlsError ? `settings-${error.kind}` : "settings-invalid" } })
+        }
         if (error instanceof MissionCreationHoldError) {
           return reply.code(error.code === "creation-capacity" ? 503 : 409).send({ error: error.message, code: error.code })
         }
@@ -185,7 +218,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (!deps.nativeParent.available && body.purpose !== "mission" && !preferenceProbe) {
         return reply.code(404).send({ error: "Browser automation is unavailable in this host" })
       }
-      return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true } : {}) } })
+      return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true, missionPreparationStart: true } : {}) } })
     }
     if (body.mode === "browser-probe") {
       try {

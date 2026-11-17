@@ -27,8 +27,13 @@ the execution journal retains its task, report and lifecycle contracts.
 | Developer feedback | Separate `codenomad.automation` plugin and its visible-session fence |
 
 The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`,
-`mission.report`, `mission.briefing`, `mission.interrupt` and `mission.prepare`.
+`mission.report`, `mission.briefing`, `mission.interrupt`, `mission.prepare`, `mission.schedule`,
+`mission.control`, `mission.configure`, `mission.delete` and `mission.settings`.
 The coordinator is the topology writer.
+Native RPC schemas use the decoder's portable primitives; strict server codecs
+validate principal exclusivity and identifier/digest formats before authentication
+or effects. `missions/native-wire-schema.test.ts` converts every Missions RPC input,
+output and event through the native schema representation.
 Native task declaration returns the canonical assignment for ordinary OpenCode
 subagent calls. Native helpers return through their actual parent; the coordinator
 alone records the declared task's business readout. Explicit independent actors
@@ -80,8 +85,8 @@ call (the catalog, a task's `native` conversations and `humanAnswers`) can chang
 without a new revision, and slices never join two observations. Map reads are also
 refused at another revision. The catalog read (`{ kind: "catalog", digest, offset }`)
 names no mission: it is the caller's Location's catalog, read afresh after the
-owned-root checks alone (`MissionControl.ownedRoot`, no mission or journal read), so an
-owned root without a mission pages a large catalog too, and a failing mission journal
+project-ownership checks alone (`MissionControl.ownedRoot`, no mission or journal read), so an
+owned conversation without a mission pages a large catalog too, and a failing mission journal
 never blocks it. A marker names its value as read before any value nested in it gave
 way. Fitting serializes the result once and keeps its exact size as values give way
 (each change counted at the value's indentation), so it stays linear in the result's
@@ -101,7 +106,7 @@ crossing its bounded RPC response. Mutations share `missionMutationToolResult` w
 the ordinary tools and carry the already fitted result, including its exact omission
 reads and task pages, in `toolResult`. The 100,000 UTF-16-unit JSON bound costs at
 most 300,000 UTF-8 bytes plus fixed RPC envelopes, within the 1 MiB transport limit.
-`mission.inspect({ list: true })` pages its missions the same way (`listOffset`,
+`mission.inspect({ list: true })` pages every project Mission the same way (`listOffset`,
 `listPage.nextListOffset`). `mission.inspect({ taskKey })`
 rereads one task with its contract, exact current assignment prompt and every report
 of that task, each once, its largest values replaced the same way. A native
@@ -112,8 +117,8 @@ questions and decisions).
 Coordinator actions that need native reads or effects outside the plugin's
 Promise API cross the authenticated desktop bridge (`sendMissionInput`, fixed error
 codes in `missions/recovery-error.ts`), so they work only with backend presence and
-refuse otherwise. Only one-time coordinators are offered and told about
-`mission.interrupt` and `mission.prepare`.
+refuse otherwise. Coordinators retain `mission.interrupt`; any owned project session
+can use `mission.prepare`, including descendants, task actors and scheduled passages.
 
 - `mission.inspect({ taskKey })` adds the task's observed native conversations
   (`server/routes/mission-task-native.ts`): the coordinator's direct children
@@ -128,13 +133,25 @@ refuse otherwise. Only one-time coordinators are offered and told about
   task along `reuseFromTaskKey`/`parentTaskKey` chains, or its actor. The coordinator, other tasks and the plan are
   untouched, under the worktree-deletion fence; `complete: false` is reported
   honestly, and an empty result notes that only canonical assignments are visible.
-- `mission.prepare` creates a paused one-time hand-off through the same
+- `mission.prepare` creates a separate one-time or scheduled hand-off through the same
   `prepareMissionCreation` pipeline, holds and fences as the editor, at the
-  coordinator's Location. The user starts it with Play. The trusted `preparedBy`
-  (`{ missionId, coordinatorSessionId }`) gives that coordinator read-only
-  visibility (`inspect({ missionID })`, `inspect({ list: true })`). An active
-  one-time coordinator can prepare hand-offs; a caller outside an active mission
-  receives `mission-not-found` with guidance to use the Missions editor. Follow
+  author's Location. `startOnCreation` defaults false; the user then starts it with
+  Play. An explicitly requested `true` may continue only its fresh creation
+  acknowledgement through the ordinary guarded lifecycle operation. The trusted `preparedBy`
+  (`{ coordinatorSessionId, missionId? }`) records its author for immutable replay
+  (`inspect({ missionID })`, `inspect({ list: true })`). The stable
+  `coordinatorSessionId` field names the actual author session, including a descendant;
+  `missionId` records the source from native membership, passage metadata or bounded
+  native ancestry when available. Stored provenance with both fields uses the same
+  journal, index and RPC readers. Ordinary roots, coordinators, current or historical
+  task actors, descendants and scheduled-passage sessions share the author admission.
+  Native control and the backend independently validate project and placement;
+  ambiguous ownership is refused. Passage preparation uses the ordinary project
+  journal, preserving its isolated source journal. Project target reads use that
+  same ordinary journal; passage lists combine it with isolated passage membership.
+  Scheduled documents retain the author and original inputs before their first journal
+  exists; project list and point reads use bounded native document pages without reconciliation.
+  The calling conversation stays unchanged. Follow
   the [creation and retry discipline](#mission-profile-selection-and-creation-recovery).
 
 The human-answer gate's `discover` finds fresh children of the expected parent
@@ -157,6 +174,71 @@ different summary when the latest automatic briefing is still the last event. On
 of them in `replacesTaskKey`.
 
 ## Mission profile selection and creation recovery
+
+Explicit `missionID` reads any Mission in the owned project, including human-created
+Missions and another agent's preparation. `mission.inspect({ project })` exposes
+fixed pure native reads through the unique owning backend: `panel` for summaries,
+cleanups and mission fields; `current`, `current-page`, `current-content` for an
+admitted passage; `passage` for archived daily results; and `sources` for local
+branches, native conversation pages, coordinator roots and the detected forge.
+`playbook` reads one template's exact steps, roles and prompts for the selected
+taskMode, sharing the UI recipe builder. These reuse the panel's codecs, native
+page bounds and physical-directory admission.
+Every backend read revalidates the actual native caller, project and Location.
+Source continuation is explicit; file criteria use relative paths discovered with
+the ordinary file tools. Schedule list/read retains counts, observations, control
+receipts and the bounded result history. Reads keep all execution identities intact.
+
+`mission.inspect({ start })` attaches the calling root conversation as the
+coordinator of a paused mission for human Play. `mission.prepare` creates a separate
+mission, preserving the calling conversation: a new coordinator for one-time work,
+or a fresh root per scheduled passage unless an eligible root is explicitly selected.
+Its `startOnCreation?: boolean` defaults false; true requires the user's explicit
+automatic first-Play request. `missionID` selects an existing mission;
+combining it with `start` is refused before routing, preference discovery or creation.
+Both creation inputs accept an optional trimmed, single-line title of 1–60
+characters and preserve notes verbatim, including empty and whitespace-only notes.
+An exact `start` retry compares the original creation title, objective, notes,
+template and requested choices even after human edits.
+
+### Editor and agent-tool options
+
+| Editor option | Agent-tool contract |
+| --- | --- |
+| Configuration | `inspect({ configurations: true })` lists saved records; `configurations: "<id>"` reads one. Copy its chosen creation fields explicitly. `settings` with scope `configurations` saves, replaces/renames by ID, deletes or resets the library. |
+| Objective, Title, Notes | `prepare` and `inspect.start` accept `objective`, optional `title` and verbatim `notes`. |
+| Playbook | Both accept `template`: `custom`, `debug`, `wayfinder`, `delivery`, `compare`. |
+| Task sessions | Both accept `taskMode`: `native` or `independent`, with the same preference resolution as the editor. |
+| Subagent depth | `settings` with scope `depth` reads the project snapshot and saves 1–10 or `null` (Inherit), with the exact document expectation. Never change it to bypass a delegation limit. |
+| Agents and models | Both accept `profiles.coordinator` and `profiles.roles`, with `agent`, `model.providerID`, `model.id` and optional `model.variant`. Omitted slots inherit preferences. |
+| Start automatically | `prepare.startOnCreation`, default false; true requires an explicit user request and continues only a fresh creation acknowledgement. `inspect.start` waits for human Play. |
+| Scheduling | `prepare.launch.when` accepts ordered `now`, cron and event criteria with the editor's grouping and validation. Hourly/daily/weekday/monthly shortcuts use cron expressions and their IANA zone. |
+| Coordinator session | `prepare.coordinatorSessionID` selects an eligible idle root for calendar-backed work; omission selects a fresh root per passage. |
+| Followed conversations | `prepare.watchedConversationIDs` carries followed context; a `conversation-message` criterion also supplies its selected conversation. |
+
+Repository activity, GitHub account events, local branch commits, new conversation
+messages, file changes and another Mission's success use the shared
+[launch-criteria contract](MISSIONS_RECURRING.md#launch-criteria).
+`mission.schedule` lists, reads and controls every calendar-backed document in the
+caller's project, including documents created in the editor. Any owned project session
+may Play, Pause, Stop, Resume, Run now, Check, configure or delete.
+
+`mission.inspect({ configurations: true })` lists the owning backend's saved
+configuration IDs, names and templates. `configurations: "<id>"` reads one complete
+saved record plus the editor's suggested `title` (collapsed whitespace, bounded to
+60 characters). These read-only requests work from any owned conversation outside a mission
+and from a scheduled-passage coordinator. Lists, point reads and content slices
+use the ordinary owning backend, select no journal and use the same strict
+unique-backend discovery as profile preferences. The backend reads `ui.settings.missionModels` through
+`getRawConfigOwner("ui")`; the shared `missions/model-library.ts` codec validates
+every record. An absent field returns an empty list; invalid data and unavailable
+or ambiguous owners return their respective preference errors, with bytes preserved.
+The list stays short (at most 20 entries); a record exceeding the inspection bound
+returns a `{ kind: "configuration", configurationID, digest, offset }` content read,
+whose slices reread the owner and reject changed content. Pass each `read` whole and
+follow `next`. Copy the selected objective, suggested title, notes, template,
+profiles and task mode explicitly into creation so its retry contract freezes
+the supplied values.
 
 Both `mission.prepare` and `mission.inspect({ start })` resolve omitted
 coordinator/role profiles and `taskMode` from the owning CodeNomad backend's
@@ -233,10 +315,223 @@ A live backend's preferences stay protected by this refusal.
 resolution can use the no-owner fallback. Fully explicit choices make no preference
 request; preparation still requires its owning backend. Before sending creation
 provenance, preparation requires the backend's positive `missionCreationDefaults`
-capability. Missing support returns the update-required refusal before dispatch
+and `missionPreparationStart` capabilities. Preparation also requires the native
+document's positive `automaticStart` capability before creation dispatch.
+Missing backend support returns the update-required refusal before dispatch
 and releases only newly reserved choices; previous uncertain outcomes remain retained.
+Calendar-backed preparation additionally requires the native document's positive
+`agentSchedulePreparation` capability before reserving or dispatching creation.
 
-The requestID is scoped to the coordinator and mission. Preparations with the
+Preparation results separate `outcome: prepared | activated | refused | uncertain`
+and a `target: { kind: "one-time", mission } | { kind: "schedule", document }`, retained after a start refusal or
+uncertain start. Confirmed outcomes carry `acknowledgement: fresh | recovered`;
+`activated` confirms the original first Play. Refusals name their phase and code;
+uncertainty retains the original request and Mission identities. Tool targets expose
+compact state and saved selection; `inspect` reads the complete map.
+The returned uncertain `requestID` identifies the native creation or first-Play
+operation; retries keep the original tool inputs, never substitute that derived ID.
+
+Native creation decides the acknowledgement: an existing event/document, including
+a document whose journal publication completes in this invocation, is recovered.
+Only `startOnCreation: true` plus a fresh acknowledgement may continue. The immutable
+`creation` binding retains the author, normalized original inputs and creation
+defaults. Its single `automaticStart: { requestID, attempted }` slot uses a
+creation-derived lifecycle identity. The ordinary lifecycle RPC consumes it by exact
+document CAS before first-Play intent or effects, retaining the native operation and
+message identities in `oneTime.firstPlay`. Concurrent human controls keep their exact
+journal/document revision guards. An attempted slot stays consumed after any failure.
+Recovered creation with an unattempted slot stays prepared; an attempted slot reports
+only the original first-Play acknowledgement or uncertainty. Never send another Play
+from prepare replay, receipt reads, inspection, listing, reconnect or restart.
+For scheduled preparation, `launch?: { when: [...] }` uses the editor's ordered
+criteria codec and its OR/IF/ELSE grouping, limits, event sources and cron zones.
+An absent or empty list and a sole `now` select one-time preparation.
+`watchedConversationIDs` freezes followed sources; `coordinatorSessionID` explicitly
+selects an eligible root for a schedule, with a fresh root per passage as the default.
+Calendar profiles resolve to complete explicit agent/model selections and pass the
+native catalog check. Launch policy, followed sources, coordinator choice, target kind
+and automatic start participate in the original immutable retry identity.
+Scheduled creation and its first automatic Play use an authenticated agent principal
+bound to that author, creation request and document. The first-Play intent CAS consumes
+the single automatic-start slot. Explicit OFF, missing capabilities and incompatible
+settings refuse activation while keeping the prepared target visible.
+Document recovery reads the backend's exact retained receipt to release its physical
+permit; its internal observation-only path keeps absent or partial receipts uncertain.
+Before first scheduled dispatch, preparation reads document existence without a
+request selector; held and observation-only recovery reads the exact original receipt.
+Project controls use `mission.schedule` independently of preparation provenance.
+
+### Agent one-time controls
+
+Every owned project conversation can use `mission.control`, `mission.configure`
+and `mission.delete` on any project Mission, including human-created Missions.
+All mutations take a stable `requestID` and the owning read's `expectedRevision`.
+`control` maps Play/Resume to the existing Start operation, Pause to graceful
+Pause, Interrupt to immediate Pause and Stop to terminal Stop. Recovery targets
+the coordinator (including reopening a failed Mission) or one missing report by
+`taskKey`. Recovery deduplicates the mission/revision/target contract. Request
+update uses the shared fixed briefing text and ordinary native prompt admission,
+with `delivery: "steer"` and the coordinator's existing native profile.
+
+`configure.save` accepts objective/notes for the journal's recorded text edit, or
+the editor's complete `configuration` for the shared schedule configuration and
+immediate/calendar conversion admission. Its document guards apply before
+admission and between passages. `delete.delete` freezes `deleteManagedSessions`
+from the supplied option or the owning profile's `missionDeleteSessions` preference.
+Its ordinary cleanup preserves excluded native conversations.
+
+Each tool's `read` observes the Mission and optionally its exact `requestID`;
+deletion reads retain cleanup after the map disappears. Native project-tool
+intents and bounded receipts retain the original action, payload and revision.
+Text-edit replies project the request identity and payload digest; native storage
+retains the original text.
+Reads also recover the panel's existing lifecycle and deletion identities;
+an original native Start is returned as the canonical tool action `play`.
+Uncertain requests reserve their physical permit and block replacement agent
+identities. Exact completed replays return their saved receipt. Explicit
+`retry: true` requires a positively read partial original lifecycle/cleanup
+receipt; structural configuration uses its existing partial-receipt contract.
+Keep every original field unchanged, including Pause's graceful intent.
+Never resend from passive reads or replace an unknown request identity.
+Explicit Stop retains the panel's ability to supersede a positively saved partial
+lifecycle action at the current revision; reads preserve that original receipt
+with its superseded outcome.
+
+The private bridge discovers and revalidates the native caller and owning
+project, connection and physical checkout. It signs an agent-only principal,
+exact command, project, directory and issue time. The native controller asks the
+owning backend to verify its signature and fresh ownership before effects.
+Public HTTP keeps its human entry. The authenticated human-answer mark remains
+behind its separate human gate.
+
+### Agent library and preferences
+
+`mission.settings` is available to every owned project conversation through the
+unique owning backend. Its fixed scopes share the UI's existing write owners:
+
+- `configurations`: `read` returns validity, presence, a raw-field `expectation`
+  and the short ID/name/template list. `save` takes `configuration` with a stable
+  UUID `id`, name, objective, verbatim notes, template and optional profiles/taskMode.
+  A new ID appends; an existing ID replaces/renames that record. `delete` takes
+  `configurationID`; `reset` writes an empty library, including for invalid data.
+  `inspect.configurations` reads complete records with bounded slices. To save
+  an existing Mission's instructions, read its recorded objective/notes and
+  template/profiles/taskMode, then supply those fields to `settings.save`.
+- `preferences`: select `field: "missionProfileDefaults"` or
+  `"missionDeleteSessions"`. `read` returns validity, presence, expectation and
+  the decoded value when valid. `save` replaces the `defaults` array (scopes
+  `all`, `custom`, `debug`, `wayfinder`, `delivery`, `compare`) or supplies
+  `deleteSessions`. Omitted scopes, roles and taskMode inherit; a role's `{}` is
+  an explicit OpenCode-default selection. A scope's profile reset keeps its
+  taskMode by supplying that entry with `profiles: {}`. `reset` clears defaults
+  or removes the deletion preference to restore its false fallback. A complete
+  valid save or reset can repair invalid data using its original expectation.
+  Both fields and the library belong globally to the owning CodeNomad profile,
+  across its projects.
+- `depth`: `read` returns the existing `SubagentDepthSettings` snapshot.
+  `save` takes `depth: 1–10 | null` with `snapshot.project.expectation`;
+  `null` inherits and repairs a redundant empty project `experimental` object.
+  The native owner keeps neighboring settings, comments and its marked nesting rule.
+
+The private authenticated bridge supplies the actual agent principal and rechecks
+caller/project/Location ownership before the write. Profile expectations hash
+the exact raw field together with its presence as UTF-16LE JSON using SHA-256;
+absence, `{}` and normalized values remain distinct. The bridge reads through
+`getRawConfigOwner`, validates with the shared library/default codecs, then
+uses `applyConditionalMissionPreferences`. Its authoritative write-base check
+refuses intervening edits, preserving neighboring fields through the ordinary
+owner merge. A changed field returns `settings-conflict`; after a conflict or
+unknown acknowledgement, read afresh before choosing another edit.
+
+### Human action / agent surface
+
+The Mission components, Missions Preferences and public Mission routes use these
+equivalent agent surfaces:
+
+| Human action | Agent surface |
+| --- | --- |
+| Create with title, instructions, notes, playbook, profiles and task sessions | `prepare`; `inspect.start` attaches the calling root |
+| Load a configuration; save instructions; replace/rename, remove or repair a configuration | `inspect.configurations`; `settings` / `configurations` |
+| Global/playbook defaults, role inheritance, resets and deletion preference | `settings` / `preferences` |
+| Project depth, Inherit, empty experimental repair and refresh | `settings` / `depth` |
+| Add/remove/reorder schedule criteria, followed conversations, choose an eligible existing scheduled coordinator | `prepare.launch`; `schedule.configure` or `configure.configuration` |
+| Discover branches, conversations, coordinator candidates and forge | `inspect.project` / `sources`; ordinary file tools for relative file criteria |
+| Read playbook steps, roles and complete instructions | `inspect.project` / `playbook`, with template and optional taskMode |
+| Read lists, tasks, reports, plan changes, passages, history and cleanup | `inspect`, its bounded project views and content/page continuations; `schedule.read` |
+| One-time Start/Resume, graceful Pause, Interrupt now, Stop | `control` |
+| Recover coordination or a missing report; request an update | `control` |
+| Edit text or eligible structural configuration, convert immediate/calendar | `configure`; `schedule.configure` |
+| Delete and explicitly continue partial controls, edits or cleanup | `delete`; `control`/`configure`/`schedule` exact receipt reads and `retry` |
+| Schedule Start/Pause/Resume/Stop, Run now, Check, activation/diagnostic and daily controls | `schedule` |
+
+Presentation gestures (selection, copy, mark read, opening conversations) remain
+window-local. Authenticated human answers use the human question gate. Existing
+coordinator selection belongs to the scheduled editor; one-time preparation uses
+a fresh root, while `inspect.start` attaches the calling root.
+
+### Agent schedule controls
+
+`mission.schedule({ action: "list", after?, limit? })` reads a bounded project page
+(at most eight entries); `read` takes `missionID` and optional `requestID` for its exact
+receipt. Every mutation takes `missionID`, `action`, a stable `requestID` and
+`expectedRevision` from the current read. `configure` supplies the editor's complete
+configuration, with `missionCriteriaLaunchPolicySchema`, explicit frozen profiles,
+task mode and followed conversations; the backend supplies execution roots and profile
+identity. Its persisted `coordinatorSelectionAuthor` applies the idle-root adoption
+guards at configuration and passage admission, including for human-created documents.
+
+The private bridge discovers exactly one owning backend and revalidates the native
+caller, project, Location, connection and physical checkout. Its signed project-agent
+principal carries the actual session; preparation continuations retain their separate
+creation/request/digest scope. Mutation dispatch requires the native document's positive
+`agentScheduleControl` capability. The shared `executeScheduledMission` admission owns the
+same physical holds, payload identity, native CAS, receipt settlement and single-passage
+Run now as public human controls. Play/Resume share settings preparation and preserve
+explicit OFF. Exact completed Play, Pause, Stop, Resume, Run now, configure and delete
+replays read their own retained receipt with no document write or revision change.
+Check always reconciles. Missing, evicted or partial calendar, actor or admission
+proofs retain their original reconciliation path and uncertainty. Changed inputs
+conflict. Lost acknowledgements retain the original hold: read that request's receipt
+without resending or choosing another identity. Deletion replays read the tombstone.
+Public HTTP mutations authenticate their human principal before admission.
+
+`capabilities` shares the panel's passive capability and activation-plan reader.
+`activate` prepares native settings under its stable request and document revision;
+`activation-read` observes that exact preparation without Play. Explicit OFF keeps
+its structured refusal. `configure` also admits eligible one-time documents and
+their editor conversion guard. `retry: true` resumes only an explicitly read partial
+original configure, retaining its request, payload and revision through the shared
+schedule hold.
+
+`owner: "daily"` selects daily storage: bounded list/read, paused `create` with
+`creation` instructions/clock/profiles/task mode/sources, and Play/Pause/Resume/Stop/
+Run now/Check. Creation takes `requestID` alone, with no mission ID or revision.
+An exact receipt read supplies `missionID`, `requestID`, `expectedRevision` and
+`receiptAction`. Partial Pause/Stop retries use their original fields and
+`retry: true`. The public human routes and private agent bridge share physical
+admission, signed-principal verification, dispatch and receipt settlement.
+A project-scoped discovery page returns at most eight schedule IDs and owning
+directories. Point reads resolve the saved directory; snapshots, exact receipts
+and controls then acquire and revalidate that owned Location, including from
+another checkout of the same project. Native snapshot and origin placement guards
+remain Location-exact.
+A daily creation's exact recovery uses `read` with its original `requestID` and
+`creation` fields, with no mission ID or revision; absence remains pending and
+the read dispatches no creation.
+
+Preparation requestIDs are scoped to the actual author and native source mission
+when present; authors outside a mission use their stable `outside-mission` domain.
+The original author/source binding owns replay after source completion or release
+of a reused passage root. Before creation, the author/request lane searches the
+journal, paged documents and retained preparation bindings for existing identities;
+multiple existing identities refuse as a conflict. Documents with an extended creation
+binding compare its frozen inputs; historical one-time documents use their original
+journal inputs and available creation choices. Each author retains its original
+replay identity. Compaction keeps the original author/source, creation request and
+input digest in the existing bounded document tombstone. Preparation identity reads
+include these tombstones, so deletion refuses replay after source release and restart
+for both scheduled and one-time targets; display inventories omit them.
+Preparations with the
 same requestID are serialized. Reuse that requestID and the original inputs:
 a retry first reads the saved creation event/document and returns the saved
 mission or a conflict. `mission.prepare` alone reserves a standalone durable
@@ -346,7 +641,7 @@ Native proof: `node scripts/test-missions-native-trajectory.mjs <CLI>`.
 Only the coordinator's final report finalizes a mission, even when every declared
 task is complete; empty plan history is omitted. A one-time mission finishes only as
 completed (`completedFinalOnly` on the plugin's `MissionControl`, the
-`COMPLETED_FINAL_ONLY` instruction), and only the human stops a mission: when
+`COMPLETED_FINAL_ONLY` instruction); lifecycle controls handle Stop. When
 nothing can proceed without the human, the coordinator asks through the native
 question tool and waits (§Human questions and decisions). Recurring passages, with
 their own control, finish completed or failed.
@@ -1411,6 +1706,8 @@ answers mutations with 405 and writes `browser-report.json` to the absolute
 
 ## Agent conventions
 
+- Missions project tools admit every owned project conversation, including descendants and scheduled passages, and include human-created Missions. Keep coordinator-only topology and authenticated human-answer evidence at their existing domain boundaries.
+
 - Mission reader and conversation gestures advance the tab occurrence generation at admission. Async navigation adopts only while that generation is current. Passage retargeting, inventory cleanup and Mission absence reconciliation apply immediately against their current source and reader; pending gestures retain their authority.
 
 - Restored task selections demand their exact bounded task ID even with the reader closed. Their toolbar stays task-owned and disabled until resolution; a successful absent answer clears that selection. Dependency links update the owning row, task selection and reader together. The open reader follows one-time, daily and calendar-owned selections, with view, connection and exact passage fences around delayed reads. Calendar-owned schedules without a current passage show their saved instructions centrally.
@@ -1419,7 +1716,7 @@ answers mutations with 405 and writes `browser-report.json` to the absolute
 - Mission sections use `components/mission-disclosure.tsx` and the shared `.disclosure-chevron`. `stores/mission-view-state.ts` takes the occurrence's `instanceId` for selection, reader, expanded rows and disclosures; `tab-view-state.ts` captures them in each restorable tab envelope. The newest disclosure choices share the bounded Mission view value. Native reader `<details>` use `createMissionDisclosure` so their open state and lazy body demand survive remounts for that occurrence. Completion/task acknowledgements retain their project scope within the window; native actions retain their project, connection and passage authority fences. Long mission content uses `components/mission-reader.tsx` above the transcript; its chrome follows `.window-*`. Mission styles live under `styles/panels/mission-*.css`. Recurring setup/list geometry lives in `styles/panels/mission-recurrence.css`. Template and execution mode are orthogonal; recurring drafts record the chosen template, optional verbatim notes and exact coordinator/playbook-role profiles for future passages, under H9 editing guards. The shared configuration library retains its version-1 name, instructions, notes, playbook, profiles and task-mode storage contract. Daily CREATE and UI share `recurrenceReadBudget` / `recurrenceInputBudget`, with exact native Location room; never raise a ceiling automatically.
 - Creation is one compact screen (`components/mission-editor.tsx`, `styles/panels/mission-create.css`): the saved-configuration picker first, then instructions, an editable title prefilled from its first sentence or the loaded configuration name (≤60, `missions/mission-title.ts`), playbook, delegation, profile selectors, Notes and Launch when criteria. Objective and Notes start at one line and grow with `field-sizing: content`. Profile and scheduling rows are directly visible; criteria default to once now and show their or / if / else connectors, with the saved zone shown only when it differs from the system zone. Delegation includes the project's native subagent depth row (`mission-subagent-depth.tsx`, shared with Preferences). Secondary explanations and localized help links use focusable info actions: playbooks at their selected anchor, configuration at `missions#saved-briefs`, task sessions and depth at `missions#profiles`, scheduling at `missions#native-scheduling`.
 - The panel's Create button heads the form, which replaces the selection line and the tree with its selected detail; these stay mounted but hidden (`.mission-control[data-creating]` in `mission-control.css`, `MissionPanelHeader` `creating`) so pending controls and retries survive. The form fills the panel below its header as a column whose body is the only scroller, with the footer below that scrollport at the panel bottom: asynchronous content (depth reads, catalogs) never moves Create from under an aimed click, and focus scrolling never hides a field behind the footer. Unconfirmed cleanup banners are ordered above the form, so they shrink the body instead. When the header, banners and footer leave the body less than its minimum, the whole form scrolls in the panel with the footer after it (`mission-panel-scroll.ts`).
-- The footer's Save configuration is a bookmark icon (`.window-icon-button`) named by its tooltip; its name field's Save and Cancel take the footer's `button-secondary` template. Every command of the Missions panel and its readers (retry, check, copy, open a reader or conversation, the configuration name field's Save and Cancel) is a bordered `.window-action`; `.window-text-button` stays only on end-of-list "Load more" links (the panel's paging, the task tree's continuation, the schedule list and a task's whole report history). The footer has a single **Create** submit. Scheduling starts with **Start on creation**, off by default and retained in the form draft. Creation stores a paused Mission; when selected, only its direct positive acknowledgement continues guarded Play under the same captured view and intention. Read-only receipt recovery leaves Play explicit. Validation stays inline beside its field.
+- The footer's Save configuration is a bookmark icon (`.window-icon-button`) named by its tooltip; its name field's Save and Cancel take the footer's `button-secondary` template. Every command of the Missions panel and its readers (retry, check, copy, open a reader or conversation, the configuration name field's Save and Cancel) is a bordered `.window-action`; `.window-text-button` stays only on end-of-list "Load more" links (the panel's paging, the task tree's continuation, the schedule list and a task's whole report history). The footer has a single **Create** submit. **Start automatically** sits outside Scheduling, off by default and retained in the form draft. Creation stores a paused Mission; when selected, only its direct positive acknowledgement continues guarded Play under the same captured view and intention. Read-only receipt recovery leaves Play explicit. Validation stays inline beside its field.
 - One-time and current daily/native-scheduled readers show bodies through `useMissionBody`/`useReaderValue` (§Body display). Never feed cached display values into admission, mutations or lost-acknowledgement checks. Answer presence from descriptors (`missionBodyPresent`, `missionReportHas`) and labels from bounded excerpts and `decidedBy`. New bodies belong in `MISSION_BODY_FIELDS`; never add prose to compact rows. Restrict compacting and paging to display projections (`list`, `mission`, `panelPage`, exact current passage pages and their routes); keep authority maps full. Current passage body keys carry the exact source and report readers retain immutable report IDs. Browser fixtures serve actual bounded projections/content from their own full maps and retain every report in the mission's own `reports`, as the reducer does.
 - A compact map holds a page of its tasks and their reports (§Task pages). Never derive a whole-mission fact (task counts, open questions, activity, owed work, whether a task or report exists) from its `tasks` or `reports`: use `taskPage`, `actorEvidence`, `actors`, the activity projection and the summary rows. Navigation to a task the map does not hold reads it (`openMissionTask`, `missionStore.loadTasks`) instead of being disabled, and every row the server sends stays within its budget: a new unbounded task, report or change field is a body or a count, never a list in a row. Keep `missionTaskOrder` the only display order, shared by the server's pages and the tree.
 - Editor input copies and receipt checks use exact descriptor-pinned content with their original map revision and request identity (§User-journey regression checks). Unified-document projections stay whole in compact maps: `MissionDocumentSummary` carries bounded configuration metadata and input digests; editor text comes from the schedule or content route.

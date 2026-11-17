@@ -3,11 +3,9 @@ import { serverApi } from "./api-client"
 import { instances } from "../stores/instances"
 import { hydrateRestoredSessionChain } from "../stores/sessions"
 import { sendMessage } from "../stores/session-actions"
+import { missionAcceptsCoordinatorMessage as missionAcceptsMessage } from "../../../server/src/missions/briefing-request"
 
-export function missionAcceptsMessage(mission: MissionPanelMap): boolean {
-  return mission.status === "active" && (!mission.runState || mission.runState === "running")
-    && !mission.control?.pending.length && !mission.controlUnavailable
-}
+export { missionAcceptsMessage }
 
 /** Ordinary admission, not a workflow mutation. Caller owns the view/connection fence.
  * `text` is written from the admission read's full map. */

@@ -21,7 +21,7 @@ export const panelHeaderSchema = z.object({ root: z.object({ version: z.literal(
   profiles: z.unknown().refine(value => { try { parseMissionProfiles(value); return true } catch { return false } }).optional(),
   briefing: z.object({ id, requestID: z.string().min(1).max(128), basedOnRevision: count, basedOnUpdatedAt: count, createdAt: count }).strict().optional(),
   briefingResponses: z.array(z.object({ requestID: z.string().min(1).max(128), briefingID: id }).strict()).max(16).optional(),
-  preparedBy: z.object({ missionId: id, coordinatorSessionId: id }).strict().optional(),
+  preparedBy: z.object({ missionId: id.optional(), coordinatorSessionId: id }).strict().optional(),
   controlUnavailable: z.boolean().optional(), notificationUnavailable: z.boolean().optional(),
   objective: z.never().optional(), notes: z.never().optional(), summary: z.never().optional(), actors: z.never().optional(), tasks: z.never().optional(), reports: z.never().optional(),
   history: z.never().optional(), frontier: z.never().optional(), claims: z.never().optional(), control: z.never().optional(), actorEvidence: z.never().optional(), taskPage: z.never().optional(),

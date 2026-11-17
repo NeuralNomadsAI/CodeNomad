@@ -51,7 +51,8 @@ test("immediate creation carries exact followed identities through HTTP preparat
   assert.ok(doc && !("deletedAt" in doc))
   assert.deepEqual(doc.configuration.watchedConversationIDs, [f.source.id])
   assert.equal(roots, 1)
-  assert.deepEqual(await create(native, context), result, "a lost reply recovers the same creation through the actual parser")
+  assert.deepEqual(await create(native, context), { ...result, acknowledgement: "recovered" },
+    "a lost reply recovers the same creation through the actual parser")
   await assert.rejects(create({ ...native, watchedConversationIDs: ["ses_other"] }, context), { code: "request-conflict" })
   assert.equal(roots, 1); assert.equal(f.reads, 0)
   for (const watchedConversationIDs of [[f.source.id, f.source.id], ["bad/id"], [" ses_followed "], Array.from({ length: 33 }, (_, i) => `ses_${i}`)]) {

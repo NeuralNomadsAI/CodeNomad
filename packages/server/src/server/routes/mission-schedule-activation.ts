@@ -8,6 +8,7 @@ import { requestAdmission } from "../request-admission"
 import { MissionMapMutationError, prepareMissionMapMutation, type MissionMapMutationManager } from "./mission-map-mutation"
 import { missionScheduleActivationJournal } from "./mission-schedule-activation-journal"
 import { missionScheduleActivationRefusal } from "./mission-schedule-activation-refusal"
+import { prepareMissionScheduleSettings } from "./mission-schedule-settings"
 
 const params = z.object({ id: z.string().min(1).max(200), missionID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/) }).strict()
 const identity = z.object({ requestID: z.string().min(1).max(128), expectedDocumentRevision: z.number().int().nonnegative().safe() }).strict()
@@ -44,34 +45,14 @@ export function registerMissionScheduleActivation(app: FastifyInstance, deps: De
             return reply.code(409).send({ error: "Mission schedule preparation unavailable", code: "schedule-activation-unavailable" })
           const previous = before.scheduleActivation
           const same = previous?.requestID === input.data.requestID && previous.expectedRevision === input.data.expectedDocumentRevision
-          noEffect = !same
-          if (previous?.state === "ready" && (same || before.revision === input.data.expectedDocumentRevision)) {
-            await deps.scheduleSettingsActivation.verify(selected.data.id, options.location, previous.authority)
-            await owned.refresh()
-            const after = await adapter.read()
-            if (after.revision !== before.revision) throw new PluginControlsError("Mission activation changed during verification", "conflict")
-            return { document: after }
-          }
-          if (!same && (before.revision !== input.data.expectedDocumentRevision
-            || previous && (previous.state !== "failed" || previous.targets.some(target => target.attempted))))
+          if (!(previous?.state === "ready" && (same || before.revision === input.data.expectedDocumentRevision)) && !same
+            && (before.revision !== input.data.expectedDocumentRevision
+              || previous && (previous.state !== "failed" || previous.targets.some(target => target.attempted))))
             return reply.code(409).send({ error: "Original Mission activation remains unresolved", code: "schedule-activation-conflict" })
-          try {
-            const plan = same ? { authority: previous!.authority, targets: previous!.targets }
-              : await deps.scheduleSettingsActivation.prepare(selected.data.id, options.location)
-            owned.current()
-            const intent = { authority: plan.authority, targets: plan.targets.map(target => ({ ...target,
-              attempted: "attempted" in target ? Boolean(target.attempted) : false,
-              acknowledged: "acknowledged" in target ? Boolean(target.acknowledged) : false })) }
-            await deps.scheduleSettingsActivation.apply(selected.data.id, options.location, intent, adapter.journal)
-            return { document: await adapter.read() }
-          } catch (error) {
-            if (noEffect && missionScheduleActivationRefusal(error)) throw error
-            const code = error instanceof PluginControlsError ? `configuration-${error.kind}` : "configuration-unconfirmed"
-            // This records metadata only. Attempt markers and successful writes
-            // survive failure; an uncertain target is never rolled back/replayed.
-            await adapter.failed(code).catch(() => undefined)
-            throw error
-          }
+          return { document: await prepareMissionScheduleSettings({ adapter, activation: deps.scheduleSettingsActivation,
+            workspaceID: selected.data.id, location: options.location, requestID: input.data.requestID,
+            expectedRevision: input.data.expectedDocumentRevision, before, refresh: owned.refresh,
+            noEffect: value => { noEffect = value }, isNoEffect: () => noEffect }) }
         })
       } catch (error) {
         const status = error instanceof MissionMapMutationError ? error.status : error instanceof PluginControlsError

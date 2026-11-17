@@ -6,26 +6,27 @@ import { missionProfilesSchema } from "./playbook-profiles"
 import { missionTaskModeSchema } from "./task-execution-mode"
 import { stableToken } from "./receipt-identity"
 import { MISSION_SCHEDULE_PAGE_MAX } from "./mission-schedule-list"
+import { recurrenceControlProofSchema, schedulePrincipalWire } from "./recurrence-control-proof"
+import { missionPreparationCreationSchema, missionPreparationCreationWire } from "./preparation-input"
 
 export const missionScheduleActions = ["create", "play", "pause", "resume", "stop", "check", "run-now", "configure", "delete"] as const
 export type MissionScheduleAction = typeof missionScheduleActions[number]
-export const missionScheduleTransportSchema = z.object({ sessionID: z.string().min(1).max(256), workspaceID: z.string().min(1).max(200),
-  requestID: z.string().min(1).max(128), location: z.object({ directory: z.string().min(1).max(4096), workspaceID: z.string().optional() }).strict(),
-  scheduleID: documentID, expectedRevision: documentCounter, action: z.enum(missionScheduleActions),
-  configDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(), digest: z.string().regex(/^[a-f0-9]{64}$/),
-  issuedAt: documentCounter, proof: z.string().regex(/^[a-f0-9]{64}$/),
-  profileSource: z.object({ profileID: z.string().min(1).max(240), executionHost: z.string().min(1).max(240),
-    configYamlPath: z.string().min(1).max(4096) }).strict(),
-}).strict()
+const signedProof = { proof: z.string().regex(/^[a-f0-9]{64}$/) }
+export const missionScheduleTransportSchema = z.union([
+  recurrenceControlProofSchema.options[0].extend(signedProof),
+  recurrenceControlProofSchema.options[1].extend(signedProof),
+])
 export const missionScheduleRequestSchema = z.object({
   missionID: documentID, requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/), expectedRevision: documentCounter,
   action: z.enum(missionScheduleActions), configuration: missionConfigurationSchema.optional(),
+  creation: missionPreparationCreationSchema.optional(),
   deleteManagedSessions: z.boolean().optional(), retry: z.boolean().optional(),
   transport: missionScheduleTransportSchema,
 }).strict().superRefine((input, ctx) => {
   if (["create", "configure"].includes(input.action) !== (input.configuration !== undefined)
     || input.deleteManagedSessions !== undefined && input.action !== "delete"
-    || input.action === "create" && input.expectedRevision !== 0)
+    || input.action === "create" && input.expectedRevision !== 0
+    || input.creation !== undefined && input.action !== "create")
     ctx.addIssue({ code: "custom", message: "Mission schedule action payload differs" })
   const transport = input.transport
   if (transport.scheduleID !== input.missionID || transport.requestID !== input.requestID
@@ -38,11 +39,13 @@ export const missionScheduleRequestSchema = z.object({
 export type MissionScheduleRequest = z.infer<typeof missionScheduleRequestSchema>
 export const missionScheduleID = (projectID: string, canonical: string, requestID: string) =>
   `msn_${stableToken(canonicalAuthority([projectID, canonical, requestID]), 40)}`
-export const missionSchedulePayloadDigest = (input: Pick<MissionScheduleRequest, "configuration" | "deleteManagedSessions">) =>
-  stableToken(canonicalAuthority(input.configuration ?? { deleteManagedSessions: input.deleteManagedSessions ?? false }), 64)
+export const missionSchedulePayloadDigest = (input: Pick<MissionScheduleRequest, "configuration" | "deleteManagedSessions" | "creation">) =>
+  stableToken(canonicalAuthority(input.creation === undefined
+    ? input.configuration ?? { deleteManagedSessions: input.deleteManagedSessions ?? false }
+    : { configuration: input.configuration, creation: input.creation }), 64)
 export const missionScheduleRefusalSchema = z.object({ missionID: documentID, requestID: documentID,
   expectedRevision: documentCounter, action: z.enum(missionScheduleActions), payloadDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  reason: z.enum(["revision-conflict", "date-passed"]),
+  reason: z.enum(["revision-conflict", "control-conflict", "date-passed"]),
 }).strict()
 
 const text = { type: "string" } as const
@@ -55,15 +58,16 @@ export const missionConfigurationWire = { type: "object", properties: {
   profiles: missionProfilesSchema, taskMode: missionTaskModeSchema,
   profileID: { type: ["string", "null"] }, executionHost: { type: ["string", "null"] },
   coordinatorSessionID: text,
+  coordinatorSelectionAuthor: { type: "object", properties: { coordinatorSessionID: text }, required: ["coordinatorSessionID"], additionalProperties: false },
   roots: { type: "array", minItems: 1, maxItems: 32, items: root },
   watchedConversationIDs: { type: "array", maxItems: 64, items: text }, launch: missionDocumentSummaryWire.properties.launch,
 }, required: ["title", "objective", "template", "taskMode", "profileID", "executionHost", "roots", "watchedConversationIDs", "launch"], additionalProperties: false } as const
-const proof = { type: "object", properties: { sessionID: text, workspaceID: text, requestID: text, location,
+const proof = { type: "object", properties: { sessionID: text, principal: schedulePrincipalWire, workspaceID: text, requestID: text, location,
   scheduleID: text, expectedRevision: counter, action: { type: "string", enum: missionScheduleActions },
   configDigest: text, digest: text, issuedAt: counter, proof: text,
   profileSource: { type: "object", properties: { profileID: text, executionHost: text, configYamlPath: text },
     required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
-}, required: ["sessionID", "workspaceID", "requestID", "location", "scheduleID", "expectedRevision", "action", "digest", "issuedAt", "proof", "profileSource"], additionalProperties: false } as const
+}, required: ["workspaceID", "requestID", "location", "scheduleID", "expectedRevision", "action", "digest", "issuedAt", "proof", "profileSource"], additionalProperties: false } as const
 const wake = { type: "object", properties: { scheduleID: text, run: counter, messageID: text, dueAt: counter },
   required: ["scheduleID", "run", "messageID", "dueAt"], additionalProperties: false } as const
 const missionScheduleHistoryWire = { type: "object", properties: { id: text, missionID: text, coordinatorSessionID: text, messageID: text,
@@ -82,6 +86,7 @@ const missionScheduleHistoryWire = { type: "object", properties: { id: text, mis
   outcome: { type: "string", enum: ["completed", "failed", "ended-without-report"] }, reason: { const: "not-started" },
 }, required: ["id", "missionID", "coordinatorSessionID", "messageID", "configurationGeneration", "timeGeneration", "createdAt", "dueAt", "origin", "admittedAt", "configurationDigest", "settledAt", "outcome"], additionalProperties: false } as const
 const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumentSummaryWire.properties,
+  creation: missionPreparationCreationWire, createdAt: counter,
   kind: { type: "string", enum: ["one-time", "schedule"] },
   observation: { type: "object", properties: { state: { type: "string", enum: ["unarmed", "known", "unknown"] },
     nativeStatus: { type: ["string", "null"], enum: ["active", "paused", "done", "mixed", null] },
@@ -111,9 +116,10 @@ const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumen
    "kind", "oneShotAt", "slotEndsAt", "successfulCount", "checks", "pendingPassage", "latestResult", "history", "observation", "availableActions", "blockReason", "technical"] } as const
 const result = { type: "object", properties: { document: { ...summary, type: ["object", "null"] },
   deleted: { type: "boolean" }, pending: { type: "boolean" },
+  acknowledgement: { type: "string", enum: ["fresh", "recovered"] },
   refusal: { type: "object", properties: { missionID: text, requestID: text, expectedRevision: counter,
     action: { type: "string", enum: missionScheduleActions }, payloadDigest: text,
-    reason: { type: "string", enum: ["revision-conflict", "date-passed"] } },
+    reason: { type: "string", enum: ["revision-conflict", "control-conflict", "date-passed"] } },
     required: ["missionID", "requestID", "expectedRevision", "action", "payloadDigest", "reason"], additionalProperties: false },
   deletionReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, deleteManagedSessions: { type: "boolean" } },
     required: ["id", "requestID", "expectedRevision", "deleteManagedSessions"], additionalProperties: false },
@@ -122,6 +128,14 @@ const result = { type: "object", properties: { document: { ...summary, type: ["o
 /** Native RPC validates the wire first; the strict domain codec and signed action
  * are revalidated before any document or native effect. */
 export const missionScheduleRpcMethods = {
+  schedulePreparationRead: { input: { type: "object", properties: { creationRequestID: { type: "string", minLength: 1, maxLength: 128 } },
+    required: ["creationRequestID"], additionalProperties: false },
+    output: { type: "object", properties: { binding: { type: "object",
+      properties: { author: schedulePrincipalWire.oneOf[1].properties.author,
+        creationRequestID: schedulePrincipalWire.oneOf[1].properties.creationRequestID,
+        creationDigest: schedulePrincipalWire.oneOf[1].properties.creationDigest },
+      required: ["author", "creationRequestID", "creationDigest"], additionalProperties: false } },
+      required: [], additionalProperties: false } },
   scheduleFlag: { input: { type: "object", properties: {}, additionalProperties: false },
     output: { type: "object", properties: { enabled: { type: "boolean" },
       provenance: { type: "string", enum: ["environment", "experimental-block", "all-flags", "channel-default"] } },
@@ -132,6 +146,7 @@ export const missionScheduleRpcMethods = {
   scheduleRead: { input: { type: "object", properties: { missionID: text, requestID: text }, required: ["missionID"], additionalProperties: false }, output: result },
   scheduleControl: { input: { type: "object", properties: { missionID: text, requestID: text, expectedRevision: counter,
     action: { type: "string", enum: missionScheduleActions }, configuration: missionConfigurationWire,
+    creation: missionPreparationCreationWire,
     deleteManagedSessions: { type: "boolean" }, retry: { type: "boolean" }, transport: proof },
     required: ["missionID", "requestID", "expectedRevision", "action", "transport"], additionalProperties: false }, output: result },
   scheduleCarrierRead: { input: { type: "object", properties: { sessionID: text }, required: ["sessionID"], additionalProperties: false },

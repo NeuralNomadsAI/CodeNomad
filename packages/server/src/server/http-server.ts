@@ -369,7 +369,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerIntegrationInstallRoutes(app, { installer: new IntegrationInstaller({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog, sources: pluginSources }) })
   registerIntegrationAttachmentRoutes(app, { attachments: new IntegrationAttachments({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog }) })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
-  registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
+  const subagentDepth = new SubagentDepthSettings(configurationControls, deps.workspaceManager)
+  registerSubagentDepthSettingsRoutes(app, subagentDepth)
   const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)
   registerImageSettingsRoutes(app, imageSettings)
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
@@ -414,7 +415,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   const developerCdp = new DeveloperCdp()
+  const scheduleSettingsActivation = new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager)
   registerAutomationPluginRoute(app, {
+    subagentDepth,
+    forge: forgeWorkItems,
     memory,
     authManager: deps.authManager,
     settings: deps.settings,
@@ -423,6 +427,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     nativeParent: deps.nativeParent,
     developerCdp,
     workspaceManager: deps.workspaceManager,
+    scheduleSettingsActivation,
+    scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
@@ -431,7 +437,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const stopMissionActivityCache = connectMissionActivityCache(deps.eventBus, missionActivityCache)
   app.addHook("onClose", async () => stopMissionActivityCache())
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings, activityCache: missionActivityCache,
-    scheduleSettingsActivation: new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager),
+    scheduleSettingsActivation,
     scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,
     missionsHost: deps.missionsHost })

@@ -522,8 +522,10 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (input.title !== undefined && parseMissionTitle(input.title) !== input.title) return undefined
       if (input.prepared !== undefined && typeof input.prepared !== "boolean") return undefined
       const preparedBy = input.preparedBy
+      if (input.startOnCreation !== undefined && typeof input.startOnCreation !== "boolean") return undefined
       if (preparedBy !== undefined && (!record(preparedBy) || !onlyFields(preparedBy, ["missionID", "coordinatorSessionID"])
-        || !text(preparedBy.missionID, MAX_SHORT_TEXT) || !text(preparedBy.coordinatorSessionID, MAX_SHORT_TEXT))) return undefined
+        || preparedBy.missionID !== undefined && !text(preparedBy.missionID, MAX_SHORT_TEXT)
+        || !text(preparedBy.coordinatorSessionID, MAX_SHORT_TEXT))) return undefined
       if (input.taskMode !== undefined && !missionTaskModeInputSchema.safeParse(input.taskMode).success) return undefined
       let profiles, creationDefaults
       try {
@@ -549,8 +551,10 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         },
         ...(input.requestID === undefined ? {} : { requestID: input.requestID as string }),
         ...(input.prepared === undefined ? {} : { prepared: input.prepared as boolean }),
-        ...(preparedBy === undefined ? {} : { preparedBy: { missionID: preparedBy.missionID as string,
+        ...(preparedBy === undefined ? {} : { preparedBy: {
+          ...(preparedBy.missionID === undefined ? {} : { missionID: preparedBy.missionID as string }),
           coordinatorSessionID: preparedBy.coordinatorSessionID as string } }),
+        ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation as boolean }),
       }
     }
     case "mission.control-requested": {

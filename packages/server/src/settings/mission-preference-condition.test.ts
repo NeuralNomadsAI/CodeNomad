@@ -37,6 +37,20 @@ describe("conditional mission preference checks", () => {
     assert.equal(writes(), 1)
   })
 
+  it("checks the authoritative write base as well as the first raw read", () => {
+    let writes = 0
+    const service = {
+      getRawConfigOwner: () => ({ settings: { missionModels: [] } }),
+      mergePatchOwner: (_kind: unknown, _owner: unknown, _patch: unknown, check: any) => {
+        check({ ui: { settings: { missionModels: ["external human change"] } } })
+        writes++
+        return {}
+      },
+    }
+    assert.throws(() => applyConditionalMissionPreferences(service, "ui", request([])), MissionPreferenceConflictError)
+    assert.equal(writes, 0)
+  })
+
   it("rejects malformed bodies and non-ui owners before reading or writing", () => {
     const service = {
       getRawConfigOwner: () => assert.fail("invalid requests must not read settings"),
