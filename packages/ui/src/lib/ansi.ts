@@ -1,4 +1,13 @@
 import { createAnsiSequenceParser, createColorPalette } from "ansi-sequence-parser"
+import { HIGH_CONTRAST_TARGETS, strengthenContrast } from "./high-contrast"
+import { contrastRatio, oklabLightness, withOklabLightness } from "./color-contrast"
+
+export interface AnsiRenderOptions {
+  highContrast?: boolean
+  forcedColors?: boolean
+  foreground?: string
+  background?: string
+}
 
 const ESC_CHAR = "\u001b"
 const ANSI_LITERAL_PATTERN = /\\u001b|\\x1b|\\033/
@@ -11,16 +20,16 @@ export function hasAnsi(text: string): boolean {
   return ANSI_ESCAPE_PATTERN.test(normalized)
 }
 
-export function ansiToHtml(text: string): string {
+export function ansiToHtml(text: string, options: AnsiRenderOptions = {}): string {
   const normalized = normalizeAnsiText(text)
   const parser = createAnsiSequenceParser()
   const tokens = parser.parse(normalized)
-  return tokensToHtml(tokens)
+  return tokensToHtml(tokens, options)
 }
 
 export interface AnsiStreamRenderer {
   reset: () => void
-  render: (chunk: string) => string
+  render: (chunk: string, options?: AnsiRenderOptions) => string
 }
 
 export function createAnsiStreamRenderer(): AnsiStreamRenderer {
@@ -30,10 +39,10 @@ export function createAnsiStreamRenderer(): AnsiStreamRenderer {
     reset() {
       parser = createAnsiSequenceParser()
     },
-    render(chunk: string) {
+    render(chunk: string, options: AnsiRenderOptions = {}) {
       const normalized = normalizeAnsiText(chunk)
       const tokens = parser.parse(normalized)
-      return tokensToHtml(tokens)
+      return tokensToHtml(tokens, options)
     },
   }
 }
@@ -49,15 +58,16 @@ function normalizeAnsiText(text: string): string {
     .replace(/\\033/g, ESC_CHAR)
 }
 
-function tokensToHtml(tokens: { value: string; foreground: unknown; background: unknown; decorations: Set<string> }[]): string {
+function tokensToHtml(tokens: { value: string; foreground: unknown; background: unknown; decorations: Set<string> }[], options: AnsiRenderOptions): string {
   let html = ""
+  const colors = new Map<string, string>()
 
   for (const token of tokens) {
     if (!token.value) {
       continue
     }
 
-    const styles = buildTokenStyles(token)
+    const styles = buildTokenStyles(token, options, colors)
     const escaped = escapeHtml(token.value)
 
     if (!styles) {
@@ -71,7 +81,7 @@ function tokensToHtml(tokens: { value: string; foreground: unknown; background: 
   return html
 }
 
-function buildTokenStyles(token: { foreground: any; background: any; decorations: Set<string> }): string | null {
+function buildTokenStyles(token: { foreground: any; background: any; decorations: Set<string> }, options: AnsiRenderOptions, colors: Map<string, string>): string | null {
   const decorations = token.decorations
   let foreground = token.foreground ? colorPalette.value(token.foreground) : null
   let background = token.background ? colorPalette.value(token.background) : null
@@ -80,6 +90,26 @@ function buildTokenStyles(token: { foreground: any; background: any; decorations
     const swapped = foreground
     foreground = background
     background = swapped
+  }
+
+  if (options.highContrast && options.foreground && options.background) {
+    // Dim keeps a lower contrast tier without fading its background or hidden text.
+    const color = (foreground ?? options.foreground).toUpperCase()
+    let surface = (background ?? options.background).toUpperCase()
+    const regularTarget = HIGH_CONTRAST_TARGETS.text + 2.5
+    if (background && Math.max(contrastRatio("#000000", surface), contrastRatio("#FFFFFF", surface)) < regularTarget) {
+      const backgroundKey = `background:${surface}`
+      const ink = contrastRatio("#000000", surface) > contrastRatio("#FFFFFF", surface) ? "#000000" : "#FFFFFF"
+      background = colors.get(backgroundKey) ?? strengthenContrast(surface, [ink], regularTarget)
+      colors.set(backgroundKey, background)
+      surface = background
+    }
+    const dim = decorations.has("dim")
+    const target = dim ? HIGH_CONTRAST_TARGETS.text : regularTarget
+    const key = `${color}:${surface}:${target}`
+    foreground = colors.get(key) ?? strengthenContrast(
+      dim ? withOklabLightness(color, oklabLightness(surface)) : color, [surface], target)
+    colors.set(key, foreground)
   }
 
   const styles: string[] = []
@@ -97,7 +127,8 @@ function buildTokenStyles(token: { foreground: any; background: any; decorations
   }
 
   if (decorations.has("dim")) {
-    styles.push("opacity: 0.7")
+    if (options.forcedColors) styles.push("color: GrayText")
+    else if (!options.highContrast) styles.push("opacity: 0.7")
   }
 
   if (decorations.has("italic")) {
@@ -119,6 +150,7 @@ function buildTokenStyles(token: { foreground: any; background: any; decorations
   }
 
   if (decorations.has("hidden")) {
+    styles.push("visibility: hidden")
     styles.push("color: transparent")
     styles.push("background-color: transparent")
   }

@@ -2,17 +2,41 @@ import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { renderMermaid } from "../lib/mermaid-renderer"
 import { BoundedText } from "./hidden-text"
+import { useOptionalTheme } from "../lib/theme"
+import { createCssColorResolver } from "../lib/css-color"
+import type { MermaidAppearance } from "../lib/mermaid-renderer"
 
 export function MermaidDiagram(props: {
   code: string; isDark?: boolean; showSourceOnError?: boolean; onReady?: (ready: boolean) => void; onRendered?: () => void
 }) {
   const { t } = useI18n()
+  const theme = useOptionalTheme()
   const [image, setImage] = createSignal<string>()
   const [failed, setFailed] = createSignal(false)
+  let previousCode: string | undefined
   createEffect(() => {
+    theme?.themeRevision()
+    let appearance: MermaidAppearance | undefined
+    if (theme) {
+      const colors = createCssColorResolver()
+      try {
+        appearance = {
+          background: colors.resolve("--surface-canvas", "background"),
+          surface: colors.resolve("--surface-inset", "background"),
+          secondary: colors.resolve("--surface-control", "background"),
+          text: colors.resolve("--text-primary", "foreground"),
+          border: colors.resolve("--accent-text", "foreground"),
+          error: colors.resolve("--status-error", "foreground"),
+        }
+      } finally { colors.dispose() }
+    }
     const controller = new AbortController()
-    setImage(undefined); setFailed(false); props.onReady?.(false)
-    void renderMermaid(props.code, Boolean(props.isDark), controller.signal).then(value => {
+    if (props.code !== previousCode) {
+      previousCode = props.code
+      setImage(undefined); props.onReady?.(false)
+    }
+    setFailed(false)
+    void renderMermaid(props.code, props.isDark ?? theme?.isDark() ?? false, controller.signal, appearance).then(value => {
       if (controller.signal.aborted) return
       setImage(value); props.onReady?.(true)
     }).catch(() => {

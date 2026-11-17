@@ -39,6 +39,42 @@ const gitFocusBoundaryInitScript = String.raw`(() => {
 
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
 
+// Vite resolves the same Solid instance as the real components for this mounted
+// tool renderer, without expanding the shared Git fixture's public test API.
+const toolDiffFixtureModule = `
+import { createComponent, createSignal } from "solid-js"
+import { render } from "solid-js/web"
+import { createDiffContentRenderer } from "/src/components/tool-call/diff-render.tsx"
+import { ThemeProvider, useTheme } from "/src/lib/theme.tsx"
+import { ConfigProvider } from "/src/stores/preferences.tsx"
+import { getCacheEntry } from "/src/lib/global-cache.ts"
+const host = document.createElement("div")
+host.id = "contrast-tool-diff"
+document.body.prepend(host)
+const entry = { scope: "diff", cacheId: "contrast", version: "1" }
+const payload = { filePath: "example.ts", diffText: "--- a/example.ts\\n+++ b/example.ts\\n@@ -1,2 +1,2 @@\\n-const value = 1\\n+const value = 2\\n unchanged\\n" }
+const handle = { get: () => undefined, params: () => entry }
+const content = () => {
+  const theme = useTheme()
+  const [shown, setShown] = createSignal(true)
+  window.remountToolDiff = () => {
+    setShown(false)
+    queueMicrotask(() => setShown(true))
+  }
+  const renderer = createDiffContentRenderer({
+    toolState: () => ({ status: "completed" }), preferences: () => ({ diffViewMode: "unified" }),
+    setDiffViewMode() {}, isDark: theme.isDark, t: key => key,
+    diffCache: handle, permissionDiffCache: handle, textRevealTarget: () => undefined,
+    scrollHelpers: { registerContainer() {}, handleScroll() {}, renderSentinel() {} }, handleScrollRendered() {},
+  })
+  window.toolDiffCached = () => Boolean(getCacheEntry(entry))
+  return () => shown() ? renderer.renderDiffContent(payload) : undefined
+}
+render(() => createComponent(ConfigProvider, { get children() {
+  return createComponent(ThemeProvider, { get children() { return createComponent(content, {}) } })
+} }), host)
+`
+
 async function clickModifiedDiffLine(page: Page) {
   // Plain model text paints before the asynchronous diff adds its deleted-code
   // view zones. Selecting those old coordinates can open Monaco's copy menu.
@@ -291,7 +327,11 @@ before(async () => {
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     cacheDir: cache.cacheDir,
     publicDir: fileURLToPath(new URL("../../src/renderer/public", import.meta.url)),
-    plugins: [shutdown.plugin, solid(), { name: "git-history-fixture", configureServer(s) {
+    plugins: [shutdown.plugin, solid(), {
+      name: "contrast-tool-diff-fixture",
+      resolveId(id) { if (id === "/contrast-tool-diff.js") return id },
+      load(id) { if (id === "/contrast-tool-diff.js") return toolDiffFixtureModule },
+    }, { name: "git-history-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/git-history.tsx"></script></body></html>'))
@@ -460,9 +500,12 @@ test("clicked previews bypass blocked background scans and follow the live palet
     await page.locator(".workspace-file-view .view-line").first().waitFor({ timeout: 5000 })
     console.log(`Cold file reader with blocked scans: ${Math.round(performance.now() - start)}ms`)
     await page.evaluate(() => (window as any).releaseScans())
-    await page.evaluate(() => {
-      document.documentElement.style.setProperty("--surface-canvas", "#24313f")
-      document.documentElement.style.setProperty("--status-success", "#68ac93")
+    await page.evaluate(async () => {
+      const preferencesPath = "/src/stores/preferences.tsx", schemePath = "/src/lib/theme-scheme.ts"
+      const { setColorSchemePreference } = await import(preferencesPath)
+      const { DEFAULT_CUSTOM_COLORS } = await import(schemePath)
+      await setColorSchemePreference({ id: "custom", appearance: "dark",
+        colors: { ...DEFAULT_CUSTOM_COLORS, surfaceBase: "#24313F", surfaceSecondary: "#24313F", statusSuccess: "#68AC93" } })
     })
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".monaco-editor-background")!).backgroundColor === "rgb(36, 49, 63)")
     await page.getByRole("button", { name: /Changements/, exact: true }).click()
@@ -482,6 +525,200 @@ test("clicked previews bypass blocked background scans and follow the live palet
     const inserted = await page.locator(".line-insert").first().evaluate(el => getComputedStyle(el).backgroundColor)
     assert.match(inserted, /104, 172, 147/)
     if (process.env.CODENOMAD_GIT_CAPTURE) await page.screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/palette-diff.png` })
+  } finally { await page.close() }
+})
+
+test("mounted Monaco readers follow contrast preference and live system changes without replacing their models", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  const preference = (value: "auto" | "on" | "off") => page.evaluate(async value => {
+    const path = "/src/stores/preferences.tsx"
+    await (await import(path)).setHighContrastPreference(value)
+  }, value)
+  const theme = () => page.evaluate(() => (window as any).contrastTheme)
+  try {
+    await page.emulateMedia({ contrast: "no-preference", forcedColors: "none" })
+    await page.goto(url)
+    await page.getByRole("button", { name: "Changements", exact: true }).click()
+    await page.getByRole("button", { name: "Aperçu du fichier · src/styles/panels/git-history.css", exact: true }).click()
+    await page.locator(".git-diff-view .line-insert").first().waitFor()
+    await page.evaluate(() => {
+      const api = (window as any).monaco
+      const define = api.editor.defineTheme
+      api.editor.defineTheme = (name: string, data: unknown) => {
+        if (name === "codenomad") (window as any).contrastTheme = data
+        return define(name, data)
+      }
+      const editor = api.editor.getDiffEditors().at(-1)
+      ;(window as any).contrastReader = { editor, model: editor.getModel() }
+      editor.getModifiedEditor().setSelection(new api.Selection(3, 2, 3, 12))
+    })
+    // Media emulation changes the actual MediaQueryLists; no attribute/style
+    // mutation is used to trigger the already-mounted reader.
+    await page.emulateMedia({ contrast: "more" })
+    await page.waitForFunction(() => (window as any).contrastTheme?.colors["editor.selectionForeground"])
+    const strong = await theme()
+    const alpha = (color: string) => parseInt(color.slice(7), 16)
+    assert.ok(alpha(strong.colors["diffEditor.insertedLineBackground"]) < alpha(strong.colors["diffEditorGutter.insertedLineBackground"]))
+    assert.ok(alpha(strong.colors["diffEditorGutter.insertedLineBackground"]) < alpha(strong.colors["diffEditor.insertedTextBackground"]))
+    assert.notEqual(strong.colors["editorLineNumber.foreground"], strong.colors["editor.foreground"])
+    await preference("off")
+    await page.waitForFunction(() => (window as any).contrastTheme?.colors["diffEditor.insertedLineBackground"].endsWith("14"))
+    await preference("on")
+    await page.emulateMedia({ contrast: "no-preference" })
+    await page.waitForFunction(() => (window as any).contrastTheme?.colors["editor.selectionForeground"])
+    await preference("auto")
+    await page.waitForFunction(() => (window as any).contrastTheme?.colors["diffEditor.insertedLineBackground"].endsWith("14"))
+    await page.emulateMedia({ forcedColors: "active" })
+    await page.waitForFunction(() => (window as any).contrastTheme?.colors["editor.selectionForeground"])
+    const forced = await theme()
+    const system = await page.evaluate(async () => {
+      const path = "/src/lib/css-color.ts"
+      const { resolveCssColor } = await import(path)
+      return {
+        background: resolveCssColor("--surface-canvas", "background"),
+        foreground: resolveCssColor("--text-primary", "foreground"),
+        selection: resolveCssColor("--accent-primary", "selection"),
+        selectionText: resolveCssColor("--text-on-accent", "selectionText"),
+      }
+    })
+    assert.equal(forced.colors["editor.background"], system.background)
+    assert.equal(forced.colors["editor.foreground"], system.foreground)
+    assert.equal(forced.colors["editor.selectionBackground"], system.selection)
+    assert.equal(forced.colors["editor.selectionForeground"], system.selectionText)
+    await page.emulateMedia({ forcedColors: "none" })
+    await page.waitForFunction(() => !(window as any).contrastTheme?.colors["editor.selectionForeground"])
+    assert.equal(await page.evaluate(() => {
+      const { editor, model } = (window as any).contrastReader
+      const selection = editor.getModifiedEditor().getSelection()
+      return editor === (window as any).monaco.editor.getDiffEditors().at(-1) && editor.getModel() === model
+        && selection.startLineNumber === 3 && selection.startColumn === 2 && selection.endColumn === 12
+    }), true)
+    const contrastChecks = await page.evaluate(async () => {
+      const prefsPath = "/src/stores/preferences.tsx", schemesPath = "/src/lib/theme-scheme.ts", colorsPath = "/src/lib/color-contrast.ts"
+      const prefs = await import(prefsPath), { BUILT_IN_COLOR_SCHEMES, normalizeColorScheme } = await import(schemesPath)
+      const { mix, contrastRatio } = await import(colorsPath)
+      await prefs.setHighContrastPreference("on")
+      const failures: string[] = []
+      let minimum = 21, checked = 0
+      for (const scheme of BUILT_IN_COLOR_SCHEMES.filter((scheme: any) => scheme.colors)) {
+        await prefs.setThemePreference(scheme.appearance)
+        await prefs.setColorSchemePreference(normalizeColorScheme(scheme.id))
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        const { colors, rules } = (window as any).contrastTheme
+        const base = colors["editor.background"].toUpperCase()
+        const paint = { over(value: string, background: string) {
+          return value.length === 7 ? value.toUpperCase()
+            : mix(value.slice(0, 7).toUpperCase(), background, parseInt(value.slice(7), 16) / 255)
+        } }
+        for (const kind of ["inserted", "removed"]) {
+          const line = paint.over(colors[`diffEditor.${kind}LineBackground`], base)
+          const backgrounds = [line, paint.over(colors[`diffEditorGutter.${kind}LineBackground`], base),
+            paint.over(colors[`diffEditor.${kind}TextBackground`], line)]
+          const alphas = ["diffEditor." + kind + "LineBackground", "diffEditorGutter." + kind + "LineBackground",
+            "diffEditor." + kind + "TextBackground"].map(key => parseInt(colors[key].slice(7), 16))
+          if (!(0 < alphas[0] && alphas[0] < alphas[1] && alphas[1] < alphas[2])) failures.push(`${scheme.id} ${kind}: tint hierarchy ${alphas}`)
+          for (const { token, foreground } of rules) for (const background of backgrounds) {
+            const fore = `#${foreground.toUpperCase()}`
+            const ratio = contrastRatio(fore, background)
+            const target = Math.min(7.5, contrastRatio(fore, base))
+            if (ratio < target) failures.push(`${scheme.id} ${kind} ${token}: ${ratio}`)
+            minimum = Math.min(minimum, ratio)
+            checked++
+          }
+        }
+        const selected = contrastRatio(colors["editor.selectionForeground"].toUpperCase(), colors["editor.selectionBackground"].toUpperCase())
+        if (selected < 7.5) failures.push(`${scheme.id} selected: ${selected}`)
+        for (const key of ["editor.lineHighlightBackground", "editor.inactiveSelectionBackground"]) {
+          for (const { token, foreground } of rules) {
+            const ratio = contrastRatio(`#${foreground.toUpperCase()}`, colors[key].toUpperCase())
+            if (ratio < 7.5) failures.push(`${scheme.id} ${key} ${token}: ${ratio}`)
+          }
+        }
+      }
+      return { failures, minimum, checked }
+    })
+    assert.deepEqual(contrastChecks.failures, [])
+    assert.ok(contrastChecks.checked > 900)
+    console.log(`Monaco composed backgrounds: ${contrastChecks.checked} contrast pairs, minimum ${contrastChecks.minimum.toFixed(2)}:1`)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("live and cached tool diffs retain token surfaces and hierarchical tints through system contrast changes", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => (window as any).fixture)
+    await page.evaluate(async () => { const path = "/contrast-tool-diff.js"; await import(path) })
+    const root = page.locator("#contrast-tool-diff .diff-style-root")
+    await root.waitFor({ state: "attached" })
+    assert.deepEqual(errors, [])
+    await page.locator("#contrast-tool-diff .diff-line-num").first().waitFor()
+    await page.waitForFunction(() => (window as any).toolDiffCached())
+    await page.evaluate(() => (window as any).remountToolDiff())
+    await root.waitFor()
+    await page.evaluate(() => { (window as any).cachedDiffRoot = document.querySelector("#contrast-tool-diff .diff-style-root") })
+    const snapshot = () => root.evaluate(element => {
+      const style = getComputedStyle(element)
+      return {
+        line: style.getPropertyValue("--diff-line-alpha").trim(), gutter: style.getPropertyValue("--diff-gutter-alpha").trim(),
+        text: style.getPropertyValue("--diff-text-alpha").trim(), color: style.color,
+        paintedLine: style.getPropertyValue("--diff-add-content--").trim(),
+        paintedGutter: style.getPropertyValue("--diff-add-lineNumber--").trim(),
+        paintedText: style.getPropertyValue("--diff-add-content-highlight--").trim(),
+        keyword: getComputedStyle(element.querySelector(".hljs-keyword")!).color,
+        plain: style.getPropertyValue("--diff-plain-content--").trim(), canvas: style.getPropertyValue("--surface-canvas").trim(),
+        number: getComputedStyle(element.querySelector(".diff-line-num")!).color,
+      }
+    })
+    const normal = await snapshot()
+    assert.equal(normal.line, "8%")
+    assert.equal(normal.plain, normal.canvas, "the lazy library stylesheet cannot replace the palette surface")
+    await page.emulateMedia({ contrast: "more" })
+    await page.waitForFunction(() => getComputedStyle(document.querySelector("#contrast-tool-diff .diff-style-root")!).getPropertyValue("--diff-add-content--").trim().startsWith("#"))
+    const strong = await snapshot()
+    const alpha = (color: string) => parseInt(color.slice(7), 16)
+    assert.ok(alpha(strong.paintedLine) < alpha(strong.paintedGutter))
+    assert.ok(alpha(strong.paintedGutter) < alpha(strong.paintedText))
+    assert.notEqual(strong.keyword, strong.color, "syntax keeps its colored text role")
+    assert.notEqual(strong.keyword, normal.keyword, "the live syntax role adapts to contrast")
+    assert.notEqual(strong.number, strong.color, "line numbers retain their secondary treatment")
+    const paintedContrast = await root.evaluate(async element => {
+      const colorPath = "/src/lib/color-contrast.ts", resolverPath = "/src/lib/css-color.ts"
+      const { mix, contrastRatio } = await import(colorPath), { resolveCssColor } = await import(resolverPath)
+      const style = getComputedStyle(element), base = resolveCssColor("--surface-canvas", "background").toUpperCase()
+      const paint = { over(value: string, background: string) {
+        return mix(value.slice(0, 7).toUpperCase(), background, parseInt(value.slice(7), 16) / 255)
+      } }
+      const line = paint.over(style.getPropertyValue("--diff-add-content--").trim(), base)
+      const word = paint.over(style.getPropertyValue("--diff-add-content-highlight--").trim(), line)
+      const gutter = paint.over(style.getPropertyValue("--diff-add-lineNumber--").trim(), base)
+      return [".hljs-keyword", ".hljs-number", ".diff-line-num"].map(selector => {
+        const color = getComputedStyle(element.querySelector(selector)!).color.match(/\d+/g)!.slice(0, 3)
+        const hex = `#${color.map(n => Number(n).toString(16).padStart(2, "0")).join("")}`.toUpperCase()
+        return { selector, hex, background: selector === ".diff-line-num" ? gutter : word,
+          ratio: contrastRatio(hex, selector === ".diff-line-num" ? gutter : word),
+          expected: resolveCssColor(selector === ".hljs-keyword" ? "--accent-text"
+            : selector === ".hljs-number" ? "--status-warning" : "--text-secondary").toUpperCase() }
+      })
+    })
+    assert.ok(paintedContrast.every(({ hex, expected, ratio }) => hex === expected && ratio >= 7.5), `painted syntax/gutter contrast: ${JSON.stringify(paintedContrast)}`)
+    assert.equal(await root.evaluate(element => element === (window as any).cachedDiffRoot), true, "cached markup updates in place")
+    await page.emulateMedia({ contrast: "no-preference" })
+    await page.waitForFunction(() => !getComputedStyle(document.querySelector("#contrast-tool-diff .diff-style-root")!).getPropertyValue("--diff-add-content--").trim().startsWith("#"))
+    await page.emulateMedia({ forcedColors: "active" })
+    assert.equal(await root.evaluate(element => getComputedStyle(element).getPropertyValue("--diff-plain-content--").trim()), "Canvas")
+    await page.emulateMedia({ forcedColors: "none" })
+    await page.evaluate(async () => {
+      const path = "/src/stores/preferences.tsx"
+      await (await import(path)).setThemePreference("light")
+    })
+    await page.locator('#contrast-tool-diff .diff-tailwindcss-wrapper[data-theme="light"]').waitFor()
+    assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
 

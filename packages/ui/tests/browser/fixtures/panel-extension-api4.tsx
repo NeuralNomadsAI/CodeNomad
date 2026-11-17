@@ -3,9 +3,9 @@ import { render } from "solid-js/web"
 import SessionView from "../../../src/components/session/session-view"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import type { PromptInputApi } from "../../../src/components/prompt-input/types"
-import { ConfigProvider } from "../../../src/stores/preferences"
+import { ConfigProvider, useConfig } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
-import { ThemeProvider } from "../../../src/lib/theme"
+import { ThemeProvider, useTheme } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverEvents } from "../../../src/lib/server-events"
 import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
@@ -75,6 +75,9 @@ const promptApi = () => { const id = active(); return id ? apis()[id] ?? null : 
 
 function Fixture() {
   const { t } = useI18n()
+  const theme = useTheme(), config = useConfig()
+  Object.assign((window as any).fixture ??= {}, { theme: theme.setThemeMode, contrast: config.setHighContrastPreference,
+    themeState: () => ({ contrast: theme.highContrast(), forced: theme.forcedColors(), dark: theme.isDark() }) })
   return <div style={{ display: "flex", height: "100dvh", width: "100vw", position: "relative" }}>
     <div style={{ flex: "1", "min-width": "0", display: "flex" }}>
       <Show when={active()} keyed>{id =>
@@ -99,7 +102,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProv
 // Frames report answers that outlive them (navigation, closing) to the host page.
 const frameMessages: unknown[] = []
 window.addEventListener("message", event => { if (event.data?.fixtureAnswer) frameMessages.push(event.data.fixtureAnswer) })
-;(window as any).fixture = {
+Object.assign((window as any).fixture, {
   frameMessages: () => frameMessages.splice(0),
   show: async (id: string) => {
     const intent = beginGesture({ instanceId, sessionId: id })
@@ -117,4 +120,4 @@ window.addEventListener("message", event => { if (event.data?.fixtureAnswer) fra
     attachments: listed.reduce((count, id) => count + getAttachments(instanceId, id).length, 0),
     draft: (document.querySelector("textarea.prompt-input") as HTMLTextAreaElement | null)?.value ?? null,
     focused: document.activeElement?.classList.contains("prompt-input") === true }),
-}
+})
