@@ -331,10 +331,16 @@ fencing and coalesced trailing invalidation after `memory.changed` or reconnect.
 Mutation replies check their context generation before changing drafts and only
 replace the draft version sent by that mutation, preserving newer edits.
 The list's `scopeKey` identifies the resolved namespace, and its server-generated
-`observedAt` is captured before the read. A successful read advances a monotonic
-localStorage consultation frontier per namespace. Each visit freezes the previous
-frontier: created-after entries show **New**, otherwise updated-after entries
-show **Modified**. Badges remain visible through refreshes during that visit.
+`observedAt` is captured before the read. The entries sit in a
+`settings-disclosure` folded by default for the window's lifetime and unfolded
+by a dirty draft. Its summary shows the scope's count and limit (named
+**Entries** for assistive technology) and repeats the **New**, **Modified** and
+**Needs review** badges present in the list; rows render only while it is
+open. A successful read advances a monotonic localStorage consultation frontier
+per namespace while the list is open, or when it is unfolded after that read.
+Each visit freezes the previous frontier: created-after entries show **New**,
+otherwise updated-after entries show **Modified**. Badges remain visible through
+refreshes during that visit.
 Failed reads leave the saved frontier untouched; unavailable localStorage keeps
 the badges visit-local. The frontier belongs to the current UI storage origin.
 

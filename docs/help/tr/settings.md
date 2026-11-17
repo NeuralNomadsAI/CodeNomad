@@ -46,7 +46,7 @@ CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de 
 - **Hakkınızda**: bu yapılandırmayı kullanan projeler arasında paylaşılan en fazla 60 kayıt.
 - **Proje**: en fazla 200 kayıt. Bu arayüz Tercihler’de seçilen projeyi, gömülü Ayarlar ise ana pencerenin etkin projesini kullanır. Sunucu depoyu normalleştirilmiş Git uzak adresiyle, bu yoksa yerel depo yoluyla tanımlar; worktree’ler bu belleği paylaşır. Bu kapsamı seçmek için bir proje açın.
 
-1. Kapsamı ve kaydı seçin. **Yeni** ve **Değiştirildi**, bu tarayıcı veya masaüstü görünümünde kapsamın son başarılı incelemesinden sonraki değişiklikleri gösterir; geçerli ziyaret boyunca görünür kalırlar.
+1. Kapsamı seçin, kayıt sayısını (örneğin **7/200**) açın ve bir kayıt seçin. **Yeni** ve **Değiştirildi**, bu tarayıcı veya masaüstü görünümünde kapsamın kayıtlarının son gösteriminden sonraki değişiklikleri gösterir; daraltılmış sayaç satırı da bunları gösterir ve geçerli ziyaret boyunca görünür kalırlar.
 2. **Başlık**, **Tür** (**Bilgi**, **Tercih** veya **Referans**) ve **Metin** alanlarını düzenleyip **Kaydet** seçeneğini kullanın. Başlık 60, metin 2.000 karakterle sınırlıdır. **İptal** kayıtlı içeriği geri getirir. Kayıt başka yerde değiştiyse **Yeniden yükle** ile inceleyip sonra kaydedin.
 3. Kaldırmak için kaydın işlem menüsünü açıp **Unut** işlemini onaylayın. Kayıt etkin bellekten çıkar; yerel Git eski metin dahil geçmişi korur. Unutmak ajanın kullanımını sonlandırır, güvenli veri silme değildir.
 4. Bellek doluysa yeniden denemeden önce kayıtları birleştirin veya unutun. Eşleşen başlıklar ya da büyük ölçüde örtüşen metinler mevcut bir kaydı değiştirir; Git önceki metni saklar.

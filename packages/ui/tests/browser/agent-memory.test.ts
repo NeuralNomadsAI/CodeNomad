@@ -79,8 +79,15 @@ async function setup(page: Page, initial = true) {
     hold: (value: (route: Route) => Promise<void>) => { hold = value }, holdWrite: (value: () => Promise<void>) => { holdWrite = value },
     inventory: (value: typeof inventory) => { inventory = value }, writable: (value: boolean) => { cleanupWritable = value } }
 }
+/** Unfolds the entry list; the fold state then lasts for the page's lifetime. */
+async function unfold(page: Page) {
+  const fold = card(page).locator("details.agent-memory-entries")
+  await fold.locator("> summary").waitFor()
+  if (!(await fold.evaluate(node => (node as HTMLDetailsElement).open))) await fold.locator("> summary").click()
+}
 async function open(page: Page) {
   await page.goto(url)
+  await unfold(page)
   await page.getByRole("button", { name: /Project A/ }).waitFor()
   assert.equal(await scope(page).inputValue(), "project")
 }
@@ -208,6 +215,7 @@ test("disabled memory shows only the activation card and makes no entry reads", 
     assert.equal(f.requests.some(value => value.operation), false)
     f.settingFailure(false)
     await page.getByRole("switch").click()
+    await unfold(page)
     await page.getByRole("button", { name: /Project A/ }).waitFor()
     assert.deepEqual(f.requests.filter(value => "enabled" in value), [{ enabled: true }, { enabled: true }])
     assert.deepEqual(f.errors, [])
@@ -220,8 +228,19 @@ test("badges use a frozen server frontier, prefer New and advance only after suc
   await page.addInitScript(() => localStorage.setItem("codenomad.memory.seen.project-a", String(Date.parse("2026-11-01T00:00:00Z"))))
   try {
     await page.goto(url)
+    // Folded: the summary announces the badges, rows stay unrendered and nothing is acknowledged.
+    const summary = card(page).locator("details.agent-memory-entries > summary")
+    await summary.getByText("New", { exact: true }).waitFor()
+    await summary.getByText("Modified", { exact: true }).waitFor()
+    assert.match(await summary.innerText(), /2\/200/)
+    // Spaces separate the badges in the summary's accessible name.
+    assert.equal(await summary.evaluate(node => node.textContent), "Entries 2/200 New Modified")
+    assert.equal(await card(page).locator(".agent-memory-entry").count(), 0)
+    assert.equal(await page.evaluate(() => Number(localStorage.getItem("codenomad.memory.seen.project-a"))), Date.parse("2026-11-01T00:00:00Z"))
+    await unfold(page)
     const newItem = page.getByRole("button", { name: /New item/ }), modified = page.getByRole("button", { name: /Modified item/ })
     await newItem.waitFor()
+    await page.waitForFunction(at => Number(localStorage.getItem("codenomad.memory.seen.project-a")) === at, Date.parse(observedAt))
     assert.equal(await newItem.getByText("New", { exact: true }).count(), 1)
     f.frontier("2026-11-07T10:00:00Z"); f.listError("unreadable")
     await page.evaluate(() => (window as any).fixture.event({ type: "memory.changed" }))
@@ -400,6 +419,19 @@ test("a late save cannot erase a newer draft across missing and restored reconne
     assert.deepEqual(f.errors, [])
   } finally { release?.(); await page.close() }
 })
+test("a dirty draft stays editable after its entry is deleted elsewhere and the list empties", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  try {
+    await open(page); await page.getByRole("button", { name: /Project A/ }).click()
+    await text(page).fill("Unsaved draft")
+    f.data["project-a"] = []
+    await page.evaluate(() => (window as any).fixture.event({ type: "memory.changed" }))
+    await page.getByRole("alert").getByText(en["settings.memory.error.conflict"], { exact: true }).waitFor()
+    assert.equal(await text(page).inputValue(), "Unsaved draft")
+    assert.equal(await card(page).locator(".agent-memory-entry").count(), 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
 test("scope errors are explicit, never empty, and retained snapshots become read-only", async () => {
   const page = await browser.newPage(), f = await setup(page)
   try {
@@ -409,6 +441,7 @@ test("scope errors are explicit, never empty, and retained snapshots become read
     assert.equal(await page.getByText(en["settings.memory.empty"], { exact: true }).count(), 0)
     assert.equal(await page.getByText("0/200", { exact: true }).count(), 0)
     f.listError(); await page.getByRole("button", { name: "Try again", exact: true }).click()
+    await unfold(page)
     await page.getByRole("button", { name: /Project A/ }).click(); await text(page).fill("Draft")
     f.listError("git_unavailable"); await page.evaluate(() => (window as any).fixture.event({ type: "memory.changed" }))
     await page.getByRole("alert").getByText(en["settings.memory.error.git_unavailable"], { exact: true }).waitFor()
@@ -488,7 +521,7 @@ test("ten locales have the same labels; Hebrew layout keeps fields and actions i
   }
   const page = await browser.newPage({ viewport: { width: 390, height: 850 } }), f = await setup(page)
   try {
-    await page.goto(`${url}?locale=he`); await page.getByRole("button", { name: /Project A/ }).click()
+    await page.goto(`${url}?locale=he`); await unfold(page); await page.getByRole("button", { name: /Project A/ }).click()
     assert.equal(await page.locator("html").getAttribute("dir"), "rtl")
     const fields = card(page).locator(".agent-memory-editor input, .agent-memory-editor textarea")
     for (const field of await fields.all()) {

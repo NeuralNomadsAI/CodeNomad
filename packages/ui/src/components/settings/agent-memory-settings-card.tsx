@@ -11,12 +11,16 @@ import { showConfirmDialog } from "../../stores/alerts"
 import { requestMemoryCleanup } from "../../lib/native/memory-cleanup"
 import { generateUUID } from "../../lib/client-identity"
 
+// Window-lifetime fold state, like the Providers groups: the entry list starts folded.
+const [entriesOpen, setEntriesOpen] = createSignal(false)
+
 export function AgentMemorySettingsCard(props: { instanceId?: string; location?: LocationRef }) {
   const { t } = useI18n(), id = createUniqueId()
   const [enabled, setEnabled] = createSignal<boolean>(), [changing, setChanging] = createSignal(false)
   const [settingsError, setSettingsError] = createSignal(false)
   const context = createMemo(() => props.instanceId ? { workspaceId: props.instanceId, ...(props.location?.directory ? { directory: props.location.directory } : {}) } : undefined)
-  const review = createAgentMemoryReview(context, () => enabled() === true)
+  const review = createAgentMemoryReview(context, () => enabled() === true, entriesOpen)
+  createEffect(() => { if (review.dirty()) setEntriesOpen(true) })
   const [tidying, setTidying] = createSignal(false), [tidyError, setTidyError] = createSignal(false)
   const [admitted, setAdmitted] = createSignal(false)
   let cleanupConsent = new AbortController()
@@ -67,6 +71,10 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
   })
   const readOnly = () => !!review.error() || review.busy() || changing()
   const badge = (createdAt: string, updatedAt: string) => Date.parse(createdAt) > review.baseline() ? "new" : Date.parse(updatedAt) > review.baseline() ? "modified" : undefined
+  const summaryBadges = createMemo(() => {
+    const entries = review.entries(), states = new Set(entries.map(entry => badge(entry.createdAt, entry.updatedAt)))
+    return [...(["new", "modified"] as const).filter(state => states.has(state)), ...(entries.some(entry => entry.flagged) ? ["flagged" as const] : [])]
+  })
   return <section id="agent-memory" class="settings-card agent-memory" aria-labelledby={`${id}-heading`}>
     <div class="settings-card-header">
       <h3 id={`${id}-heading`} class="settings-card-title">{t("settings.memory.title")}<SettingsInfoTip text={t("settings.memory.info")} help={{ page: "settings", anchor: "agent-memory" }} /></h3>
@@ -81,7 +89,6 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
           event.currentTarget.value = review.scope()
           void review.changeScope(value)
         }}><option value="global">{t("settings.memory.global")}</option><option value="project" disabled={!context()}>{t("settings.memory.project")}</option></select>
-        <Show when={review.available() && review.hasSnapshot()}><span class="agent-memory-counter">{t("settings.memory.count", { count: review.entries().length, limit: review.scope() === "global" ? 60 : 200 })}</span></Show>
         <span class="agent-memory-tidy"><button type="button" class="window-action" disabled={!canTidy()} onClick={() => void tidy()}>{t("settings.memory.tidy")}</button><SettingsInfoTip text={t("settings.memory.tidyInfo")} help={{ page: "settings", anchor: "agent-memory" }} /></span>
       </div>
       <Show when={tidyError()}><p role="alert">{t("settings.memory.tidyFailed")}</p></Show>
@@ -93,14 +100,23 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
         <button type="button" class="window-action" disabled={review.loading()} onClick={() => void (error().code === "conflict" ? review.reload() : review.load())}>{t(error().code === "conflict" ? "settings.memory.reload" : "settings.memory.retry")}</button>
       </div>}</Show>
       <Show when={review.available() && !review.loading() && !review.error() && !review.entries().length}><p role="status">{t("settings.memory.empty")}</p></Show>
-      <ul class="agent-memory-list"><For each={review.entries()}>{entry => <li>
-        <button type="button" class="agent-memory-entry" aria-expanded={review.draft()?.entry.id === entry.id} aria-controls={review.draft()?.entry.id === entry.id ? `${id}-editor` : undefined} disabled={review.busy()} onClick={() => void review.open(entry)}>
-          <bdi class="agent-memory-entry-title">{entry.title}</bdi><span class="agent-memory-entry-type">{t(`settings.memory.type.${entry.type}`)}</span>
-          <Show when={badge(entry.createdAt, entry.updatedAt)}>{state => <span class="badge-shape agent-memory-badge">{t(`settings.memory.${state()}`)}</span>}</Show>
-          <Show when={entry.flagged}><span class="badge-shape agent-memory-badge">{t("settings.memory.flagged")}</span></Show>
-        </button>
-      </li>}</For></ul>
-      <Show when={review.available() && review.draft()}><AgentMemoryEditor id={`${id}-editor`} review={review} readOnly={readOnly()} /></Show>
+      {/* A draft keeps the fold (and its editor) even after its entry left the list. */}
+      <Show when={review.available() && (review.entries().length || review.draft())}>
+        <details class="settings-disclosure agent-memory-entries" open={entriesOpen()} onToggle={event => setEntriesOpen(event.currentTarget.open)}>
+          <summary><span class="sr-only">{t("settings.memory.entries")} </span>{t("settings.memory.count", { count: review.entries().length, limit: review.scope() === "global" ? 60 : 200 })}<For each={summaryBadges()}>{state => <>{" "}<span class="badge-shape agent-memory-badge">{t(`settings.memory.${state}`)}</span></>}</For></summary>
+          {/* The rows render only while unfolded; a project holds up to 200 entries. */}
+          <Show when={entriesOpen()}>
+            <ul class="agent-memory-list"><For each={review.entries()}>{entry => <li>
+              <button type="button" class="agent-memory-entry" aria-expanded={review.draft()?.entry.id === entry.id} aria-controls={review.draft()?.entry.id === entry.id ? `${id}-editor` : undefined} disabled={review.busy()} onClick={() => void review.open(entry)}>
+                <bdi class="agent-memory-entry-title">{entry.title}</bdi><span class="agent-memory-entry-type">{t(`settings.memory.type.${entry.type}`)}</span>
+                <Show when={badge(entry.createdAt, entry.updatedAt)}>{state => <span class="badge-shape agent-memory-badge">{t(`settings.memory.${state()}`)}</span>}</Show>
+                <Show when={entry.flagged}><span class="badge-shape agent-memory-badge">{t("settings.memory.flagged")}</span></Show>
+              </button>
+            </li>}</For></ul>
+            <Show when={review.draft()}><AgentMemoryEditor id={`${id}-editor`} review={review} readOnly={readOnly()} /></Show>
+          </Show>
+        </details>
+      </Show>
     </Show>
   </section>
 }
