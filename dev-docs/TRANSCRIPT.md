@@ -2,6 +2,18 @@
 
 ## Agent conventions
 
+- Concrete-color renderers follow `useTheme().themeRevision()` as well as their
+  content identity. Markdown cache keys include effective contrast and code
+  surface/text colors; Shiki adjusts token lightness against the rendered code
+  surface, retaining hue. Request-generation fences also cover theme retries.
+  Code controls retain focus by stable fence key when recoloring replaces HTML.
+  ANSI dim retains its hierarchy, uses `GrayText` in forced colors, and hidden
+  stays hidden. Mermaid diagrams use effective surface, text and semantic colors
+  in every contrast mode. Gantt task states share readable surface/ink pairs;
+  completed tasks use the control surface and critical outlines use error ink.
+  `tests/browser/mermaid.test.ts` measures the rendered SVG task labels and borders
+  in normal, high-contrast and forced-color appearances.
+
 - Mermaid fences (`mermaid`/`mmd`) use only `@mermaid-js/tiny`, loaded on demand and excluded from PWA precaching. `lib/markdown.ts` publishes a per-render token/encoded-source/completeness sidecar from actual fenced tokens alongside cached HTML; raw HTML cannot supply that provenance. `markdown-mermaid.tsx` consumes the sidecar and retains source for unfinished or display-truncated fences and while streaming. Source/diagram choices remain local to the Markdown owner; copy/wrap keep the native source. `mermaid-renderer.ts` serializes bounded renders in one opaque `allow-scripts` iframe with network-disabled CSP; returned SVGs are image documents rather than host HTML. Keep 50,000-character/500-edge input limits, a 2M-character SVG ceiling and the initialization/render deadlines, including late-import fencing. `MermaidDiagram` is shared with `.mmd` file previews; invalid/unsupported/oversized content keeps an actionable source fallback. Regression coverage: `tests/browser/mermaid.test.ts`.
 
 - Partial live projections preserve omitted resident message runs beside their preceding shared row, with leading history before the snapshot and pending optimistic sends at the tail. Shared rows follow the incoming native order. A prompt delivered from the session inbox takes the position the native message page owns: the SDK's `session.inbox.delivered` moves the prompt's row to the reducer's tail, so a delivery that relocates a row which is not the reducer's last owes an authoritative page read — invalidated and finished like a settlement read, shared with any in-flight read and superseded only by a newer admitted execution, and published through the instance layer's frame gates (active session, latest window) exactly as live events' projections are. The outstanding read is a retirement barrier, and a verified reconnect carries the demand: after the seeded page lands, the repair resumes immediately instead of trailing behind the quiet reconciliation. No client-side ordering state survives the delivery: the reducer itself is healed, so reconnect seeding and authoritative replacement carry the corrected order. HTTP pages can contain later steps whose events are still in transit; message IDs and wall-clock timestamps remain identity/display data rather than transcript sort keys.

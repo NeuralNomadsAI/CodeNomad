@@ -23,12 +23,15 @@ The selected right-panel tab and Files mode are saved separately for each projec
 
 1. In **General**, select **Language**: English, Spanish, French, Russian, Japanese, Simplified Chinese, Hebrew, German, Nepali or Turkish.
 2. In **Color scheme**, choose **Mode**: **Auto**, **Dark** or **Light**. Auto follows the operating system.
-3. Choose a palette for the displayed appearance. Light and dark selections are saved independently; Auto uses the matching one.
-4. For custom colors, use the swatches and **Save**; **Reset** restores a built-in palette's colors. Use **New** to name a separate palette and **Delete** to remove one you created.
+3. Beside **Mode**, choose **Contrast**: **Auto** (the default) follows the system's contrast preference; **On** increases contrast with any palette; **Off** uses normal contrast.
+4. Choose a palette for the displayed appearance. Light and dark selections are saved independently; Auto uses the matching one.
+5. For custom colors, use the swatches and **Save**; **Reset** restores a built-in palette's colors. Use **New** to name a separate palette and **Delete** to remove one you created.
+
+Contrast applies and saves immediately, independently of **Save** for colors. It adapts rendering while preserving your selected palette, editable colors and conversation draft. The **i** shows the current contrast state in Auto. System forced colors take priority.
 
 The UI updates without restarting a conversation. Hebrew uses right-to-left layout; code and technical values remain readable in their own direction. Language selection changes interface text, not the language of existing messages or agent instructions. Native desktop menus switch to the interface language once a CodeNomad window has loaded.
 
-If colors become hard to read, select a built-in palette or reset the edited one. Switching palettes can ask you to discard unsaved color edits; it does not discard a conversation draft.
+If colors become hard to read, set **Contrast → On**. You can also select a built-in palette or reset the edited one. Switching palettes can ask you to discard unsaved color edits; your conversation draft is preserved.
 
 ## Keep the computer awake {#keep-computer-awake}
 
