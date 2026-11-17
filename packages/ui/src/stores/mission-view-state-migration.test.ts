@@ -64,7 +64,10 @@ if (!mode) {
   test("restores selection, tree and reader with recreated instance bindings", () => {
     assert.deepEqual(missionProjectView("first"), { ...legacy, reader: { ...legacy.reader, instanceId: "first",
       recurrence: { ...legacy.reader.recurrence, instanceId: "first" } } })
-    if (mode === "native-with-preview") assert.equal(getTabViewState("first").previews?.session.targetUrl, "https://example.com/")
+    if (mode === "native-with-preview") {
+      assert.equal(getTabViewState("first").previews?.session.mode, "preview")
+      assert.equal(JSON.parse(state.readClientLayoutValue("opencode-session-browser-state-v1")!).session.targetUrl, "https://example.com/")
+    }
   })
   test("keeps saved closed/open disclosures readable and gives occurrence rewrites precedence", () => {
     assert.equal(missionDisclosureOpen("first", "legacy-mission", "technical"), false)

@@ -72,6 +72,27 @@ async function prepare(page: Page, host: string, query = "") {
 }
 const preview = (page: Page, sessionId: string) => page.evaluate(id => (window as any).fixture.preview(id), sessionId)
 
+for (const host of ["web", "tauri", "electron"]) test(`${host}: opening a duplicate uses the session's existing preview token and URL`, { timeout: 90_000 }, async () => {
+  const native = host === "electron" ? await launchHistoryElectron() : undefined
+  const page = native?.page ?? await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await prepare(page, host, "&duplicate=1")
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), `${base}/page/a`)
+    const original = await preview(page, "session")
+    await page.evaluate(() => (window as any).fixture.selectOccurrence("header-duplicate"))
+    const tab = page.locator('[data-occurrence="header-duplicate"]')
+    await tab.locator(".message-stream-container").waitFor({ state: "visible" })
+    await tab.getByRole("button", { name: "Open web preview", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.preview("session", "header-duplicate")?.mode === "preview")
+    const duplicate = await page.evaluate(() => (window as any).fixture.preview("session", "header-duplicate"))
+    assert.equal(duplicate.token, original.token, "showing the other tab must reuse the session's token")
+    assert.equal(duplicate.targetUrl, original.targetUrl, "showing the other tab must retain the session's URL")
+  } finally {
+    if (native) { await native.app.close(); await rm(native.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+    else await page.close()
+  }
+})
+
 test("localhost transcript links open only the clicked duplicate occurrence", { timeout: 90_000 }, async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
   const a = "header-windows", b = "header-duplicate"
@@ -79,14 +100,14 @@ test("localhost transcript links open only the clicked duplicate occurrence", { 
     await prepare(page, "web", "&duplicate=1&assistant=1&links=1")
     const root = (id: string) => page.locator(`[data-occurrence="${id}"]`)
     await root(a).getByRole("link", { name: "Local preview", exact: true }).click()
-    await root(a).locator(".window-shell").waitFor({ state: "visible" })
-    assert.equal(await page.evaluate(id => (window as any).fixture.preview("session", id), b), null)
+     await page.locator('[data-preview-instance="header-windows"] .window-shell').waitFor({ state: "visible" })
+     assert.equal(await page.evaluate(id => (window as any).fixture.preview("session", id).mode, b), "chat")
     const original = await page.evaluate(id => (window as any).fixture.preview("session", id), a)
     await page.evaluate(id => (window as any).fixture.selectOccurrence(id), b)
     await root(b).getByRole("link", { name: "Local preview", exact: true }).click()
-    await root(b).locator(".window-shell").waitFor({ state: "visible" })
+     await page.locator('[data-preview-instance="header-duplicate"] .window-shell').waitFor({ state: "visible" })
     const other = await page.evaluate(id => (window as any).fixture.preview("session", id), b)
-    assert.notEqual(original.token, other.token)
+     assert.equal(original.token, other.token)
     assert.equal(other.targetUrl, base.replace("127.0.0.1", "localhost") + "/page/a")
     assert.deepEqual(await page.evaluate(id => (window as any).fixture.preview("session", id), a), original)
   } finally { await page.close() }
@@ -241,15 +262,15 @@ for (const host of ["web", "tauri", "electron"]) test(`${host}: browser gestures
 })
 
 for (const host of ["web", "tauri", "electron"]) {
-  test(`${host}: duplicate occurrences own independent previews, history, restoration and cleanup`, { timeout: 120_000 }, async () => {
+  test(`${host}: duplicate foreground choices share one retained document, history, template and token`, { timeout: 120_000 }, async () => {
     const native = host === "electron" ? await launchHistoryElectron() : undefined
     const page = native?.page ?? await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 1400, height: 900 } })
     const errors: string[] = []
     page.on("pageerror", error => errors.push(error.message))
     const a = "header-windows", b = "header-duplicate"
     const rootA = page.locator(`[data-occurrence="${a}"]`), rootB = page.locator(`[data-occurrence="${b}"]`)
-    const paneA = rootA.locator('[data-session-id="session"] .window-shell')
-    const paneB = rootB.locator('[data-session-id="session"] .window-shell')
+    const paneA = page.locator(`[data-preview-instance="${a}"] .window-shell`)
+    const paneB = page.locator(`[data-preview-instance="${b}"] .window-shell`)
     const read = (id: string) => page.evaluate(id => (window as any).fixture.preview("session", id), id)
     const select = (id: string) => page.evaluate(id => (window as any).fixture.selectOccurrence(id), id)
     const navigate = async (url: string) => {
@@ -269,7 +290,7 @@ for (const host of ["web", "tauri", "electron"]) {
         }, `${base}/page/a`)
       }
       await select(b)
-      assert.equal(await read(b), null)
+      assert.equal((await read(b)).mode, "chat")
       await rootB.locator(".message-stream-container").waitFor({ state: "visible" })
       await select(a)
       await navigate(`${base}/page/b`)
@@ -280,24 +301,53 @@ for (const host of ["web", "tauri", "electron"]) {
       await paneA.getByRole("button", { name: "Viewport size", exact: true }).click()
       await paneA.getByRole("menuitemradio", { name: "Mobile viewport (390 x 844)", exact: true }).click()
       await page.waitForFunction(() => (window as any).fixture.savedPreview("session")?.viewport === "mobile")
-      assert.equal(await read(b), null)
+      assert.equal((await read(b)).viewport, "mobile")
       await rootA.getByRole("button", { name: "Back to chat", exact: true }).click()
       await rootA.getByRole("button", { name: "Open web preview", exact: true }).click()
       await paneA.getByRole("button", { name: "Close", exact: true }).click()
-      assert.equal(await read(b), null)
+      assert.equal((await read(b)).mode, "chat")
       await rootA.getByRole("button", { name: "Open web preview", exact: true }).click()
       await paneA.getByRole("button", { name: "Back", exact: true }).click()
       await page.waitForFunction(url => (window as any).fixture.preview("session").targetUrl === url, `${base}/page/a`)
       await paneA.getByRole("button", { name: "Forward", exact: true }).click()
       await page.waitForFunction(url => (window as any).fixture.preview("session").targetUrl === url, `${base}/page/b`)
+      const token = (await read(a)).token
+      const created = await page.evaluate(() => (window as any).fixture.createdPreviews())
+      const requests = pageRequests.length
+      const guest = host === "electron" ? await page.evaluate(async () => {
+        const guest = document.querySelector("webview") as any
+        await guest.executeJavaScript('document.querySelector("#draft").value = "retained document"; window.retained = 123')
+        return guest.getWebContentsId()
+      }) : undefined
+      const frame = host === "web" ? await page.locator("iframe").elementHandle() : undefined
       await select(b)
-      await page.evaluate(({ url, id }) => (window as any).fixture.openPreview("session", url, id), { url: `${base}/page/c`, id: b })
+      await rootB.locator(".message-stream-container").waitFor({ state: "visible" })
+      await rootB.getByRole("button", { name: "Open web preview", exact: true }).click()
       await paneB.waitFor({ state: "visible" })
+      assert.equal((await read(b)).token, token)
       assert.equal((await read(a)).targetUrl, `${base}/page/b`)
+      assert.equal(await page.evaluate(() => (window as any).fixture.createdPreviews()), created)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.previewModes("header-duplicate")), { session: { mode: "preview" } })
+      if (host === "electron") {
+        assert.equal(await page.locator("webview").count(), 1)
+        assert.deepEqual(await page.evaluate(async () => {
+          const guest = document.querySelector("webview") as any
+          return [guest.getWebContentsId(), await guest.executeJavaScript('[window.retained, document.querySelector("#draft").value]')]
+        }), [guest, [123, "retained document"]])
+        assert.equal(pageRequests.length, requests, "switching duplicate tabs never reloads the document")
+      }
+      if (frame) assert.equal(await frame.evaluate(element => element === document.querySelector("iframe")), true)
+      if (host === "tauri") assert.equal(await page.evaluate(() => (window as any).fixture.native.calls.filter((c: any) => c.command === "browser_target_register").length), 1)
       await paneB.getByRole("button", { name: "Close", exact: true }).click()
       assert.equal((await read(a)).mode, "preview")
-      // Actual occurrence envelopes are restored lazily; A and B keep different
-      // saved URLs and display choices, with no guest allocated during hydration.
+      assert.equal((await read(b)).mode, "chat")
+      await select(a)
+      await paneA.waitFor({ state: "visible" })
+      await select(b)
+      await rootB.getByRole("button", { name: "Open web preview", exact: true }).click()
+      await paneB.waitFor({ state: "visible" })
+      // Restore with B in chat and A in preview, without automatically visiting saved pages.
+      await paneB.getByRole("button", { name: "Close", exact: true }).click()
       await page.reload()
       await page.waitForFunction(() => (window as any).browserHistoryReady)
       assert.equal(await page.locator(".window-shell").count(), 0)
@@ -309,9 +359,9 @@ for (const host of ["web", "tauri", "electron"]) {
       assert.equal(saved[0].mode, "preview")
       assert.equal(saved[1].mode, "chat")
       assert.equal(saved[0].targetUrl, `${base}/page/b`)
-      assert.equal(saved[1].targetUrl, `${base}/page/c`)
+      assert.equal(saved[1].targetUrl, `${base}/page/b`)
       assert.equal(saved[0].viewport, "mobile")
-      assert.equal(saved[1].viewport, undefined)
+      assert.equal(saved[1].viewport, "mobile")
       await rootA.getByRole("button", { name: "Open web preview", exact: true }).click()
       if (host !== "web") await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_register"))
       await paneA.getByRole("button", { name: "Viewport size", exact: true }).click()
@@ -321,21 +371,20 @@ for (const host of ["web", "tauri", "electron"]) {
       await rootB.locator(".message-stream-container").waitFor({ state: "visible" })
       await rootB.getByRole("button", { name: "Open web preview", exact: true }).click()
       await paneB.waitFor({ state: "visible" })
-      if (host !== "web") await page.waitForFunction(() => (window as any).fixture.native.calls.filter((call: any) => call.command === "browser_target_register").length >= 2)
+      if (host !== "web") await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_register"))
       const tokenA = (await read(a)).token, tokenB = (await read(b)).token
       await page.evaluate(id => (window as any).fixture.closeOccurrence(id), a)
       await rootA.locator(".session-shell-frame").waitFor({ state: "detached" })
       assert.equal(await read(a), null)
-      assert.equal((await read(b)).targetUrl, `${base}/page/c`)
-      assert.deepEqual(await page.evaluate(() => (window as any).fixture.deletedPreviews), [tokenA])
-      assert.notEqual(tokenA, tokenB)
+      assert.equal((await read(b)).targetUrl, `${base}/page/b`)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.deletedPreviews), [])
+      assert.equal(tokenA, tokenB)
       if (host === "tauri") {
         await page.waitForFunction(() => (window as any).fixture.native.listenerCount() === 1)
         const calls = await page.evaluate(() => (window as any).fixture.native.calls)
         const registrationA = calls.find((call: any) => call.command === "browser_target_register" && call.payload.url.endsWith("/page/b")).payload.registrationId
-        const registrationB = calls.find((call: any) => call.command === "browser_target_register" && call.payload.url.endsWith("/page/c")).payload.registrationId
-        assert.ok(calls.some((call: any) => call.command === "browser_target_unregister" && call.registrationId === registrationA))
-        assert.ok(!calls.some((call: any) => call.command === "browser_target_unregister" && call.registrationId === registrationB))
+        assert.equal(calls.filter((call: any) => call.command === "browser_target_register").length, 1)
+        assert.ok(!calls.some((call: any) => call.command === "browser_target_unregister" && call.registrationId === registrationA))
       }
       await paneB.getByRole("button", { name: "Close", exact: true }).click()
       await rootB.getByRole("button", { name: "Open web preview", exact: true }).click()
@@ -397,7 +446,7 @@ for (const host of ["web", "tauri", "electron"]) {
       await rootA.locator(".workspace-file-view").getByRole("heading", { name: "A.md", exact: true }).waitFor()
       await select(b)
       await page.evaluate(({ id, url }) => (window as any).fixture.openPreview("session", url, id), { id: b, url: `${base}/page/b` })
-      await rootB.locator(".session-preview-view, [data-session-id='session'] .window-shell").waitFor({ state: "visible" })
+      await page.locator('[data-preview-instance="header-duplicate"] .window-shell').waitFor({ state: "visible" })
       assert.equal((await state(a)).file.path, "A.md")
       assert.equal((await state(a)).mission.reader, undefined)
       await select(a)
@@ -452,7 +501,7 @@ for (const host of ["web", "tauri", "electron"]) {
       await select(a)
       await rootA.getByRole("button", { name: "Back to conversation", exact: true }).click()
       await page.evaluate(({ id, url }) => (window as any).fixture.openPreview("session", url, id), { id: a, url: `${base}/page/a` })
-      const pane = rootA.locator('[data-session-id="session"] .window-shell')
+      const pane = page.locator('[data-preview-instance="header-windows"] .window-shell')
       await pane.waitFor()
       const before = await page.evaluate(id => (window as any).fixture.preview("session", id), a)
       await pane.locator("input").focus()
@@ -591,7 +640,7 @@ for (const navigation of [false, true]) for (const fail of [false, true]) {
       const url = navigation ? `${base}/page/late` : "http://localhost:3000"
       await page.evaluate(({ url, fail }) => (window as any).fixture.delayPreview(url, fail), { url, fail })
       if (navigation) {
-        const address = rootA.locator('[data-session-id="session"] .window-shell input')
+        const address = page.locator('[data-preview-instance="header-windows"] .window-shell input')
         await address.fill(url)
         await address.press("Enter")
       } else await rootA.getByRole("button", { name: "Open web preview", exact: true }).click()
@@ -607,8 +656,9 @@ for (const navigation of [false, true]) for (const fail of [false, true]) {
       assert.equal(await composer.inputValue(), "Keep B focused")
       assert.equal(await rootB.locator(".message-stream-container").isVisible(), true)
       assert.equal(await page.getByRole("alertdialog").count(), 0)
-      assert.equal(await page.evaluate(id => (window as any).fixture.preview("session", id), b), null)
-      assert.equal(await page.evaluate(() => (window as any).fixture.previewCount()), 0)
+      if (navigation) assert.equal(await page.evaluate(id => (window as any).fixture.preview("session", id).targetUrl, b), `${base}/page/a`)
+      else assert.equal(await page.evaluate(id => (window as any).fixture.preview("session", id), b), null)
+      assert.equal(await page.evaluate(() => (window as any).fixture.previewCount()), navigation ? 1 : 0)
       assert.deepEqual(errors, [])
     } finally { await page.close() }
   })
@@ -935,18 +985,19 @@ test("Tauri retains hidden native registrations and restores the correct session
     await page.evaluate(url => (window as any).fixture.openPreview("second", url), `${base}/page/c`)
     await page.waitForFunction(() => (window as any).fixture.native.calls.filter((c: any) => c.command === "browser_target_register").length === 2)
     await page.evaluate(() => (window as any).fixture.registerHiddenOccurrence("/other-project"))
-    await page.evaluate(url => (window as any).fixture.openPreview("session", url, "/other-project"), `${base}/page/other`)
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url, "/other-project"), `${base}/page/b`)
     await page.evaluate(() => (window as any).fixture.selectSession("session"))
     await page.getByRole("button", { name: "Open web preview", exact: true }).click()
     await page.waitForFunction(id => (window as any).fixture.native.calls.some((c: any) => c.command === "browser_target_update" && c.payload.registrationId === id && c.payload.visible === true), registration)
     await page.locator('[data-session-id="session"] .window-shell').getByRole("button", { name: "Back", exact: true }).click()
+    await page.waitForFunction(url => (window as any).fixture.preview("session").targetUrl === url, `${base}/page/a`)
     const calls = await page.evaluate(() => (window as any).fixture.native.calls)
     assert.equal(calls.filter((c: any) => c.command === "browser_target_register").length, 2)
     assert.equal(calls.filter((c: any) => c.command === "browser_target_unregister").length, 0)
     assert.ok(calls.some((c: any) => c.command === "browser_target_action" && c.payload.registrationId === registration && c.payload.action === "history-go"))
     assert.equal((await preview(page, "session")).targetUrl, `${base}/page/a`)
     assert.equal((await preview(page, "second")).targetUrl, `${base}/page/c`)
-    assert.equal(await page.evaluate(() => (window as any).fixture.preview("session", "/other-project").targetUrl), `${base}/page/other`)
+    assert.equal(await page.evaluate(() => (window as any).fixture.preview("session", "/other-project").targetUrl), `${base}/page/a`)
     await page.locator('[data-session-id="session"] .window-shell').getByRole("button", { name: "Forward", exact: true }).click()
     await page.waitForFunction(() => (window as any).fixture.preview("session").history.index === 1)
     await page.reload()

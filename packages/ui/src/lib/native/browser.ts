@@ -15,15 +15,6 @@ export interface BrowserPresentation {
   viewport?: { width: number; height: number }
 }
 
-export function selectBrowserOpenOwner<T extends { id: string }>(
-  owners: readonly T[],
-  activeInstanceId: string | undefined,
-): T | undefined {
-  const activeOwner = activeInstanceId ? owners.find((owner) => owner.id === activeInstanceId) : undefined
-  if (activeOwner) return activeOwner
-  return owners.length === 1 ? owners[0] : undefined
-}
-
 export interface BrowserHostCapabilities {
   embedding: boolean
   history: boolean

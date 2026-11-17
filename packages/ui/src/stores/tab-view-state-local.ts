@@ -3,6 +3,7 @@ import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { LEGACY_SESSION_PREVIEWS_KEY, MAX_TAB_PREVIEW_STORAGE, normalizeTabViewState, parseLegacySessionPreviews,
   type RestorableTabViewState } from "./tab-view-state-codec"
 import { readLegacyMissionView } from "./tab-view-state-migration"
+import { importSessionBrowsers, tabPreviewModes } from "./session-browser-persistence"
 
 const KEY = "opencode-session-tab-views-v1"
 const scopes = new Map<string, string>()
@@ -15,10 +16,16 @@ function read(): Record<string, RestorableTabViewState> {
     const value: unknown = JSON.parse(text)
     if (!value || typeof value !== "object" || Array.isArray(value)) return {}
     const budget = { remaining: MAX_TAB_PREVIEW_STORAGE }
-    return Object.fromEntries(Object.entries(value).slice(-32).flatMap(([key, value]) => {
+    const entries = Object.entries(value).slice(-32).flatMap(([key, value]) => {
       const view = normalizeTabViewState(value, budget)
-      return view ? [[key, view]] : []
-    }))
+      return view ? [[key, view] as const] : []
+    })
+    const imported = importSessionBrowsers(entries.map(([, view]) => view).reverse())
+    const result = Object.fromEntries(entries.map(([key, view]) => [key, imported ? tabPreviewModes(view) : view]))
+    if (imported && entries.some(([, view]) => Object.values(view.previews ?? {}).some(p => p.targetUrl))) {
+      try { window.localStorage.setItem(KEY, JSON.stringify(result)) } catch { /* Resource URLs are already durable. */ }
+    }
+    return result
   } catch { return {} }
 }
 

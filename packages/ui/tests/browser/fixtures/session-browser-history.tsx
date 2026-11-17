@@ -16,6 +16,7 @@ import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/sh
 import { sseManager } from "../../../src/lib/sse-manager"
 import { sessions, activeSessionId } from "../../../src/stores/session-state"
 import { beginGesture } from "../../../src/stores/session-surface"
+import { savedSessionBrowser } from "../../../src/stores/session-browser-persistence"
 import { startNewSession } from "../../../src/stores/session-actions"
 
 // The production shell, session switching, preview store and native guests run
@@ -87,8 +88,13 @@ Object.assign(shell, {
   surfaceIntentCurrent: () => surfaceIntent.current(),
   native: nativeFixture,
   openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),
-  preview: (sessionId: string, instanceId = ids[0]) => getSessionPreview(sessionId, instanceId),
-  savedPreview: (sessionId: string, instanceId = ids[0]) => getTabViewState(instanceId).previews?.[sessionId],
+  preview: (sessionId: string, instanceId = ids[0]) => {
+    const preview = getSessionPreview(sessionId, instanceId)
+    return preview && { ...preview, mode: getTabViewState(instanceId).previews?.[sessionId]?.mode ?? "chat" }
+  },
+  savedPreview: (sessionId: string, instanceId = ids[0]) => ({ ...savedSessionBrowser(sessionId), ...getTabViewState(instanceId).previews?.[sessionId] }),
+  previewModes: (instanceId: string) => getTabViewState(instanceId).previews,
+  createdPreviews: () => nextToken,
   readMission: async (instanceId: string, kind: "overview" | "report", itemId?: string) => {
     await missionStore.refresh(instanceId)
     showSessionChatFor("session", instanceId)

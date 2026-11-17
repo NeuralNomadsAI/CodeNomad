@@ -1,7 +1,8 @@
-import { createSignal, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, type Component } from "solid-js"
+import { Portal } from "solid-js/web"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
+import { getSessionPreview, sessionPreviews, openSessionPreview, showSessionChatFor, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
@@ -9,8 +10,54 @@ import { beginGesture } from "../stores/session-surface"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
+  instanceId: string
   active?: boolean
   onInsertComment: (markdown: string) => void
+}
+
+type PreviewSlot = { instanceId: string; element: HTMLDivElement; insertComment: (markdown: string) => void }
+const [slots, setSlots] = createSignal<ReadonlyMap<string, PreviewSlot>>(new Map())
+
+/** Geometry moves; the guest's DOM stays attached throughout tab switches. */
+export const SessionPreviewSlot: Component<{ sessionId: string; instanceId: string; active: boolean; onInsertComment: (markdown: string) => void }> = props => {
+  let element!: HTMLDivElement
+  createEffect(() => {
+    if (!props.active) return
+    const id = props.sessionId, slot = { element, instanceId: props.instanceId, insertComment: props.onInsertComment }
+    setSlots(previous => new Map(previous).set(id, slot))
+    onCleanup(() => setSlots(previous => {
+      if (previous.get(id) !== slot) return previous
+      const next = new Map(previous); next.delete(id); return next
+    }))
+  })
+  return <div ref={element} class="flex-1 min-h-0" style={{ display: props.active ? undefined : "none" }} />
+}
+
+export const SessionPreviewHost: Component = () => {
+  const ids = createMemo<string[]>((previous) => {
+    const wanted = new Set(sessionPreviews().keys())
+    return [...previous.filter(id => wanted.delete(id)), ...wanted]
+  }, [])
+  return <Portal><For each={ids()}>{id => {
+    const slot = () => slots().get(id)
+    const [bounds, setBounds] = createSignal<DOMRect>()
+    createEffect(() => {
+      const current = slot()
+      if (!current) { setBounds(undefined); return }
+      const measure = () => setBounds(current.element.getBoundingClientRect())
+      const observer = new ResizeObserver(measure)
+      observer.observe(current.element)
+      window.addEventListener("resize", measure)
+      window.addEventListener("scroll", measure, true)
+      measure()
+      onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true) })
+    })
+    return <div data-session-id={id} data-preview-instance={slot()?.instanceId} style={{
+      position: "fixed", display: slot() ? "flex" : "none", "z-index": 1,
+      left: `${bounds()?.x ?? 0}px`, top: `${bounds()?.y ?? 0}px`, width: `${bounds()?.width ?? 0}px`, height: `${bounds()?.height ?? 0}px`,
+    }}><SessionPreviewView preview={getSessionPreview(id)!} instanceId={slot()?.instanceId ?? ""} active={Boolean(slot() && bounds()?.width && bounds()?.height)}
+      onInsertComment={text => slot()?.insertComment(text)} /></div>
+  }}</For></Portal>
 }
 
 function describeElement(target: BrowserFrameElementTarget): string {
@@ -63,7 +110,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
     <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface-canvas" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
       <BrowserFrame
         active={props.active}
-        onClose={() => showSessionChat(props.preview.storageKey)}
+        onClose={() => showSessionChatFor(props.preview.sessionId, props.instanceId)}
         sessionId={props.preview.sessionId}
         title={t("sessionPreview.title")}
         initialUrl={frameSource()}
@@ -72,11 +119,11 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         initialViewport={props.preview.viewport}
         onViewportChange={viewport => updateSessionPreviewViewport(props.preview.storageKey, viewport)}
         onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
-        onNavigationStart={() => { beginGesture(props.preview) }}
+        onNavigationStart={() => { beginGesture({ sessionId: props.preview.sessionId, instanceId: props.instanceId }) }}
         onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
-        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceId))}
+        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.instanceId))}
         onNavigationError={showNavigationError}
         onFrameLocation={(path) => {
           const target = new URL(path, props.preview.targetUrl)

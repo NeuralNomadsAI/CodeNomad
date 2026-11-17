@@ -5,7 +5,7 @@ import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
 import { canCommitClientSnapshotV2, decodeClientSnapshotV2, encodeClientSnapshotV2, isClientSnapshotV2 } from "./client-state-partitions"
 import type { ClientSnapshotV2 } from "./client-state-partitions"
-import { LEGACY_SESSION_PREVIEWS_KEY } from "./tab-view-state-codec"
+import { LEGACY_SESSION_PREVIEWS_KEY, SESSION_BROWSER_STATE_KEY, mergeSessionBrowsers, tabPreviewModes } from "./tab-view-state-codec"
 import { migrateLegacyTabPreviews } from "./tab-view-state-migration"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 export type { ClientSnapshotV2 }
@@ -368,6 +368,18 @@ export function initializeClientState(): Promise<void> {
           if (source !== null) layoutMigrations.set(LEGACY_SESSION_PREVIEWS_KEY, { source, remaining: migration.remaining })
           for (const { key, source } of migration.missions) layoutMigrations.set(key, { source, remaining: null })
           setLoadedRestorableSession(migration.state)
+        }
+        const session = loadedRestorableSession()
+        if (session) {
+          const tabs = session.tabs
+          const ordered = [tabs[session.activeTabIndex], ...tabs.filter((_, index) => index !== session.activeTabIndex)]
+          const views = ordered.flatMap(tab => tab?.kind === "workspace" ? [tab.viewState] : [])
+          if (views.some(view => Object.values(view?.previews ?? {}).some(p => p.targetUrl))) {
+            writeClientLayoutValue(SESSION_BROWSER_STATE_KEY, mergeSessionBrowsers(views, readClientLayoutValue(SESSION_BROWSER_STATE_KEY)))
+            setLoadedRestorableSession({ ...session, tabs: tabs.map(tab => tab.kind === "workspace" && tab.viewState
+              ? { ...tab, viewState: tabPreviewModes(tab.viewState) } : tab) })
+            scheduleSave()
+          }
         }
         if (migratedLayout || migration) scheduleSave()
       }

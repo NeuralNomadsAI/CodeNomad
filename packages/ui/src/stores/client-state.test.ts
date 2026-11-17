@@ -39,6 +39,29 @@ const boot = async (api?: NativeApi, storage?: MemoryStorage) => {
 const transact = (state: ClientState, kind: TransactionKind) => kind === "clear"
   ? state.clearRestoredClientState() : state.setRestorePreviousStateEnabled(false)
 describe("client state ownership and persistence", () => {
+  it("merges imported duplicate browsers by session with active-descriptor priority and preserves modes", async () => {
+    const workspace = (occurrence: number) => ({ kind: "workspace", folder: "/same", occurrence,
+      activeSessionId: "session", drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      viewState: { version: 1, previews: { session: { mode: occurrence ? "chat" : "preview",
+        targetUrl: `https://example.com/${occurrence}`, viewport: occurrence ? "mobile" : "desktop",
+        history: { urls: ["https://example.com/start", `https://example.com/${occurrence}`], index: 1 } },
+        [`only-${occurrence}`]: { mode: "chat", targetUrl: `https://example.com/only-${occurrence}` } } } })
+    let saved: any
+    const state = await boot({
+      loadClientState: async () => loadResult({ ...snapshot("unused"),
+        session: { tabs: [workspace(0), workspace(1)], activeTabIndex: 1 } }),
+      saveClientState: async (_token, value) => { saved = value; return true },
+    })
+    const browsers = JSON.parse(state.readClientLayoutValue("opencode-session-browser-state-v1")!)
+    assert.equal(browsers.session.targetUrl, "https://example.com/1")
+    assert.equal(browsers.session.viewport, "mobile")
+    assert.deepEqual(browsers.session.history, { urls: ["https://example.com/start", "https://example.com/1"], index: 1 })
+    assert.equal(browsers["only-0"].targetUrl, "https://example.com/only-0")
+    assert.equal(browsers["only-1"].targetUrl, "https://example.com/only-1")
+    await state.flushClientState()
+    assert.deepEqual(saved.session.tabs.map((tab: any) => tab.viewState.previews.session), [{ mode: "preview" }, { mode: "chat" }])
+    assert.equal(JSON.parse(saved.layout["opencode-session-browser-state-v1"]).session.targetUrl, browsers.session.targetUrl)
+  })
   it("publishes migrated descriptor views before retiring legacy preview entries; failed publication retains the source", async () => {
     const key = "opencode-session-previews-v1"
     const source = JSON.stringify({ '[\"/same\",\"session\"]': { targetUrl: "https://example.com/", mode: "preview" } })
@@ -52,7 +75,8 @@ describe("client state ownership and persistence", () => {
         session: { tabs: [workspace, { ...workspace, occurrence: 1 }], activeTabIndex: 0 } }),
       saveClientState: async (_token, value) => {
         saved.push(value)
-        assert.ok(value.session.tabs.every((tab: any) => tab.viewState.previews.session.targetUrl === "https://example.com/"))
+        assert.ok(value.session.tabs.every((tab: any) => tab.viewState.previews.session.mode === "preview"))
+        assert.equal(JSON.parse(value.layout["opencode-session-browser-state-v1"]).session.targetUrl, "https://example.com/")
         if (fail) throw new Error("publication failed")
         return true
       },
@@ -391,8 +415,9 @@ describe("plain web tab session", () => {
     const views = saved.session.tabs.map((tab: any) => tab.viewState)
     assert.equal(views[0].missions.selected, "mission")
     assert.equal(views[1].missions, undefined)
-    assert.equal(views[0].previews.session.targetUrl, "https://example.com/")
-    assert.equal(views[1].previews.session.targetUrl, "https://example.com/")
+    assert.deepEqual(views[0].previews.session, { mode: "preview" })
+    assert.deepEqual(views[1].previews.session, { mode: "preview" })
+    assert.equal(JSON.parse(storage.getItem("opencode-session-browser-state-v1")!).session.targetUrl, "https://example.com/")
     assert.deepEqual(views[2], { version: 1 })
     assert.equal(storage.getItem(previewKey), "{}")
     assert.equal(storage.getItem(missionKey), concurrent ? JSON.stringify({ selected: "newer" }) : null)

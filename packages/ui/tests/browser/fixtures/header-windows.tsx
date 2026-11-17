@@ -8,6 +8,7 @@ import { ConfigProvider, updatePreferences } from "../../../src/stores/preferenc
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import AlertDialog from "../../../src/components/alert-dialog"
+import { SessionPreviewHost } from "../../../src/components/session-preview-view"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
@@ -115,6 +116,7 @@ function Fixture() {
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
     <button id="outside">Outside target</button>
     <AlertDialog />
+    <SessionPreviewHost />
     <div data-occurrence={id} style={{ display: selectedOccurrence() === id ? "contents" : "none" }}>
     <Show when={instances().has(id)}><InstanceShell instance={instance} isActiveInstance={active() && selectedOccurrence() === id} escapeInDebounce={escapeInDebounce()}
       paletteCommands={() => [{ id: "fixture", label: "Fixture command", description: "Execute the fixture", category: "System", action: () => {} }]}
