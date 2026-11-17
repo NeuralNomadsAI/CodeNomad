@@ -299,12 +299,12 @@ for (const state of ["running", "form"] as const) test(`Pause lets ${state} work
     const interrupt = () => missionMenuItemState(page, "interrupt")
     await observed.promise
     // The header can publish before the directory reconciliation finishes: this is
-    // still the pending operation's Saving state.
+    // still the pending operation's own state.
     assert.equal((await interrupt()).enabled, false)
     // Command feedback is announced (visually hidden, here in a leaf's folded detail) and joins
     // the primary button's tooltip.
     const status = (text: string) => page.getByRole("status", { includeHidden: true }).filter({ hasText: text })
-    assert.equal(await status("Saving…").count(), 1)
+    assert.equal(await status("Pausing mission…").count(), 1)
     release.resolve()
     await status("Pausing: the steps in progress are finishing.").waitFor({ state: "attached" })
     assert.equal(await status("Pausing: the steps in progress are finishing.").count(), 1)

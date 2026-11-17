@@ -629,7 +629,8 @@ try {
   // their exact/changed retries without weakening creation-uncertain/conflict.
   await rejectedMutation("POST", "", conflictingCreation, 409, "request-conflict")
   await rejectedMutation("POST", "", conflictingCreation, 409, "request-conflict")
-  await rejectedMutation("POST", "", { ...conflictingCreation, objective: "Changed contract" }, 409, "request-conflict")
+  // A retry differing from the first HTTP contract of this request is refused by the route itself.
+  await rejectedMutation("POST", "", { ...conflictingCreation, objective: "Changed contract" }, 409, "creation-conflict")
   assert.deepEqual(await client.session.list({ location, limit: 32 }), beforeCreationConflict,
     "Native pre-effect conflicts and HTTP retries never create another coordinator")
   await rejectedMutation("PATCH", `/${crudCreated.mission.id}`, {

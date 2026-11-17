@@ -46,7 +46,7 @@ const client: any = { session: {
 }, message: { list: async ({ sessionID, limit = 200, cursor }: any) => {
   requests.push(sessionID)
   if (sessionID === childId && holdChildReads) await new Promise<void>(resolve => heldReads.push(resolve))
-  if (sessionID === childId && failChildRead) { failChildRead = false; throw new Error("Deterministic read failure") }
+  if (sessionID === childId && failChildRead) throw new Error("Deterministic read failure")
   const messages = history[sessionID] ?? []
   const end = cursor ? Number(cursor) : messages.length, start = Math.max(0, end - limit)
   return { data: messages.slice(start, end).reverse(), cursor: start ? { next: String(start) } : {} }
@@ -123,6 +123,8 @@ observer?.observe(document.querySelector("main")!, { childList: true, subtree: t
     return loadMessages(instanceId, childId, { force: true })
   },
   failRead: () => {
+    // Child reads fail until recoverRead(): the delta's own repair read must not
+    // consume the failure the invalidated page's activation reload surfaces.
     failChildRead = true
     delta()
     // Streamed deltas project into a watched child without a reload; a failing
@@ -130,6 +132,7 @@ observer?.observe(document.querySelector("main")!, { childList: true, subtree: t
     // like a refresh that fails after the page's loaded flag was dropped.
     invalidateSessionMessageLoad(instanceId, childId)
   },
+  recoverRead: () => { failChildRead = false },
   clearChild: () => { history[childId] = []; return loadMessages(instanceId, childId, { force: true }) },
   deleteChild: () => {
     history[childId] = []
