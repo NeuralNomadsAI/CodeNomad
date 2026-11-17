@@ -4,7 +4,7 @@ import { getSessionPreview, openSessionPreview, sessionPreviews } from "../../..
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { getTabViewState, seedTabViewState } from "../../../src/stores/tab-view-state"
 import { migrateLegacyTabPreviews } from "../../../src/stores/tab-view-state-migration"
-import { publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
+import { isInstanceOccurrenceOpen, publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
 import { addInstance, instances, removeInstance } from "../../../src/stores/instances"
 import { missionStore } from "../../../src/stores/missions"
 import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
@@ -89,6 +89,7 @@ Object.assign(shell, {
   native: nativeFixture,
   openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),
   preview: (sessionId: string, instanceId = ids[0]) => {
+    if (!isInstanceOccurrenceOpen(instanceId)) return null
     const preview = getSessionPreview(sessionId)
     return preview && { ...preview, mode: getTabViewState(instanceId).previews?.[sessionId]?.mode ?? "chat" }
   },
