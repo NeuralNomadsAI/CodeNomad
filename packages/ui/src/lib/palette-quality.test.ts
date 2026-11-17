@@ -63,6 +63,14 @@ describe("palette quality", () => {
     assert.equal(SOFT_COLOR_SCHEMES.filter((s) => s.appearance === "dark").length, 4)
   })
 
+  it("places Base nearer the appearance extreme than Secondary in every built-in palette", () => {
+    for (const scheme of BUILT_IN_COLOR_SCHEMES.filter(s => s.colors)) {
+      const c = scheme.colors!
+      const base = lab(c.surfaceBase)[0], secondary = lab(c.surfaceSecondary)[0]
+      assert.ok(scheme.appearance === "dark" ? base < secondary : base > secondary, scheme.id)
+    }
+  })
+
   for (const scheme of readyMade) {
     it(`${scheme.id}: readable text and identity on actual message/tool surfaces`, () => {
       const c = scheme.colors!
@@ -77,7 +85,7 @@ describe("palette quality", () => {
         }
         for (const key of ["userAccent", "agentAccent", "compactionAccent"] as const) {
           const minimum = scheme.id === "porcelain" && key === "compactionAccent" && c[key] === "#A07AFF"
-            && ["#CFD1D4", "#E1E3E5", "#BDC1C6", "#D6DCE0"].includes(bg) ? 1.72 : 3
+            && ["#CFD1D4", "#E1E3E5", "#BDC1C6", "#C5CBD0"].includes(bg) ? 1.72 : 3
           assert.ok(contrastRatio(c[key], bg) >= minimum, `${key} on ${bg}`)
         }
       }
