@@ -25,6 +25,34 @@ before(() => {
 afterEach(async () => { for (const id of sessionPreviews().keys()) await closeSessionPreview(id) })
 
 describe("session preview persistence", () => {
+  it("a second occurrence restores independently when the first requester closes", async () => {
+    const create = serverApi.createPreview, remove = serverApi.deletePreview
+    const responses: Array<(value: any) => void> = [], deleted: string[] = []
+    const a = "restore-first", b = "restore-survivor"
+    registerOccurrence(a); registerOccurrence(b)
+    seedTabViewState(a, { version: 1, previews: { same: { targetUrl: "https://example.com/saved", mode: "chat" } } })
+    seedTabViewState(b, { version: 1, previews: { same: { targetUrl: "https://example.com/saved", mode: "chat" } } })
+    serverApi.createPreview = () => new Promise(resolve => { responses.push(resolve) })
+    serverApi.deletePreview = async token => { deleted.push(token); return undefined as any }
+    try {
+      const first = restoreSessionPreview("same", a)
+      const firstResult = assert.rejects(first, { name: "AbortError" })
+      const second = restoreSessionPreview("same", b)
+      const secondResult = second.then(record => { showSessionPreview(record!.sessionId, b); return record })
+      // Observe rejection even on the broken implementation, where both share A's promise.
+      void secondResult.catch(() => undefined)
+      closeOccurrence(a)
+      responses[0]({ sessionId: "same", token: "stale", targetUrl: "https://example.com/saved" })
+      await firstResult
+      assert.equal(responses.length, 2, "another occurrence owns its own restoration fence")
+      assert.equal(restoreSessionPreview("same", b), second, "stale cleanup retains B's pending work")
+      responses[1]({ sessionId: "same", token: "survivor", targetUrl: "https://example.com/saved" })
+      assert.equal((await secondResult)?.token, "survivor")
+      assert.equal(getSessionSurface({ instanceId: b, sessionId: "same" }).kind, "web")
+      assert.equal(getPendingPreviewOperationCount(), 0)
+      assert.deepEqual(deleted, ["stale"])
+    } finally { closeOccurrence(a); closeOccurrence(b); serverApi.createPreview = create; serverApi.deletePreview = remove }
+  })
   it("passive locations and same-URL history entries apply immediately without cancelling gesture adoption", async () => {
     const create = serverApi.createPreview, remove = serverApi.deletePreview, id = "web-intent"
     registerOccurrence(id)

@@ -54,7 +54,7 @@ const readLegacyLayoutValue = (key: string) =>
     return value !== null && value.length <= MAX_LAYOUT_VALUE_LENGTH ? value : null
   })
 const writeLegacyLayoutValue = (key: string, value: string) =>
-  useLocalStorage(undefined, (storage) => storage.setItem(key, value))
+  useLocalStorage(false, (storage) => { storage.setItem(key, value); return true })
 const removeLegacyLayoutValue = (key: string) =>
   useLocalStorage(undefined, (storage) => storage.removeItem(key))
 function legacyLayoutKeys(storage: Storage): string[] {
@@ -233,22 +233,23 @@ export function readClientLayoutValue(key: string): string | null {
   return legacyValue
 }
 
-export function writeClientLayoutValue(key: string, value: string): void {
-  if (!isValidLayoutKey(key) || value.length > MAX_LAYOUT_VALUE_LENGTH) return
+export function writeClientLayoutValue(key: string, value: string): boolean {
+  if (!isValidLayoutKey(key) || value.length > MAX_LAYOUT_VALUE_LENGTH) return false
   if (!clientStateIsPrimary() || !snapshotOwnsLayout) return writeLegacyLayoutValue(key, value)
   if (writeBlock === "transaction") {
-    if (!hasLayoutKey(key) && layoutIsFull()) return
+    if (!hasLayoutKey(key) && layoutIsFull()) return false
     dirty ||= layout[key] !== value
     layout[key] = value
     transactionLayoutWrites.add(key)
-    return
+    return true
   }
-  if (!restorePreviousStateEnabled() || writeBlock) return
-  if (!hasLayoutKey(key) && layoutIsFull()) return
+  if (!restorePreviousStateEnabled() || writeBlock) return false
+  if (!hasLayoutKey(key) && layoutIsFull()) return false
   writeLegacyLayoutValue(key, value)
-  if (layout[key] === value) return
+  if (layout[key] === value) return true
   layout[key] = value
   scheduleSave()
+  return true
 }
 
 export function removeClientLayoutValue(key: string): void {
@@ -375,10 +376,12 @@ export function initializeClientState(): Promise<void> {
           const ordered = [tabs[session.activeTabIndex], ...tabs.filter((_, index) => index !== session.activeTabIndex)]
           const views = ordered.flatMap(tab => tab?.kind === "workspace" ? [tab.viewState] : [])
           if (views.some(view => Object.values(view?.previews ?? {}).some(p => p.targetUrl))) {
-            writeClientLayoutValue(SESSION_BROWSER_STATE_KEY, mergeSessionBrowsers(views, readClientLayoutValue(SESSION_BROWSER_STATE_KEY)))
-            setLoadedRestorableSession({ ...session, tabs: tabs.map(tab => tab.kind === "workspace" && tab.viewState
-              ? { ...tab, viewState: tabPreviewModes(tab.viewState) } : tab) })
-            scheduleSave()
+            const value = mergeSessionBrowsers(views, readClientLayoutValue(SESSION_BROWSER_STATE_KEY))
+            if (writeClientLayoutValue(SESSION_BROWSER_STATE_KEY, value)) {
+              setLoadedRestorableSession({ ...session, tabs: tabs.map(tab => tab.kind === "workspace" && tab.viewState
+                ? { ...tab, viewState: tabPreviewModes(tab.viewState) } : tab) })
+              scheduleSave()
+            }
           }
         }
         if (migratedLayout || migration) scheduleSave()

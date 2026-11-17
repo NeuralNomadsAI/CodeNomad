@@ -38,7 +38,7 @@ Si une autre fenêtre affiche la même connexion de projet, son onglet se ferme 
 
 Fermer une fenêtre entière, quitter ou recharger ne ferme pas ses connexions de projet ; la restauration normale au démarrage s’applique toujours. Arrêtez explicitement les exécutions concernées si vous devez vérifier qu’elles sont terminées. CodeNomad ne décharge jamais les Locations natives ; la maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
 
-Lorsque la restauration au démarrage est activée, chaque onglet restant retrouve ses propres choix de panneaux, sa sélection et son lecteur de Mission ainsi que l’URL et l’historique du navigateur enregistrés. Les pages du navigateur enregistrées se chargent à leur réouverture explicite. Fermer une occurrence retire uniquement sa vue enregistrée ; rouvrir le dossier crée une nouvelle occurrence.
+Lorsque la restauration au démarrage est activée, chaque onglet restant retrouve ses propres choix de panneaux, sa sélection et son lecteur de Mission ainsi que son choix entre le chat et l’aperçu web. Les URL et l’historique du navigateur sont partagés par session ; les pages enregistrées se chargent uniquement lorsque l’aperçu web est explicitement rouvert. Fermer une occurrence retire uniquement sa vue enregistrée ; rouvrir le dossier crée une nouvelle occurrence.
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 

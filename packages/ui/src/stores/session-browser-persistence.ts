@@ -14,6 +14,5 @@ export function saveSessionBrowser(sessionId: string, preview: RestorableBrowser
 export function importSessionBrowsers(views: readonly (RestorableTabViewState | undefined)[]): boolean {
   if (!views.some(view => Object.values(view?.previews ?? {}).some(p => p.targetUrl))) return true
   const value = mergeSessionBrowsers(views, readClientLayoutValue(SESSION_BROWSER_STATE_KEY))
-  writeClientLayoutValue(SESSION_BROWSER_STATE_KEY, value)
-  return readClientLayoutValue(SESSION_BROWSER_STATE_KEY) === value
+  return writeClientLayoutValue(SESSION_BROWSER_STATE_KEY, value)
 }

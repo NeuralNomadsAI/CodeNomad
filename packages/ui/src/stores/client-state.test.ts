@@ -39,6 +39,33 @@ const boot = async (api?: NativeApi, storage?: MemoryStorage) => {
 const transact = (state: ClientState, kind: TransactionKind) => kind === "clear"
   ? state.clearRestoredClientState() : state.setRestorePreviousStateEnabled(false)
 describe("client state ownership and persistence", () => {
+  for (const localCopy of [false, true]) it(`retains occurrence browser resources when the shared layout is full (${localCopy ? "matching local copy" : "new key"}) and retries on reload`, async () => {
+    const browser = { mode: "preview", targetUrl: "https://example.com/saved", viewport: "mobile",
+      history: { urls: ["https://example.com/start", "https://example.com/saved"], index: 1 } }
+    const workspace = { kind: "workspace", folder: "/same", activeSessionId: "session",
+      drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      viewState: { version: 1, previews: { session: browser } } }
+    let saved: any
+    const api = {
+      loadClientState: async () => loadResult(saved ?? { ...snapshot("unused",
+        Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`entry-${i}`, "saved"]))),
+        session: { tabs: [workspace], activeTabIndex: 0 } }),
+      saveClientState: async (_token: string, value: any) => { saved = value; return true },
+    }
+    const storage = new MemoryStorage()
+    if (localCopy) storage.setItem("opencode-session-browser-state-v1", JSON.stringify({ session: { ...browser, mode: "chat" } }))
+    const state = await boot(api, storage)
+    state.updateRestorableSession(state.loadedRestorableSession())
+    await state.flushClientState()
+    assert.equal(Object.hasOwn(saved.layout, "opencode-session-browser-state-v1"), false)
+    assert.deepEqual(saved.session.tabs[0].viewState.previews.session, browser)
+    state.removeClientLayoutValue("entry-0")
+    await state.flushClientState()
+    const reloaded = await boot(api, storage)
+    await reloaded.flushClientState()
+    assert.deepEqual(JSON.parse(saved.layout["opencode-session-browser-state-v1"]).session, { ...browser, mode: "chat" })
+    assert.deepEqual(saved.session.tabs[0].viewState.previews.session, { mode: "preview" })
+  })
   it("merges imported duplicate browsers by session with active-descriptor priority and preserves modes", async () => {
     const workspace = (occurrence: number) => ({ kind: "workspace", folder: "/same", occurrence,
       activeSessionId: "session", drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},

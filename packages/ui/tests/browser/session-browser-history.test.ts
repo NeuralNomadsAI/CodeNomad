@@ -72,6 +72,81 @@ async function prepare(page: Page, host: string, query = "") {
 }
 const preview = (page: Page, sessionId: string) => page.evaluate(id => (window as any).fixture.preview(id), sessionId)
 
+test("a duplicate's toolbar reopens a saved preview after its first requester closes", { timeout: 90_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await prepare(page, "web", "&duplicate=1")
+    const url = `${base}/page/saved`
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), url)
+    await page.locator('[data-preview-instance="header-windows"]').getByRole("button", { name: "Close", exact: true }).click()
+    await page.reload()
+    await page.waitForFunction(() => (window as any).browserHistoryReady)
+    await page.evaluate(url => (window as any).fixture.delayPreview(url, false, true), url)
+    await page.locator('[data-occurrence="header-windows"]').getByRole("button", { name: "Open web preview", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.isPreviewDelayed())
+    await page.evaluate(() => (window as any).fixture.selectOccurrence("header-duplicate"))
+    await page.locator('[data-occurrence="header-duplicate"]').getByRole("button", { name: "Open web preview", exact: true }).click()
+    await page.evaluate(() => {
+      const f = (window as any).fixture
+      f.closeOccurrence("header-windows")
+      f.releasePreview()
+    })
+    await page.locator('[data-preview-instance="header-duplicate"] .window-shell').waitFor({ state: "visible" })
+    assert.equal(await page.evaluate(() => (window as any).fixture.preview("session", "header-duplicate")?.targetUrl), url)
+    assert.equal(await page.evaluate(() => (window as any).fixture.deletedPreviews.length), 1, "only A's stale token is released")
+    assert.equal(await page.getByRole("dialog").count(), 0)
+  } finally { await page.close() }
+})
+
+for (const host of ["web", "tauri", "electron"]) test(`${host}: floating drawers cover the retained preview and retire its native target`, { timeout: 90_000 }, async () => {
+  const native = host === "electron" ? await launchHistoryElectron() : undefined
+  const page = native?.page ?? await browser.newPage({ viewport: { width: 800, height: 800 } })
+  try {
+    if (native) await native.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(800, 800))
+    await prepare(page, host)
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), `${base}/page/a`)
+    const pane = page.locator('[data-preview-instance="header-windows"] .window-shell')
+    await pane.waitFor({ state: "visible" })
+    if (host !== "web") await page.waitForFunction(() => (window as any).fixture.native.calls.some((c: any) => c.command === "browser_target_register"))
+    const guest = await page.locator(host === "electron" ? "webview" : host === "web" ? "iframe" : "[data-session-id] .window-shell").elementHandle()
+    const token = (await preview(page, "session")).token
+    await page.getByRole("button", { name: "Right panel", exact: true }).click()
+    await page.locator(".session-floating-drawer .MuiDrawer-paper").waitFor({ state: "visible" })
+    await page.getByRole("tab", { name: "Files", exact: true }).click()
+    const hit = await page.evaluate(() => ({
+      tag: document.elementFromPoint(600, 300)?.tagName,
+      drawer: Boolean(document.elementFromPoint(600, 300)?.closest(".MuiDrawer-paper")),
+    }))
+    assert.equal(hit.drawer, true, `the drawer must receive input, not ${hit.tag}`)
+    if (host === "tauri") await page.waitForFunction(() => (window as any).fixture.native.calls
+      .filter((c: any) => c.command === "browser_target_update").at(-1)?.payload.visible === false)
+    if (host === "electron") await page.waitForFunction(() => (window as any).fixture.native.calls.at(-1)?.command === "browser_target_unregister")
+    await page.getByRole("button", { name: "Right panel", exact: true }).click()
+    await page.locator(".session-floating-drawer").waitFor({ state: "detached" })
+    await pane.waitFor({ state: "visible" })
+    assert.equal((await preview(page, "session")).token, token)
+    assert.equal(await guest!.evaluate(element => element.isConnected), true, "covering a preview retains its DOM")
+    // The preview's own menu remains usable, above the guest.
+    await pane.getByRole("button", { name: "Viewport size", exact: true }).click()
+    await pane.getByRole("menuitemradio", { name: "Mobile viewport (390 x 844)", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.savedPreview("session")?.viewport === "mobile")
+    await page.evaluate(() => (window as any).fixture.showPreviewDialog())
+    const dialog = page.getByRole("dialog", { name: "Preview overlay", exact: true })
+    await dialog.waitFor()
+    assert.equal(await dialog.evaluate(element => {
+      const rect = element.getBoundingClientRect()
+      return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
+    }), true, "dialogs paint above the retained guest")
+    if (host === "tauri") await page.waitForFunction(() => (window as any).fixture.native.calls
+      .filter((c: any) => c.command === "browser_target_update").at(-1)?.payload.visible === false)
+    await dialog.getByRole("button", { name: "OK", exact: true }).click()
+    await pane.waitFor({ state: "visible" })
+  } finally {
+    if (native) { await native.app.close(); await rm(native.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+    else await page.close()
+  }
+})
+
 for (const host of ["web", "tauri", "electron"]) test(`${host}: opening a duplicate uses the session's existing preview token and URL`, { timeout: 90_000 }, async () => {
   const native = host === "electron" ? await launchHistoryElectron() : undefined
   const page = native?.page ?? await browser.newPage({ viewport: { width: 1400, height: 900 } })

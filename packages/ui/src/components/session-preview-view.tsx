@@ -36,19 +36,26 @@ export const SessionPreviewHost: Component = () => {
     return [...previous.filter(id => wanted.delete(id)), ...wanted]
   }, [])
   const [bounds, setBounds] = createSignal<DOMRect>()
+  const [covered, setCovered] = createSignal(false)
   createEffect(() => {
     const current = slot()
     if (!current) { setBounds(undefined); return }
-    const measure = () => setBounds(current.element.getBoundingClientRect())
+    const shell = current.element.closest(".session-shell-frame")!
+    const measure = () => {
+      setBounds(current.element.getBoundingClientRect())
+      setCovered(Boolean(shell.querySelector(".session-floating-drawer")))
+    }
     const observer = new ResizeObserver(measure)
+    const drawers = new MutationObserver(measure)
     observer.observe(current.element)
+    drawers.observe(shell, { childList: true, subtree: true })
     window.addEventListener("resize", measure)
     window.addEventListener("scroll", measure, true)
     measure()
-    onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true) })
+    onCleanup(() => { observer.disconnect(); drawers.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true) })
   })
   return <Portal><For each={ids()}>{id => {
-    const activeSlot = () => slot()?.sessionId === id ? slot() : undefined
+    const activeSlot = () => !covered() && slot()?.sessionId === id ? slot() : undefined
     return <div data-session-id={id} data-preview-instance={activeSlot()?.instanceId} style={{
       position: "fixed", display: activeSlot() ? "flex" : "none", "z-index": 1,
       left: `${bounds()?.x ?? 0}px`, top: `${bounds()?.y ?? 0}px`, width: `${bounds()?.width ?? 0}px`, height: `${bounds()?.height ?? 0}px`,

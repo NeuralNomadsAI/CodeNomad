@@ -18,15 +18,16 @@ import { sessions, activeSessionId } from "../../../src/stores/session-state"
 import { beginGesture } from "../../../src/stores/session-surface"
 import { savedSessionBrowser } from "../../../src/stores/session-browser-persistence"
 import { startNewSession } from "../../../src/stores/session-actions"
+import { showAlertDialog } from "../../../src/stores/alerts"
 
 // The production shell, session switching, preview store and native guests run
 // unchanged. Only server responses and the native registration IPC are fixtures.
 let nextToken = 0
 const deletedPreviews: string[] = []
-let delayedPreview: { url: string; requested: boolean; promise: Promise<void>; release: () => void; fail?: boolean } | undefined
+let delayedPreview: { url: string; requested: boolean; promise: Promise<void>; release: () => void; fail?: boolean; all?: boolean } | undefined
 serverApi.createPreview = async ({ sessionId, url }) => {
   const delay = delayedPreview
-  if (delay?.url === url && !delay.requested) {
+  if (delay?.url === url && (!delay.requested || delay.all)) {
     delay.requested = true
     await delay.promise
     delayedPreview = undefined
@@ -67,6 +68,7 @@ let eventTime = 1000
 let surfaceIntent: ReturnType<typeof beginGesture>
 let releaseNewSession: (() => void) | undefined
 Object.assign(shell, {
+  showPreviewDialog: () => { showAlertDialog("Preview overlay", { title: "Preview overlay" }) },
   delayNewSession: () => {
     instances().get(ids[0])!.client!.session.create = (() => new Promise(resolve => {
       releaseNewSession = () => {
@@ -122,10 +124,10 @@ Object.assign(shell, {
   },
   status: (id: string) => sessions().get(id)?.get("session")?.status,
   deletedPreviews,
-  delayPreview: (url: string, fail = false) => {
+  delayPreview: (url: string, fail = false, all = false) => {
     let release!: () => void
     const promise = new Promise<void>(resolve => { release = resolve })
-    delayedPreview = { url, requested: false, promise, release, fail }
+    delayedPreview = { url, requested: false, promise, release, fail, all }
   },
   isPreviewDelayed: () => Boolean(delayedPreview?.requested),
   releasePreview: () => delayedPreview?.release(),

@@ -211,6 +211,8 @@ Native open claims retain their request deadline and backend-generation fence. T
 
 ## Agent conventions
 
+- A floating session drawer covers the portaled session preview: `SessionPreviewHost` hides its retained DOM and deactivates its native target until that shell's drawer leaves the DOM. Body-portaled menus and dialogs retain their shared stacking layers; Tauri child views follow `localOverlayOpen()` visibility.
+
 - After changing fixed page programs or their signatures, run `node --import tsx scripts/build-page-function-registry.ts` and the driver contract tests. Keep `functions.generated.json` derived from the authored registry. Bump the private driver contract version for incompatible operation/signature changes. Preserve the fixed-program hashes and snapshot goldens when behavior is unchanged. Never accept caller-supplied protocol names or JavaScript source in the page channel.
 
 - Give `embedded_view.rs` child modules explicit `#[path = "embedded_view/..."]` attributes so the native qualification example can include the production layer directly. Keep fixture-only lifecycle controls inside the example executable.

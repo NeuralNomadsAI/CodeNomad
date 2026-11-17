@@ -82,9 +82,11 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   if (current) return Promise.resolve(current)
   const stored = savedPreview(sessionId, instanceId)
   if (!stored) return Promise.resolve(null)
-  const pending = operations.get(sessionId)?.current() ? restorePromises.get(sessionId) : undefined
+  const operationInProgress = operations.get(sessionId)
+  const ownOperation = operationInProgress?.instanceId === instanceId && operationInProgress.current()
+  const pending = ownOperation ? restorePromises.get(sessionId) : undefined
   if (pending) return pending
-  if (operations.get(sessionId)?.current()) return Promise.resolve(null)
+  if (ownOperation) return Promise.resolve(null)
   const operation = beginOperation(sessionId, instanceId)
   const restore = serverApi.createPreview({ sessionId, url: stored.targetUrl }).then(preview => {
     if (!operation.current()) {
