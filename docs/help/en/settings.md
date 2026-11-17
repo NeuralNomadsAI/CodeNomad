@@ -46,7 +46,7 @@ Open **Preferences → General → Memory** (or **Settings → General** in a br
 - **About you**: up to 60 entries shared across projects using this configuration.
 - **Project**: up to 200 entries. This interface uses the project selected in Preferences, or the main window's active project in embedded Settings. The server identifies the repository by its normalized Git remote address, falling back to its local repository path; worktrees share this memory. Open a project to select this scope.
 
-1. Select a scope and an entry. **New** and **Modified** mark changes since this browser or desktop view last successfully consulted that scope; they stay visible during the current visit.
+1. Select a scope, unfold **Entries** and select an entry. **New** and **Modified** mark changes since this browser or desktop view last showed that scope's entries; the folded **Entries** line repeats them, and they stay visible during the current visit.
 2. Edit **Title**, **Type** (**Fact**, **Preference** or **Reference**) and **Text**, then **Save**. Titles allow 60 characters and text 2,000. **Cancel** restores the selected entry's saved content. If another writer changed it, use **Reload** and review before saving again.
 3. To remove an entry, open its action menu and confirm **Forget**. It leaves active memory; local Git retains its history, including the old text. Treat forgetting as removal from agent use, not secure erasure.
 4. If memory is full, merge or forget entries before retrying. Matching titles or strongly overlapping text replace an existing entry while Git keeps its previous text.

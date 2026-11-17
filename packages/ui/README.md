@@ -43,7 +43,7 @@ project replacement, deletion and the shared Settings discard guard.
 
 UI list responses supply `scopeKey` and `observedAt`. Per-scope consultation
 frontiers live in browser storage; each visit freezes its baseline and advances
-the stored frontier only after successful reads. The server derives project keys
+the stored frontier only after successful reads while the folded entry list is open. The server derives project keys
 so linked worktrees share badge state. Reviewable flagged entries carry an
 explanation behind an info tip. Explicit revision conflicts retain the draft and
 require a confirmed reload. Browser coverage lives in
