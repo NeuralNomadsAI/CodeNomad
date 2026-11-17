@@ -5,9 +5,7 @@ import { formatUnknownForCopy, formatUnknownForRender, getToolName, readToolStat
 import { interruptedShellOutput, shellOutput } from "./bash-data"
 import { tGlobal } from "../../../lib/i18n"
 import { createStableAnsiStreamUpdater } from "../ansi-render"
-import { ansiToHtml, hasAnsi, type AnsiRenderOptions } from "../../../lib/ansi"
-import { useOptionalTheme } from "../../../lib/theme"
-import { createCssColorResolver } from "../../../lib/css-color"
+import { ansiToHtml, hasAnsi } from "../../../lib/ansi"
 import { getBashToolSearchText } from "../search-text"
 import type { RecordTextRevealTarget } from "../../../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "../../hidden-text"
@@ -28,7 +26,6 @@ function OutputReveal(props: { output: TextWindowHandle }) {
 // Past the display bound the streamed prefix stops changing; only the reveal line counts on.
 function RunningBashOutput(props: {
   content: Accessor<string>
-  options: Accessor<AnsiRenderOptions>
   output: TextWindowHandle
   scrollHelpers?: ToolScrollHelpers
 }) {
@@ -38,7 +35,7 @@ function RunningBashOutput(props: {
   createEffect(() => {
     const element = preRef
     if (!element) return
-    updater.update(element, props.content(), props.options())
+    updater.update(element, props.content())
     props.scrollHelpers?.restoreAfterRender()
   })
 
@@ -93,15 +90,6 @@ function BashToolBody(props: {
   revealTarget: RecordTextRevealTarget
   scrollHelpers?: ToolScrollHelpers
 }) {
-  const theme = useOptionalTheme()
-  const ansiOptions = createMemo((): AnsiRenderOptions => {
-    theme?.themeRevision()
-    if (!theme?.highContrast()) return { forcedColors: theme?.forcedColors() }
-    const colors = createCssColorResolver()
-    try {
-      return { highContrast: true, foreground: colors.resolve("--text-primary", "foreground"), background: colors.resolve("--surface-code", "background") }
-    } finally { colors.dispose() }
-  })
   const state = createMemo(() => props.toolState())
 
   // "$ command\noutput" as parts of the native strings: windows copy only their
@@ -127,7 +115,7 @@ function BashToolBody(props: {
   })
   // Detect ANSI across the whole output, so a reveal never switches renderers.
   const finalHasAnsi = createMemo(() => isFinal() && parts().some((part) => hasAnsi(part)))
-  const finalAnsiHtml = createMemo(() => (finalHasAnsi() ? ansiToHtml(renderedContent(), ansiOptions()) : null))
+  const finalAnsiHtml = createMemo(() => (finalHasAnsi() ? ansiToHtml(renderedContent()) : null))
 
   return (
     <Show when={state() && source().length > 0}>
@@ -141,7 +129,7 @@ function BashToolBody(props: {
           </Show>
         }
       >
-        <RunningBashOutput content={renderedContent} options={ansiOptions} output={output} scrollHelpers={props.scrollHelpers} />
+        <RunningBashOutput content={renderedContent} output={output} scrollHelpers={props.scrollHelpers} />
       </Show>
     </Show>
   )

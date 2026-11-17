@@ -17,7 +17,6 @@ button.button-primary {
 button.button-primary:hover:not(:disabled) {
   background-color: var(--button-primary-hover-bg);
   border-color: var(--button-primary-hover-bg);
-  color: var(--button-primary-hover-text);
 }
 
 .button-primary:focus-visible,

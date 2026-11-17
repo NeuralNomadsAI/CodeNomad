@@ -6,7 +6,6 @@ import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { prepareGitPrototypeAssets } from "./fixtures/git-history-assets.mjs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { contrastRatio } from "../../src/lib/color-contrast"
 
 let browser: Browser, url: string
 before(async () => {
@@ -40,12 +39,6 @@ async function diagram(page: Page) {
   await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>(".mermaid-diagram img")].every(image => image.complete && image.naturalWidth > 0))
   return image
 }
-async function changedDiagram(page: Page, previous: string | null) {
-  await page.waitForFunction(previous => {
-    const image = document.querySelector<HTMLImageElement>(".mermaid-diagram img")
-    return image?.complete && image.naturalWidth > 0 && image.getAttribute("src") !== previous
-  }, previous)
-}
 
 test("Tiny loads on demand, renders mermaid/mmd fences, and preserves source controls and theme", async () => {
   const { page, errors, requests } = await open()
@@ -66,13 +59,8 @@ test("Tiny loads on demand, renders mermaid/mmd fences, and preserves source con
     assert.equal(await page.locator(".code-block-wrap").count(), 1)
     await page.getByRole("button", { name: "Show diagram", exact: true }).click()
     const light = await image.getAttribute("src")
-    await page.evaluate(async () => {
-      ;(window as any).fixture.setDark(true)
-      const { serverApi } = await import("/src/lib/api-client.ts" as string)
-      serverApi.patchStateOwner = async (_owner: string, patch: unknown) => patch
-      await (await import("/src/stores/preferences.tsx" as string)).setThemePreference("dark")
-    })
-    await changedDiagram(page, light)
+    await page.evaluate(() => (window as any).fixture.setDark(true))
+    await diagram(page)
     assert.notEqual(await page.locator(".mermaid-diagram img").getAttribute("src"), light)
     await setText(page, fenced("sequenceDiagram\n Alice->>Bob: Hello", "mmd"))
     await diagram(page)
@@ -206,175 +194,4 @@ test("initialization timeout includes a stalled Tiny import and ignores late com
     await diagram(page)
     assert.deepEqual(errors, [])
   } finally { release(); await page.close() }
-})
-
-test("displayed fences and files follow contrast, palette revisions and forced colors", async () => {
-  const { page, errors } = await open()
-  try {
-    await page.emulateMedia({ contrast: "no-preference", forcedColors: "none" })
-    await setText(page, fenced(graph))
-    const image = await diagram(page)
-    const normal = await image.getAttribute("src")
-    const button = page.locator(".code-block-diagram")
-    await button.focus()
-    const focusedControl = await button.elementHandle()
-    await page.emulateMedia({ contrast: "more" })
-    await changedDiagram(page, normal)
-    await diagram(page)
-    await page.waitForFunction(element => !element.isConnected, focusedControl)
-    await page.waitForFunction(() => document.activeElement === document.querySelector(".code-block-diagram"))
-    assert.equal(await button.evaluate(element => document.activeElement === element), true, "contrast retains the focused Markdown diagram control")
-    const high = await image.getAttribute("src")
-    const colors = await page.evaluate(async () => {
-      const { resolveCssColor } = await import("/src/lib/css-color.ts" as string)
-      return { text: resolveCssColor("--text-primary", "foreground"), border: resolveCssColor("--accent-text", "foreground") }
-    })
-    assert.ok(decodeURIComponent(high!).toUpperCase().includes(colors.text.toUpperCase()), "SVG labels use strengthened palette ink")
-    assert.match(decodeURIComponent(high!), new RegExp(`stroke:\\s*${colors.border}`, "i"), "SVG borders follow the palette")
-    await button.click()
-    await page.evaluate(async () => {
-      const { serverApi } = await import("/src/lib/api-client.ts" as string)
-      serverApi.patchStateOwner = async (_owner: string, patch: unknown) => patch
-      const preferences = await import("/src/stores/preferences.tsx" as string)
-      await preferences.setThemePreference("dark")
-      await preferences.setColorSchemePreference({ id: "fjord", appearance: "dark" })
-    })
-    await changedDiagram(page, high)
-    assert.equal(await page.locator(".markdown-code-block > pre").isVisible(), true, "palette refresh retains source choice")
-    await button.click()
-    const palette = await image.getAttribute("src")
-    await page.emulateMedia({ forcedColors: "active" })
-    await changedDiagram(page, palette)
-    await diagram(page)
-    const forced = await image.getAttribute("src")
-    const systemText = await page.evaluate(async () => (await import("/src/lib/css-color.ts" as string)).resolveCssColor("--text-primary", "foreground"))
-    assert.ok(decodeURIComponent(forced!).toUpperCase().includes(systemText.toUpperCase()), "image SVG uses system ink")
-    assert.match(decodeURIComponent(forced!), new RegExp(`stroke:\\s*${systemText}`, "i"), "image SVG borders use system ink")
-    await page.emulateMedia({ forcedColors: "none", contrast: "no-preference" })
-    await changedDiagram(page, forced)
-    await diagram(page)
-    // The standalone file viewer uses the same reactive renderer.
-    await page.evaluate(source => (window as any).fixture.file(source), "sequenceDiagram\n Alice->>Bob: Keep this label")
-    const fileImage = await diagram(page)
-    const fileNormal = await fileImage.getAttribute("src")
-    const fileButton = page.getByRole("button", { name: "Show source", exact: true })
-    await fileButton.focus()
-    const originalButton = await fileButton.elementHandle()
-    await page.emulateMedia({ contrast: "more" })
-    await changedDiagram(page, fileNormal)
-    await diagram(page)
-    assert.equal(await originalButton!.evaluate(element => element.isConnected && document.activeElement === element), true,
-      "a diagram refresh preserves the file viewer's focused control")
-    assert.equal(await page.evaluate(() => (window as any).fixture.reads()), 1, "contrast never reloads file contents")
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
-test("late contrast renders retain the last image and cannot overwrite a newer forced-colors render", async () => {
-  const { page, errors } = await open()
-  try {
-    await page.emulateMedia({ contrast: "no-preference", forcedColors: "none" })
-    await page.evaluate(source => (window as any).fixture.file(source), graph)
-    const image = await diagram(page)
-    const normal = await image.getAttribute("src")
-    await page.evaluate(`(() => {
-      const original = MessagePort.prototype.postMessage
-      let held
-      const publications = []
-      const observer = new MutationObserver(() => {
-        const src = document.querySelector(".mermaid-diagram img")?.getAttribute("src")
-        if (src && publications.at(-1) !== src) publications.push(src)
-      })
-      observer.observe(document.querySelector(".mermaid-diagram"), { subtree: true, attributes: true, attributeFilter: ["src"], childList: true })
-      MessagePort.prototype.postMessage = function (data, ...args) {
-        if (data?.code && !held) {
-          held = () => { MessagePort.prototype.postMessage = original; original.call(this, data, ...args) }
-          window.heldMermaid = true
-          return
-        }
-        return original.call(this, data, ...args)
-      }
-      window.mermaidRace = { release: () => held?.(), publications }
-    })()`)
-    await page.emulateMedia({ contrast: "more" })
-    await page.waitForFunction(() => (window as any).heldMermaid)
-    assert.equal(await image.getAttribute("src"), normal, "passive refresh keeps the last successful image")
-    assert.equal(await page.locator(".mermaid-loading").count(), 0)
-    await page.emulateMedia({ forcedColors: "active" })
-    await page.waitForFunction(() => document.documentElement.dataset.contrast !== "more")
-    const text = await page.evaluate(async () => (await import("/src/lib/css-color.ts" as string)).resolveCssColor("--text-primary", "foreground"))
-    await page.evaluate(() => (window as any).mermaidRace.release())
-    await changedDiagram(page, normal)
-    const publications = await page.evaluate(() => (window as any).mermaidRace.publications as string[])
-    assert.equal(publications.length, 1, "only the latest theme generation publishes")
-    assert.ok(decodeURIComponent(publications[0]).toUpperCase().includes(text.toUpperCase()))
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
-test("Gantt task states keep readable palette and system ink in the rendered SVG", async () => {
-  const { page, errors } = await open()
-  // An image document keeps its concrete SVG colors. Inspect its actual CSS in
-  // a separate document without host styles or forced-color substitution.
-  const svgPage = await browser.newPage({ forcedColors: "none" })
-  const rows: { palette: string; mode: string; state: string; ratio: number; border: number }[] = []
-  try {
-    for (const [palette, appearance] of [["parchment", "light"], ["linen", "light"], ["clay", "dark"], ["fjord", "dark"]] as const) {
-      await page.evaluate(async ({ palette, appearance }) => {
-        const { serverApi } = await import("/src/lib/api-client.ts" as string)
-        serverApi.patchStateOwner = async (_owner: string, patch: unknown) => patch
-        const preferences = await import("/src/stores/preferences.tsx" as string)
-        await preferences.setThemePreference(appearance)
-        await preferences.setColorSchemePreference({ id: palette, appearance })
-        ;(window as any).fixture.setDark(appearance === "dark")
-      }, { palette, appearance })
-      for (const mode of ["normal", "high", "forced"] as const) {
-        await page.emulateMedia({
-          colorScheme: appearance, contrast: mode === "normal" ? "no-preference" : "more",
-          forcedColors: mode === "forced" ? "active" : "none",
-        })
-        await page.waitForFunction(mode => (document.documentElement.dataset.contrast === "more") === (mode === "high"), mode)
-        // Unique source identity also fences any palette/media render still queued.
-        await setText(page, fenced(`gantt
- title ${palette} ${mode}
- dateFormat YYYY-MM-DD
- todayMarker off
- section Tasks
- Normal :normal, 2026-01-01, 30d
- Done :done, completed, 2026-01-01, 30d
- Critical :crit, critical, 2026-01-01, 30d
- Done critical :done, crit, donecritical, 2026-01-01, 30d`))
-        await diagram(page)
-        await page.waitForFunction(title => decodeURIComponent(document.querySelector<HTMLImageElement>(".mermaid-diagram img")?.src ?? "").includes(title), `${palette} ${mode}`)
-        const src = await page.locator(".mermaid-diagram img").getAttribute("src")
-        await svgPage.setContent(decodeURIComponent(src!.slice(src!.indexOf(",") + 1)))
-        const colors = await svgPage.evaluate(() => {
-          return ["normal", "completed", "critical", "donecritical"].map(state => {
-            const bar = document.querySelector<SVGGraphicsElement>(`#diagram-${state}`)!
-            const text = document.querySelector<SVGGraphicsElement>(`#diagram-${state}-text`)!
-            const style = getComputedStyle(bar), ink = getComputedStyle(text)
-            const barBox = bar.getBBox(), textBox = text.getBBox()
-            return {
-              state, fill: style.fill, stroke: style.stroke, text: ink.fill,
-              opacity: [style.opacity, style.fillOpacity, ink.opacity, ink.fillOpacity],
-              inside: textBox.x >= barBox.x && textBox.x + textBox.width <= barBox.x + barBox.width,
-            }
-          })
-        })
-        const hex = (color: string) => "#" + color.match(/\d+/g)!.slice(0, 3)
-          .map(channel => Number(channel).toString(16).padStart(2, "0")).join("").toUpperCase()
-        for (const color of colors) {
-          assert.equal(color.inside, true, `${palette}/${mode}/${color.state}: label is inside its measured bar`)
-          assert.deepEqual(color.opacity, ["1", "1", "1", "1"], "no unmeasured task paint opacity")
-          rows.push({ palette, mode, state: color.state, ratio: contrastRatio(hex(color.text), hex(color.fill)), border: contrastRatio(hex(color.stroke), hex(color.fill)) })
-        }
-      }
-    }
-    console.table(rows.map(row => ({ ...row, ratio: row.ratio.toFixed(2), border: row.border.toFixed(2) })))
-    for (const row of rows) {
-      assert.ok(row.ratio >= (row.mode === "normal" ? 4.5 : 7), `${row.palette}/${row.mode}/${row.state}: ${row.ratio.toFixed(2)}:1`)
-      if (row.mode !== "normal") assert.ok(row.border >= 3, `${row.palette}/${row.mode}/${row.state} border: ${row.border.toFixed(2)}:1`)
-    }
-    assert.deepEqual(errors, [])
-  } finally { await svgPage.close(); await page.close() }
 })

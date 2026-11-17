@@ -1,4 +1,4 @@
-import { createContext, createRenderEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js"
+import { createContext, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js"
 import { createTheme, ThemeProvider as MuiThemeProvider } from "@suid/material/styles"
 import CssBaseline from "@suid/material/CssBaseline"
 import { useConfig } from "../stores/preferences"
@@ -8,8 +8,7 @@ import {
   normalizeColorScheme,
   type NormalizedColorScheme,
 } from "./theme-scheme"
-import { createCssColorResolver } from "./css-color"
-import { effectiveHighContrast } from "./high-contrast"
+import { resolveCssColor } from "./css-color"
 
 export type ThemeMode = "system" | "light" | "dark"
 
@@ -20,10 +19,6 @@ interface ThemeContextValue {
   cycleThemeMode: () => void
   colorScheme: () => NormalizedColorScheme
   setColorScheme: (scheme: NormalizedColorScheme) => void
-  highContrast: () => boolean
-  systemContrast: () => boolean
-  forcedColors: () => boolean
-  themeRevision: () => number
 }
 
 const ThemeContext = createContext<ThemeContextValue>()
@@ -35,11 +30,7 @@ interface ResolvedPaletteColors {
   primaryContrast: string
   textPrimary: string
   textSecondary: string
-  textMuted: string
   divider: string
-  success: string
-  warning: string
-  error: string
 }
 
 const lightPaletteFallbacks: ResolvedPaletteColors = {
@@ -49,9 +40,7 @@ const lightPaletteFallbacks: ResolvedPaletteColors = {
   primaryContrast: "#ffffff",
   textPrimary: "#1a1a1a",
   textSecondary: "#666666",
-  textMuted: "#666666",
   divider: "#e0e0e0",
-  success: "#2e7d32", warning: "#ed6c02", error: "#d32f2f",
 }
 
 const darkPaletteFallbacks: ResolvedPaletteColors = {
@@ -61,74 +50,59 @@ const darkPaletteFallbacks: ResolvedPaletteColors = {
   primaryContrast: "#1a1a1a",
   textPrimary: "#cfd4dc",
   textSecondary: "#999999",
-  textMuted: "#999999",
   divider: "#3a3a3a",
-  success: "#66bb6a", warning: "#ffa726", error: "#f44336",
+}
+
+const readCssVar = (token: string, fallback: string, rootStyle: CSSStyleDeclaration | null) => {
+  if (!rootStyle) return fallback
+  const value = rootStyle.getPropertyValue(token)
+  if (!value) return fallback
+  const trimmed = value.trim()
+  return trimmed || fallback
 }
 
 const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
   const fallbackSet = dark ? darkPaletteFallbacks : lightPaletteFallbacks
-  if (typeof window === "undefined") return fallbackSet
-  const resolver = createCssColorResolver()
-  try {
-    return {
-      backgroundDefault: resolver.resolve("--surface-canvas", "background"),
-      backgroundPaper: resolver.resolve("--surface-secondary", "background"),
-      primary: resolver.resolve("--accent-primary", "selection"),
-      primaryContrast: resolver.resolve("--text-on-accent", "selectionText"),
-      textPrimary: resolver.resolve("--text-primary"),
-      textSecondary: resolver.resolve("--text-secondary"),
-      textMuted: resolver.resolve("--text-muted"),
-      divider: resolver.resolve("--border-base"),
-      success: resolver.resolve("--status-success"),
-      warning: resolver.resolve("--status-warning"),
-      error: resolver.resolve("--status-error"),
-    }
-  } finally { resolver.dispose() }
+  const rootStyle = typeof window !== "undefined" ? getComputedStyle(document.documentElement) : null
+
+  return {
+    backgroundDefault: rootStyle ? resolveCssColor("--surface-canvas") : fallbackSet.backgroundDefault,
+    backgroundPaper: readCssVar("--surface-secondary", fallbackSet.backgroundPaper, rootStyle),
+    primary: readCssVar("--accent-primary", fallbackSet.primary, rootStyle),
+    primaryContrast: readCssVar("--text-on-accent", fallbackSet.primaryContrast, rootStyle),
+    textPrimary: readCssVar("--text-primary", fallbackSet.textPrimary, rootStyle),
+    textSecondary: readCssVar("--text-secondary", fallbackSet.textSecondary, rootStyle),
+    divider: readCssVar("--border-base", fallbackSet.divider, rootStyle),
+  }
 }
 
 export function ThemeProvider(props: { children: JSX.Element }) {
-  const media = (query: string) => typeof window !== "undefined" ? window.matchMedia?.(query) : undefined
-  const mediaQuery = media("(prefers-color-scheme: dark)")
-  const contrastQuery = media("(prefers-contrast: more)")
-  const forcedQuery = media("(forced-colors: active)")
+  const mediaQuery = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null
   const config = useConfig()
   const [systemDark, setSystemDark] = createSignal(mediaQuery?.matches ?? false)
   const [isDark, setIsDarkSignal] = createSignal(true)
   const [themeRevision, setThemeRevision] = createSignal(0)
-  const [systemContrast, setSystemContrast] = createSignal(contrastQuery?.matches ?? false)
-  const [forcedColors, setForcedColors] = createSignal(forcedQuery?.matches ?? false)
 
   const themeMode = () => config.themePreference()
-  const colorScheme = createMemo(
-    () => config.getAppearancePalette(effectiveAppearance(themeMode(), systemDark())),
-    undefined, { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
-  )
-  const highContrast = createMemo(() => !forcedColors() && effectiveHighContrast(config.highContrastPreference(), systemContrast()))
+  const colorScheme = () => config.getAppearancePalette(effectiveAppearance(themeMode(), systemDark()))
 
   const applyResolvedTheme = () => {
-    // System ink can change while the manually selected palette stays identical.
-    if (forcedColors()) systemDark()
-    const dark = applyColorScheme(colorScheme(), { highContrast: highContrast(), forcedColors: forcedColors() })
+    const dark = applyColorScheme(colorScheme(), { systemDark: mediaQuery?.matches })
     setIsDarkSignal(dark)
-    setThemeRevision((v) => v + 1)
+    if (typeof window !== "undefined") {
+      requestAnimationFrame(() => setThemeRevision((v) => v + 1))
+    } else {
+      setThemeRevision((v) => v + 1)
+    }
   }
 
-  createRenderEffect(() => {
+  createEffect(() => {
     applyResolvedTheme()
   })
 
   const handleSystemThemeChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
-  const handleSystemContrastChange = (event: MediaQueryListEvent) => setSystemContrast(event.matches)
-  const handleForcedColorsChange = (event: MediaQueryListEvent) => setForcedColors(event.matches)
   mediaQuery?.addEventListener("change", handleSystemThemeChange)
-  contrastQuery?.addEventListener("change", handleSystemContrastChange)
-  forcedQuery?.addEventListener("change", handleForcedColorsChange)
-  onCleanup(() => {
-    mediaQuery?.removeEventListener("change", handleSystemThemeChange)
-    contrastQuery?.removeEventListener("change", handleSystemContrastChange)
-    forcedQuery?.removeEventListener("change", handleForcedColorsChange)
-  })
+  onCleanup(() => mediaQuery?.removeEventListener("change", handleSystemThemeChange))
 
   const setColorScheme = (scheme: NormalizedColorScheme) => {
     void config.setColorSchemePreference(normalizeColorScheme(scheme))
@@ -164,14 +138,8 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         text: {
           primary: paletteColors.textPrimary,
           secondary: paletteColors.textSecondary,
-          ...(highContrast() || forcedColors() ? { disabled: paletteColors.textMuted } : {}),
         },
         divider: paletteColors.divider,
-        ...(highContrast() || forcedColors() ? {
-          success: { main: paletteColors.success },
-          warning: { main: paletteColors.warning },
-          error: { main: paletteColors.error },
-        } : {}),
       },
       typography: {
         fontFamily: "var(--font-family-sans)",
@@ -183,11 +151,6 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         // No press ripple: pointer and touch presses do not animate, like the Message
         // content trigger. The keyboard focus ripple stays as the focus-visible cue.
         MuiButtonBase: { defaultProps: { disableTouchRipple: true } },
-        MuiPaper: {
-          styleOverrides: {
-            root: { backgroundImage: highContrast() || forcedColors() ? "none" : undefined },
-          },
-        },
         MuiIconButton: {
           styleOverrides: {
             root: {
@@ -196,7 +159,7 @@ export function ThemeProvider(props: { children: JSX.Element }) {
               padding: "6px",
               "&.Mui-disabled": {
                 color: "var(--text-muted)",
-                opacity: highContrast() ? "var(--contrast-opacity-55)" : 0.55,
+                opacity: 0.55,
               },
             },
           },
@@ -232,9 +195,8 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   })
 
   return (
-    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, cycleThemeMode, colorScheme, setColorScheme,
-      highContrast, systemContrast, forcedColors, themeRevision }}>
-      <MuiThemeProvider theme={muiTheme}>
+    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, cycleThemeMode, colorScheme, setColorScheme }}>
+      <MuiThemeProvider theme={muiTheme()}>
         <CssBaseline />
         {props.children}
       </MuiThemeProvider>
@@ -249,6 +211,3 @@ export function useTheme() {
   }
   return context
 }
-
-/** Standalone content renderers may also mount outside the application theme. */
-export const useOptionalTheme = () => useContext(ThemeContext)

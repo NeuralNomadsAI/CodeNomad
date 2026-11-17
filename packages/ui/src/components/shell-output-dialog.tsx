@@ -1,9 +1,7 @@
-import { Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
+import { Show, createEffect, createSignal, createUniqueId, onCleanup } from "solid-js"
 import type { ShellInfo } from "@opencode/client"
 
-import { ansiToHtml, hasAnsi, type AnsiRenderOptions } from "../lib/ansi"
-import { createCssColorResolver } from "../lib/css-color"
-import { useOptionalTheme } from "../lib/theme"
+import { createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 import { useI18n } from "../lib/i18n"
 import { appendShellOutput } from "../stores/shell-store"
 import { shellStore } from "../stores/shells"
@@ -20,19 +18,10 @@ interface ShellOutputDialogProps {
 
 export function ShellOutputDialog(props: ShellOutputDialogProps) {
   const { t } = useI18n()
-  const theme = useOptionalTheme()
   const id = `shell-output-${createUniqueId()}`
   const [output, setOutput] = createSignal("")
-  const ansiEnabled = createMemo(() => hasAnsi(output()))
-  const ansiOptions = createMemo((): AnsiRenderOptions => {
-    theme?.themeRevision()
-    if (!theme?.highContrast()) return { forcedColors: theme?.forcedColors() }
-    const colors = createCssColorResolver()
-    try {
-      return { highContrast: true, foreground: colors.resolve("--text-primary", "foreground"), background: colors.resolve("--surface-inset", "background") }
-    } finally { colors.dispose() }
-  })
-  const outputHtml = createMemo(() => ansiEnabled() ? ansiToHtml(output(), ansiOptions()) : "")
+  const [outputHtml, setOutputHtml] = createSignal("")
+  const [ansiEnabled, setAnsiEnabled] = createSignal(false)
   const [truncated, setTruncated] = createSignal(false)
   const [loading, setLoading] = createSignal(false)
 
@@ -46,6 +35,13 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
     let cursor = 0
     let raw = ""
     let timer: ReturnType<typeof setTimeout> | undefined
+    const render = () => {
+      const ansi = hasAnsi(raw)
+      setAnsiEnabled(ansi)
+      if (!ansi) return setOutputHtml("")
+      const renderer = createAnsiStreamRenderer()
+      setOutputHtml(renderer.render(raw))
+    }
     const poll = async () => {
       try {
         const result = await shellStore.output(props.instanceId, directory, shell.id, cursor, workspaceID)
@@ -56,11 +52,14 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
           raw = next.output
           setOutput(raw)
           setTruncated((current) => current || result.truncated || next.truncated)
+          render()
         } else if (result.truncated) {
           setTruncated(true)
         }
       } catch {
         if (!active) return
+        setAnsiEnabled(false)
+        setOutputHtml("")
         setOutput(t("backgroundProcessOutputDialog.loadErrorFallback"))
       } finally {
         if (!active) return
@@ -70,6 +69,8 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
     }
 
     setOutput("")
+    setOutputHtml("")
+    setAnsiEnabled(false)
     setTruncated(false)
     setLoading(true)
     void poll()

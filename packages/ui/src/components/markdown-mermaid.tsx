@@ -1,4 +1,4 @@
-import { createEffect, createMemo, getOwner, onCleanup, runWithOwner, type Accessor } from "solid-js"
+import { createEffect, getOwner, onCleanup, runWithOwner, type Accessor } from "solid-js"
 import { render } from "solid-js/web"
 import { useI18n } from "../lib/i18n"
 import { MermaidDiagram } from "./mermaid-diagram"
@@ -12,8 +12,6 @@ export function useMarkdownMermaid(options: {
 }) {
   const { t } = useI18n()
   const owner = getOwner()
-  const contentIdentity = createMemo(options.identity)
-  const appearanceDark = createMemo(options.dark)
   const modes = new Map<string, boolean>()
   let cleanups: Array<() => void> = []
   let disposed = false, queued = false
@@ -24,8 +22,8 @@ export function useMarkdownMermaid(options: {
     clear()
     const root = options.root()
     if (disposed || !root) return
-    if (identity !== contentIdentity()) { identity = contentIdentity(); modes.clear() }
-    const dark = appearanceDark(), streaming = options.streaming()
+    if (identity !== options.identity()) { identity = options.identity(); modes.clear() }
+    const dark = options.dark(), streaming = options.streaming()
     for (const entry of options.blocks()) {
       if (!entry.complete) continue
       const block = root.querySelector<HTMLElement>(`[data-mermaid-token="${entry.token}"]`)
@@ -67,7 +65,7 @@ export function useMarkdownMermaid(options: {
     }
   }
   createEffect(() => {
-    options.html(); options.blocks(); appearanceDark(); options.streaming(); contentIdentity()
+    options.html(); options.blocks(); options.dark(); options.streaming(); options.identity()
     if (!queued) { queued = true; queueMicrotask(sync) }
   })
   onCleanup(() => { disposed = true; clear() })

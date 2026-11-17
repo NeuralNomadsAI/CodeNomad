@@ -2,20 +2,17 @@ import { createSignal, onMount, Show } from "solid-js"
 import Drawer from "@suid/material/Drawer"
 import { render } from "solid-js/web"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
-import { ConfigProvider, useConfig } from "../../../src/stores/preferences"
+import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider, useTheme } from "../../../src/lib/theme"
 import { serverEvents } from "../../../src/lib/server-events"
-import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
 ;(window as any).__headerFixtureBoot?.mark("modules-evaluated")
-await applyUiSettings({ highContrast: "off" })
 
 function Fixture() {
   const { t } = useI18n()
   const theme = useTheme()
-  const config = useConfig()
   ;(window as any).__headerFixtureBoot?.mark("fixture-created")
   const [instanceId, setInstanceId] = createSignal("first"), [sessionId, setSessionId] = createSignal("session-a")
   const [active, setActive] = createSignal(true)
@@ -25,8 +22,6 @@ function Fixture() {
   let host!: HTMLDivElement
   ;(window as any).extensionFixture = { instance: setInstanceId, session: setSessionId, active: setActive,
     theme: theme.setThemeMode,
-    contrast: config.setHighContrastPreference,
-    themeState: () => ({ contrast: theme.highContrast(), forced: theme.forcedColors(), dark: theme.isDark() }),
     changed: () => (serverEvents as any).dispatchBatch([{ type: "storage.stateChanged", owner: "panelExtensions", value: {} }]),
     transport: (value: string) => (serverEvents as any).emitTransportStatus(value),
     event: (event: unknown) => (serverEvents as any).dispatchBatch([event]),

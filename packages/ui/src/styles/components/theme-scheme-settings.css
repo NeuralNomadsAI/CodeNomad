@@ -27,32 +27,15 @@
   background-color: var(--surface-control);
 }
 
-.theme-scheme-appearance-row {
+.theme-scheme-mode {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-sm);
   padding-bottom: var(--space-sm);
   border-bottom: 1px solid var(--border-base);
-}
-
-.theme-scheme-contrast { margin-inline-start: auto; }
-
-.theme-scheme-mode,
-.theme-scheme-contrast {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
-}
-
-.theme-scheme-contrast-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
 }
 
 .theme-scheme-picker:focus {

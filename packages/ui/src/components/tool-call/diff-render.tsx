@@ -10,9 +10,6 @@ import { getCacheEntry } from "../../lib/global-cache"
 import { copyToClipboard } from "../../lib/clipboard"
 import type { RecordTextRevealTarget } from "../../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "../hidden-text"
-import { useTheme } from "../../lib/theme"
-import { createCssColorResolver } from "../../lib/css-color"
-import { monacoTheme } from "../../lib/monaco/theme"
 
 const LazyToolCallDiffViewer = lazy(() =>
   import("../diff-viewer").then((module) => ({ default: module.ToolCallDiffViewer })),
@@ -52,23 +49,6 @@ export function createDiffContentRenderer(params: {
   handleScrollRendered: () => void
   onContentRendered?: () => void
 }) {
-  const theme = useTheme()
-  const diffColors = createMemo(() => {
-    theme.themeRevision()
-    if (!theme.highContrast() || theme.forcedColors()) return undefined
-    const resolver = createCssColorResolver()
-    try {
-      const { colors } = monacoTheme(resolver.resolve, { dark: params.isDark(), highContrast: true, forcedColors: false })
-      return {
-        "--tool-diff-inserted-line": colors["diffEditor.insertedLineBackground"],
-        "--tool-diff-removed-line": colors["diffEditor.removedLineBackground"],
-        "--tool-diff-inserted-gutter": colors["diffEditorGutter.insertedLineBackground"],
-        "--tool-diff-removed-gutter": colors["diffEditorGutter.removedLineBackground"],
-        "--tool-diff-inserted-text": colors["diffEditor.insertedTextBackground"],
-        "--tool-diff-removed-text": colors["diffEditor.removedTextBackground"],
-      }
-    } finally { resolver.dispose() }
-  })
   const compactDiffQuery = useMediaQuery("(max-width: 640px)")
   const [mobileModeOverride, setMobileModeOverride] = createSignal<DiffViewMode | undefined>(undefined)
   const [wordWrapEnabled, setWordWrapEnabled] = createSignal(true)
@@ -109,7 +89,7 @@ export function createDiffContentRenderer(params: {
       return mobileModeOverride() || "unified"
     }
     const shouldWrap = () => wordWrapEnabled()
-    const themeKey = () => params.isDark() ? "dark" : "light"
+    const themeKey = params.isDark() ? "dark" : "light"
     const state = params.toolState()
     const disableScrollTracking = Boolean(
       options?.disableScrollTracking || (state?.status !== "running" && state?.status !== "pending"),
@@ -133,7 +113,7 @@ export function createDiffContentRenderer(params: {
       if (
         cached
         && cached.text === renderedDiffText()
-        && cached.theme === themeKey()
+        && cached.theme === themeKey
         && cached.mode === currentMode()
         && cached.wrap === currentWrap()
       ) {
@@ -172,7 +152,6 @@ export function createDiffContentRenderer(params: {
     return (
         <div
           class="message-text tool-call-markdown tool-call-markdown-large tool-call-diff-shell"
-          style={diffColors()}
           data-diff-mode={currentMode()}
           ref={registerRef}
           onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
@@ -222,7 +201,7 @@ export function createDiffContentRenderer(params: {
             <LazyToolCallDiffViewer
               diffText={renderedDiffText()}
               filePath={payload.filePath}
-              theme={themeKey()}
+              theme={themeKey}
               mode={currentMode()}
               wrap={currentWrap()}
               cacheEntryParams={cacheEntryParams as any}

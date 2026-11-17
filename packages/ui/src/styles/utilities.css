@@ -153,18 +153,16 @@
    accents as light as their surface (Parchment) still separate, then 10% toward
    --surface-base, which always sits opposite the primary-text icon: the icon
    keeps 3:1 on headers, canvases and muted message/tool cards alike.
-   The 44% fill separates from idle hover even on brighter light bases; the
-   56% hover leaves a visible step on muted cards while retaining icon contrast.
    :where keeps the historical specificity for overrides. */
 .icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):where(:not(:disabled, [aria-disabled="true"])) {
   --icon-toggle-active-ink: color-mix(in oklab, color-mix(in oklab, var(--accent-primary) 80%, var(--text-on-accent)) 90%, var(--surface-base));
-  background-color: color-mix(in oklab, var(--icon-toggle-active-ink) 44%, transparent) !important;
+  background-color: color-mix(in oklab, var(--icon-toggle-active-ink) 40%, transparent) !important;
   color: var(--text-primary) !important;
   opacity: 1;
 }
 
 .icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):where(:not(:disabled, [aria-disabled="true"])):hover {
-  background-color: color-mix(in oklab, var(--icon-toggle-active-ink) 56%, transparent) !important;
+  background-color: color-mix(in oklab, var(--icon-toggle-active-ink) 50%, transparent) !important;
 }
 
 .panel-header {

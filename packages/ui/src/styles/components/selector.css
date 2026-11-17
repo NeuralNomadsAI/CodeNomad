@@ -337,9 +337,7 @@
 }
 
 .selector-button-primary:hover:not(:disabled) {
-  background-color: var(--accent-hover) !important;
-  border-color: var(--accent-hover) !important;
-  color: var(--text-on-accent-hover) !important;
+  background-color: var(--accent-hover);
 }
 
 .selector-button-primary:disabled {

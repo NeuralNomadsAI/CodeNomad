@@ -78,9 +78,6 @@ admitted Location before their first RPC, and surface failed setup immediately.
 
 ## Agent conventions
 
-- `high-contrast.test.ts` derives its 17 rendering palettes from the catalog, excluding System and Custom, and checks exact normal-token restoration, independent Auto transitions and the three persisted customization families. Custom extreme/intermediate surfaces report their composed ratios explicitly; the shared Base/Secondary input rule can leave opposing surfaces below the text target. Its loaded Markdown transcript checks one palette revision per effective toggle and zero palette revisions when messages mount or append.
-- Extension theme checks await the requested effective appearance before sampling normal colors. Their API adapters retain UI-state merge patches so palette-mode changes reach the provider before frame-color comparisons.
-
 - Mermaid initialization-deadline checks use the file preview's single renderer
   consumer and await the held Tiny module's evaluation before checking late
   iframe creation. Markdown's deferred highlight pass can remount a fence and

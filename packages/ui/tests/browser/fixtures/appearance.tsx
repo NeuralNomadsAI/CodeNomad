@@ -1,5 +1,5 @@
 import { render } from "solid-js/web"
-import { ConfigProvider, setColorSchemePreference, setThemePreference, setHighContrastPreference } from "../../../src/stores/preferences"
+import { ConfigProvider, setColorSchemePreference, setThemePreference } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { GeneralSettingsSection } from "../../../src/components/settings/general-settings-section"
@@ -8,14 +8,7 @@ import { normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import "../../../src/index.css"
 
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
-  <style>{`
-    .appearance-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr) 300px; width: 100%; height: 100%; color: var(--text-primary); }
-    @media (max-width: 600px) {
-      .appearance-layout { grid-template-columns: minmax(0, 1fr); overflow: auto; }
-      .appearance-layout > .session-view { overflow: visible !important; }
-    }
-  `}</style>
-  <div class="appearance-layout">
+  <div style={{ display: "grid", "grid-template-columns": "260px 1fr 300px", width: "100%", height: "100%", color: "var(--text-primary)" }}>
     <div class="session-sidebar" style={{ padding: "16px" }}>
       <div class="session-item-base session-item-inactive" tabindex="0">Review session</div>
       <div class="session-item-base session-item-active" tabindex="0">Selected session</div>
@@ -47,5 +40,4 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     await setColorSchemePreference(scheme)
     await setThemePreference(scheme.appearance)
   },
-  contrast: setHighContrastPreference,
 }

@@ -47,14 +47,10 @@
   --text-tertiary: var(--text-muted);
   --text-inverted: #ffffff;
   --text-on-accent: #ffffff;
-  --text-on-accent-hover: var(--text-on-accent);
   
   /* Accent tokens */
   --accent-primary: #0066ff;
   --accent-hover: #0052cc;
-  /* Text may strengthen independently of the palette's unchanged accent fill. */
-  --accent-text: var(--accent-primary);
-  --accent-hover-text: var(--accent-hover);
   
   /* Status tokens */
   --status-success: #4caf50;
@@ -121,7 +117,6 @@
   --dropdown-highlight-text: var(--text-primary);
   --selection-highlight-bg: rgba(0, 102, 255, 0.12);
   --selection-highlight-strong-bg: rgba(0, 102, 255, 0.18);
-  --selection-highlight-text: var(--text-primary);
   --overlay-scrim: rgba(0, 0, 0, 0.5);
   --scroll-elevation-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
   --panel-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
@@ -158,7 +153,6 @@
   --button-primary-bg: var(--accent-primary);
   --button-primary-hover-bg: var(--accent-hover);
   --button-primary-text: var(--text-on-accent);
-  --button-primary-hover-text: var(--text-on-accent-hover);
   --tab-active-bg: var(--surface-base);
   --tab-active-hover-bg: color-mix(in oklab, var(--text-primary) 4%, var(--surface-base));
   --tab-active-text: var(--text-primary);
@@ -330,11 +324,10 @@
     --button-primary-bg: #3f3f46;
     --button-primary-hover-bg: #52525b;
     --button-primary-text: #f5f6f8;
-    --button-primary-hover-text: var(--button-primary-text);
   }
 }
 
-:root[data-theme="dark"] {
+[data-theme="dark"] {
   color-scheme: dark;
   /* Surface tokens */
   --surface-base: #1a1a1a;
@@ -428,7 +421,6 @@
   --button-primary-bg: #3f3f46;
   --button-primary-hover-bg: #52525b;
   --button-primary-text: #f5f6f8;
-  --button-primary-hover-text: var(--button-primary-text);
   --button-danger-text: var(--text-inverted);
   --message-error-bg: rgba(244, 67, 54, 0.12);
   --message-error-bg-strong: rgba(244, 67, 54, 0.2);

@@ -7,14 +7,6 @@ import type { Highlighter } from "shiki/bundle/full"
 import { decodeHtmlEntities, escapeHtml } from "./text-render-utils"
 import { isFileUrl, localImagePath } from "./markdown-local-images"
 import type { MermaidCodeBlock } from "../types/message"
-import { HIGH_CONTRAST_TARGETS, strengthenContrast } from "./high-contrast"
-import { isCanonicalHexColor } from "./color-contrast"
-
-export interface MarkdownColors {
-  background: string
-  foreground: string
-  forced: boolean
-}
 
 const log = getLogger("actions")
 
@@ -23,7 +15,6 @@ let highlighterPromise: Promise<Highlighter> | null = null
 let currentTheme: "light" | "dark" = "light"
 let isInitialized = false
 let highlightSuppressed = false
-let renderColors: MarkdownColors | undefined
 let escapeRawHtmlEnabled = false
 let literalRawHtmlEnabled = false
 let defaultCodeBlockWrapEnabled = true
@@ -612,22 +603,6 @@ function setupRenderer(isDark: boolean) {
         const html = highlighter!.codeToHtml(decodedCode, {
           lang: langKey,
           theme: currentTheme === "dark" ? "github-dark" : "github-light-high-contrast",
-          transformers: renderColors ? [{
-            tokens(lines) {
-              const colors = renderColors!
-              const adjusted = new Map<string, string>()
-              for (const line of lines) for (const token of line) {
-                const original = token.color?.toUpperCase() ?? colors.foreground
-                if (!adjusted.has(original)) adjusted.set(original, colors.forced ? colors.foreground
-                  : isCanonicalHexColor(original) ? strengthenContrast(original, [colors.background], HIGH_CONTRAST_TARGETS.text)
-                    : colors.foreground)
-                token.color = adjusted.get(original)
-              }
-            },
-            pre(node) {
-              node.properties.style = `background-color:${renderColors!.background};color:${renderColors!.foreground}`
-            },
-          }] : [],
         })
         return renderCodeBlock(html)
       } catch {
@@ -697,7 +672,6 @@ export async function renderMarkdown(
     defaultCodeBlockWrap?: boolean
     onMermaid?: (block: MermaidCodeBlock) => void
     truncated?: boolean
-    colors?: MarkdownColors
   },
 ): Promise<string> {
   if (!isInitialized) {
@@ -717,8 +691,6 @@ export async function renderMarkdown(
   }
 
   const previousSuppressed = highlightSuppressed
-  const previousColors = renderColors
-  renderColors = options?.colors
   const previousEscapeRawHtml = escapeRawHtmlEnabled
   const previousLiteralRawHtml = literalRawHtmlEnabled
   const previousDefaultCodeBlockWrap = defaultCodeBlockWrapEnabled
@@ -744,7 +716,6 @@ export async function renderMarkdown(
   } finally {
     resetCodeBlockRenderState()
     highlightSuppressed = previousSuppressed
-    renderColors = previousColors
     escapeRawHtmlEnabled = previousEscapeRawHtml
     literalRawHtmlEnabled = previousLiteralRawHtml
     defaultCodeBlockWrapEnabled = previousDefaultCodeBlockWrap
