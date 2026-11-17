@@ -152,8 +152,8 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
     await page.evaluate(async () => {
       const f = (window as any).fixture
       const a = await f.open("same", "https://example.com/a", "web-a")
-      f.history(a.storageKey, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
-      f.viewport(a.storageKey, "mobile")
+      f.history(a.sessionId, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
+      f.viewport(a.sessionId, "mobile")
       await f.open("same", "https://example.com/b", "web-b")
       f.hide("same", "web-b")
       await f.flush()

@@ -105,7 +105,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
-  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceId))
+  const preview = createMemo(() => getSessionPreview(props.sessionId))
   const surface = createMemo(() => getSessionSurface({ instanceId: props.instanceId, sessionId: props.sessionId }))
   const missionReader = () => {
     const current = surface()

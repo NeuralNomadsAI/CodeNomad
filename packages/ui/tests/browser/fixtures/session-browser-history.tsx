@@ -89,7 +89,7 @@ Object.assign(shell, {
   native: nativeFixture,
   openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),
   preview: (sessionId: string, instanceId = ids[0]) => {
-    const preview = getSessionPreview(sessionId, instanceId)
+    const preview = getSessionPreview(sessionId)
     return preview && { ...preview, mode: getTabViewState(instanceId).previews?.[sessionId]?.mode ?? "chat" }
   },
   savedPreview: (sessionId: string, instanceId = ids[0]) => ({ ...savedSessionBrowser(sessionId), ...getTabViewState(instanceId).previews?.[sessionId] }),

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { afterEach, before, describe, it } from "node:test"
-import { parseStoredSessionPreviews, sessionPreviews, openSessionPreview, restoreSessionPreview, showSessionChatFor, showSessionPreview, getSessionPreview, closeSessionPreview, updateSessionPreviewHistory, updateSessionPreviewLocation, updateSessionPreviewViewport } from "./session-previews"
+import { sessionPreviews, openSessionPreview, restoreSessionPreview, showSessionChatFor, showSessionPreview, getSessionPreview, closeSessionPreview, updateSessionPreviewHistory, updateSessionPreviewLocation, updateSessionPreviewViewport } from "./session-previews"
+import { parseLegacySessionPreviews } from "./tab-view-state-codec"
 import { missionProjectView, navigateMissionProjectView } from "./mission-view-state"
 import { serverApi } from "../lib/api-client"
 import { getTabViewState, seedTabViewState } from "./tab-view-state"
@@ -34,15 +35,15 @@ describe("session preview persistence", () => {
       setActiveSessionId(previous => new Map(previous).set(id, "same"))
       const ctx = { instanceId: id, sessionId: "same" }
       const unchanged = beginGesture(ctx)
-      updateSessionPreviewLocation(preview.storageKey, preview.targetUrl)
-      updateSessionPreviewHistory(preview.storageKey, preview.history)
+      updateSessionPreviewLocation(preview.sessionId, preview.targetUrl)
+      updateSessionPreviewHistory(preview.sessionId, preview.history)
       assert.equal(unchanged.current(), true)
-      updateSessionPreviewLocation(preview.storageKey, "https://example.com/b")
+      updateSessionPreviewLocation(preview.sessionId, "https://example.com/b")
       assert.equal(unchanged.current(), true)
       const sameUrl = beginGesture(ctx)
-      updateSessionPreviewHistory(preview.storageKey, { urls: [preview.targetUrl, preview.targetUrl], index: 1 })
+      updateSessionPreviewHistory(preview.sessionId, { urls: [preview.targetUrl, preview.targetUrl], index: 1 })
       assert.equal(sameUrl.current(), true)
-      assert.deepEqual(getSessionPreview("same", id)?.history, { urls: [preview.targetUrl, preview.targetUrl], index: 1 })
+      assert.deepEqual(getSessionPreview("same")?.history, { urls: [preview.targetUrl, preview.targetUrl], index: 1 })
       applySurface(ctx, { kind: "mission", target: { kind: "overview", missionId: "next" } }, sameUrl)
       assert.equal(getSessionSurface(ctx).kind, "mission")
     } finally { closeOccurrence(id); serverApi.createPreview = create; serverApi.deletePreview = remove }
@@ -58,18 +59,18 @@ describe("session preview persistence", () => {
       setActiveSessionId(previous => new Map(previous).set(id, "b"))
       assert.equal(getTabViewState(id).previews?.a.mode, "preview", "saved mode also remains preview for the hidden session")
       const intent = beginGesture({ instanceId: id, sessionId: "b" })
-      updateSessionPreviewLocation(a.storageKey, "https://example.com/redirect")
+      updateSessionPreviewLocation(a.sessionId, "https://example.com/redirect")
       assert.equal(intent.current(), true)
-      assert.equal(getSessionPreview("a", id)?.targetUrl, "https://example.com/redirect")
+      assert.equal(getSessionPreview("a")?.targetUrl, "https://example.com/redirect")
       const history = { urls: [a.targetUrl, "https://example.com/redirect"], index: 1 }
-      updateSessionPreviewHistory(a.storageKey, history)
+      updateSessionPreviewHistory(a.sessionId, history)
       assert.equal(intent.current(), true)
-      assert.deepEqual(getSessionPreview("a", id)?.history, history)
+      assert.deepEqual(getSessionPreview("a")?.history, history)
       assert.equal(getTabViewState(id).previews?.a.history, undefined, "tab envelopes retain only foreground choices")
-      updateSessionPreviewLocation(b.storageKey, "https://example.com/foreground")
+      updateSessionPreviewLocation(b.sessionId, "https://example.com/foreground")
       assert.equal(intent.current(), true)
       const next = beginGesture({ instanceId: id, sessionId: "b" })
-      updateSessionPreviewHistory(b.storageKey, { urls: [b.targetUrl, b.targetUrl], index: 1 })
+      updateSessionPreviewHistory(b.sessionId, { urls: [b.targetUrl, b.targetUrl], index: 1 })
       assert.equal(next.current(), true)
     } finally { closeOccurrence(id); serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
@@ -91,7 +92,7 @@ describe("session preview persistence", () => {
         resolve({ sessionId: "same", token: id, targetUrl: "https://example.com" })
         await assert.rejects(pending, { name: "AbortError" })
         assert.equal(getPendingPreviewOperationCount(), 0)
-        assert.equal(getSessionPreview("same", id), null)
+        assert.equal(getSessionPreview("same"), null)
       }
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
@@ -103,18 +104,18 @@ describe("session preview persistence", () => {
     serverApi.deletePreview = async token => { deleted.push(token); return undefined as any }
     try {
       const a = await openSessionPreview("same", "https://example.com/a", "duplicate-a")
-      assert.equal(getSessionPreview("same", "duplicate-b"), a)
+      assert.equal(getSessionPreview("same"), a)
       const b = await restoreSessionPreview("same", "duplicate-b")
       showSessionPreview("same", "duplicate-b")
       assert.equal(a, b)
       assert.equal(token, 1)
       assert.equal(getPendingPreviewOperationCount(), 0, "settled opens release their fences")
       showSessionChatFor("same", "duplicate-b")
-      updateSessionPreviewHistory(a.storageKey, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
-      updateSessionPreviewViewport(a.storageKey, "mobile")
+      updateSessionPreviewHistory(a.sessionId, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
+      updateSessionPreviewViewport(a.sessionId, "mobile")
       assert.equal(getTabViewState("duplicate-b").previews?.same.mode, "chat")
-      assert.equal(getSessionPreview("same", "duplicate-b")?.targetUrl, "https://example.com/next")
-      assert.equal(getSessionPreview("same", "duplicate-b")?.viewport, "mobile")
+      assert.equal(getSessionPreview("same")?.targetUrl, "https://example.com/next")
+      assert.equal(getSessionPreview("same")?.viewport, "mobile")
       assert.equal(getTabViewState("duplicate-a").previews?.same.viewport, undefined)
       assert.equal(getTabViewState("duplicate-b").previews?.same.viewport, undefined)
       const snapshot = getTabViewState("duplicate-a")
@@ -124,13 +125,13 @@ describe("session preview persistence", () => {
       assert.deepEqual(restored?.history, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
       assert.equal(restored?.viewport, "mobile")
       closeOccurrence("duplicate-a")
-      assert.equal(getSessionPreview("same", "duplicate-a"), null)
-      assert.equal(getSessionPreview("same", "duplicate-b")?.token, b!.token)
+      assert.equal(getSessionPreview("same"), restored, "closing one occurrence retains the shared resource")
+      assert.equal(getSessionPreview("same")?.token, b!.token)
       assert.deepEqual(deleted, [])
       showSessionPreview("same", "duplicate-b")
       assert.equal(getTabViewState("duplicate-b").previews?.same.mode, "preview")
-      await closeSessionPreview(b!.storageKey)
-      await closeSessionPreview(restored!.storageKey)
+      await closeSessionPreview(b!.sessionId)
+      await closeSessionPreview(restored!.sessionId)
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
 
@@ -145,7 +146,7 @@ describe("session preview persistence", () => {
       closeOccurrence("closed-pending")
       resolve({ sessionId: "same", token: "late-closed", targetUrl: "https://example.com/a" })
       await assert.rejects(pending, { name: "AbortError", message: "Preview navigation was superseded" })
-      assert.equal(getSessionPreview("same", "closed-pending"), null)
+      assert.equal(getSessionPreview("same"), null)
       assert.equal(getTabViewState("closed-pending").previews, undefined)
       assert.deepEqual(deleted, ["late-closed"])
       await assert.rejects(openSessionPreview("same", "https://example.com/a", "closed-pending"), /closed/)
@@ -163,7 +164,7 @@ describe("session preview persistence", () => {
       showSessionChatFor("same", "restore-race")
       resolve({ sessionId: "same", token: "late-restore", targetUrl: "https://example.com/" })
       await assert.rejects(pending, /superseded/)
-      assert.equal(getSessionPreview("same", "restore-race"), null)
+      assert.equal(getSessionPreview("same"), null)
       assert.equal(getTabViewState("restore-race").previews?.same.mode, "chat")
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
@@ -183,7 +184,7 @@ describe("session preview persistence", () => {
       assert.equal(getPendingPreviewOperationCount(), 0)
       responses[0]({ sessionId: "same", token: "old", targetUrl: "https://example.com/old" })
       await assert.rejects(old, { name: "AbortError" })
-      assert.equal(getSessionPreview("same", "reused"), record)
+      assert.equal(getSessionPreview("same"), record)
       assert.deepEqual(deleted, ["old"])
       closeOccurrence("reused")
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
@@ -202,7 +203,7 @@ describe("session preview persistence", () => {
       resolve({ sessionId: "same", token: "unavailable", targetUrl: "https://example.com" })
       await assert.rejects(pending, { name: "AbortError" })
       assert.equal(getPendingPreviewOperationCount(), 0)
-      assert.equal(getSessionPreview("same", "unavailable"), null)
+      assert.equal(getSessionPreview("same"), null)
       closeOccurrence("unavailable")
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
@@ -222,10 +223,10 @@ describe("session preview persistence", () => {
         reject(new Error("late server failure"))
         await assert.rejects(pending, { name: "AbortError" })
         assert.equal(getPendingPreviewOperationCount(), 0, "settled errors release their fences")
-        assert.equal(getSessionPreview("same", id), close ? null : b)
-        assert.equal(getSessionPreview("same", "error-survivor"), b)
+        assert.equal(getSessionSurface({ instanceId: id, sessionId: "same" }).kind, "conversation")
+        assert.equal(getSessionPreview("same"), b)
       }
-      await closeSessionPreview(b.storageKey)
+      await closeSessionPreview(b.sessionId)
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
   it("reopening after a hide starts a fresh restore and an old completion cannot clear it", async () => {
@@ -245,10 +246,10 @@ describe("session preview persistence", () => {
       assert.equal(restoreSessionPreview("same", "restore-reopen"), second)
       responses[1]({ sessionId: "same", token: "new", targetUrl: "https://example.com/" })
       const current = await second
-      showSessionPreview(current!.storageKey, "restore-reopen")
+      showSessionPreview(current!.sessionId, "restore-reopen")
       assert.equal(getTabViewState("restore-reopen").previews?.same.mode, "preview")
       assert.deepEqual(deleted, ["old"])
-      await closeSessionPreview(current!.storageKey)
+      await closeSessionPreview(current!.sessionId)
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
   it("an expired native open cannot publish a delayed preview response", async () => {
@@ -258,22 +259,22 @@ describe("session preview persistence", () => {
     serverApi.deletePreview = async token => { deleted.push(token); return undefined as any }
     try {
       await assert.rejects(openSessionPreview("session", "https://example.com", "expired-native", async () => false), /no longer current/)
-      assert.equal(getSessionPreview("session", "expired-native"), null)
+      assert.equal(getSessionPreview("session"), null)
       assert.deepEqual(deleted, ["expired-native-open"])
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
   it("restores only valid HTTP preview records", () => {
-    assert.deepEqual(parseStoredSessionPreviews(JSON.stringify({
+    assert.deepEqual(parseLegacySessionPreviews(JSON.stringify({
       valid: { targetUrl: "http://localhost:3000/app", mode: "preview" },
       invalidScheme: { targetUrl: "javascript:alert(1)", mode: "preview" },
       invalidMode: { targetUrl: "https://example.com", mode: "hidden" },
     })), [["valid", { targetUrl: "http://localhost:3000/app", mode: "preview" }]])
-    assert.deepEqual(parseStoredSessionPreviews("not json"), [])
-    assert.equal(parseStoredSessionPreviews(JSON.stringify({
+    assert.deepEqual(parseLegacySessionPreviews("not json"), [])
+    assert.equal(parseLegacySessionPreviews(JSON.stringify({
       mobile: { targetUrl: "https://example.com/", mode: "chat", viewport: "mobile" },
       invalid: { targetUrl: "https://example.com/", mode: "chat", viewport: "custom-script" },
     }))[0][1].viewport, "mobile")
-    assert.equal(parseStoredSessionPreviews(JSON.stringify({
+    assert.equal(parseLegacySessionPreviews(JSON.stringify({
       invalid: { targetUrl: "https://example.com/", mode: "chat", viewport: "custom-script" },
     }))[0][1].viewport, undefined)
   })
@@ -283,14 +284,14 @@ describe("session preview persistence", () => {
     serverApi.deletePreview = async () => undefined as any
     try {
       const reader = { missionId: "mission", kind: "overview" as const }
-      const { storageKey } = await openSessionPreview("session", "https://example.com", "surface")
+      const { sessionId } = await openSessionPreview("session", "https://example.com", "surface")
       showSessionChatFor("session", "surface")
       navigateMissionProjectView("surface", { reader })
       assert.equal(getTabViewState("surface").previews?.session.mode, "chat")
-      showSessionPreview(storageKey, "surface")
+      showSessionPreview(sessionId, "surface")
       assert.equal(missionProjectView("surface").reader, undefined)
-      assert.equal(getSessionPreview("session", "surface")?.targetUrl, "https://example.com")
-      await closeSessionPreview(storageKey)
+      assert.equal(getSessionPreview("session")?.targetUrl, "https://example.com")
+      await closeSessionPreview(sessionId)
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
   it("a pending browser open cannot steal a later mission reader gesture", async () => {
@@ -308,7 +309,7 @@ describe("session preview persistence", () => {
       await assert.rejects(pending, /superseded/)
       assert.deepEqual(deleted, ["stale"])
       assert.deepEqual(missionProjectView("race").reader, reader)
-      assert.equal(getSessionPreview("session", "race"), null)
+      assert.equal(getSessionPreview("session"), null)
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
 })

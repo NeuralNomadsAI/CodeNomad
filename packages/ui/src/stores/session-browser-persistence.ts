@@ -1,5 +1,5 @@
 import { readClientLayoutValue, writeClientLayoutValue } from "./client-state"
-import { mergeSessionBrowsers, parseLegacySessionPreviews, SESSION_BROWSER_STATE_KEY, tabPreviewModes,
+import { mergeSessionBrowsers, parseLegacySessionPreviews, SESSION_BROWSER_STATE_KEY,
   type RestorableBrowserPreview, type RestorableTabViewState } from "./tab-view-state-codec"
 
 export function savedSessionBrowser(sessionId: string): RestorableBrowserPreview | undefined {
@@ -17,5 +17,3 @@ export function importSessionBrowsers(views: readonly (RestorableTabViewState | 
   writeClientLayoutValue(SESSION_BROWSER_STATE_KEY, value)
   return readClientLayoutValue(SESSION_BROWSER_STATE_KEY) === value
 }
-
-export { tabPreviewModes }

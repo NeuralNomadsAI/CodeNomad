@@ -4,23 +4,20 @@ import type { PreviewSession } from "../../../server/src/api-types"
 import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
 import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
 import { adoptLegacyTabPreview, getTabViewState, updateTabViewState } from "./tab-view-state"
-import { parseLegacySessionPreviews, type RestorableBrowserPreview } from "./tab-view-state-codec"
+import type { RestorableBrowserPreview } from "./tab-view-state-codec"
 import { savedSessionBrowser, saveSessionBrowser } from "./session-browser-persistence"
 import { isInstanceOccurrenceOpen, onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 
 interface SessionPreviewRecord extends PreviewSession {
-  storageKey: string
   history: BrowserHistory
   viewport?: RestorableBrowserPreview["viewport"]
 }
-type StoredSessionPreview = RestorableBrowserPreview
 const DEFAULT_PREVIEW_URL = "http://localhost:3000"
 const [sessionPreviews, setSessionPreviews] = createSignal<Map<string, SessionPreviewRecord>>(new Map())
 const owners = new Map<string, ReadonlyMap<string, unknown>>()
 const restorePromises = new Map<string, Promise<SessionPreviewRecord | null>>()
 const operations = new Map<string, SurfaceGesture & { instanceId: string }>()
 export const getPendingPreviewOperationCount = () => operations.size
-export const parseStoredSessionPreviews = parseLegacySessionPreviews
 
 function cancelOperation(sessionId: string) {
   operations.delete(sessionId)
@@ -39,14 +36,13 @@ function finishOperation(sessionId: string, operation: SurfaceGesture) {
 function storePreview(record: SessionPreviewRecord) {
   saveSessionBrowser(record.sessionId, { targetUrl: record.targetUrl, history: record.history, viewport: record.viewport, mode: "chat" })
 }
-function getSessionPreview(sessionId: string, instanceId?: string): SessionPreviewRecord | null {
-  if (instanceId && !isInstanceOccurrenceOpen(instanceId)) return null
+function getSessionPreview(sessionId: string): SessionPreviewRecord | null {
   return sessionPreviews().get(sessionId) ?? null
 }
 function savedPreview(sessionId: string, instanceId: string) {
   adoptLegacyTabPreview(instanceId, sessionId)
   const legacy = getTabViewState(instanceId).previews?.[sessionId]
-  return savedSessionBrowser(sessionId) ?? (legacy?.targetUrl ? legacy as StoredSessionPreview : undefined)
+  return savedSessionBrowser(sessionId) ?? (legacy?.targetUrl ? legacy as RestorableBrowserPreview : undefined)
 }
 
 async function openSessionPreview(sessionId: string, url: string, instanceId: string, canPublish?: () => Promise<boolean>, intent = beginGesture({ sessionId, instanceId })): Promise<SessionPreviewRecord> {
@@ -66,7 +62,7 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
       if (preview !== existing) void serverApi.deletePreview(preview.token).catch(() => undefined)
       throw new DOMException("Preview navigation was superseded", "AbortError")
     }
-    const record: SessionPreviewRecord = preview === existing ? existing : { ...preview, storageKey: sessionId,
+    const record: SessionPreviewRecord = preview === existing ? existing : { ...preview,
       viewport: existing?.viewport ?? saved?.viewport,
       history: new BrowserHistoryJournal(existing?.history ?? parseBrowserHistory(saved?.history, saved?.targetUrl ?? preview.targetUrl)).visitUrl(preview.targetUrl) }
     setSessionPreviews(previous => new Map(previous).set(sessionId, record))
@@ -95,7 +91,7 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
       void serverApi.deletePreview(preview.token).catch(() => undefined)
       throw new DOMException("Preview navigation was superseded", "AbortError")
     }
-    const record: SessionPreviewRecord = { ...preview, storageKey: sessionId,
+    const record: SessionPreviewRecord = { ...preview,
       viewport: stored.viewport, history: parseBrowserHistory(stored.history, preview.targetUrl) }
     setSessionPreviews(previous => new Map(previous).set(sessionId, record))
     return record
@@ -131,7 +127,7 @@ export function updateSessionPreviewHistory(sessionId: string, history: BrowserH
   setSessionPreviews(previous => new Map(previous).set(sessionId, next))
   storePreview(next)
 }
-export function updateSessionPreviewViewport(sessionId: string, viewport: NonNullable<StoredSessionPreview["viewport"]>) {
+export function updateSessionPreviewViewport(sessionId: string, viewport: NonNullable<RestorableBrowserPreview["viewport"]>) {
   const current = getSessionPreview(sessionId)
   if (!current) return
   const next = { ...current, viewport }
@@ -159,4 +155,4 @@ onInstanceLifecycleAuthority(event => {
 
 export { sessionPreviews, getSessionPreview, openSessionPreview, restoreSessionPreview, updateSessionPreviewLocation,
   showSessionPreview, showSessionChatFor, closeSessionPreview, DEFAULT_PREVIEW_URL }
-export type { SessionPreviewRecord, StoredSessionPreview }
+export type { SessionPreviewRecord }

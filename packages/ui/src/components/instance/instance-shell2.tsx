@@ -444,7 +444,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? getSessionPreview(sessionId, props.instance.id) : null
+    return sessionId ? getSessionPreview(sessionId) : null
   })
   const showingPreview = () => getSessionSurface({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() }).kind === "web"
 

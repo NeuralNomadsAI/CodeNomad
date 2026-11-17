@@ -11,6 +11,8 @@ import { addInstance, instances } from "../../../src/stores/instances"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { clearSessionCatalogState, refreshSessionCatalog } from "../../../src/stores/session-api"
 import { openSessionPreview, showSessionChatFor, getSessionPreview } from "../../../src/stores/session-previews"
+import { getTabViewState } from "../../../src/stores/tab-view-state"
+import { SessionPreviewHost } from "../../../src/components/session-preview-view"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { serverEvents } from "../../../src/lib/server-events"
@@ -43,8 +45,8 @@ await openSessionPreview("ses_initial", "https://example.invalid/", id)
 showSessionChatFor("ses_initial", id)
 
 // Previews are per conversation; follow the one opened for the initial conversation.
-const initialPreview = () => getSessionPreview("ses_initial", id)
-const snapshot = () => ({ session: activeSessionId().get(id) ?? null, mode: initialPreview()?.mode ?? null,
+const initialPreview = () => getSessionPreview("ses_initial")
+const snapshot = () => ({ session: activeSessionId().get(id) ?? null, mode: getTabViewState(id).previews?.ses_initial?.mode ?? null,
   previewSession: initialPreview()?.sessionId, previewUrl: initialPreview()?.targetUrl,
   reader: missionProjectView(id).reader ?? null })
 const history: ReturnType<typeof snapshot>[] = []
@@ -74,6 +76,7 @@ function Fixture() {
       onExecuteCommand={() => {}} onCloseSession={() => {}} onNewSession={() => {}}
       handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0}
       mobileFullscreenMode={false} onEnterMobileFullscreen={() => {}} onExitMobileFullscreen={() => {}} />
+    <SessionPreviewHost />
   </div>
 }
 declare global {

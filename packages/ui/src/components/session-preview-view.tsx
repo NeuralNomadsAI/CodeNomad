@@ -15,20 +15,17 @@ interface SessionPreviewViewProps {
   onInsertComment: (markdown: string) => void
 }
 
-type PreviewSlot = { instanceId: string; element: HTMLDivElement; insertComment: (markdown: string) => void }
-const [slots, setSlots] = createSignal<ReadonlyMap<string, PreviewSlot>>(new Map())
+type PreviewSlot = { sessionId: string; instanceId: string; element: HTMLDivElement; insertComment: (markdown: string) => void }
+const [slot, setSlot] = createSignal<PreviewSlot>()
 
 /** Geometry moves; the guest's DOM stays attached throughout tab switches. */
 export const SessionPreviewSlot: Component<{ sessionId: string; instanceId: string; active: boolean; onInsertComment: (markdown: string) => void }> = props => {
   let element!: HTMLDivElement
   createEffect(() => {
     if (!props.active) return
-    const id = props.sessionId, slot = { element, instanceId: props.instanceId, insertComment: props.onInsertComment }
-    setSlots(previous => new Map(previous).set(id, slot))
-    onCleanup(() => setSlots(previous => {
-      if (previous.get(id) !== slot) return previous
-      const next = new Map(previous); next.delete(id); return next
-    }))
+    const current = { element, sessionId: props.sessionId, instanceId: props.instanceId, insertComment: props.onInsertComment }
+    setSlot(current)
+    onCleanup(() => setSlot(previous => previous === current ? undefined : previous))
   })
   return <div ref={element} class="flex-1 min-h-0" style={{ display: props.active ? undefined : "none" }} />
 }
@@ -38,25 +35,25 @@ export const SessionPreviewHost: Component = () => {
     const wanted = new Set(sessionPreviews().keys())
     return [...previous.filter(id => wanted.delete(id)), ...wanted]
   }, [])
+  const [bounds, setBounds] = createSignal<DOMRect>()
+  createEffect(() => {
+    const current = slot()
+    if (!current) { setBounds(undefined); return }
+    const measure = () => setBounds(current.element.getBoundingClientRect())
+    const observer = new ResizeObserver(measure)
+    observer.observe(current.element)
+    window.addEventListener("resize", measure)
+    window.addEventListener("scroll", measure, true)
+    measure()
+    onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true) })
+  })
   return <Portal><For each={ids()}>{id => {
-    const slot = () => slots().get(id)
-    const [bounds, setBounds] = createSignal<DOMRect>()
-    createEffect(() => {
-      const current = slot()
-      if (!current) { setBounds(undefined); return }
-      const measure = () => setBounds(current.element.getBoundingClientRect())
-      const observer = new ResizeObserver(measure)
-      observer.observe(current.element)
-      window.addEventListener("resize", measure)
-      window.addEventListener("scroll", measure, true)
-      measure()
-      onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true) })
-    })
-    return <div data-session-id={id} data-preview-instance={slot()?.instanceId} style={{
-      position: "fixed", display: slot() ? "flex" : "none", "z-index": 1,
+    const activeSlot = () => slot()?.sessionId === id ? slot() : undefined
+    return <div data-session-id={id} data-preview-instance={activeSlot()?.instanceId} style={{
+      position: "fixed", display: activeSlot() ? "flex" : "none", "z-index": 1,
       left: `${bounds()?.x ?? 0}px`, top: `${bounds()?.y ?? 0}px`, width: `${bounds()?.width ?? 0}px`, height: `${bounds()?.height ?? 0}px`,
-    }}><SessionPreviewView preview={getSessionPreview(id)!} instanceId={slot()?.instanceId ?? ""} active={Boolean(slot() && bounds()?.width && bounds()?.height)}
-      onInsertComment={text => slot()?.insertComment(text)} /></div>
+    }}><SessionPreviewView preview={getSessionPreview(id)!} instanceId={activeSlot()?.instanceId ?? ""} active={Boolean(activeSlot() && bounds()?.width && bounds()?.height)}
+      onInsertComment={text => activeSlot()?.insertComment(text)} /></div>
   }}</For></Portal>
 }
 
@@ -78,7 +75,7 @@ function buildCommentMarkdown(target: BrowserFrameElementTarget, comment: string
   return `${lines.join("\n")}\n\n${comment}\n\n`
 }
 
-export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
+const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
   const { t } = useI18n()
   const [commentMode, setCommentMode] = createSignal(false)
   function showNavigationError(error: unknown) {
@@ -117,17 +114,17 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         initialAddress={props.preview.targetUrl}
         initialHistory={props.preview.history}
         initialViewport={props.preview.viewport}
-        onViewportChange={viewport => updateSessionPreviewViewport(props.preview.storageKey, viewport)}
-        onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
+        onViewportChange={viewport => updateSessionPreviewViewport(props.preview.sessionId, viewport)}
+        onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.sessionId, history)}
         onNavigationStart={() => { beginGesture({ sessionId: props.preview.sessionId, instanceId: props.instanceId }) }}
-        onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
+        onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.sessionId)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
         onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.instanceId))}
         onNavigationError={showNavigationError}
         onFrameLocation={(path) => {
           const target = new URL(path, props.preview.targetUrl)
-          updateSessionPreviewLocation(props.preview.storageKey, target.href)
+          updateSessionPreviewLocation(props.preview.sessionId, target.href)
           return target.href
         }}
         commentBridge

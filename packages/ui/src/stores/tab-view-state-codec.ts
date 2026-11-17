@@ -36,7 +36,7 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const id = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0
   && value.length <= 512 && !["__proto__", "constructor", "prototype"].includes(value)
 
-export function normalizeTabPreview(value: unknown): RestorableTabPreview | undefined {
+function normalizeTabPreview(value: unknown): RestorableTabPreview | undefined {
   if (!record(value) || (value.mode !== "chat" && value.mode !== "preview")) return
   if (value.targetUrl === undefined) return { mode: value.mode }
   const targetUrl = historyUrl(value.targetUrl)

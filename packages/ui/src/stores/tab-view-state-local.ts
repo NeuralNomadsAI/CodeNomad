@@ -1,9 +1,9 @@
 import { clientStateIsPrimary, readClientLayoutValue, removeClientLayoutValue, writeClientLayoutValue } from "./client-state"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
-import { LEGACY_SESSION_PREVIEWS_KEY, MAX_TAB_PREVIEW_STORAGE, normalizeTabViewState, parseLegacySessionPreviews,
+import { LEGACY_SESSION_PREVIEWS_KEY, MAX_TAB_PREVIEW_STORAGE, normalizeTabViewState, parseLegacySessionPreviews, tabPreviewModes,
   type RestorableTabViewState } from "./tab-view-state-codec"
 import { readLegacyMissionView } from "./tab-view-state-migration"
-import { importSessionBrowsers, tabPreviewModes } from "./session-browser-persistence"
+import { importSessionBrowsers } from "./session-browser-persistence"
 
 const KEY = "opencode-session-tab-views-v1"
 const scopes = new Map<string, string>()

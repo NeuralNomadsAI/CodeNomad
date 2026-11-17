@@ -1,9 +1,9 @@
 import { createSignal } from "solid-js"
 import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
-import { normalizeTabViewState, type RestorableTabViewState } from "./tab-view-state-codec"
+import { normalizeTabViewState, tabPreviewModes, type RestorableTabViewState } from "./tab-view-state-codec"
 import { bindLocalTabView, saveLocalTabView, unbindLocalTabView, adoptLocalLegacyPreview, retireLocalLegacyPreview } from "./tab-view-state-local"
-import { importSessionBrowsers, tabPreviewModes } from "./session-browser-persistence"
-export type { RestorableTabViewState, RestorableTabPreview, RestorableTabMissionView } from "./tab-view-state-codec"
+import { importSessionBrowsers } from "./session-browser-persistence"
+export type { RestorableTabViewState, RestorableTabMissionView } from "./tab-view-state-codec"
 
 const empty: RestorableTabViewState = { version: 1 }
 const [states, setStates] = createSignal<ReadonlyMap<string, RestorableTabViewState>>(new Map())
