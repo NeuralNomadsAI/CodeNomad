@@ -408,7 +408,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     }
     const configuration = { update: "disable", snapshots: false, experimental: { schedules: true }, permissions: [{ action: "*", resource: "*", effect: "allow" }],
       plugins: extraPlugins, model: "fixture/fixture", agents: { "fixture-worker": { mode: "all", description: "Owned native product coordinator" }, title: { model: "fixture/fixture" }, compaction: { model: "fixture/fixture" } },
-      providers: { fixture: { activation: "enabled", package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: { limit: { context: 32000, output: 4096 } } } } } }
+       providers: { fixture: { activation: "enabled", package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: { limit: { context: 128000, output: 4096 } } } } } }
     assert(!("codenomad-missions-local" in configuration.providers))
     await writeFile(path.join(env.OPENCODE_CONFIG_DIR, "opencode.json"), JSON.stringify(configuration))
     await writeFile(path.join(env.XDG_CONFIG_HOME, "opencode", "service.json"), JSON.stringify({ hostname: "127.0.0.1", port: 0, disabled: false })).catch(async error => {

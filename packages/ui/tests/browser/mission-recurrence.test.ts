@@ -600,10 +600,11 @@ for (const mode of ["manual", "partial-pause", "partial-stop"] as const) test(`r
       assert.equal(await missionRefresh(page).getAttribute("aria-label"), "Refresh and resend the unconfirmed action")
       await missionRefresh(page).click()
       await check.waitFor({ state: "hidden" })
+      // Check status hides as soon as the resend starts; the refresh names a plain read once it is confirmed.
+      await missionRefresh(page).and(page.getByRole("button", { name: "Refresh mission map", exact: true })).waitFor()
       assert.equal(controlStatusReads.length, 1, "the refresh first reads the exact request's status")
       assert.equal(posts.length, 2)
       assert.deepEqual(posts[1], { ...posts[0], retry: true })
-      assert.equal(await missionRefresh(page).getAttribute("aria-label"), "Refresh mission map")
     }
     assert.deepEqual(errors, [])
   } finally { await page.close() }
