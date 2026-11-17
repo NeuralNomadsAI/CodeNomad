@@ -1,3 +1,4 @@
+use super::diagnostics::preview_error;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -60,7 +61,8 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
     webview
         .with_webview(move |platform| {
             let result = (|| {
-                let core = unsafe { platform.controller().CoreWebView2() }?;
+                let core = unsafe { platform.controller().CoreWebView2() }
+                    .map_err(|error| preview_error("get WebView2 for protections", error))?;
                 let fullscreen_view = view.clone();
                 let fullscreen_policy = policy.clone();
                 let permission =
@@ -88,9 +90,13 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
                         Ok(())
                     }));
                 let mut event_token = 0;
-                unsafe { core.add_PermissionRequested(&permission, &mut event_token)? };
+                unsafe { core.add_PermissionRequested(&permission, &mut event_token) }
+                    .map_err(|error| preview_error("install permission handler", error))?;
                 unsafe {
-                    core.Settings()?.SetIsStatusBarEnabled(true)?;
+                    core.Settings()
+                        .map_err(|error| preview_error("get WebView2 settings", error))?
+                        .SetIsStatusBarEnabled(true)
+                        .map_err(|error| preview_error("enable status bar", error))?;
                 }
                 unsafe {
                     core.add_ContainsFullScreenElementChanged(
@@ -120,16 +126,17 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
                             }),
                         ),
                         &mut 0,
-                    )?;
+                    )
+                    .map_err(|error| preview_error("install fullscreen handler", error))?;
                 }
-                Ok::<(), webview2_com::Error>(())
+                Ok::<(), String>(())
             })();
-            let _ = sender.send(result.map_err(|error| error.to_string()));
+            let _ = sender.send(result);
         })
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| preview_error("dispatch WebView2 protections", error))?;
     receiver
         .recv_timeout(Duration::from_secs(5))
-        .map_err(|_| "Timed out configuring WebView2 browser security".to_string())?
+        .map_err(|error| preview_error("wait for WebView2 protections", error))?
 }
 
 fn permission_state(

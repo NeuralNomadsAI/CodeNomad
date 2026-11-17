@@ -43,6 +43,7 @@ Windows Tauri (`packages/tauri-app/src-tauri/src/developer_mode.rs`):
 - Uses a persistent local `developer-mode` WebView2 directory inside the data profile, leaving isolated remote-window profiles untouched.
 - Gives only local WebViews `--remote-debugging-port=0`, then reads and verifies their `EBWebView/DevToolsActivePort` endpoint.
 - Enables Rust backtraces and Node source-map stack traces for the managed backend.
+- Retains the latest 32 contextual preview errors in memory for the lifetime of the native process (2,048 characters per log entry). `developer.status` includes them in its native snapshot `logs`; `codenomad.inspect` exposes them as runtime diagnostics. The error dialog keeps the complete native message, including its HRESULT, after the localized heading. Copy that detail or the inspection diagnostics when reporting a preview failure.
 
 Packaged Electron main/preload/renderer, UI and server builds emit source maps. Local hosts sanitize inherited debugging flags; isolated remote-window profiles run without local instrumentation. Windows WebView2 is the supported Tauri CDP host. `packages/server/src/developer-cdp.ts` (`DeveloperCdp`) is the shared CDP controller and `opencode/automation-plugin.ts` the OpenCode adapter. `.opencode/skills/codenomad-automation/SKILL.md` holds the inspect, edit, build, relaunch, reconnect and evidence workflow.
 
