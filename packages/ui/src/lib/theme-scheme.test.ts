@@ -14,7 +14,6 @@ import {
   validateColorSchemeColors,
   type ColorSchemeTarget,
 } from "./theme-scheme.ts"
-import { highContrastColors } from "./high-contrast"
 
 function target() {
   const properties = new Map<string, string>()
@@ -70,18 +69,6 @@ describe("normalizeColorScheme", () => {
       appearance: "light",
       colors,
     })
-  })
-
-  it("preserves saved soft light surfaces and uses Porcelain for System light", () => {
-    for (const id of ["porcelain", "dawn", "parchment", "linen", "iris", "sage-light"] as const) {
-      const current = normalizeColorScheme(id).colors!
-      const saved = { ...current, surfaceBase: current.surfaceSecondary, surfaceSecondary: current.surfaceBase }
-      assert.deepEqual(normalizeColorScheme({ id, colors: saved }).colors, saved)
-      assert.deepEqual(normalizeColorScheme({ id: "custom", appearance: "light", colors: saved }).colors, saved)
-    }
-    assert.deepEqual(SYSTEM_LIGHT_COLOR_SCHEME_COLORS, normalizeColorScheme("porcelain").colors)
-    assert.equal(SYSTEM_LIGHT_COLOR_SCHEME_COLORS.surfaceBase, "#E1E3E5")
-    assert.equal(SYSTEM_LIGHT_COLOR_SCHEME_COLORS.surfaceSecondary, "#CFD1D4")
   })
 })
 
@@ -152,93 +139,6 @@ describe("built-in color schemes", () => {
 })
 
 describe("applyColorScheme", () => {
-  it("restores every normal property exactly after repeated contrast and forced-colors transitions", () => {
-    for (const { id } of BUILT_IN_COLOR_SCHEMES) {
-      for (const systemDark of [false, true]) {
-        const scheme = normalizeColorScheme(id)
-        const snapshot = structuredClone(scheme)
-        const root = target()
-        applyColorScheme(scheme, { target: root.value, systemDark })
-        const baseline = new Map(root.properties)
-        for (let i = 0; i < 3; i++) {
-          applyColorScheme(scheme, { target: root.value, systemDark, highContrast: true })
-          assert.equal(root.value.dataset.contrast, "more")
-          assert.ok(root.properties.has("--accent-text"))
-          assert.deepEqual(scheme, snapshot)
-          applyColorScheme(scheme, { target: root.value, systemDark, highContrast: true, forcedColors: true })
-          assert.equal(root.value.dataset.contrast, undefined)
-          assert.deepEqual(root.properties, baseline)
-          applyColorScheme(scheme, { target: root.value, systemDark, highContrast: true })
-          applyColorScheme(scheme, { target: root.value, systemDark })
-          assert.equal(root.value.dataset.contrast, undefined)
-          assert.deepEqual(root.properties, baseline)
-        }
-      }
-    }
-  })
-
-  it("preserves custom Muted inputs and maximizes attainable text contrast on extreme overrides", () => {
-    for (const id of ["custom", "light", "classic", "clay"] as const) {
-      for (const background of ["#FFFFFF", "#000000", "#777777"]) {
-        const scheme = normalizeColorScheme({ id, colors: {
-          ...DEFAULT_CUSTOM_COLORS, surfaceBase: background, surfaceSecondary: background, surfaceMuted: background,
-        } })
-        const root = target()
-        const snapshot = structuredClone(scheme)
-        applyColorScheme(scheme, { target: root.value })
-        const normal = new Map(root.properties)
-        applyColorScheme(scheme, { target: root.value, highContrast: true })
-        const backgrounds = ["--surface-base", "--surface-secondary", "--surface-muted", "--message-user-bg",
-          "--message-assistant-bg", "--message-tool-bg", "--list-item-highlight-bg", "--selection-highlight-bg"]
-          .map(key => root.properties.get(key)!)
-        const weakest = (ink: string) => Math.min(...backgrounds.map(bg => contrastRatio(ink, bg)))
-        const attainablePole = Math.max(weakest("#FFFFFF"), weakest("#000000"))
-        for (const text of ["--text-primary", "--text-secondary", "--text-muted", "--accent-text"]) {
-          assert.ok(weakest(root.properties.get(text)!) >= Math.min(7.5, attainablePole), `${id} ${background}: ${text}`)
-        }
-        const dark = scheme.appearance === "dark"
-        const inputs = highContrastColors(scheme.colors!, dark)
-        assert.equal(root.properties.get("--surface-base"), inputs.surfaceBase)
-        assert.equal(root.properties.get("--surface-secondary"), inputs.surfaceSecondary)
-        assert.equal(root.properties.get("--surface-muted"), background)
-        assert.deepEqual(scheme, snapshot)
-        applyColorScheme(scheme, { target: root.value })
-        assert.deepEqual(root.properties, normal)
-      }
-    }
-  })
-
-  it("strengthens the final Classic overrides, including borders and secondary text", () => {
-    const root = target()
-    applyColorScheme(normalizeColorScheme("classic"), { target: root.value, highContrast: true })
-    const border = contrastRatio(root.properties.get("--border-base")!, root.properties.get("--surface-secondary")!)
-    const muted = contrastRatio(root.properties.get("--border-muted")!, root.properties.get("--surface-secondary")!)
-    assert.ok(border >= 3)
-    assert.ok(muted > 1 && muted < border)
-    applyColorScheme(normalizeColorScheme("light"), { target: root.value, highContrast: true })
-    assert.ok(contrastRatio(root.properties.get("--text-secondary")!, root.properties.get("--message-tool-bg")!) >= 7)
-    assert.equal(root.properties.get("--message-tool-bg"), "#F8F8F8")
-    assert.equal(root.properties.get("--surface-code"), "#F1F5F9")
-  })
-
-  it("keeps opposing custom surfaces intact when their text target is unattainable", () => {
-    for (const appearance of ["light", "dark"] as const) {
-      const scheme = normalizeColorScheme({ id: "custom", appearance, colors: {
-        ...DEFAULT_CUSTOM_COLORS, surfaceBase: "#FFFFFF", surfaceSecondary: "#000000", surfaceMuted: "#777777",
-      } })
-      const snapshot = structuredClone(scheme)
-      const root = target()
-      applyColorScheme(scheme, { target: root.value, highContrast: true })
-      const inputs = highContrastColors(scheme.colors!, appearance === "dark")
-      assert.equal(root.properties.get("--surface-base"), inputs.surfaceBase)
-      assert.equal(root.properties.get("--surface-secondary"), inputs.surfaceSecondary)
-      assert.equal(root.properties.get("--surface-muted"), "#777777")
-      assert.equal(root.properties.get("--message-tool-bg"), "#777777")
-      assert.ok(["#FFFFFF", "#000000"].includes(root.properties.get("--text-muted")!))
-      assert.deepEqual(scheme, snapshot)
-    }
-  })
-
   it("replaces stale overrides when switching to system or light", () => {
     const root = target()
     applyColorScheme(normalizeColorScheme("fjord"), { target: root.value })
@@ -282,26 +182,15 @@ describe("applyColorScheme", () => {
     applyColorScheme(scheme, { target: root.value })
     const text = root.properties.get("--text-on-accent")
     assert.equal(text, textOnColor("#8FA8FF"))
-    assert.equal(text, "#000000")
-    assert.ok(contrastRatio(text, "#8FA8FF") >= 3)
+    assert.ok(contrastRatio(text ?? "", "#8FA8FF") >= 4.5)
   })
 
-  it("pairs custom accent and final hover fills with their OKLab ink in both modes", () => {
-    for (const appearance of ["light", "dark"] as const) {
-      for (const accentPrimary of ["#0066FF", "#FF00FF", "#888888", "#A9BA45"]) {
-        const scheme = normalizeColorScheme({ id: "custom", appearance, colors: { ...DEFAULT_CUSTOM_COLORS, accentPrimary } })
-        const root = target()
-        for (const highContrast of [false, true]) {
-          applyColorScheme(scheme, { target: root.value, highContrast })
-          assert.equal(root.properties.get("--accent-primary"), accentPrimary)
-          assert.equal(root.properties.get("--text-on-accent"), textOnColor(accentPrimary))
-          assert.equal(root.properties.get("--text-on-accent-hover"), textOnColor(root.properties.get("--accent-hover")!))
-          if (highContrast) {
-            assert.equal(root.properties.get("--button-danger-text"), textOnColor(root.properties.get("--button-danger-bg")!))
-          }
-        }
-      }
-    }
+  it("keeps normal filled text selected by the strongest black/white contrast ratio", () => {
+    assert.equal(textOnColor("#4D7AFE"), "#000000")
+    const root = target()
+    applyColorScheme(normalizeColorScheme("classic"), { target: root.value })
+    assert.equal(root.properties.get("--text-on-accent"), "#000000")
+    assert.equal(root.properties.has("--text-on-accent-hover"), false)
   })
 
   it("keeps neutral selection independent of accent-colored actions", () => {

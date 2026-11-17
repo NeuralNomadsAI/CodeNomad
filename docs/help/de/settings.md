@@ -27,7 +27,7 @@ Der ausgewählte Tab im rechten Panel und der Dateien-Modus werden für jeden Pr
 4. Wählen Sie eine Palette für die angezeigte Darstellung. Helle und dunkle Auswahl werden getrennt gespeichert; Auto verwendet die passende.
 5. Verwenden Sie für eigene Farben die Farbfelder und **Speichern**; **Zurücksetzen** stellt die Farben einer integrierten Palette wieder her. Mit **Neu** benennen Sie eine separate Palette, mit **Löschen** entfernen Sie eine selbst erstellte.
 
-Kontrast wird sofort angewendet und gespeichert, unabhängig vom **Speichern** der Farben. Die Darstellung wird angepasst; ausgewählte Palette, bearbeitbare Farben und Unterhaltungsentwurf bleiben erhalten. Das **i** zeigt bei Auto den aktuellen Kontrastzustand. Erzwungene Systemfarben haben Vorrang.
+Kontrast wird sofort angewendet und gespeichert, unabhängig vom **Speichern** der Farben. Die Darstellung wird angepasst; ausgewählte Palette, bearbeitbare Farben und Unterhaltungsentwurf bleiben erhalten. Das **i** zeigt bei Auto den aktuellen Kontrastzustand.
 
 Die Oberfläche aktualisiert sich ohne Unterhaltungsneustart. Hebräisch verwendet Rechts-nach-links-Layout; Code und technische Werte bleiben in ihrer eigenen Richtung lesbar. Die Sprachauswahl ändert Oberflächentexte, nicht die Sprache vorhandener Nachrichten oder Agentenanweisungen. Native Desktop-Menüs wechseln in die Oberflächensprache, sobald ein CodeNomad-Fenster geladen ist.
 

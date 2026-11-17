@@ -129,19 +129,12 @@ reloaded/navigated document.
 Use `apiVersion: 2` and the two permissions above. Inspection shows the additional
 current-session asset permission before the trust checkbox. The injected context
 advertises that package's API version.
-APIs 2–4 receive `context.colors` (`background`, `surface`, `text`, `muted`,
-`border`, `focus`) as concrete `#rrggbb` values from the effective host palette.
-Palette, contrast and system-colour changes republish context through the theme
-revision while retaining the mounted iframe. Forced colours resolve backgrounds
-to system Canvas and foregrounds (including focus) to system CanvasText.
+API 2 also receives `context.colors` (`background`, `surface`, `text`, `muted`,
+`border`, `focus`) from the current host palette. Palette changes republish context.
 `background` matches the native panel sections (`--surface-secondary`); `surface`
 is the reading canvas (`--surface-canvas`, resolved to a concrete colour). Apply
 `background` to the panel document so its `color-scheme` cannot substitute a
 browser-default canvas color.
-`text`, `muted`, `border` and `focus` resolve `--text-primary`, `--text-muted`,
-`--border-base` and `--focus-ring-color` respectively. Consume each context
-publication to update these six colors in the extension's own styles; third-party
-content follows the extension author's rendering.
 
 ```js
 const page = await codenomad.assets.list() // or list(page.cursor) for older pages

@@ -153,7 +153,6 @@ export const settingsMessages = {
   "settings.appearance.contrast.info": "מגביר את ניגודיות הממשק תוך שמירה על לוח הצבעים שלך. המצב האוטומטי עוקב אחר העדפת הניגודיות של המערכת.",
   "settings.appearance.contrast.current.on": "ניגודיות גבוהה מופעלת כעת.",
   "settings.appearance.contrast.current.off": "ניגודיות גבוהה כבויה כעת.",
-  "settings.appearance.contrast.forcedColors": "לצבעים הכפויים של המערכת יש עדיפות.",
   "settings.appearance.contrast.saveError": "לא ניתן לשמור את הניגודיות. יש לנסות שוב.",
   "settings.appearance.palette.auto": "אוטומטי",
   "settings.appearance.palette.mist": "ערפל",

@@ -3,14 +3,11 @@ import { describe, it } from "node:test"
 import { BUILT_IN_COLOR_SCHEMES, COLOR_SCHEME_IDS, DEFAULT_CUSTOM_COLORS, applyColorScheme, contrastRatio, normalizeColorScheme, type ColorSchemeColors } from "./theme-scheme.ts"
 import { SOFT_COLOR_SCHEMES } from "./soft-color-schemes.ts"
 import { isDefaultCustomColors, normalizeColorSchemePresets } from "./color-scheme-presets.ts"
-import { TEXT_ON_COLOR_LIGHTNESS_THRESHOLD, textOnColor } from "./color-contrast"
-import { highContrastColors, highContrastProperties } from "./high-contrast"
 
-function render(id: (typeof COLOR_SCHEME_IDS)[number], systemDark = false, highContrast = false, colors?: ColorSchemeColors) {
+function render(id: (typeof COLOR_SCHEME_IDS)[number], systemDark = false) {
   const properties = new Map<string, string>()
-  applyColorScheme(colors ? { ...normalizeColorScheme(id), colors } : normalizeColorScheme(id), {
+  applyColorScheme(normalizeColorScheme(id), {
     systemDark,
-    highContrast,
     target: {
       style: { setProperty: (k, v) => { properties.set(k, v) }, removeProperty: (k) => properties.delete(k) },
       dataset: {}, setAttribute() {}, removeAttribute() {},
@@ -33,154 +30,6 @@ function lab(hex: string) {
 }
 const distance = (a: string, b: string) => Math.hypot(...lab(a).map((v, i) => v - lab(b)[i])) * 100
 const readyMade = BUILT_IN_COLOR_SCHEMES.filter((s) => s.colors && s.id !== "custom")
-
-describe("high-contrast palette quality", () => {
-  it("covers every built-in rendering palette", () => {
-    assert.equal(readyMade.length, 17)
-    assert.equal(readyMade.length, COLOR_SCHEME_IDS.length - 2)
-  })
-  it("preserves the normal border contrast hierarchy instead of flattening lighter roles", () => {
-    for (const scheme of readyMade) {
-      const normal = render(scheme.id), p = render(scheme.id, false, true)
-      const reference = p.get("--surface-secondary")!, normalReference = normal.get("--surface-secondary")!
-      const ratio = (key: string) => contrastRatio(p.get(key)!, reference)
-      const normalRatio = (key: string) => contrastRatio(normal.get(key)!, normalReference)
-      assert.ok(ratio("--border-base") >= 3, `${scheme.id}: primary border`)
-      assert.ok(ratio("--border-strong") > ratio("--border-base"), `${scheme.id}: strong > base`)
-      assert.ok(ratio("--border-base") > ratio("--border-secondary"), `${scheme.id}: base > secondary`)
-      assert.ok(ratio("--border-secondary") > ratio("--border-muted"), `${scheme.id}: secondary > muted`)
-      assert.ok(ratio("--border-divider") > ratio("--border-base"), `${scheme.id}: group divider > base`)
-      assert.ok(ratio("--border-row") < ratio("--border-base"), `${scheme.id}: fine row < base`)
-      for (const key of ["--border-secondary", "--border-muted"]) {
-        const sourceWeight = (normalRatio(key) - 1) / (normalRatio("--border-base") - 1)
-        const normalWeight = sourceWeight >= 1 ? key === "--border-secondary" ? .72 : .5 : sourceWeight
-        const weight = (ratio(key) - 1) / (ratio("--border-base") - 1)
-        assert.ok(Math.abs(weight - normalWeight) < .04, `${scheme.id}/${key}: ${weight} vs normal ${normalWeight}`)
-      }
-      assert.equal(p.get("--focus-ring-color"), normal.get("--focus-ring-color"), `${scheme.id}: focus source retained`)
-    }
-  })
-  it("uses OKLab ink with WCAG 2 >= 3:1 on accent and hover fills in both modes and Auto", () => {
-    // Measured [accent ink, L, ratio, hover ink, L, ratio]; ratios rounded to 4 decimals.
-    const measured: Record<string, [string, number, number, string, number, number]> = {
-      light: ["#FFFFFF", .563, 4.8336, "#FFFFFF", .480, 6.8207],
-      classic: ["#FFFFFF", .620, 3.7971, "#FFFFFF", .669, 3.0855],
-      porcelain: ["#FFFFFF", .515, 5.8492, "#FFFFFF", .449, 7.6990],
-      mist: ["#000000", .906, 16.2757, "#000000", .920, 16.9339],
-      dawn: ["#FFFFFF", .601, 4.1822, "#FFFFFF", .521, 5.8007],
-      slate: ["#000000", .777, 10.3894, "#000000", .808, 11.5567],
-      parchment: ["#000000", .753, 9.7965, "#FFFFFF", .652, 3.1281],
-      clay: ["#000000", .737, 9.3780, "#000000", .772, 10.5691],
-      linen: ["#FFFFFF", .617, 3.6798, "#FFFFFF", .535, 5.1785],
-      iris: ["#FFFFFF", .640, 3.5281, "#FFFFFF", .555, 4.9573],
-      "sage-light": ["#FFFFFF", .615, 3.7935, "#FFFFFF", .533, 5.3090],
-      sage: ["#000000", .806, 11.5224, "#000000", .834, 12.6391],
-      basalt: ["#000000", .748, 9.2130, "#000000", .783, 10.4467],
-      fjord: ["#000000", .772, 10.6404, "#000000", .803, 11.7743],
-      lichen: ["#000000", .783, 10.8894, "#000000", .813, 12.0108],
-      velvet: ["#000000", .777, 10.1552, "#000000", .807, 11.3094],
-      ember: ["#000000", .719, 8.1899, "#000000", .756, 9.4204],
-    }
-    for (const id of [...readyMade.map(s => s.id), "system"] as const) {
-      for (const systemDark of [false, true]) {
-        for (const highContrast of [false, true]) {
-          const p = render(id, systemDark, highContrast)
-          const expected = measured[id === "system" ? systemDark ? "mist" : "porcelain" : id]
-          for (const [index, [text, fill]] of [["--text-on-accent", "--accent-primary"], ["--text-on-accent-hover", "--accent-hover"]].entries()) {
-            const lightness = lab(p.get(fill)!)[0]
-            const ratio = contrastRatio(p.get(text)!, p.get(fill)!)
-            const label = `${id} ${systemDark} ${highContrast}: ${text} on ${fill}`
-            assert.equal(p.get(text), lightness < TEXT_ON_COLOR_LIGHTNESS_THRESHOLD ? "#FFFFFF" : "#000000", label)
-            assert.equal(p.get(text), expected[index * 3], label)
-            assert.equal(Number(lightness.toFixed(3)), expected[index * 3 + 1], label)
-            assert.equal(Number(ratio.toFixed(4)), expected[index * 3 + 2], label)
-            assert.ok(ratio >= 3, `${label}: ${ratio}`)
-          }
-        }
-      }
-    }
-  })
-  for (const scheme of readyMade) {
-    it(`${scheme.id}: texts >= 7 and boundaries >= 3 across final surfaces and derived states`, () => {
-      const snapshot = structuredClone(scheme)
-      const normal = render(scheme.id)
-      const p = render(scheme.id, false, true)
-      for (const key of ["--accent-primary", "--accent-hover"]) {
-        assert.equal(p.get(key), normal.get(key), `${scheme.id}: immutable ${key}`)
-      }
-      assert.equal(p.get("--button-danger-bg"), normal.get("--status-error"), `${scheme.id}: immutable danger fill`)
-      assert.equal(p.get("--button-danger-text"), textOnColor(normal.get("--status-error")!))
-      // Foreground adaptation preserves normal derivation, including CSS role
-      // aliases/mixes and Classic surfaces. Only the two input endpoints move.
-      for (const strength of [0, .2, .3, .35, .5, .6, .9]) {
-        const colors = highContrastColors(scheme.colors!, scheme.appearance === "dark", strength)
-        const derived = render(scheme.id, false, false, colors)
-        const q = highContrastProperties(Object.fromEntries(derived), { dark: scheme.appearance === "dark" })
-        assert.notEqual(q["--surface-base"], q["--surface-secondary"], `${scheme.id} ${strength}: Base/Secondary gap`)
-        for (const key of ["--surface-base", "--surface-secondary", "--surface-muted", "--surface-code",
-          "--message-user-bg", "--message-assistant-bg", "--message-tool-bg"]) {
-          assert.equal(q[key], derived.get(key), `${scheme.id} ${strength}: ${key}`)
-        }
-        for (const key of ["--surface-base", "--surface-secondary"]) {
-          assert.notEqual(q[key], q["--surface-muted"], `${scheme.id} ${strength}: input/muted separation`)
-        }
-        for (const key of ["--surface-base", "--surface-secondary"]) {
-          assert.ok(distance(q[key], q["--surface-muted"]) >= Math.min(.1, distance(normal.get(key)!, normal.get("--surface-muted")!)),
-            `${scheme.id} ${strength}: ${key}/muted gap`)
-        }
-      }
-      const backgrounds = ["--surface-base", "--surface-secondary", "--surface-muted", "--message-user-bg",
-        "--message-assistant-bg", "--message-tool-bg", "--surface-code", "--list-item-highlight-bg",
-        "--selection-highlight-bg", "--selection-highlight-strong-bg", "--surface-hover", "--menu-item-selected-bg"]
-        .map(key => [key, p.get(key)!]).filter(([, value]) => value.startsWith("#"))
-      for (const key of ["--text-primary", "--text-secondary", "--text-muted", "--tab-active-text", "--tab-inactive-text",
-        "--new-tab-text", "--accent-text", "--accent-hover-text", "--status-success", "--status-warning", "--status-error",
-        "--session-status-compacting-fg", "--session-yolo-accent", "--message-user-border", "--message-assistant-border",
-        "--message-part-header-type", "--message-part-header-title", "--dropdown-highlight-text",
-        "--selection-highlight-text", "--timeline-segment-active-text"]) {
-        for (const [role, bg] of backgrounds) assert.ok(contrastRatio(p.get(key)!, bg) >= 7,
-          `${scheme.id} ${key} normal/selected/hover on ${role} ${bg}: ${contrastRatio(p.get(key)!, bg)}`)
-      }
-      for (const key of ["--border-base", "--border-strong", "--border-critical",
-        "--border-divider", "--message-tool-border", "--tab-border",
-        "--list-item-highlight-border", "--scrollbar-thumb", "--scrollbar-thumb-hover"]) {
-        for (const [role, bg] of backgrounds) assert.ok(contrastRatio(p.get(key)!, bg) >= 3,
-          `${scheme.id} ${key} normal/selected/hover on ${role} ${bg}: ${contrastRatio(p.get(key)!, bg)}`)
-      }
-      for (const [text, bg] of [
-        ["--attachment-chip-text", "--attachment-chip-bg"], ["--badge-neutral-text", "--badge-neutral-bg"],
-        ["--env-vars-text", "--env-vars-bg"], ["--status-success", "--status-success-bg"],
-        ["--status-warning", "--status-warning-bg"], ["--status-error-fg", "--status-error-bg"],
-        ["--status-ready-fg", "--status-ready-bg"], ["--status-starting-fg", "--status-starting-bg"],
-        ["--status-stopped-fg", "--status-stopped-bg"], ["--session-status-working-fg", "--session-status-working-bg"],
-        ["--session-status-idle-fg", "--session-status-idle-bg"], ["--session-status-permission-fg", "--session-status-permission-bg"],
-        ["--session-status-compacting-fg", "--session-status-compacting-bg"],
-      ]) assert.ok(contrastRatio(p.get(text)!, p.get(bg)!) >= 7, `${scheme.id} ${text} on composed ${bg}`)
-      for (const [key, source] of [
-        ["--accent-text", "--accent-primary"], ["--accent-hover-text", "--accent-hover"],
-        ...["--status-success", "--status-warning", "--status-error", "--message-user-border",
-          "--message-assistant-border", "--session-status-compacting-fg", "--session-yolo-accent"]
-          .map(key => [key, key]),
-      ]) {
-        const [, a, b] = lab(normal.get(source)!), [, x, y] = lab(p.get(key)!)
-        const delta = Math.abs(Math.atan2(b, a) - Math.atan2(y, x)) * 180 / Math.PI
-        // Near-white, byte quantization makes hue coarse; retain it within 12°.
-        assert.ok(Math.min(delta, 360 - delta) < 12, `${scheme.id} ${key}: OKLCH hue drift ${delta}`)
-        assert.ok(Math.hypot(x, y) > .005, `${scheme.id} ${key}: recognizable chroma`)
-        assert.ok(!["#FFFFFF", "#000000"].includes(p.get(key)!), `${scheme.id} ${key}: colored ink`)
-      }
-      assert.deepEqual(scheme, snapshot)
-    })
-  }
-  it("applies the same strict roles when the system appearance changes", () => {
-    for (const dark of [true, false, true]) {
-      const p = render("system", dark, true)
-      for (const role of ["--surface-base", "--surface-secondary", "--surface-muted", "--message-user-bg"]) {
-        assert.ok(contrastRatio(p.get("--text-muted")!, p.get(role)!) >= 7)
-      }
-    }
-  })
-})
 
 // Only these exact foreground/background pairs are exempt from the historical
 // 3:1 emphasis check. A new color or surface must meet the original check.
@@ -212,14 +61,6 @@ describe("palette quality", () => {
     assert.equal(new Set(BUILT_IN_COLOR_SCHEMES.map((s) => s.id)).size, COLOR_SCHEME_IDS.length)
     assert.equal(SOFT_COLOR_SCHEMES.filter((s) => s.appearance === "light").length, 6)
     assert.equal(SOFT_COLOR_SCHEMES.filter((s) => s.appearance === "dark").length, 4)
-  })
-
-  it("places Base nearer the appearance extreme than Secondary in every built-in palette", () => {
-    for (const scheme of BUILT_IN_COLOR_SCHEMES.filter(s => s.colors)) {
-      const c = scheme.colors!
-      const base = lab(c.surfaceBase)[0], secondary = lab(c.surfaceSecondary)[0]
-      assert.ok(scheme.appearance === "dark" ? base < secondary : base > secondary, scheme.id)
-    }
   })
 
   for (const scheme of readyMade) {

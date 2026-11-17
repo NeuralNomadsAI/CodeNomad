@@ -9,7 +9,6 @@ import { BUILT_IN_COLOR_SCHEMES } from "../../src/lib/theme-scheme"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { prepareInterruptionDock } from "./fixtures/interruption-dock-preparation"
-import { sampleContrast } from "./contrast-sampling"
 
 const ENTRY = "/tests/browser/fixtures/header-windows.tsx"
 let server: ViteDevServer, browser: Browser, url: string
@@ -66,10 +65,41 @@ const distance = (a: RGB, b: RGB) => Math.hypot(...oklab(a).map((v, i) => v - ok
 
 
 type Sample = { surface: RGB; fill: RGB; icon: RGB; css: string }
-const sample = async (target: Locator): Promise<Sample> => {
-  const value = await sampleContrast(target)
-  return { ...value, icon: value.foreground }
-}
+/** Composite the toggle's background over every ancestor's, as rendered, including
+ * solid overlay gradients such as list-selection hover (`linear-gradient(c, c)`). */
+const sample = (target: Locator) => target.evaluate((button) => {
+  const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!
+  const overlay = (element: Element) => {
+    const gradient = /^linear-gradient\((.*)\)$/.exec(getComputedStyle(element).backgroundImage)?.[1]
+    if (!gradient) return undefined
+    let depth = 0
+    for (let i = 0; i < gradient.length; i++) {
+      if (gradient[i] === "(") depth++
+      else if (gradient[i] === ")") depth--
+      else if (gradient[i] === "," && depth === 0) return gradient.slice(0, i).trim()
+    }
+    return undefined
+  }
+  const paint = (elements: Element[]) => {
+    ctx.clearRect(0, 0, 1, 1)
+    ctx.fillStyle = "#ffffff"
+    ctx.fillRect(0, 0, 1, 1)
+    for (const element of elements) {
+      for (const color of [getComputedStyle(element).backgroundColor, overlay(element)]) {
+        if (!color) continue
+        ctx.fillStyle = color
+        ctx.fillRect(0, 0, 1, 1)
+      }
+    }
+    return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3)
+  }
+  const ancestors: Element[] = []
+  for (let node = button.parentElement; node; node = node.parentElement) ancestors.unshift(node)
+  ctx.fillStyle = getComputedStyle(button).color
+  ctx.fillRect(0, 0, 1, 1)
+  const icon = [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3)
+  return { surface: paint(ancestors), fill: paint([...ancestors, button]), icon, css: getComputedStyle(button).backgroundColor }
+}) as Promise<Sample>
 
 // Speech capabilities that let the real message cards render their SpeechActionButton.
 const SPEECH = { available: true, configured: true, provider: "fixture", supportsStt: false, supportsTts: true, supportsStreamingTts: true,
@@ -128,11 +158,11 @@ test("active toggles carry a visible accent tint on every real surface and ready
 
     const away = () => page.mouse.move(1, 750)
     const failures: string[] = []
-    for (const highContrast of [false, true]) for (const scheme of BUILT_IN_COLOR_SCHEMES.filter(s => s.colors && s.id !== "custom")) {
-      await page.evaluate(async ({ id, highContrast }) => {
+    for (const scheme of BUILT_IN_COLOR_SCHEMES.filter(s => s.colors && s.id !== "custom")) {
+      await page.evaluate(async (id) => {
         const { applyColorScheme, normalizeColorScheme } = await import("/src/lib/theme-scheme.ts")
-        applyColorScheme(normalizeColorScheme(id), { highContrast })
-      }, { id: scheme.id, highContrast })
+        applyColorScheme(normalizeColorScheme(id))
+      }, scheme.id)
       // The header search toggle is exercised through its real open/close behaviour.
       if (await search.getAttribute("aria-expanded") !== "true") await search.click()
       await away()
@@ -144,9 +174,6 @@ test("active toggles carry a visible accent tint on every real surface and ready
       assert.equal(await search.getAttribute("aria-expanded"), "false")
       for (const [name, target] of Object.entries(targets)) {
         await away()
-        // These containers are deliberately transparent until the card is hovered.
-        // Composite their actual visible state rather than ignoring ancestor opacity.
-        if (name.endsWith("card")) await target.locator("xpath=ancestor::*[@data-view='message-item']").hover()
         // Message actions only accept the pointer once their card is hovered; the
         // second move then reaches the revealed button, as a user's pointer does.
         const active = await sample(target)
@@ -158,13 +185,13 @@ test("active toggles carry a visible accent tint on every real surface and ready
 
       const notes: string[] = []
       for (const [name, { active, hover }] of Object.entries(measured)) {
-        const label = `${scheme.id}/${highContrast ? "more" : "normal"}/${name}: surface ${active.surface} active ${active.fill} (${active.css})`
+        const label = `${scheme.id}/${name}: surface ${active.surface} active ${active.fill} (${active.css})`
         const tint = distance(active.fill, active.surface)
         // The previous neutral fill measured ΔE 0.4–1.2 on the soft light headers. The
         // header keeps a wider margin; muted cards sit closest to some accents.
-        if (!highContrast && tint < (name === "header" ? 8 : 5)) failures.push(`${label} ΔE ${tint.toFixed(1)}`)
-        // 44% → 56% keeps a visible step where the ink sits close to muted cards.
-        if (!highContrast && distance(hover.fill, active.fill) < 1.4) failures.push(`${label} vs active hover ${hover.fill}`)
+        if (tint < (name === "header" ? 8 : 5)) failures.push(`${label} ΔE ${tint.toFixed(1)}`)
+        // 40% → 50% is a smaller step where the ink sits close to the surface (muted cards).
+        if (distance(hover.fill, active.fill) < 1.4) failures.push(`${label} vs active hover ${hover.fill}`)
         // Icons are non-text graphics (WCAG 1.4.11: 3:1), including on the stronger hover fill.
         for (const [state, value] of [["active", active], ["active hover", hover]] as const) {
           if (contrast(value.icon, value.fill) < 3) failures.push(`${label} ${state} icon ${value.icon} ${contrast(value.icon, value.fill).toFixed(2)}`)
@@ -172,7 +199,7 @@ test("active toggles carry a visible accent tint on every real surface and ready
         notes.push(`${name} ΔE ${tint.toFixed(1)} step ${distance(hover.fill, active.fill).toFixed(1)} icon ${contrast(active.icon, active.fill).toFixed(2)}/${contrast(hover.icon, hover.fill).toFixed(2)}`)
       }
       const header = measured.header.active
-      if (!highContrast && distance(header.fill, idleHover.fill) < 6) failures.push(`${scheme.id}/header: active ${header.fill} vs idle hover ${idleHover.fill}`)
+      if (distance(header.fill, idleHover.fill) < 6) failures.push(`${scheme.id}/header: active ${header.fill} vs idle hover ${idleHover.fill}`)
 
       // Selected past-run text keeps normal-text contrast (WCAG 1.4.3: 4.5:1).
       const runText: string[] = []
@@ -180,11 +207,11 @@ test("active toggles carry a visible accent tint on every real surface and ready
         if (state === "selected hover") await pastRun.hover({ force: true })
         else await away()
         const run = await sample(pastRun)
-        if (contrast(run.icon, run.fill) < (highContrast ? 7 : 4.5)) failures.push(`${scheme.id}/past run ${state}: text ${run.icon} on ${run.fill} ${contrast(run.icon, run.fill).toFixed(2)}`)
+        if (contrast(run.icon, run.fill) < 4.5) failures.push(`${scheme.id}/past run ${state}: text ${run.icon} on ${run.fill} ${contrast(run.icon, run.fill).toFixed(2)}`)
         runText.push(contrast(run.icon, run.fill).toFixed(2))
       }
       await away()
-      t.diagnostic(`${scheme.id}/${highContrast ? "more" : "normal"}: idle-hover ΔE ${distance(header.fill, idleHover.fill).toFixed(1)}; ${notes.join("; ")}; past run text ${runText.join("/")}`)
+      t.diagnostic(`${scheme.id}: idle-hover ΔE ${distance(header.fill, idleHover.fill).toFixed(1)}; ${notes.join("; ")}; past run text ${runText.join("/")}`)
     }
     assert.deepEqual(failures, [])
 

@@ -1,147 +1,118 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
-import { contrastRatio, luminance, mix, oklabLightness } from "./color-contrast"
-import { effectiveHighContrast, HIGH_CONTRAST_SURFACE_STRENGTH, HIGH_CONTRAST_TARGETS, highContrastColors, highContrastProperties, normalizeHighContrastPreference, strengthenContrast } from "./high-contrast"
-import { applyColorScheme, BUILT_IN_COLOR_SCHEMES, normalizeColorScheme } from "./theme-scheme"
+import { it } from "node:test"
+import { effectiveHighContrast, HIGH_CONTRAST_CURVE, highContrastColors, normalizeHighContrastPreference } from "./high-contrast"
+import { channel, oklabLightness } from "./color-contrast"
+import { BUILT_IN_COLOR_SCHEMES, applyColorScheme, normalizeColorScheme, type ColorSchemeTarget } from "./theme-scheme"
+import { SOFT_COLOR_SCHEMES } from "./soft-color-schemes"
 
-describe("high contrast preference", () => {
-  it("normalizes absent and invalid values without treating truthy values as on", () => {
-    for (const value of [undefined, null, true, false, 1, "ON", "more", {}, []]) {
-      assert.equal(normalizeHighContrastPreference(value), "auto")
-    }
-    for (const value of ["auto", "on", "off"] as const) assert.equal(normalizeHighContrastPreference(value), value)
-  })
-  it("follows dynamic system contrast only in Auto", () => {
-    for (const system of [false, true, false]) {
-      assert.equal(effectiveHighContrast("auto", system), system)
-      assert.equal(effectiveHighContrast("on", system), true)
-      assert.equal(effectiveHighContrast("off", system), false)
-    }
-    assert.equal(effectiveHighContrast("auto"), false)
-  })
+const palettes = BUILT_IN_COLOR_SCHEMES.filter(s => s.colors && s.id !== "custom")
+
+it("resolves absent, on, off and Auto preferences against the system", () => {
+  assert.equal(normalizeHighContrastPreference(undefined), "auto")
+  for (const system of [false, true]) {
+    assert.equal(effectiveHighContrast("auto", system), system)
+    assert.equal(effectiveHighContrast("on", system), true)
+    assert.equal(effectiveHighContrast("off", system), false)
+  }
 })
 
-describe("strengthenContrast", () => {
-  it("keeps the final source record immutable during custom rendering adaptation", () => {
-    const source: Record<string, string> = {}
-    applyColorScheme(normalizeColorScheme("parchment"), {
-      target: {
-        style: { setProperty: (key, value) => { source[key] = value }, removeProperty: key => { delete source[key] } },
-        dataset: {}, setAttribute() {}, removeAttribute() {},
-      },
-    })
-    const snapshot = structuredClone(source)
-    Object.freeze(source)
-    const properties = highContrastProperties(source, { dark: false })
-    assert.deepEqual(source, snapshot)
-    assert.notEqual(properties, source)
-    for (const key of Object.keys(source).filter(key => key.startsWith("--surface-") && !key.includes("hover"))) {
-      assert.equal(properties[key], source[key], key)
-    }
-  })
-  it("copies only Base and Secondary inputs for every palette and validates strength", () => {
-    assert.deepEqual(HIGH_CONTRAST_SURFACE_STRENGTH, { dark: 0.2, light: 0.8 })
-    for (const scheme of BUILT_IN_COLOR_SCHEMES.filter(s => s.colors)) {
-      const source = Object.freeze({ ...scheme.colors! })
-      const snapshot = structuredClone(source)
-      const dark = scheme.appearance === "dark"
-      for (const strength of [0, .2, .3, .35, .5, .6, .9, 1]) {
-        const colors = highContrastColors(source, dark, strength)
-        for (const key of Object.keys(source) as (keyof typeof source)[]) {
-          if (key === "surfaceBase" || key === "surfaceSecondary") {
-            assert.ok(dark ? luminance(colors[key]) <= luminance(source[key]) : luminance(colors[key]) >= luminance(source[key]))
-          } else assert.equal(colors[key], source[key], `${scheme.id}: ${key}`)
-        }
-        if (!strength) assert.deepEqual(colors, source)
-        assert.deepEqual(source, snapshot)
-      }
-      for (const strength of [-1, 1.01, NaN, Infinity]) {
-        assert.throws(() => highContrastColors(source, dark, strength), RangeError)
-      }
-    }
-  })
-  it("moves Secondary by half the absolute Base lightness delta in both appearances", () => {
-    for (const scheme of BUILT_IN_COLOR_SCHEMES.filter(s => s.colors && s.id !== "custom")) {
-      const dark = scheme.appearance === "dark"
-      const source = scheme.colors!
-      const colors = highContrastColors(source, dark)
-      assert.equal(new Set([colors.surfaceBase, colors.surfaceSecondary, colors.surfaceMuted]).size, 3,
-        `${scheme.id}: three distinct background levels`)
-      const base = oklabLightness(source.surfaceBase), secondary = oklabLightness(source.surfaceSecondary)
-      const baseDelta = oklabLightness(colors.surfaceBase) - base
-      const secondaryDelta = oklabLightness(colors.surfaceSecondary) - secondary
-      // RGB byte quantization rounds each independent OKLCH lightness move.
-      assert.ok(Math.abs(baseDelta - ((dark ? 0 : 1) - base) * HIGH_CONTRAST_SURFACE_STRENGTH[dark ? "dark" : "light"]) < .003, scheme.id)
-      assert.ok(Math.abs(secondaryDelta - baseDelta * .5) < .003, scheme.id)
-      const gap = Math.abs(secondary - base)
-      const finalGap = Math.abs(oklabLightness(colors.surfaceSecondary) - oklabLightness(colors.surfaceBase))
-      if (scheme.id !== "light") assert.ok(finalGap > gap, `${scheme.id}: expanding ${scheme.appearance} gap`)
-      else assert.ok(Math.abs(finalGap - gap) < .003, `${scheme.id}: Base already white`)
-    }
-    for (const dark of [true, false]) {
-      const source = { ...normalizeColorScheme("custom").colors!,
-        surfaceBase: dark ? "#333333" : "#CCCCCC", surfaceSecondary: dark ? "#555555" : "#AAAAAA" }
-      const colors = highContrastColors(source, dark)
-      assert.ok(Math.abs(oklabLightness(colors.surfaceSecondary) - oklabLightness(colors.surfaceBase))
-        > Math.abs(oklabLightness(source.surfaceSecondary) - oklabLightness(source.surfaceBase)))
-    }
-  })
-  it("keeps custom inputs immutable, including opposing and extreme surfaces", () => {
-    for (const dark of [true, false]) {
-      for (const surfaceMuted of ["#000000", "#FFFFFF", "#777777", "#FF00FF"]) {
-        const source = Object.freeze({ ...normalizeColorScheme("custom").colors!, surfaceBase: "#FFFFFF", surfaceSecondary: "#000000", surfaceMuted })
-        const colors = highContrastColors(source, dark)
-        assert.equal(colors.surfaceMuted, surfaceMuted)
-        assert.equal(source.surfaceBase, "#FFFFFF")
-        const properties: Record<string, string> = {}
-        applyColorScheme({ id: "custom", appearance: dark ? "dark" : "light", colors: source }, {
-          highContrast: true, target: {
-            style: { setProperty: (key, value) => { properties[key] = value }, removeProperty() {} },
-            dataset: {}, setAttribute() {}, removeAttribute() {},
-          },
-        })
-        assert.equal(properties["--surface-muted"], surfaceMuted)
-        assert.match(properties["--text-primary"], /^#[0-9A-F]{6}$/)
+it("applies the exact clamped sRGB channel curve", () => {
+  assert.deepEqual(HIGH_CONTRAST_CURVE, { contrast: 1.3, pivotShift: .3 })
+  for (const [input, dark, light] of [
+    ["#000000", "#000000", "#000000"],
+    ["#FFFFFF", "#FFFFFF", "#FFFFFF"],
+    ["#808080", "#979797", "#696969"],
+    ["#336699", "#3375B8", "#05478A"],
+    ["#112233", "#071D33", "#000005"],
+  ]) {
+    const source = { ...palettes[0].colors!, accentPrimary: input }
+    assert.equal(highContrastColors(source, true).accentPrimary, dark, input)
+    assert.equal(highContrastColors(source, false).accentPrimary, light, input)
+  }
+})
+
+it("mirrors the pivot and preserves grayscale lightness order through clipping", () => {
+  assert.equal(highContrastColors({ ...palettes[0].colors!, accentPrimary: "#333333" }, true).accentPrimary, "#333333")
+  assert.equal(highContrastColors({ ...palettes[0].colors!, accentPrimary: "#CCCCCC" }, false).accentPrimary, "#CCCCCC")
+  let previousDark = -1, previousLight = -1
+  for (let value = 0; value <= 255; value++) {
+    const gray = (v: number) => `#${v.toString(16).padStart(2, "0").repeat(3).toUpperCase()}`
+    const source = { ...palettes[0].colors!, accentPrimary: gray(value) }
+    const dark = highContrastColors(source, true).accentPrimary
+    const light = highContrastColors(source, false).accentPrimary
+    const mirrored = highContrastColors({ ...source, accentPrimary: gray(255 - value) }, false).accentPrimary
+    assert.ok(Math.abs(channel(dark, 1) + channel(mirrored, 1) - 255) <= 1, `mirror/${value}`)
+    assert.ok(oklabLightness(dark) >= previousDark, `dark/${value}`)
+    assert.ok(oklabLightness(light) >= previousLight, `light/${value}`)
+    previousDark = oklabLightness(dark)
+    previousLight = oklabLightness(light)
+  }
+})
+
+it("curves every input, increases text/surface separation and preserves source and surface order on all 17 palettes", () => {
+  assert.equal(palettes.length, 17)
+  for (const palette of palettes) {
+    const source = Object.freeze(structuredClone(palette.colors!))
+    const dark = palette.appearance === "dark"
+    const transformed = highContrastColors(source, dark)
+    assert.deepEqual(Object.keys(transformed), Object.keys(source))
+    for (const key of Object.keys(source) as (keyof typeof source)[]) {
+      for (const offset of [1, 3, 5]) {
+        const pivot = dark ? .2 : .8
+        const expected = Math.round(255 * Math.max(0, Math.min(1, pivot + (channel(source[key], offset) / 255 - pivot) * 1.3)))
+        assert.equal(channel(transformed[key], offset), expected, `${palette.id}/${key}/${offset}`)
       }
     }
-  })
-  it("leaves sufficient colors exact and measures the quantized result", () => {
-    assert.deepEqual(HIGH_CONTRAST_TARGETS, { text: 7.5, nonText: 3.5 })
-    assert.equal(strengthenContrast("#FFFFFF", ["#000000"], 7.5), "#FFFFFF")
-    for (const background of ["#FFFFFF", "#D5C09E", "#55524E", "#17181A"]) {
-      for (const target of [7.5, 3.5]) {
-        const result = strengthenContrast("#998877", [background], target)
-        assert.ok(contrastRatio(result, background) >= target, `${result} on ${background}`)
-        assert.equal(strengthenContrast("#998877", [background], target), result)
+    assert.deepEqual(source, palette.colors)
+    const surfaces = ["surfaceBase", "surfaceSecondary", "surfaceMuted"] as const
+    for (const surface of surfaces) {
+      for (const text of ["textPrimary", "textMuted"] as const) {
+        assert.ok(Math.abs(oklabLightness(transformed[text]) - oklabLightness(transformed[surface]))
+          > Math.abs(oklabLightness(source[text]) - oklabLightness(source[surface])), `${palette.id}/${text}/${surface}`)
+      }
+      for (const other of surfaces) {
+        const direction = Math.sign(oklabLightness(source[surface]) - oklabLightness(source[other]))
+        assert.ok(direction * (oklabLightness(transformed[surface]) - oklabLightness(transformed[other])) >= 0,
+          `${palette.id}/${surface}/${other}: clipping may tie, never reverse`)
       }
     }
-  })
-  it("finds the first passing byte on a grayscale path, rather than rounding below target", () => {
-    const result = strengthenContrast("#888888", ["#FFFFFF"], 7.5)
-    const next = Number.parseInt(result.slice(1, 3), 16) + 1
-    const weaker = `#${next.toString(16).repeat(3).toUpperCase()}`
-    assert.ok(contrastRatio(result, "#FFFFFF") >= 7.5)
-    assert.ok(contrastRatio(weaker, "#FFFFFF") < 7.5)
-    assert.equal(mix("#000000", "#FFFFFF", 0), "#FFFFFF")
-  })
-  it("maximizes attainable contrast on immutable intermediate or opposing custom backgrounds", () => {
-    assert.equal(strengthenContrast("#777777", ["#777777"], 7.5), "#000000")
-    const backgrounds = ["#000000", "#FFFFFF"]
-    const value = strengthenContrast("#777777", backgrounds, 7.5)
-    assert.ok(["#000000", "#FFFFFF"].includes(value))
-    assert.equal(Math.min(...backgrounds.map(bg => contrastRatio(value, bg))), 1)
-  })
-  it("finds attainable intermediate border colors on opposing custom surfaces", () => {
-    const backgrounds = ["#000000", "#FFFFFF"]
-    const result = strengthenContrast("#101010", backgrounds, 3.5)
-    for (const bg of backgrounds) assert.ok(contrastRatio(result, bg) >= 3.5, `${result} on ${bg}`)
-  })
-  it("rejects malformed colors and invalid targets at the boundary", () => {
-    for (const color of ["#fff", "#ffffff", "red", "var(--text-primary)", ""]) {
-      assert.throws(() => strengthenContrast(color, ["#FFFFFF"], 7.5), RangeError)
+  }
+})
+
+it("derives ordinary tokens with original filled-button ink and restores exact normal rendering", () => {
+  const properties = new Map<string, string>()
+  const target: ColorSchemeTarget = {
+    style: { setProperty: (key, value) => { properties.set(key, value) }, removeProperty: key => properties.delete(key) },
+    dataset: {}, setAttribute() {}, removeAttribute() {},
+  }
+  for (const { id } of BUILT_IN_COLOR_SCHEMES) for (const systemDark of [false, true]) {
+    const scheme = normalizeColorScheme(id), snapshot = structuredClone(scheme)
+    applyColorScheme(scheme, { target, systemDark })
+    const normal = new Map(properties)
+    for (let pass = 0; pass < 2; pass++) {
+      applyColorScheme(scheme, { target, systemDark, highContrast: true })
+      assert.equal(target.dataset.contrast, "more")
+      for (const ink of ["--text-on-accent", "--text-inverted"]) {
+        assert.equal(properties.get(ink), normal.get(ink), `${id}/${ink}: original button ink`)
+      }
+      const curved = new Map(properties)
+      if (scheme.colors) {
+        applyColorScheme({ ...scheme, colors: highContrastColors(scheme.colors, scheme.appearance === "dark") }, { target, systemDark })
+        for (const ink of ["--text-on-accent", "--text-inverted"]) properties.set(ink, normal.get(ink)!)
+        assert.deepEqual(properties, curved, `${id}: ordinary token derivation`)
+      }
+      applyColorScheme(scheme, { target, systemDark, highContrast: false })
+      assert.deepEqual(properties, normal, id)
+      assert.equal(target.dataset.contrast, undefined)
+      assert.deepEqual(scheme, snapshot)
     }
-    for (const target of [NaN, Infinity, 0, 22]) assert.throws(() => strengthenContrast("#000000", ["#FFFFFF"], target), RangeError)
-    assert.throws(() => strengthenContrast("#000000", [], 7.5), RangeError)
-    assert.throws(() => strengthenContrast("#000000", ["invalid"], 7.5), RangeError)
-  })
+  }
+})
+
+it("places the lightest surface in Base for the six soft light palettes", () => {
+  const light = SOFT_COLOR_SCHEMES.filter(s => s.appearance === "light")
+  assert.equal(light.length, 6)
+  for (const { id, colors } of light) {
+    assert.ok(oklabLightness(colors!.surfaceBase) > oklabLightness(colors!.surfaceSecondary), id)
+  }
 })

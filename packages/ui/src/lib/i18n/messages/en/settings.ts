@@ -153,7 +153,6 @@ export const settingsMessages = {
   "settings.appearance.contrast.info": "Increases interface contrast while keeping your palette. Auto follows your system's contrast preference.",
   "settings.appearance.contrast.current.on": "High contrast is currently on.",
   "settings.appearance.contrast.current.off": "High contrast is currently off.",
-  "settings.appearance.contrast.forcedColors": "System forced colors take priority.",
   "settings.appearance.contrast.saveError": "Couldn't save contrast. Try again.",
   "settings.appearance.palette.auto": "Auto",
   "settings.appearance.palette.mist": "Mist",

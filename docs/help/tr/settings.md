@@ -27,7 +27,7 @@ Seçilen sağ panel sekmesi ve Dosyalar modu her proje sekmesi için ayrı kayde
 4. Görüntülenen görünüm için bir palet seçin. Açık ve koyu seçimler bağımsız olarak kaydedilir; Otomatik eşleşeni kullanır.
 5. Özel renkler için renk örneklerini ve **Kaydet** öğesini kullanın; **Sıfırla** yerleşik bir paletin renklerini geri yükler. Ayrı bir paleti adlandırmak için **Yeni**, oluşturduğunuz bir paleti kaldırmak için **Sil** öğesini kullanın.
 
-Kontrast, renkler için **Kaydet** işleminden bağımsız olarak hemen uygulanır ve kaydedilir. Seçili paleti, düzenlenebilir renkleri ve konuşma taslağını koruyarak görünümü uyarlar. **i**, Otomatik modunda geçerli kontrast durumunu gösterir. Sistemin zorunlu renkleri önceliklidir.
+Kontrast, renkler için **Kaydet** işleminden bağımsız olarak hemen uygulanır ve kaydedilir. Seçili paleti, düzenlenebilir renkleri ve konuşma taslağını koruyarak görünümü uyarlar. **i**, Otomatik modunda geçerli kontrast durumunu gösterir.
 
 Kullanıcı arayüzü, bir konuşmayı yeniden başlatmadan güncellenir. İbranice sağdan sola düzeni kullanır; kod ve teknik değerler kendi yönlerinde okunabilir durumda kalır. Dil seçimi, mevcut mesajların veya aracı talimatlarının dilini değil, arayüz metnini değiştirir. Yerel masaüstü menüleri, bir CodeNomad penceresi yüklendikten sonra arayüz diline geçer.
 

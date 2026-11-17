@@ -39,36 +39,3 @@ export function oklab(color: string): [number, number, number] {
 }
 
 export const oklabLightness = (color: string): number => oklab(color)[0]
-
-/** Change OKLCH lightness, keeping hue and the largest in-gamut source chroma. */
-export function withOklabLightness(color: string, lightness: number): string {
-  const [, a, b] = oklab(color)
-  const rgb = (chroma: number) => {
-    const l = (lightness + .3963377774 * a * chroma + .2158037573 * b * chroma) ** 3
-    const m = (lightness - .1055613458 * a * chroma - .0638541728 * b * chroma) ** 3
-    const s = (lightness - .0894841775 * a * chroma - 1.291485548 * b * chroma) ** 3
-    return [
-      4.0767416621 * l - 3.3077115913 * m + .2309699292 * s,
-      -1.2684380046 * l + 2.6097574011 * m - .3413193965 * s,
-      -.0041960863 * l - .7034186147 * m + 1.707614701 * s,
-    ]
-  }
-  const inGamut = (channels: number[]) => channels.every(v => v >= -1e-7 && v <= 1 + 1e-7)
-  let low = 0, high = 1
-  if (!inGamut(rgb(1))) {
-    for (let i = 0; i < 24; i++) {
-      const middle = (low + high) / 2
-      if (inGamut(rgb(middle))) low = middle
-      else high = middle
-    }
-  } else low = 1
-  return `#${rgb(low).map(v => {
-    v = Math.max(0, Math.min(1, v))
-    return Math.round(255 * (v <= .0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - .055))
-      .toString(16).padStart(2, "0")
-  }).join("").toUpperCase()}`
-}
-
-export const TEXT_ON_COLOR_LIGHTNESS_THRESHOLD = 0.68
-export const textOnColor = (color: string): "#000000" | "#FFFFFF" =>
-  isCanonicalHexColor(color) && oklabLightness(color) < TEXT_ON_COLOR_LIGHTNESS_THRESHOLD ? "#FFFFFF" : "#000000"

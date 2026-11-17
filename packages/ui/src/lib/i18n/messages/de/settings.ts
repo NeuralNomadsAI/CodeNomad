@@ -153,7 +153,6 @@ export const settingsMessages = {
   "settings.appearance.contrast.info": "Erhöht den Kontrast der Oberfläche und behält Ihre Palette bei. Automatisch folgt der Kontrasteinstellung Ihres Systems.",
   "settings.appearance.contrast.current.on": "Hoher Kontrast ist derzeit eingeschaltet.",
   "settings.appearance.contrast.current.off": "Hoher Kontrast ist derzeit ausgeschaltet.",
-  "settings.appearance.contrast.forcedColors": "Erzwungene Systemfarben haben Vorrang.",
   "settings.appearance.contrast.saveError": "Kontrast konnte nicht gespeichert werden. Versuchen Sie es erneut.",
   "settings.appearance.palette.auto": "Auto",
   "settings.appearance.palette.mist": "Nebel",

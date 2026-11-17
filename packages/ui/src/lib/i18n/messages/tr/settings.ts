@@ -153,7 +153,6 @@ export const settingsMessages = {
   "settings.appearance.contrast.info": "Paletinizi koruyarak arayüz kontrastını artırır. Otomatik, sisteminizin kontrast tercihini izler.",
   "settings.appearance.contrast.current.on": "Yüksek kontrast şu anda açık.",
   "settings.appearance.contrast.current.off": "Yüksek kontrast şu anda kapalı.",
-  "settings.appearance.contrast.forcedColors": "Sistemin zorunlu renkleri önceliklidir.",
   "settings.appearance.contrast.saveError": "Kontrast kaydedilemedi. Tekrar deneyin.",
   "settings.appearance.palette.auto": "Otomatik",
   "settings.appearance.palette.mist": "Sis",

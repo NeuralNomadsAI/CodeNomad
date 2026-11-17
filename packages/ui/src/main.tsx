@@ -56,7 +56,6 @@ async function bootstrap() {
       applyColorScheme(getAppearancePalette(effectiveAppearance(themePreference(), systemDark)), {
         systemDark,
         highContrast: effectiveHighContrast(highContrastPreference(), window.matchMedia?.("(prefers-contrast: more)").matches),
-        forcedColors: window.matchMedia?.("(forced-colors: active)").matches,
       })
     }
     try {

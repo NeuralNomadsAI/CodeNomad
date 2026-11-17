@@ -14,7 +14,6 @@
 @import "./messaging/timeline-scrollbar.css";
 @import "./messaging/session-timeline-rail.css";
 @import "./messaging/tool-call.css";
-@import "./messaging/tool-call/diff.css";
 @import "./messaging/tool-call/images.css";
 @import "./messaging/tool-call/question.css";
 @import './messaging/timeline-virtual-list.css';

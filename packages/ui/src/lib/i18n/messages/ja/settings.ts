@@ -153,7 +153,6 @@ export const settingsMessages = {
   "settings.appearance.contrast.info": "パレットを維持したまま、インターフェースのコントラストを高めます。自動はシステムのコントラスト設定に従います。",
   "settings.appearance.contrast.current.on": "現在、高コントラストはオンです。",
   "settings.appearance.contrast.current.off": "現在、高コントラストはオフです。",
-  "settings.appearance.contrast.forcedColors": "システムの強制カラーが優先されます。",
   "settings.appearance.contrast.saveError": "コントラストを保存できませんでした。もう一度お試しください。",
   "settings.appearance.palette.auto": "自動",
   "settings.appearance.palette.mist": "霧",

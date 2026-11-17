@@ -6,8 +6,7 @@ import { PANEL_EXTENSION_SANDBOX, panelExtensionDocument } from "./frame-documen
 import { useAssetsChannel } from "./assets-channel"
 import { useWorkItemsChannel } from "./work-items-channel"
 import { useApi4Channel, type Api4Host } from "./api4-channel"
-import { createCssColorResolver } from "../../lib/css-color"
-import { useOptionalTheme } from "../../lib/theme"
+import { resolveCssColor } from "../../lib/css-color"
 import { generateUUID } from "../../lib/client-identity"
 
 export function ExtensionPanel(props: {
@@ -19,9 +18,6 @@ export function ExtensionPanel(props: {
 
 function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; context: PanelExtensionContext; host: Api4Host }) {
   const { t } = useI18n()
-  const theme = useOptionalTheme()
-  const colors = createCssColorResolver()
-  onCleanup(colors.dispose)
   const [document, setDocument] = createSignal<string>()
   const [failed, setFailed] = createSignal(false)
   let frame: HTMLIFrameElement | undefined, port: MessagePort | undefined, disposed = false, initialized = false
@@ -40,18 +36,16 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
     if (!disposed) setDocument(panelExtensionDocument(result.html, handshake, manifest.apiVersion, manifest.permissions))
   }).catch(() => { if (!disposed) setFailed(true) })
   const publish = () => {
+    const style = getComputedStyle(globalThis.document.documentElement)
+    const colors = Object.fromEntries(Object.entries({ background: "--surface-secondary", text: "--text-primary",
+      muted: "--text-muted", border: "--border-base", focus: "--focus-ring-color" }).map(([key, token]) => [key, style.getPropertyValue(token).trim()]))
+    // The canvas role is a color-mix(); frames receive a concrete colour.
+    colors.surface = resolveCssColor("--surface-canvas")
     const context = { ...props.context, apiVersion: props.entry.manifest.apiVersion,
-      ...(props.entry.manifest.apiVersion >= 2 ? { colors: {
-        background: colors.resolve("--surface-secondary", "background"),
-        surface: colors.resolve("--surface-canvas", "background"),
-        text: colors.resolve("--text-primary"),
-        muted: colors.resolve("--text-muted"),
-        border: colors.resolve("--border-base"),
-        focus: colors.resolve("--focus-ring-color"),
-      } } : {}) }
+      ...(props.entry.manifest.apiVersion >= 2 ? { colors } : {}) }
     if (authenticated) port?.postMessage({ type: "context", context })
   }
-  createEffect(() => { theme?.themeRevision(); publish() })
+  createEffect(publish)
   const palette = new MutationObserver(publish)
   palette.observe(globalThis.document.documentElement, { attributes: true, attributeFilter: ["style", "data-theme", "data-color-scheme"] })
   onCleanup(() => palette.disconnect())

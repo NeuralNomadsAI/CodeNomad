@@ -153,7 +153,6 @@ export const settingsMessages = {
   "settings.appearance.contrast.info": "Aumenta el contraste de la interfaz sin cambiar tu paleta. Auto sigue la preferencia de contraste del sistema.",
   "settings.appearance.contrast.current.on": "El contraste alto está activado.",
   "settings.appearance.contrast.current.off": "El contraste alto está desactivado.",
-  "settings.appearance.contrast.forcedColors": "Los colores forzados del sistema tienen prioridad.",
   "settings.appearance.contrast.saveError": "No se pudo guardar el contraste. Inténtalo de nuevo.",
   "settings.appearance.palette.auto": "Auto",
   "settings.appearance.palette.mist": "Bruma",

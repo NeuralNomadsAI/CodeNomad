@@ -302,7 +302,6 @@ export const ThemeSchemeSettings: Component = () => {
     config.highContrastPreference() === "auto"
       ? t(theme.highContrast() ? "settings.appearance.contrast.current.on" : "settings.appearance.contrast.current.off")
       : "",
-    theme.forcedColors() ? t("settings.appearance.contrast.forcedColors") : "",
   ].filter(Boolean).join(" "))
 
   let workbench!: HTMLDivElement, actions!: HTMLDivElement

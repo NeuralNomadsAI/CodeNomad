@@ -8,8 +8,6 @@ import solid from "vite-plugin-solid"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { contrastRatio } from "../../src/lib/color-contrast"
-import { BUILT_IN_COLOR_SCHEMES } from "../../src/lib/theme-scheme"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -67,18 +65,10 @@ async function open(run: (page: Page) => Promise<void>) {
   const page = await context.newPage(), errors: string[] = []
   page.setDefaultTimeout(15_000)
   page.on("pageerror", error => errors.push(error.message))
-  let config: any = {}
   await page.route("**/*", route => {
     const request = new URL(route.request().url())
     if (request.origin !== new URL(url).origin) return route.abort("blockedbyclient")
-    if (request.pathname.startsWith("/api/")) {
-      const ui = request.pathname === "/api/storage/config/ui"
-      if (ui && route.request().method() === "PATCH") {
-        const patch = route.request().postDataJSON()
-        config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
-      }
-      return route.fulfill({ contentType: "application/json", body: JSON.stringify(ui ? config : {}) })
-    }
+    if (request.pathname.startsWith("/api/")) return route.fulfill({ contentType: "application/json", body: "{}" })
     return route.continue()
   })
   try {
@@ -175,95 +165,6 @@ test("real language completion and theme retries retain highlighted code, wrap a
   await page.locator(".code-block-copy").click()
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "const latest = 851")
   assert.ok((await page.evaluate(() => (window as any).fixture.cached()))?.html.includes("github-dark"))
-}))
-
-test("displayed code follows contrast and every palette, restores its cache and fences late renders", async () => open(async page => {
-  await page.evaluate(() => (window as any).fixture.releaseModule())
-  await page.locator(".markdown-body strong").waitFor()
-  await page.evaluate(() => {
-    const f = (window as any).fixture
-    f.setDisableHighlight(false)
-    f.update("```typescript\n// comment\nexport const latest: string = \"readable\"\n```", 61)
-  })
-  await page.locator(".shiki span[style]").first().waitFor()
-  const normal = await page.locator(".shiki").innerHTML()
-  await page.locator(".code-block-wrap").click()
-  await page.evaluate(() => (window as any).fixture.contrast("on"))
-  await page.waitForFunction(() => document.querySelector(".markdown-body")?.getAttribute("data-markdown-theme")?.includes(":more:"))
-  await settle(page)
-  assert.equal(await page.locator(".code-block-wrap").evaluate(button => document.activeElement === button), true, "contrast retains the focused code control")
-  const schemes = BUILT_IN_COLOR_SCHEMES.filter(s => s.id !== "custom" && s.id !== "system")
-  assert.equal(schemes.length, 17)
-  for (const scheme of schemes) {
-    await page.evaluate(id => (window as any).fixture.palette(id), scheme.id)
-    await page.waitForFunction(() => {
-      const key = document.querySelector(".markdown-body")?.getAttribute("data-markdown-theme")
-      const cached = (window as any).fixture.cached()
-      return cached?.theme === key && cached.html.includes("shiki")
-    })
-    const measured = await page.evaluate(() => (window as any).fixture.codeColors())
-    for (const color of measured.colors) assert.ok(contrastRatio(color.toUpperCase(), measured.background.toUpperCase()) >= 7, `${scheme.id}: ${color} on ${measured.background}`)
-    assert.equal(await page.locator(".code-block-wrap").getAttribute("aria-pressed"), "false")
-    assert.ok(measured.colors.length > 1)
-    assert.ok(contrastRatio(measured.mui.text.secondary.toUpperCase(), measured.mui.background.default.toUpperCase()) >= 7, `${scheme.id}: MUI secondary`)
-    assert.equal(measured.muiRendered.secondary, measured.mui.text.secondary)
-    assert.equal(measured.muiRendered.background, measured.mui.background.paper)
-    assert.equal(measured.muiRendered.backgroundImage, "none")
-    for (const color of [measured.mui.text.disabled, ...["success", "warning", "error"].map(role => measured.mui[role].main)]) {
-      assert.ok(contrastRatio(color.toUpperCase(), measured.mui.background.paper.toUpperCase()) >= 7, `${scheme.id}: MUI semantic/disabled`)
-    }
-  }
-  // Return to the initial dark palette before comparing the exact normal HTML.
-  await page.evaluate(async () => { const f = (window as any).fixture; await f.palette("classic"); f.setDark(false); await f.contrast("off") })
-  await page.waitForFunction(() => document.querySelector(".markdown-body")?.getAttribute("data-markdown-theme") === "light")
-  await page.waitForFunction(html => document.querySelector(".shiki")?.innerHTML === html, normal)
-  await page.evaluate(() => (window as any).fixture.update("```typescript\n// comment\nexport const latest: string = \"readable\"\n```", 63))
-  await page.waitForFunction(() => (window as any).fixture.cached()?.mode.startsWith("63:"))
-  await page.evaluate(() => { const f = (window as any).fixture; f.audit.holdResults = true; void f.contrast("on") })
-  await page.waitForFunction(() => (window as any).fixture.audit.results.length === 1)
-  assert.equal(await page.locator(".shiki").innerHTML(), normal, "a theme refresh keeps the last rendered code while its result is held")
-  await page.evaluate(() => (window as any).fixture.contrast("off"))
-  await page.waitForFunction(() => document.querySelector(".markdown-body")?.getAttribute("data-markdown-theme") === "light")
-  await page.evaluate(() => (window as any).fixture.releaseResult())
-  await settle(page)
-  assert.equal(await page.locator(".shiki").innerHTML(), normal, "late high-contrast result cannot replace the restored normal cache")
-}))
-
-test("system-only contrast and forced-color changes update displayed code, MUI and concrete roles", async () => open(async page => {
-  await page.emulateMedia({ contrast: "no-preference", forcedColors: "none", colorScheme: "light" })
-  await page.evaluate(() => (window as any).fixture.releaseModule())
-  await page.locator(".markdown-body strong").waitFor()
-  await page.evaluate(async () => {
-    const f = (window as any).fixture
-    await f.palette("parchment")
-    await f.contrast("auto")
-    f.setDisableHighlight(false)
-    f.update("```typescript\nconst system = \"colors\" // dim\n```", 62)
-  })
-  await page.locator(".shiki span[style]").first().waitFor()
-  await page.emulateMedia({ contrast: "more" })
-  await page.waitForFunction(() => document.querySelector(".markdown-body")?.getAttribute("data-markdown-theme")?.includes(":more:"))
-  for (const preference of ["on", "off", "auto"]) {
-    await page.evaluate(value => (window as any).fixture.contrast(value), preference)
-    for (const colorScheme of ["light", "dark"] as const) {
-      await page.emulateMedia({ forcedColors: "active", colorScheme })
-      await page.waitForFunction(scheme => document.querySelector(".markdown-body")?.getAttribute("data-markdown-theme")
-        ?.includes(`:forced:${scheme === "light" ? "#FFFFFF" : "#000000"}:`), colorScheme)
-      const sample = await page.evaluate(() => ({ roles: (window as any).fixture.roles(), mui: (window as any).fixture.mui() }))
-      assert.notEqual(sample.roles.background, sample.roles.foreground)
-      assert.ok(contrastRatio(sample.roles.background.toUpperCase(), sample.roles.foreground.toUpperCase()) >= 7)
-      assert.equal(sample.roles.background, colorScheme === "light" ? "#ffffff" : "#000000")
-      assert.equal(sample.mui.background.default, sample.roles.background)
-      assert.equal(sample.mui.background.paper, sample.roles.background)
-      assert.equal(sample.mui.text.primary, sample.roles.foreground)
-      assert.equal(sample.mui.primary.main, sample.roles.selection)
-      assert.equal(sample.mui.primary.contrastText, sample.roles.selectionText)
-      for (const role of ["success", "warning", "error"]) assert.equal(sample.mui[role].main, sample.roles.foreground)
-      assert.equal(await page.evaluate(() => (window as any).fixture.contrastPreference()), preference)
-    }
-  }
-  await page.emulateMedia({ forcedColors: "none", contrast: "no-preference" })
-  await page.waitForFunction(() => document.querySelector(".markdown-body")?.getAttribute("data-markdown-theme") === "light")
 }))
 
 test("latest bounded render reveals the rest in place, keeping the rendered prefix until the full render lands", async () => open(async page => {

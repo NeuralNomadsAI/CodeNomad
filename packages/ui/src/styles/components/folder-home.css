@@ -83,7 +83,7 @@
 .folder-home-open-instance-button:focus-visible {
   border-color: var(--accent-hover);
   background-color: var(--accent-hover);
-  color: var(--text-on-accent-hover);
+  color: var(--text-on-accent);
 }
 
 .folder-home-open-instance-button:focus-visible {

@@ -1,8 +1,3 @@
-export type CssColorRole = "background" | "foreground" | "selection" | "selectionText"
-const systemColors: Record<CssColorRole, string> = {
-  background: "Canvas", foreground: "CanvasText", selection: "Highlight", selectionText: "HighlightText",
-}
-
 /** Resolves colour tokens, including derived color-mix() roles, to concrete
  * #rrggbb values for consumers that do not accept CSS colours (Monaco, MUI,
  * extension frames). Call dispose() to remove the probe element. */
@@ -12,14 +7,10 @@ export function createCssColorResolver(root: HTMLElement = document.documentElem
   const context = canvas.getContext("2d")!
   const probe = document.createElement("span")
   probe.hidden = true
-  // Only the measuring probe opts out: its requested system role must survive
-  // the browser's automatic foreground substitution.
-  probe.style.forcedColorAdjust = "none"
   root.append(probe)
   return {
-    resolve(token: string, role: CssColorRole = "foreground") {
-      probe.style.color = window.matchMedia?.("(forced-colors: active)").matches
-        ? systemColors[role] : `var(${token})`
+    resolve(token: string) {
+      probe.style.color = `var(${token})`
       context.clearRect(0, 0, 1, 1)
       context.fillStyle = getComputedStyle(probe).color
       context.fillRect(0, 0, 1, 1)
@@ -31,7 +22,7 @@ export function createCssColorResolver(root: HTMLElement = document.documentElem
 }
 
 /** One-shot resolution of a single token. */
-export function resolveCssColor(token: string, role: CssColorRole = "foreground") {
+export function resolveCssColor(token: string) {
   const resolver = createCssColorResolver()
-  try { return resolver.resolve(token, role) } finally { resolver.dispose() }
+  try { return resolver.resolve(token) } finally { resolver.dispose() }
 }

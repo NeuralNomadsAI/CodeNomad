@@ -27,7 +27,7 @@ L’onglet sélectionné du panneau droit et le mode Fichiers sont enregistrés 
 4. Choisissez une palette pour l’apparence affichée. Les sélections claire et sombre sont enregistrées indépendamment ; Auto utilise celle qui correspond.
 5. Pour des couleurs personnalisées, utilisez les échantillons et **Enregistrer** ; **Réinitialiser** restaure les couleurs d’une palette intégrée. Utilisez **Nouveau** pour nommer une palette distincte et **Supprimer** pour retirer une palette que vous avez créée.
 
-Le contraste s’applique et s’enregistre immédiatement, indépendamment d’**Enregistrer** pour les couleurs. Il adapte le rendu en conservant la palette sélectionnée, les couleurs éditables et le brouillon de conversation. Le **i** indique l’état actuel du contraste en Auto. Les couleurs forcées du système sont prioritaires.
+Le contraste s’applique et s’enregistre immédiatement, indépendamment d’**Enregistrer** pour les couleurs. Il adapte le rendu en conservant la palette sélectionnée, les couleurs éditables et le brouillon de conversation. Le **i** indique l’état actuel du contraste en Auto.
 
 L’interface se met à jour sans redémarrer de conversation. L’hébreu utilise une disposition de droite à gauche ; code et valeurs techniques restent lisibles dans leur propre sens. La sélection de langue change les textes d’interface, pas la langue des messages existants ou instructions d’agent. Les menus natifs du bureau passent à la langue de l’interface dès qu’une fenêtre CodeNomad est chargée.
 

@@ -293,8 +293,6 @@ test("contrast covers all three choices, system changes, explicit Auto and reloa
   await page.emulateMedia({ contrast: "no-preference" })
   await expectContrast(page, "Auto", false)
   assert.match(await page.getByRole("tooltip").innerText(), /currently off/)
-  await page.emulateMedia({ forcedColors: "active" })
-  await page.waitForFunction(() => document.querySelector(".theme-scheme-contrast .settings-info-tip")?.getAttribute("aria-label")?.includes("System forced colors take priority."))
   assert.equal(server.patches.length, count)
 }))
 

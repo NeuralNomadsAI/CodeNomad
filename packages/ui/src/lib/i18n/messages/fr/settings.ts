@@ -153,7 +153,6 @@ export const settingsMessages = {
   "settings.appearance.contrast.info": "Renforce le contraste de l'interface en conservant votre palette. Auto suit la préférence de contraste du système.",
   "settings.appearance.contrast.current.on": "Le contraste élevé est actuellement activé.",
   "settings.appearance.contrast.current.off": "Le contraste élevé est actuellement désactivé.",
-  "settings.appearance.contrast.forcedColors": "Les couleurs forcées du système sont prioritaires.",
   "settings.appearance.contrast.saveError": "Impossible d'enregistrer le contraste. Réessayez.",
   "settings.appearance.palette.auto": "Auto",
   "settings.appearance.palette.mist": "Brume",

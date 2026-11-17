@@ -18,9 +18,6 @@ import { decorateSessionLinks, routeSessionLink, sessionLinkBase, sessionLinkTit
 import { messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useMarkdownMermaid } from "./markdown-mermaid"
-import { useOptionalTheme } from "../lib/theme"
-import { createCssColorResolver } from "../lib/css-color"
-import type { MarkdownColors } from "../lib/markdown"
 
 const log = getLogger("session")
 
@@ -30,8 +27,6 @@ interface ResolvedMarkdownSnapshot {
   part: TextPart
   text: string
   themeKey: string
-  dark: boolean
-  colors?: MarkdownColors
   highlightEnabled: boolean
   escapeRawHtml: boolean
   literalRawHtml: boolean
@@ -138,7 +133,6 @@ interface MarkdownProps {
 
 export function Markdown(props: MarkdownProps) {
   const { t } = useI18n()
-  const theme = useOptionalTheme()
 
   // Loopback-link availability resolves without waiting for a click.
   warmLoopbackPreviewMeta(props.instanceId, props.sessionId)
@@ -160,25 +154,7 @@ export function Markdown(props: MarkdownProps) {
   let deferredRender: ReturnType<typeof setTimeout> | undefined
   let disposed = false
   let cleanupLanguageListener: (() => void) | undefined
-  let renderedIdentity: string | undefined
   const codeBlockWrapOverrides = new Map<string, boolean>()
-
-  const setRenderedHtml = (value: string, snapshot: ResolvedMarkdownSnapshot) => {
-    const identity = `${snapshot.cacheId}:${snapshot.version}`
-    const active = document.activeElement
-    const action = identity === renderedIdentity && active instanceof HTMLButtonElement && containerRef?.contains(active)
-      ? ["code-block-wrap", "code-block-copy", "code-block-diagram"].find(name => active.classList.contains(name)) : undefined
-    const key = action ? active?.closest<HTMLElement>(".markdown-code-block")?.dataset.codeBlockKey : undefined
-    renderedIdentity = identity
-    setHtml(value)
-    // Mermaid decorates the new HTML in a microtask; restore the semantic
-    // control afterwards, only when this replacement actually dropped focus.
-    if (key && action) queueMicrotask(() => queueMicrotask(() => {
-      if (disposed || active?.isConnected || document.activeElement !== document.body) return
-      containerRef?.querySelector<HTMLButtonElement>(`[data-code-block-key="${CSS.escape(key)}"] .${action}`)
-        ?.focus({ preventScroll: true })
-    }))
-  }
 
   const cancelDeferredRender = () => {
     if (deferredRender === undefined) return
@@ -241,29 +217,13 @@ export function Markdown(props: MarkdownProps) {
     }
   }
 
-  const renderTheme = createMemo(() => {
-    theme?.themeRevision()
-    const dark = props.isDark ?? theme?.isDark() ?? false
-    const forced = theme?.forcedColors() ?? false
-    let colors: MarkdownColors | undefined
-    if (theme?.highContrast() || forced) {
-      const resolver = createCssColorResolver()
-      try {
-        colors = { background: resolver.resolve("--surface-code", "background").toUpperCase(),
-          foreground: resolver.resolve("--text-primary").toUpperCase(), forced }
-      } finally { resolver.dispose() }
-    }
-    const themeKey = `${dark ? "dark" : "light"}${colors ? `:${forced ? "forced" : "more"}:${colors.background}:${colors.foreground}` : ""}`
-    return { themeKey, dark, colors }
-  }, undefined, { equals: (a, b) => a.themeKey === b.themeKey })
-
   const resolved = createMemo(() => {
     const part = props.part
     const window = bounded.window()
     const literalRawHtml = Boolean(props.literalRawHtml)
     const boundedText = props.formatText ? props.formatText(window.text) : window.text
     const text = literalRawHtml ? boundedText : decodeHtmlEntitiesLocally(boundedText)
-    const { themeKey, dark, colors } = renderTheme()
+    const themeKey = Boolean(props.isDark) ? "dark" : "light"
     // Re-parsing a long window for every streamed chunk costs 25-115 ms per chunk at
     // 45 000 characters; short replies keep rendering every chunk, highlighted.
     const deferred = Boolean(props.streaming) && text.length > STREAMING_INSTANT_RENDER_CHARACTER_LIMIT
@@ -283,8 +243,6 @@ export function Markdown(props: MarkdownProps) {
       part,
       text,
       themeKey,
-      dark,
-      colors,
       highlightEnabled,
       escapeRawHtml,
       literalRawHtml,
@@ -306,7 +264,7 @@ export function Markdown(props: MarkdownProps) {
     version: () => resolved().version,
   })
   useMarkdownMermaid({ root: () => containerRef, html, identity: () => resolved().cacheId,
-    blocks: mermaidBlocks, dark: () => renderTheme().dark, streaming: () => Boolean(props.streaming), onRendered: notifyRendered })
+    blocks: mermaidBlocks, dark: () => Boolean(props.isDark), streaming: () => Boolean(props.streaming), onRendered: notifyRendered })
 
   const commitCacheEntry = (
     snapshot: ResolvedMarkdownSnapshot,
@@ -322,7 +280,7 @@ export function Markdown(props: MarkdownProps) {
       mermaid: options?.mermaid,
     }
     setMermaidBlocks(options?.mermaid ?? [])
-    setRenderedHtml(renderedHtml, snapshot)
+    setHtml(renderedHtml)
     setRendered(true)
     if (options?.cache ?? true) {
       cacheHandle.set(cacheEntry)
@@ -335,7 +293,7 @@ export function Markdown(props: MarkdownProps) {
     // Awaiting even a warm module suspends this invocation. Skip stale work before
     // entering the synchronous parser, including retries with the same key.
     if (!isCurrentRender(request)) return
-    markdown.setMarkdownTheme(snapshot.dark)
+    markdown.setMarkdownTheme(snapshot.themeKey === "dark")
     const diagrams: MermaidCodeBlock[] = []
     const rendered = await markdown.renderMarkdown(snapshot.text, {
       suppressHighlight: !highlight,
@@ -344,7 +302,6 @@ export function Markdown(props: MarkdownProps) {
       defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
       onMermaid: block => diagrams.push(block),
       truncated: snapshot.truncated,
-      colors: snapshot.colors,
     })
     if (!isCurrentRender(request)) return
     // A deferred plain pass never publishes under a cache key that promises
@@ -404,7 +361,7 @@ export function Markdown(props: MarkdownProps) {
     if (localCache && cacheMatches(localCache)) {
       cancelDeferredRender()
       setMermaidBlocks(localCache.mermaid ?? [])
-      setRenderedHtml(localCache.html, snapshot)
+      setHtml(localCache.html)
       setRendered(true)
       notifyRendered()
       return
@@ -414,13 +371,13 @@ export function Markdown(props: MarkdownProps) {
     if (globalCache && cacheMatches(globalCache)) {
       cancelDeferredRender()
       setMermaidBlocks(globalCache.mermaid ?? [])
-      setRenderedHtml(globalCache.html, snapshot)
+      setHtml(globalCache.html)
       setRendered(true)
       notifyRendered()
       return
     }
 
-    // A theme change, a reveal, a long streaming window and its completion keep
+    // A reveal, a long streaming window and the render completing such a stream keep
     // the rendered block in place until the next render commits, rather than
     // flashing it as plain text.
     const samePart = previous?.cacheId === snapshot.cacheId && untrack(rendered)
@@ -430,7 +387,7 @@ export function Markdown(props: MarkdownProps) {
       return
     }
     cancelDeferredRender()
-    if (!(samePart && (revealing || previous.deferred || previous.themeKey !== snapshot.themeKey))) {
+    if (!(samePart && (revealing || previous.deferred))) {
       setMermaidBlocks([])
       setHtml(renderFallbackHtml(snapshot.text))
       setRendered(false)

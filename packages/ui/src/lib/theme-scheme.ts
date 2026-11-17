@@ -1,10 +1,10 @@
 import { DARK_IDENTITY_COLORS, LIGHT_IDENTITY_COLORS, SOFT_COLOR_SCHEME_IDS, SOFT_COLOR_SCHEMES, SOFT_SYSTEM_DARK, SOFT_SYSTEM_LIGHT } from "./soft-color-schemes.ts"
 import { classicLightSurfaces } from "./classic-light-surfaces"
 import { classicDarkSurfaces } from "./classic-dark-surfaces"
-import { channel, contrastRatio, isCanonicalHexColor, luminance, mix, textOnColor } from "./color-contrast"
-import { highContrastColors, highContrastProperties } from "./high-contrast"
+import { channel, contrastRatio, isCanonicalHexColor, luminance, mix } from "./color-contrast"
+import { highContrastColors } from "./high-contrast"
 
-export { contrastRatio, isCanonicalHexColor, textOnColor } from "./color-contrast"
+export { contrastRatio, isCanonicalHexColor } from "./color-contrast"
 
 export const COLOR_SCHEME_IDS = ["system", "light", ...SOFT_COLOR_SCHEME_IDS, "classic", "basalt", "fjord", "lichen", "velvet", "ember", "custom"] as const
 
@@ -347,6 +347,9 @@ export function validateColorSchemeColors(value: unknown): value is ColorSchemeC
 const alpha = (color: string, opacity: number) =>
   `rgba(${channel(color, 1)}, ${channel(color, 3)}, ${channel(color, 5)}, ${opacity})`
 
+export const textOnColor = (color: string): "#000000" | "#FFFFFF" =>
+  contrastRatio("#000000", color) >= contrastRatio("#FFFFFF", color) ? "#000000" : "#FFFFFF"
+
 const APPLIED_PROPERTIES = [
   "--surface-base",
   "--surface-primary",
@@ -418,8 +421,13 @@ const APPLIED_PROPERTIES = [
   "--new-tab-text",
 ] as const
 
-function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(typeof APPLIED_PROPERTIES)[number], string> {
-  const textOnAccent = textOnColor(colors.accentPrimary)
+function derivedProperties(
+  colors: ColorSchemeColors,
+  dark: boolean,
+  // Ink on filled actions follows the palette's own accent, so contrast never flips it.
+  inkSource: ColorSchemeColors = colors,
+): Record<(typeof APPLIED_PROPERTIES)[number], string> {
+  const textOnAccent = textOnColor(inkSource.accentPrimary)
   // Selection is a neutral surface state, not a participant's identity color.
   const selection = colors.textMuted
   return {
@@ -495,20 +503,17 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
   }
 }
 
-const appliedProperties = new WeakMap<ColorSchemeTarget, string[]>()
-
 export function applyColorScheme(
   scheme: NormalizedColorScheme,
-  options: { target?: ColorSchemeTarget; systemDark?: boolean; highContrast?: boolean; forcedColors?: boolean } = {},
+  options: { target?: ColorSchemeTarget; systemDark?: boolean; highContrast?: boolean } = {},
 ): boolean {
   const dark = scheme.appearance === "dark" || (scheme.appearance === "system" && Boolean(options.systemDark))
   const target = options.target ?? (typeof document === "undefined" ? undefined : document.documentElement)
   if (!target) return dark
 
-  for (const property of new Set([...APPLIED_PROPERTIES, ...appliedProperties.get(target) ?? []])) target.style.removeProperty(property)
+  for (const property of APPLIED_PROPERTIES) target.style.removeProperty(property)
   target.dataset.colorScheme = scheme.id
-  const strengthened = options.highContrast === true && !options.forcedColors
-  if (strengthened) target.dataset.contrast = "more"
+  if (options.highContrast) target.dataset.contrast = "more"
   else delete target.dataset.contrast
 
   if (scheme.appearance === "system") target.removeAttribute("data-theme")
@@ -518,21 +523,16 @@ export function applyColorScheme(
     ? scheme.colors ?? (dark ? SYSTEM_DARK_COLOR_SCHEME_COLORS : SYSTEM_LIGHT_COLOR_SCHEME_COLORS)
     : scheme.colors
   if (sourceColors) {
-    const colors = strengthened ? highContrastColors(sourceColors, dark) : sourceColors
-    let properties: Record<string, string> = {
-      ...derivedProperties(colors, dark),
-      ...(scheme.id === "light" ? classicLightSurfaces(colors) : {}),
-      ...(scheme.id === "classic" ? classicDarkSurfaces(colors) : {}),
+    const colors = options.highContrast ? highContrastColors(sourceColors, dark) : sourceColors
+    for (const [property, value] of Object.entries(derivedProperties(colors, dark, sourceColors))) {
+      target.style.setProperty(property, value)
     }
-    properties["--text-on-accent-hover"] = textOnColor(properties["--accent-hover"])
-    if (strengthened) properties = highContrastProperties(properties, { dark,
-      normalProperties: { ...derivedProperties(sourceColors, dark),
-        ...(scheme.id === "light" ? classicLightSurfaces(sourceColors) : {}),
-        ...(scheme.id === "classic" ? classicDarkSurfaces(sourceColors) : {}),
-      },
-    })
-    for (const [property, value] of Object.entries(properties)) target.style.setProperty(property, value)
-    appliedProperties.set(target, Object.keys(properties))
+    if (scheme.id === "light") {
+      for (const [property, value] of Object.entries(classicLightSurfaces(colors))) target.style.setProperty(property, value)
+    }
+    if (scheme.id === "classic") {
+      for (const [property, value] of Object.entries(classicDarkSurfaces(colors))) target.style.setProperty(property, value)
+    }
   }
 
   return dark

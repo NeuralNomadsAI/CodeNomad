@@ -13,8 +13,6 @@ import { PANEL_EXTENSION_API4_PERMISSIONS } from "../../../server/src/panel-exte
 import { registerPanelExtensionRoutes } from "../../../server/src/server/routes/panel-extensions"
 import { registerPanelExtensionApi4Routes } from "../../../server/src/server/routes/panel-extension-api4"
 import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
-import { applyMergePatch } from "../../../server/src/settings/merge-patch"
-import { checkExtensionTheme, ignoreExtensionPaletteObserver } from "./fixtures/panel-extension-theme-check"
 
 // The real host routes, store, bridge, channels and composer; only OpenCode is a fake.
 const instanceId = "api4-instance"
@@ -97,7 +95,6 @@ async function install(permissions: string[] = ALL) {
 async function open(options: { phone?: boolean } = {}) {
   const page = await fixture.browser.newPage({ viewport: options.phone ? { width: 390, height: 844 } : { width: 1200, height: 800 }, locale: "en-US" })
   const errors: string[] = [], requests: string[] = [], aborted: string[] = []
-  let uiState: Record<string, unknown> = {}
   page.on("pageerror", error => errors.push(error.message))
   page.on("requestfailed", request => { if (request.failure()?.errorText.includes("ABORTED")) aborted.push(new URL(request.url()).pathname) })
   // A steady transport: reconnects would remount the panel.
@@ -106,10 +103,6 @@ async function open(options: { phone?: boolean } = {}) {
   })
   await page.route("**/api/**", async route => {
     const request = route.request(), url = new URL(request.url())
-    if (url.pathname === "/api/storage/state/ui") {
-      if (request.method() === "PATCH") uiState = applyMergePatch(uiState, request.postDataJSON())
-      return route.fulfill({ json: uiState })
-    }
     if (!url.pathname.startsWith("/api/panel-extensions")) return route.fulfill({ json: { entries: [], files: [], records: [], messages: [], data: [] } })
     requests.push(url.pathname)
     if (url.pathname.endsWith("/images")) await transit.hold?.()
@@ -167,17 +160,6 @@ test("only declared permissions expose frame objects; undeclared calls never rea
     assert.deepEqual(await frameOf(page).locator("body").evaluate(() => (window as any).objects()), ["preferences"])
     assert.deepEqual((await call(page, "images.status")).error, "Cannot read properties of undefined (reading 'status')")
     assert.deepEqual(requests.filter(value => !value.endsWith("/panel") && value !== "/api/panel-extensions"), [])
-  } finally { await page.close() }
-})
-
-test("API4 keeps its iframe while republishing contrast and forced light/dark system colors", async () => {
-  await install(["session.context", "panel.preferences"])
-  const { page, errors } = await open()
-  try {
-    await ignoreExtensionPaletteObserver(page)
-    await showPanel(page)
-    await checkExtensionTheme(page, "fixture")
-    assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
 

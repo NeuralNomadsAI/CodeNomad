@@ -27,7 +27,7 @@ The selected right-panel tab and Files mode are saved separately for each projec
 4. Choose a palette for the displayed appearance. Light and dark selections are saved independently; Auto uses the matching one.
 5. For custom colors, use the swatches and **Save**; **Reset** restores a built-in palette's colors. Use **New** to name a separate palette and **Delete** to remove one you created.
 
-Contrast applies and saves immediately, independently of **Save** for colors. It adapts rendering while preserving your selected palette, editable colors and conversation draft. The **i** shows the current contrast state in Auto. System forced colors take priority.
+Contrast applies and saves immediately, independently of **Save** for colors. It adapts rendering while preserving your selected palette, editable colors and conversation draft. The **i** shows the current contrast state in Auto.
 
 The UI updates without restarting a conversation. Hebrew uses right-to-left layout; code and technical values remain readable in their own direction. Language selection changes interface text, not the language of existing messages or agent instructions. Native desktop menus switch to the interface language once a CodeNomad window has loaded.
 

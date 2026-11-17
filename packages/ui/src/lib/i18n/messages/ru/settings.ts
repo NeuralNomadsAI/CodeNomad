@@ -153,7 +153,6 @@ export const settingsMessages = {
   "settings.appearance.contrast.info": "Повышает контраст интерфейса, сохраняя вашу палитру. Авто следует системным настройкам контраста.",
   "settings.appearance.contrast.current.on": "Высокий контраст сейчас включён.",
   "settings.appearance.contrast.current.off": "Высокий контраст сейчас выключен.",
-  "settings.appearance.contrast.forcedColors": "Принудительные системные цвета имеют приоритет.",
   "settings.appearance.contrast.saveError": "Не удалось сохранить контраст. Повторите попытку.",
   "settings.appearance.palette.auto": "Авто",
   "settings.appearance.palette.mist": "Туман",

@@ -153,7 +153,6 @@ export const settingsMessages = {
   "settings.appearance.contrast.info": "保留当前调色板并提高界面对比度。自动模式跟随系统的对比度偏好。",
   "settings.appearance.contrast.current.on": "高对比度当前已开启。",
   "settings.appearance.contrast.current.off": "高对比度当前已关闭。",
-  "settings.appearance.contrast.forcedColors": "系统强制颜色优先。",
   "settings.appearance.contrast.saveError": "无法保存对比度。请重试。",
   "settings.appearance.palette.auto": "自动",
   "settings.appearance.palette.mist": "薄雾",
