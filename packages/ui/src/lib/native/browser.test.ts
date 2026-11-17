@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { browserHostCapabilities, nativeBrowserHost, onNativeBrowserOpen, physicalBrowserBounds, selectBrowserOpenOwner } from "./browser.ts"
+import { browserHostCapabilities, nativeBrowserHost, onNativeBrowserOpen, physicalBrowserBounds } from "./browser.ts"
 
 describe("native browser adapter", () => {
   it("subscribes to WebKit open requests with native automation available", async () => {
@@ -58,25 +58,4 @@ describe("native browser adapter", () => {
     })
   })
 
-  it("routes duplicate session owners through the active instance", () => {
-    const owners = [{ id: "first" }, { id: "active" }, { id: "third" }]
-    assert.equal(selectBrowserOpenOwner(owners, "active"), owners[1])
-  })
-
-  it("uses a sole owner and rejects unresolved duplicate owners", () => {
-    const only = { id: "only" }
-    assert.equal(selectBrowserOpenOwner([only], undefined), only)
-    assert.equal(selectBrowserOpenOwner([only], "unrelated-active"), only)
-    assert.equal(selectBrowserOpenOwner([], "closed"), undefined)
-    assert.equal(selectBrowserOpenOwner([{ id: "first" }, { id: "second" }], undefined), undefined)
-    assert.equal(selectBrowserOpenOwner([{ id: "first" }, { id: "second" }], "missing"), undefined)
-  })
-
-  it("retains the selected occurrence identity when selection changes or its owner closes", () => {
-    const owners = [{ id: "a" }, { id: "b" }]
-    const selected = selectBrowserOpenOwner(owners, "a")
-    owners.shift()
-    assert.equal(selected?.id, "a", "an admitted open keeps the captured occurrence, never the surviving duplicate")
-    assert.equal(selectBrowserOpenOwner(owners, "b")?.id, "b", "only a new open may select B")
-  })
 })

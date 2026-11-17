@@ -57,14 +57,14 @@ import { showAlertDialog } from "../../stores/alerts"
 import {
   DEFAULT_PREVIEW_URL,
   getSessionPreview,
-  getPreviewSessionIds,
   openSessionPreview,
   restoreSessionPreview,
-  showSessionChat,
+  showSessionChatFor,
   showSessionPreview,
+  setPreviewSessionOwners,
 } from "../../stores/session-previews"
 import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
-import { beginGesture } from "../../stores/session-surface"
+import { beginGesture, getSessionSurface } from "../../stores/session-surface"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
@@ -444,8 +444,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? getSessionPreview(sessionId, props.instance.id) : null
+    return sessionId ? getSessionPreview(sessionId) : null
   })
+  const showingPreview = () => getSessionSurface({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() }).kind === "web"
 
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
     setSessionPromptApis((current) => ({
@@ -466,7 +467,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     try {
       const restored = await restoreSessionPreview(sessionId, props.instance.id)
       if (!intent.current()) return
-      if (restored) showSessionPreview(restored.storageKey, intent)
+      if (restored) showSessionPreview(sessionId, props.instance.id, intent)
       else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.id, undefined, intent)
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return
@@ -484,21 +485,20 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (!sessionId || sessionId === "info") return
 
     const preview = activeSessionPreview()
-    if (preview?.mode === "preview") {
-      showSessionChat(preview.storageKey)
+    if (showingPreview() && preview) {
+      showSessionChatFor(sessionId, props.instance.id)
       return
     }
 
     if (preview) {
-      showSessionPreview(preview.storageKey)
+      showSessionPreview(sessionId, props.instance.id)
       return
     }
     void handleOpenPreview()
   }
 
   const previewToggleLabel = createMemo(() => {
-    const preview = activeSessionPreview()
-    return preview?.mode === "preview" ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
+    return showingPreview() && activeSessionPreview() ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
   })
 
   const yoloModeEnabled = createMemo(() => {
@@ -612,7 +612,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         color="inherit"
         onClick={handlePreviewButtonClick}
         aria-label={previewToggleLabel()}
-        aria-pressed={activeSessionPreview()?.mode === "preview"}
+        aria-pressed={showingPreview() && Boolean(activeSessionPreview())}
         title={previewToggleLabel()}
         size="small"
       >
@@ -674,7 +674,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (!previewsUnavailable()) items.push({
       key: "preview",
       label: previewToggleLabel(),
-      checked: activeSessionPreview()?.mode === "preview",
+      checked: showingPreview() && Boolean(activeSessionPreview()),
       icon: <Globe class="w-4 h-4" aria-hidden="true" />,
       onSelect: handlePreviewButtonClick,
     })
@@ -720,17 +720,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     isAvailable: (sessionId) => allInstanceSessions().has(sessionId),
     select: handleSessionSelect,
   })
-
-  // Keep only explicitly opened browser shells; inactive transcripts/composers
-  // still unmount and remain subject to the existing transcript memory budget.
-  const mountedSessionIds = createMemo<string[]>((previous) => {
-    const wanted = new Set([
-      ...getPreviewSessionIds(props.instance.id).filter((id) => allInstanceSessions().has(id)),
-      ...cachedSessionIds(),
-    ])
-    // Reordering an Electron webview in the DOM can recreate its guest.
-    return [...previous.filter((id) => wanted.delete(id)), ...wanted]
-  }, [])
+  createEffect(() => setPreviewSessionOwners(props.instance.id, allInstanceSessions()))
 
   const showEmbeddedSidebarToggle = createMemo(() => !leftPinned() && !leftOpen())
 
@@ -1264,7 +1254,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </div>
                   </Show>
               </Show>
-          <For each={mountedSessionIds()}>
+          <For each={cachedSessionIds()}>
             {(sessionId) => {
               const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId
               return (

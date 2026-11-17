@@ -38,7 +38,7 @@ Si otra ventana muestra la misma conexión de proyecto, su pestaña también se 
 
 Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto; se sigue aplicando la restauración normal al iniciar. Detén explícitamente las ejecuciones relevantes si necesitas verificar que la ejecución terminó. CodeNomad nunca descarga las Locations nativas; el mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
 
-Con la restauración al iniciar activada, cada pestaña restante recupera sus propias opciones de paneles, selección y lector de Misión, y URL e historial guardados del navegador. Las páginas guardadas del navegador se cargan al reabrirlas explícitamente. Cerrar una instancia elimina solo su vista guardada; reabrir la carpeta crea una instancia nueva.
+Con la restauración al iniciar activada, cada pestaña restante recupera sus propias opciones de paneles, selección y lector de Misión, y elección entre chat y vista previa web. Las URL y el historial del navegador se comparten por sesión; las páginas guardadas se cargan solo al reabrir explícitamente la vista previa web. Cerrar una instancia elimina solo su vista guardada; reabrir la carpeta crea una instancia nueva.
 
 ## Espacios de trabajo temporales {#temporary-workspaces}
 

@@ -58,7 +58,7 @@ it("a delayed browser releases only its token after a file, Mission or conversat
       resolve({ sessionId: "same", token: id, targetUrl: "https://example.com/" })
       await assert.rejects(pending, { name: "AbortError" })
       assert.deepEqual(getSessionSurface(ctx(id)), surface)
-      assert.equal(getSessionPreview("same", id), null)
+      assert.equal(getSessionPreview("same"), null)
       lifecycle(id, "removed")
     }
     assert.deepEqual(deleted, ["delay-conversation", "delay-file", "delay-mission"])

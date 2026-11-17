@@ -16,6 +16,44 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
+test("occurrence browser data merges into one session resource before lazy restoration", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.addInitScript(() => {
+      const w = window as any
+      w.__name = (value: unknown) => value
+      w.__CODENOMAD_RUNTIME_HOST__ = "web"; w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
+      w.EventSource = class extends EventTarget { close() {} }
+      if (sessionStorage.getItem("migration-seeded")) return
+      sessionStorage.setItem("migration-seeded", "true")
+      localStorage.setItem("opencode-session-tab-views-v1", JSON.stringify(Object.fromEntries([0, 1].map(index => [
+        JSON.stringify(["/same", index]), { version: 1, previews: { same: {
+          mode: index ? "chat" : "preview", targetUrl: `https://example.com/${index}`,
+          history: { urls: ["https://example.com/start", `https://example.com/${index}`], index: 1 },
+          viewport: index ? "mobile" : "desktop",
+        } } },
+      ]))))
+    })
+    await page.route("**/api/**", route => route.fulfill({ json: [] }))
+    await page.goto(webUrl); await page.waitForFunction(() => Boolean((window as any).fixture))
+    assert.equal(await page.evaluate(() => (window as any).fixture.created()), 0)
+    assert.deepEqual(await page.evaluate(() => ["web-a", "web-b"].map(id => (window as any).fixture.view(id).previews.same)),
+      [{ mode: "preview" }, { mode: "chat" }])
+    const saved = await page.evaluate(() => (window as any).fixture.saved("same"))
+    assert.equal(saved.targetUrl, "https://example.com/1", "most recently written occurrence supplies the shared browser")
+    assert.equal(saved.viewport, "mobile")
+    assert.deepEqual(saved.history, { urls: ["https://example.com/start", "https://example.com/1"], index: 1 })
+    await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
+    assert.equal(await page.evaluate(() => (window as any).fixture.created()), 0)
+    const restored = await page.evaluate(async () => {
+      const f = (window as any).fixture
+      const a = await f.restore("same", "web-a"), b = await f.restore("same", "web-b")
+      return [a.token, b.token, a.targetUrl, b.targetUrl, f.created()]
+    })
+    assert.deepEqual(restored, ["web-1", "web-1", "https://example.com/1", "https://example.com/1", 1])
+  } finally { await page.close() }
+})
+
 for (const remote of [false, true]) for (const exactFirst of [false, true]) {
   test(`${remote ? "desktop remote" : "storage-unavailable web"} legacy session adoption merges sequential sessions, exact first=${exactFirst}`, async () => {
     const page = await browser.newPage()
@@ -41,12 +79,12 @@ for (const remote of [false, true]) for (const exactFirst of [false, true]) {
       const remaining = await page.evaluate(() => JSON.parse(localStorage.getItem("opencode-session-previews-v1")!))
       assert.deepEqual(Object.keys(remaining).sort(), ["/same", JSON.stringify(["/same", "two"])].sort(), "only the exact consumed source retires")
       assert.equal(await page.evaluate(async () => (await (window as any).fixture.restore("two", "web-a")).targetUrl), "https://example.com/two")
-      assert.deepEqual(await page.evaluate(() => Object.values((window as any).fixture.view("web-a").previews).map((p: any) => p.targetUrl)),
+      assert.deepEqual(await page.evaluate(() => Object.values((window as any).fixture.browsers()).map((p: any) => p.targetUrl)),
         ["https://example.com/one", "https://example.com/two"], "adopting the next session preserves the first")
       assert.equal(await page.evaluate(async () => (await (window as any).fixture.restore("three", "web-a")).targetUrl), "https://example.com/project")
       assert.equal(await page.evaluate(() => localStorage.getItem("opencode-session-previews-v1")), "{}")
       await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
-      assert.deepEqual(await page.evaluate(() => Object.values((window as any).fixture.view("web-a").previews).map((p: any) => p.targetUrl)),
+      assert.deepEqual(await page.evaluate(() => Object.values((window as any).fixture.browsers()).map((p: any) => p.targetUrl)),
         ["https://example.com/one", "https://example.com/two", "https://example.com/project"])
       assert.equal(await page.evaluate(() => (window as any).fixture.created()), 0)
     } finally { await page.close() }
@@ -92,8 +130,9 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
     await page.waitForFunction(() => !(window as any).fixture.ids().includes("web-a"))
     await page.evaluate(() => sessionStorage.setItem("workspace-inventory", JSON.stringify((window as any).fixture.ids())))
     await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
-    assert.deepEqual(await page.evaluate(() => ["web-b", "web-c"].map(id => (window as any).fixture.view(id).previews?.same.targetUrl)),
-      ["https://example.com/b", "https://example.com/c"])
+    assert.deepEqual(await page.evaluate(() => ["web-b", "web-c"].map(id => (window as any).fixture.view(id).previews?.same)),
+      [{ mode: "preview" }, { mode: "preview" }])
+    assert.equal(await page.evaluate(() => (window as any).fixture.saved("same").targetUrl), "https://example.com/c")
     assert.equal(await page.evaluate(() => (window as any).fixture.created()), 0)
   } finally { release(); await page.close() }
 })
@@ -113,8 +152,8 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
     await page.evaluate(async () => {
       const f = (window as any).fixture
       const a = await f.open("same", "https://example.com/a", "web-a")
-      f.history(a.storageKey, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
-      f.viewport(a.storageKey, "mobile")
+      f.history(a.sessionId, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
+      f.viewport(a.sessionId, "mobile")
       await f.open("same", "https://example.com/b", "web-b")
       f.hide("same", "web-b")
       await f.flush()
@@ -122,15 +161,17 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
     assert.equal(await page.evaluate(() => (window as any).fixture.state()), null, "non-native clients never acquire a native snapshot")
     await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
     const views = await page.evaluate(() => ["web-a", "web-b"].map(id => (window as any).fixture.view(id).previews.same))
-    assert.deepEqual(views.map(v => [v.targetUrl, v.mode]), [["https://example.com/next", "preview"], ["https://example.com/b", "chat"]])
-    assert.deepEqual(views[0].history, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
-    assert.equal(views[0].viewport, "mobile")
+    assert.deepEqual(views, [{ mode: "preview" }, { mode: "chat" }])
+    const saved = await page.evaluate(() => (window as any).fixture.saved("same"))
+    assert.equal(saved.targetUrl, "https://example.com/b")
+    assert.deepEqual(saved.history, { urls: ["https://example.com/a", "https://example.com/next", "https://example.com/b"], index: 2 })
+    assert.equal(saved.viewport, "mobile")
     assert.equal(await page.evaluate(() => (window as any).fixture.created()), 0)
     await page.evaluate(async () => { await (window as any).fixture.restore("same", "web-a"); await (window as any).fixture.flush() })
-    assert.equal(await page.evaluate(() => (window as any).fixture.preview("same", "web-a").targetUrl), "https://example.com/next")
+    assert.equal(await page.evaluate(() => (window as any).fixture.preview("same", "web-a").targetUrl), "https://example.com/b")
     await page.evaluate(() => (window as any).fixture.close("web-a"))
     await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
-    assert.equal(await page.evaluate(() => (window as any).fixture.view("web-a").previews.same.targetUrl), "https://example.com/b",
+    assert.equal(await page.evaluate(() => (window as any).fixture.view("web-a").previews.same.mode), "chat",
       "the surviving duplicate retains its view when backend occurrence ranks compact")
     assert.equal(await page.evaluate(() => (window as any).fixture.view("web-b").previews), undefined)
     await page.evaluate(() => {
@@ -153,7 +194,7 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
     assert.equal(restored.targetUrl, "https://example.com/legacy")
     assert.equal(await page.evaluate(() => localStorage.getItem("opencode-session-previews-v1")), "{}")
     await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
-    assert.equal(await page.evaluate(() => (window as any).fixture.view("web-a").previews.same.targetUrl), "https://example.com/legacy")
+    assert.equal(await page.evaluate(() => (window as any).fixture.saved("same").targetUrl), "https://example.com/legacy")
     assert.equal(await page.evaluate(() => (window as any).fixture.created()), 0)
   } finally { await page.close() }
 })
@@ -244,7 +285,8 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
     assert.equal(captured.length, close ? 1 : 2)
     assert.equal(captured[0].viewState.missions.reader.kind, "playbook")
     assert.equal(captured[0].viewState.missions.reader.missionId, "debug")
-    if (!close) assert.equal(captured[1].viewState.previews.same.targetUrl, "https://example.com/a")
+    if (!close) assert.deepEqual(captured[1].viewState.previews.same, { mode: "preview" })
+    assert.equal(await page.evaluate(() => (window as any).tabViews.saved("same").targetUrl), "https://example.com/a")
     const count = loads.length
     await page.reload(); await page.locator('[data-restoring="false"]').waitFor()
     const restored = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
