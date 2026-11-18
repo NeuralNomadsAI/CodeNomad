@@ -72,16 +72,16 @@ it("a parent folder's list and indicator show only its workspace scope, convergi
     await reloadWorktrees(instanceId)
     assert.deepEqual(listed(), ["late", "own"])
 
-    // Either family order: a local child keeps its parent from elsewhere, and a
-    // child from elsewhere joins its local parent.
+    // Either family order: a session located elsewhere never joins the list,
+    // neither as a local child's parent nor as a local parent's child.
     created("child", "/home", "parent")
     created("parent", "/elsewhere")
     created("early-child", "/elsewhere", "late-parent")
     setSessionStatus(instanceId, "early-child", "working")
     assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "idle")
     created("late-parent", "/home")
-    assert.deepEqual(listed(), ["child", "early-child", "late", "late-parent", "own", "parent"])
-    assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "working", "a working child joining the scope lights the tab")
+    assert.deepEqual(listed(), ["late", "late-parent", "own"])
+    assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "idle", "a working child located elsewhere does not light the tab")
     setSessionStatus(instanceId, "early-child", "idle")
 
     // A session opened explicitly is shown where it was opened.

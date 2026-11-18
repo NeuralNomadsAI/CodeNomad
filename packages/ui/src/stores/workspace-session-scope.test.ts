@@ -25,16 +25,14 @@ it("scopes a native project to the opened local repository and its registered wo
   assert.deepEqual(selected.map(({ id }) => id), ["root", "worktree", "child", "migrated"])
 })
 
-it("retains the ancestry and siblings needed by a local family member", () => {
+it("never selects family members located elsewhere for a local member", () => {
   const inventory = [
     session("parent", "/former-directory"),
     session("local-child", "/repo", "parent"),
     session("sibling", "/former-directory", "parent"),
     session("unrelated", "/former-directory"),
   ]
-  assert.deepEqual(selectWorkspaceSessionFamilies(inventory, "/repo", []).map(({ id }) => id), [
-    "parent", "local-child", "sibling",
-  ])
+  assert.deepEqual(selectWorkspaceSessionFamilies(inventory, "/repo", []).map(({ id }) => id), ["local-child"])
 })
 
 it("matches the service-side paths of WSL worktrees without treating a shared project ID as ownership", () => {

@@ -16,9 +16,9 @@ export function isWorkspaceSessionDirectory(directory: string, folder: string, w
   return workspaceSessionDirectories(folder, worktrees).has(normalizeSessionDirectory(directory))
 }
 
-/** The members of complete families with a member in the opened folder or a
- * registered worktree, including a parent needed by a local descendant, plus
- * the families of `include` (sessions shown explicitly). */
+/** The members located in the opened folder or a registered worktree: a
+ * session elsewhere never belongs to the workspace, whatever its family. Only
+ * the complete families of `include` (sessions shown explicitly) are added. */
 export function selectWorkspaceFamilyIds(
   members: Iterable<{ id: string; parentId?: string | null; directory?: string }>,
   folder: string,
@@ -27,6 +27,11 @@ export function selectWorkspaceFamilyIds(
 ): Set<string> {
   const directories = workspaceSessionDirectories(folder, worktrees)
   const byId = new Map([...members].map((member) => [member.id, member]))
+  const ids = new Set([...byId.values()]
+    .filter((member) => member.directory && directories.has(normalizeSessionDirectory(member.directory)))
+    .map((member) => member.id))
+  const explicit = [...include].filter((id) => byId.has(id))
+  if (!explicit.length) return ids
   const rootOf = (id: string): string => {
     const seen = new Set<string>()
     let member = byId.get(id)!
@@ -36,11 +41,9 @@ export function selectWorkspaceFamilyIds(
     }
     return member.id
   }
-  const roots = new Set([...byId.values()]
-    .filter((member) => member.directory && directories.has(normalizeSessionDirectory(member.directory)))
-    .map((member) => rootOf(member.id)))
-  for (const id of include) if (byId.has(id)) roots.add(rootOf(id))
-  return new Set([...byId.keys()].filter((id) => roots.has(rootOf(id))))
+  const roots = new Set(explicit.map(rootOf))
+  for (const id of byId.keys()) if (roots.has(rootOf(id))) ids.add(id)
+  return ids
 }
 
 export function selectWorkspaceSessionFamilies(

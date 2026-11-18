@@ -65,6 +65,8 @@ Implementation:
   (`removeSessionProjection`), whatever started the move; a failed fresh read removes
   nothing. Its draft and attachments stay, and no deletion marker is set: a session
   refresh or a later published inventory that owns the destination lists it again.
+  The moved-away record behind the latter (`session-state.ts`) is released when the
+  session is listed, deleted or moved again, or the instance closes.
   Each instance applies only the latest move of a session (a per-session generation),
   so an earlier decision still reading the inventory never overrides a later move.
   Family members left behind stay sessions of their own location
@@ -103,11 +105,12 @@ server). Native `location.get().project.directory` describes the local checkout,
 and `project.canonical` describes its canonical repository root; both are distinct
 from `SessionInfo.location.directory`, the session's working directory.
 
-The UI uses the native project inventory to discover candidates, then projects
-families using the opened folder and the server's registered worktree paths,
+The UI uses the native project inventory to discover candidates, then keeps the
+sessions whose own directory is the opened folder or a registered worktree path,
 including their service-side paths for WSL. A separate clone sharing the native
-project ID must not appear merely because of that ID. Family ancestry is retained
-when a member belongs to the local scope. Moving within this workspace's worktrees
+project ID must not appear merely because of that ID, nor a session located
+elsewhere because a family member is local: a local child whose parent is located
+elsewhere has no listed root. Moving within this workspace's worktrees
 changes the execution directory and badge, while keeping the conversation in the
 same CodeNomad project tab.
 
@@ -119,9 +122,11 @@ completion, compaction and retry notices show only the workspace scope; a
 needs-input notice of an out-of-scope session follows the interruption dock that
 shows its request
 (`stores/session-state.ts` `getWorkspaceSessionScope`, from
-`selectWorkspaceFamilyIds`): complete families with a member in the opened folder
-or a registered worktree, plus the active session's family, so a session opened
-explicitly is shown where it was opened. The scope is reactive, so a late worktree
+`selectWorkspaceFamilyIds`, also the inventory's selection): the sessions located in
+the opened folder or a registered worktree, however they arrive (refresh, inventory,
+parent chain, live event), plus the active session's complete family, so a session
+opened explicitly is shown where it was opened. Thread rows apply the same scope to
+descendants. The scope is reactive, so a late worktree
 inventory and either family order converge. An unread or failed inventory and a
 Git-unavailable folder (which projects its own directory) keep every held session
 in scope (`stores/session-workspace-scope.test.ts`).

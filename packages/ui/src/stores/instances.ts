@@ -50,6 +50,7 @@ import {
   setSessionPendingForm,
   setSessionPendingPermission,
   invalidateSessionMessageLoad,
+  clearInstanceMovedAwaySessions,
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
@@ -1631,6 +1632,7 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   clearSessionCatalogState(id)
   clearInstanceAttachments(id)
   clearInstanceDeletedSessionAuthority(id)
+  clearInstanceMovedAwaySessions(id)
   clearInstanceSessionExpansionState(id)
   clearInstanceSessionSelection(id)
   if (removedInstance && removedOccurrence >= 0 && options.authoritative !== false) {

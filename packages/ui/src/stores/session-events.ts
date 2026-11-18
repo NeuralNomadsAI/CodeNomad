@@ -40,7 +40,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
@@ -81,8 +81,6 @@ const pendingSessionMoves = new Map<string, Map<string, SessionMove>>()
 /** Per `instance\0session`, the move whose placement decision still applies. */
 const latestSessionMoves = new Map<string, number>()
 let sessionMoveGeneration = 0
-/** Per instance, the destination of each session it removed as moved away. */
-const movedAwaySessions = new Map<string, Map<string, string>>()
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
   const key = `${instanceId}\0${sessionId}`
@@ -308,7 +306,7 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
   for (const instanceId of new Set(affectedInstanceIds)) {
     const generation = ++sessionMoveGeneration
     latestSessionMoves.set(`${instanceId}\0${sessionId}`, generation)
-    movedAwaySessions.get(instanceId)?.delete(sessionId)
+    forgetSessionMovedAway(instanceId, sessionId)
     pendingSessionMoves.set(instanceId, (pendingSessionMoves.get(instanceId) ?? new Map()).set(sessionId, { directory: location.directory, generation }))
     const pending = movedSessionRefreshTimers.get(instanceId)
     if (pending) clearTimeout(pending)
@@ -350,17 +348,14 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
   nativeLifecycleGenerations.delete(key)
   dismissRetryToast(instanceId, sessionId)
   removeSessionProjection(instanceId, sessionId)
-  movedAwaySessions.set(instanceId, (movedAwaySessions.get(instanceId) ?? new Map()).set(sessionId, move.directory))
+  markSessionMovedAway(instanceId, sessionId, move.directory)
 }
 
 /** A later inventory that owns a moved-away session's destination lists it again. */
 function relistReturnedSessions(instanceId: string): void {
-  const away = movedAwaySessions.get(instanceId)
-  if (!away) return
-  const returned = [...away].filter(([, directory]) => ownsSessionDirectory(instanceId, directory)).map(([id]) => id)
+  const returned = [...getMovedAwaySessions(instanceId)].filter(([, directory]) => ownsSessionDirectory(instanceId, directory)).map(([id]) => id)
   if (!returned.length) return
-  for (const id of returned) away.delete(id)
-  if (!away.size) movedAwaySessions.delete(instanceId)
+  for (const id of returned) forgetSessionMovedAway(instanceId, id)
   void fetchSessions(instanceId, { reset: true }).catch((error) => {
     log.warn("Failed to list returned moved sessions", { instanceId, error })
   })

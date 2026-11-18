@@ -213,8 +213,8 @@ function isSessionSearchLoading(instanceId: string): boolean {
 
 // A workspace also holds sessions of nested checkouts of other repositories it
 // owns (an opened parent folder receives their live events). Its list,
-// indicators and notices show the inventory's scope: complete families with a
-// member in the opened folder or a registered worktree. Without a read
+// indicators and notices show the inventory's scope: the sessions located in
+// the opened folder or a registered worktree. Without a read
 // inventory, and for Git-unavailable folders (which project their own
 // directory), every held session is in scope. The active session's family is
 // always in scope: a session opened explicitly is shown where it was opened.
@@ -448,6 +448,33 @@ function getAuthoritativeSessionExpansionIdsForInstance(instanceId: string): Rea
 
 function markSessionDeletedAuthoritative(instanceId: string, sessionId: string): void {
   addAuthoritativeKey(setAuthoritativelyDeletedSessionKeys, getDraftKey(instanceId, sessionId))
+}
+
+/** Per instance, the destination of each session it removed as moved away, so
+ * a later inventory owning that destination lists it again. Released when the
+ * session is listed or deleted, moves again, or the instance closes. */
+const movedAwaySessions = new Map<string, Map<string, string>>()
+
+function markSessionMovedAway(instanceId: string, sessionId: string, directory: string): void {
+  movedAwaySessions.set(instanceId, (movedAwaySessions.get(instanceId) ?? new Map()).set(sessionId, directory))
+}
+
+function forgetSessionMovedAway(instanceId: string, sessionId: string): void {
+  const away = movedAwaySessions.get(instanceId)
+  if (!away?.delete(sessionId) || away.size) return
+  movedAwaySessions.delete(instanceId)
+}
+
+function getMovedAwaySessions(instanceId: string): ReadonlyMap<string, string> {
+  return movedAwaySessions.get(instanceId) ?? new Map()
+}
+
+function getMovedAwaySessionIds(instanceId: string): string[] {
+  return [...getMovedAwaySessions(instanceId).keys()]
+}
+
+function clearInstanceMovedAwaySessions(instanceId: string): void {
+  movedAwaySessions.delete(instanceId)
 }
 
 function clearInstanceDeletedSessionAuthority(instanceId: string): void {
@@ -905,7 +932,8 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
 }
 
 function getSessionThreads(instanceId: string): SessionThread[] {
-  return buildSessionThreads(instanceId, getSessionListIds(instanceId).filter((id) => isSessionInWorkspaceScope(instanceId, id)))
+  const scope = getWorkspaceSessionScope(instanceId)
+  return buildSessionThreads(instanceId, getSessionListIds(instanceId).filter((id) => scope?.has(id) ?? true), scope ? new Set(scope) : undefined)
 }
 
 function getSessionSearchSessions(instanceId: string): Session[] {
@@ -1300,6 +1328,11 @@ export {
   getAuthoritativelyDeletedSessionIdsForInstance,
   getAuthoritativeSessionExpansionIdsForInstance,
   markSessionDeletedAuthoritative,
+  markSessionMovedAway,
+  forgetSessionMovedAway,
+  getMovedAwaySessions,
+  getMovedAwaySessionIds,
+  clearInstanceMovedAwaySessions,
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
   hydrateSessionDraftPrompt,

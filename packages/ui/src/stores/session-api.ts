@@ -24,6 +24,7 @@ import {
   clearSessionDraftPrompt,
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
+  forgetSessionMovedAway,
   getAuthoritativelyDeletedSessionIdsForInstance,
   messagesLoaded,
   getSessionMessagesLoadError,
@@ -743,6 +744,8 @@ async function fetchSessions(instanceId: string, options?: {
       next.set(instanceId, instanceSessions)
       return next
     })
+    // Listed here, so no longer moved away.
+    for (const session of apiSessions) forgetSessionMovedAway(instanceId, session.id)
     await ensureV2ParentChainsLoaded(instanceId, apiSessions, options?.signal, isCurrent)
     if (!isCurrent()) {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
@@ -1339,7 +1342,10 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   clearSessionSeenInterruption(instanceId, sessionId)
-  if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
+  if (authoritative) {
+    markSessionDeletedAuthoritative(instanceId, sessionId)
+    forgetSessionMovedAway(instanceId, sessionId)
+  }
   deleteSessionAttachments(instanceId, sessionId)
   clearSessionDraftPrompt(instanceId, sessionId)
   setSessionExpanded(instanceId, sessionId, false)

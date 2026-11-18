@@ -12,8 +12,12 @@ import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { setInstanceMetadata } from "./instance-metadata.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { handleNativeSessionEvent } from "./session-events.ts"
-import { activeSessionId, getSessionDraftPrompt, getSessionListError, getSessionListIds, prependSessionListId, sessions, setActiveSession, setSessionDraftPrompt, setSessions } from "./session-state.ts"
+import { handleNativeSessionEvent, handleSessionDeleted } from "./session-events.ts"
+
+const getMovedAwaySessionIds = (instanceId: string): Iterable<string> =>
+  (sessionState as { getMovedAwaySessionIds?: (id: string) => Iterable<string> }).getMovedAwaySessionIds?.(instanceId) ?? ["<no record getter>"]
+import * as sessionState from "./session-state.ts"
+import { activeSessionId, getSessionDraftPrompt, getSessionListError, getSessionListIds, getSessionThreads, prependSessionListId, sessions, setActiveSession, setSessionDraftPrompt, setSessions } from "./session-state.ts"
 import { ensureWorktreesLoaded, setWorktreeSlugForParentSession } from "./worktrees.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
@@ -177,6 +181,72 @@ it("removes a single moved session from its old instance while its children stay
     assert.deepEqual(getSessionListIds(source.session.instanceId), ["restored"])
     assert.equal(sessions().get(source.session.instanceId)?.get("left-child")?.parentId, "restored")
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = original; source.cleanup() }
+})
+
+const listedIds = (instanceId: string) => {
+  const ids: string[] = []
+  const walk = (threads: ReturnType<typeof getSessionThreads>) => { for (const thread of threads) { ids.push(thread.session.id); walk(thread.children) } }
+  walk(getSessionThreads(instanceId))
+  return ids.sort()
+}
+
+it("never lists a session located outside the tab, even when its project inventory and local children bring it back", async () => {
+  const source = setup("move-clone-inventory", "/repo")
+  const id = source.session.instanceId
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
+    { slug: "root", directory: "/repo", kind: "root" }, { slug: "feature", directory: "/repo-feature", kind: "worktree" },
+  ] }) as any
+  // An independent clone shares the native project ID.
+  setInstanceMetadata(id, { project: { id: "shared-project", canonical: "/repo" } as any })
+  const row = (sessionId: string, directory: string, parentID?: string) => ({ ...source.session, id: sessionId, title: sessionId,
+    parentId: parentID ?? null, parentID, projectID: "shared-project", location: { directory } })
+  const child = row("left-child", "/repo", "restored")
+  const worktreeParent = row("worktree-parent", "/repo-feature"), worktreeChild = row("worktree-child", "/repo", "worktree-parent")
+  setSessions((previous) => new Map(previous).set(id, new Map([...previous.get(id)!, [child.id, child as any]])))
+  setActiveSession(id, "restored")
+  let parentLocation = "/repo"
+  source.client.session.list = async (input: any) => {
+    const native = [row("restored", parentLocation), child, worktreeParent, worktreeChild]
+    return { data: input.project ? native : native.filter(session => session.location.directory === input.directory && !session.parentID) }
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => Response.json({ error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON }, { status: 403 })
+  const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
+  const proxy = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+  source.client.session.get = (input: any, options: any) => proxy.session.get(input, options)
+  try {
+    await ensureWorktreesLoaded(id)
+    parentLocation = "/independent-clone"
+    handleNativeSessionEvent(id, moved("to-clone", "restored", "/independent-clone"))
+    await delay(250)
+    assert.deepEqual(listedIds(id), ["worktree-child", "worktree-parent"], "a parent in a registered worktree stays listed")
+    await fetchSessions(id, { reset: true })
+    assert.deepEqual(listedIds(id), ["worktree-child", "worktree-parent"])
+    assert.equal(getSessionListError(id), undefined)
+  } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = original; source.cleanup() }
+})
+
+it("releases a moved-away record on deletion, on a refresh that lists the session and with its instance", async () => {
+  for (const release of ["deletion", "refresh", "instance"] as const) {
+    const source = setup(`move-record-${release}`, "/repo")
+    const id = source.session.instanceId
+    const original = serverApi.fetchWorktrees
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+    source.client.session.list = async () => ({ data: [] })
+    try {
+      await ensureWorktreesLoaded(id)
+      handleNativeSessionEvent(id, moved("away", "restored", "/foreign"))
+      await delay(200)
+      assert.deepEqual([...getMovedAwaySessionIds(id)], ["restored"], release)
+      if (release === "deletion") handleSessionDeleted(id, { type: "session.deleted", data: { sessionID: "restored" } } as any)
+      else if (release === "refresh") {
+        source.client.session.list = async () => ({ data: [{ ...source.session, parentID: undefined }] })
+        await fetchSessions(id, { reset: true })
+      } else removeInstance(id, { authoritative: false })
+      assert.deepEqual([...getMovedAwaySessionIds(id)], [], release)
+    } finally { serverApi.fetchWorktrees = original; source.cleanup() }
+  }
 })
 
 const moved = (id: string, sessionID: string, directory: string, created = 1) => ({
