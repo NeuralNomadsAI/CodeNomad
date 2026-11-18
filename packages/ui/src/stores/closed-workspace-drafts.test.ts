@@ -78,6 +78,64 @@ afterEach(() => {
 })
 
 describe("closed project drafts", () => {
+  it("keeps the exact pending draft when a sibling clears its own copy and closes", async () => {
+    const folder = "/exact-pending-sibling-close", original = "pending-original-a", a = "pending-restored-a", b = "pending-cleared-b"
+    const file = (byte: number) => createFileAttachment("draft.bin", "draft.bin", "application/octet-stream", new Uint8Array([byte]))
+    const descriptor = (workspaceId: string, text: string, byte: number) => ({
+      kind: "workspace" as const, folder, workspaceId, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      ...serializeDraftAttachments({ shared: text }, { shared: [file(byte)] }),
+    })
+    const savedA = descriptor(original, "stale A", 1), savedB = descriptor(b, "stale B", 2)
+    open(original, folder)
+    setSessionDraftPrompt(original, "shared", "recent A")
+    addAttachment(original, "shared", file(65))
+    close(original)
+
+    const entered = deferred<void>(), native = deferred<unknown>()
+    open(a, folder, [], sessionID => {
+      assert.equal(sessionID, "shared")
+      entered.resolve()
+      return native.promise
+    }, false, true)
+    const hydration = hydrateRestoredWorkspaceState(a, savedA, new AbortController().signal, () => true)
+    attachInstanceTab(a, { source: "restore" })
+    await entered.promise
+    try {
+      open(b, folder)
+      setSessionDraftPrompt(b, "shared", "only B")
+      addAttachment(b, "shared", file(66))
+      clearSessionDraftPrompt(b, "shared")
+      clearAttachments(b, "shared")
+      close(b)
+      const pending = captureState(new Map()).state.tabs.find(tab => tab.kind === "workspace" && tab.workspaceId === a)
+      assert.equal(pending?.kind, "workspace")
+      assert.equal(pending.drafts.shared, "recent A", "the claimed draft must survive the sibling close while the native read is held")
+      assert.equal(pending.attachments.shared?.[0]?.filename, "draft.bin")
+    } finally { native.resolve(apiSession("shared", folder)) }
+    await hydration
+    await settle()
+
+    const reopenedB = `${b}-again`
+    open(reopenedB, folder, ["shared"], undefined, false, true)
+    await hydrateRestoredWorkspaceState(reopenedB, savedB, new AbortController().signal, () => true)
+    attachInstanceTab(reopenedB, { source: "restore" })
+    const captured = captureState(new Map()).state
+    const encoded = await encodeClientSnapshotV2({ version: 1, revision: 1, savedAt: 1, layout: {},
+      session: { ...captured, activeTabIndex: 0 } })
+    const decoded = await decodeClientSnapshotV2(encoded.root, 1, async key => encoded.partitions[key] ?? null)
+    for (const [id, text, bytes] of [[a, "recent A", [[65]]], [reopenedB, "", []]] as const) {
+      const tab = decoded?.session?.tabs.find(tab => tab.kind === "workspace" && tab.workspaceId === id)
+      assert.equal(tab?.kind, "workspace")
+      close(id, { drafts: "skip" })
+      const reopened = `${id}-saved`
+      open(reopened, folder, ["shared"], undefined, false, true)
+      await hydrateRestoredWorkspaceState(reopened, tab, new AbortController().signal, () => true)
+      assert.equal(getSessionDraftPrompt(reopened, "shared"), text)
+      assert.deepEqual(getAttachments(reopened, "shared").map(({ source }) =>
+        source.type === "file" && Array.from(source.data ?? [])), bytes)
+    }
+  })
+
   it("fills only empty and untouched bundles on fallback, protecting a file-only snapshot and late typing", async () => {
     const folder = "/vault-bundle-occupancy", from = "vault-bundle-origin", to = "vault-bundle-target"
     const file = createFileAttachment("saved.bin", "saved.bin", "application/octet-stream", new Uint8Array([88]))

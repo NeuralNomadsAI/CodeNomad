@@ -24,17 +24,18 @@ const log = getLogger("session")
 const vault = new Map<string, VaultEntry>()
 // Folder fallback carries bytes; only a saved workspace identity can carry clears.
 const closedAuthority = new Map<string, Map<string, Set<string>>>()
-const restoreAuthority = new Map<string, {
+interface RestoreAuthority {
   key: string
   snapshotId?: string
   claimedIds: Set<string>
   clearSource?: { id: string; sessions: Set<string> }
   entry?: VaultEntry
-}>()
+}
+const restoreAuthority = new Map<string, RestoreAuthority>()
 /**
  * Entries taken by a reopened instance whose restore has not finished. They are
  * the only older drafts that can come back to the vault, so a later close
- * supersedes its sessions in them directly.
+ * can invalidate folder fallback. Exact claims keep their occurrence authority.
  */
 const claims = new Map<string, { key: string; entry: VaultEntry }>()
 
@@ -136,10 +137,22 @@ function requeue(key: string, older: VaultEntry): void {
   stash(key, merge(older, vault.get(key) ?? empty, new Set()))
 }
 
+/** Keep capture and the native continuation on the same surviving bundles. */
+function supersedePendingDrafts(key: string, ids: ReadonlySet<string>, ownsExact: (sourceId: string) => boolean, except?: string) {
+  for (const [instanceId, bound] of restoreAuthority) {
+    if (instanceId === except || bound.key !== key) continue
+    const keep = (id: string) => !ids.has(id)
+      || (bound.claimedIds.has(id) && bound.snapshotId !== undefined && !ownsExact(bound.snapshotId))
+    if (bound.entry) bound.entry = pick(bound.entry, keep)
+    const claim = claims.get(instanceId)
+    if (claim) claim.entry = pick(claim.entry, keep)
+  }
+}
+
 /**
  * Called while an instance is removed, before its drafts are cleared. `keep`
  * hands its drafts over: the later close wins per session, clears and sends
- * included, over the vault and over every pending restore of the project, and
+ * included, over the vault and pending folder fallback or same-occurrence claims, and
  * whatever an unfinished restore into it had not applied goes back underneath.
  * `skip` keeps nothing of this instance; `discard` also purges the project's
  * whole entry, because its folder is deleted.
@@ -181,13 +194,7 @@ export function retainClosedWorkspaceDrafts(
     if (authority.size) closedAuthority.set(key, authority)
     while (closedAuthority.size > MAX_CLOSED_WORKSPACE_DRAFTS) closedAuthority.delete(closedAuthority.keys().next().value!)
   }
-  // A sibling close supersedes pending vault bytes, not the sibling's independent snapshot.
-  for (const bound of restoreAuthority.values()) {
-    if (bound.key === key && bound.entry) bound.entry = pick(bound.entry, id => !superseded.has(id))
-  }
-  for (const pending of claims.values()) {
-    if (pending.key === key) pending.entry = pick(pending.entry, (sessionId) => !superseded.has(sessionId))
-  }
+  supersedePendingDrafts(key, superseded, sourceId => sourceId === instanceId || sourceId === snapshotId)
   stash(key, merge(vault.get(key) ?? empty, captured, superseded))
   if (remaining) requeue(key, remaining)
 }
@@ -214,14 +221,12 @@ export function restoreClosedWorkspaceDrafts(
   const entry = available && emptySessionsOf(instanceId, pick(available, id =>
     !cleared?.has(id) && (!occupied.has(id) || matchesOrigin(id))))
   const claimed = entry ? contentSessions(entry) : new Set<string>()
-  const bound = { key, snapshotId, claimedIds: new Set([...claimed].filter(matchesOrigin)), entry }
+  const bound: RestoreAuthority = { key, snapshotId, claimedIds: new Set([...claimed].filter(matchesOrigin)), entry }
   restoreAuthority.set(instanceId, bound)
   if (!available || !entry || !claimed.size) return
   stash(key, pick(available, id => !claimed.has(id)))
-  // A retry moves the unresolved source to its new claimant; only that binding captures it.
-  for (const other of restoreAuthority.values()) {
-    if (other !== bound && other.key === key && other.entry) other.entry = pick(other.entry, id => !claimed.has(id))
-  }
+  // A retry moves unresolved bundles to the new claimant without taking another occurrence's exact claim.
+  supersedePendingDrafts(key, claimed, sourceId => sourceId === snapshotId, instanceId)
   const claim = { key, entry }
   claims.set(instanceId, claim)
   const isCurrent = () => claims.get(instanceId) === claim
