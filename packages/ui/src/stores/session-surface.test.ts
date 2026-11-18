@@ -11,7 +11,7 @@ import { clearActiveParentSession, clearActiveSession, hydrateActiveSessionSelec
   setActiveParentSession, setActiveSession, setActiveSessionFromList, setSessions } from "./session-state"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 import { activeParentSessionId, sessions } from "./session-state"
-import { removeSessionRuntimeState } from "./session-api"
+import { removeSessionProjection, removeSessionRuntimeState } from "./session-api"
 import { addInstance, removeInstance } from "./instances"
 import { captureState } from "../lib/hooks/use-app-session-capture"
 import { attachInstanceTabMembership, detachInstanceTabMembership } from "./app-tab-membership"
@@ -183,7 +183,7 @@ it("deletion preserves an unrelated unavailable selection and later recovery can
   assert.equal(unrelated.current(), true)
   assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], ["unavailable", "unavailable-child"])
   const recovery = beginGesture({ instanceId: id, sessionId: "unavailable-child" })
-  removeSessionRuntimeState(id, "unavailable-child", false)
+  removeSessionProjection(id, "unavailable-child")
   assert.equal(activeSessionId().get(id), undefined)
   setSessions(previous => new Map(previous).set(id, new Map([["unavailable-child", { id: "unavailable-child" } as any]])))
   setActiveSessionFromList(id, "unavailable-child", recovery)

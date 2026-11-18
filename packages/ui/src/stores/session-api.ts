@@ -786,7 +786,7 @@ async function fetchSessions(instanceId: string, options?: {
       }
       for (const sessionId of staleIds) {
         if (currentSessions.get(sessionId) !== existingSessions.get(sessionId)) continue
-        removeSessionRuntimeState(instanceId, sessionId, false, true)
+        removeSessionProjection(instanceId, sessionId)
       }
     }
     const rootIds: string[] = []
@@ -1357,13 +1357,12 @@ async function removeSession(instanceId: string, sessionId: string, cleanup: boo
   }
 }
 
-function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true, preserveUnrequestedDraft = false): void {
+/** Apply a confirmed native deletion, whether requested here or observed. */
+function removeSessionRuntimeState(instanceId: string, sessionId: string, source: "request" | "observation" = "request"): void {
   const requested = deleteSessionAuthorities.get(messagePageKey(instanceId, sessionId))
-  const preserve = requested?.cleanup || (preserveUnrequestedDraft && !requested)
+  const preserve = requested?.cleanup ?? (source === "observation")
   if (preserve) recoverRemovedSessionDraft(instanceId, sessionId)
-  cancelSessionGenerationAdmissions(instanceId, sessionId)
-  clearSessionSeenInterruption(instanceId, sessionId)
-  if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
+  markSessionDeletedAuthoritative(instanceId, sessionId)
   if (preserve) {
     deleteSessionAttachments(instanceId, sessionId)
     evictSessionDraftPrompt(instanceId, sessionId)
@@ -1371,6 +1370,13 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
     clearAttachments(instanceId, sessionId)
     clearSessionDraftPrompt(instanceId, sessionId)
   }
+  removeSessionProjection(instanceId, sessionId)
+}
+
+/** A row can leave the workspace inventory while its draft still belongs to that ID. */
+function removeSessionProjection(instanceId: string, sessionId: string): void {
+  cancelSessionGenerationAdmissions(instanceId, sessionId)
+  clearSessionSeenInterruption(instanceId, sessionId)
   setSessionExpanded(instanceId, sessionId, false)
 
   setSessions((prev) => {
@@ -2086,6 +2092,7 @@ export {
   createSession,
   isCreatingSession,
   deleteSession,
+  removeSessionProjection,
   removeSessionRuntimeState,
   fetchAgents,
   fetchProviders,

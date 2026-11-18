@@ -87,8 +87,8 @@ it("recovers a not-yet-hydrated draft when deletion arrives before the first che
   try {
     clearSessionDraftPrompt(id, "cleared")
     clearAttachments(id, "cleared")
-    removeSessionRuntimeState(id, "gone", true, true)
-    removeSessionRuntimeState(id, "cleared", true, true)
+    removeSessionRuntimeState(id, "gone", "observation")
+    removeSessionRuntimeState(id, "cleared", "observation")
     const restore = () => hydrateRestoredWorkspaceState(id, snapshot, new AbortController().signal, () => true)
     await restore()
     const preservation = createRestorableSessionPreservation({ tabs: [snapshot], activeTabIndex: 0 })

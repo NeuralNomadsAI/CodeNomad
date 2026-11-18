@@ -85,7 +85,7 @@ export async function hydrateRestoredWorkspaceState(
   for (const id of absent) if (!Object.hasOwn(prompts.drafts, id) && !Object.hasOwn(prompts.attachments, id)) absent.delete(id)
   if (absent.size) {
     recoverDeletedWorkspacePrompts(instanceId, prompts, absent)
-    for (const id of absent) removeSessionRuntimeState(instanceId, id, true, true)
+    for (const id of absent) removeSessionRuntimeState(instanceId, id, "observation")
   }
   recoverDeletedWorkspacePrompts(instanceId, prompts)
   sessions = getSessions(instanceId)
