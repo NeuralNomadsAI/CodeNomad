@@ -38,7 +38,7 @@ import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 import { definedBefore, enabledThrough, matchesSelector, type AppliedEntry, type AppliedSequence } from "./plugin-activation-order"
-import { discoveryLoaders } from "./plugin-discovery-loaders"
+import { discoveryEntrypointOf, discoveryLoaders } from "./plugin-discovery-loaders"
 import { pluginPackageIdentities } from "./plugin-source-document"
 
 /** One writable target of a plugin-documents edit, with the snapshot's reading of it. `consistent`: the daemon's
@@ -1155,24 +1155,16 @@ function discoveryFolders(context: ReadContext): string[] {
     ? ["plugin", "plugins"].map(name => context.paths.join(entry.path, name)) : [])
 }
 
-// Native module resolution infers these extensions for a directory's `server`/`index` entrypoint.
-const ENTRYPOINT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs", ".cts", ".cjs"]
-
 /**
- * Whether native discovery (`plugin/source-directory.ts`, `config/plugin/source.ts`) loads the plugin whose resolved
- * server entrypoint `plugin.list` reports at `file`: it examines only the immediate children of each plugin(s)/
- * folder, a `.ts`/`.js` file child loading as itself and a directory child through its `server` or `index` module.
- * Other resolutions (package `main`, nested `server/index`, symlinked real paths) are not counted.
+ * Whether native discovery loads the plugin whose resolved server entrypoint `plugin.list` reports at `file`: it is the
+ * entrypoint (`discoveryEntrypointOf`) of an immediate child of a reported plugin(s)/ folder. Symlinked real paths
+ * outside the folder are not counted.
  */
 function discoveredEntrypoint(paths: path.PlatformPath, folders: readonly string[], file: string): boolean {
   return folders.some(folder => {
     const relative = paths.relative(folder, file)
     if (!relative || relative.startsWith("..") || paths.isAbsolute(relative)) return false
-    const parts = relative.split(/[\\/]/)
-    const extension = paths.extname(parts.at(-1)!)
-    if (parts.length === 1) return extension === ".ts" || extension === ".js"
-    return parts.length === 2 && ENTRYPOINT_EXTENSIONS.includes(extension)
-      && ["server", "index"].includes(parts[1]!.slice(0, -extension.length))
+    return discoveryEntrypointOf(paths, paths.join(folder, relative.split(/[\\/]/)[0]!), file)
   })
 }
 

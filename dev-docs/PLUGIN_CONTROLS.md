@@ -85,8 +85,11 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   reports the ID and is not the removed source (whatever its path), or a discovery child may
   load it. The immediate children of the reported plugin(s)/ folders are listed once
   (`plugin-discovery-loaders.ts`, at most 256 per folder, one `stat` per symlinked child); a
-  child is excluded only when native discovery would skip it or it maps, after resolving
-  links and junctions, to inventory entries or a verified descriptor of other IDs only. A
+  child is excluded only when native discovery would skip it or it maps to inventory entries
+  or a verified descriptor of other IDs only. An inventory entry maps to a child only when its
+  path is that child's own entrypoint (`discoveryEntrypointOf`, as named or after resolving
+  links and junctions); a nested plugin or sibling module inside the child leaves it
+  unclassified. A
   listing that is not certain (unmapped path, read error, too many children, WSL) counts as
   a possible loader. Activation deletes `-id` rules only to perform a requested enable (or
   while replacing them with a disable), so it needs no proof.
@@ -190,8 +193,9 @@ plugins (including verified CodeNomad descriptors) are defined before every docu
 local plugin's resolved server entrypoint, so CodeNomad mirrors native discovery (`plugin/source-directory.ts`,
 `plugin/host.ts`): it examines only the immediate children of the `plugin/` and `plugins/` folders of each
 configuration directory `config.get` reports, a `.ts`/`.js` file child loading as itself and a directory child
-through its `server` or `index` module (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`, `.cjs`). A local
-entry counts as discovered only when its reported path is exactly one of these; nested modules, package `main`,
+through its `server` or `index` module (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`, `.cjs`). One function,
+`discoveryEntrypointOf` in `plugin-discovery-loaders.ts`, states that rule for positive writes and for the loader
+proof's child mapping. A local entry counts as discovered only when its reported path is exactly one of these; nested modules, package `main`,
 `server/index` and symlinked real paths do not count. Any other undeclared inventory entry (a removed declaration
 the daemon still reports while it reloads) defines nothing. Write decisions (activation and removal, inside their
 mutation lock) also require each discovered entrypoint to exist as a regular file now: one inspection per candidate
@@ -433,7 +437,8 @@ guessed paths.
   refused for an inline document), the source document committed last under an injected commit failure, a disable
   kept while a plugin(s)/ folder still discovers the plugin (also through a junction to the declared folder) or
   another inventory entry reports its ID, one loader proof for orphan rows, rule-only and source removal (a
-  disabled discovered file, an unidentified declaration), a bare name after its own `-id` read as a package,
+  disabled discovered file, an unidentified declaration), a discovery child identified only by its own entrypoint (a
+  nested plugin's inventory leaves it unclassified), a bare name after its own `-id` read as a package,
   orphan rule removal and refusal,
   inventory correlation and the strict route:
   `plugin-sources.test.ts`

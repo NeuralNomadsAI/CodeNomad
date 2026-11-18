@@ -438,6 +438,29 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
+  it("identifies a discovery child only by its own entrypoint, never by a nested plugin's inventory", async () => {
+    const f = await fixture()
+    try {
+      // plugins/bundle/index.js is the disabled outer plugin (absent from the inventory); plugins/bundle/other is a
+      // separate plugin declared in Project. The child "bundle" still loads bundle.disabled once its disable goes.
+      const bundle = path.join(path.dirname(f.globalFile), "plugins", "bundle")
+      await mkdir(path.join(bundle, "other"), { recursive: true })
+      await writeFile(path.join(bundle, "index.js"), "export default {}\n")
+      await writeFile(path.join(bundle, "other", "index.js"), "export default {}\n")
+      f.state.runtime = [{ id: "bundle.other", source: { type: "local", path: path.join(bundle, "other", "index.js") }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      await writeFile(f.projectFile, JSON.stringify({ plugins: [path.join(bundle, "other")] }))
+      const text = JSON.stringify({ plugins: ["-bundle.disabled"] })
+      await writeFile(f.globalFile, text)
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "bundle.disabled")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "bundle.disabled", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text)
+      // The child's own entrypoint identifies it: with the outer plugin reported under another ID, nothing loads bundle.disabled.
+      f.state.runtime.push({ id: "bundle.outer", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } })
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "bundle.disabled")?.orphan, true)
+    } finally { await f.cleanup() }
+  })
+
   it("reads a bare name after its own -rule as a package declaration, never an orphan rule", async () => {
     const f = await fixture()
     try {
