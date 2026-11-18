@@ -69,6 +69,6 @@ Das Löschen einer übergeordneten Sitzung löscht auch deren nachgeordnete Unte
 
 Beide Bereinigungen löschen nur nachweislich leere, inaktive Sitzungen ohne Untersitzungen. Favoriten und ihre übergeordneten Sitzungen bleiben ordnerübergreifend erhalten.
 
-Wenn eine Unterhaltung beim Bereinigen verschwindet, finden Sie ihren Entwurf und ihre Anhänge im Eingabefeld für eine neue Unterhaltung im Projekt. Mit **Entwurf wechseln** öffnen Sie einen gespeicherten Entwurf, ohne den aktuellen zu überschreiben.
+Wenn eine Unterhaltung beim Bereinigen verschwindet, finden Sie ihren Entwurf und ihre Anhänge im Eingabefeld für eine neue Unterhaltung im Projekt. Mit **Entwurf wechseln** öffnen Sie einen gespeicherten Entwurf, ohne den aktuellen zu überschreiben. Das gilt auch beim erneuten Öffnen des Projekts.
 
 Löschen entfernt Unterhaltungen, keine Git-Commits, und macht keine Dateisystem-/externen Auswirkungen rückgängig. Bei teilweise erfolgreicher Bereinigung bleiben bereits gelöschte Sitzungen gelöscht. Prüfen Sie vor dem Wiederholen die verbleibende Liste und Fehler. Siehe [Unterhaltungen](conversations.md) zu Forks/Rücknahme und [Projekte](projects.md) zum Löschen temporärer Ordner oder Worktrees.

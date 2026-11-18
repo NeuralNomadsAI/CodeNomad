@@ -15,14 +15,16 @@ import { keyboardRegistry } from "../../../src/lib/keyboard-registry"
 import PromptInput from "../../../src/components/prompt-input"
 import PromptAttachmentsBar from "../../../src/components/prompt-input/PromptAttachmentsBar"
 import RecoveredDrafts from "../../../src/components/prompt-input/recovered-drafts"
-import { addAttachment, clearAttachments, getAttachments, getSessionAttachmentsForInstance } from "../../../src/stores/attachments"
+import { addAttachment, clearAttachments, clearInstanceAttachments, getAttachments, getSessionAttachmentsForInstance } from "../../../src/stores/attachments"
 import { setSessionDraftPrompt } from "../../../src/stores/session-state"
 import { NO_SESSION_DRAFT_SESSION_ID } from "../../../src/stores/app-session-workspace-hydration"
 import { createFileAttachment } from "../../../src/types/attachment"
-import { clearSessionDraftPrompt, getSessionDraftPromptsForInstance } from "../../../src/stores/session-state"
+import { clearInstanceDraftPrompts, clearSessionDraftPrompt, getSessionDraftPromptsForInstance } from "../../../src/stores/session-state"
 import { hydrateRestoredWorkspaceState } from "../../../src/stores/app-session-workspace-hydration"
 import { serializeDraftAttachments } from "../../../src/stores/client-state-attachments-codec"
 import { decodeClientSnapshotV2, encodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
+import { retainClosedWorkspaceDrafts, restoreClosedWorkspaceDrafts } from "../../../src/stores/closed-workspace-drafts"
+import { recoveredDraftIds } from "../../../src/stores/session-draft-recovery"
 import { createClientSession } from "../../../src/types/session"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
@@ -124,7 +126,7 @@ function Fixture() {
     </Show>
     <section class="p-3 flex-1 bg-surface-canvas">
       <button type="button" class="button-tertiary" onClick={() => setShown(value => !value)}>Bureau</button>
-      <Show when={getAttachments(id, NO_SESSION_DRAFT_SESSION_ID).length > 0}><div data-recovered-composer>
+      <Show when={getAttachments(id, NO_SESSION_DRAFT_SESSION_ID).length > 0 || recoveredDraftIds(id).length > 0}><div data-recovered-composer>
         <RecoveredDrafts instanceId={id} />
         <PromptAttachmentsBar attachments={getAttachments(id, NO_SESSION_DRAFT_SESSION_ID)} onRemoveAttachment={() => {}} />
         <PromptInput instanceId={id} instanceFolder={main} sessionId={NO_SESSION_DRAFT_SESSION_ID}
@@ -148,6 +150,10 @@ const readSaved = async () => {
 if (sessionStorage.getItem("fixture-clear-draft")) {
   clearSessionDraftPrompt(id, "ses_fixture_cleared")
   clearAttachments(id, "ses_fixture_cleared")
+}
+if (sessionStorage.getItem("fixture-delete-before-restore")) {
+  emit("session.deleted", { sessionID: "ses_fixture_absent" })
+  emit("session.deleted", { sessionID: "ses_fixture_cleared" })
 }
 await readSaved()
 void serverEvents.connect()
@@ -190,6 +196,21 @@ Object.assign(window, { favoriteFixture: {
     sessionStorage.setItem("fixture-saved-drafts", JSON.stringify(encoded))
   },
   readSaved,
+  restoreWithEarlyDeletion: () => sessionStorage.setItem("fixture-delete-before-restore", "1"),
+  simulateTabReopen: () => {
+    retainClosedWorkspaceDrafts(id, main)
+    clearInstanceDraftPrompts(id)
+    clearInstanceAttachments(id)
+    return restoreClosedWorkspaceDrafts(id, main, async () => {})
+  },
+  clearFixtureDraft: () => {
+    clearSessionDraftPrompt(id, "ses_fixture_cleared")
+    clearAttachments(id, "ses_fixture_cleared")
+  },
+  clearRecoveredComposer: () => {
+    clearSessionDraftPrompt(id, NO_SESSION_DRAFT_SESSION_ID)
+    clearAttachments(id, NO_SESSION_DRAFT_SESSION_ID)
+  },
   metadata: () => native.get("ses_briefing")?.metadata,
   automatic: () => cleanupBlankSessions(id),
   deep: () => { blank.add("ses_dossier_02"); return cleanupBlankSessions(id, undefined, true) },

@@ -69,6 +69,6 @@ Deleting a parent session also deletes its descendant subsessions and their hist
 
 Both cleanup modes remove only verified empty, inactive sessions without children. Favorites and their ancestors are kept across folders.
 
-If a conversation disappears during cleanup, look for its unsent text and attachments in the project’s new-conversation composer. Use **Switch draft** to open a saved draft without replacing the current one.
+If a conversation disappears during cleanup, look for its unsent text and attachments in the project’s new-conversation composer. Use **Switch draft** to open a saved draft without replacing the current one. This also works when you reopen the project.
 
 Deletion removes conversations, not Git commits or a rollback of filesystem/external effects. If cleanup only partly succeeds, already deleted sessions stay deleted. Review the remaining list and errors before retrying. See [Conversations](conversations.md) for forks/undo and [Projects](projects.md) for deleting temporary folders or worktrees.

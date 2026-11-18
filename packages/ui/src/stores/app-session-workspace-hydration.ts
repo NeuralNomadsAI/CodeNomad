@@ -2,10 +2,10 @@ import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import { getUnavailableRestoredSessionIds, resolveRestoredSessionSelection } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
 import { getRestoredSessionIds } from "./app-session-restored-session-ids"
-import { hydrateWorkspacePromptState } from "./app-session-prompt-hydration"
+import { hydrateWorkspacePromptState, recoverDeletedWorkspacePrompts } from "./app-session-prompt-hydration"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus, type MessageScrollSnapshotSeed } from "./message-v2/bus"
 import { getSessionAncestorIdsFromMap } from "./session-tree"
-import { seedRestoredSessionSelection } from "./session-state"
+import { getAuthoritativelyDeletedSessionIdsForInstance, seedRestoredSessionSelection } from "./session-state"
 import { seedSessionOutlineIndexes } from "./session-outline"
 import { seedSessionCatalog } from "./session-catalog-hydration"
 import { hydrateSeenInterruptions } from "./session-interruption-seen"
@@ -34,6 +34,7 @@ export function seedRestoredWorkspaceState(
   hydrateSeenInterruptions(instanceId, snapshot.seenInterruptions)
   if (snapshot.expandedSessionIds !== undefined) hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds)
   hydrateWorkspacePromptState(instanceId, snapshot, new Set(getSessions(instanceId).map(session => session.id)), NO_SESSION_DRAFT_SESSION_ID)
+  recoverDeletedWorkspacePrompts(instanceId, snapshot)
   seedRestoredSessionSelection(instanceId, snapshot.activeParentSessionId ?? null, snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null)
 }
 
@@ -73,9 +74,10 @@ export async function hydrateRestoredWorkspaceState(
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
   if (absent.size) {
-    hydrateWorkspacePromptState(instanceId, snapshot, absent, NO_SESSION_DRAFT_SESSION_ID)
+    recoverDeletedWorkspacePrompts(instanceId, snapshot, absent)
     for (const id of absent) removeSessionRuntimeState(instanceId, id, true, true)
   }
+  recoverDeletedWorkspacePrompts(instanceId, snapshot)
   sessions = getSessions(instanceId)
   const validIds = new Set(sessions.map(({ id }) => id))
   selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
@@ -85,7 +87,8 @@ export async function hydrateRestoredWorkspaceState(
     scrollSessionIds: Object.keys(snapshot.scrollSnapshots), idleMarkerSessionIds: Object.keys(snapshot.unseenIdleSince),
     generationRecoverySessionIds: [...Object.keys(snapshot.generationRecovery), ...Object.keys(snapshot.seenInterruptions ?? {})],
     expandedSessionIds: snapshot.expandedSessionIds ?? [],
-  }, [...absent, ...Object.keys(snapshot.drafts).filter(isLocalDraftId), ...Object.keys(snapshot.attachments).filter(isLocalDraftId)])
+  }, [...getAuthoritativelyDeletedSessionIdsForInstance(instanceId),
+    ...Object.keys(snapshot.drafts).filter(isLocalDraftId), ...Object.keys(snapshot.attachments).filter(isLocalDraftId)])
   hydrateWorkspacePromptState(instanceId, snapshot, validIds, NO_SESSION_DRAFT_SESSION_ID)
   hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)

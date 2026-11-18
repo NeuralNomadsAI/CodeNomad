@@ -71,7 +71,9 @@ export function setDraftAttachments(instanceId: string, sessionId: string, value
 }
 
 function deleteSessionAttachments(instanceId: string, sessionId: string) {
-  setSession(instanceId, sessionId)
+  const key = getSessionKey(instanceId, sessionId)
+  const state = attachments().get(key)
+  if (state?.values.length) setSession(instanceId, sessionId, state.authoritative ? { ...state, values: [] } : undefined)
 }
 
 function hydrateSessionAttachments(instanceId: string, sessionId: string, values: Attachment[]) {

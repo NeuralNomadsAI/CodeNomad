@@ -1,19 +1,24 @@
 import assert from "node:assert/strict"
-import { afterEach, describe, it } from "node:test"
+import { after, afterEach, before, describe, it } from "node:test"
+import toast from "solid-toast"
 
 import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverEvents } from "../lib/server-events.ts"
-import { createTextAttachment } from "../types/attachment.ts"
+import { createFileAttachment, createTextAttachment } from "../types/attachment.ts"
 import { addAttachment, clearAttachments, getAttachments } from "./attachments.ts"
 import { hydrateWorkspacePromptState } from "./app-session-prompt-hydration.ts"
 import { clearClosedWorkspaceDrafts, MAX_CLOSED_WORKSPACE_DRAFTS } from "./closed-workspace-drafts.ts"
 import { addInstance, instances, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { clearSessionDraftPrompt, getSessionDraftPrompt, setSessionDraftPrompt, setSessions } from "./session-state.ts"
+import { recoveredDraftIds, switchRecoveredDraft } from "./session-draft-recovery.ts"
 
 const NO_SESSION = "__no_session_draft__"
 const opened: string[] = []
+const originalToast = toast.custom
+before(() => { toast.custom = () => "recovered" })
+after(() => { toast.custom = originalToast })
 
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (error: unknown) => void
@@ -64,6 +69,43 @@ afterEach(() => {
 })
 
 describe("closed project drafts", () => {
+  it("keeps an unresolved closed draft and recovers it exactly once across subsequent opens", async () => {
+    const folder = "/closed-recovery"
+    open("recovery-origin", folder)
+    setSessionDraftPrompt("recovery-origin", NO_SESSION, "do not replace")
+    setSessionDraftPrompt("recovery-origin", "gone", "draft of removed session")
+    addAttachment("recovery-origin", "gone", createFileAttachment("proof.bin", "proof.bin", "application/octet-stream", new Uint8Array([0, 255])))
+    close("recovery-origin")
+
+    open("recovery-offline", folder, [], async () => { throw new Error("unavailable") })
+    await settle()
+    assert.deepEqual(recoveredDraftIds("recovery-offline"), [])
+    close("recovery-offline")
+    open("recovery-confirmed", folder, [], async sessionID => { throw { _tag: "SessionNotFoundError", sessionID } })
+    await settle()
+    assert.equal(getSessionDraftPrompt("recovery-confirmed", NO_SESSION), "do not replace")
+    assert.equal(recoveredDraftIds("recovery-confirmed").length, 1)
+    close("recovery-confirmed")
+
+    open("recovery-reopened", folder, [], async () => assert.fail("local draft slots must not use native reads"))
+    await settle()
+    const slots = recoveredDraftIds("recovery-reopened")
+    assert.equal(slots.length, 1)
+    switchRecoveredDraft("recovery-reopened", slots[0])
+    assert.equal(getSessionDraftPrompt("recovery-reopened", NO_SESSION), "draft of removed session")
+    const [file] = getAttachments("recovery-reopened", NO_SESSION)
+    assert.deepEqual(file.source.type === "file" && Array.from(file.source.data ?? []), [0, 255])
+    clearSessionDraftPrompt("recovery-reopened", NO_SESSION)
+    clearAttachments("recovery-reopened", NO_SESSION)
+    close("recovery-reopened")
+    open("recovery-after-clear", folder, [], async () => assert.fail("the original must not be replayed"))
+    await settle()
+    assert.equal(getSessionDraftPrompt("recovery-after-clear", NO_SESSION), "")
+    const [draft] = recoveredDraftIds("recovery-after-clear")
+    switchRecoveredDraft("recovery-after-clear", draft)
+    assert.equal(getSessionDraftPrompt("recovery-after-clear", NO_SESSION), "do not replace")
+    assert.deepEqual(recoveredDraftIds("recovery-after-clear"), [])
+  })
   it("restores drafts and attachments of existing sessions and the new-conversation draft", async () => {
     open("first", "D:\\Work\\App\\", ["kept", "deleted"])
     setSessionDraftPrompt("first", NO_SESSION, "new conversation [pasted #1]")

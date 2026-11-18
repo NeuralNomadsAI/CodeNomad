@@ -14,6 +14,7 @@ import {
   markPreservedWorkspaceReopened, markPreservedWorkspaceUnavailable,
   getPreservedWorkspaceReopenTarget, getPreservedWorkspaceState,
   hasRestoredTabBinding, mergeRestorableSessionState, recordRestoredTab,
+  retirePreservedWorkspacePrompts,
   settleRestoredTab as settlePreservedTab, type RestorableSessionPreservation,
   type RestorableWorkspaceRuntimeAuthority,
 } from "../../stores/app-session-snapshot-merge"
@@ -33,7 +34,7 @@ import { serializeDraftAttachments } from "../../stores/client-state-attachments
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
 import { captureSeenInterruptions, seenInterruptionsRevision } from "../../stores/session-interruption-seen"
-import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
+import { hydrateWorkspacePromptState, recoverDeletedWorkspacePrompts } from "../../stores/app-session-prompt-hydration"
 import { captureSessionOutlineIndexes, outlineCacheRevision } from "../../stores/session-outline"
 import { captureSessionCatalog } from "../../stores/session-catalog-persistence"
 import { captureTabViewState } from "../../stores/tab-view-state"
@@ -163,22 +164,26 @@ export function useAppSessionCapture() {
   let timer: ReturnType<typeof setTimeout> | null = null
   let preservation: RestorableSessionPreservation | null = null
   let nativeFallbackState: RestorableSessionState | null = null
-  const hydratePreservedPrompts = (instanceId: string) => {
+  const hydratePreservedPrompts = (instanceId: string, recoverOnly = false) => {
     if (!preservation) return
     const instance = instances().get(instanceId)
     if (!instance) return
-    const snapshot = getPreservedWorkspaceState(preservation, {
-      runtimeTabId: getInstanceAppTabId(instanceId), folder: instance.folder, occurrence: 0,
-    })
+    const runtimeTabId = getInstanceAppTabId(instanceId)
+    const snapshot = getPreservedWorkspaceState(preservation, { runtimeTabId, folder: instance.folder, occurrence: 0 })
     if (!snapshot) return
-    hydrateWorkspacePromptState(
+    if (!recoverOnly) hydrateWorkspacePromptState(
       instanceId,
       snapshot,
       new Set(getSessions(instanceId).map(({ id }) => id)),
       NO_SESSION_DRAFT_SESSION_ID,
     )
+    const consumed = recoverDeletedWorkspacePrompts(instanceId, snapshot)
+    if (consumed) retirePreservedWorkspacePrompts(preservation, runtimeTabId, consumed)
   }
   const mergedState = () => {
+    // Flush can run before the hydration effect; move prompt bytes before
+    // merge applies the native deletion tombstones to the saved tab.
+    for (const instanceId of instances().keys()) hydratePreservedPrompts(instanceId, true)
     const captured = captureState(scrollAuthority)
     return mergeRestorableSessionState(captured.state, preservation, {
       currentTabIds: captured.tabIds, currentTabAuthorities: captured.authorities,
@@ -339,6 +344,7 @@ export function useAppSessionCapture() {
     const tabs = appTabs()
     checkpointSessions()
     for (const tab of tabs) if (tab.kind === "instance") {
+      getAuthoritativelyDeletedSessionIdsForInstance(tab.instance.id)
       untrack(() => hydratePreservedPrompts(tab.instance.id))
     }
   })

@@ -478,6 +478,11 @@ function clearSessionDraftPrompt(instanceId: string, sessionId: string) {
   })
 }
 
+/** A passive eviction clears the live value, not an unhydrated saved draft. */
+export function evictSessionDraftPrompt(instanceId: string, sessionId: string) {
+  if (getSessionDraftPrompt(instanceId, sessionId)) writeSessionDraftPrompt(instanceId, sessionId, "")
+}
+
 function clearInstanceDraftPromptValues(instanceId: string) {
   if (!instanceId) return
   setSessionDraftPrompts((prev) => {

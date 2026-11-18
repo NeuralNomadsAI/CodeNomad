@@ -280,22 +280,27 @@ test("favorites persist, keep requests first and synchronize over the real route
     await page.getByRole("button", { name: "Supprimer", exact: true }).click()
     await row(page, "briefing").waitFor({ state: "detached" })
     assert.deepEqual((await app.inject({ url: owner })).json().records, { ses_conseil: [], ses_dossier_01: [] })
-    for (const direct of [true, false]) {
+    for (const mode of ["direct", "point-read", "early-deletion", "closed-tab"] as const) {
       const draftPage = await browser.newPage({ viewport: { width: 1280, height: 800 } })
       try {
         await setup(draftPage)
-        await draftPage.evaluate(async direct => {
+        await draftPage.evaluate(async mode => {
           const f = (window as any).favoriteFixture
-          f.prepareDrafts(direct)
+          f.prepareDrafts(mode === "direct")
+          if (mode === "early-deletion") f.restoreWithEarlyDeletion()
+          if (mode === "closed-tab") {
+            f.clearFixtureDraft()
+            await f.simulateTabReopen()
+          }
           await f.saveDrafts()
-        }, direct)
+        }, mode)
         await draftPage.reload()
         await draftPage.waitForFunction(() => Boolean((window as any).favoriteFixture))
         const composer = draftPage.locator("[data-recovered-composer]")
         const picker = composer.getByRole("combobox", { name: "Changer de brouillon", exact: true })
         const textarea = composer.locator("textarea")
         assert.equal(await textarea.inputValue(), "a".repeat(32000))
-        assert.equal(await picker.locator("option").count(), 2)
+        assert.equal(await picker.locator("option").count(), 2, mode)
         await composer.getByText("@main.txt", { exact: true }).waitFor()
         assert.deepEqual(await draftPage.evaluate(() => (window as any).favoriteFixture.recoveredBytes()), [[1]])
         const saved = await picker.locator("option").nth(1).getAttribute("value")
@@ -309,6 +314,24 @@ test("favorites persist, keep requests first and synchronize over the real route
         assert.equal(await textarea.inputValue(), "b".repeat(2000))
         await picker.selectOption(saved)
         assert.equal(await textarea.inputValue(), "a".repeat(32000))
+        if (mode === "early-deletion" || mode === "closed-tab") {
+          await draftPage.evaluate(() => (window as any).favoriteFixture.saveDrafts())
+          await draftPage.reload()
+          await draftPage.waitForFunction(() => Boolean((window as any).favoriteFixture))
+          assert.equal(await textarea.inputValue(), "a".repeat(32000))
+          assert.equal(await picker.locator("option").count(), 2)
+          await picker.selectOption(saved)
+          assert.equal(await textarea.inputValue(), "b".repeat(2000))
+          assert.deepEqual(await draftPage.evaluate(() => (window as any).favoriteFixture.recoveredBytes()), [[2, 3]])
+          await draftPage.evaluate(async () => {
+            const f = (window as any).favoriteFixture
+            f.clearRecoveredComposer()
+            await f.readSaved()
+          })
+          await picker.selectOption(saved)
+          assert.equal(await textarea.inputValue(), "a".repeat(32000))
+          assert.equal(await picker.count(), 0)
+        }
       } finally { await draftPage.close() }
     }
     await writeFile(cfg.stateYamlPath, "sessionFavorites: [")

@@ -22,6 +22,7 @@ import {
   clearActiveParentSession,
   setActiveSession,
   clearSessionDraftPrompt,
+  evictSessionDraftPrompt,
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
   getAuthoritativelyDeletedSessionIdsForInstance,
@@ -64,7 +65,7 @@ import {
   sessionInfoByInstance,
 } from "./session-state"
 import { settleAbandonedSessionListRestoration } from "./session-list-restoration"
-import { deleteSessionAttachments } from "./attachments"
+import { clearAttachments, deleteSessionAttachments } from "./attachments"
 import { recoverRemovedSessionDraft } from "./session-draft-recovery"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
@@ -1356,12 +1357,18 @@ async function removeSession(instanceId: string, sessionId: string, cleanup: boo
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true, preserveUnrequestedDraft = false): void {
   const requested = deleteSessionAuthorities.get(messagePageKey(instanceId, sessionId))
-  if (requested?.cleanup || (preserveUnrequestedDraft && !requested)) recoverRemovedSessionDraft(instanceId, sessionId)
+  const preserve = requested?.cleanup || (preserveUnrequestedDraft && !requested)
+  if (preserve) recoverRemovedSessionDraft(instanceId, sessionId)
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   clearSessionSeenInterruption(instanceId, sessionId)
   if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
-  deleteSessionAttachments(instanceId, sessionId)
-  clearSessionDraftPrompt(instanceId, sessionId)
+  if (preserve) {
+    deleteSessionAttachments(instanceId, sessionId)
+    evictSessionDraftPrompt(instanceId, sessionId)
+  } else {
+    clearAttachments(instanceId, sessionId)
+    clearSessionDraftPrompt(instanceId, sessionId)
+  }
   setSessionExpanded(instanceId, sessionId, false)
 
   setSessions((prev) => {

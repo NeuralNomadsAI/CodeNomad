@@ -3,11 +3,11 @@ import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import { normalizeRestorableAttachmentRecord } from "./client-state-attachments-codec"
 import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsForInstance } from "./attachments"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
-import { hydrateWorkspacePromptState } from "./app-session-prompt-hydration"
+import { hydrateWorkspacePromptState, recoverDeletedWorkspacePrompts } from "./app-session-prompt-hydration"
 import { getRestoredSessionIds } from "./app-session-restored-session-ids"
 import { NO_SESSION_DRAFT_SESSION_ID } from "./app-session-workspace-hydration"
 import { hydrateRestoredSessionChain } from "./session-api"
-import { getAuthoritativeDraftSessionIdsForInstance, getSessionDraftPromptsForInstance, getSessions } from "./session-state"
+import { getAuthoritativeDraftSessionIdsForInstance, getSessionDraftPromptsForInstance, getSessions, isSessionInWorkspaceScope } from "./session-state"
 
 /**
  * Unsent drafts and attachments of project tabs removed from this window,
@@ -113,16 +113,14 @@ export function retainClosedWorkspaceDrafts(
 
 /**
  * Called once when an instance is added. Hydrates through the restore rules
- * (only existing sessions, fetched like restored ones, never over what the
- * user changed) and only into sessions the instance still shows nothing for,
- * so state another restore path hydrated stays. The new-conversation draft
- * applies immediately.
+ * without replacing live prompts. Proven deletions transfer their saved
+ * prompts; unavailable sessions keep their claim for the next opening.
  */
 export function restoreClosedWorkspaceDrafts(
   instanceId: string,
   folder: string,
   sessionsReady: () => Promise<void>,
-): void {
+): Promise<void> | undefined {
   const key = closedWorkspaceDraftKey(folder)
   const entry = vault.get(key)
   if (!entry) return
@@ -134,23 +132,27 @@ export function restoreClosedWorkspaceDrafts(
   const hydrate = () => hydrateWorkspacePromptState(
     instanceId,
     emptySessionsOf(instanceId, claim.entry),
-    new Set(getSessions(instanceId).map(({ id }) => id)),
+    new Set(getSessions(instanceId).filter(session => !session.catalogSnapshot && isSessionInWorkspaceScope(instanceId, session.id)).map(({ id }) => id)),
     NO_SESSION_DRAFT_SESSION_ID,
   )
   hydrate()
-  void (async () => {
+  return (async () => {
     await sessionsReady()
     if (!isCurrent()) return
-    await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
+    const absent = await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
       Object.keys(claim.entry.drafts), Object.keys(claim.entry.attachments),
-    ]), undefined, isCurrent)
+    ]), undefined, isCurrent, true)
     if (!isCurrent()) return
     hydrate()
+    recoverDeletedWorkspacePrompts(instanceId, emptySessionsOf(instanceId, claim.entry), absent)
+    recoverDeletedWorkspacePrompts(instanceId, emptySessionsOf(instanceId, claim.entry))
     claims.delete(instanceId)
+    requeue(key, emptySessionsOf(instanceId, claim.entry))
   })().catch((error) => {
     if (!isCurrent()) return
     log.warn("Failed to restore drafts of a closed project", { instanceId, error })
     hydrate()
+    recoverDeletedWorkspacePrompts(instanceId, emptySessionsOf(instanceId, claim.entry))
     claims.delete(instanceId)
     requeue(key, emptySessionsOf(instanceId, claim.entry))
   })
