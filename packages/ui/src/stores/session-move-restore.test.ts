@@ -223,6 +223,15 @@ it("never lists a session located outside the tab, even when its project invento
     assert.deepEqual(listedIds(id), ["worktree-child", "worktree-parent"], "a parent in a registered worktree stays listed")
     await fetchSessions(id, { reset: true })
     assert.deepEqual(listedIds(id), ["worktree-child", "worktree-parent"])
+    const search = sessionState.beginSessionSearch(id, "restored")
+    sessionState.setSessionSearchResults(id, "restored", ["restored"], search)
+    assert.deepEqual(sessionState.getSessionSearchSessions(id), [], "search cannot surface a moved-away row either")
+    assert.equal(getSessionListError(id), undefined)
+    // A cold catalogue sees the same shared-project inventory without the event.
+    sessionState.clearInstanceMovedAwaySessions(id)
+    setSessions(previous => { const next = new Map(previous); next.delete(id); return next })
+    await fetchSessions(id, { reset: true })
+    assert.deepEqual(listedIds(id), ["worktree-child", "worktree-parent"])
     assert.equal(getSessionListError(id), undefined)
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = original; source.cleanup() }
 })
@@ -265,13 +274,27 @@ it("renders no row through an ancestor located elsewhere, like a child whose par
   const id = source.session.instanceId
   const original = serverApi.fetchWorktrees
   serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
-  const row = (sessionId: string, directory: string, parentId: string) => ({ ...source.session, id: sessionId, title: sessionId, parentId, location: { directory } })
+  setInstanceMetadata(id, { project: { id: "middle-project", canonical: "/repo" } as any })
+  const row = (sessionId: string, directory: string, parentID?: string) => ({ ...source.session, id: sessionId, title: sessionId,
+    parentId: parentID ?? null, parentID, location: { directory } })
+  let middleDirectory = "/repo"
+  source.client.session.list = async (input: any) => {
+    const native = [row("restored", "/repo"), row("middle", middleDirectory, "restored"), row("grandchild", "/repo", "middle"),
+      row("local-child", "/repo", "restored")]
+    return { data: input.project ? native : native.filter(session => session.location.directory === input.directory && !session.parentID) }
+  }
   try {
     await ensureWorktreesLoaded(id)
-    setSessions((previous) => new Map(previous).set(id, new Map([...previous.get(id)!,
-      ["middle", row("middle", "/elsewhere", "restored")], ["grandchild", row("grandchild", "/repo", "middle")],
-      ["local-child", row("local-child", "/repo", "restored")]] as any)))
+    await fetchSessions(id, { reset: true })
+    assert.deepEqual(listedIds(id), ["grandchild", "local-child", "middle", "restored"])
+    middleDirectory = "/elsewhere"
+    handleNativeSessionEvent(id, moved("middle-away", "middle", middleDirectory))
+    await delay(250)
+    // The refresh brings the middle back as a family member; it stays located elsewhere.
+    assert.equal(sessions().get(id)?.has("middle"), true)
     assert.deepEqual(listedIds(id), ["local-child", "restored"])
+    sessionState.setSessionStatus(id, "grandchild", "working")
+    assert.equal(sessionState.getInstanceSessionIndicatorStatusCached(id), "idle", "an unlisted grandchild's work does not light the tab")
   } finally { serverApi.fetchWorktrees = original; source.cleanup() }
 })
 

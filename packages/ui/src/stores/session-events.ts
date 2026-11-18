@@ -52,6 +52,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
 import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
+import { isWorkspaceServedDirectory } from "./workspace-served-directory"
 import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
@@ -275,6 +276,12 @@ function ownsSessionDirectory(instanceId: string, directory: string): boolean {
   return Boolean(instance) && isWorkspaceSessionDirectory(directory, instance!.folder, getWorktrees(instanceId))
 }
 
+/** Whether the workspace proxy serves a session there; otherwise it is located elsewhere. */
+function servesSessionDirectory(instanceId: string, directory: string): boolean {
+  const instance = instances().get(instanceId)
+  return Boolean(instance) && isWorkspaceServedDirectory(directory, instance!.folder, getWorktrees(instanceId))
+}
+
 function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {
   const { sessionID: sessionId, location } = data
   const targetInstanceIds = Array.from(instances().keys()).filter((instanceId) => ownsSessionDirectory(instanceId, location.directory))
@@ -320,14 +327,15 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
   }
 }
 
-/** A session moved to a directory this instance does not own leaves its list
- * and selection; its draft and attachments stay for its return. Only a fresh
- * inventory decides, and only for the latest move of that session. */
+/** A session moved to a directory the workspace proxy does not serve is
+ * located elsewhere: it is recorded as such, so no path lists it here, and it
+ * leaves the list and selection; its draft and attachments stay for its return.
+ * Only a fresh inventory decides, and only for the latest move of that session. */
 async function settleSessionMove(instanceId: string, sessionId: string, move: SessionMove): Promise<void> {
   const key = `${instanceId}\0${sessionId}`
   const latest = () => latestSessionMoves.get(key) === move.generation
   if (!latest()) return
-  if (!ownsSessionDirectory(instanceId, move.directory)) {
+  if (!servesSessionDirectory(instanceId, move.directory)) {
     try {
       await reloadWorktrees(instanceId, true)
     } catch (error) {
@@ -338,16 +346,18 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
   }
   if (!latest()) return
   latestSessionMoves.delete(key)
-  if (ownsSessionDirectory(instanceId, move.directory) || !sessions().get(instanceId)?.has(sessionId)) return
+  if (!instances().has(instanceId) || servesSessionDirectory(instanceId, move.directory)
+    || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
+  markSessionMovedAway(instanceId, sessionId, move.directory)
+  if (!sessions().get(instanceId)?.has(sessionId)) return
   nativeLifecycleGenerations.delete(key)
   dismissRetryToast(instanceId, sessionId)
   removeSessionProjection(instanceId, sessionId)
-  markSessionMovedAway(instanceId, sessionId, move.directory)
 }
 
-/** A later inventory that owns a moved-away session's destination lists it again. */
+/** A later inventory that serves a moved-away session's destination lists it again. */
 function relistReturnedSessions(instanceId: string): void {
-  const returned = [...getMovedAwaySessions(instanceId)].filter(([, directory]) => ownsSessionDirectory(instanceId, directory)).map(([id]) => id)
+  const returned = [...getMovedAwaySessions(instanceId)].filter(([, directory]) => directory !== null && servesSessionDirectory(instanceId, directory)).map(([id]) => id)
   if (!returned.length) return
   for (const id of returned) forgetSessionMovedAway(instanceId, id)
   void fetchSessions(instanceId, { reset: true }).catch((error) => {

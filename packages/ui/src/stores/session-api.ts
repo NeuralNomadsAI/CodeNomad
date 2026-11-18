@@ -8,6 +8,8 @@ import type { Instance } from "../types/instance"
 import { forkAfterMessage } from "./session-fork"
 import { historyWindowCursor, historyWindowTarget, readHistoryWindow, MissingHistoryAnchorError } from "./history-window"
 import { captureWorktreeMoveReconciliation, ensureWorktreesLoaded, getDirectoryOnlyWorktree, getGitRepoStatus, getWorktrees } from "./worktrees"
+import { isWorkspaceServedDirectory } from "./workspace-served-directory"
+import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
 import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import { isSessionNotFoundError, type LocationRef, type SessionInfo as SDKSession, type SessionMessagesResponse } from "@opencode/client"
 
@@ -24,7 +26,9 @@ import {
   clearSessionDraftPrompt,
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
+  markSessionMovedAway,
   forgetSessionMovedAway,
+  getMovedAwaySessions,
   getAuthoritativelyDeletedSessionIdsForInstance,
   messagesLoaded,
   getSessionMessagesLoadError,
@@ -362,6 +366,19 @@ async function fetchCompleteSessionInventory(
   signal?.throwIfAborted()
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
   if (!directoryOnly && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
+  const projectFamilies = (rows: SDKSession[]) => {
+    const worktrees = getWorktrees(instanceId)
+    const candidates = selectWorkspaceSessionFamilies(rows, directory ?? "", worktrees)
+    // A cold catalogue can return the same foreign parent as a live move:
+    // native project IDs span clones. Confirm placement before publishing it.
+    for (const session of candidates) {
+      if (!getMovedAwaySessions(instanceId).has(session.id)
+        && !isWorkspaceServedDirectory(session.location.directory, directory ?? "", worktrees)) {
+        markSessionMovedAway(instanceId, session.id, session.location.directory)
+      }
+    }
+    return candidates
+  }
   const scopes: V2SessionListOptions[] = [directoryOnly
     ? { directory: directoryOnly.serviceDirectory ?? directoryOnly.directory, order: "desc" }
     : { project, order: "desc" }]
@@ -379,7 +396,7 @@ async function fetchCompleteSessionInventory(
       if (!getDirectoryOnlyWorktree(instanceId) && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
       // This is additive only. Absence/deletion is authoritative only after the
       // complete inventory; partial families still require verified membership.
-      publishFirstPage(selectWorkspaceSessionFamilies(response.data, directory ?? "", getWorktrees(instanceId)))
+      publishFirstPage(projectFamilies(response.data))
     }
     while (true) {
       if (!isCurrent()) return []
@@ -395,7 +412,7 @@ async function fetchCompleteSessionInventory(
   if (!isCurrent()) return []
   signal?.throwIfAborted()
   if (!getDirectoryOnlyWorktree(instanceId) && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
-  return selectWorkspaceSessionFamilies(Array.from(inventory.values()), directory ?? "", getWorktrees(instanceId))
+  return projectFamilies(Array.from(inventory.values()))
 }
 
 function getDisconnectedCapturedSessionIds(
@@ -570,6 +587,10 @@ async function hydrateRestoredSessionChainAttempt(
           if (signal?.aborted) throw error
           if (!isRequestCurrent()) return null
           if (!isSessionNotFoundError(error)) throw error
+          if ("reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON
+            && sessions().get(instanceId)?.get(sessionId) === captured && !getMovedAwaySessions(instanceId).has(sessionId)) {
+            markSessionMovedAway(instanceId, sessionId, null)
+          }
           log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
           return null
         }
@@ -613,6 +634,7 @@ async function fetchSessions(instanceId: string, options?: {
   }
 
   const requestId = beginSessionListRequest(instanceId)
+  const capturedAway = getMovedAwaySessions(instanceId)
   const worktreeMoveProject = getInstanceMetadata(instanceId)?.project?.id
   const reconcileWorktreeMoves = captureWorktreeMoveReconciliation(instanceId)
   const client = instance.client
@@ -744,8 +766,15 @@ async function fetchSessions(instanceId: string, options?: {
       next.set(instanceId, instanceSessions)
       return next
     })
-    // Listed here, so no longer moved away.
-    for (const session of apiSessions) forgetSessionMovedAway(instanceId, session.id)
+    // A session read at a directory this workspace serves is no longer located elsewhere.
+    const currentAway = getMovedAwaySessions(instanceId)
+    const worktrees = getWorktrees(instanceId)
+    for (const session of apiSessions) {
+      if (currentAway.has(session.id) && capturedAway.get(session.id) === currentAway.get(session.id)
+        && isWorkspaceServedDirectory(session.location.directory, instance.folder, worktrees)) {
+        forgetSessionMovedAway(instanceId, session.id)
+      }
+    }
     await ensureV2ParentChainsLoaded(instanceId, apiSessions, options?.signal, isCurrent)
     if (!isCurrent()) {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")

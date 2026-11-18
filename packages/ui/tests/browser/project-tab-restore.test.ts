@@ -136,15 +136,13 @@ test(`${host} restores the active project and saved session identity before hydr
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } })
       const query = new URL(request.url()).searchParams
       if (query.has("cursor")) cursors.push(query.get("cursor")!)
-      // The linked checkout lies outside the folder: only its registration owns it.
-      const linked = `${directory}-linked`
       body = path.endsWith("/worktrees") ? { isGitRepo: true, worktrees: [
         { slug: "root", directory, serviceDirectory: directory, kind: "root" },
-        ...(includeLinked || id !== "second" ? [{ slug: "linked", directory: linked, serviceDirectory: linked, kind: "worktree" }] : []),
+        ...(includeLinked || id !== "second" ? [{ slug: "linked", directory: `${directory}/linked`, serviceDirectory: `${directory}/linked`, kind: "worktree" }] : []),
       ] } : path.endsWith("/location") ? { directory, project: { id } }
-        : query.has("project") ? { data: [session("saved-session", directory), session("linked-session", linked),
+        : query.has("project") ? { data: [session("saved-session", directory), session("linked-session", `${directory}/linked`),
             session("foreign-session", "D:/unowned")], cursor: { next: `${id}-next` } }
-        : query.has("cursor") ? { data: [session("older-session", linked)], cursor: {} }
+        : query.has("cursor") ? { data: [session("older-session", `${directory}/linked`)], cursor: {} }
         : { data: [session("saved-session", directory)], cursor: {} }
     } else if (foreground && (path.endsWith("/creation/release") || path.endsWith("/worktrees")
       || path.endsWith("/git-status") || path.endsWith("/vcs/status")

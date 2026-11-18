@@ -73,9 +73,15 @@ test("a parent's chevron counts only the subsessions the list shows", async () =
   try {
     await row(page, "a", "staying").waitFor()
     assert.equal(await page.evaluate(() => (window as any).fixture.childActivity("staying")), null)
-    await page.evaluate(() => (window as any).fixture.holdForeignChild())
+    await page.evaluate(() => (window as any).fixture.holdChild("/projects/a"))
+    await page.waitForFunction(() => (window as any).fixture.childActivity("staying") === "working")
+    assert.equal(await page.evaluate(() => (window as any).fixture.indicator("a")), "working")
+    await page.evaluate(() => (window as any).fixture.move("busy-child", "/projects/elsewhere"))
+    await page.waitForFunction(() => (window as any).fixture.indicator("a") === "idle")
+    // A late live event brings it back into the store, still located elsewhere.
+    await page.evaluate(() => (window as any).fixture.holdChild("/projects/elsewhere"))
     await page.waitForTimeout(200)
-    assert.equal(await row(page, "a", "busy-elsewhere").count(), 0)
+    assert.equal(await row(page, "a", "busy-child").count(), 0)
     assert.equal(await page.evaluate(() => (window as any).fixture.indicator("a")), "idle")
     assert.equal(await page.evaluate(() => (window as any).fixture.childActivity("staying")), null,
       "a working child located elsewhere does not light its parent's chevron")

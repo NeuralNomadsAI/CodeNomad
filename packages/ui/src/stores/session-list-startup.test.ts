@@ -9,6 +9,7 @@ import { setInstanceMetadata } from "./instance-metadata"
 import { fetchSessions, hydrateRestoredSessionChain, refreshSessionRuntimeStatus } from "./session-api"
 import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data"
 import { beginSessionGenerationAdmission, getSessionListIds, getSessionListError, loading, sessions, setSessions, setSessionStatus } from "./session-state"
+import { getMovedAwaySessionIds } from "./session-state"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -293,6 +294,7 @@ it("treats a parent the workspace refuses as located elsewhere like a missing pa
       assert.deepEqual(getSessionListIds(id), ["root"])
     }
     assert.equal(reads.length, 2)
+    assert.deepEqual(getMovedAwaySessionIds(id), ["moved"], "the typed refusal keeps a reintroduced parent out of scope")
     refusal = { error: "Session does not belong to workspace" }
     await assert.rejects(fetchSessions(id, { reset: true, strictStatus: true }))
     assert.ok(getSessionListError(id), "an untyped refusal stays an error")

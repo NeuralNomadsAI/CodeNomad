@@ -68,7 +68,7 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
         const body = await response.clone().json().catch(() => undefined)
         // A parent located in another project is absent from this one.
         if (body?.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
-          return Response.json({ _tag: "SessionNotFoundError", sessionID: parentSessionId, message: "Session not found" }, { status: 404 })
+          return Response.json({ _tag: "SessionNotFoundError", sessionID: parentSessionId, message: "Session not found", reason: body.reason }, { status: 404 })
         }
       }
       if (response.status === 426) {

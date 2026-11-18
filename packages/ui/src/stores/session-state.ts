@@ -211,25 +211,31 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
-// A workspace can hold sessions its proxy does not serve (a session that left,
-// a family member located elsewhere). Its list, indicators and notices show the
-// inventory's scope: the sessions the workspace proxy serves. Without a read
+// A workspace also holds sessions of nested checkouts of other repositories it
+// owns (an opened parent folder receives their live events). Its list,
+// indicators and notices show the inventory's scope: complete families with a
+// member in the opened folder or a registered worktree. Without a read
 // inventory, and for Git-unavailable folders (which project their own
 // directory), every held session is in scope. The active session's family is
 // always in scope: a session opened explicitly is shown where it was opened.
-const workspaceScopes = new Map<string, { sessions: unknown; worktrees: unknown; active?: string; scope: ReadonlySet<string> }>()
+// A session a move located elsewhere (`markSessionMovedAway`) is never in scope.
+const workspaceScopes = new Map<string, { sessions: unknown; worktrees: unknown; active?: string; away: unknown; scope: ReadonlySet<string> }>()
 
 function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | null {
   const all = sessions()
   const worktrees = worktreesByInstance().get(instanceId)
-  if (!worktrees || getGitRepoStatus(instanceId) === null || getDirectoryOnlyWorktree(instanceId)) return null
+  const away = getMovedAwaySessions(instanceId)
+  const unscoped = !worktrees || getGitRepoStatus(instanceId) === null || Boolean(getDirectoryOnlyWorktree(instanceId))
+  if (unscoped && !away.size) return null
   const active = activeSessionId().get(instanceId)
   const cached = workspaceScopes.get(instanceId)
-  if (cached && cached.sessions === all && cached.worktrees === worktrees && cached.active === active) return cached.scope
-  const scope = selectWorkspaceFamilyIds([...(all.get(instanceId)?.values() ?? [])].map((session) => ({
-    id: session.id, parentId: session.parentId, directory: session.location?.directory })),
-  instances().get(instanceId)?.folder ?? "", worktrees, active ? [active] : [])
-  workspaceScopes.set(instanceId, { sessions: all, worktrees, active, scope })
+  if (cached && cached.sessions === all && cached.worktrees === worktrees && cached.active === active && cached.away === away) return cached.scope
+  const scope = unscoped ? new Set(all.get(instanceId)?.keys() ?? [])
+    : selectWorkspaceFamilyIds([...(all.get(instanceId)?.values() ?? [])].map((session) => ({
+      id: session.id, parentId: session.parentId, directory: session.location?.directory })),
+    instances().get(instanceId)?.folder ?? "", worktrees!, active ? [active] : [])
+  for (const id of away.keys()) scope.delete(id)
+  workspaceScopes.set(instanceId, { sessions: all, worktrees, active, away, scope })
   return scope
 }
 
@@ -240,16 +246,21 @@ function isSessionInWorkspaceScope(instanceId: string, sessionId: string): boole
 const NO_SESSIONS: ReadonlyMap<string, Session> = new Map()
 const listedSessionMaps = new Map<string, { held: unknown; scope: unknown; listed: ReadonlyMap<string, Session> }>()
 
-/** The held sessions the list can show: its rows, its parents' subsession
- * activity and the tab indicator all derive from this one map, so a session
- * outside the scope never renders, connects rows or contributes activity. */
+/** The held sessions the list shows: in scope and connected to a listed root.
+ * Its rows, its parents' subsession activity and the tab indicator all derive
+ * from this one map, so a session outside it never renders, connects rows or
+ * contributes activity; a row under an ancestor outside the scope is left out
+ * as a child whose parent is missing is. */
 function getListedSessionMap(instanceId: string): ReadonlyMap<string, Session> {
   const held = sessions().get(instanceId) ?? NO_SESSIONS
   const scope = getWorkspaceSessionScope(instanceId)
   if (!scope) return held
   const cached = listedSessionMaps.get(instanceId)
   if (cached && cached.held === held && cached.scope === scope) return cached.listed
-  const listed = new Map([...held].filter(([id]) => scope.has(id)))
+  const scoped = new Map([...held].filter(([id]) => scope.has(id)))
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  const listed = new Map([...scoped].filter(([id]) => getSessionRootFromMap(scoped, id, directory) !== null))
   listedSessionMaps.set(instanceId, { held, scope, listed })
   return listed
 }
@@ -464,23 +475,37 @@ function markSessionDeletedAuthoritative(instanceId: string, sessionId: string):
   addAuthoritativeKey(setAuthoritativelyDeletedSessionKeys, getDraftKey(instanceId, sessionId))
 }
 
-/** Per instance, the destination of each session it removed as moved away, so
- * a later inventory owning that destination lists it again. Released when the
- * session is listed or deleted, moves again, or the instance closes. */
-const movedAwaySessions = new Map<string, Map<string, string>>()
+/** Per instance, the destination of each session located elsewhere (null if
+ * the proxy refused a parent read without revealing its directory). It is never
+ * listed there, whatever path brings it; a later inventory serving that
+ * destination lists it again. Released when a refresh lists it at a served
+ * directory, it is deleted or moves again, or the instance closes. */
+const [movedAwaySessions, setMovedAwaySessions] = createSignal<ReadonlyMap<string, ReadonlyMap<string, string | null>>>(new Map())
+const NO_MOVED_AWAY: ReadonlyMap<string, string | null> = new Map()
 
-function markSessionMovedAway(instanceId: string, sessionId: string, directory: string): void {
-  movedAwaySessions.set(instanceId, (movedAwaySessions.get(instanceId) ?? new Map()).set(sessionId, directory))
+function updateMovedAwaySessions(instanceId: string, update: (away: Map<string, string | null>) => void): void {
+  setMovedAwaySessions((previous) => {
+    const away = new Map(previous.get(instanceId) ?? NO_MOVED_AWAY)
+    update(away)
+    const next = new Map(previous)
+    if (away.size) next.set(instanceId, away)
+    else next.delete(instanceId)
+    return next
+  })
+}
+
+function markSessionMovedAway(instanceId: string, sessionId: string, directory: string | null): void {
+  if (movedAwaySessions().get(instanceId)?.get(sessionId) === directory) return
+  updateMovedAwaySessions(instanceId, (away) => { away.set(sessionId, directory) })
 }
 
 function forgetSessionMovedAway(instanceId: string, sessionId: string): void {
-  const away = movedAwaySessions.get(instanceId)
-  if (!away?.delete(sessionId) || away.size) return
-  movedAwaySessions.delete(instanceId)
+  if (!movedAwaySessions().get(instanceId)?.has(sessionId)) return
+  updateMovedAwaySessions(instanceId, (away) => { away.delete(sessionId) })
 }
 
-function getMovedAwaySessions(instanceId: string): ReadonlyMap<string, string> {
-  return movedAwaySessions.get(instanceId) ?? new Map()
+function getMovedAwaySessions(instanceId: string): ReadonlyMap<string, string | null> {
+  return movedAwaySessions().get(instanceId) ?? NO_MOVED_AWAY
 }
 
 function getMovedAwaySessionIds(instanceId: string): string[] {
@@ -488,7 +513,8 @@ function getMovedAwaySessionIds(instanceId: string): string[] {
 }
 
 function clearInstanceMovedAwaySessions(instanceId: string): void {
-  movedAwaySessions.delete(instanceId)
+  if (!movedAwaySessions().has(instanceId)) return
+  setMovedAwaySessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
 }
 
 function clearInstanceDeletedSessionAuthority(instanceId: string): void {
@@ -957,7 +983,9 @@ function getSessionThreads(instanceId: string): SessionThread[] {
 function getSessionSearchSessions(instanceId: string): Session[] {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return []
+  const away = getMovedAwaySessions(instanceId)
   return getSessionSearchResultIds(instanceId).flatMap(id => {
+    if (away.has(id)) return []
     const session = instanceSessions.get(id)
     return session ? [session] : []
   })

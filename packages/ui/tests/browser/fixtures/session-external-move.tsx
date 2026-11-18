@@ -89,14 +89,15 @@ render(() => <ConfigProvider><I18nProvider><div style={{ display: "flex", gap: "
   <Tab tab="a" /><Tab tab="b" />
 </div></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-/** A working child located elsewhere that tab a holds, e.g. from a live event. */
-const holdForeignChild = () => {
-  const id = instanceId("a"), row = make("busy-elsewhere", "/projects/elsewhere", "staying")
+/** Tab A receives a working child of "staying", as from a live event. */
+const holdChild = (directory: string) => {
+  const id = instanceId("a"), row = make("busy-child", directory, "staying")
+  native.set(row.id, row)
   setSessions(previous => new Map(previous).set(id, new Map(previous.get(id)).set(row.id,
     createClientSession(row as any, id, "build", { providerId: "fixture", modelId: "fixture" }))))
   setSessionStatus(id, row.id, "working")
 }
-;(window as any).fixture = { move, holdForeignChild,
+;(window as any).fixture = { move, holdChild,
   childActivity: (sessionId: string) => document.querySelector(`[data-session-id="${sessionId}"] .session-item-expander`)?.getAttribute("data-child-activity") ?? null,
   indicator: (tab: Tab) => getInstanceSessionIndicatorStatusCached(instanceId(tab)),
   selected: (tab: Tab) => activeSessionId().get(instanceId(tab)) ?? null,
