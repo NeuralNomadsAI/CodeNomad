@@ -397,7 +397,9 @@ test("unproven and third-party no-ID local failures retain ordinary native-path 
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => { (window as any).fixture.ordinaryLocalFailure(); (window as any).fixture.show() })
     await page.locator('[data-local-path="/thirdparty/plugin.ts"]').waitFor()
-    assert.equal(await page.locator(".plugin-control-row").count(), 2)
+    // The unidentified declarations naming those paths keep their own rows; a raw path never merges them.
+    assert.equal(await page.locator(".plugin-control-row[data-local-path]").count(), 2)
+    assert.equal(await page.locator(".plugin-control-row[data-source-target]").count(), 2)
     assert.equal(await page.locator(".plugin-system-attention").count(), 0)
     assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').count(), 0)
     for (const path of ["/thirdparty/plugin.ts", "/daemon/plugins/codenomad-design.js"]) {

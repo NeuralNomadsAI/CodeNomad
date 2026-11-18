@@ -112,8 +112,9 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   // Declarations and just-added specs the inventory does not report yet: installing,
   // disabled, or never confirmed. Their rows carry no switch (no plugin ID is known).
   const sourceTargets = createMemo(() => {
-    const loaded = new Set((snapshot()?.runtime ?? []).flatMap(entry => entry.source.type === "package" ? [entry.source.target]
-      : entry.source.type === "local" ? [entry.source.path] : []))
+    // Package targets only: a local declaration is loaded only when the server identifies it (`pluginId`), never
+    // because its raw target names a reported path.
+    const loaded = new Set((snapshot()?.runtime ?? []).flatMap(entry => entry.source.type === "package" ? [entry.source.target] : []))
     const targets = new Set<string>()
     const configured = new Set<string>()
     for (const source of snapshot()?.configured.sources ?? []) {
@@ -262,14 +263,16 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     )
   }
 
-  const removableFor = (target: string) => createMemo(() => removableSources(snapshot(), source => source.target === target), [], {
+  const removableFor = (target: string, applies: () => boolean = () => true) => createMemo(() => applies()
+    ? removableSources(snapshot(), source => source.target === target) : [], [], {
     equals: (left, right) => left.length === right.length && left.every((source, index) => sameSource(source, right[index]!)),
   })
 
   const renderRuntime = (target: string) => {
     const entry = () => runtimesByTarget().get(target)
     const nameId = createUniqueId()
-    const removable = removableFor(target)
+    // A failed local entry never claims a declaration by its raw path; unidentified declarations keep their own rows.
+    const removable = removableFor(target, () => entry()?.source.type === "package")
     const integration = () => recognised().byTarget.get(target)
     const packageVersion = () => { const source = entry()?.source; return source?.type === "package" ? source.version : undefined }
     const details = () => {

@@ -703,8 +703,8 @@ function snapshotBase(context: ReadContext): SnapshotBase {
     // repeated entry cannot displace the inventory record already published.
     if (!runtimeById.has(entry.id)) runtimeById.set(entry.id, entry)
     runtimeIds.add(entry.id)
+    // Package targets only: local declarations are identified by their selected entrypoint (`localIdentities`).
     if (entry.source.type === "package") runtimeSourceIds.set(entry.source.target, entry.id)
-    else if (entry.source.type === "local") runtimeSourceIds.set(entry.source.path, entry.id)
   }
   return { runtime, runtimeIds, runtimeSourceIds, runtimeById, ...configDocuments(context) }
 }
@@ -749,8 +749,7 @@ function evaluateDocuments(
   const knownDefinitions = new Set(startIds)
   // Targets OpenCode reports loading as packages, including failures that exported no ID: such an entry is a source,
   // whatever ID an earlier rule names.
-  const reportedTargets = new Set(runtime.flatMap(entry => entry.source.type === "package" ? [entry.source.target]
-    : entry.source.type === "local" ? [entry.source.path] : []))
+  const reportedTargets = new Set(runtime.flatMap(entry => entry.source.type === "package" ? [entry.source.target] : []))
   const declaredTargets = new Set<string>()
   const rules: PluginConfiguredRule[] = []
   const sources: PluginConfiguredSource[] = []
@@ -1113,10 +1112,11 @@ function runtimeIdForConfiguredTarget(
   runtimeById: ReadonlyMap<string, PluginRuntimeInventoryEntry>,
   direct: ReadonlyMap<string, string>,
 ): string | undefined {
-  const exact = direct.get(target)
-  if (exact) return exact
+  // Classify first, as OpenCode does: a target resolving to an absolute path (file URL, ./ ../, absolute) is a local
+  // declaration and is identified only through a verified descriptor or its selected entrypoint; anything else is a
+  // package, identified by its exact native target. No raw-target shortcut crosses the two.
   const localTarget = configuredLocalTarget(context, document.path, target)
-  if (!localTarget) return undefined
+  if (!localTarget) return direct.get(target)
   const installation = managedDesktopPluginForSource(context.managedPlugins, localTarget, context.paths)
   if (installation) {
     // The daemon may report the shim while configuration names its referenced bundle (or vice versa).

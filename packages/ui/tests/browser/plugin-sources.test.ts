@@ -168,6 +168,26 @@ test("uninstalling leaves no rule row, and a failed package and an orphan rule r
   } finally { await page.close() }
 })
 
+test("a local declaration is never claimed by a reported path: it keeps its own row and Remove item", async () => {
+  const page = await browser.newPage({ viewport: { width: 520, height: 800 }, locale: "en-US" })
+  try {
+    await page.goto(url)
+    const file = "/plugins/bundle/index.js"
+    await page.evaluate(target => (window as any).fixture.localDeclaration(target), file)
+    const source = page.locator(`[data-source-target="${file}"]`)
+    await source.waitFor()
+    await source.getByRole("button", { name: `Actions for ${file}`, exact: true }).click()
+    assert.ok((await page.getByRole("menuitem").allInnerTexts()).map(item => item.trim()).includes("Remove from Global"))
+    await page.keyboard.press("Escape")
+    // The failed local runtime row shows its failure without taking the declaration's removal.
+    const runtime = page.locator(`[data-local-path="${file}"]`)
+    await runtime.waitFor()
+    await runtime.getByRole("button", { name: `Actions for ${file}`, exact: true }).click()
+    assert.deepEqual((await page.getByRole("menuitem").allInnerTexts()).map(item => item.trim()), ["Refresh plugin controls"],
+      "the declaration's Remove stays on its own row")
+  } finally { await page.close() }
+})
+
 test("an install failure shows its native reference, and a refused spec stays in the window with its reason", async () => {
   const page = await browser.newPage({ viewport: { width: 520, height: 800 }, locale: "en-US" })
   try {

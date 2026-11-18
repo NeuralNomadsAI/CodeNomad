@@ -122,14 +122,17 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   its unconfirmed source row carrying the Remove items. Removing that source leaves the
   ID row orphan, with its own Remove items.
 - **Correlation**: snapshot sources carry `pluginId` when runtime inventory or a verified
-  managed installation associates their source, so Remove items attach to ordinary plugin rows. A package source is
-  associated by its exact native target. An explicit local declaration (relative, `file://` or absolute) is associated
-  only through the one local resolver (`declaredEntrypointOf`, built on the same `selectedEntrypoint` as discovery):
+  managed installation associates their source, so Remove items attach to ordinary plugin rows. Each declaration is
+  classified first, with OpenCode's rule (`plugin/module.ts`): a target that is absolute after `file://` and `./`/`../`
+  resolution is local, anything else a package. A package source is associated only by its exact native target. An
+  explicit local declaration is associated only through a verified descriptor or the one local resolver (`declaredEntrypointOf`, built on the same `selectedEntrypoint` as discovery):
   native loading drops a declared file and resolves a declared folder `server` before `index`, so an inventory entry
   identifies the declaration only when its path is that single selected entrypoint, as named or after resolving links.
   Containment, a sibling module, several IDs at that entrypoint or an uncertain selection leave it without `pluginId`:
   it then counts as a possible loader of any ID and never authorizes a bare write. Through WSL (no host listing) local
-  declarations stay unidentified. A string or object
+  declarations stay unidentified. No lookup by raw target string crosses the classification: the inventory's target map
+  holds package targets only, and the Plugins surface treats a declaration as loaded or attaches its Remove items only
+  by `pluginId` or an exact package target, so an unidentified local declaration keeps its own row. A string or object
   entry whose exact target `plugin.list` reports as a package is a source at its first declaration, even when an
   earlier rule names the same ID, so a failed package keeps its Remove items. A row offers removal only
   for declarations in a scope's own write target; inherited, inline and other
@@ -444,7 +447,7 @@ guessed paths.
   removal-only or refused enables of IDs without a preceding verified definition, wildcards left disabling, undeclared
   local inventory counted only at the entrypoint native discovery selects (nested plugins, deleted entrypoints, an
   `index` behind a `server` and ambiguous candidates refused), and an explicit local folder never defining a nested
-  plugin's ID:
+  plugin's ID or a declared file defining one:
   `plugin-controls.test.ts`; the applied-order evaluator: `plugin-activation-order.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`
@@ -495,7 +498,8 @@ guessed paths.
 - package check/update menus, one native request per target and pending state
   across hiding: `packages/ui/tests/browser/plugin-packages.test.ts`
 - Add window (Global default, Project warning, refusals), Installing until the
-  inventory reports, version/update/ref tooltips, Remove items (failed packages and switchless orphan rule rows included), the pending
+  inventory reports, version/update/ref tooltips, Remove items (failed packages and switchless orphan rule rows included;
+  an unidentified local declaration keeps its own row), the pending
   timeout with an injected clock and the GUI notice:
   `packages/ui/tests/browser/plugin-sources.test.ts`
 
@@ -509,5 +513,5 @@ guessed paths.
 - The Plugins Add menu (`components/plugin-add-menu.tsx`) uses stable item descriptors for **Add an integration…** and **Add a plugin…**. The integration catalog window (`integration-catalog-window.tsx`) uses shared window primitives, overlay surface, an upper-right close button and reviewed catalog IDs through `pluginSourcesStore.installIntegration`; native integrations lock the focusable scope selector to Global. Confirmation uses the shared 600 ms guard. Installation hints and reconciliation use the existing source store.
 - The Add plugin window (`components/plugin-source-add.tsx`) is a transient `.window-*` popover without a close button: a `--surface-field` spec input, the native scope select (Global default, Project disabled when unavailable), the trust sentence and the Project warning. It closes on success and keeps refusals inline; it never announces an active plugin.
 - A recognized integration has exactly one surface, its Plugins row ([integration rows](OPENCODE_INTEGRATIONS.md#ui-read-model)): display name, version, `PluginActivationSwitch` with its `integration` flag (the accent switch of Yolo and the settings, `ACCENT_SWITCH_SX`, instead of the green plugin variant), and under it a state line that always says where the integration stands and acts when it can (install or update the application part, attach or detach the displayed conversation). Its `PluginRowActions` menu adds the connection line, documentation and application (re)installation before the ordinary items. Source ambiguity labels a Plugins row **Non-conforming** and attributes it to no integration. Supplemental integration details use tooltips with localized terse labels.
-- Plugins that fail before exporting an ID remain visible by their native package target or local path, with failure details in the name tooltip; package entries retain check/update actions. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds. Managed failures belong to the attention block.
+- Plugins that fail before exporting an ID remain visible by their native package target or local path, with failure details in the name tooltip; package entries retain check/update actions and their declaration's Remove items, while a failed local row never takes a declaration's Remove items (the declaration keeps its own row). Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds. Managed failures belong to the attention block.
 - Plugins rows use the app's ordinary tooltips: the native `title` attribute (multi-line with `\n`) on names, the state line, switches and row actions, never Kobalte `Tooltip` or a custom tooltip surface. A row's details also go into a hidden element the row names through `aria-describedby` (`<name id>-details`), and every control keeps its `aria-label`, so keyboard and screen-reader users get the same text.

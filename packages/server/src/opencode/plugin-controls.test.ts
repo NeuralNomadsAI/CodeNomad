@@ -745,6 +745,23 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "bundle.other"])
   })
 
+  it("classifies a local declaration before any lookup: a declared file defines nothing even when the inventory reports it", async () => {
+    // OpenCode drops the Global file declaration (configured paths must be directories); only Project defines it.
+    const fixture = createFixture({ globalPlugins: [], runtime: [] })
+    const bundle = path.join(fixture.projectDirectory, "..", "bundle")
+    fs.mkdirSync(bundle, { recursive: true })
+    fs.writeFileSync(path.join(bundle, "index.js"), "export default {}\n")
+    fixture.setGlobalPlugins([path.join(bundle, "index.js"), "-*"])
+    fixture.setProjectPlugins([bundle])
+    fixture.runtime.push({ id: "bundle.plugin", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } })
+    const snapshot = await fixture.controls.read("workspace", fixture.location)
+    assert.deepEqual(snapshot.configured.sources.map(({ target, pluginId }) => ({ target, pluginId })),
+      [{ target: path.join(bundle, "index.js"), pluginId: undefined }, { target: bundle, pluginId: "bundle.plugin" }])
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.plugin", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [path.join(bundle, "index.js"), "-*"])
+  })
+
   it("never lets an explicit local folder define a nested plugin's ID for a bare write", async () => {
     // bundle/other is defined only by the Project declaration: a bare ID in Global would precede it.
     const fixture = createFixture({ globalPlugins: [], runtime: [] })

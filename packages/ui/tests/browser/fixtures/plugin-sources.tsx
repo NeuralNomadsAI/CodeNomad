@@ -120,6 +120,14 @@ const notify = () => (serverEvents as any).dispatchBatch([{
     for (const control of snapshot.controls) if (control.id === id) control.orphan = true
     notify()
   },
+  /** A Global declaration naming a local path the inventory reports as a failed plugin without an ID: the server
+   * identifies the declaration by its selected entrypoint only, so it has no `pluginId`. */
+  localDeclaration: (file: string) => {
+    snapshot.configured.sources.push({ target: file, scope: "global", path: globalPath, entryIndex: 3, hasOptions: false })
+    snapshot.runtime.push({ key: `local:${file}`, source: { type: "local", path: file }, features: {},
+      state: { status: "failed", error: "Plugin failed to load" } })
+    notify()
+  },
   failNextAdd: (status: number, code?: string) => { nextError = { status, code } },
   dropProjectTarget: () => { snapshot.targets = snapshot.targets.filter(target => target.scope !== "project"); notify() },
   notify,
