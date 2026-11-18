@@ -538,6 +538,7 @@ async function hydrateRestoredSessionChainAttempt(
   let pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
   const visited = new Set<string>()
   const departures: Array<() => void> = []
+  const ownedReads = new Map<string, () => boolean>()
   while (pending.length > 0) {
     if (!isRequestCurrent()) return
     signal?.throwIfAborted()
@@ -574,6 +575,8 @@ async function hydrateRestoredSessionChainAttempt(
             return next
           })
           session = sessions().get(instanceId)?.get(sessionId)
+          ownedReads.set(sessionId, () => getPendingSessionMove(instanceId, sessionId) === move
+            && sessions().get(instanceId)?.get(sessionId)?.location === apiSession.location)
           if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
         } catch (error) {
           if (signal?.aborted) throw error
@@ -587,7 +590,7 @@ async function hydrateRestoredSessionChainAttempt(
                 || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
               clearPendingSessionMove(instanceId, sessionId)
               markSessionMovedAway(instanceId, sessionId, null)
-              removeSessionProjection(instanceId, sessionId)
+              removeSessionProjection(instanceId, sessionId, (selectedId) => ownedReads.get(selectedId)?.() ?? false)
             })
           }
           log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
@@ -1399,7 +1402,7 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
 
 /** Removes the session from this instance's list, selection and transcript
  * caches only; its draft, attachments and other per-session state stay. */
-function removeSessionProjection(instanceId: string, sessionId: string): void {
+function removeSessionProjection(instanceId: string, sessionId: string, ownsSelection?: (sessionId: string) => boolean): void {
   setSessions((prev) => {
     const next = new Map(prev)
     const instanceSessions = next.get(instanceId)
@@ -1443,7 +1446,8 @@ function removeSessionProjection(instanceId: string, sessionId: string): void {
     const selected = active && sessions().get(instanceId)?.get(active)
     const away = getMovedAwaySessions(instanceId)
     if (away.has(sessionId) && selected && !away.has(selected.id)
-      && isWorkspaceServedDirectory(selected.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId))) {
+      && (ownsSelection?.(selected.id)
+        || isWorkspaceServedDirectory(selected.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId)))) {
       setActiveSessionFromList(instanceId, selected.id)
     } else clearActiveParentSession(instanceId)
   } else if (sessionId === active) {

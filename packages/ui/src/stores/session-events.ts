@@ -76,7 +76,7 @@ const nativeLifecycleGenerations = new Map<string, number>()
 // attempt starts or its run settles.
 let activeRetryToast: { key: string; handle: ToastHandle } | null = null
 const movedSessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
-interface SessionMove { directory: string; unresolved?: boolean }
+interface SessionMove { data: SessionMoved["data"]; unresolved?: boolean }
 /** Per instance, the latest move of each session since its last refresh. */
 const pendingSessionMoves = new Map<string, Map<string, SessionMove>>()
 /** A move remains current until its placement is settled or superseded. */
@@ -281,6 +281,23 @@ function servesSessionDirectory(instanceId: string, directory: string): boolean 
   return Boolean(instance) && isWorkspaceServedDirectory(directory, instance!.folder, getWorktrees(instanceId))
 }
 
+function applySessionMovePlacement(instanceId: string, { sessionID, location, projectID, subpath }: SessionMoved["data"]): void {
+  withSession(instanceId, sessionID, (session) => {
+    session.location = location
+    session.projectID = projectID
+    session.subpath = subpath
+  })
+}
+
+async function refreshMovedSessions(instanceId: string): Promise<void> {
+  try {
+    await fetchSessions(instanceId, { reset: true })
+    if (activeSessionId().get(instanceId)) await refreshSessionCatalog(instanceId)
+  } catch (error) {
+    log.warn("Failed to reconcile moved sessions", { instanceId, error })
+  }
+}
+
 function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {
   const { sessionID: sessionId, location } = data
   const targetInstanceIds = Array.from(instances().keys()).filter((instanceId) => ownsSessionDirectory(instanceId, location.directory))
@@ -290,11 +307,7 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
   // assigning it to an arbitrary duplicate view.
   const sourceOwnsLocation = targetInstanceIds.includes(sourceInstanceId)
   if (sourceOwnsLocation) {
-    withSession(sourceInstanceId, sessionId, (session) => {
-      session.location = location
-      session.projectID = data.projectID
-      session.subpath = data.subpath
-    })
+    applySessionMovePlacement(sourceInstanceId, data)
     if (activeSessionId().get(sourceInstanceId) === sessionId) {
       void refreshSessionCatalog(sourceInstanceId).catch((error) => {
         log.warn("Failed to refresh moved session catalog", { instanceId: sourceInstanceId, sessionId, error })
@@ -304,7 +317,7 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
 
   const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]
   for (const instanceId of new Set(affectedInstanceIds)) {
-    const move: SessionMove = { directory: location.directory }
+    const move: SessionMove = { data }
     const latest = latestSessionMoves.get(instanceId) ?? new Map()
     latest.set(sessionId, move)
     latestSessionMoves.set(instanceId, latest)
@@ -319,11 +332,7 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
       void reloadWorktrees(instanceId).catch(error => {
         log.warn("Failed to refresh moved-session worktrees", { instanceId, error })
       }).then(() => Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move))))
-        .then(() => fetchSessions(instanceId, { reset: true })).then(() => (
-          activeSessionId().get(instanceId) ? refreshSessionCatalog(instanceId) : undefined
-        )).catch((error) => {
-          log.warn("Failed to reconcile moved sessions", { instanceId, error })
-        })
+        .then(() => refreshMovedSessions(instanceId))
     }, 100))
   }
 }
@@ -332,9 +341,9 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
  * located elsewhere: it is recorded as such, so no path lists it here, and it
  * leaves the list and selection; its draft and attachments stay for its return.
  * Only a fresh inventory decides, and only for the latest move of that session. */
-async function settleSessionMove(instanceId: string, sessionId: string, move: SessionMove): Promise<void> {
-  if (getPendingSessionMove(instanceId, sessionId) !== move) return
-  const needsFresh = move.unresolved || !servesSessionDirectory(instanceId, move.directory)
+async function settleSessionMove(instanceId: string, sessionId: string, move: SessionMove): Promise<boolean> {
+  if (getPendingSessionMove(instanceId, sessionId) !== move) return false
+  const needsFresh = move.unresolved || !servesSessionDirectory(instanceId, move.data.location.directory)
   move.unresolved = false
   if (needsFresh) {
     try {
@@ -342,22 +351,27 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
     } catch (error) {
       log.warn("Failed to read the inventory for a moved session", { instanceId, sessionId, error })
       move.unresolved = true
-      return
+      return false
     }
   }
-  finishSessionMove(instanceId, sessionId, move)
+  return finishSessionMove(instanceId, sessionId, move)
 }
 
-function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove): void {
-  if (getPendingSessionMove(instanceId, sessionId) !== move) return
+function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove): boolean {
+  if (getPendingSessionMove(instanceId, sessionId) !== move) return false
   clearPendingSessionMove(instanceId, sessionId)
-  if (!instances().has(instanceId) || servesSessionDirectory(instanceId, move.directory)
-    || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
-  markSessionMovedAway(instanceId, sessionId, move.directory)
-  if (!sessions().get(instanceId)?.has(sessionId)) return
+  if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return false
+  const { directory } = move.data.location
+  if (servesSessionDirectory(instanceId, directory)) {
+    applySessionMovePlacement(instanceId, move.data)
+    return true
+  }
+  markSessionMovedAway(instanceId, sessionId, directory)
+  if (!sessions().get(instanceId)?.has(sessionId)) return true
   nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
   dismissRetryToast(instanceId, sessionId)
   removeSessionProjection(instanceId, sessionId)
+  return true
 }
 
 export function getPendingSessionMove(instanceId: string, sessionId: string): SessionMove | undefined {
@@ -437,11 +451,14 @@ function notifySessionAttention(category: "needsInput" | "sessionDone", instance
 queueMicrotask(() => {
   onWorktreesPublished((instanceId, fresh) => {
     relistReturnedSessions(instanceId)
+    const retries: Array<boolean | Promise<boolean>> = []
     for (const [sessionId, move] of latestSessionMoves.get(instanceId) ?? []) {
       if (!move.unresolved) continue
-      if (fresh) finishSessionMove(instanceId, sessionId, move)
-      else void settleSessionMove(instanceId, sessionId, move)
+      retries.push(fresh ? finishSessionMove(instanceId, sessionId, move) : settleSessionMove(instanceId, sessionId, move))
     }
+    if (retries.length) void Promise.all(retries).then(results => {
+      if (results.some(Boolean)) return refreshMovedSessions(instanceId)
+    })
   })
   setPendingFormAddedHandler((instanceId, form) => notifySessionAttention("needsInput", instanceId, form.sessionID))
 })

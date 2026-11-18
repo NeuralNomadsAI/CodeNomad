@@ -68,8 +68,10 @@ Implementation:
   as moved away and removes its list, selection and transcript caches
   (`removeSessionProjection`). A failed fresh read keeps the move unresolved
   across catalogue refreshes. A later worktree publication resumes the fresh
-  check; a typed departure can settle the same move directly. Its draft and
-  attachments stay, and no deletion marker is set. The record keeps the session out
+  check; confirmation applies the placement and refreshes the session list and
+  selected composer catalogue. A typed departure can settle the same move
+  directly. Its draft and attachments stay, and no deletion marker is set.
+  The record keeps the session out
   of the scope (below) and makes a later published inventory serving the destination
   list it again; it is released when a session refresh reads it at a served
   directory, it is deleted or moved again, or the instance closes.
@@ -82,8 +84,9 @@ Implementation:
   Parent and saved-workspace reads opt in through the instance adapter
   (`lib/sdk-manager.ts`, a client-side header never sent), which reads that refusal
   as absent and preserves the reason for projection cleanup. Restore applies
-  departures after the selection's reads settle, so a local child can keep
-  its selection. Other 403s stay errors
+  departures after the selection's reads settle. A successful workspace-proxy
+  read keeps the child selected while the display inventory catches up. Other
+  403s stay errors
   (`stores/session-list-startup.test.ts`, `lib/sdk-manager.test.ts`).
   Search traverses every local worktree's native cursor chain.
 - `scripts/test-native-worktree-management.mjs` (run by `test-opencode-location-native.mjs`,

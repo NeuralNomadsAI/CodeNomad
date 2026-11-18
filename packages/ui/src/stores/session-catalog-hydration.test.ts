@@ -232,16 +232,21 @@ for (const scenario of ["typed restore refusal", "standalone outside inventory",
 
 test("cold restore reconciles a departed parent after the local child read without overriding user selection", async () => {
   const originalFetch = globalThis.fetch
+  const originalWorktrees = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({
+    isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }],
+  })
   try {
     for (const userSelects of [false, true]) {
       const id = `catalog-cold-local-child-${userSelects}`, f = fixture(id)
       const releasedParent = deferred<void>(), childRead = deferred<Response>()
       const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
       const local = (id: string, parentID?: string) => ({
-        ...row(id), status: "idle", parentID, location: { directory: "/repo" }, model: { providerID: "p", id: "m" },
+        ...row(id), status: "idle", parentID, location: { directory: "/linked-worktree" }, model: { providerID: "p", id: "m" },
       })
       try {
         Object.assign(f.saved, { activeSessionId: "child", drafts: {}, sessionCatalog: undefined })
+        await ensureWorktreesLoaded(id)
         globalThis.fetch = async (input) => {
           const path = new URL(String(input)).pathname
           if (path.endsWith("/child")) return childRead.promise
@@ -262,7 +267,7 @@ test("cold restore reconciles a departed parent after the local child read witho
         assert.equal(sessions().get(id)?.get("child")?.parentId, "root")
       } finally { childRead.resolve(Response.json({ data: local("child", "root") })); f.cleanup() }
     }
-  } finally { globalThis.fetch = originalFetch }
+  } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees }
 })
 
 test("a concurrent rename survives selected-row revalidation and a concurrent root survives complete reconciliation", async () => {

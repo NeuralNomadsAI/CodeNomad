@@ -341,7 +341,11 @@ for (const registered of [true, false]) {
     }
     const row = { ...source.session, parentID: undefined, location: { directory: newWorktree.directory } }
     const child = { ...source.session, id: "child", parentID: "restored", location: { directory: "/repo" } }
-    source.client.session.list = async (input: any) => ({ data: input.project ? [row, child] : [] })
+    // The local case is standalone: the old inventory can't include the moved
+    // row through a child, so it retains the original checkout until recovery.
+    source.client.session.list = async (input: any) => ({ data: input.project ? registered ? [row] : [row, child] : [] })
+    const agentDirectories: string[] = []
+    source.client.agent = { list: async ({ location }: any) => { agentDirectories.push(location.directory); return [] } }
     setInstanceMetadata(id, { project: { id: "project" } as any })
     try {
       await ensureWorktreesLoaded(id)
@@ -360,6 +364,10 @@ for (const registered of [true, false]) {
       assert.equal(activeSessionId().get(id), registered ? "restored" : undefined)
       assert.deepEqual([...getMovedAwaySessionIds(id)], registered ? [] : ["restored"])
       assert.equal(getSessionDraftPrompt(id, "restored"), "keep draft")
+      if (registered) {
+        assert.equal(sessions().get(id)?.get("restored")?.location.directory, newWorktree.directory)
+        assert.ok(agentDirectories.includes(newWorktree.directory), "the composer loads agents at the confirmed checkout")
+      }
     } finally { serverApi.fetchWorktrees = original; source.cleanup() }
   })
 }
