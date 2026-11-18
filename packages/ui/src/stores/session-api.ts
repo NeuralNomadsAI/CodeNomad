@@ -89,6 +89,7 @@ import {
 
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
+import { isSessionMovePending } from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
@@ -366,19 +367,7 @@ async function fetchCompleteSessionInventory(
   signal?.throwIfAborted()
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
   if (!directoryOnly && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
-  const projectFamilies = (rows: SDKSession[]) => {
-    const worktrees = getWorktrees(instanceId)
-    const candidates = selectWorkspaceSessionFamilies(rows, directory ?? "", worktrees)
-    // A cold catalogue can return the same foreign parent as a live move:
-    // native project IDs span clones. Confirm placement before publishing it.
-    for (const session of candidates) {
-      if (!getMovedAwaySessions(instanceId).has(session.id)
-        && !isWorkspaceServedDirectory(session.location.directory, directory ?? "", worktrees)) {
-        markSessionMovedAway(instanceId, session.id, session.location.directory)
-      }
-    }
-    return candidates
-  }
+  const projectFamilies = (rows: SDKSession[]) => selectWorkspaceSessionFamilies(rows, directory ?? "", getWorktrees(instanceId))
   const scopes: V2SessionListOptions[] = [directoryOnly
     ? { directory: directoryOnly.serviceDirectory ?? directoryOnly.directory, order: "desc" }
     : { project, order: "desc" }]
@@ -396,7 +385,8 @@ async function fetchCompleteSessionInventory(
       if (!getDirectoryOnlyWorktree(instanceId) && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
       // This is additive only. Absence/deletion is authoritative only after the
       // complete inventory; partial families still require verified membership.
-      publishFirstPage(projectFamilies(response.data))
+      publishFirstPage(projectFamilies(response.data).filter(session =>
+        isWorkspaceServedDirectory(session.location.directory, directory ?? "", getWorktrees(instanceId))))
     }
     while (true) {
       if (!isCurrent()) return []
@@ -635,6 +625,7 @@ async function fetchSessions(instanceId: string, options?: {
 
   const requestId = beginSessionListRequest(instanceId)
   const capturedAway = getMovedAwaySessions(instanceId)
+  const capturedSelection = [activeParentSessionId().get(instanceId), activeSessionId().get(instanceId)]
   const worktreeMoveProject = getInstanceMetadata(instanceId)?.project?.id
   const reconcileWorktreeMoves = captureWorktreeMoveReconciliation(instanceId)
   const client = instance.client
@@ -811,6 +802,18 @@ async function fetchSessions(instanceId: string, options?: {
       for (const sessionId of staleIds) {
         if (currentSessions.get(sessionId) !== existingSessions.get(sessionId)) continue
         removeSessionRuntimeState(instanceId, sessionId, false)
+      }
+
+      // Native project IDs span clones. Let a pending move reconcile first;
+      // otherwise use the merged placement, which retains newer move metadata.
+      for (const { id, location } of inventory) {
+        const directory = currentSessions.get(id)?.location.directory
+        if (isSessionMovePending(instanceId, id) || directory !== location.directory
+          || isWorkspaceServedDirectory(directory, instance.folder, worktrees)) continue
+        if (!getMovedAwaySessions(instanceId).has(id)) markSessionMovedAway(instanceId, id, directory)
+        if (capturedSelection.includes(id) || activeParentSessionId().get(instanceId) === id || activeSessionId().get(instanceId) === id) {
+          removeSessionProjection(instanceId, id)
+        }
       }
     }
     const rootIds: string[] = []

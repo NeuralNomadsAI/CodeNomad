@@ -131,8 +131,11 @@ explicitly is shown where it was opened. A session located elsewhere (a director
 the workspace proxy does not serve) stays out of scope until its moved-away record
 is released. A move, a typed parent-read refusal or a project inventory row can
 establish that placement, including when an independent clone shares the native
-project ID and the row would otherwise be kept for a local descendant. Rows, chevron
-activity and the tab indicator derive from one map (`getListedSessionMap`): the
+project ID and the row would otherwise be kept for a local descendant. Complete
+catalogue reconciliation uses merged placement, deferring to pending native moves,
+and clears the departed selection and transcript while preserving drafts and
+attachments. Rows, chevron activity and the tab indicator derive from one map
+(`getListedSessionMap`): the
 sessions in scope connected to a listed root, so a row under an ancestor outside the
 scope is not shown, as for a missing parent. The scope is reactive, so a late worktree
 inventory and either family order converge. An unread or failed inventory and a

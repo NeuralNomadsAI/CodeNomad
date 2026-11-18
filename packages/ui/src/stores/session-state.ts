@@ -265,14 +265,14 @@ function getListedSessionMap(instanceId: string): ReadonlyMap<string, Session> {
   return listed
 }
 
-// The tab's aggregate over the listed sessions, derived once per listed map, so
-// every publication and scope change is reflected.
-const indicatorStatuses = new Map<string, { listed: unknown; status: InstanceSessionIndicatorStatus }>()
+// The listed map can share the held map, which withSession updates in place.
+const indicatorStatuses = new Map<string, { publication: unknown; listed: unknown; status: InstanceSessionIndicatorStatus }>()
 
 export function getInstanceSessionIndicatorStatusCached(instanceId: string): InstanceSessionIndicatorStatus {
+  const publication = sessions()
   const listed = getListedSessionMap(instanceId)
   const cached = indicatorStatuses.get(instanceId)
-  if (cached && cached.listed === listed) return cached.status
+  if (cached && cached.publication === publication && cached.listed === listed) return cached.status
   let status: InstanceSessionIndicatorStatus = "idle"
   for (const session of listed.values()) {
     if (session.pendingPermission || session.pendingForm) {
@@ -282,7 +282,7 @@ export function getInstanceSessionIndicatorStatusCached(instanceId: string): Ins
     if (session.status === "compacting") status = "compacting"
     else if (session.status === "working" && status === "idle") status = "working"
   }
-  indicatorStatuses.set(instanceId, { listed, status })
+  indicatorStatuses.set(instanceId, { publication, listed, status })
   return status
 }
 

@@ -355,6 +355,10 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
   removeSessionProjection(instanceId, sessionId)
 }
 
+export function isSessionMovePending(instanceId: string, sessionId: string): boolean {
+  return latestSessionMoves.has(`${instanceId}\0${sessionId}`)
+}
+
 /** A later inventory that serves a moved-away session's destination lists it again. */
 function relistReturnedSessions(instanceId: string): void {
   const returned = [...getMovedAwaySessions(instanceId)].filter(([, directory]) => directory !== null && servesSessionDirectory(instanceId, directory)).map(([id]) => id)

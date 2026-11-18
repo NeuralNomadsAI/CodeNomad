@@ -8,7 +8,9 @@ import { fetchSessions, hydrateRestoredSessionChain, removeSessionRuntimeState }
 import { hydrateRestoredWorkspaceState, seedRestoredWorkspaceState } from "./app-session-workspace-hydration"
 import { ensureWorktreesLoaded } from "./worktrees"
 import { captureSessionCatalog } from "./session-catalog-persistence"
-import { activeSessionId, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, sessions, setSessions } from "./session-state"
+import { activeParentSessionId, activeSessionId, getInstanceSessionIndicatorStatusCached, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, setActiveParentSession, setSessionPendingPermission, setSessionStatus, sessions, setSessions } from "./session-state"
+import { messageStoreBus } from "./message-v2/bus"
+import { handleNativeSessionEvent } from "./session-events"
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import type { Session } from "../types/session"
 
@@ -65,6 +67,75 @@ test("restores hierarchy, selection and draft before any native read and revalid
     seedRestoredWorkspaceState(id, f.saved)
     assert.equal(sessions().get(id)?.has("child"), false, "repeated hydration must not resurrect deleted rows")
   } finally { f.cleanup() }
+})
+
+test("the tab indicator follows publications when the list shares its held map", () => {
+  const id = "catalog-unresolved-scope-indicator", f = fixture(id)
+  try {
+    setSessions(previous => new Map(previous).set(id, new Map([["root", { ...row("root"), status: "idle" }]])))
+    const held = sessions().get(id)
+    assert.equal(getInstanceSessionIndicatorStatusCached(id), "idle")
+    setSessionStatus(id, "root", "working")
+    assert.equal(sessions().get(id), held)
+    assert.equal(getInstanceSessionIndicatorStatusCached(id), "working")
+    setSessionPendingPermission(id, "root", true)
+    assert.equal(getInstanceSessionIndicatorStatusCached(id), "permission")
+    setSessionPendingPermission(id, "root", false)
+    setSessionStatus(id, "root", "idle")
+    assert.equal(getInstanceSessionIndicatorStatusCached(id), "idle")
+  } finally { f.cleanup() }
+})
+
+test("cold catalogue reconciliation clears a departed saved selection and transcript but keeps its draft", async () => {
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  try {
+    for (const scenario of ["departed", "local", "new-selection", "moved-back"] as const) {
+      const id = `catalog-restored-placement-${scenario}`, f = fixture(id)
+      const gate = deferred<any>(), started = deferred<void>()
+      const store = messageStoreBus.getOrCreate(id)
+      const native = (id: string, directory: string, parentID?: string) => ({
+        ...row(id), status: "idle", parentID, location: { directory }, model: { providerID: "p", id: "m" },
+      })
+      try {
+        Object.assign(f.saved, { activeSessionId: "root", drafts: { root: "unsent draft" } })
+        seedRestoredWorkspaceState(id, f.saved)
+        setInstanceMetadata(id, { project: { id: "project" } as any })
+        store.upsertMessage({
+          id: "resident", sessionId: "root", role: "user", status: "complete", createdAt: 2,
+          parts: [{ id: "text", type: "text", text: "Cached conversation" }],
+        })
+        f.client.session.list = async (input: any) => {
+          if (input.project) { started.resolve(); return gate.promise }
+          return { data: [native("other", "/repo")], cursor: {} }
+        }
+        const refresh = fetchSessions(id, { strictStatus: true })
+        await started.promise
+        assert.equal(activeSessionId().get(id), "root")
+        if (scenario === "new-selection") setActiveParentSession(id, "other")
+        if (scenario === "moved-back") handleNativeSessionEvent(id, {
+          id: "return", type: "session.moved", created: 10,
+          location: { directory: "/independent-clone" },
+          data: { sessionID: "root", projectID: "project", location: { directory: "/repo/packages/ui" } },
+        } as any)
+        gate.resolve({ data: [
+          native("root", scenario === "local" ? "/repo/linked" : "/independent-clone"),
+          native("child", "/repo", "root"),
+          native("grandchild", "/repo", "child"),
+        ], cursor: {} })
+        await refresh
+        const expected = scenario === "departed" ? undefined : scenario === "new-selection" ? "other" : "root"
+        assert.equal(activeSessionId().get(id), expected, scenario)
+        assert.equal(activeParentSessionId().get(id), expected, scenario)
+        if (scenario === "departed" || scenario === "new-selection") assert.deepEqual(store.getSessionMessageIds("root"), [])
+        if (scenario === "local" || scenario === "moved-back") {
+          assert.deepEqual(store.getSessionMessageIds("root"), ["resident"], scenario)
+          assert.ok(getSessionThreads(id).some(thread => thread.session.id === "root"), scenario)
+        }
+        assert.equal(getSessionDraftPrompt(id, "root"), "unsent draft", scenario)
+      } finally { f.cleanup() }
+    }
+  } finally { serverApi.fetchWorktrees = original }
 })
 
 test("partial, unavailable and failed inventories preserve saved families; complete inventory evicts absent cached children", async () => {
