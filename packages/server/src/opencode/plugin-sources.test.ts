@@ -227,7 +227,8 @@ describe("plugin source mutations", () => {
       const saved = await readFile(f.globalFile, "utf8")
       assert.match(saved, /\/\/ keep\n/)
       assert.deepEqual(parse(saved).plugins, ["broken@1", "keep@1", "-broken.id", "broken.id", "-keep.id", "keep.id", "*", "-ponytail.*"])
-      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["-ponytail", "ponytail"], "other scopes are untouched")
+      // Project's bare "ponytail" followed only the removed Global definition: it would become a package spec.
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["-ponytail"], "the Project disable stays, its bare ID goes")
       await f.sources.remove("w", { location: f.location, scope: "global", target: "broken@1", entryIndex: 0, expectedRevision: await revision(f) })
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep@1", "-keep.id", "keep.id", "*", "-ponytail.*"])
     } finally { await f.cleanup() }
@@ -297,6 +298,41 @@ describe("plugin source mutations", () => {
         assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, expected, String(globalPlugins))
         assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["@acme/plugin@^1"])
       }
+    } finally { await f.cleanup() }
+  })
+
+  it("deletes the Project's bare ID that loses its Global definition in the same removal, or refuses writing nothing", async () => {
+    const f = await fixture()
+    try {
+      const runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      const global = '{\n  // keep\n  "plugins": ["@acme/plugin@1", "-acme.plugin"]\n}\n'
+      const project = '{\n  // project\n  "plugins": ["keep", "acme.plugin", "-acme.plugin"]\n}\n'
+      await writeFile(f.globalFile, global)
+      await writeFile(f.projectFile, project)
+      f.state.runtime = runtime
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, [])
+      const saved = await readFile(f.projectFile, "utf8")
+      assert.match(saved, /\/\/ project/)
+      assert.deepEqual(parse(saved).plugins, ["keep", "-acme.plugin"], "the bare ID would follow no definition: a package spec")
+      // A verified Project declaration before the bare ID still defines it: nothing changes there.
+      await writeFile(f.globalFile, global)
+      await writeFile(f.projectFile, JSON.stringify({ plugins: ["@acme/plugin@^1", "acme.plugin"] }))
+      f.state.runtime = [...runtime, { ...runtime[0]!, source: { type: "package", target: "@acme/plugin@^1" } }]
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["@acme/plugin@^1", "acme.plugin"])
+      // A dependent bare ID in a document CodeNomad does not edit (a daemon-reported inline document) refuses the removal.
+      await writeFile(f.globalFile, global)
+      await writeFile(f.projectFile, project)
+      f.state.runtime = runtime
+      const inline = { type: "document", info: { plugins: ["acme.plugin"] } }
+      const get = f.connection.client.config.get
+      f.connection.client.config.get = async () => [...await get(), inline]
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision: await revision(f) }),
+        code("dependent-rule", "invalid"))
+      assert.equal(await readFile(f.globalFile, "utf8"), global, "a refusal writes nothing")
+      assert.equal(await readFile(f.projectFile, "utf8"), project)
     } finally { await f.cleanup() }
   })
 

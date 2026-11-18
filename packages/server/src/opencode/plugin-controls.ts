@@ -39,16 +39,26 @@ import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedD
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 import { definedBefore, enabledThrough, matchesSelector, type AppliedEntry, type AppliedSequence } from "./plugin-activation-order"
 
-/** The snapshot's reading of one edited document: its own sources and rules, every applicable document's sources
- * (`allSources`, sharing the own entries' objects), every control, and the applied order with this document's
- * position in it. */
-export interface PluginDocumentDeclarations {
+/** One writable target of a plugin-documents edit, with the snapshot's reading of it. `consistent`: the daemon's
+ * entries equal the raw document (the condition `read` grants removal confirmation on), so its sources and rules
+ * describe it; substitutions and watcher lag never authorize deletion. */
+export interface PluginDocumentsTarget {
+  scope: PluginControlScope
+  document: PluginControlDocument
+  /** Position in the applied order; absent when the daemon reports no document there yet. */
+  order?: number
+  consistent: boolean
   sources: PluginConfiguredSource[]
   rules: PluginConfiguredRule[]
+}
+
+/** Every applicable document's sources (sharing the targets' objects), every control, the applied order and the
+ * location's writable targets. */
+export interface PluginDocumentsView {
   allSources: PluginConfiguredSource[]
   controls: PluginActivationControl[]
   sequence: AppliedSequence
-  document: number
+  targets: PluginDocumentsTarget[]
 }
 
 export interface NativeConfigEdit { scope: PluginControlScope; path: string; expectation: string; updated: string }
@@ -156,8 +166,7 @@ export class PluginControls {
     workspaceId: string,
     location: PluginControlLocation,
     scope: PluginControlScope,
-    edit: (document: PluginControlDocument, current: { entries: ConfigEntry[]; path: string; location: PluginControlLocation;
-      declarations(): PluginDocumentDeclarations | undefined }) => string | Promise<string>,
+    edit: (document: PluginControlDocument, current: { entries: ConfigEntry[]; path: string; location: PluginControlLocation }) => string | Promise<string>,
     // Aborts the daemon reads and, re-checked under the lock, the commit itself.
     signal?: AbortSignal,
     strictDocuments = false,
@@ -178,14 +187,66 @@ export class PluginControls {
         if (expectedRevision !== undefined && expectedRevision !== this.documentRevision(workspaceId, context, target, document)) {
           throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
         }
-        const updated = await edit(document, { entries: context.entries, path: target.path, location: context.location,
-          declarations: () => documentDeclarations(context, target, document) })
+        const updated = await edit(document, { entries: context.entries, path: target.path, location: context.location })
         await replacePluginControlDocument(document, updated, {
           beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
         }, context.fileSystem)
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
       finally { release() }
     })
+  }
+
+  /**
+   * One plugin-source edit over the location's writable documents: `expectedRevision` confirms `scope`'s document,
+   * `edit` returns the new text of each target it changes, and every changed file is prepared and verified before the
+   * first rename, so a refusal writes nothing. Global and Project queues are held in that fixed order.
+   */
+  editPluginDocuments(workspaceId: string, location: PluginControlLocation, scope: PluginControlScope, expectedRevision: string,
+    edit: (view: PluginDocumentsView) => Partial<Record<PluginControlScope, string>>): Promise<void> {
+    const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
+    return this.serializeMutation(`${workspaceId}\nglobal`, () => this.serializeMutation(`${workspaceId}\nproject\n${directory}`, async () => {
+      const context = await this.readContext(workspaceId, location)
+      if (!context.targets.some(target => target.scope === scope)) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
+      if (!context.fileSystem.prepare) throw new PluginControlsError("Prepared configuration editing is unavailable", "unavailable")
+      const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
+      if (!identity) throw new PluginControlsError("Location is not owned by an active worktree", "forbidden")
+      const release = this.options.worktreeDeletionFence.enter([identity])
+      if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
+      const prepared: PluginControlDocumentPrepared[] = []
+      try {
+        const documents = await Promise.all(context.targets.map(async target => ({ target, document: await readPluginControlDocument(target.ioPath, context.fileSystem) })))
+        const confirmed = documents.find(entry => entry.target.scope === scope)!
+        if (expectedRevision !== this.documentRevision(workspaceId, context, confirmed.target, confirmed.document)) {
+          throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
+        }
+        const { snapshot, sequence, documents: applied } = evaluateDocuments(snapshotBase(context), context)
+        const at = (item: { path?: string }, path: string) => Boolean(item.path && samePath(context.paths, item.path, path))
+        const updates = edit({ allSources: snapshot.configured.sources, controls: snapshot.controls, sequence,
+          targets: documents.map(({ target, document }) => {
+            const normalized = applied.find(entry => at(entry, target.path))
+            return { scope: target.scope, document, ...(normalized ? { order: normalized.order } : {}),
+              consistent: Boolean(document.exists && normalized && isDeepStrictEqual(normalized.plugins, document.plugins)),
+              sources: snapshot.configured.sources.filter(source => at(source, target.path)),
+              rules: snapshot.configured.rules.filter(rule => at(rule, target.path)) }
+          }) })
+        // Physical ordering is shared with other batches to avoid lock inversion.
+        const changed = documents.filter(({ target }) => updates[target.scope] !== undefined)
+          .sort((left, right) => left.document.writePath < right.document.writePath ? -1 : 1)
+        for (const { target, document } of changed) {
+          assertCurrentConnection(context.connection)
+          prepared.push(await context.fileSystem.prepare(document, updates[target.scope]!, { beforeCommit: () => assertCurrentConnection(context.connection) }))
+        }
+        for (const write of prepared) await write.verify()
+        for (const write of prepared) {
+          assertCurrentConnection(context.connection)
+          await write.commit()
+        }
+      } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
+      finally {
+        await Promise.allSettled(prepared.map(write => write.dispose()))
+        release()
+      }
+    }))
   }
 
   private documentRevision(workspaceId: string, context: ReadContext, target: ResolvedTarget, document: PluginControlDocument): string {
@@ -536,20 +597,6 @@ function buildSnapshot(
   overlay?: { servicePath: string; plugins: readonly PluginConfigEntry[]; scope: PluginControlScope },
 ): PluginControlsSnapshot {
   return controlsForDocuments(snapshotBase(context), context, overlay)
-}
-
-/**
- * The snapshot's declarations in `target`'s raw document, only while the daemon's entries for it equal that document
- * (the condition `read` grants removal confirmation on): substitutions and watcher lag never authorize rule deletion.
- */
-function documentDeclarations(context: ReadContext, target: ResolvedTarget, document: PluginControlDocument): PluginDocumentDeclarations | undefined {
-  const base = snapshotBase(context)
-  const normalized = base.documents.find(entry => entry.path && samePath(context.paths, entry.path, target.path))
-  if (!document.exists || !normalized || !isDeepStrictEqual(normalized.plugins, document.plugins)) return undefined
-  const { snapshot, sequence } = evaluateDocuments(base, context)
-  const own = (item: { path?: string }) => Boolean(item.path && samePath(context.paths, item.path, target.path))
-  return { sources: snapshot.configured.sources.filter(own), rules: snapshot.configured.rules.filter(own),
-    allSources: snapshot.configured.sources, controls: snapshot.controls, sequence, document: normalized.order }
 }
 
 function controlsForDocuments(

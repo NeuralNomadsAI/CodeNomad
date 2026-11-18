@@ -24,7 +24,7 @@ one string entry at the end of the scope's `plugins`; `DELETE` (`{ location,
 scope, target, entryIndex, expectedRevision }`) removes one source with its plugin's
 rules, or (`{ location, scope, pluginId, expectedRevision }`) an orphan ID's rules. Both routes are strict, map
 errors like the activation route and add a stable `code` (`invalid-spec`,
-`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`).
+`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`, `dependent-rule`).
 
 - **Accepted specs** match OpenCode's own `plugin add`: registry versions, ranges,
   tags and `npm:` aliases, and remote Git specs, parsed with `npm-package-arg`.
@@ -56,10 +56,20 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   document: a bare `id` is deleted unless a verified definition still precedes it (it
   would otherwise be a package spec OpenCode installs from the registry), and a `-id` is
   deleted only when no other declaration of the plugin remains in any applicable document
-  (same target, `pluginId` or package identity). Wildcards, prefixes, other plugins'
-  rules and other documents are never touched. A source without `pluginId` (disabled,
-  failed before exporting an ID) keeps its rules. The result must parse to the original
-  minus exactly those elements, and OpenCode's package cache is never touched.
+  (same target, `pluginId` or package identity). In every other document applied at the
+  requesting location, a bare `id` that a verified definition preceded only through the
+  removed source would become a package spec too: it is deleted from the location's other
+  writable target in the same request, and anywhere else (inherited, inline or other
+  documents) it refuses the whole removal with `dependent-rule` (422). Wildcards,
+  prefixes, other plugins' rules and `-id` rules of other documents are never touched.
+  A source without `pluginId` (disabled, failed before exporting an ID) keeps its rules.
+  Each result must parse to its original minus exactly those elements, and OpenCode's
+  package cache is never touched.
+  `PluginControls.editPluginDocuments` performs the request: it holds the Global then the Project queue, checks the
+  confirmed revision of the source's document, reads every writable target and prepares and verifies each changed
+  file before the first rename, so a refusal or failed check writes nothing. A failure between the two renames
+  can leave the first committed, as for every multi-file edit. Locations that are not open (other projects sharing
+  the Global document) cannot be enumerated: a bare `id` in their Project documents is not re-checked.
 - **Orphan rules**: a control is `orphan` when no runtime entry, verified descriptor or
   source defines its ID and every source has a `pluginId` (a runtime entry exporting an ID,
   or a verified descriptor), so no declaration can define it; a failed report without an ID
@@ -249,9 +259,10 @@ commands without a generic metadata round-trip.
 
 `packages/server/src/opencode/plugin-control-document.ts` owns the file
 operation. Activation rules and source declarations use the same primitive:
-source add/remove runs through `PluginControls.editConfigDocument`, whose awaited
-callback edits the freshly read document (`plugin-source-document.ts` holds the
-spec validation, package identity and removal edit). The pinned connection is rechecked before committing its edit.
+source add runs through `PluginControls.editConfigDocument`, whose awaited
+callback edits the freshly read document, and removal through `PluginControls.editPluginDocuments` over the
+location's writable documents (`plugin-source-document.ts` holds the spec validation, package identity and removal
+edit). The pinned connection is rechecked before committing each edit.
 
 `PluginControls.read` supplies `targets[].expectedRevision` only when the displayed daemon plugin entries
 match the raw writable document, including full options. The opaque HMAC binds the workspace, canonical
@@ -259,8 +270,8 @@ Location, scope, logical/physical destination, selected WSL distro, current auth
 document existence, native mode, BOM and complete text. Its random key and connection tokens stay private
 to the service instance; configuration values stay out of the token and diagnostics. Mutation-produced
 overlays acquire removal authority through reconciliation. `PluginSources.remove` requires this token;
-`editConfigDocument(..., signal?, strictDocuments?, expectedRevision?)` compares it inside the existing mutation queue before
-editing the freshly read document. Changed options at the same source/index, content, destination, mode or
+`editPluginDocuments` (like `editConfigDocument(..., signal?, strictDocuments?, expectedRevision?)`) compares it inside the
+mutation queues before editing the freshly read documents. Changed options at the same source/index, content, destination, mode or
 connection refuse with `stale` and require a fresh selection/confirmation.
 
 1. Read at most 4 MiB and require valid UTF-8 JSON/JSONC with one array-valued
@@ -390,7 +401,8 @@ guessed paths.
 - source add/remove ownership, scope availability, duplicates across scopes, rule removal with the source (active and
   failed plugins, wildcards, other plugins and scopes kept), rule retention for unknown IDs, bare names loaded as
   packages, rules kept for a failed ID-less package or a remaining declaration, a bare ID removed when it would
-  precede the remaining definition, orphan rule removal and refusal,
+  precede the remaining definition, the Project's dependent bare ID removed with a Global source (or the removal
+  refused for an inline document), orphan rule removal and refusal,
   inventory correlation and the strict route:
   `plugin-sources.test.ts`
 - confirmed-document revisions, full-options and connection replacement refusals, ordinary native removal
