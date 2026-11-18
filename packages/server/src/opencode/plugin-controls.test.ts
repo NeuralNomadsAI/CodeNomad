@@ -674,6 +674,23 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["@acme/reviewer"])
   })
 
+  it("counts an undeclared local plugin as defined only inside a configuration directory's plugin(s)/ folder", async () => {
+    for (const discovered of [false, true]) {
+      const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+      // Outside discovery, the entry is a removed declaration the daemon still reports while it reloads.
+      const local = discovered ? path.join(fixture.globalDirectory, "plugins", "external.ts") : path.join(fixture.projectDirectory, "..", "external", "index.js")
+      fixture.runtime.push({ id: "acme.external", source: { type: "local", path: local }, features: {}, state: { status: "active" } })
+      const enable = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.external", scope: "global", enabled: true })
+      if (discovered) {
+        await enable
+        assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "acme.external"])
+      } else {
+        await assert.rejects(enable, (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+        assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"], "no bare ID without a definition")
+      }
+    }
+  })
+
   it("refuses an enable whose deletion leaves a wildcard disabling the plugin, writing nothing", async () => {
     for (const wildcard of ["-*", "-acme.*"]) {
       const fixture = createFixture({ globalPlugins: ["@acme/reviewer", wildcard, "-acme.reviewer"], runtime: [] })

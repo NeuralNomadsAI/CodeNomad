@@ -55,8 +55,9 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   string entry the snapshot reads as an exact rule of the source's `pluginId` in that
   document: a bare `id` is deleted unless a verified definition still precedes it (it
   would otherwise be a package spec OpenCode installs from the registry), and a `-id` is
-  deleted only when no other declaration of the plugin remains in any applicable document
-  (same target, `pluginId` or package identity). In every other document applied at the
+  deleted only when no other declaration of the plugin remains: none in any applicable
+  document (same target, `pluginId` or package identity), and no discovered plugin(s)/
+  folder entry or verified descriptor with that ID. In every other document applied at the
   requesting location, a bare `id` that a verified definition preceded only through the
   removed source would become a package spec too: it is deleted from the location's other
   writable target in the same request, and anywhere else (inherited, inline or other
@@ -66,9 +67,10 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   Each result must parse to its original minus exactly those elements, and OpenCode's
   package cache is never touched.
   `PluginControls.editPluginDocuments` performs the request: it holds the Global then the Project queue, checks the
-  confirmed revision of the source's document, reads every writable target and prepares and verifies each changed
-  file before the first rename, so a refusal or failed check writes nothing. A failure between the two renames
-  can leave the first committed, as for every multi-file edit. Locations that are not open (other projects sharing
+  confirmed revision of the source's document, reads every writable target and prepares (locks in physical path
+  order) and verifies each changed file before the first rename, so a refusal or failed check writes nothing.
+  Commits follow safety order: dependent cleanups first, the source's document last, so a failure between renames
+  leaves every remaining bare `id` after its definition. Locations that are not open (other projects sharing
   the Global document) cannot be enumerated: a bare `id` in their Project documents is not re-checked.
 - **Orphan rules**: a control is `orphan` when no runtime entry, verified descriptor or
   source defines its ID and every source has a `pluginId` (a runtime entry exporting an ID,
@@ -173,10 +175,13 @@ activation rule is written.
 
 `opencode/plugin-activation-order.ts` models that order for every mutation. Builtin, SDK and directory-discovered
 plugins (including verified CodeNomad descriptors) are defined before every document; documents then apply in
-`config.get` order (Global before Project), entries in array order. Each add carries the ID it verifiably defines:
-the runtime reports that exact ID for that source, or a verified managed descriptor. A runtime package entry no
-document declares has no position. `-x` disables only plugins defined before it, and an add selects only plugins
-defined before it.
+`config.get` order (Global before Project), entries in array order. A local inventory entry counts as discovered
+only inside the `plugin/` or `plugins/` folder of a configuration directory `config.get` reports; any other
+undeclared inventory entry (a removed declaration the daemon still reports while it reloads) defines nothing. Each
+add carries the ID it verifiably defines: the runtime reports that exact ID for that source, or a verified managed
+descriptor. `-x` disables only plugins defined before it, and an add selects only plugins defined before it. The
+snapshot classifies each positive entry the same way: it is an activation rule only when a definition precedes it,
+never because an earlier `-id` names the ID, and otherwise a source declaration (a package spec).
 
 - **Safe positive rule**: a bare `id` at a position is written only when a verified definition precedes it, or the
   ID is a reserved `opencode.*` selector. CodeNomad appends at the end of the target document, so a definition in a
@@ -394,7 +399,8 @@ guessed paths.
   re-verified deletions: `plugin-control-document.test.ts`
 - rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
   selectors, rules in another scope, source declarations named like their ID, managed re-enable), and the
-  removal-only or refused enables of IDs without a preceding verified definition, wildcards left disabling:
+  removal-only or refused enables of IDs without a preceding verified definition, wildcards left disabling, undeclared
+  local inventory outside discovery folders:
   `plugin-controls.test.ts`; the applied-order evaluator: `plugin-activation-order.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`
@@ -402,7 +408,9 @@ guessed paths.
   failed plugins, wildcards, other plugins and scopes kept), rule retention for unknown IDs, bare names loaded as
   packages, rules kept for a failed ID-less package or a remaining declaration, a bare ID removed when it would
   precede the remaining definition, the Project's dependent bare ID removed with a Global source (or the removal
-  refused for an inline document), orphan rule removal and refusal,
+  refused for an inline document), the source document committed last under an injected commit failure, a disable
+  kept while a plugin(s)/ folder still discovers the plugin, a bare name after its own `-id` read as a package,
+  orphan rule removal and refusal,
   inventory correlation and the strict route:
   `plugin-sources.test.ts`
 - confirmed-document revisions, full-options and connection replacement refusals, ordinary native removal

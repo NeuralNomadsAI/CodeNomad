@@ -212,7 +212,7 @@ export class PluginControls {
       if (!identity) throw new PluginControlsError("Location is not owned by an active worktree", "forbidden")
       const release = this.options.worktreeDeletionFence.enter([identity])
       if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
-      const prepared: PluginControlDocumentPrepared[] = []
+      const prepared: Array<{ scope: PluginControlScope; write: PluginControlDocumentPrepared }> = []
       try {
         const documents = await Promise.all(context.targets.map(async target => ({ target, document: await readPluginControlDocument(target.ioPath, context.fileSystem) })))
         const confirmed = documents.find(entry => entry.target.scope === scope)!
@@ -234,16 +234,20 @@ export class PluginControls {
           .sort((left, right) => left.document.writePath < right.document.writePath ? -1 : 1)
         for (const { target, document } of changed) {
           assertCurrentConnection(context.connection)
-          prepared.push(await context.fileSystem.prepare(document, updates[target.scope]!, { beforeCommit: () => assertCurrentConnection(context.connection) }))
+          prepared.push({ scope: target.scope, write: await context.fileSystem.prepare(document, updates[target.scope]!,
+            { beforeCommit: () => assertCurrentConnection(context.connection) }) })
         }
-        for (const write of prepared) await write.verify()
-        for (const write of prepared) {
+        for (const { write } of prepared) await write.verify()
+        // Locks follow physical order; commits follow safety order. The confirmed document (the source removal)
+        // commits last, after the cleanups that depend on it, so a failure in between leaves a configuration where
+        // every bare ID still follows its definition.
+        for (const { write } of [...prepared].sort((left, right) => Number(left.scope === scope) - Number(right.scope === scope))) {
           assertCurrentConnection(context.connection)
           await write.commit()
         }
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
       finally {
-        await Promise.allSettled(prepared.map(write => write.dispose()))
+        await Promise.allSettled(prepared.map(({ write }) => write.dispose()))
         release()
       }
     }))
@@ -619,7 +623,16 @@ function evaluateDocuments(
   // A runtime homonym from another source retains its ordinary controls.
   const managedIds = new Set(context.managedPlugins.flatMap(entry => entry.ids)
     .filter(id => !runtimeById.has(id) || runtimeById.get(id)?.managedBy === "codenomad"))
-  const knownDefinitions = new Set([...runtimeIds, ...managedIds])
+  // Defined before every document, as OpenCode applies discovery first: builtin and SDK plugins, plugins inside a
+  // reported configuration directory's plugin(s)/ folder, and verified descriptors. Any other undeclared inventory
+  // entry (a declaration the daemon is still reloading) defines nothing.
+  const discovery = context.entries.flatMap(entry => entry?.type === "directory" && typeof entry.path === "string"
+    ? ["plugin", "plugins"].map(name => context.paths.join(entry.path, name)) : [])
+  const startIds = new Set([...runtime.flatMap(entry => entry.id && (entry.source.type === "builtin" || entry.source.type === "sdk"
+    || (entry.source.type === "local" && discovery.some(directory => insideDirectory(context.paths, directory, (entry.source as { path: string }).path))))
+    ? [entry.id] : []), ...managedIds])
+  // Positive entries select only IDs defined before them in the applied order; a `-id` rule defines nothing.
+  const knownDefinitions = new Set(startIds)
   // Targets OpenCode reports loading as packages, including failures that exported no ID: such an entry is a source,
   // whatever ID an earlier rule names.
   const reportedTargets = new Set(runtime.flatMap(entry => entry.source.type === "package" ? [entry.source.target]
@@ -655,7 +668,6 @@ function evaluateDocuments(
       applied.push(step)
       if (disabled) {
         rules.push({ selector, enabled: false, scope: document.scope, path: document.path, order: document.order, entryIndex })
-        if (isExactSelector(selector)) knownDefinitions.add(selector)
         return
       }
 
@@ -712,10 +724,6 @@ function evaluateDocuments(
       ...(identified && !runtimeEntry && !managed && !builtin && !declaredIds.has(id) ? { orphan: true as const } : {}),
     } satisfies PluginActivationControl
   })
-  // Directory, builtin and SDK plugins and verified descriptors apply before every document; a declared ID is
-  // defined where it is declared.
-  const startIds = new Set([...runtime.flatMap(entry => entry.id && entry.source.type !== "package" ? [entry.id] : []), ...managedIds]
-    .filter(id => !declaredIds.has(id)))
   return {
     snapshot: { location: context.location, runtime, configured: { rules, sources }, controls, targets: context.targets.map(publicTarget) },
     sequence: { entries: applied, startIds },
@@ -1057,6 +1065,10 @@ function samePath(paths: path.PlatformPath, left: string, right: string): boolea
   const a = normalize(left)
   const b = normalize(right)
   return paths === path.win32 ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+function insideDirectory(paths: path.PlatformPath, directory: string, candidate: string): boolean {
+  return containsPath(paths, directory, candidate) && !samePath(paths, directory, candidate)
 }
 
 function containsPath(paths: path.PlatformPath, candidate: string, directory: string): boolean {

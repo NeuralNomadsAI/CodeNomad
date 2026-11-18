@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url"
 import { setImmediate as nextTurn } from "node:timers/promises"
 import Fastify from "fastify"
 import { parse } from "jsonc-parser"
+import { hostPluginControlDocumentFileSystem, type PluginControlDocumentFileSystem } from "./plugin-control-document"
 import { PluginControls } from "./plugin-controls"
 import { PluginSources } from "./plugin-sources"
 import { registerPluginSourceRoutes } from "../server/routes/plugin-sources"
@@ -333,6 +334,58 @@ describe("plugin source mutations", () => {
         code("dependent-rule", "invalid"))
       assert.equal(await readFile(f.globalFile, "utf8"), global, "a refusal writes nothing")
       assert.equal(await readFile(f.projectFile, "utf8"), project)
+    } finally { await f.cleanup() }
+  })
+
+  it("commits the dependent cleanup before the source removal, so a failed last commit leaves a valid configuration", async t => {
+    const f = await fixture()
+    try {
+      f.state.runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      const global = JSON.stringify({ plugins: ["@acme/plugin@1", "-acme.plugin"] })
+      await writeFile(f.globalFile, global)
+      await writeFile(f.projectFile, JSON.stringify({ plugins: ["keep", "acme.plugin"] }))
+      const expectedRevision = await revision(f)
+      let commits = 0
+      const fileSystem = hostPluginControlDocumentFileSystem as Required<PluginControlDocumentFileSystem>
+      const prepare = fileSystem.prepare.bind(fileSystem)
+      t.mock.method(fileSystem, "prepare", async (...args: Parameters<typeof prepare>) => {
+        const write = await prepare(...args)
+        return { ...write, commit: async () => { if (++commits === 2) throw new Error("injected commit failure"); await write.commit() } }
+      })
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision }), /injected/)
+      // The Global source still defines the plugin; the Project's bare ID that depended on it is already gone.
+      assert.equal(await readFile(f.globalFile, "utf8"), global)
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["keep"])
+    } finally { await f.cleanup() }
+  })
+
+  it("keeps the disabling rule while a plugin(s)/ folder still discovers the plugin", async () => {
+    const f = await fixture()
+    try {
+      // Removing the explicit declaration leaves the discovered plugin loaded in every project: its disable still applies.
+      const discovered = path.join(path.dirname(f.globalFile), "plugins", "reviewer")
+      f.state.runtime = [{ id: "acme.reviewer", source: { type: "local", path: discovered }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["./plugins/reviewer", "-acme.reviewer"] }))
+      await writeFile(f.projectFile, JSON.stringify({ plugins: ["acme.reviewer"] }))
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "./plugins/reviewer", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["-acme.reviewer"])
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["acme.reviewer"], "discovery still defines it before Project")
+    } finally { await f.cleanup() }
+  })
+
+  it("reads a bare name after its own -rule as a package declaration, never an orphan rule", async () => {
+    const f = await fixture()
+    try {
+      // "-foo" defines nothing: OpenCode installs "foo" from the registry, so it is a source whose ID is unknown.
+      const text = JSON.stringify({ plugins: ["-foo", "foo"] })
+      await writeFile(f.globalFile, text)
+      const snapshot = await f.controls.read("w", f.location)
+      assert.deepEqual(snapshot.configured.sources.map(({ target, entryIndex }) => ({ target, entryIndex })), [{ target: "foo", entryIndex: 1 }])
+      assert.equal(snapshot.controls.find(control => control.id === "foo")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "foo", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text)
     } finally { await f.cleanup() }
   })
 
