@@ -16,6 +16,8 @@ import { recoveredDraftIds, switchRecoveredDraft } from "./session-draft-recover
 import { hydrateRestoredWorkspaceState } from "./app-session-workspace-hydration"
 import { serializeDraftAttachments } from "./client-state-attachments-codec"
 import { captureState } from "../lib/hooks/use-app-session-capture"
+import { createRestorableSessionPreservation, mergeRestorableSessionState, recordRestoredTab } from "./app-session-snapshot-merge"
+import { getInstanceAppTabId } from "./app-tabs"
 import { attachInstanceTab } from "./app-tabs"
 import { encodeClientSnapshotV2, decodeClientSnapshotV2 } from "./client-state-partitions"
 
@@ -74,6 +76,61 @@ afterEach(() => {
 })
 
 describe("closed project drafts", () => {
+  it("closing and clearing one occurrence cannot erase an independent saved occurrence", async () => {
+    const folder = "/independent-saved-occurrences", session = "shared"
+    const binary = (n: number) => createFileAttachment("bytes.bin", "bytes.bin", "application/octet-stream", new Uint8Array([n]))
+    const snapshot = {
+      kind: "workspace" as const, folder, occurrence: 1, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      ...serializeDraftAttachments({ shared: "B independent" }, { shared: [binary(66)] }),
+    }
+    open("occurrence-clear-a", folder, [session])
+    setSessionDraftPrompt("occurrence-clear-a", session, "A only")
+    addAttachment("occurrence-clear-a", session, binary(65))
+    const read = deferred<unknown>(), entered = deferred<void>()
+    const b = "occurrence-restore-b"
+    open(b, folder, [], () => { entered.resolve(); return read.promise })
+    attachInstanceTab(b)
+    const restore = hydrateRestoredWorkspaceState(b, snapshot, new AbortController().signal, () => true)
+    await entered.promise
+    clearSessionDraftPrompt("occurrence-clear-a", session)
+    clearAttachments("occurrence-clear-a", session)
+    close("occurrence-clear-a")
+
+    const preservation = createRestorableSessionPreservation({ tabs: [snapshot], activeTabIndex: 0 })
+    recordRestoredTab(preservation, 0, getInstanceAppTabId(b))
+    const checkpoint = () => {
+      const captured = captureState(new Map())
+      return mergeRestorableSessionState(captured.state, preservation, {
+        currentTabIds: captured.tabIds, currentTabAuthorities: captured.authorities,
+      })
+    }
+    try {
+      const pending = checkpoint().tabs[0]
+      assert.equal(pending.kind, "workspace")
+      assert.equal(pending.drafts.shared, "B independent", "checkpoint while native read is pending")
+    } finally { read.resolve(apiSession(session, folder)) }
+    await restore
+    const encoded = await encodeClientSnapshotV2({ version: 1, revision: 1, savedAt: 1, layout: {}, session: checkpoint() })
+    const decoded = await decodeClientSnapshotV2(encoded.root, 1, async key => encoded.partitions[key] ?? null)
+    const saved = decoded?.session?.tabs[0]
+    assert.equal(saved?.kind, "workspace")
+    assert.equal(saved.drafts.shared, "B independent")
+    close(b, { drafts: "skip" })
+
+    // The next vault claim sees A's clear; a different binding then restores B from disk.
+    open("occurrence-reopen-a", folder, [session])
+    await hydrateRestoredWorkspaceState("occurrence-reopen-a", {
+      ...snapshot, occurrence: 0,
+      ...serializeDraftAttachments({ shared: "stale A" }, { shared: [binary(65)] }),
+    }, new AbortController().signal, () => true)
+    assert.equal(getSessionDraftPrompt("occurrence-reopen-a", session), "")
+    assert.deepEqual(getAttachments("occurrence-reopen-a", session), [])
+    open("occurrence-reopen-b", folder, [session])
+    await hydrateRestoredWorkspaceState("occurrence-reopen-b", saved, new AbortController().signal, () => true)
+    assert.equal(getSessionDraftPrompt("occurrence-reopen-b", session), "B independent")
+    const [file] = getAttachments("occurrence-reopen-b", session)
+    assert.deepEqual(file.source.type === "file" && Array.from(file.source.data ?? []), [66])
+  })
   for (const clear of [false, true]) for (const vaultFirst of [false, true]) {
     it(`chooses the newer ${clear ? "clear" : "bundle"} independently of ${vaultFirst ? "vault" : "snapshot"} completion`, async () => {
       const key = `draft-authority-${clear}-${vaultFirst}`, folder = `/${key}`, old = `${key}-old`, id = `${key}-reopened`

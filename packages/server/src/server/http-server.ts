@@ -913,7 +913,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     return
   }
 
-  const ordinarySessionMutation = request.method !== "GET" && request.method !== "HEAD"
+  const isMutation = request.method !== "GET" && request.method !== "HEAD"
+    && !(request.method === "POST" && SESSION_SETTLEMENT_WAIT.test(pathname.replace(/\/+$/, "")))
+  const ordinarySessionMutation = isMutation
     && /^\/api\/(?:experimental\/)?session(?:\/|$)/.test(pathname)
     && !isGlobalFormAction(pathname, request.method)
   if (ordinarySessionMutation) {
@@ -1218,7 +1220,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     }
     authorizedSessionDirectory = session?.location.directory
     authorizedSession = session
-    if (session && request.method !== "GET" && request.method !== "HEAD") {
+    if (session && isMutation) {
       const sessionWorktree = await wait(workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory))
       if (!sessionWorktree) {
         reply.code(403).send({ error: "Session does not belong to workspace" })
@@ -1232,7 +1234,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   const defaultLocation = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
   const body = defaultLocation.body
   if (defaultLocation.directory) mutationDirectories.add(defaultLocation.directory)
-  if (request.method !== "GET" && request.method !== "HEAD") {
+  if (isMutation) {
     // Resolve every effective effect location, including server-supplied defaults
     // and a native resource's actual cwd, BEFORE entering the deletion fence.
     for (const directory of mutationDirectories) {
@@ -1247,18 +1249,16 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   }
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
   signal.throwIfAborted()
-  const releaseFence = request.method === "GET" || request.method === "HEAD"
-    ? undefined
-    : worktreeDeletionFence.enter([...mutationIdentities])
-  if (request.method !== "GET" && request.method !== "HEAD" && !releaseFence) {
+  const releaseFence = isMutation ? worktreeDeletionFence.enter([...mutationIdentities]) : undefined
+  if (isMutation && !releaseFence) {
     reply.code(409).send({ error: "Worktree deletion is in progress" })
     return
   }
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
-  const releaseAccount = connection && request.method !== "GET" && request.method !== "HEAD"
+  const releaseAccount = connection && isMutation
     && /^\/api\/(?:credential|integration)(?:\/|$)/.test(pathname) ? args.accounts?.manual(connection) : undefined
   const releasePhysicalMutation = releaseFence || releaseAccount ? () => { releaseAccount?.(); releaseFence?.() } : undefined
-  const releaseMutation = request.method === "GET" || request.method === "HEAD" ? releasePhysicalMutation
+  const releaseMutation = !isMutation ? releasePhysicalMutation
     : () => { releasePhysicalMutation?.(); releaseSession() }
 
   try {
@@ -1701,6 +1701,8 @@ function hasDotSegment(value: string): boolean {
   })
 }
 
+const SESSION_SETTLEMENT_WAIT = /^\/api\/experimental\/session\/[^/]+\/wait$/
+
 function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
   const route = pathname.replace(/\/+$/, "")
   const allowed: Array<[string, RegExp]> = [
@@ -1738,7 +1740,7 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["DELETE", /^\/api\/session\/[^/]+\/inbox\/[^/]+$/],
     ["PATCH", /^\/api\/session\/[^/]+$/],
     ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|move|prompt|command|shell|compact|interrupt|background|fork|generate)$/],
-    ["POST", /^\/api\/experimental\/session\/[^/]+\/wait$/],
+    ["POST", SESSION_SETTLEMENT_WAIT],
     ["PATCH", /^\/api\/session\/[^/]+\/inbox\/[^/]+$/],
     ["POST", /^\/api\/session\/[^/]+\/revert\/stage$/],
     ["DELETE", /^\/api\/session\/[^/]+\/revert$/],

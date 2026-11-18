@@ -73,6 +73,7 @@ async function harness(
     reply.header("www-authenticate", 'Basic realm="OpenCode"')
     reply.header("proxy-authenticate", 'Basic realm="OpenCode proxy"')
     if (request.headers["x-test-challenge"] === "1") reply.code(401)
+    if (request.headers["x-test-unavailable"] === "1") reply.code(503)
     return { url: request.raw.url, body: request.body, headers: request.headers }
   })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
@@ -424,7 +425,7 @@ describe("instance proxy location enforcement", () => {
     const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/session/session/wait" })
     assert.equal(response.statusCode, 200)
     assert.equal(JSON.parse(response.body).url, "/api/experimental/session/session/wait")
-    assert.deepEqual(sessionGets, ["session", "session"])
+    assert.deepEqual(sessionGets, ["session"])
     assert.equal(requestCount(), 1)
   })
 
@@ -433,6 +434,27 @@ describe("instance proxy location enforcement", () => {
     const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/session/session/wait" })
     assert.equal(response.statusCode, 403)
     assert.equal(requestCount(), 0)
+  })
+
+  it("allows a rename after a failed settlement read, but holds a session after an uncertain rename", async () => {
+    const { app, requestCount, sessionCleanup } = await harness()
+    const root = "/workspaces/workspace/instance/api"
+    const unavailable = { "x-test-unavailable": "1" }
+    const wait = () => app.inject({ method: "POST", url: `${root}/experimental/session/session/wait`, headers: unavailable })
+    const rename = (title: string, headers = {}) => app.inject({
+      method: "PATCH", url: `${root}/session/session`, payload: { title }, headers,
+    })
+
+    assert.equal((await wait()).statusCode, 503)
+    const renamed = await rename("First rename")
+    assert.equal(renamed.statusCode, 200)
+    assert.deepEqual(renamed.json().body, { title: "First rename" })
+    assert.equal(requestCount(), 2)
+    assert.equal((await rename("Uncertain rename", unavailable)).statusCode, 503)
+    assert.equal(sessionCleanup.hasUncertain("session"), true)
+    assert.equal((await wait()).statusCode, 503, "read remains available during an uncertain write")
+    assert.equal((await rename("Conflicting rename")).statusCode, 409)
+    assert.equal(requestCount(), 4)
   })
 
   it("proxies session instruction entries with or without ambient location context", async () => {

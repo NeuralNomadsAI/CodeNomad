@@ -35,13 +35,14 @@ export function closedWorkspaceDraftKey(folder: string, backendId = ""): string 
 }
 
 /** Snapshot fallback yields per session, including both fields of a clear. */
-export function closedDraftSnapshotAuthority(instanceId: string, folder?: string): ReadonlySet<string> {
-  const bound = restoreAuthority.get(instanceId)
-  return bound?.superseded ?? (folder === undefined ? undefined : closedAuthority.get(closedWorkspaceDraftKey(folder))) ?? new Set()
+const noSnapshotAuthority: ReadonlySet<string> = new Set()
+
+export function closedDraftSnapshotAuthority(instanceId: string): ReadonlySet<string> {
+  return restoreAuthority.get(instanceId)?.superseded ?? noSnapshotAuthority
 }
 
-export function omitSupersededClosedDrafts<T extends ClosedWorkspaceDrafts>(instanceId: string, snapshot: T, folder?: string): T {
-  const superseded = closedDraftSnapshotAuthority(instanceId, folder)
+export function omitSupersededClosedDrafts<T extends ClosedWorkspaceDrafts>(instanceId: string, snapshot: T): T {
+  const superseded = closedDraftSnapshotAuthority(instanceId)
   return superseded.size ? { ...snapshot, ...pick(snapshot, id => !superseded.has(id)) } : snapshot
 }
 
@@ -132,12 +133,9 @@ export function retainClosedWorkspaceDrafts(
     closedAuthority.delete(key)
     closedAuthority.set(key, authority)
     while (closedAuthority.size > MAX_CLOSED_WORKSPACE_DRAFTS) closedAuthority.delete(closedAuthority.keys().next().value!)
-    // A sibling close can supersede a pending restoration of an older source.
+    // A sibling close supersedes pending vault bytes, not the sibling's independent snapshot.
     for (const bound of restoreAuthority.values()) {
-      if (bound.key === key) {
-        for (const id of superseded) bound.superseded.add(id)
-        if (bound.entry) bound.entry = pick(bound.entry, id => !superseded.has(id))
-      }
+      if (bound.key === key && bound.entry) bound.entry = pick(bound.entry, id => !superseded.has(id))
     }
   }
   for (const pending of claims.values()) {
@@ -159,7 +157,10 @@ export function restoreClosedWorkspaceDrafts(
 ): Promise<void> | undefined {
   const key = closedWorkspaceDraftKey(folder)
   const entry = vault.get(key)
-  const bound = { key, superseded: new Set([...(closedAuthority.get(key) ?? []), ...(entry ? contentSessions(entry) : [])]), entry }
+  const authority = closedAuthority.get(key)
+  if (!entry && !authority) return
+  closedAuthority.delete(key)
+  const bound = { key, superseded: new Set([...(authority ?? []), ...(entry ? contentSessions(entry) : [])]), entry }
   restoreAuthority.set(instanceId, bound)
   if (!entry) return
   vault.delete(key)
@@ -173,6 +174,7 @@ export function restoreClosedWorkspaceDrafts(
   const finish = () => {
     claims.delete(instanceId)
     bound.entry = emptySessionsOf(instanceId, claim.entry)
+    // Once returned to the vault, only actual pending bytes are eligible for a new claim.
     requeue(key, bound.entry)
   }
   // Reads `claim.entry`: closes of sibling tabs may supersede sessions meanwhile.

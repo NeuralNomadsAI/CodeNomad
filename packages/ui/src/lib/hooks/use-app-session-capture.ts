@@ -176,7 +176,7 @@ export function useAppSessionCapture() {
     const runtimeTabId = getInstanceAppTabId(instanceId)
     const source = getPreservedWorkspaceState(preservation, { runtimeTabId, folder: instance.folder, occurrence: 0 })
     if (!source) return
-    const snapshot = omitSupersededClosedDrafts(instanceId, source, instance.folder)
+    const snapshot = omitSupersededClosedDrafts(instanceId, source)
     if (!recoverOnly) hydrateWorkspacePromptState(
       instanceId,
       snapshot,
@@ -318,7 +318,7 @@ export function useAppSessionCapture() {
         )
         // Seed the independent local composer before either native-read batch can recover into it.
         if (snapshot && isCurrentBinding()) hydrateWorkspacePromptState(event.instanceId,
-          omitSupersededClosedDrafts(event.instanceId, snapshot, event.folder), new Set(), NO_SESSION_DRAFT_SESSION_ID, true)
+          omitSupersededClosedDrafts(event.instanceId, snapshot), new Set(), NO_SESSION_DRAFT_SESSION_ID, true)
         if (snapshot && instances().has(event.instanceId)) void Promise.resolve().then(() => {
           if (!isCurrentBinding()) return null
           return hydrateRestoredWorkspaceState(event.instanceId, snapshot, hydrationController.signal, isCurrentBinding)

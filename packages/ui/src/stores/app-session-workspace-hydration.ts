@@ -23,6 +23,7 @@ export { NO_SESSION_DRAFT_SESSION_ID } from "./local-draft-ids"
 export function seedRestoredWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
+  seedPrompts = true,
 ): void {
   seedTabViewState(instanceId, snapshot.viewState)
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
@@ -34,10 +35,14 @@ export function seedRestoredWorkspaceState(
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
   hydrateSeenInterruptions(instanceId, snapshot.seenInterruptions)
   if (snapshot.expandedSessionIds !== undefined) hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds)
-  const prompts = omitSupersededClosedDrafts(instanceId, snapshot, snapshot.folder)
+  if (seedPrompts) seedRestoredWorkspacePrompts(instanceId, snapshot)
+  seedRestoredSessionSelection(instanceId, snapshot.activeParentSessionId ?? null, snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null)
+}
+
+export function seedRestoredWorkspacePrompts(instanceId: string, snapshot: RestorableWorkspaceTabState) {
+  const prompts = omitSupersededClosedDrafts(instanceId, snapshot)
   hydrateWorkspacePromptState(instanceId, prompts, new Set(getSessions(instanceId).map(session => session.id)), NO_SESSION_DRAFT_SESSION_ID)
   recoverDeletedWorkspacePrompts(instanceId, prompts)
-  seedRestoredSessionSelection(instanceId, snapshot.activeParentSessionId ?? null, snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null)
 }
 
 export async function hydrateRestoredWorkspaceState(
@@ -64,19 +69,19 @@ export async function hydrateRestoredWorkspaceState(
   }
   hydrateWorkspacePromptState(
     instanceId,
-    omitSupersededClosedDrafts(instanceId, snapshot, snapshot.folder),
+    omitSupersededClosedDrafts(instanceId, snapshot),
     new Set(sessions.map(({ id }) => id)),
     NO_SESSION_DRAFT_SESSION_ID,
   )
 
-  const requestedPrompts = omitSupersededClosedDrafts(instanceId, snapshot, snapshot.folder)
+  const requestedPrompts = omitSupersededClosedDrafts(instanceId, snapshot)
   const absenceProofs = await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
     Object.keys(requestedPrompts.drafts),
     Object.keys(requestedPrompts.attachments),
   ]), signal, isCurrentBinding, true)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
-  const prompts = omitSupersededClosedDrafts(instanceId, snapshot, snapshot.folder)
+  const prompts = omitSupersededClosedDrafts(instanceId, snapshot)
   const absent = currentDraftAbsences(absenceProofs)
   for (const id of absent) if (!Object.hasOwn(prompts.drafts, id) && !Object.hasOwn(prompts.attachments, id)) absent.delete(id)
   if (absent.size) {
