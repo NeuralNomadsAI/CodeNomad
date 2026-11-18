@@ -76,6 +76,74 @@ afterEach(() => {
 })
 
 describe("closed project drafts", () => {
+  for (const first of ["A", "B"] as const) it(`restores ${first} first without borrowing the other occurrence's clear`, async () => {
+    const folder = `/ordered-clears-${first}`, a = `ordered-${first}-A`, b = `ordered-${first}-B`
+    const binary = (n: number) => createFileAttachment("bytes.bin", "bytes.bin", "application/octet-stream", new Uint8Array([n]))
+    const snapshot = (workspaceId: string, occurrence: number, text: string, byte: number) => ({
+      kind: "workspace" as const, folder, workspaceId, occurrence, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      ...serializeDraftAttachments({ shared: text }, { shared: [binary(byte)] }),
+    })
+    const savedA = snapshot(a, 0, "A stale", 65)
+    const savedB = snapshot(b, 1, "B independent", 66)
+    open(a, folder, ["shared"])
+    setSessionDraftPrompt(a, "shared", "A stale")
+    addAttachment(a, "shared", binary(65))
+    clearSessionDraftPrompt(a, "shared")
+    clearAttachments(a, "shared")
+    close(a)
+
+    const preservation = createRestorableSessionPreservation({ tabs: [savedA, savedB], activeTabIndex: 0 })
+    const openedIds = { A: `${a}-reopen`, B: `${b}-reopen` }
+    for (const letter of [first, first === "A" ? "B" : "A"] as const) {
+      const id = openedIds[letter]
+      open(id, folder, ["shared"])
+      attachInstanceTab(id)
+      recordRestoredTab(preservation, letter === "A" ? 0 : 1, getInstanceAppTabId(id))
+      await hydrateRestoredWorkspaceState(id, letter === "A" ? savedA : savedB, new AbortController().signal, () => true)
+    }
+    const captured = captureState(new Map())
+    const state = mergeRestorableSessionState(captured.state, preservation, {
+      currentTabIds: captured.tabIds, currentTabAuthorities: captured.authorities,
+    })
+    const serialized = await encodeClientSnapshotV2({ version: 1, revision: 1, savedAt: 1, layout: {}, session: state })
+    const restored = await decodeClientSnapshotV2(serialized.root, 1, async key => serialized.partitions[key] ?? null)
+    for (const letter of ["B", "A"] as const) {
+      const tab = restored?.session?.tabs.find(tab => tab.kind === "workspace" && tab.workspaceId === openedIds[letter])
+      assert.equal(tab?.kind, "workspace")
+      assert.equal(tab.drafts.shared, letter === "A" ? undefined : "B independent")
+      close(openedIds[letter], { drafts: "skip" })
+      const id = `${openedIds[letter]}-again`
+      open(id, folder, ["shared"])
+      await hydrateRestoredWorkspaceState(id, tab, new AbortController().signal, () => true)
+      assert.equal(getSessionDraftPrompt(id, "shared"), letter === "A" ? "" : "B independent")
+      const bytes = getAttachments(id, "shared").map(({ source }) => source.type === "file" && Array.from(source.data ?? []))
+      assert.deepEqual(bytes, letter === "A" ? [] : [[66]])
+    }
+  })
+
+  it("keeps a folder-only legacy snapshot and leaves the clear for the exact source", async () => {
+    const folder = "/ambiguous-legacy-clear", source = "legacy-clear-source"
+    const checkpoint = {
+      kind: "workspace" as const, folder, occurrence: 0, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      ...serializeDraftAttachments({ shared: "independent legacy text" }, {
+        shared: [createFileAttachment("bytes.bin", "bytes.bin", "application/octet-stream", new Uint8Array([77]))],
+      }),
+    }
+    open(source, folder, ["shared"])
+    clearSessionDraftPrompt(source, "shared")
+    clearAttachments(source, "shared")
+    close(source)
+    open("legacy-ambiguous", folder, ["shared"])
+    await hydrateRestoredWorkspaceState("legacy-ambiguous", checkpoint, new AbortController().signal, () => true)
+    assert.equal(getSessionDraftPrompt("legacy-ambiguous", "shared"), "independent legacy text")
+    const [attachment] = getAttachments("legacy-ambiguous", "shared")
+    assert.deepEqual(attachment.source.type === "file" && Array.from(attachment.source.data ?? []), [77])
+
+    open("legacy-exact", folder, ["shared"])
+    await hydrateRestoredWorkspaceState("legacy-exact", { ...checkpoint, workspaceId: source }, new AbortController().signal, () => true)
+    assert.equal(getSessionDraftPrompt("legacy-exact", "shared"), "")
+    assert.deepEqual(getAttachments("legacy-exact", "shared"), [])
+  })
   it("closing and clearing one occurrence cannot erase an independent saved occurrence", async () => {
     const folder = "/independent-saved-occurrences", session = "shared"
     const binary = (n: number) => createFileAttachment("bytes.bin", "bytes.bin", "application/octet-stream", new Uint8Array([n]))
@@ -120,7 +188,7 @@ describe("closed project drafts", () => {
     // The next vault claim sees A's clear; a different binding then restores B from disk.
     open("occurrence-reopen-a", folder, [session])
     await hydrateRestoredWorkspaceState("occurrence-reopen-a", {
-      ...snapshot, occurrence: 0,
+      ...snapshot, occurrence: 0, workspaceId: "occurrence-clear-a",
       ...serializeDraftAttachments({ shared: "stale A" }, { shared: [binary(65)] }),
     }, new AbortController().signal, () => true)
     assert.equal(getSessionDraftPrompt("occurrence-reopen-a", session), "")
@@ -136,7 +204,7 @@ describe("closed project drafts", () => {
       const key = `draft-authority-${clear}-${vaultFirst}`, folder = `/${key}`, old = `${key}-old`, id = `${key}-reopened`
       const binary = (n: number) => createFileAttachment("bytes.bin", "bytes.bin", "application/octet-stream", new Uint8Array([n]))
       const snapshot = {
-        kind: "workspace" as const, folder, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+        kind: "workspace" as const, folder, workspaceId: old, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
         ...serializeDraftAttachments({ [NO_SESSION]: "independent composer", gone: "old", unrelated: "independent session" },
           { gone: [binary(1)] }),
       }

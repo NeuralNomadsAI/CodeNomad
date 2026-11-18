@@ -19,9 +19,14 @@ export const MAX_CLOSED_WORKSPACE_DRAFTS = 16
 
 const log = getLogger("session")
 const vault = new Map<string, ClosedWorkspaceDrafts>()
-// A close with no remaining content still supersedes older snapshots.
-const closedAuthority = new Map<string, Set<string>>()
-const restoreAuthority = new Map<string, { key: string; superseded: Set<string>; entry?: ClosedWorkspaceDrafts }>()
+// Folder fallback carries bytes; only a saved workspace identity can carry clears.
+const closedAuthority = new Map<string, Map<string, Set<string>>>()
+const restoreAuthority = new Map<string, {
+  key: string
+  claimedIds: Set<string>
+  clearSource?: { id: string; sessions: Set<string> }
+  entry?: ClosedWorkspaceDrafts
+}>()
 /**
  * Entries taken by a reopened instance whose restore has not finished. They are
  * the only older drafts that can come back to the vault, so a later close
@@ -38,11 +43,30 @@ export function closedWorkspaceDraftKey(folder: string, backendId = ""): string 
 const noSnapshotAuthority: ReadonlySet<string> = new Set()
 
 export function closedDraftSnapshotAuthority(instanceId: string): ReadonlySet<string> {
-  return restoreAuthority.get(instanceId)?.superseded ?? noSnapshotAuthority
+  const bound = restoreAuthority.get(instanceId)
+  if (!bound) return noSnapshotAuthority
+  return bound.clearSource ? new Set([...bound.claimedIds, ...bound.clearSource.sessions]) : bound.claimedIds
 }
 
-export function omitSupersededClosedDrafts<T extends ClosedWorkspaceDrafts>(instanceId: string, snapshot: T): T {
-  const superseded = closedDraftSnapshotAuthority(instanceId)
+export function omitSupersededClosedDrafts<T extends ClosedWorkspaceDrafts & Pick<RestorableWorkspaceTabState, "folder" | "workspaceId">>(
+  instanceId: string,
+  snapshot: T,
+): T {
+  const key = closedWorkspaceDraftKey(snapshot.folder)
+  const sourceId = snapshot.workspaceId
+  const existing = restoreAuthority.get(instanceId)
+  const sources = closedAuthority.get(key)
+  const marks = sourceId && sources?.get(sourceId)
+  if (sourceId && marks && sources && (!existing || (existing.key === key && (!existing.clearSource || existing.clearSource.id === sourceId)))) {
+    const bound = existing ?? { key, claimedIds: new Set<string>() }
+    bound.clearSource = { id: sourceId, sessions: new Set([...(bound.clearSource?.sessions ?? []), ...marks]) }
+    restoreAuthority.set(instanceId, bound)
+    sources.delete(sourceId)
+    if (!sources.size) closedAuthority.delete(key)
+  }
+  const bound = restoreAuthority.get(instanceId)
+  const superseded = bound?.key !== key ? noSnapshotAuthority
+    : bound.clearSource?.id === sourceId ? closedDraftSnapshotAuthority(instanceId) : bound.claimedIds
   return superseded.size ? { ...snapshot, ...pick(snapshot, id => !superseded.has(id)) } : snapshot
 }
 
@@ -115,6 +139,7 @@ export function retainClosedWorkspaceDrafts(
 ): void {
   const key = closedWorkspaceDraftKey(folder)
   const claim = claims.get(instanceId)
+  const bound = restoreAuthority.get(instanceId)
   claims.delete(instanceId)
   restoreAuthority.delete(instanceId)
   if (mode !== "keep") {
@@ -128,15 +153,24 @@ export function retainClosedWorkspaceDrafts(
   const captured = captureInstanceDrafts(instanceId)
   // Sessions emptied by typing, clearing or sending supersede older drafts too.
   const superseded = new Set([...contentSessions(captured), ...touchedSessions(instanceId)])
-  if (superseded.size) {
-    const authority = new Set([...(closedAuthority.get(key) ?? []), ...superseded])
-    closedAuthority.delete(key)
-    closedAuthority.set(key, authority)
-    while (closedAuthority.size > MAX_CLOSED_WORKSPACE_DRAFTS) closedAuthority.delete(closedAuthority.keys().next().value!)
-    // A sibling close supersedes pending vault bytes, not the sibling's independent snapshot.
-    for (const bound of restoreAuthority.values()) {
-      if (bound.key === key && bound.entry) bound.entry = pick(bound.entry, id => !superseded.has(id))
+  const written = contentSessions(captured)
+  const inherited = bound?.key === key ? bound.clearSource : undefined
+  const cleared = [...new Set([...superseded, ...(inherited?.sessions ?? [])])].filter(id => !written.has(id))
+  if (cleared.length || closedAuthority.has(key)) {
+    const authority = closedAuthority.get(key) ?? new Map<string, Set<string>>()
+    for (const source of new Set([instanceId, ...(inherited ? [inherited.id] : [])])) {
+      const marks = new Set([...(authority.get(source) ?? []), ...cleared])
+      for (const id of written) marks.delete(id)
+      if (marks.size) authority.set(source, marks)
+      else authority.delete(source)
     }
+    closedAuthority.delete(key)
+    if (authority.size) closedAuthority.set(key, authority)
+    while (closedAuthority.size > MAX_CLOSED_WORKSPACE_DRAFTS) closedAuthority.delete(closedAuthority.keys().next().value!)
+  }
+  // A sibling close supersedes pending vault bytes, not the sibling's independent snapshot.
+  for (const bound of restoreAuthority.values()) {
+    if (bound.key === key && bound.entry) bound.entry = pick(bound.entry, id => !superseded.has(id))
   }
   for (const pending of claims.values()) {
     if (pending.key === key) pending.entry = pick(pending.entry, (sessionId) => !superseded.has(sessionId))
@@ -157,16 +191,13 @@ export function restoreClosedWorkspaceDrafts(
 ): Promise<void> | undefined {
   const key = closedWorkspaceDraftKey(folder)
   const entry = vault.get(key)
-  const authority = closedAuthority.get(key)
-  if (!entry && !authority) return
-  closedAuthority.delete(key)
-  const bound = { key, superseded: new Set([...(authority ?? []), ...(entry ? contentSessions(entry) : [])]), entry }
-  restoreAuthority.set(instanceId, bound)
   if (!entry) return
+  const bound = { key, claimedIds: contentSessions(entry), entry }
+  restoreAuthority.set(instanceId, bound)
   vault.delete(key)
   // A retry moves the unresolved source to its new claimant; only that binding captures it.
   for (const other of restoreAuthority.values()) {
-    if (other !== bound && other.key === key && other.entry) other.entry = pick(other.entry, id => !bound.superseded.has(id))
+    if (other !== bound && other.key === key && other.entry) other.entry = pick(other.entry, id => !bound.claimedIds.has(id))
   }
   const claim = { key, entry }
   claims.set(instanceId, claim)
