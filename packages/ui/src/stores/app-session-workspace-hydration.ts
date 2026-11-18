@@ -23,7 +23,6 @@ export { NO_SESSION_DRAFT_SESSION_ID } from "./local-draft-ids"
 export function seedRestoredWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
-  seedPrompts = true,
 ): void {
   seedTabViewState(instanceId, snapshot.viewState)
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
@@ -35,11 +34,11 @@ export function seedRestoredWorkspaceState(
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
   hydrateSeenInterruptions(instanceId, snapshot.seenInterruptions)
   if (snapshot.expandedSessionIds !== undefined) hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds)
-  if (seedPrompts) seedRestoredWorkspacePrompts(instanceId, snapshot)
+  seedRestoredWorkspacePrompts(instanceId, snapshot)
   seedRestoredSessionSelection(instanceId, snapshot.activeParentSessionId ?? null, snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null)
 }
 
-export function seedRestoredWorkspacePrompts(instanceId: string, snapshot: RestorableWorkspaceTabState) {
+function seedRestoredWorkspacePrompts(instanceId: string, snapshot: RestorableWorkspaceTabState) {
   const prompts = omitSupersededClosedDrafts(instanceId, snapshot)
   hydrateWorkspacePromptState(instanceId, prompts, new Set(getSessions(instanceId).map(session => session.id)), NO_SESSION_DRAFT_SESSION_ID)
   recoverDeletedWorkspacePrompts(instanceId, prompts)

@@ -22,7 +22,7 @@ import {
 } from "../../stores/instances"
 import { openSidecarTab, SidecarNotFoundError } from "../../stores/sidecars"
 import {
-  hydrateRestoredWorkspaceState, seedRestoredWorkspacePrompts, seedRestoredWorkspaceState,
+  hydrateRestoredWorkspaceState, seedRestoredWorkspaceState,
 } from "../../stores/app-session-workspace-hydration"
 import { runWithSerializedCommits } from "../../stores/app-session-restore-queue"
 import { shouldWaitForSavedSessionList } from "../../stores/app-session-restore-readiness"
@@ -119,11 +119,8 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
           waitForCreateCommit: waitForCreateCommit ? () => waitForCreateCommit : undefined,
           shouldCreateCommit: id => canCommitCreation() && (!hasLocalRestoredTab(capture, match.tabIndex)
             || capture.restoredTabIds()[match.tabIndex] === getInstanceAppTabId(id)),
-          onBeforeCreateCommit: (id) => seedRestoredWorkspaceState(id, tab, false),
-          onCreateCommit: (id) => {
-            seedRestoredWorkspacePrompts(id, tab)
-            capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id))
-          },
+          onBeforeCreateCommit: (id) => seedRestoredWorkspaceState(id, tab),
+          onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),
         })
         const creation = existingId || isWebHost() ? null : await create()
         if (creation && finishCreateCommit) await waitForWorkspaceMountAdoption()

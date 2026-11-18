@@ -5,34 +5,38 @@ import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsF
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { currentDraftAbsences, hydrateWorkspacePromptState, recoverDeletedWorkspacePrompts } from "./app-session-prompt-hydration"
 import { getRestoredSessionIds } from "./app-session-restored-session-ids"
-import { NO_SESSION_DRAFT_SESSION_ID } from "./app-session-workspace-hydration"
+import { NO_SESSION_DRAFT_SESSION_ID } from "./local-draft-ids"
 import { hydrateRestoredSessionChain } from "./session-api"
 import { getAuthoritativeDraftSessionIdsForInstance, getSessionDraftPromptsForInstance, getSessions, isSessionInWorkspaceScope } from "./session-state"
+import { waitForInstanceInitialSessionHydration } from "./instances"
 
 /**
  * Unsent drafts and attachments of project tabs removed from this window,
  * kept for the page lifetime so reopening the project gives them back.
  */
 type ClosedWorkspaceDrafts = Pick<RestorableWorkspaceTabState, "drafts" | "attachments">
+type DraftSnapshot = ClosedWorkspaceDrafts & Pick<RestorableWorkspaceTabState, "folder" | "workspaceId">
+type VaultEntry = ClosedWorkspaceDrafts & { origins: Record<string, readonly string[]> }
 
 export const MAX_CLOSED_WORKSPACE_DRAFTS = 16
 
 const log = getLogger("session")
-const vault = new Map<string, ClosedWorkspaceDrafts>()
+const vault = new Map<string, VaultEntry>()
 // Folder fallback carries bytes; only a saved workspace identity can carry clears.
 const closedAuthority = new Map<string, Map<string, Set<string>>>()
 const restoreAuthority = new Map<string, {
   key: string
+  snapshotId?: string
   claimedIds: Set<string>
   clearSource?: { id: string; sessions: Set<string> }
-  entry?: ClosedWorkspaceDrafts
+  entry?: VaultEntry
 }>()
 /**
  * Entries taken by a reopened instance whose restore has not finished. They are
  * the only older drafts that can come back to the vault, so a later close
  * supersedes its sessions in them directly.
  */
-const claims = new Map<string, { key: string; entry: ClosedWorkspaceDrafts }>()
+const claims = new Map<string, { key: string; entry: VaultEntry }>()
 
 /** Project identity: the backend (one per window today) and the normalized folder. */
 export function closedWorkspaceDraftKey(folder: string, backendId = ""): string {
@@ -48,10 +52,11 @@ export function closedDraftSnapshotAuthority(instanceId: string): ReadonlySet<st
   return bound.clearSource ? new Set([...bound.claimedIds, ...bound.clearSource.sessions]) : bound.claimedIds
 }
 
-export function omitSupersededClosedDrafts<T extends ClosedWorkspaceDrafts & Pick<RestorableWorkspaceTabState, "folder" | "workspaceId">>(
+export function omitSupersededClosedDrafts<T extends DraftSnapshot>(
   instanceId: string,
   snapshot: T,
 ): T {
+  void restoreClosedWorkspaceDrafts(instanceId, snapshot.folder, () => waitForInstanceInitialSessionHydration(instanceId), snapshot)
   const key = closedWorkspaceDraftKey(snapshot.folder)
   const sourceId = snapshot.workspaceId
   const existing = restoreAuthority.get(instanceId)
@@ -78,26 +83,31 @@ export function pendingClosedDrafts(instanceId: string): ClosedWorkspaceDrafts {
 const contentSessions = (entry: ClosedWorkspaceDrafts) =>
   new Set([...Object.keys(entry.drafts), ...Object.keys(entry.attachments)])
 
-function pick(entry: ClosedWorkspaceDrafts, keep: (sessionId: string) => boolean): ClosedWorkspaceDrafts {
+function pick<T extends ClosedWorkspaceDrafts>(entry: T, keep: (sessionId: string) => boolean): T {
   const filter = <T>(record: Record<string, T>) =>
     Object.fromEntries(Object.entries(record).filter(([sessionId]) => keep(sessionId)))
-  return { drafts: filter(entry.drafts), attachments: filter(entry.attachments) }
+  return {
+    ...entry, drafts: filter(entry.drafts), attachments: filter(entry.attachments),
+    ...("origins" in entry ? { origins: filter((entry as VaultEntry).origins) } : {}),
+  }
 }
 
 /** `top` wins for its sessions and `replaced`: their text and attachments move together. */
-function merge(base: ClosedWorkspaceDrafts, top: ClosedWorkspaceDrafts, replaced: ReadonlySet<string>): ClosedWorkspaceDrafts {
-  const kept = pick(base, (sessionId) => !replaced.has(sessionId) && !contentSessions(top).has(sessionId))
-  return { drafts: { ...kept.drafts, ...top.drafts }, attachments: { ...kept.attachments, ...top.attachments } }
+function merge(base: VaultEntry, top: VaultEntry, replaced: ReadonlySet<string>): VaultEntry {
+  const topIds = contentSessions(top)
+  const kept = pick(base, (sessionId) => !replaced.has(sessionId) && !topIds.has(sessionId))
+  return { drafts: { ...kept.drafts, ...top.drafts }, attachments: { ...kept.attachments, ...top.attachments },
+    origins: { ...kept.origins, ...top.origins } }
 }
 
-function stash(key: string, merged: ClosedWorkspaceDrafts): void {
+function stash(key: string, merged: VaultEntry): void {
   vault.delete(key)
   if (contentSessions(merged).size === 0) return
   vault.set(key, merged)
   while (vault.size > MAX_CLOSED_WORKSPACE_DRAFTS) vault.delete(vault.keys().next().value!)
 }
 
-const empty: ClosedWorkspaceDrafts = { drafts: {}, attachments: {} }
+const empty: VaultEntry = { drafts: {}, attachments: {}, origins: {} }
 
 /** Sessions the user typed in, cleared or sent from in this instance. */
 const touchedSessions = (instanceId: string) => new Set([
@@ -105,14 +115,16 @@ const touchedSessions = (instanceId: string) => new Set([
   ...getAuthoritativeAttachmentSessionIdsForInstance(instanceId),
 ])
 
-function captureInstanceDrafts(instanceId: string): ClosedWorkspaceDrafts {
+function captureInstanceDrafts(instanceId: string, snapshotId?: string): VaultEntry {
   const drafts = getSessionDraftPromptsForInstance(instanceId)
-  return normalizeRestorableAttachmentRecord(getSessionAttachmentsForInstance(instanceId), drafts)
+  const entry = normalizeRestorableAttachmentRecord(getSessionAttachmentsForInstance(instanceId), drafts)
     ?? { drafts, attachments: {} }
+  const origins = snapshotId && snapshotId !== instanceId ? [instanceId, snapshotId] : [instanceId]
+  return { ...entry, origins: Object.fromEntries([...contentSessions(entry)].map(id => [id, origins])) }
 }
 
 /** Sessions of `entry` this instance shows nothing for and the user has not touched. */
-function emptySessionsOf(instanceId: string, entry: ClosedWorkspaceDrafts): ClosedWorkspaceDrafts {
+function emptySessionsOf(instanceId: string, entry: VaultEntry): VaultEntry {
   const drafts = getSessionDraftPromptsForInstance(instanceId)
   const attachments = getSessionAttachmentsForInstance(instanceId)
   const touched = touchedSessions(instanceId)
@@ -120,7 +132,7 @@ function emptySessionsOf(instanceId: string, entry: ClosedWorkspaceDrafts): Clos
 }
 
 /** Returns what a restore could not apply underneath the project's newer drafts. */
-function requeue(key: string, older: ClosedWorkspaceDrafts): void {
+function requeue(key: string, older: VaultEntry): void {
   stash(key, merge(older, vault.get(key) ?? empty, new Set()))
 }
 
@@ -150,7 +162,8 @@ export function retainClosedWorkspaceDrafts(
     return
   }
   const remaining = claim ? emptySessionsOf(instanceId, claim.entry) : null
-  const captured = captureInstanceDrafts(instanceId)
+  const snapshotId = bound?.key === key ? bound.snapshotId : undefined
+  const captured = captureInstanceDrafts(instanceId, snapshotId)
   // Sessions emptied by typing, clearing or sending supersede older drafts too.
   const superseded = new Set([...contentSessions(captured), ...touchedSessions(instanceId)])
   const written = contentSessions(captured)
@@ -158,7 +171,7 @@ export function retainClosedWorkspaceDrafts(
   const cleared = [...new Set([...superseded, ...(inherited?.sessions ?? [])])].filter(id => !written.has(id))
   if (cleared.length || closedAuthority.has(key)) {
     const authority = closedAuthority.get(key) ?? new Map<string, Set<string>>()
-    for (const source of new Set([instanceId, ...(inherited ? [inherited.id] : [])])) {
+    for (const source of new Set([instanceId, ...(snapshotId ? [snapshotId] : [])])) {
       const marks = new Set([...(authority.get(source) ?? []), ...cleared])
       for (const id of written) marks.delete(id)
       if (marks.size) authority.set(source, marks)
@@ -180,7 +193,8 @@ export function retainClosedWorkspaceDrafts(
 }
 
 /**
- * Called once when an instance is added. Hydrates through the restore rules
+ * Called once the opening's own saved prompts (or their absence) are known.
+ * Hydrates through the restore rules
  * without replacing live prompts. Proven deletions transfer their saved
  * prompts; unavailable sessions keep their claim for the next opening.
  */
@@ -188,16 +202,25 @@ export function restoreClosedWorkspaceDrafts(
   instanceId: string,
   folder: string,
   sessionsReady: () => Promise<void>,
+  snapshot?: DraftSnapshot,
 ): Promise<void> | undefined {
   const key = closedWorkspaceDraftKey(folder)
-  const entry = vault.get(key)
-  if (!entry) return
-  const bound = { key, claimedIds: contentSessions(entry), entry }
+  if (restoreAuthority.has(instanceId)) return
+  const available = vault.get(key)
+  const occupied = snapshot ? contentSessions(snapshot) : noSnapshotAuthority
+  const snapshotId = snapshot?.workspaceId
+  const cleared = snapshotId ? closedAuthority.get(key)?.get(snapshotId) : undefined
+  const matchesOrigin = (id: string) => Boolean(snapshotId && available?.origins[id]?.includes(snapshotId))
+  const entry = available && emptySessionsOf(instanceId, pick(available, id =>
+    !cleared?.has(id) && (!occupied.has(id) || matchesOrigin(id))))
+  const claimed = entry ? contentSessions(entry) : new Set<string>()
+  const bound = { key, snapshotId, claimedIds: new Set([...claimed].filter(matchesOrigin)), entry }
   restoreAuthority.set(instanceId, bound)
-  vault.delete(key)
+  if (!available || !entry || !claimed.size) return
+  stash(key, pick(available, id => !claimed.has(id)))
   // A retry moves the unresolved source to its new claimant; only that binding captures it.
   for (const other of restoreAuthority.values()) {
-    if (other !== bound && other.key === key && other.entry) other.entry = pick(other.entry, id => !bound.claimedIds.has(id))
+    if (other !== bound && other.key === key && other.entry) other.entry = pick(other.entry, id => !claimed.has(id))
   }
   const claim = { key, entry }
   claims.set(instanceId, claim)

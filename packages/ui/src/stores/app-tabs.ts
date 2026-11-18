@@ -1,6 +1,7 @@
 import { createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
-import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId } from "./instances"
+import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId, waitForInstanceInitialSessionHydration } from "./instances"
+import { restoreClosedWorkspaceDrafts } from "./closed-workspace-drafts"
 import { activeSidecarToken, setActiveSidecarToken, sidecarTabs, type SideCarTabRecord } from "./sidecars"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
 import {
@@ -145,9 +146,14 @@ function publishLocalInstanceTabLifecycle(type: "opened" | "removed", instanceId
 }
 
 function attachInstanceTab(instanceId: string, options?: { source?: "restore" }): void {
-  if (!instances().has(instanceId) || openInstanceTabIds().has(instanceId)) return
+  const instance = instances().get(instanceId)
+  if (!instance || openInstanceTabIds().has(instanceId)) return
+  if (options?.source !== "restore") {
+    // Capture can bind a saved occurrence synchronously; otherwise this is a plain opening.
+    publishLocalInstanceTabLifecycle("opened", instanceId)
+    void restoreClosedWorkspaceDrafts(instanceId, instance.folder, () => waitForInstanceInitialSessionHydration(instanceId))
+  }
   attachInstanceTabMembership(instanceId)
-  if (options?.source !== "restore") publishLocalInstanceTabLifecycle("opened", instanceId)
 }
 
 function closeInstanceTab(instanceId: string): void {
