@@ -38,6 +38,7 @@ import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 import { definedBefore, enabledThrough, matchesSelector, type AppliedEntry, type AppliedSequence } from "./plugin-activation-order"
+import { discoveryLoaders } from "./plugin-discovery-loaders"
 
 /** One writable target of a plugin-documents edit, with the snapshot's reading of it. `consistent`: the daemon's
  * entries equal the raw document (the condition `read` grants removal confirmation on), so its sources and rules
@@ -59,6 +60,9 @@ export interface PluginDocumentsView {
   controls: PluginActivationControl[]
   sequence: AppliedSequence
   targets: PluginDocumentsTarget[]
+  /** Whether anything other than `source` may still load its plugin: an inventory entry of that ID it does not
+   * correlate with (whatever its path), or a discovery child that maps to that ID or to none. True when unknown. */
+  otherLoader(source: PluginConfiguredSource): boolean
 }
 
 export interface NativeConfigEdit { scope: PluginControlScope; path: string; expectation: string; updated: string }
@@ -222,9 +226,20 @@ export class PluginControls {
         if (expectedRevision !== this.documentRevision(workspaceId, context, confirmed.target, confirmed.document)) {
           throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
         }
+        const loaders = await this.discoveryLoaders(workspaceId, context)
+        assertCurrentConnection(context.connection)
         const { snapshot, sequence, documents: applied } = evaluateDocuments(snapshotBase(context), context)
         const at = (item: { path?: string }, path: string) => Boolean(item.path && samePath(context.paths, item.path, path))
-        const updates = edit({ allSources: snapshot.configured.sources, controls: snapshot.controls, sequence,
+        const otherLoader = (source: PluginConfiguredSource) => {
+          const id = source.pluginId
+          if (!id) return true
+          const local = configuredLocalTarget(context, source.path, source.target)
+          const own = (entry: PluginRuntimeInventoryEntry) => entry.source.type === "package" ? entry.source.target === source.target
+            : entry.source.type === "local" && Boolean(local && containsPath(context.paths, local, entry.source.path))
+          return snapshot.runtime.some(entry => entry.id === id && !own(entry))
+            || loaders === undefined || loaders.some(ids => ids.length === 0 || ids.includes(id))
+        }
+        const updates = edit({ allSources: snapshot.configured.sources, controls: snapshot.controls, sequence, otherLoader,
           targets: documents.map(({ target, document }) => {
             const normalized = applied.find(entry => at(entry, target.path))
             return { scope: target.scope, document, ...(normalized ? { order: normalized.order } : {}),
@@ -275,6 +290,24 @@ export class PluginControls {
     }))
     assertCurrentConnection(context.connection)
     context.existingEntrypoints = existing
+  }
+
+  /** The discovery children of the reported plugin(s)/ folders and the IDs each maps to; `undefined` when they cannot
+   * be listed with certainty, including through WSL, which has no listing primitive here. */
+  private async discoveryLoaders(workspaceId: string, context: ReadContext): Promise<string[][] | undefined> {
+    if (this.options.workspaceManager.getServiceWslDistro(workspaceId)) return undefined
+    try {
+      return await discoveryLoaders({
+        folders: discoveryFolders(context),
+        hostPath: servicePath => this.options.workspaceManager.getHostPathForServicePath(workspaceId, servicePath),
+        inventory: context.runtime.flatMap(entry => typeof entry?.id === "string" && entry.source?.type === "local"
+          && typeof entry.source.path === "string" ? [{ id: entry.id, path: entry.source.path }] : []),
+        managedIds: child => managedDesktopPluginForSource(context.managedPlugins, child, context.paths)?.ids ?? [],
+        serviceJoin: (folder, name) => context.paths.join(folder, name),
+      })
+    } catch {
+      return undefined
+    }
   }
 
   private documentRevision(workspaceId: string, context: ReadContext, target: ResolvedTarget, document: PluginControlDocument): string {
@@ -1030,18 +1063,7 @@ function runtimeIdForConfiguredTarget(
 ): string | undefined {
   const exact = direct.get(target)
   if (exact) return exact
-  let localTarget: string | undefined
-  try {
-    if (target.startsWith("file://")) {
-      localTarget = fileURLToPath(target, { windows: context.style === "win32" })
-    } else if (target.startsWith("./") || target.startsWith("../")) {
-      localTarget = context.paths.resolve(document.path ? context.paths.dirname(document.path) : context.location.directory, target)
-    } else if (context.paths.isAbsolute(target)) {
-      localTarget = target
-    }
-  } catch {
-    return undefined
-  }
+  const localTarget = configuredLocalTarget(context, document.path, target)
   if (!localTarget) return undefined
   const installation = managedDesktopPluginForSource(context.managedPlugins, localTarget, context.paths)
   if (installation) {
@@ -1058,6 +1080,19 @@ function runtimeIdForConfiguredTarget(
       || containsPath(context.paths, localTarget, entry.source.path)) return entry.id
   }
   return undefined
+}
+
+/** The native path a local declaration names (`file://`, relative to its document, or absolute), as OpenCode resolves it. */
+function configuredLocalTarget(context: ReadContext, documentPath: string | undefined, target: string): string | undefined {
+  try {
+    if (target.startsWith("file://")) return fileURLToPath(target, { windows: context.style === "win32" })
+    if (target.startsWith("./") || target.startsWith("../")) {
+      return context.paths.resolve(documentPath ? context.paths.dirname(documentPath) : context.location.directory, target)
+    }
+    return context.paths.isAbsolute(target) ? target : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function normalizeLocation(input: PluginControlLocation): LocationRef & PluginControlLocation {

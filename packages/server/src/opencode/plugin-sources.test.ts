@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
@@ -375,6 +375,39 @@ describe("plugin source mutations", () => {
       await f.sources.remove("w", { location: f.location, scope: "global", target: "./plugins/reviewer", entryIndex: 0, expectedRevision: await revision(f) })
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["-acme.reviewer"])
       assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["acme.reviewer"], "discovery still defines it before Project")
+    } finally { await f.cleanup() }
+  })
+
+  it("keeps the disabling rule unless no other loader is provable: a junctioned discovery child or another inventory entry", async t => {
+    const f = await fixture()
+    try {
+      const external = path.join(f.root, "external-reviewer")
+      await mkdir(external, { recursive: true })
+      await writeFile(path.join(external, "index.js"), "export default {}\n")
+      const reviewer = { id: "acme.reviewer", source: { type: "local", path: path.join(external, "index.js") }, features: {}, state: { status: "active" } }
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      const remove = async (runtime: unknown[]) => {
+        await writeFile(f.globalFile, JSON.stringify({ plugins: [external, "-acme.reviewer"] }))
+        await writeFile(f.projectFile, JSON.stringify({ plugins: ["acme.reviewer"] }))
+        f.state.runtime = runtime
+        await f.sources.remove("w", { location: f.location, scope: "global", target: external, entryIndex: 0, expectedRevision: await revision(f) })
+        return parse(await readFile(f.globalFile, "utf8")).plugins
+      }
+      // Provably no other loader: the disabling rule goes with the source.
+      assert.deepEqual(await remove([reviewer]), [])
+      // Another inventory entry of the ID, whatever its path, may still load it.
+      assert.deepEqual(await remove([reviewer, { ...reviewer, source: { type: "local", path: path.join(f.root, "elsewhere", "index.js") } }]), ["-acme.reviewer"])
+      // global/plugins/reviewer junctions to the declared folder: native discovery still loads it in every project.
+      await mkdir(path.join(path.dirname(f.globalFile), "plugins"), { recursive: true })
+      try {
+        await symlink(external, path.join(path.dirname(f.globalFile), "plugins", "reviewer"), process.platform === "win32" ? "junction" : "dir")
+      } catch (error) {
+        t.skip(`symbolic links unavailable: ${(error as NodeJS.ErrnoException).code}`)
+        return
+      }
+      assert.deepEqual(await remove([reviewer]), ["-acme.reviewer"], "the disable still applies to the discovered plugin")
+      // The bare ID lost its only verified definition, so it would be a package spec: it still goes.
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, [])
     } finally { await f.cleanup() }
   })
 

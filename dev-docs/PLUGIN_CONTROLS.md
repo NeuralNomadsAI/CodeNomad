@@ -55,9 +55,15 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   string entry the snapshot reads as an exact rule of the source's `pluginId` in that
   document: a bare `id` is deleted unless a verified definition still precedes it (it
   would otherwise be a package spec OpenCode installs from the registry), and a `-id` is
-  deleted only when no other declaration of the plugin remains: none in any applicable
-  document (same target, `pluginId` or package identity), and no discovered plugin(s)/
-  folder entry or verified descriptor with that ID. In every other document applied at the
+  deleted only when no other loader of the plugin is provably left: no other declaration
+  in any applicable document (same target, `pluginId` or package identity), no inventory
+  entry of that ID other than the removed source (whatever its path), and no unclassified
+  discovery child. The immediate children of the reported plugin(s)/ folders are listed
+  once (`plugin-discovery-loaders.ts`, at most 256 per folder, one `stat` per symlinked
+  child); a child is excluded only when native discovery would skip it or it maps, after
+  resolving links and junctions, to inventory entries or a verified descriptor of other IDs
+  only. A listing that is not certain (unmapped path, read error, too many children, WSL)
+  keeps the `-id`; its row can be removed later. In every other document applied at the
   requesting location, a bare `id` that a verified definition preceded only through the
   removed source would become a package spec too: it is deleted from the location's other
   writable target in the same request, and anywhere else (inherited, inline or other
@@ -191,6 +197,8 @@ descriptor. `-x` disables only plugins defined before it, and an add selects onl
 snapshot classifies each positive entry the same way: it is an activation rule only when a definition precedes it,
 never because an earlier `-id` names the ID, and otherwise a source declaration (a package spec).
 
+- **Uncertainty**: wherever the model cannot prove a fact, it refuses positive bare writes and keeps negative `-id`
+  rules, which install nothing.
 - **Safe positive rule**: a bare `id` at a position is written only when a verified definition precedes it, or the
   ID is a reserved `opencode.*` selector. CodeNomad appends at the end of the target document, so a definition in a
   later document (Global rule, Project declaration) never qualifies.
@@ -418,7 +426,8 @@ guessed paths.
   packages, rules kept for a failed ID-less package or a remaining declaration, a bare ID removed when it would
   precede the remaining definition, the Project's dependent bare ID removed with a Global source (or the removal
   refused for an inline document), the source document committed last under an injected commit failure, a disable
-  kept while a plugin(s)/ folder still discovers the plugin, a bare name after its own `-id` read as a package,
+  kept while a plugin(s)/ folder still discovers the plugin (also through a junction to the declared folder) or
+  another inventory entry reports its ID, a bare name after its own `-id` read as a package,
   orphan rule removal and refusal,
   inventory correlation and the strict route:
   `plugin-sources.test.ts`
