@@ -39,7 +39,7 @@ import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 import { definedBefore, enabledThrough, matchesSelector, type AppliedEntry, type AppliedSequence } from "./plugin-activation-order"
-import { discoveryEntrypointOf, discoveryEntrypointShape, discoveryLoaders } from "./plugin-discovery-loaders"
+import { discoveryEntrypointOf, discoveryEntrypointShape, discoveryLoaders, escapes } from "./plugin-discovery-loaders"
 import { pluginPackageIdentities } from "./plugin-source-document"
 
 /** One writable target of a plugin-documents edit, with the snapshot's reading of it. `consistent`: the daemon's
@@ -1169,7 +1169,7 @@ function discoveryFolders(context: ReadContext): string[] {
 function discoveryChild(paths: path.PlatformPath, folders: readonly string[], file: string): string | undefined {
   for (const folder of folders) {
     const relative = paths.relative(folder, file)
-    if (!relative || relative.startsWith("..") || paths.isAbsolute(relative)) continue
+    if (!relative || escapes(paths, relative)) continue
     const child = paths.join(folder, relative.split(/[\\/]/)[0]!)
     if (discoveryEntrypointShape(paths, child, file)) return child
   }

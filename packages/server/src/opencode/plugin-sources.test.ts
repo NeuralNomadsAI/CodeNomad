@@ -489,6 +489,44 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
+  it("decides that discovery skips a folder only on proof; every doubt keeps the disable", async t => {
+    const f = await fixture()
+    try {
+      const bundle = path.join(path.dirname(f.globalFile), "plugins", "bundle")
+      const text = JSON.stringify({ plugins: ["-bundle.disabled"] })
+      await writeFile(f.globalFile, text)
+      const orphan = async () => (await f.controls.read("w", f.location)).controls.find(control => control.id === "bundle.disabled")?.orphan
+      const kept = async (label: string) => {
+        assert.equal(await orphan(), undefined, label)
+        await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "bundle.disabled", expectedRevision: await revision(f) }), code("stale"), label)
+        assert.equal(await readFile(f.globalFile, "utf8"), text, label)
+        await rm(bundle, { recursive: true, force: true })
+      }
+      // Proof: a folder with no entry that could resolve as server or index is skipped natively.
+      await mkdir(bundle, { recursive: true })
+      await writeFile(path.join(bundle, "readme.md"), "")
+      assert.equal(await orphan(), true)
+      await rm(bundle, { recursive: true, force: true })
+      // Case-insensitive file systems resolve Server.js for "server".
+      await mkdir(bundle, { recursive: true })
+      await writeFile(path.join(bundle, "Server.js"), "export default {}\n")
+      await kept("Server.js")
+      // A link to an internal file whose name starts with "..", and a link leaving the folder.
+      for (const [label, target] of [["..entry.js", path.join(bundle, "..entry.js")], ["outside", path.join(f.root, "outside.js")]] as const) {
+        await mkdir(bundle, { recursive: true })
+        await writeFile(target, "export default {}\n")
+        try {
+          await symlink(target, path.join(bundle, "server.js"), "file")
+        } catch (error) {
+          if (!["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+          t.diagnostic(`file symbolic links unavailable: ${label} case skipped`)
+          continue
+        }
+        await kept(label)
+      }
+    } finally { await f.cleanup() }
+  })
+
   it("reads a bare name after its own -rule as a package declaration, never an orphan rule", async () => {
     const f = await fixture()
     try {

@@ -16,17 +16,24 @@ const ENTRYPOINT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs", ".c
 export function discoveryEntrypointShape(paths: path.PlatformPath, child: string, file: string): boolean {
   const relative = paths.relative(child, file)
   if (relative === "") return child.endsWith(".ts") || child.endsWith(".js")
-  if (relative.startsWith("..") || paths.isAbsolute(relative) || /[\\/]/.test(relative)) return false
+  if (escapes(paths, relative) || /[\\/]/.test(relative)) return false
   const extension = paths.extname(relative)
   return ENTRYPOINT_EXTENSIONS.includes(extension) && ["server", "index"].includes(relative.slice(0, -extension.length))
+}
+
+/** Whether a `path.relative` result leaves its base: `..` as a whole segment, or another root. */
+export function escapes(paths: path.PlatformPath, relative: string): boolean {
+  return relative === ".." || relative.startsWith(`..${paths.sep}`) || relative.startsWith("../") || paths.isAbsolute(relative)
 }
 
 /**
  * The single entrypoint native discovery loads for the host plugin(s)/ folder child `child` (`plugin/source-directory.ts`,
  * `config/plugin/source.ts`, `plugin/host.ts`): a `.ts`/`.js` file child loads as itself; a directory child through
- * `Host.resolve`, `server` before `index`, which must stay inside the folder. `null`: discovery skips the child.
- * `undefined`: the selection is not certain (read error, an extensionless or unknown-extension candidate, several
- * candidates for one name, a candidate that is not a regular file), so the child stays unclassified.
+ * `Host.resolve`, `server` before `index`. `null` only when discovery provably skips the child: a dangling link, a
+ * file child without a `.ts`/`.js` name, an entry that is neither file nor directory, or a folder with no entry whose
+ * name could resolve as `server`/`index` in any letter case. Every doubt is `undefined`, an unclassified child: a read
+ * error, a candidate group other than exactly one `server.<ext>` (else `index.<ext>`) with a Node-inferred extension
+ * and the exact name, a candidate that is not a regular file, or one resolving outside the folder.
  */
 export async function discoveryEntrypointOf(child: string): Promise<string | null | undefined> {
   const name = path.basename(child)
@@ -47,17 +54,18 @@ export async function discoveryEntrypointOf(child: string): Promise<string | nul
   }
   if (entries.length > DISCOVERY_MAX_CHILDREN) return undefined
   for (const base of ["server", "index"]) {
-    const found = entries.filter(entry => entry.name === base || entry.name.startsWith(`${base}.`))
+    // Case-insensitive file systems resolve `Server.js` for `server`: any letter case counts as a candidate.
+    const found = entries.filter(entry => entry.name.toLowerCase() === base || entry.name.toLowerCase().startsWith(`${base}.`))
     if (found.length === 0) continue
     const [only] = found
-    if (found.length > 1 || !ENTRYPOINT_EXTENSIONS.includes(path.extname(only!.name))) return undefined
+    const extension = path.extname(only!.name)
+    if (found.length > 1 || only!.name !== `${base}${extension}` || !ENTRYPOINT_EXTENSIONS.includes(extension)) return undefined
     const file = path.join(child, only!.name)
     try {
       if (!(await stat(file)).isFile()) return undefined
-      // A resolved entrypoint outside the folder drops the child.
+      // Native discovery drops a folder whose entrypoint resolves outside it; not mirrored exactly, so it is uncertain.
       const [root, server] = await Promise.all([realpath(child), realpath(file)])
-      const relative = path.relative(root, server)
-      return relative.startsWith("..") || path.isAbsolute(relative) ? null : file
+      return escapes(path, path.relative(root, server)) ? undefined : file
     } catch {
       return undefined
     }

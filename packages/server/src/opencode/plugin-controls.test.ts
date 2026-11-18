@@ -742,6 +742,24 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "bundle.other"])
   })
 
+  it("selects a linked server entrypoint whose internal name starts with ..", async t => {
+    const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+    const bundle = path.join(fixture.globalDirectory, "plugins", "bundle")
+    fs.mkdirSync(bundle, { recursive: true })
+    fs.writeFileSync(path.join(bundle, "..entry.js"), "export default {}\n")
+    try {
+      fs.symlinkSync(path.join(bundle, "..entry.js"), path.join(bundle, "server.js"), "file")
+    } catch (error) {
+      if (!["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+      t.skip("file symbolic links unavailable")
+      return
+    }
+    // "..entry.js" stays inside the folder: the selection is certain and the bare ID follows its definition.
+    fixture.runtime.push({ id: "bundle.entry", source: { type: "local", path: path.join(bundle, "server.js") }, features: {}, state: { status: "active" } })
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.entry", scope: "global", enabled: true })
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "bundle.entry"])
+  })
+
   it("never writes a Global bare ID for a nested plugin declared only in Project", async () => {
     // plugins/resources has no entrypoint, so discovery skips it: the reviewer is defined only by the Project entry.
     const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })

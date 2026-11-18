@@ -197,10 +197,14 @@ through `Host.resolve`, `server` before `index`. One function, `discoveryEntrypo
 `plugin-discovery-loaders.ts`, returns the child's single selected entrypoint for both positive writes and the loader
 proof's child mapping: the file child itself, or the one `server.<ext>` candidate (else the one `index.<ext>`) with a
 Node-inferred extension (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`, `.cjs`) that is a regular file resolving
-inside the folder. The Bun resolver has its own extension order and directory rules, so a selection is certain only
-when both runtimes agree: several candidates for one name, an extensionless or unknown-extension candidate, or a
-read error leaves the child unclassified; a folder without candidates, or whose entrypoint resolves outside it, is
-skipped as natively. Write decisions (activation and removal, inside their mutation lock) count a reported local
+inside the folder (relative paths are checked by whole `..` segment, so internal names such as `..entry.js` stay
+inside). The Bun resolver has its own extension order and directory rules, so a selection is certain only when both
+runtimes agree on the exact name. A child is skipped only on proof: a dangling link, a file child without a
+`.ts`/`.js` name, an entry that is neither file nor directory, or a folder with no entry whose name is `server` or
+`index`, or starts with `server.` or `index.`, in any letter case (case-insensitive file systems resolve
+`Server.js`). Every doubt leaves the child unclassified: a read error, a candidate group other than exactly one
+exact-case `server.<ext>` (else `index.<ext>`), a candidate that is not a regular file, or an entrypoint resolving
+outside the folder. Write decisions (activation and removal, inside their mutation lock) count a reported local
 entry as discovered only when that selection is exactly its path, as named or after resolving links, so a deleted
 folder or a `server` module taking precedence over a reported `index` defines nothing. Without a host listing (WSL)
 nothing is verified and the bare write is refused. Display reads keep the cheap shape check
@@ -445,6 +449,7 @@ guessed paths.
   another inventory entry reports its ID, one loader proof for orphan rows, rule-only and source removal (a
   disabled discovered file, an unidentified declaration), a discovery child identified only by its own entrypoint (a
   nested plugin's inventory leaves it unclassified) and only by the selected entrypoint (`server` before `index`), a
+  folder skipped only on proof (`Server.js`, a linked entrypoint inside or outside the folder keep the disable), a
   bare name after its own `-id` read as a package,
   orphan rule removal and refusal,
   inventory correlation and the strict route:
