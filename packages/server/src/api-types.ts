@@ -575,6 +575,9 @@ export interface PluginActivationControl {
   global: PluginScopeRuleState
   project: PluginScopeRuleState
   controllingRule?: PluginConfiguredRule
+  /** Only activation rules name this ID: no runtime entry, verified descriptor or declaration defines it, and every
+   * declaration has an exported or verified ID. Its exact rules select nothing and are removable. */
+  orphan?: true
 }
 
 export interface PluginControlTarget {

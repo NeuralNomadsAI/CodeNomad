@@ -47,7 +47,7 @@ A package update changes that package in OpenCode's shared cache for every Locat
 3. Keep **Global** unless the plugin should run only for this project, then select **Add**.
 4. The new row shows **Installing** until OpenCode reports it.
 
-To remove a plugin, open the menu beside its name and select **Remove from Global** or **Remove from Project**. Only the declaration in that scope's configuration file is deleted; its **Global**/**Project** activation rules stay as rules, and OpenCode's package cache is left in place.
+To remove a plugin, open the menu beside its name and select **Remove from Global** or **Remove from Project**. Its declaration and its activation rules in that scope's configuration file are deleted, except a disabling rule while another declaration of the plugin remains and an enabling rule that an earlier declaration still defines. An enabling rule that would lose its definition is also deleted from this project's configuration, since OpenCode would otherwise download a registry package of that name; if it is in a file CodeNomad does not edit, the removal is refused. OpenCode's package cache is left in place. Rules of a plugin OpenCode could not identify (disabled, or failed before loading) stay on a row of their own, whose menu offers the same removal.
 
 The plugin's code runs with your permissions inside OpenCode. A **Project** entry runs whenever that folder is opened in OpenCode, and packages with parts for OpenCode's desktop app load those parts only from **Global**; the tooltip says so when such a package is declared elsewhere. Local paths, configuration variables and plugin IDs are refused here: declare local plugins in the configuration file. A package already declared in a configuration that applies to this Location is refused, whatever its version, range or form.
 
@@ -82,7 +82,7 @@ The row's **…** menu starts with the connection state, for example **Blender: 
 
 Catalogue installation, application-part installation/update and removal require confirmation. **Cancel** is focused first; the confirming action becomes available after 600 ms. Activation, plugin updates, attaching and detaching run directly.
 
-Removing any plugin opens a warning naming the plugin and exact scope. **Cancel** is initially focused; **Remove from Global/Project** becomes available after 600 ms and needs an explicit click or keyboard action. Removal can interrupt availability and connections in conversations using the plugin; Global can also affect other projects. CodeNomad removes only the confirmed declaration, preserving activation rules, package cache, application files and saved attachment hints. Changed configuration requires a fresh selection and confirmation.
+Removing any plugin opens a warning naming the plugin and exact scope. **Cancel** is initially focused; **Remove from Global/Project** becomes available after 600 ms and needs an explicit click or keyboard action. Removal can interrupt availability and connections in conversations using the plugin; Global can also affect other projects. CodeNomad removes only the confirmed declaration and the activation rules described above, preserving the package cache, application files and saved attachment hints. Changed configuration requires a fresh selection and confirmation.
 
 ## Install or update the application integration {#application-installation}
 

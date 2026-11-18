@@ -120,6 +120,15 @@ describe("plugin control JSONC document", () => {
       [{ package: "@acme/reviewer", options: { a: 1 } }, "other"])
   })
 
+  it("replaces a trailing rule of a compact array", async () => {
+    const target = temporaryFile()
+    fs.writeFileSync(target, '{"plugins":["@acme/reviewer","-acme.reviewer"],"theme":"dark"}')
+    const document = await readPluginControlDocument(target)
+    assert.deepEqual(parse(replacePluginControlRules(document, [1], new Set(["-acme.reviewer"]), "acme.reviewer")),
+      { plugins: ["@acme/reviewer", "acme.reviewer"], theme: "dark" })
+    assert.deepEqual(parse(replacePluginControlRules(document, [1], new Set(["-acme.reviewer"]))), { plugins: ["@acme/reviewer"], theme: "dark" })
+  })
+
   it("refuses to remove an entry that is no longer the expected rule", async () => {
     const target = temporaryFile()
     fs.writeFileSync(target, `{ "plugins": ["other", { "package": "acme.reviewer" }] }\n`)

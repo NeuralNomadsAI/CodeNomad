@@ -76,7 +76,12 @@ export const acquireNativeScheduledPassageCoverage = Effect.fn("missions.acquire
         // A positive pause freezes future firing for observation only. An
         // in-flight preparation still needs its exact ACK/message below.
         const pausedObservation = window.suppress === true && before.status === "paused"
-        if (!pausedObservation && before.status !== "done" && (before.status !== "active" || before.nextDueAt === undefined
+        // Prompt entry admits only highWater + 1, so while that prepared run is native's
+        // last one every later firing is refused before its message exists: native then
+        // keeps retrying an overdue slot, and that refusal is the barrier.
+        const gated = before.status === "active" && before.runCount === calendar.highWater + 1
+          && calendar.wakePreparing?.run === before.runCount
+        if (!pausedObservation && !gated && before.status !== "done" && (before.status !== "active" || before.nextDueAt === undefined
           || DateTime.toEpochMillis(before.nextDueAt) <= window.cutoff)) return incomplete()
         if (before.runCount - calendar.highWater > 256 - wakes.length) return incomplete()
         const group: MissionWake[] = []

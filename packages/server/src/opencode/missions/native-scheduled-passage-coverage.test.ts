@@ -79,6 +79,23 @@ test("OFF, missing message, partial principal inventory and old due barrier all 
   assert.equal((await f.coverage.coverage(f.doc, f.window, current, signal)).complete, false)
 })
 
+test("an overdue native slot covers the prepared run that prompt entry gates; nothing else relaxes the barrier", async () => {
+  const f = await fixture(1), calendar = f.doc.calendars[0], info = f.infos.get(calendar.scheduleID)!
+  // Native keeps retrying the next slot, refused at prompt entry, so its due time stays in the past.
+  f.infos.set(info.id, { ...info, nextDueAt: info.time.created, lastFiredAt: info.time.created })
+  assert.equal((await f.coverage.coverage(f.doc, f.window, current, signal)).complete, false, "no prepared run: no gate")
+  calendar.wakePreparing = { scheduleID: calendar.scheduleID, run: 1, messageID: `msg_${calendar.scheduleID}_1`, dueAt: at }
+  const covered = await f.coverage.coverage(f.doc, f.window, current, signal)
+  assert.equal(covered.complete, true); assert.deepEqual(covered.wakes.map(wake => wake.run), [1])
+  f.infos.set(info.id, { ...info, status: "paused", nextDueAt: info.time.created })
+  assert.equal((await f.coverage.coverage(f.doc, f.window, current, signal)).complete, false, "only an active calendar is gated")
+  f.infos.set(info.id, { ...info, runCount: 2, nextDueAt: info.time.created })
+  f.messages.set(`msg_${calendar.scheduleID}_2`, Schema.decodeUnknownSync(SessionMessage.Info)({ type: "user",
+    id: `msg_${calendar.scheduleID}_2`, text: NATIVE_SCHEDULE_CARRIER_SIGNAL, time: { created: at },
+    metadata: { schedule: { id: calendar.scheduleID, run: 2, dueAt: at + 1, late: false } } }))
+  assert.equal((await f.coverage.coverage(f.doc, f.window, current, signal)).complete, false, "a later admitted run is not gated")
+})
+
 test("changed row during another principal read or more than 256 outstanding occurrences stays unknown", async () => {
   const f = await fixture()
   const id = f.doc.calendars[0].scheduleID, info = f.infos.get(id)!
