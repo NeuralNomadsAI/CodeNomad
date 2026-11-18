@@ -305,7 +305,9 @@ describe("plugin source mutations", () => {
   it("deletes the Project's bare ID that loses its Global definition in the same removal, or refuses writing nothing", async () => {
     const f = await fixture()
     try {
-      const runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      // "keep" is loaded with its own ID, so it cannot be another loader of acme.plugin.
+      const runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } },
+        { id: "keep.id", source: { type: "package", target: "keep" }, features: {}, state: { status: "active" } }]
       await mkdir(path.dirname(f.projectFile), { recursive: true })
       const global = '{\n  // keep\n  "plugins": ["@acme/plugin@1", "-acme.plugin"]\n}\n'
       const project = '{\n  // project\n  "plugins": ["keep", "acme.plugin", "-acme.plugin"]\n}\n'
@@ -408,6 +410,31 @@ describe("plugin source mutations", () => {
       assert.deepEqual(await remove([reviewer]), ["-acme.reviewer"], "the disable still applies to the discovered plugin")
       // The bare ID lost its only verified definition, so it would be a package spec: it still goes.
       assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, [])
+    } finally { await f.cleanup() }
+  })
+
+  it("applies one loader proof to orphan rows, rule-only removal and source removal", async () => {
+    const f = await fixture()
+    try {
+      // A disabled discovered plugin is absent from the inventory, but its file still loads it once the disable goes.
+      const discovered = path.join(path.dirname(f.globalFile), "plugins", "reviewer.js")
+      await mkdir(path.dirname(discovered), { recursive: true })
+      await writeFile(discovered, "export default {}\n")
+      const text = JSON.stringify({ plugins: ["-acme.reviewer"] })
+      await writeFile(f.globalFile, text)
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "acme.reviewer")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "acme.reviewer", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text, "the disable stays")
+      // Without the file, nothing can load it: the row is orphan and its rule removable.
+      await rm(discovered)
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "acme.reviewer")?.orphan, true)
+      await f.sources.remove("w", { location: f.location, scope: "global", pluginId: "acme.reviewer", expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, [])
+      // A declaration without an exported ID may be another loader: removing a source keeps the disable.
+      f.state.runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["@acme/plugin@1", "unreported-package", "-acme.plugin"] }))
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["unreported-package", "-acme.plugin"])
     } finally { await f.cleanup() }
   })
 

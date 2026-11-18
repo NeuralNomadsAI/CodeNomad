@@ -55,15 +55,8 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   string entry the snapshot reads as an exact rule of the source's `pluginId` in that
   document: a bare `id` is deleted unless a verified definition still precedes it (it
   would otherwise be a package spec OpenCode installs from the registry), and a `-id` is
-  deleted only when no other loader of the plugin is provably left: no other declaration
-  in any applicable document (same target, `pluginId` or package identity), no inventory
-  entry of that ID other than the removed source (whatever its path), and no unclassified
-  discovery child. The immediate children of the reported plugin(s)/ folders are listed
-  once (`plugin-discovery-loaders.ts`, at most 256 per folder, one `stat` per symlinked
-  child); a child is excluded only when native discovery would skip it or it maps, after
-  resolving links and junctions, to inventory entries or a verified descriptor of other IDs
-  only. A listing that is not certain (unmapped path, read error, too many children, WSL)
-  keeps the `-id`; its row can be removed later. In every other document applied at the
+  deleted only when the [loader proof](#loader-proof) shows no other loader is left;
+  otherwise it stays and its row can be removed later. In every other document applied at the
   requesting location, a bare `id` that a verified definition preceded only through the
   removed source would become a package spec too: it is deleted from the location's other
   writable target in the same request, and anywhere else (inherited, inline or other
@@ -78,13 +71,25 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   Commits follow safety order: dependent cleanups first, the source's document last, so a failure between renames
   leaves every remaining bare `id` after its definition. Locations that are not open (other projects sharing
   the Global document) cannot be enumerated: a bare `id` in their Project documents is not re-checked.
-- **Orphan rules**: a control is `orphan` when no runtime entry, verified descriptor or
-  source defines its ID and every source has a `pluginId` (a runtime entry exporting an ID,
-  or a verified descriptor), so no declaration can define it; a failed report without an ID
-  leaves its source unidentified. Its row's **Remove from Global/Project** (per writable
-  scope holding its exact rules) sends `pluginId`; the server recomputes `orphan` and
+- **Orphan rules**: a control is `orphan` when it has no runtime entry, verified descriptor
+  or builtin status and the [loader proof](#loader-proof) shows nothing can load its ID. Its
+  row's **Remove from Global/Project** (per writable scope holding its exact rules) sends
+  `pluginId`; the server recomputes `orphan` with the full proof inside the mutation lock and
   deletes those rules alone. Rule-only removal is refused for any other ID. An orphan row has no
-  Global/Project switches.
+  Global/Project switches. Reads list discovery only when some control lacks a runtime entry,
+  descriptor and builtin status; without a certain listing (WSL, read error) no control is orphan.
+- **Loader proof**: one predicate (`anotherLoader` in `plugin-controls.ts`) decides every
+  removal that deletes a `-id`: source removal and rule-only removal of an orphan. A loader
+  is possible when another document declaration exists (same `pluginId`, target or package
+  identity), any declaration lacks an exported ID (it may define any ID), an inventory entry
+  reports the ID and is not the removed source (whatever its path), or a discovery child may
+  load it. The immediate children of the reported plugin(s)/ folders are listed once
+  (`plugin-discovery-loaders.ts`, at most 256 per folder, one `stat` per symlinked child); a
+  child is excluded only when native discovery would skip it or it maps, after resolving
+  links and junctions, to inventory entries or a verified descriptor of other IDs only. A
+  listing that is not certain (unmapped path, read error, too many children, WSL) counts as
+  a possible loader. Activation deletes `-id` rules only to perform a requested enable (or
+  while replacing them with a disable), so it needs no proof.
   Source removal is independent of catalog, family or binding count.
   The trusted Cancel-first confirmation names the plugin and exact scope, warns of interrupted availability
   and connections (including other projects for Global), and enables its scoped removal action after 600 ms.
@@ -427,7 +432,8 @@ guessed paths.
   precede the remaining definition, the Project's dependent bare ID removed with a Global source (or the removal
   refused for an inline document), the source document committed last under an injected commit failure, a disable
   kept while a plugin(s)/ folder still discovers the plugin (also through a junction to the declared folder) or
-  another inventory entry reports its ID, a bare name after its own `-id` read as a package,
+  another inventory entry reports its ID, one loader proof for orphan rows, rule-only and source removal (a
+  disabled discovered file, an unidentified declaration), a bare name after its own `-id` read as a package,
   orphan rule removal and refusal,
   inventory correlation and the strict route:
   `plugin-sources.test.ts`

@@ -39,6 +39,7 @@ import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedD
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 import { definedBefore, enabledThrough, matchesSelector, type AppliedEntry, type AppliedSequence } from "./plugin-activation-order"
 import { discoveryLoaders } from "./plugin-discovery-loaders"
+import { pluginPackageIdentities } from "./plugin-source-document"
 
 /** One writable target of a plugin-documents edit, with the snapshot's reading of it. `consistent`: the daemon's
  * entries equal the raw document (the condition `read` grants removal confirmation on), so its sources and rules
@@ -100,6 +101,8 @@ interface ReadContext {
   packageVersions: Map<string, { revision: string; version: string }>
   /** Write decisions only: discovered entrypoints that exist as regular files now. Absent for display reads. */
   existingEntrypoints?: ReadonlySet<string>
+  /** The plugin(s)/ folder children and the IDs each maps to (`discoveryLoaders`); absent or undefined: unknown. */
+  discoveryLoaders?: string[][]
 }
 
 interface ResolvedTarget extends PluginControlTarget {
@@ -138,7 +141,14 @@ export class PluginControls {
 
   async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
     const context = await this.readContext(workspaceId, location, signal)
-    const snapshot = buildSnapshot(context)
+    let snapshot = buildSnapshot(context)
+    // Orphan needs the discovery listing; list only when some control could be orphan (no loaded, managed or builtin
+    // definition). Without it (WSL, read error), no control is orphan.
+    if (snapshot.controls.some(control => !control.runtime && !control.managedBy && !control.builtin)) {
+      context.discoveryLoaders = await this.discoveryLoaders(workspaceId, context)
+      assertCurrentConnection(context.connection)
+      snapshot = buildSnapshot(context)
+    }
     const documents = configDocuments(context).documents
     await Promise.all(context.targets.map(async target => {
       try {
@@ -226,19 +236,12 @@ export class PluginControls {
         if (expectedRevision !== this.documentRevision(workspaceId, context, confirmed.target, confirmed.document)) {
           throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
         }
-        const loaders = await this.discoveryLoaders(workspaceId, context)
+        context.discoveryLoaders = await this.discoveryLoaders(workspaceId, context)
         assertCurrentConnection(context.connection)
         const { snapshot, sequence, documents: applied } = evaluateDocuments(snapshotBase(context), context)
         const at = (item: { path?: string }, path: string) => Boolean(item.path && samePath(context.paths, item.path, path))
-        const otherLoader = (source: PluginConfiguredSource) => {
-          const id = source.pluginId
-          if (!id) return true
-          const local = configuredLocalTarget(context, source.path, source.target)
-          const own = (entry: PluginRuntimeInventoryEntry) => entry.source.type === "package" ? entry.source.target === source.target
-            : entry.source.type === "local" && Boolean(local && containsPath(context.paths, local, entry.source.path))
-          return snapshot.runtime.some(entry => entry.id === id && !own(entry))
-            || loaders === undefined || loaders.some(ids => ids.length === 0 || ids.includes(id))
-        }
+        const otherLoader = (source: PluginConfiguredSource) => !source.pluginId
+          || anotherLoader(context, snapshot.configured.sources, snapshot.runtime, source.pluginId, source)
         const updates = edit({ allSources: snapshot.configured.sources, controls: snapshot.controls, sequence, otherLoader,
           targets: documents.map(({ target, document }) => {
             const normalized = applied.find(entry => at(entry, target.path))
@@ -397,6 +400,8 @@ export class PluginControls {
 
       try {
         await this.verifyDiscoveredEntrypoints(workspaceId, context)
+        // The response snapshot classifies orphan IDs with the same discovery proof as reads.
+        context.discoveryLoaders = await this.discoveryLoaders(workspaceId, context)
         let document
         try {
           document = await readPluginControlDocument(target.ioPath, context.fileSystem)
@@ -760,9 +765,6 @@ function evaluateDocuments(
   for (const rule of rules) {
     if (isExactSelector(rule.selector)) ids.add(rule.selector)
   }
-  // A declaration without an exported or verified ID (disabled, installing, failed) may define any ID.
-  const identified = sources.every(source => source.pluginId)
-  const declaredIds = new Set(sources.flatMap(source => source.pluginId ? [source.pluginId] : []))
   const controls = [...ids].filter(validPluginId).sort(controlIdCollator.compare).map((id) => {
     const matching = rules.filter((rule) => matchesSelector(rule.selector, id))
     const controllingRule = matching.at(-1)
@@ -780,7 +782,7 @@ function evaluateDocuments(
       global: stateForRule(matching.filter((rule) => rule.scope === "global").at(-1)),
       project: stateForRule(matching.filter((rule) => rule.scope === "project").at(-1)),
       ...(controllingRule ? { controllingRule } : {}),
-      ...(identified && !runtimeEntry && !managed && !builtin && !declaredIds.has(id) ? { orphan: true as const } : {}),
+      ...(!runtimeEntry && !managed && !builtin && !anotherLoader(context, sources, runtime, id) ? { orphan: true as const } : {}),
     } satisfies PluginActivationControl
   })
   return {
@@ -1080,6 +1082,26 @@ function runtimeIdForConfiguredTarget(
       || containsPath(context.paths, localTarget, entry.source.path)) return entry.id
   }
   return undefined
+}
+
+/**
+ * The one proof every `-id` deletion needs (rule-only removal through `orphan`, and source removal): whether anything
+ * other than the removed source `except` may still load `id`. Possible loaders: another document declaration of the
+ * plugin (same `pluginId`, target or package identity), any declaration without an exported ID (it may define any
+ * ID), an inventory entry of `id` that `except` does not account for (whatever its path), and a discovery child that
+ * maps to `id` or to no ID. True when the discovery listing is unknown: uncertainty keeps `-id`.
+ */
+function anotherLoader(context: ReadContext, sources: readonly PluginConfiguredSource[], runtime: readonly PluginRuntimeInventoryEntry[],
+  id: string, except?: PluginConfiguredSource): boolean {
+  const identities = new Set(except ? pluginPackageIdentities(except.target) : [])
+  if (sources.some(other => other !== except && (!other.pluginId || other.pluginId === id || (except !== undefined
+    && (other.target === except.target || pluginPackageIdentities(other.target).some(identity => identities.has(identity))))))) return true
+  const local = except && configuredLocalTarget(context, except.path, except.target)
+  const accounted = (entry: PluginRuntimeInventoryEntry) => except !== undefined && (entry.source.type === "package"
+    ? entry.source.target === except.target : entry.source.type === "local" && Boolean(local && containsPath(context.paths, local, entry.source.path)))
+  if (runtime.some(entry => entry.id === id && !accounted(entry))) return true
+  const loaders = context.discoveryLoaders
+  return loaders === undefined || loaders.some(ids => ids.length === 0 || ids.includes(id))
 }
 
 /** The native path a local declaration names (`file://`, relative to its document, or absolute), as OpenCode resolves it. */

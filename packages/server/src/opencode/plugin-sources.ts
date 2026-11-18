@@ -152,13 +152,9 @@ export class PluginSources {
           const id = source.pluginId
           if (!id) return { [scope]: removePluginSourceEntry(own.document, request.entryIndex, request.target) }
           // Re-evaluate the plugin's exact rules without the source, in OpenCode's applied order. In this document a bare
-          // `id` stays only after another verified definition (otherwise it becomes a package spec), and `-id` stays
-          // while any declaration of the plugin remains, keeping it disabled.
-          // `-id` installs nothing, so it goes only when no other loader is provably left: no other declaration, no
-          // other inventory entry of the ID and no discovery child that may load it. Otherwise it stays.
-          const identities = new Set(pluginPackageIdentities(source.target))
-          const remains = view.otherLoader(source) || view.allSources.some(other => other !== source && (other.target === source.target
-            || other.pluginId === id || pluginPackageIdentities(other.target).some(identity => identities.has(identity))))
+          // `id` stays only after another verified definition (otherwise it becomes a package spec); a `-id` installs
+          // nothing, so it goes only when the shared loader proof shows no other loader is left.
+          const remains = view.otherLoader(source)
           const removed = view.sequence.entries.find(entry => entry.document === own.order && entry.entryIndex === request.entryIndex)
           const rules = rulesOf(id, rule => rule.enabled ? definedBefore(view.sequence, id, own.order!, rule.entryIndex, removed) : remains)
           const updates: Partial<Record<PluginControlScope, string>> = { [scope]: removePluginSourceEntry(own.document, request.entryIndex, request.target, rules) }
