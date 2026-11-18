@@ -227,6 +227,54 @@ it("never lists a session located outside the tab, even when its project invento
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = original; source.cleanup() }
 })
 
+it("keeps a child moved into an owned project subfolder listed, also after a reload, with its activity", async () => {
+  const source = setup("move-owned-subfolder", "/repo")
+  const id = source.session.instanceId
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  setInstanceMetadata(id, { project: { id: "subfolder-project", canonical: "/repo" } as any })
+  const row = (sessionId: string, directory: string, parentID?: string) => ({ ...source.session, id: sessionId, title: sessionId,
+    parentId: parentID ?? null, parentID, location: { directory } })
+  let childDirectory = "/repo"
+  source.client.session.list = async (input: any) => {
+    const native = [row("restored", "/repo"), row("sub-child", childDirectory, "restored"), row("other", "/repo")]
+    return { data: input.project ? native : native.filter(session => session.location.directory === input.directory && !session.parentID) }
+  }
+  try {
+    await ensureWorktreesLoaded(id)
+    await fetchSessions(id, { reset: true })
+    // The child's own agent moves it while it is shown.
+    setActiveSession(id, "sub-child")
+    childDirectory = "/repo/packages/ui"
+    handleNativeSessionEvent(id, moved("into-package", "sub-child", childDirectory))
+    await delay(200)
+    assert.equal(activeSessionId().get(id), "sub-child", "a move within the workspace keeps the selection")
+    setActiveSession(id, "other")
+    assert.deepEqual(listedIds(id), ["other", "restored", "sub-child"])
+    sessionState.setSessionStatus(id, "sub-child", "working")
+    assert.equal(sessionState.getInstanceSessionIndicatorStatusCached(id), "working")
+    // A reloaded tab loads it from the project inventory.
+    setSessions((previous) => { const next = new Map(previous); next.delete(id); return next })
+    await fetchSessions(id, { reset: true })
+    assert.deepEqual(listedIds(id), ["other", "restored", "sub-child"])
+  } finally { serverApi.fetchWorktrees = original; source.cleanup() }
+})
+
+it("renders no row through an ancestor located elsewhere, like a child whose parent is missing", async () => {
+  const source = setup("excluded-middle", "/repo")
+  const id = source.session.instanceId
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  const row = (sessionId: string, directory: string, parentId: string) => ({ ...source.session, id: sessionId, title: sessionId, parentId, location: { directory } })
+  try {
+    await ensureWorktreesLoaded(id)
+    setSessions((previous) => new Map(previous).set(id, new Map([...previous.get(id)!,
+      ["middle", row("middle", "/elsewhere", "restored")], ["grandchild", row("grandchild", "/repo", "middle")],
+      ["local-child", row("local-child", "/repo", "restored")]] as any)))
+    assert.deepEqual(listedIds(id), ["local-child", "restored"])
+  } finally { serverApi.fetchWorktrees = original; source.cleanup() }
+})
+
 it("releases a moved-away record on deletion, on a refresh that lists the session and with its instance", async () => {
   for (const release of ["deletion", "refresh", "instance"] as const) {
     const source = setup(`move-record-${release}`, "/repo")
@@ -252,7 +300,8 @@ it("releases a moved-away record on deletion, on a refresh that lists the sessio
 const moved = (id: string, sessionID: string, directory: string, created = 1) => ({
   id, type: "session.moved", created, data: { sessionID, location: { directory } },
 }) as any
-const newWorktree = { slug: "new", directory: "/repo/.worktrees/new" }
+// Outside the opened folder: only its registration makes it owned.
+const newWorktree = { slug: "new", directory: "/repo-worktrees/new" }
 
 it("decides a move away only from a fresh worktree inventory", async () => {
   const source = setup("move-fresh-inventory", "/repo")

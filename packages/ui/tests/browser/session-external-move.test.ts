@@ -68,6 +68,21 @@ test("an external move to a folder open in no tab only leaves the old tab", asyn
   } finally { await page.close() }
 })
 
+test("a parent's chevron counts only the subsessions the list shows", async () => {
+  const { page, errors } = await open()
+  try {
+    await row(page, "a", "staying").waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.childActivity("staying")), null)
+    await page.evaluate(() => (window as any).fixture.holdForeignChild())
+    await page.waitForTimeout(200)
+    assert.equal(await row(page, "a", "busy-elsewhere").count(), 0)
+    assert.equal(await page.evaluate(() => (window as any).fixture.indicator("a")), "idle")
+    assert.equal(await page.evaluate(() => (window as any).fixture.childActivity("staying")), null,
+      "a working child located elsewhere does not light its parent's chevron")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a reloaded old tab lists its sessions without an error after the move", async () => {
   const { page, errors, refused } = await open("?moved")
   try {

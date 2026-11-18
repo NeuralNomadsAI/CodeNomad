@@ -15,8 +15,8 @@ function queuedRequests(instanceId: string) {
 }
 
 // An opened folder also owns the requests of nested checkouts of other
-// repositories. Such a request is shown by another open project that lists its
-// directory (its folder or a registered worktree) and holds it in its own queue;
+// repositories. Such a request is shown by each open project whose list serves
+// its directory (`isWorkspaceSessionDirectory`) and holds it in its own queue;
 // otherwise the owning folder shows it, so no request is left without a dock. A
 // request of a session in this project's scope (its list, or the active
 // session's family) is always shown with that session.

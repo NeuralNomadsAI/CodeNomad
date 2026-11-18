@@ -9,7 +9,8 @@ import { OpenCode } from "@opencode/client"
 import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
 import { setInstanceMetadata } from "../../../src/stores/instance-metadata"
-import { activeSessionId, getSessionListError, getSessionThreads, setActiveSession } from "../../../src/stores/session-state"
+import { activeSessionId, getInstanceSessionIndicatorStatusCached, getSessionListError, getSessionThreads, setActiveSession, setSessions, setSessionStatus } from "../../../src/stores/session-state"
+import { createClientSession } from "../../../src/types/session"
 import { fetchSessions } from "../../../src/stores/session-api"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
@@ -23,7 +24,7 @@ const make = (id: string, directory: string, parentID?: string) => ({ id, parent
   time: { created: 1, updated: 1 } })
 const native = new Map<string, any>([
   make("moving", workspaces.a), make("moving-child", workspaces.a, "moving"), make("staying", workspaces.a),
-  make("resident", workspaces.b),
+  make("staying-child", workspaces.a, "staying"), make("resident", workspaces.b),
 ].map(row => [row.id, row]))
 // "?moved": a fresh page after the conversation already moved to project b.
 if (new URL(location.href).searchParams.has("moved")) Object.assign(native.get("moving"), { location: { directory: workspaces.b }, projectID: workspaces.b })
@@ -88,6 +89,15 @@ render(() => <ConfigProvider><I18nProvider><div style={{ display: "flex", gap: "
   <Tab tab="a" /><Tab tab="b" />
 </div></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-;(window as any).fixture = { move,
+/** A working child located elsewhere that tab a holds, e.g. from a live event. */
+const holdForeignChild = () => {
+  const id = instanceId("a"), row = make("busy-elsewhere", "/projects/elsewhere", "staying")
+  setSessions(previous => new Map(previous).set(id, new Map(previous.get(id)).set(row.id,
+    createClientSession(row as any, id, "build", { providerId: "fixture", modelId: "fixture" }))))
+  setSessionStatus(id, row.id, "working")
+}
+;(window as any).fixture = { move, holdForeignChild,
+  childActivity: (sessionId: string) => document.querySelector(`[data-session-id="${sessionId}"] .session-item-expander`)?.getAttribute("data-child-activity") ?? null,
+  indicator: (tab: Tab) => getInstanceSessionIndicatorStatusCached(instanceId(tab)),
   selected: (tab: Tab) => activeSessionId().get(instanceId(tab)) ?? null,
   listError: (tab: Tab) => getSessionListError(instanceId(tab)) ?? null }

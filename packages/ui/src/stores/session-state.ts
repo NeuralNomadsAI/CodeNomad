@@ -211,10 +211,9 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
-// A workspace also holds sessions of nested checkouts of other repositories it
-// owns (an opened parent folder receives their live events). Its list,
-// indicators and notices show the inventory's scope: the sessions located in
-// the opened folder or a registered worktree. Without a read
+// A workspace can hold sessions its proxy does not serve (a session that left,
+// a family member located elsewhere). Its list, indicators and notices show the
+// inventory's scope: the sessions the workspace proxy serves. Without a read
 // inventory, and for Git-unavailable folders (which project their own
 // directory), every held session is in scope. The active session's family is
 // always in scope: a session opened explicitly is shown where it was opened.
@@ -238,18 +237,33 @@ function isSessionInWorkspaceScope(instanceId: string, sessionId: string): boole
   return getWorkspaceSessionScope(instanceId)?.has(sessionId) ?? true
 }
 
-// The tab's aggregate over the sessions in scope, derived once per sessions
-// snapshot and scope, so every publication and scope change is reflected.
-const indicatorStatuses = new Map<string, { sessions: unknown; scope: ReadonlySet<string> | null; status: InstanceSessionIndicatorStatus }>()
+const NO_SESSIONS: ReadonlyMap<string, Session> = new Map()
+const listedSessionMaps = new Map<string, { held: unknown; scope: unknown; listed: ReadonlyMap<string, Session> }>()
+
+/** The held sessions the list can show: its rows, its parents' subsession
+ * activity and the tab indicator all derive from this one map, so a session
+ * outside the scope never renders, connects rows or contributes activity. */
+function getListedSessionMap(instanceId: string): ReadonlyMap<string, Session> {
+  const held = sessions().get(instanceId) ?? NO_SESSIONS
+  const scope = getWorkspaceSessionScope(instanceId)
+  if (!scope) return held
+  const cached = listedSessionMaps.get(instanceId)
+  if (cached && cached.held === held && cached.scope === scope) return cached.listed
+  const listed = new Map([...held].filter(([id]) => scope.has(id)))
+  listedSessionMaps.set(instanceId, { held, scope, listed })
+  return listed
+}
+
+// The tab's aggregate over the listed sessions, derived once per listed map, so
+// every publication and scope change is reflected.
+const indicatorStatuses = new Map<string, { listed: unknown; status: InstanceSessionIndicatorStatus }>()
 
 export function getInstanceSessionIndicatorStatusCached(instanceId: string): InstanceSessionIndicatorStatus {
-  const all = sessions()
-  const scope = getWorkspaceSessionScope(instanceId)
+  const listed = getListedSessionMap(instanceId)
   const cached = indicatorStatuses.get(instanceId)
-  if (cached && cached.sessions === all && cached.scope === scope) return cached.status
+  if (cached && cached.listed === listed) return cached.status
   let status: InstanceSessionIndicatorStatus = "idle"
-  for (const session of all.get(instanceId)?.values() ?? []) {
-    if (scope && !scope.has(session.id)) continue
+  for (const session of listed.values()) {
     if (session.pendingPermission || session.pendingForm) {
       status = "permission"
       break
@@ -257,7 +271,7 @@ export function getInstanceSessionIndicatorStatusCached(instanceId: string): Ins
     if (session.status === "compacting") status = "compacting"
     else if (session.status === "working" && status === "idle") status = "working"
   }
-  indicatorStatuses.set(instanceId, { sessions: all, scope, status })
+  indicatorStatuses.set(instanceId, { listed, status })
   return status
 }
 
@@ -932,8 +946,12 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
 }
 
 function getSessionThreads(instanceId: string): SessionThread[] {
-  const scope = getWorkspaceSessionScope(instanceId)
-  return buildSessionThreads(instanceId, getSessionListIds(instanceId).filter((id) => scope?.has(id) ?? true), scope ? new Set(scope) : undefined)
+  // A row under an ancestor outside the listed map is shown as a child whose
+  // parent is missing is: not at all.
+  const listed = getListedSessionMap(instanceId) as Map<string, Session>
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  return buildSessionThreadsFromMap(listed, getSessionListIds(instanceId).filter((id) => listed.has(id)), undefined,
+    directoryOnly?.serviceDirectory ?? directoryOnly?.directory)
 }
 
 function getSessionSearchSessions(instanceId: string): Session[] {
@@ -1293,6 +1311,7 @@ export {
   sessions,
   setSessions,
   isSessionInWorkspaceScope,
+  getListedSessionMap,
   activeSessionId,
   activeParentSessionId,
   agents,

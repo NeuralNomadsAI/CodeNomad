@@ -105,28 +105,32 @@ server). Native `location.get().project.directory` describes the local checkout,
 and `project.canonical` describes its canonical repository root; both are distinct
 from `SessionInfo.location.directory`, the session's working directory.
 
-The UI uses the native project inventory to discover candidates, then keeps the
-sessions whose own directory is the opened folder or a registered worktree path,
-including their service-side paths for WSL. A separate clone sharing the native
-project ID must not appear merely because of that ID, nor a session located
-elsewhere because a family member is local: a local child whose parent is located
-elsewhere has no listed root. Moving within this workspace's worktrees
-changes the execution directory and badge, while keeping the conversation in the
-same CodeNomad project tab.
+The UI uses the native project inventory to discover candidates, then lists a
+session if and only if the workspace proxy serves it: its own directory is the
+opened folder or lies within a registered checkout directory (the root entry
+included, so the folder's subfolders and nested checkouts too, and WSL service
+paths), while an exact-folder (`directoryOnly`) entry owns only itself
+(`stores/workspace-session-scope.ts` `isWorkspaceSessionDirectory`, mirroring
+`WorkspaceManager.ownsDirectory`/`resolveOwnedWorktreePath` over the same
+inventory; the server's additional physical-path and Git-identity checks are
+server-side only). A separate clone sharing the native project ID must not appear
+merely because of that ID, nor a session located elsewhere because a family member
+is local: a local child whose parent is located elsewhere has no listed root.
+Moving within this workspace's checkouts changes the execution directory and badge,
+while keeping the conversation in the same CodeNomad project tab.
 
-Live sessions follow the same scope at display. An opened folder also receives the
-events of a nested checkout of another repository it owns (a parent folder such as
-the home directory); the store holds every session it receives, and the session
-list, tab indicator (derived per sessions snapshot and scope), idle fade, and
-completion, compaction and retry notices show only the workspace scope; a
-needs-input notice of an out-of-scope session follows the interruption dock that
-shows its request
+Live sessions follow the same scope at display. The store can hold sessions the
+proxy does not serve (one that left, a family member located elsewhere); the
+session list, tab indicator, subsession chevrons, idle fade, and completion,
+compaction and retry notices show only the scope; a needs-input notice of an
+out-of-scope session follows the interruption dock that shows its request
 (`stores/session-state.ts` `getWorkspaceSessionScope`, from
-`selectWorkspaceFamilyIds`, also the inventory's selection): the sessions located in
-the opened folder or a registered worktree, however they arrive (refresh, inventory,
-parent chain, live event), plus the active session's complete family, so a session
-opened explicitly is shown where it was opened. Thread rows apply the same scope to
-descendants. The scope is reactive, so a late worktree
+`selectWorkspaceFamilyIds`, also the inventory's selection): the sessions the proxy
+serves, however they arrive (refresh, inventory, parent chain, live event), plus the
+active session's complete family, so a session opened explicitly is shown where it
+was opened. Rows, chevron activity and the tab indicator all derive from one map of
+those sessions (`getListedSessionMap`): a row under an ancestor outside it is not
+shown, as for a missing parent. The scope is reactive, so a late worktree
 inventory and either family order converge. An unread or failed inventory and a
 Git-unavailable folder (which projects its own directory) keep every held session
 in scope (`stores/session-workspace-scope.test.ts`).

@@ -50,7 +50,7 @@ import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
 import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
-import { getDescendantSessions, getSessionAncestorIds, revealSubsession } from "../stores/session-state"
+import { getDescendantSessions, getListedSessionMap, getSessionAncestorIds, revealSubsession } from "../stores/session-state"
 const log = getLogger("session")
 
 
@@ -144,8 +144,9 @@ const SessionList: Component<SessionListProps> = (props) => {
     return loading().fetchingSessions.get(props.instanceId) ?? false
   })
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
+  // Over the listed sessions only, like the rows and the tab indicator.
   const descendantActivity = createMemo(() => collectDescendantActivity(
-    sessionStateSessions().get(props.instanceId),
+    getListedSessionMap(props.instanceId),
     session => !session.retry && session.generationRecovery !== "interrupted"
       && shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus),
   ))

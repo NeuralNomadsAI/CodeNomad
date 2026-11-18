@@ -2,21 +2,29 @@ import type { SessionInfo } from "@opencode/client"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { normalizeSessionDirectory } from "./session-list-options"
 
-// Native project IDs may be shared by independent clones. The opened local
-// directory and its registered worktrees define the CodeNomad workspace.
-function workspaceSessionDirectories(folder: string, worktrees: WorktreeDescriptor[]): Set<string> {
-  return new Set([folder, ...worktrees.flatMap((worktree) => [
-    worktree.directory,
-    worktree.serviceDirectory ?? worktree.directory,
-  ])].map(normalizeSessionDirectory).filter(Boolean))
-}
+const isWithin = (root: string, target: string) => target === root || target.startsWith(root.endsWith("/") ? root : `${root}/`)
 
-/** Whether a session in this directory belongs to the workspace's session list. */
+/**
+ * Whether the workspace proxy serves a session in this directory, mirroring the
+ * server's selection (`WorkspaceManager.ownsDirectory`, `resolveOwnedWorktreePath`
+ * in `workspaces/worktree-directory.ts`) over the same registered inventory: the
+ * opened folder, and every directory within a registered checkout directory (the
+ * root entry included, WSL service paths too), except that an exact-folder
+ * (`directoryOnly`) entry owns only itself. Native project IDs, shared by
+ * independent clones, never grant ownership. The server additionally checks
+ * physical path and Git identity, which this display mirror cannot read.
+ */
 export function isWorkspaceSessionDirectory(directory: string, folder: string, worktrees: WorktreeDescriptor[]): boolean {
-  return workspaceSessionDirectories(folder, worktrees).has(normalizeSessionDirectory(directory))
+  const target = normalizeSessionDirectory(directory)
+  if (!target) return false
+  if (target === normalizeSessionDirectory(folder)) return true
+  return worktrees.some((worktree) => [worktree.directory, worktree.serviceDirectory].some((candidate) => {
+    const root = normalizeSessionDirectory(candidate)
+    return Boolean(root) && (worktree.directoryOnly ? target === root : isWithin(root, target))
+  }))
 }
 
-/** The members located in the opened folder or a registered worktree: a
+/** The members the workspace proxy serves (`isWorkspaceSessionDirectory`): a
  * session elsewhere never belongs to the workspace, whatever its family. Only
  * the complete families of `include` (sessions shown explicitly) are added. */
 export function selectWorkspaceFamilyIds(
@@ -25,10 +33,9 @@ export function selectWorkspaceFamilyIds(
   worktrees: WorktreeDescriptor[],
   include: Iterable<string> = [],
 ): Set<string> {
-  const directories = workspaceSessionDirectories(folder, worktrees)
   const byId = new Map([...members].map((member) => [member.id, member]))
   const ids = new Set([...byId.values()]
-    .filter((member) => member.directory && directories.has(normalizeSessionDirectory(member.directory)))
+    .filter((member) => member.directory && isWorkspaceSessionDirectory(member.directory, folder, worktrees))
     .map((member) => member.id))
   const explicit = [...include].filter((id) => byId.has(id))
   if (!explicit.length) return ids

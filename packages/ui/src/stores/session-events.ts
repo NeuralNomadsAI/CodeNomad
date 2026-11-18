@@ -51,7 +51,7 @@ import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionProjec
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
-import { normalizeSessionDirectory } from "./session-list-options"
+import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
 import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
@@ -272,13 +272,7 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
 
 function ownsSessionDirectory(instanceId: string, directory: string): boolean {
   const instance = instances().get(instanceId)
-  if (!instance) return false
-  const normalized = normalizeSessionDirectory(directory)
-  const directories = [
-    instance.folder,
-    ...getWorktrees(instanceId).flatMap((worktree) => [worktree.directory, worktree.serviceDirectory]),
-  ]
-  return directories.some((candidate) => normalizeSessionDirectory(candidate) === normalized)
+  return Boolean(instance) && isWorkspaceSessionDirectory(directory, instance!.folder, getWorktrees(instanceId))
 }
 
 function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {

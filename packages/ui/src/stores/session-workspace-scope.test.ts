@@ -16,10 +16,10 @@ import {
 } from "./session-state.ts"
 import { ensureWorktreesLoaded, reloadWorktrees } from "./worktrees.ts"
 
-// #1154: an opened parent folder also holds the sessions of nested repositories
-// (it receives their live events); its list and tab indicator show only the
-// inventory's scope, which follows the worktree inventory and either family order.
-it("a parent folder's list and indicator show only its workspace scope, converging with the inventory", async () => {
+// An opened parent folder serves the sessions of nested repositories too; a
+// held session located elsewhere stays out of its list and tab indicator. The
+// scope follows the worktree inventory and either family order.
+it("a parent folder's list and indicator show what its proxy serves, converging with the inventory", async () => {
   const instanceId = "workspace-scope-parent"
   const client = { session: { active: async () => ({}) } } as any
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
@@ -45,10 +45,12 @@ it("a parent folder's list and indicator show only its workspace scope, convergi
 
     inventory = async () => ({ isGitRepo: false, worktrees: [{ slug: "root", directory: "/home" }] })
     await reloadWorktrees(instanceId)
-    assert.deepEqual(listed(), ["own"], "the nested repository's session stays held but out of the list")
-    assert.equal(sessions().get(instanceId)?.has("nested"), true)
+    assert.deepEqual(listed(), ["nested", "own"], "the folder's proxy serves its nested repository's session")
+    created("foreign", "/elsewhere")
+    assert.deepEqual(listed(), ["nested", "own"], "a session located elsewhere stays held but out of the list")
+    assert.equal(sessions().get(instanceId)?.has("foreign"), true)
 
-    setSessionStatus(instanceId, "nested", "working")
+    setSessionStatus(instanceId, "foreign", "working")
     assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "idle", "its activity does not light the parent's tab")
     // Moving the working session into the folder brings its activity with it, and out again.
     const relocate = (id: string, directory: string) => setSessions((previous) => {
@@ -56,21 +58,21 @@ it("a parent folder's list and indicator show only its workspace scope, convergi
       held.set(id, { ...held.get(id)!, location: { directory } })
       return new Map(previous).set(instanceId, held)
     })
-    relocate("nested", "/home")
+    relocate("foreign", "/home/projects/repo-c")
     assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "working")
-    relocate("nested", "/home/projects/repo-b")
+    relocate("foreign", "/elsewhere")
     assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "idle")
-    setSessionStatus(instanceId, "nested", "idle")
+    setSessionStatus(instanceId, "foreign", "idle")
     setSessionStatus(instanceId, "own", "working")
     assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "working")
     setSessionStatus(instanceId, "own", "idle")
 
     // A worktree registered after its session's event: the list follows the inventory.
     created("late", "/home-wt")
-    assert.deepEqual(listed(), ["own"])
+    assert.deepEqual(listed(), ["nested", "own"])
     inventory = async () => ({ isGitRepo: false, worktrees: [{ slug: "root", directory: "/home" }, { slug: "wt", directory: "/home-wt" }] })
     await reloadWorktrees(instanceId)
-    assert.deepEqual(listed(), ["late", "own"])
+    assert.deepEqual(listed(), ["late", "nested", "own"])
 
     // Either family order: a session located elsewhere never joins the list,
     // neither as a local child's parent nor as a local parent's child.
@@ -80,14 +82,14 @@ it("a parent folder's list and indicator show only its workspace scope, convergi
     setSessionStatus(instanceId, "early-child", "working")
     assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "idle")
     created("late-parent", "/home")
-    assert.deepEqual(listed(), ["late", "late-parent", "own"])
+    assert.deepEqual(listed(), ["late", "late-parent", "nested", "own"])
     assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "idle", "a working child located elsewhere does not light the tab")
     setSessionStatus(instanceId, "early-child", "idle")
 
     // A session opened explicitly is shown where it was opened.
-    setActiveSession(instanceId, "nested")
-    assert.equal(listed().includes("nested"), true)
-    setSessionStatus(instanceId, "nested", "working")
+    setActiveSession(instanceId, "foreign")
+    assert.equal(listed().includes("foreign"), true)
+    setSessionStatus(instanceId, "foreign", "working")
     assert.equal(getInstanceSessionIndicatorStatusCached(instanceId), "working")
   } finally {
     serverApi.fetchWorktrees = original
@@ -98,9 +100,10 @@ it("a parent folder's list and indicator show only its workspace scope, convergi
   }
 })
 
-it("notices of a nested repository's session follow where it is shown", async () => {
+// The parent folder holds a session its proxy does not serve, as after a move.
+it("notices of a held session located elsewhere follow where it is shown", async () => {
   const parent = "workspace-scope-notice-parent", nested = "workspace-scope-notice-nested"
-  const folders: Record<string, string> = { [parent]: "/home", [nested]: "/home/projects/repo-b" }
+  const folders: Record<string, string> = { [parent]: "/home", [nested]: "/srv/projects/repo-b" }
   const originalWorktrees = serverApi.fetchWorktrees
   const originalStorage = { loadConfigOwner: storage.loadConfigOwner, loadStateOwner: storage.loadStateOwner,
     revalidateUiConfigOwner: storage.revalidateUiConfigOwner, patchConfigOwner: storage.patchConfigOwner }
