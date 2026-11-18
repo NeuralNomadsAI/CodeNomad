@@ -162,16 +162,16 @@ function requeue(bound: RestoreAuthority, older: VaultEntry): void {
 function supersedePendingDrafts(
   key: string,
   ids: ReadonlySet<string>,
-  ownsExact: (sourceId: string, sessionId: string) => boolean,
+  supersedes: (id: string, owner: string | undefined, origins: readonly string[]) => boolean,
   except?: string,
 ) {
   for (const [instanceId, bound] of restoreAuthority) {
     if (instanceId === except || bound.key !== key) continue
-    const keep = (id: string) => !ids.has(id)
-      || (bound.claimedIds.has(id) && bound.snapshotId !== undefined && !ownsExact(bound.snapshotId, id))
-    if (bound.entry) bound.entry = pick(bound.entry, keep)
+    const keep = (entry: VaultEntry) => pick(entry, id => !ids.has(id) || !supersedes(id,
+      bound.claimedIds.has(id) ? bound.snapshotId : undefined, entry.origins[id] ?? []))
+    if (bound.entry) bound.entry = keep(bound.entry)
     const claim = claims.get(instanceId)
-    if (claim) claim.entry = pick(claim.entry, keep)
+    if (claim) claim.entry = keep(claim.entry)
   }
 }
 
@@ -219,14 +219,25 @@ export function retainClosedWorkspaceDrafts(
     if (authority.size) closedAuthority.set(key, authority)
     while (closedAuthority.size > MAX_CLOSED_WORKSPACE_DRAFTS) closedAuthority.delete(closedAuthority.keys().next().value!)
   }
-  supersedePendingDrafts(key, superseded, sourceId => sourceId === instanceId || sourceId === snapshotId)
   const project = vault.get(key) ?? emptyProject()
-  const { shared, exact } = claimParts(bound, captured)
-  project.shared = merge(project.shared, shared, superseded)
-  for (const owner of new Set([instanceId, ...(snapshotId ? [snapshotId] : [])])) {
+  const owners = new Set([instanceId, ...(snapshotId ? [snapshotId] : [])])
+  const exactOwners = new Map<string, string>()
+  for (const owner of owners) {
+    const entry = project.exact.get(owner)
+    if (entry) for (const id of contentSessions(entry)) exactOwners.set(id, owner)
+  }
+  if (snapshotId) for (const id of bound?.claimedIds ?? []) exactOwners.set(id, snapshotId)
+  const supersedes = (id: string, owner: string | undefined, origins: readonly string[]) =>
+    owner !== undefined ? owners.has(owner) : !exactOwners.has(id) || origins.some(origin => owners.has(origin))
+  supersedePendingDrafts(key, superseded, supersedes)
+  // Apply the same owner check to parked bytes as to pending reads.
+  const sharedSuperseded = new Set([...superseded].filter(id => supersedes(id, undefined, project.shared.origins[id] ?? [])))
+  project.shared = merge(project.shared, pick(captured, id => !exactOwners.has(id)), sharedSuperseded)
+  for (const owner of owners) {
     const existing = project.exact.get(owner)
-    if (existing || (owner === snapshotId && contentSessions(exact).size)) {
-      setExact(project, owner, merge(existing ?? empty, owner === snapshotId ? exact : empty, superseded))
+    const replacements = pick(captured, id => exactOwners.get(id) === owner)
+    if (existing || contentSessions(replacements).size) {
+      setExact(project, owner, merge(existing ?? empty, replacements, superseded))
     }
   }
   stash(key, project)
@@ -270,7 +281,9 @@ export function restoreClosedWorkspaceDrafts(
   if (snapshotId && exact) setExact(project, snapshotId, pick(exact, id => !ownedIds.has(id)))
   stash(key, project)
   // A retry moves unresolved bundles to the new claimant without taking another occurrence's exact claim.
-  supersedePendingDrafts(key, claimed, (sourceId, id) => sourceId === snapshotId && bound.claimedIds.has(id), instanceId)
+  supersedePendingDrafts(key, claimed, (id, owner, origins) =>
+    owner !== undefined ? owner === snapshotId && bound.claimedIds.has(id)
+      : sharedIds.has(id) && origins.some(origin => shared.origins[id]?.includes(origin)), instanceId)
   const claim = { key, entry }
   claims.set(instanceId, claim)
   const isCurrent = () => claims.get(instanceId) === claim

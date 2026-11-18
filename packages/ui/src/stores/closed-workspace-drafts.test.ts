@@ -78,9 +78,9 @@ afterEach(() => {
 })
 
 describe("closed project drafts", () => {
-  for (const fail of [false, true]) for (const first of ["A", "B"] as const) {
-    it(`keeps A's exact draft alongside B after ${fail ? "read failure" : "closing the pending tab"} (${first} first)`, async () => {
-      const key = `returned-${fail}-${first}`, folder = `/${key}`, original = `${key}-original`, pending = `${key}-pending`, sibling = `${key}-sibling`
+  for (const outcome of ["completed", "interrupted", "failed"] as const) for (const first of ["A", "B"] as const) {
+    it(`keeps both recent drafts after an exact restore is ${outcome} (${first} first)`, async () => {
+      const key = `returned-${outcome}-${first}`, folder = `/${key}`, original = `${key}-original`, pending = `${key}-pending`, sibling = `${key}-sibling`
       const snapshot = (workspaceId: string, text: string, byte: number) => ({
         kind: "workspace" as const, folder, workspaceId, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
         ...serializeDraftAttachments({ shared: text }, { shared: [
@@ -102,14 +102,20 @@ describe("closed project drafts", () => {
       open(sibling, folder)
       edit(sibling, "recent B", 66)
       close(sibling)
-      if (fail) {
+      if (outcome === "failed") {
         held.reject(new Error("temporary native read failure"))
         await restore
         await settle()
-      } else {
+      } else if (outcome === "interrupted") {
         close(pending)
         held.resolve(apiSession("shared", folder))
         await restore
+      } else {
+        held.resolve(apiSession("shared", folder))
+        await restore
+        await settle()
+        assert.equal(getSessionDraftPrompt(pending, "shared"), "recent A")
+        close(pending)
       }
 
       // A plain opening can take shared B, but it cannot take A's exact bundle.
