@@ -21,7 +21,8 @@ Native package checks and updates retain their target and commit authority.
 
 `POST /api/workspaces/:id/plugin-sources` (`{ location, scope, spec }`) appends
 one string entry at the end of the scope's `plugins`; `DELETE` (`{ location,
-scope, target, entryIndex, expectedRevision }`) removes one entry. Both routes are strict, map
+scope, target, entryIndex, expectedRevision }`) removes one source with its plugin's
+rules, or (`{ location, scope, pluginId, expectedRevision }`) an orphan ID's rules. Both routes are strict, map
 errors like the activation route and add a stable `code` (`invalid-spec`,
 `local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`).
 
@@ -48,10 +49,19 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   releases the queue after a 5 s grace; the abandoned turn then fails its next
   signal check, before any write.
 - **Removal** requires, under the document primitive, that `plugins[entryIndex]`
-  still declares `target` (a string, or an object's `package`); otherwise `stale`
-  (409). The result must parse to the original minus exactly that element.
-  Activation rules (`id`/`-id`) are left in place, and OpenCode's package cache is
-  never touched.
+  still declares `target` (a string, or an object's `package`) and that the snapshot
+  of the freshly read document reads it as a source; otherwise `stale` (409). The same
+  edit deletes every string entry the snapshot reads as an exact `id`/`-id` rule of the
+  source's `pluginId` in that document, never wildcards, prefixes, other plugins' rules or
+  other documents: a bare `id` left without its package is a package spec that OpenCode
+  installs from the registry. A source without `pluginId` (disabled, failed before
+  exporting an ID) keeps its rules. The result must parse to the original minus exactly
+  those elements, and OpenCode's package cache is never touched.
+- **Orphan rules**: a control is `orphan` when no runtime entry, verified descriptor or
+  source defines its ID and every source has a `pluginId` or a reported runtime target, so
+  no declaration can define it. Its row's **Remove from Global/Project** (per writable
+  scope holding its exact rules) sends `pluginId`; the server recomputes `orphan` and
+  deletes those rules alone. Rule-only removal is refused for any other ID.
   Source removal is independent of catalog, family or binding count.
   The trusted Cancel-first confirmation names the plugin and exact scope, warns of interrupted availability
   and connections (including other projects for Global), and enables its scoped removal action after 600 ms.
@@ -78,9 +88,12 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   absent is `unconfirmed` (**Not confirmed**, with a Refresh action). `plugin.list`
   omits disabled plugins and exposes no package-to-ID link for them, so a disabled
   package with an exact `-id` rule shows two rows: its ID row with switches, and
-  its unconfirmed source row carrying the Remove items.
+  its unconfirmed source row carrying the Remove items. Removing that source leaves the
+  ID row orphan, with its own Remove items.
 - **Correlation**: snapshot sources carry `pluginId` when runtime inventory or a verified
-  managed installation associates their source, so Remove items attach to ordinary plugin rows. A row offers removal only
+  managed installation associates their source, so Remove items attach to ordinary plugin rows. A string or object
+  entry whose exact target `plugin.list` reports as a package is a source at its first declaration, even when an
+  earlier rule names the same ID, so a failed package keeps its Remove items. A row offers removal only
   for declarations in a scope's own write target; inherited, inline and other
   documents are shown, never edited.
 
@@ -233,8 +246,9 @@ connection refuse with `stale` and require a fresh selection/confirmation.
 2. Resolve physical file destinations, including symlinked parent directories,
    and fail closed on malformed content, invalid plugin entries, circular links,
    or filesystem errors.
-3. Edit with `jsonc-parser`: append one source spec string, delete exactly one verified source element,
-   or write one activation. An activation deletes the target document's earlier exact `id`/`-id` rules for
+3. Edit with `jsonc-parser`: append one source spec string, delete one verified source element with its
+   plugin's verified exact rules (or an orphan ID's rules), or write one activation. Element deletions take their
+   ranges from the parse tree (`deletePluginEntries`), which keeps compact arrays valid. An activation deletes the target document's earlier exact `id`/`-id` rules for
    that plugin, then appends the requested rule, or only deletes them, whichever first produces exactly the
    snapshot appending the rule would produce: every control's effective state and displayed switches, and
    every source. Otherwise it only appends. Entries the snapshot reads as source declarations (a package named
@@ -348,9 +362,10 @@ guessed paths.
   selectors, rules in another scope, source declarations named like their ID, managed re-enable):
   `plugin-controls.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
-  BOM, object entries, stale index): `plugin-source-document.test.ts`
-- source add/remove ownership, scope availability, duplicates across scopes,
-  rule retention, inventory correlation and the strict route:
+  BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`
+- source add/remove ownership, scope availability, duplicates across scopes, rule removal with the source (active and
+  failed plugins, wildcards, other plugins and scopes kept), rule retention for unknown IDs, bare names loaded as
+  packages, orphan rule removal and refusal, inventory correlation and the strict route:
   `plugin-sources.test.ts`
 - confirmed-document revisions, full-options and connection replacement refusals, ordinary native removal
   without catalog/status/binding/census IO, and durable removal versus runtime state: `plugin-sources.test.ts`.
@@ -383,7 +398,7 @@ guessed paths.
 - package check/update menus, one native request per target and pending state
   across hiding: `packages/ui/tests/browser/plugin-packages.test.ts`
 - Add window (Global default, Project warning, refusals), Installing until the
-  inventory reports, version/update/ref tooltips, Remove items, the pending
+  inventory reports, version/update/ref tooltips, Remove items (failed packages and orphan rule rows included), the pending
   timeout with an injected clock and the GUI notice:
   `packages/ui/tests/browser/plugin-sources.test.ts`
 

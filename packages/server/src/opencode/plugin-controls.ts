@@ -38,6 +38,13 @@ import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 
+/** The snapshot's reading of one edited document: its own sources and rules, and every control. */
+export interface PluginDocumentDeclarations {
+  sources: PluginConfiguredSource[]
+  rules: PluginConfiguredRule[]
+  controls: PluginActivationControl[]
+}
+
 export interface NativeConfigEdit { scope: PluginControlScope; path: string; expectation: string; updated: string }
 export type NativeConfigDocuments = { location: PluginControlLocation; entries: ConfigEntry[];
   documents: Array<{ scope: PluginControlScope; path: string; document: PluginControlDocument }> }
@@ -143,7 +150,8 @@ export class PluginControls {
     workspaceId: string,
     location: PluginControlLocation,
     scope: PluginControlScope,
-    edit: (document: PluginControlDocument, current: { entries: ConfigEntry[]; path: string; location: PluginControlLocation }) => string | Promise<string>,
+    edit: (document: PluginControlDocument, current: { entries: ConfigEntry[]; path: string; location: PluginControlLocation;
+      declarations(): PluginDocumentDeclarations | undefined }) => string | Promise<string>,
     // Aborts the daemon reads and, re-checked under the lock, the commit itself.
     signal?: AbortSignal,
     strictDocuments = false,
@@ -164,7 +172,8 @@ export class PluginControls {
         if (expectedRevision !== undefined && expectedRevision !== this.documentRevision(workspaceId, context, target, document)) {
           throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
         }
-        const updated = await edit(document, { entries: context.entries, path: target.path, location: context.location })
+        const updated = await edit(document, { entries: context.entries, path: target.path, location: context.location,
+          declarations: () => documentDeclarations(context, target, document) })
         await replacePluginControlDocument(document, updated, {
           beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
         }, context.fileSystem)
@@ -521,6 +530,19 @@ function buildSnapshot(
   return controlsForDocuments(snapshotBase(context), context, overlay)
 }
 
+/**
+ * The snapshot's declarations in `target`'s raw document, only while the daemon's entries for it equal that document
+ * (the condition `read` grants removal confirmation on): substitutions and watcher lag never authorize rule deletion.
+ */
+function documentDeclarations(context: ReadContext, target: ResolvedTarget, document: PluginControlDocument): PluginDocumentDeclarations | undefined {
+  const base = snapshotBase(context)
+  const normalized = base.documents.find(entry => entry.path && samePath(context.paths, entry.path, target.path))
+  if (!document.exists || !normalized || !isDeepStrictEqual(normalized.plugins, document.plugins)) return undefined
+  const snapshot = controlsForDocuments(base, context)
+  const own = (item: { path?: string }) => Boolean(item.path && samePath(context.paths, item.path, target.path))
+  return { sources: snapshot.configured.sources.filter(own), rules: snapshot.configured.rules.filter(own), controls: snapshot.controls }
+}
+
 function controlsForDocuments(
   base: SnapshotBase,
   context: ReadContext,
@@ -533,6 +555,10 @@ function controlsForDocuments(
   const managedIds = new Set(context.managedPlugins.flatMap(entry => entry.ids)
     .filter(id => !runtimeById.has(id) || runtimeById.get(id)?.managedBy === "codenomad"))
   const knownDefinitions = new Set([...runtimeIds, ...managedIds])
+  // Targets OpenCode reports loading as packages, including failures that exported no ID: such an entry is a source,
+  // whatever ID an earlier rule names.
+  const reportedTargets = new Set(runtime.flatMap(entry => entry.source.type === "package" ? [entry.source.target]
+    : entry.source.type === "local" ? [entry.source.path] : []))
   const declaredTargets = new Set<string>()
   const rules: PluginConfiguredRule[] = []
   const sources: PluginConfiguredSource[] = []
@@ -542,7 +568,7 @@ function controlsForDocuments(
         const runtimeId = runtimeIdForConfiguredTarget(context, document, entry.package, runtimeById, runtimeSourceIds)
         sources.push({ target: entry.package, scope: document.scope, path: document.path, entryIndex, hasOptions: entry.options !== undefined,
           ...(runtimeId ? { pluginId: runtimeId } : {}) })
-        const isFirstRuntimeSourceDeclaration = Boolean(runtimeId && !declaredTargets.has(entry.package))
+        const isFirstRuntimeSourceDeclaration = Boolean((runtimeId || reportedTargets.has(entry.package)) && !declaredTargets.has(entry.package))
         const selectsPlugin = entry.package.startsWith("opencode.")
           || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(entry.package))
         if (selectsPlugin) {
@@ -565,7 +591,7 @@ function controlsForDocuments(
       }
 
       const runtimeSourceId = runtimeIdForConfiguredTarget(context, document, selector, runtimeById, runtimeSourceIds)
-      const isFirstRuntimeSourceDeclaration = Boolean(runtimeSourceId && !declaredTargets.has(selector))
+      const isFirstRuntimeSourceDeclaration = Boolean((runtimeSourceId || reportedTargets.has(selector)) && !declaredTargets.has(selector))
       const selectsPlugin = selector === "*" || selector.endsWith(".*") || selector.startsWith("opencode.")
         || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(selector))
       if (!selectsPlugin) {
@@ -593,21 +619,27 @@ function controlsForDocuments(
   for (const rule of rules) {
     if (isExactSelector(rule.selector)) ids.add(rule.selector)
   }
+  // A declaration with no associated ID that OpenCode does not report (disabled, installing) may define any ID.
+  const identified = sources.every(source => source.pluginId || reportedTargets.has(source.target))
+  const declaredIds = new Set(sources.flatMap(source => source.pluginId ? [source.pluginId] : []))
   const controls = [...ids].filter(validPluginId).sort(controlIdCollator.compare).map((id) => {
     const matching = rules.filter((rule) => matchesSelector(rule.selector, id))
     const controllingRule = matching.at(-1)
     const runtimeEntry = runtimeById.get(id) ?? runtime.find(entry => !entry.id && entry.managedBy === "codenomad"
       && entry.source.type === "local"
       && managedDesktopPluginForSource(context.managedPlugins, entry.source.path, context.paths)?.ids.includes(id))
+    const managed = runtimeEntry?.managedBy === "codenomad" || managedIds.has(id)
+    const builtin = runtimeEntry?.source.type === "builtin" || id.startsWith("opencode.")
     return {
       id,
-      ...(runtimeEntry?.managedBy === "codenomad" || managedIds.has(id) ? { managedBy: "codenomad" as const } : {}),
+      ...(managed ? { managedBy: "codenomad" as const } : {}),
       ...(runtimeEntry ? { runtime: runtimeEntry } : {}),
-      builtin: runtimeEntry?.source.type === "builtin" || id.startsWith("opencode."),
+      builtin,
       effective: stateForRule(controllingRule),
       global: stateForRule(matching.filter((rule) => rule.scope === "global").at(-1)),
       project: stateForRule(matching.filter((rule) => rule.scope === "project").at(-1)),
       ...(controllingRule ? { controllingRule } : {}),
+      ...(identified && !runtimeEntry && !managed && !builtin && !declaredIds.has(id) ? { orphan: true as const } : {}),
     } satisfies PluginActivationControl
   })
   return {

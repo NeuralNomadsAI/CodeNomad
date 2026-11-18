@@ -210,7 +210,59 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
-  it("removes exactly the displayed entry, leaves activation rules, and refuses a stale index", async () => {
+  it("removes a plugin's exact rules with its source, in that document only, for active and failed plugins", async () => {
+    const f = await fixture()
+    try {
+      const text = '{\n  // keep\n  "plugins": [\n    "@acme/ponytail@4.13.0",\n    "broken@1",\n    "keep@1",\n    "-ponytail",\n    "ponytail",\n'
+        + '    "-broken.id",\n    "broken.id",\n    "-keep.id",\n    "keep.id",\n    "*",\n    "-ponytail.*"\n  ]\n}\n'
+      await writeFile(f.globalFile, text)
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      await writeFile(f.projectFile, JSON.stringify({ plugins: ["-ponytail", "ponytail"] }))
+      f.state.runtime = [
+        { id: "ponytail", source: { type: "package", target: "@acme/ponytail@4.13.0" }, features: {}, state: { status: "active" } },
+        { id: "broken.id", source: { type: "package", target: "broken@1" }, features: {}, state: { status: "failed", error: "incompatible" } },
+        { id: "keep.id", source: { type: "package", target: "keep@1" }, features: {}, state: { status: "active" } },
+      ]
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/ponytail@4.13.0", entryIndex: 0, expectedRevision: await revision(f) })
+      const saved = await readFile(f.globalFile, "utf8")
+      assert.match(saved, /\/\/ keep\n/)
+      assert.deepEqual(parse(saved).plugins, ["broken@1", "keep@1", "-broken.id", "broken.id", "-keep.id", "keep.id", "*", "-ponytail.*"])
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["-ponytail", "ponytail"], "other scopes are untouched")
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "broken@1", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep@1", "-keep.id", "keep.id", "*", "-ponytail.*"])
+    } finally { await f.cleanup() }
+  })
+
+  it("reads a bare name OpenCode loaded as a package as a removable source, and removes orphan rules on request", async () => {
+    const f = await fixture()
+    try {
+      // The state an uninstall used to leave: the rules outlived the package, and OpenCode installed the bare name.
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["keep@1", "-ponytail", "ponytail", "-keep.id"] }))
+      f.state.runtime = [
+        { id: "keep.id", source: { type: "package", target: "keep@1" }, features: {}, state: { status: "active" } },
+        { source: { type: "package", target: "ponytail" }, features: {}, state: { status: "failed", error: "Plugin must export a default definition" } },
+      ]
+      let snapshot = await f.controls.read("w", f.location)
+      assert.deepEqual(snapshot.configured.sources.map(({ target, entryIndex }) => ({ target, entryIndex })),
+        [{ target: "keep@1", entryIndex: 0 }, { target: "ponytail", entryIndex: 2 }])
+      assert.deepEqual(snapshot.controls.map(({ id, orphan }) => ({ id, orphan })), [{ id: "keep.id", orphan: undefined }, { id: "ponytail", orphan: true }])
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "keep.id", expectedRevision: await revision(f) }), code("stale"))
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "ponytail", entryIndex: 2, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep@1", "-ponytail", "-keep.id"])
+      f.state.runtime = f.state.runtime.slice(0, 1)
+      const response = await f.sources.remove("w", { location: f.location, scope: "global", pluginId: "ponytail", expectedRevision: await revision(f) })
+      assert.deepEqual(response, { scope: "global", spec: "ponytail", reloadPending: true })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep@1", "-keep.id"])
+      // A declaration OpenCode does not report (disabled, installing) may define the ID: its rules stay.
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["disabled-package", "-hidden.id"] }))
+      snapshot = await f.controls.read("w", f.location)
+      assert.equal(snapshot.controls.find(control => control.id === "hidden.id")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "hidden.id", expectedRevision: await revision(f) }), code("stale"))
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["disabled-package", "-hidden.id"])
+    } finally { await f.cleanup() }
+  })
+
+  it("removes exactly the displayed entry, keeps the rules of an unknown plugin ID, and refuses a stale index", async () => {
     const f = await fixture()
     try {
       const text = '{\n  "plugins": [\n    "keep",\n    { "package": "fixture-plugin", "options": { "x": 1 } },\n    "-fixture.package"\n  ]\n}\n'
@@ -247,7 +299,7 @@ describe("plugin source mutations", () => {
         } })
         assert.equal(response.statusCode, 200)
         assert.equal(response.body.includes("SECRET_SENTINEL"), false)
-        assert.deepEqual(parse(await readFile(f.globalFile, "utf8")), { plugins: ["-neuralnomads.fixture"], keep: true })
+        assert.deepEqual(parse(await readFile(f.globalFile, "utf8")), { plugins: [], keep: true }, "its rule goes with the source")
         assert.equal(f.state.runtime.length, 1, "durable removal never claims all runtimes stopped")
       }
       assert.deepEqual(f.state.rpcCalls, [], "zero status, binding, detach or census RPCs")
@@ -414,6 +466,8 @@ describe("plugin source routes", () => {
         assert.equal((await app.inject({ method: "POST", url, payload })).statusCode, 400)
       }
       assert.equal((await app.inject({ method: "DELETE", url, payload: { location: f.location, scope: "global", target: "x", entryIndex: -1 } })).statusCode, 400)
+      assert.equal((await app.inject({ method: "DELETE", url, payload: { location: f.location, scope: "global", target: "x", entryIndex: 0,
+        pluginId: "x", expectedRevision: "a".repeat(64) } })).statusCode, 400, "a source or an ID, never both")
       const local = await app.inject({ method: "POST", url, payload: { location: f.location, scope: "global", spec: "./local" } })
       assert.equal(local.statusCode, 422)
       assert.equal(local.json().code, "local-path")

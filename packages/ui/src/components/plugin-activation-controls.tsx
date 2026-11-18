@@ -13,7 +13,7 @@ import { integrationConnection, integrationConnectionMessage, integrationStateLi
 import { integrationDisplayPlugin } from "../lib/integration-rows"
 import { integrationBindings, integrations } from "../stores/integrations"
 import { pluginControlsCache } from "../stores/plugin-controls"
-import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
+import { pluginSourcesStore, removableRules, removableSources, type PluginRemoval } from "../stores/plugin-sources"
 import { createIntegrationHostInstallation } from "./integration-host-installation"
 import { createIntegrationRowBinding } from "./integration-row-binding"
 import { IntegrationStateLineView } from "./integration-state-line"
@@ -194,7 +194,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       const runtime = control()?.runtime?.source
       return source.pluginId === pluginId || (runtime?.type === "package" && runtime.target === source.target)
     }
-    const removable = createMemo(() => removableSources(snapshot(), matchesControl), [], {
+    const removable = createMemo((): PluginRemoval[] => [...removableSources(snapshot(), matchesControl), ...removableRules(snapshot(), pluginId)], [], {
       equals: (left, right) => left.length === right.length && left.every((source, index) => sameSource(source, right[index]!)),
     })
     const integration = () => recognised().byControl.get(pluginId)
@@ -396,6 +396,6 @@ function sourcesOverlap(left: readonly Pick<PluginConfiguredSource, "scope" | "e
   return left.some(source => right.some(other => other.scope === source.scope && other.entryIndex === source.entryIndex))
 }
 
-export function sameSource(left: PluginConfiguredSource, right: PluginConfiguredSource): boolean {
+export function sameSource(left: PluginRemoval, right: PluginRemoval): boolean {
   return left.scope === right.scope && left.target === right.target && left.entryIndex === right.entryIndex && left.path === right.path && left.expectedRevision === right.expectedRevision
 }

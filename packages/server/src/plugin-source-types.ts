@@ -7,16 +7,16 @@ export interface PluginSourceAddRequest {
   spec: string
 }
 
-/** Removes `plugins[entryIndex]` of the scope's document only while it still declares `target`. */
-export interface PluginSourceRemoveRequest {
+/** Removes `plugins[entryIndex]` of the scope's document only while it still declares `target`, with the exact
+ * activation rules of its plugin ID in that document; or, with `pluginId`, the exact rules of an orphan ID there. */
+export type PluginSourceRemoveRequest = {
   location: PluginControlLocation
   scope: PluginControlScope
-  target: string
-  entryIndex: number
   expectedRevision: string
-}
+} & ({ target: string; entryIndex: number } | { pluginId: string })
 
-/** Durable configured state only: the daemon reports loading through `plugin.list` afterwards. */
+/** Durable configured state only: the daemon reports loading through `plugin.list` afterwards. `spec` is the added or
+ * removed target, or the plugin ID whose rules were removed. */
 export interface PluginSourceMutationResponse {
   scope: PluginControlScope
   spec: string

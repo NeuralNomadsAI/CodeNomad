@@ -6,7 +6,7 @@ import type {
   PluginSourceMutationResponse,
   PluginSourceRemoveRequest,
 } from "../plugin-source-types"
-import { appendPluginControlRule, PluginControlDocumentError } from "./plugin-control-document"
+import { appendPluginControlRule, PluginControlDocumentError, replacePluginControlRules } from "./plugin-control-document"
 import { PluginControlsError, type PluginControls, type PluginControlsErrorKind } from "./plugin-controls"
 import {
   pluginEntryTarget,
@@ -114,28 +114,50 @@ export class PluginSources {
     return { scope, spec, reloadPending: true }
   }
 
+  /**
+   * Removes a source with every exact `id`/`-id` rule of its plugin ID in the same document, so no orphan rule is
+   * left for OpenCode to load as a package. A source whose ID is unknown (disabled, failed before exporting one)
+   * keeps the rules. With `pluginId`, removes the exact rules of an ID the snapshot reads as orphan.
+   */
   async remove(workspaceId: string, request: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
-    const { scope, target, entryIndex } = request
+    const { scope } = request
     if (!/^[a-f0-9]{64}$/.test(request.expectedRevision ?? "")) {
       throw new PluginSourcesError("OpenCode configuration confirmation is unavailable", "conflict", "stale")
     }
+    const stale = () => new PluginSourcesError("OpenCode plugin entry changed since it was displayed", "conflict", "stale")
+    let removedRules = 0
     try {
-      await this.options.documents.editConfigDocument(workspaceId, request.location, scope, document => {
-      try {
-        return removePluginSourceEntry(document, entryIndex, target)
-      } catch (error) {
-        if (error instanceof PluginControlDocumentError && error.kind === "conflict") {
-          throw new PluginSourcesError(error.message, "conflict", "stale")
+      await this.options.documents.editConfigDocument(workspaceId, request.location, scope, (document, current) => {
+        const declarations = current.declarations()
+        if (!declarations) throw stale()
+        const rulesOf = (id: string) => {
+          const sources = new Set(declarations.sources.map(source => source.entryIndex))
+          const indexes = declarations.rules.filter(rule => rule.selector === id && !sources.has(rule.entryIndex)).map(rule => rule.entryIndex)
+          return { indexes, expected: new Set([id, `-${id}`]) }
         }
-        throw error
-      }
+        try {
+          if ("pluginId" in request) {
+            const rules = rulesOf(request.pluginId)
+            if (!declarations.controls.some(control => control.id === request.pluginId && control.orphan) || rules.indexes.length === 0) throw stale()
+            removedRules = rules.indexes.length
+            return replacePluginControlRules(document, rules.indexes, rules.expected)
+          }
+          const source = declarations.sources.find(entry => entry.entryIndex === request.entryIndex && entry.target === request.target)
+          if (!source) throw stale()
+          const rules = source.pluginId ? rulesOf(source.pluginId) : undefined
+          removedRules = rules?.indexes.length ?? 0
+          return removePluginSourceEntry(document, request.entryIndex, request.target, rules)
+        } catch (error) {
+          if (error instanceof PluginControlDocumentError && error.kind === "conflict") throw stale()
+          throw error
+        }
       }, undefined, false, request.expectedRevision)
     } catch (error) {
       if (error instanceof PluginControlsError && error.kind === "conflict") throw new PluginSourcesError("OpenCode configuration changed since confirmation", "conflict", "stale")
       throw error
     }
-    this.options.logger.info({ workspaceId, scope }, "Removed OpenCode plugin source")
-    return { scope, spec: target, reloadPending: true }
+    this.options.logger.info({ workspaceId, scope, removedRules }, "pluginId" in request ? "Removed orphan OpenCode plugin rules" : "Removed OpenCode plugin source")
+    return { scope, spec: "pluginId" in request ? request.pluginId : request.target, reloadPending: true }
   }
 }
 
