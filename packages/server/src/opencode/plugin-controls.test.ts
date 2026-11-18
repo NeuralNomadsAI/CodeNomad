@@ -432,8 +432,9 @@ describe("OpenCode V2 plugin activation controls", () => {
 
   it("uses normalized daemon entries for authorization while preserving raw placeholders", async () => {
     const fixture = createFixture({
-      globalPlugins: ["{env:PLUGIN_RULE}"],
-      reportedGlobalPlugins: ["-known"],
+      // The unreported (disabled) package may define the ID, so enabling it is not an orphan write.
+      globalPlugins: ["known-package", "{env:PLUGIN_RULE}"],
+      reportedGlobalPlugins: ["known-package", "-known"],
       runtime: [],
     })
 
@@ -445,7 +446,7 @@ describe("OpenCode V2 plugin activation controls", () => {
     })
 
     assert.equal(response.snapshot.controls.find((entry) => entry.id === "known")?.effective, "enabled")
-    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["{env:PLUGIN_RULE}", "known"])
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["known-package", "{env:PLUGIN_RULE}", "known"])
   })
 
   it("persists the requested rule when a raw replacement or deletion has overtaken daemon normalization", async () => {
@@ -650,6 +651,21 @@ describe("OpenCode V2 plugin activation controls", () => {
       (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden",
     )
     assert.deepEqual((parse(fs.readFileSync(owned.globalFile, "utf8")) as any).plugins, [])
+  })
+
+  it("refuses to enable an orphan ID, whose bare rule OpenCode would install from the registry", async () => {
+    const fixture = createFixture({ globalPlugins: ["keep-package", "-ponytail"], projectPlugins: ["-ponytail"],
+      runtime: [activePlugin("keep.id", "keep-package")] })
+    for (const scope of ["global", "project"] as const) {
+      await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "ponytail", scope, enabled: true }),
+        (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden", scope)
+    }
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["keep-package", "-ponytail"])
+    assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["-ponytail"])
+    // A declaration OpenCode does not report (disabled, installing) may define the ID: enabling stays available.
+    fixture.setGlobalPlugins(["unreported-package", "-ponytail"])
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "ponytail", scope: "global", enabled: true })
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["unreported-package"])
   })
 
   it("fails closed when the selected configuration document is malformed", async () => {

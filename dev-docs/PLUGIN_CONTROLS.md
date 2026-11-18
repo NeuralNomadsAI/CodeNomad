@@ -61,7 +61,9 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   source defines its ID and every source has a `pluginId` or a reported runtime target, so
   no declaration can define it. Its row's **Remove from Global/Project** (per writable
   scope holding its exact rules) sends `pluginId`; the server recomputes `orphan` and
-  deletes those rules alone. Rule-only removal is refused for any other ID.
+  deletes those rules alone. Rule-only removal is refused for any other ID. An orphan row has no
+  Global/Project switches, and the activation route refuses to enable an orphan ID (`forbidden`):
+  its bare `id` would be a package spec OpenCode installs from the registry.
   Source removal is independent of catalog, family or binding count.
   The trusted Cancel-first confirmation names the plugin and exact scope, warns of interrupted availability
   and connections (including other projects for Global), and enables its scoped removal action after 600 ms.
@@ -359,8 +361,8 @@ guessed paths.
 - JSONC preservation, malformed input, optimistic conflict, atomic replace, and rule replacement with
   re-verified deletions: `plugin-control-document.test.ts`
 - rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
-  selectors, rules in another scope, source declarations named like their ID, managed re-enable):
-  `plugin-controls.test.ts`
+  selectors, rules in another scope, source declarations named like their ID, managed re-enable), and the
+  refused enable of an orphan ID: `plugin-controls.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`
 - source add/remove ownership, scope availability, duplicates across scopes, rule removal with the source (active and
@@ -398,7 +400,7 @@ guessed paths.
 - package check/update menus, one native request per target and pending state
   across hiding: `packages/ui/tests/browser/plugin-packages.test.ts`
 - Add window (Global default, Project warning, refusals), Installing until the
-  inventory reports, version/update/ref tooltips, Remove items (failed packages and orphan rule rows included), the pending
+  inventory reports, version/update/ref tooltips, Remove items (failed packages and switchless orphan rule rows included), the pending
   timeout with an injected clock and the GUI notice:
   `packages/ui/tests/browser/plugin-sources.test.ts`
 

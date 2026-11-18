@@ -142,6 +142,8 @@ test("uninstalling leaves no rule row, and a failed package and an orphan rule r
     await add.getByRole("button", { name: "Add", exact: true }).click()
     await add.waitFor({ state: "hidden" })
     await page.evaluate(() => { (window as any).fixture.report("@acme/ponytail@4.13.0", "active", { id: "ponytail" }); (window as any).fixture.addRules("ponytail") })
+    await page.locator('[data-plugin-id="ponytail"]').locator('input[type="checkbox"]').nth(1).waitFor()
+    assert.equal(await page.locator('[data-plugin-id="ponytail"]').locator('input[type="checkbox"]').count(), 2, "a defined plugin keeps its Global/Project switches")
     await remove('[data-plugin-id="ponytail"]', "ponytail")
     assert.deepEqual((await calls(page, "remove")).at(-1), { type: "remove", location: { directory: "/repo" }, scope: "global",
       target: "@acme/ponytail@4.13.0", entryIndex: 1, expectedRevision: "a".repeat(64) })
@@ -150,6 +152,8 @@ test("uninstalling leaves no rule row, and a failed package and an orphan rule r
     assert.equal(await page.locator(".plugin-control-row").filter({ hasText: "ponytail" }).count(), 0, "no rule row outlives the plugin")
 
     await page.evaluate(() => (window as any).fixture.orphan("ghost"))
+    await page.locator('[data-plugin-id="ghost"]').waitFor()
+    assert.equal(await page.locator('[data-plugin-id="ghost"]').locator('input[type="checkbox"]').count(), 0, "an orphan row has no switch to write a bare ID")
     const failedItems = await remove('[data-package-target="ghost"]', "ghost")
     assert.ok(failedItems.includes("Remove from Global"), failedItems.join())
     assert.deepEqual((await calls(page, "remove")).at(-1), { type: "remove", location: { directory: "/repo" }, scope: "global",

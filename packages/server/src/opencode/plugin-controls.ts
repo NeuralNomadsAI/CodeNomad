@@ -295,6 +295,8 @@ export class PluginControls {
         })
         const control = before.controls.find((candidate) => candidate.id === request.pluginId)
         if (!control) throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
+        // A bare ID that no plugin defines is a package spec: OpenCode would install it from the registry.
+        if (request.enabled && control.orphan) throw new PluginControlsError("No plugin defines this ID", "forbidden")
 
         const desired: PluginScopeRuleState = request.enabled ? "enabled" : "disabled"
         assertCurrentConnection(context.connection)

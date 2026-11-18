@@ -251,8 +251,11 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           {nonConformingLabel(declarationsFor(matchesControl))}<PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={name()}
           source={control()?.runtime?.source} removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id}
           info={connection()} hostAction={hostAction()} docs={integration()?.docs} /></div>
-        {renderSwitch("global")}
-        {renderSwitch("project")}
+        {/* Enabling an ID no plugin defines would write a package spec OpenCode installs: such a row only offers Remove. */}
+        <Show when={!control()?.orphan}>
+          {renderSwitch("global")}
+          {renderSwitch("project")}
+        </Show>
         <Show when={line()}>{value => <IntegrationStateLineView line={value()} binding={binding}
           install={() => { const entry = integration(); if (entry) void installation.open(entry.id) }} />}</Show>
       </div>
