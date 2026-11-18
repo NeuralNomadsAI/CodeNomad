@@ -16,7 +16,11 @@ import { waitForInstanceInitialSessionHydration } from "./instances"
  */
 type ClosedWorkspaceDrafts = Pick<RestorableWorkspaceTabState, "drafts" | "attachments">
 type DraftSnapshot = ClosedWorkspaceDrafts & Pick<RestorableWorkspaceTabState, "folder" | "workspaceId">
-type VaultEntry = ClosedWorkspaceDrafts & { origins: Record<string, readonly string[]> }
+type VaultEntry = ClosedWorkspaceDrafts & {
+  origins: Record<string, readonly string[]>
+  /** A received bundle may answer an unambiguous plain folder opening. */
+  folderEligible?: Record<string, true>
+}
 type ProjectVault = { shared: VaultEntry; exact: Map<string, VaultEntry> }
 
 export const MAX_CLOSED_WORKSPACE_DRAFTS = 16
@@ -29,6 +33,8 @@ interface RestoreAuthority {
   key: string
   snapshotId?: string
   claimedIds: Set<string>
+  returnOwners?: Map<string, string>
+  receivedIds?: Set<string>
   clearSource?: { id: string; sessions: Set<string> }
   entry?: VaultEntry
 }
@@ -91,6 +97,7 @@ function pick<T extends ClosedWorkspaceDrafts>(entry: T, keep: (sessionId: strin
   return {
     ...entry, drafts: filter(entry.drafts), attachments: filter(entry.attachments),
     ...("origins" in entry ? { origins: filter((entry as VaultEntry).origins) } : {}),
+    ...("folderEligible" in entry ? { folderEligible: filter((entry as VaultEntry).folderEligible ?? {}) } : {}),
   }
 }
 
@@ -99,7 +106,8 @@ function merge(base: VaultEntry, top: VaultEntry, replaced: ReadonlySet<string>)
   const topIds = contentSessions(top)
   const kept = pick(base, (sessionId) => !replaced.has(sessionId) && !topIds.has(sessionId))
   return { drafts: { ...kept.drafts, ...top.drafts }, attachments: { ...kept.attachments, ...top.attachments },
-    origins: { ...kept.origins, ...top.origins } }
+    origins: { ...kept.origins, ...top.origins },
+    folderEligible: { ...kept.folderEligible, ...top.folderEligible } }
 }
 
 function stash(key: string, project: ProjectVault): void {
@@ -118,11 +126,8 @@ function setExact(project: ProjectVault, owner: string, entry: VaultEntry) {
   while (project.exact.size > MAX_CLOSED_WORKSPACE_DRAFTS) project.exact.delete(project.exact.keys().next().value!)
 }
 
-function claimParts(bound: RestoreAuthority | undefined, entry: VaultEntry) {
-  return {
-    shared: pick(entry, id => !bound?.claimedIds.has(id)),
-    exact: pick(entry, id => Boolean(bound?.claimedIds.has(id))),
-  }
+function pendingOwner(bound: RestoreAuthority | undefined, id: string): string | undefined {
+  return bound?.returnOwners?.get(id) ?? (bound?.claimedIds.has(id) ? bound.snapshotId : undefined)
 }
 
 /** Sessions the user typed in, cleared or sent from in this instance. */
@@ -150,10 +155,12 @@ function emptySessionsOf(instanceId: string, entry: VaultEntry): VaultEntry {
 /** A return uses the same ownership as the claim, beneath newer writes of that owner. */
 function requeue(bound: RestoreAuthority, older: VaultEntry): void {
   const project = vault.get(bound.key) ?? emptyProject()
-  const { shared, exact } = claimParts(bound, older)
+  const shared = pick(older, id => !pendingOwner(bound, id))
   project.shared = merge(shared, project.shared, noSnapshotAuthority)
-  if (bound.snapshotId && contentSessions(exact).size) {
-    setExact(project, bound.snapshotId, merge(exact, project.exact.get(bound.snapshotId) ?? empty, noSnapshotAuthority))
+  const owners = new Set([...contentSessions(older)].map(id => pendingOwner(bound, id)))
+  for (const owner of owners) if (owner) {
+    const exact = pick(older, id => pendingOwner(bound, id) === owner)
+    setExact(project, owner, merge(exact, project.exact.get(owner) ?? empty, noSnapshotAuthority))
   }
   stash(bound.key, project)
 }
@@ -168,7 +175,7 @@ function supersedePendingDrafts(
   for (const [instanceId, bound] of restoreAuthority) {
     if (instanceId === except || bound.key !== key) continue
     const keep = (entry: VaultEntry) => pick(entry, id => !ids.has(id) || !supersedes(id,
-      bound.claimedIds.has(id) ? bound.snapshotId : undefined, entry.origins[id] ?? []))
+      pendingOwner(bound, id), entry.origins[id] ?? []))
     if (bound.entry) bound.entry = keep(bound.entry)
     const claim = claims.get(instanceId)
     if (claim) claim.entry = keep(claim.entry)
@@ -201,13 +208,25 @@ export function retainClosedWorkspaceDrafts(
   }
   const remaining = claim ? emptySessionsOf(instanceId, claim.entry) : null
   const snapshotId = bound?.key === key ? bound.snapshotId : undefined
-  const captured = captureInstanceDrafts(instanceId, snapshotId)
+  const captured = captureInstanceDrafts(instanceId)
   // Sessions emptied by typing, clearing or sending supersede older drafts too.
-  const superseded = new Set([...contentSessions(captured), ...touchedSessions(instanceId)])
+  const touched = touchedSessions(instanceId)
+  const superseded = new Set([...contentSessions(captured), ...touched])
   const written = contentSessions(captured)
+  // Only delivered bundles (or newer local edits) leave the original lineage.
+  const succeeded = new Set(bound?.receivedIds ?? [])
+  for (const id of written) if (pendingOwner(bound, id)) succeeded.add(id)
   const inherited = bound?.key === key ? bound.clearSource : undefined
   const cleared = [...new Set([...superseded, ...(inherited?.sessions ?? [])])].filter(id => !written.has(id))
-  if (cleared.length || closedAuthority.has(key)) {
+  const predecessors = new Map<string, Set<string>>()
+  for (const id of new Set([...succeeded, ...touched])) {
+    const owner = pendingOwner(bound, id)
+    if (!owner || owner === instanceId) continue
+    const ids = predecessors.get(owner) ?? new Set<string>()
+    ids.add(id)
+    predecessors.set(owner, ids)
+  }
+  if (cleared.length || predecessors.size || closedAuthority.has(key)) {
     const authority = closedAuthority.get(key) ?? new Map<string, Set<string>>()
     for (const source of new Set([instanceId, ...(snapshotId ? [snapshotId] : [])])) {
       const marks = new Set([...(authority.get(source) ?? []), ...cleared])
@@ -215,20 +234,27 @@ export function retainClosedWorkspaceDrafts(
       if (marks.size) authority.set(source, marks)
       else authority.delete(source)
     }
+    for (const [owner, ids] of predecessors) authority.set(owner, new Set([...(authority.get(owner) ?? []), ...ids]))
     closedAuthority.delete(key)
     if (authority.size) closedAuthority.set(key, authority)
     while (closedAuthority.size > MAX_CLOSED_WORKSPACE_DRAFTS) closedAuthority.delete(closedAuthority.keys().next().value!)
   }
   const project = vault.get(key) ?? emptyProject()
   const owners = new Set([instanceId, ...(snapshotId ? [snapshotId] : [])])
+  for (const owner of predecessors.keys()) owners.add(owner)
   const exactOwners = new Map<string, string>()
   for (const owner of owners) {
     const entry = project.exact.get(owner)
     if (entry) for (const id of contentSessions(entry)) exactOwners.set(id, owner)
   }
-  if (snapshotId) for (const id of bound?.claimedIds ?? []) exactOwners.set(id, snapshotId)
+  for (const id of superseded) {
+    const owner = pendingOwner(bound, id)
+    if (owner) exactOwners.set(id, owner)
+  }
+  for (const id of succeeded) exactOwners.set(id, instanceId)
   const supersedes = (id: string, owner: string | undefined, origins: readonly string[]) =>
-    owner !== undefined ? owners.has(owner) : !exactOwners.has(id) || origins.some(origin => owners.has(origin))
+    owner !== undefined ? owner === instanceId || owner === snapshotId || predecessors.get(owner)?.has(id) === true
+      : !exactOwners.has(id) || origins.some(origin => origin === instanceId || origin === snapshotId || predecessors.get(origin)?.has(id))
   supersedePendingDrafts(key, superseded, supersedes)
   // Apply the same owner check to parked bytes as to pending reads.
   const sharedSuperseded = new Set([...superseded].filter(id => supersedes(id, undefined, project.shared.origins[id] ?? [])))
@@ -236,8 +262,13 @@ export function retainClosedWorkspaceDrafts(
   for (const owner of owners) {
     const existing = project.exact.get(owner)
     const replacements = pick(captured, id => exactOwners.get(id) === owner)
+    if (owner === instanceId) {
+      replacements.folderEligible = Object.fromEntries([...contentSessions(replacements)]
+        .filter(id => succeeded.has(id)).map(id => [id, true]))
+    }
     if (existing || contentSessions(replacements).size) {
-      setExact(project, owner, merge(existing ?? empty, replacements, superseded))
+      setExact(project, owner, merge(existing ?? empty, replacements,
+        owner === instanceId || owner === snapshotId ? superseded : predecessors.get(owner) ?? noSnapshotAuthority))
     }
   }
   stash(key, project)
@@ -272,17 +303,40 @@ export function restoreClosedWorkspaceDrafts(
   const owned = exact ? emptySessionsOf(instanceId, pick(exact, eligible)) : empty
   const sharedIds = contentSessions(shared)
   const ownedIds = contentSessions(owned)
-  const entry = merge(shared, owned, noSnapshotAuthority)
+  // Plain reopening can take a received successor only when there is no
+  // competing shared bundle or another eligible successor for that session.
+  const candidates = new Map<string, string | null>()
+  if (!snapshot && project) for (const [owner, parked] of project.exact) {
+    for (const id of contentSessions(parked)) {
+      if (available?.origins[id]) continue
+      candidates.set(id, candidates.has(id) || !parked.folderEligible?.[id] ? null : owner)
+    }
+  }
+  let successor = empty
+  const transfers = new Map<string, Set<string>>()
+  if (project) for (const [id, owner] of candidates) {
+    if (!owner) continue
+    const bundle = emptySessionsOf(instanceId, pick(project.exact.get(owner)!, key => key === id))
+    if (!contentSessions(bundle).size) continue
+    successor = merge(successor, bundle, noSnapshotAuthority)
+    const ids = transfers.get(owner) ?? new Set<string>()
+    ids.add(id)
+    transfers.set(owner, ids)
+  }
+  const entry = merge(merge(shared, owned, noSnapshotAuthority), successor, noSnapshotAuthority)
   const claimed = contentSessions(entry)
-  const bound: RestoreAuthority = { key, snapshotId, claimedIds: new Set([...ownedIds, ...[...sharedIds].filter(matchesOrigin)]), entry }
+  const returnOwners = new Map<string, string>()
+  for (const [owner, ids] of transfers) for (const id of ids) returnOwners.set(id, owner)
+  const bound: RestoreAuthority = { key, snapshotId, claimedIds: new Set([...ownedIds, ...[...sharedIds].filter(matchesOrigin)]), returnOwners, entry }
   restoreAuthority.set(instanceId, bound)
   if (!project || !claimed.size) return
   project.shared = pick(project.shared, id => !sharedIds.has(id))
   if (snapshotId && exact) setExact(project, snapshotId, pick(exact, id => !ownedIds.has(id)))
+  for (const [owner, ids] of transfers) setExact(project, owner, pick(project.exact.get(owner)!, id => !ids.has(id)))
   stash(key, project)
   // A retry moves unresolved bundles to the new claimant without taking another occurrence's exact claim.
   supersedePendingDrafts(key, claimed, (id, owner, origins) =>
-    owner !== undefined ? owner === snapshotId && bound.claimedIds.has(id)
+    owner !== undefined ? owner === pendingOwner(bound, id)
       : sharedIds.has(id) && origins.some(origin => shared.origins[id]?.includes(origin)), instanceId)
   const claim = { key, entry }
   claims.set(instanceId, claim)
@@ -294,12 +348,14 @@ export function restoreClosedWorkspaceDrafts(
     requeue(bound, bound.entry)
   }
   // Reads `claim.entry`: closes of sibling tabs may supersede sessions meanwhile.
-  const hydrate = () => hydrateWorkspacePromptState(
-    instanceId,
-    emptySessionsOf(instanceId, claim.entry),
-    new Set(getSessions(instanceId).filter(session => !session.catalogSnapshot && isSessionInWorkspaceScope(instanceId, session.id)).map(({ id }) => id)),
-    NO_SESSION_DRAFT_SESSION_ID,
-  )
+  const hydrate = () => {
+    const eligible = emptySessionsOf(instanceId, claim.entry)
+    const valid = new Set(getSessions(instanceId).filter(session => !session.catalogSnapshot && isSessionInWorkspaceScope(instanceId, session.id)).map(({ id }) => id))
+    const applied = hydrateWorkspacePromptState(instanceId, eligible, valid, NO_SESSION_DRAFT_SESSION_ID)
+    for (const id of applied) if (pendingOwner(bound, id)) {
+      (bound.receivedIds ??= new Set()).add(id)
+    }
+  }
   hydrate()
   return (async () => {
     await sessionsReady()

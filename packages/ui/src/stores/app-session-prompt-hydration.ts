@@ -37,11 +37,12 @@ export function hydrateWorkspacePromptState(
   validSessionIds: ReadonlySet<string>,
   noSessionDraftSessionId: string,
   keepLive = false,
-): void {
+): ReadonlySet<string> {
   const canHydrate = (sessionId: string) =>
     validSessionIds.has(sessionId) || sessionId === noSessionDraftSessionId || isRecoveredDraftId(sessionId)
   const authoritativeDrafts = getAuthoritativeDraftSessionIdsForInstance(instanceId)
   const authoritativeAttachments = getAuthoritativeAttachmentSessionIdsForInstance(instanceId)
+  const applied = new Set<string>()
 
   batch(() => {
     // Mounted prompt synchronization requires placeholders to exist before attachments publish.
@@ -49,15 +50,15 @@ export function hydrateWorkspacePromptState(
       if (!draft || !canHydrate(sessionId)) continue
       if (authoritativeDrafts.has(sessionId) || (keepLive && getSessionDraftPrompt(instanceId, sessionId))) continue
       hydrateSessionDraftPrompt(instanceId, sessionId, draft)
+      applied.add(sessionId)
     }
     for (const [sessionId, attachments] of Object.entries(snapshot.attachments)) {
       if (!canHydrate(sessionId)) continue
       if (authoritativeAttachments.has(sessionId) || (keepLive && getAttachments(instanceId, sessionId).length)) continue
-      hydrateSessionAttachments(
-        instanceId,
-        sessionId,
-        attachments.map(hydrateRestorableAttachment).filter((value) => value !== null),
-      )
+      const hydrated = attachments.map(hydrateRestorableAttachment).filter((value) => value !== null)
+      hydrateSessionAttachments(instanceId, sessionId, hydrated)
+      if (hydrated.length) applied.add(sessionId)
     }
   })
+  return applied
 }

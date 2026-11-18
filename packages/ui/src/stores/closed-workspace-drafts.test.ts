@@ -78,6 +78,65 @@ afterEach(() => {
 })
 
 describe("closed project drafts", () => {
+  for (const simple of [true, false]) it(`carries edited drafts across successive reopenings (${simple ? "folder" : "saved ID"})`, async () => {
+    const key = `draft-successor-${simple}`, folder = `/${key}`, original = `${key}-original`, successor = `${key}-successor`
+    const file = (byte: number) => createFileAttachment("successor.bin", "successor.bin", "application/octet-stream", new Uint8Array([byte]))
+    const snapshot = (workspaceId: string, text: string, byte: number) => ({
+      kind: "workspace" as const, folder, workspaceId, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      ...serializeDraftAttachments({ shared: text }, { shared: [file(byte)] }),
+    })
+    const edit = (id: string, text: string, byte: number) => {
+      setSessionDraftPrompt(id, "shared", text)
+      clearAttachments(id, "shared")
+      addAttachment(id, "shared", file(byte))
+    }
+    const check = (id: string, text: string, bytes: number[][]) => {
+      assert.equal(getSessionDraftPrompt(id, "shared"), text)
+      assert.deepEqual(getAttachments(id, "shared").map(({ source }) =>
+        source.type === "file" && Array.from(source.data ?? [])), bytes)
+    }
+    open(original, folder)
+    edit(original, "first version", 65)
+    close(original)
+    open(successor, folder, ["shared"], undefined, false, true)
+    await hydrateRestoredWorkspaceState(successor, snapshot(original, "old snapshot", 1), new AbortController().signal, () => true)
+    await settle()
+    check(successor, "first version", [[65]])
+    const sibling = `${key}-independent`
+    open(sibling, folder, ["shared"], undefined, false, true)
+    await hydrateRestoredWorkspaceState(sibling, snapshot(sibling, "independent B", 66), new AbortController().signal, () => true)
+    edit(successor, "edited successor", 90)
+    close(successor)
+
+    const second = `${key}-second`
+    open(second, folder, ["shared"], undefined, false, !simple)
+    if (!simple) await hydrateRestoredWorkspaceState(second, snapshot(successor, "first version", 65), new AbortController().signal, () => true)
+    await settle()
+    check(second, "edited successor", [[90]])
+    check(sibling, "independent B", [[66]])
+    edit(second, "next edit", 91)
+    close(second)
+    const third = `${key}-third`
+    open(third, folder, ["shared"], undefined, false, true)
+    await hydrateRestoredWorkspaceState(third, snapshot(second, "edited successor", 90), new AbortController().signal, () => true)
+    await settle()
+    check(third, "next edit", [[91]])
+    const old = `${key}-old-source`
+    open(old, folder, ["shared"], undefined, false, true)
+    await hydrateRestoredWorkspaceState(old, snapshot(original, "old snapshot", 1), new AbortController().signal, () => true)
+    await settle()
+    check(old, "", [])
+    clearSessionDraftPrompt(third, "shared")
+    clearAttachments(third, "shared")
+    close(third)
+    const fourth = `${key}-fourth`
+    open(fourth, folder, ["shared"], undefined, false, true)
+    await hydrateRestoredWorkspaceState(fourth, snapshot(third, "next edit", 91), new AbortController().signal, () => true)
+    await settle()
+    check(fourth, "", [])
+    check(sibling, "independent B", [[66]])
+  })
+
   for (const outcome of ["completed", "interrupted", "failed"] as const) for (const first of ["A", "B"] as const) {
     it(`keeps both recent drafts after an exact restore is ${outcome} (${first} first)`, async () => {
       const key = `returned-${outcome}-${first}`, folder = `/${key}`, original = `${key}-original`, pending = `${key}-pending`, sibling = `${key}-sibling`
@@ -118,6 +177,14 @@ describe("closed project drafts", () => {
         close(pending)
       }
 
+      if (outcome === "completed") {
+        const retired = `${key}-retired-original`
+        open(retired, folder, ["shared"], undefined, false, true)
+        await hydrateRestoredWorkspaceState(retired, saved.A, new AbortController().signal, () => true)
+        await settle()
+        assert.equal(getSessionDraftPrompt(retired, "shared"), "")
+        assert.deepEqual(getAttachments(retired, "shared"), [])
+      }
       // A plain opening can take shared B, but it cannot take A's exact bundle.
       const plain = `${key}-plain`
       open(plain, folder, ["shared"])
@@ -129,7 +196,8 @@ describe("closed project drafts", () => {
       for (const letter of [first, first === "A" ? "B" : "A"] as const) {
         open(ids[letter], folder, ["shared"], undefined, false, true)
         // This snapshot names the occurrence that just published shared B.
-        await hydrateRestoredWorkspaceState(ids[letter], letter === "B" ? { ...saved.B, workspaceId: plain } : saved.A,
+        const source = letter === "B" ? plain : outcome === "completed" ? pending : original
+        await hydrateRestoredWorkspaceState(ids[letter], { ...saved[letter], workspaceId: source },
           new AbortController().signal, () => true)
         await settle()
         attachInstanceTab(ids[letter], { source: "restore" })
