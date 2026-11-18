@@ -90,7 +90,7 @@ import {
 
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
-import { isSessionMovePending } from "./session-events"
+import { clearPendingSessionMove, getPendingSessionMove, isSessionMovePending } from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
@@ -537,6 +537,7 @@ async function hydrateRestoredSessionChainAttempt(
     && requestedIds.some(id => id && (id === activeSessionId().get(instanceId) || id === activeParentSessionId().get(instanceId)))
   let pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
   const visited = new Set<string>()
+  const departures: Array<() => void> = []
   while (pending.length > 0) {
     if (!isRequestCurrent()) return
     signal?.throwIfAborted()
@@ -551,6 +552,7 @@ async function hydrateRestoredSessionChainAttempt(
       let session = sessions().get(instanceId)?.get(sessionId)
       if (!session || session.catalogSnapshot) {
         const captured = session
+        const move = getPendingSessionMove(instanceId, sessionId)
         try {
           signal?.throwIfAborted()
           const read = () => isRequestCurrent()
@@ -577,13 +579,16 @@ async function hydrateRestoredSessionChainAttempt(
           if (signal?.aborted) throw error
           if (!isRequestCurrent()) return null
           if (!isSessionNotFoundError(error)) throw error
-          if ("reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON
-            && sessions().get(instanceId)?.get(sessionId) === captured
-            && !isSessionMovePending(instanceId, sessionId)
-            && !getMovedAwaySessions(instanceId).has(sessionId)
-            && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) {
-            markSessionMovedAway(instanceId, sessionId, null)
-            removeSessionProjection(instanceId, sessionId)
+          if ("reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
+            departures.push(() => {
+              if (sessions().get(instanceId)?.get(sessionId) !== captured
+                || getPendingSessionMove(instanceId, sessionId) !== move
+                || getMovedAwaySessions(instanceId).has(sessionId)
+                || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
+              clearPendingSessionMove(instanceId, sessionId)
+              markSessionMovedAway(instanceId, sessionId, null)
+              removeSessionProjection(instanceId, sessionId)
+            })
           }
           log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
           return null
@@ -595,6 +600,8 @@ async function hydrateRestoredSessionChainAttempt(
     }))
     pending = parents.filter((id): id is string => Boolean(id))
   }
+  // A selected local child may finish loading after its parent's refusal.
+  if (isRequestCurrent() && !signal?.aborted) for (const depart of departures) depart()
 }
 
 async function ensureV2ParentChainsLoaded(
@@ -1382,6 +1389,7 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
   if (authoritative) {
     markSessionDeletedAuthoritative(instanceId, sessionId)
     forgetSessionMovedAway(instanceId, sessionId)
+    clearPendingSessionMove(instanceId, sessionId)
   }
   deleteSessionAttachments(instanceId, sessionId)
   clearSessionDraftPrompt(instanceId, sessionId)

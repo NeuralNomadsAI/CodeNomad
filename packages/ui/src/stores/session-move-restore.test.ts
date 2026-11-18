@@ -18,7 +18,7 @@ const getMovedAwaySessionIds = (instanceId: string): Iterable<string> =>
   (sessionState as { getMovedAwaySessionIds?: (id: string) => Iterable<string> }).getMovedAwaySessionIds?.(instanceId) ?? ["<no record getter>"]
 import * as sessionState from "./session-state.ts"
 import { activeSessionId, getSessionDraftPrompt, getSessionListError, getSessionListIds, getSessionThreads, prependSessionListId, sessions, setActiveSession, setSessionDraftPrompt, setSessions } from "./session-state.ts"
-import { ensureWorktreesLoaded, setWorktreeSlugForParentSession } from "./worktrees.ts"
+import { ensureWorktreesLoaded, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
@@ -325,6 +325,44 @@ const moved = (id: string, sessionID: string, directory: string, created = 1) =>
 }) as any
 // Outside the opened folder: only its registration makes it owned.
 const newWorktree = { slug: "new", directory: "/repo-worktrees/new" }
+
+for (const registered of [true, false]) {
+  it(`keeps placement unresolved until the worktree inventory recovers (${registered ? "local" : "departed"})`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const source = setup(`move-retry-${registered}`, "/repo")
+    const id = source.session.instanceId
+    const original = serverApi.fetchWorktrees
+    let recovered = false
+    serverApi.fetchWorktrees = async (_id: string, fresh = false) => {
+      if (fresh && !recovered) throw new Error("Worktree inventory unavailable")
+      return { isGitRepo: true, worktrees: [
+        { slug: "root", directory: "/repo", kind: "root" }, ...(recovered && registered ? [newWorktree] : []),
+      ] } as any
+    }
+    const row = { ...source.session, parentID: undefined, location: { directory: newWorktree.directory } }
+    const child = { ...source.session, id: "child", parentID: "restored", location: { directory: "/repo" } }
+    source.client.session.list = async (input: any) => ({ data: input.project ? [row, child] : [] })
+    setInstanceMetadata(id, { project: { id: "project" } as any })
+    try {
+      await ensureWorktreesLoaded(id)
+      setActiveSession(id, "restored")
+      setSessionDraftPrompt(id, "restored", "keep draft")
+      handleNativeSessionEvent(id, moved("into-new", "restored", newWorktree.directory))
+      t.mock.timers.tick(100)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      await fetchSessions(id, { strictStatus: true })
+      assert.equal(activeSessionId().get(id), "restored", "stale inventory cannot evict an unresolved move")
+      assert.deepEqual([...getMovedAwaySessionIds(id)], [])
+
+      recovered = true
+      await reloadWorktrees(id, true)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(activeSessionId().get(id), registered ? "restored" : undefined)
+      assert.deepEqual([...getMovedAwaySessionIds(id)], registered ? [] : ["restored"])
+      assert.equal(getSessionDraftPrompt(id, "restored"), "keep draft")
+    } finally { serverApi.fetchWorktrees = original; source.cleanup() }
+  })
+}
 
 it("decides a move away only from a fresh worktree inventory", async () => {
   const source = setup("move-fresh-inventory", "/repo")

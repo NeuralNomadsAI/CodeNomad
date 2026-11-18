@@ -76,12 +76,11 @@ const nativeLifecycleGenerations = new Map<string, number>()
 // attempt starts or its run settles.
 let activeRetryToast: { key: string; handle: ToastHandle } | null = null
 const movedSessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
-interface SessionMove { directory: string; generation: number }
+interface SessionMove { directory: string; unresolved?: boolean }
 /** Per instance, the latest move of each session since its last refresh. */
 const pendingSessionMoves = new Map<string, Map<string, SessionMove>>()
-/** Per `instance\0session`, the move whose placement decision still applies. */
-const latestSessionMoves = new Map<string, number>()
-let sessionMoveGeneration = 0
+/** A move remains current until its placement is settled or superseded. */
+const latestSessionMoves = new Map<string, Map<string, SessionMove>>()
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
   const key = `${instanceId}\0${sessionId}`
@@ -305,10 +304,12 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
 
   const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]
   for (const instanceId of new Set(affectedInstanceIds)) {
-    const generation = ++sessionMoveGeneration
-    latestSessionMoves.set(`${instanceId}\0${sessionId}`, generation)
+    const move: SessionMove = { directory: location.directory }
+    const latest = latestSessionMoves.get(instanceId) ?? new Map()
+    latest.set(sessionId, move)
+    latestSessionMoves.set(instanceId, latest)
     forgetSessionMovedAway(instanceId, sessionId)
-    pendingSessionMoves.set(instanceId, (pendingSessionMoves.get(instanceId) ?? new Map()).set(sessionId, { directory: location.directory, generation }))
+    pendingSessionMoves.set(instanceId, (pendingSessionMoves.get(instanceId) ?? new Map()).set(sessionId, move))
     const pending = movedSessionRefreshTimers.get(instanceId)
     if (pending) clearTimeout(pending)
     movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
@@ -332,31 +333,50 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
  * leaves the list and selection; its draft and attachments stay for its return.
  * Only a fresh inventory decides, and only for the latest move of that session. */
 async function settleSessionMove(instanceId: string, sessionId: string, move: SessionMove): Promise<void> {
-  const key = `${instanceId}\0${sessionId}`
-  const latest = () => latestSessionMoves.get(key) === move.generation
-  if (!latest()) return
-  if (!servesSessionDirectory(instanceId, move.directory)) {
+  if (getPendingSessionMove(instanceId, sessionId) !== move) return
+  const needsFresh = move.unresolved || !servesSessionDirectory(instanceId, move.directory)
+  move.unresolved = false
+  if (needsFresh) {
     try {
       await reloadWorktrees(instanceId, true)
     } catch (error) {
       log.warn("Failed to read the inventory for a moved session", { instanceId, sessionId, error })
-      if (latest()) latestSessionMoves.delete(key)
+      move.unresolved = true
       return
     }
   }
-  if (!latest()) return
-  latestSessionMoves.delete(key)
+  finishSessionMove(instanceId, sessionId, move)
+}
+
+function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove): void {
+  if (getPendingSessionMove(instanceId, sessionId) !== move) return
+  clearPendingSessionMove(instanceId, sessionId)
   if (!instances().has(instanceId) || servesSessionDirectory(instanceId, move.directory)
     || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
   markSessionMovedAway(instanceId, sessionId, move.directory)
   if (!sessions().get(instanceId)?.has(sessionId)) return
-  nativeLifecycleGenerations.delete(key)
+  nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
   dismissRetryToast(instanceId, sessionId)
   removeSessionProjection(instanceId, sessionId)
 }
 
+export function getPendingSessionMove(instanceId: string, sessionId: string): SessionMove | undefined {
+  return latestSessionMoves.get(instanceId)?.get(sessionId)
+}
+
+export function clearPendingSessionMove(instanceId: string, sessionId?: string): void {
+  const moves = latestSessionMoves.get(instanceId)
+  if (sessionId !== undefined) moves?.delete(sessionId)
+  if (sessionId === undefined || !moves?.size) latestSessionMoves.delete(instanceId)
+  if (sessionId === undefined) {
+    clearTimeout(movedSessionRefreshTimers.get(instanceId))
+    movedSessionRefreshTimers.delete(instanceId)
+    pendingSessionMoves.delete(instanceId)
+  }
+}
+
 export function isSessionMovePending(instanceId: string, sessionId: string): boolean {
-  return latestSessionMoves.has(`${instanceId}\0${sessionId}`)
+  return getPendingSessionMove(instanceId, sessionId) !== undefined
 }
 
 /** A later inventory that serves a moved-away session's destination lists it again. */
@@ -415,7 +435,14 @@ function notifySessionAttention(category: "needsInput" | "sessionDone", instance
 }
 
 queueMicrotask(() => {
-  onWorktreesPublished(relistReturnedSessions)
+  onWorktreesPublished((instanceId, fresh) => {
+    relistReturnedSessions(instanceId)
+    for (const [sessionId, move] of latestSessionMoves.get(instanceId) ?? []) {
+      if (!move.unresolved) continue
+      if (fresh) finishSessionMove(instanceId, sessionId, move)
+      else void settleSessionMove(instanceId, sessionId, move)
+    }
+  })
   setPendingFormAddedHandler((instanceId, form) => notifySessionAttention("needsInput", instanceId, form.sessionID))
 })
 

@@ -230,6 +230,41 @@ for (const scenario of ["typed restore refusal", "standalone outside inventory",
   })
 }
 
+test("cold restore reconciles a departed parent after the local child read without overriding user selection", async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    for (const userSelects of [false, true]) {
+      const id = `catalog-cold-local-child-${userSelects}`, f = fixture(id)
+      const releasedParent = deferred<void>(), childRead = deferred<Response>()
+      const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
+      const local = (id: string, parentID?: string) => ({
+        ...row(id), status: "idle", parentID, location: { directory: "/repo" }, model: { providerID: "p", id: "m" },
+      })
+      try {
+        Object.assign(f.saved, { activeSessionId: "child", drafts: {}, sessionCatalog: undefined })
+        globalThis.fetch = async (input) => {
+          const path = new URL(String(input)).pathname
+          if (path.endsWith("/child")) return childRead.promise
+          assert.ok(path.endsWith("/root"), path)
+          releasedParent.resolve()
+          return Response.json({ error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON }, { status: 403 })
+        }
+        f.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
+        const restoring = hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+        await releasedParent.promise
+        await new Promise<void>(resolve => setImmediate(resolve))
+        if (userSelects) setActiveParentSession(id, "other")
+        childRead.resolve(Response.json({ data: local("child", "root") }))
+        await restoring
+        const selected = userSelects ? "other" : "child"
+        assert.equal(activeSessionId().get(id), selected)
+        assert.equal(activeParentSessionId().get(id), selected)
+        assert.equal(sessions().get(id)?.get("child")?.parentId, "root")
+      } finally { childRead.resolve(Response.json({ data: local("child", "root") })); f.cleanup() }
+    }
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test("a concurrent rename survives selected-row revalidation and a concurrent root survives complete reconciliation", async () => {
   const id = "catalog-concurrent", f = fixture(id), read = deferred<any>()
   const original = serverApi.fetchWorktrees

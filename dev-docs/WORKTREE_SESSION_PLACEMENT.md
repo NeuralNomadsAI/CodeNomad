@@ -66,7 +66,9 @@ Implementation:
   (`stores/workspace-served-directory.ts`, mirroring `WorkspaceManager.ownsDirectory`
   over the same inventory). Whatever started the move, the instance then records it
   as moved away and removes its list, selection and transcript caches
-  (`removeSessionProjection`); a failed fresh read removes nothing. Its draft and
+  (`removeSessionProjection`). A failed fresh read keeps the move unresolved
+  across catalogue refreshes. A later worktree publication resumes the fresh
+  check; a typed departure can settle the same move directly. Its draft and
   attachments stay, and no deletion marker is set. The record keeps the session out
   of the scope (below) and makes a later published inventory serving the destination
   list it again; it is released when a session refresh reads it at a served
@@ -79,7 +81,9 @@ Implementation:
   `reason: "session_located_elsewhere"` (`opencode/session-access-contract.ts`).
   Parent and saved-workspace reads opt in through the instance adapter
   (`lib/sdk-manager.ts`, a client-side header never sent), which reads that refusal
-  as absent and preserves the reason for projection cleanup. Other 403s stay errors
+  as absent and preserves the reason for projection cleanup. Restore applies
+  departures after the selection's reads settle, so a local child can keep
+  its selection. Other 403s stay errors
   (`stores/session-list-startup.test.ts`, `lib/sdk-manager.test.ts`).
   Search traverses every local worktree's native cursor chain.
 - `scripts/test-native-worktree-management.mjs` (run by `test-opencode-location-native.mjs`,
