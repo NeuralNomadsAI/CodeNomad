@@ -152,12 +152,15 @@ test("uninstalling leaves no rule row, and a failed package and an orphan rule r
     assert.equal(await page.locator(".plugin-control-row").filter({ hasText: "ponytail" }).count(), 0, "no rule row outlives the plugin")
 
     await page.evaluate(() => (window as any).fixture.orphan("ghost"))
-    await page.locator('[data-plugin-id="ghost"]').waitFor()
-    assert.equal(await page.locator('[data-plugin-id="ghost"]').locator('input[type="checkbox"]').count(), 0, "an orphan row has no switch to write a bare ID")
+    const ghost = page.locator('[data-plugin-id="ghost"]')
+    await ghost.locator('input[type="checkbox"]').nth(1).waitFor()
     const failedItems = await remove('[data-package-target="ghost"]', "ghost")
     assert.ok(failedItems.includes("Remove from Global"), failedItems.join())
     assert.deepEqual((await calls(page, "remove")).at(-1), { type: "remove", location: { directory: "/repo" }, scope: "global",
       target: "ghost", entryIndex: 2, expectedRevision: "a".repeat(64) })
+    await page.evaluate(() => (window as any).fixture.settle("ghost"))
+    await ghost.locator('input[type="checkbox"]').first().waitFor({ state: "detached" })
+    assert.equal(await ghost.locator('input[type="checkbox"]').count(), 0, "an orphan row has no switch to write a bare ID")
     assert.deepEqual(await remove('[data-plugin-id="ghost"]', "ghost"), ["Remove from Global", "Refresh plugin controls"])
     assert.deepEqual((await calls(page, "remove")).at(-1), { type: "remove", location: { directory: "/repo" }, scope: "global",
       pluginId: "ghost", expectedRevision: "a".repeat(64) })

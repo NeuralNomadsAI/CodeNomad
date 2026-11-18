@@ -104,14 +104,20 @@ const notify = () => (serverEvents as any).dispatchBatch([{
     for (const control of snapshot.controls) if (control.id === id) Object.assign(control, { effective: "enabled", global: "enabled" })
     notify()
   },
-  /** What an uninstall that kept the rules left: OpenCode loaded the bare name as a package that failed, and `-id` names
-   * an ID nothing declares. */
+  /** What an uninstall that kept the rules left: OpenCode loaded the bare name as a package that failed without an ID
+   * (which may define any ID, so `-id` is not orphan yet). */
   orphan: (id: string) => {
     snapshot.configured.sources.push({ target: id, scope: "global", path: globalPath, entryIndex: 2, hasOptions: false })
     snapshot.configured.rules.push({ selector: id, enabled: false, scope: "global", path: globalPath, order: 0, entryIndex: 1 })
     snapshot.runtime.push({ key: `package:${id}`, source: { type: "package", target: id, version: "2.0.0" }, features: {},
       state: { status: "failed", error: "Plugin must export a default definition" } })
-    snapshot.controls.push({ id, builtin: false, effective: "disabled", global: "disabled", project: "default", orphan: true })
+    snapshot.controls.push({ id, builtin: false, effective: "disabled", global: "disabled", project: "default" })
+    notify()
+  },
+  /** OpenCode unloads a removed package; with every declaration identified, the remaining `-id` is orphan. */
+  settle: (id: string) => {
+    snapshot.runtime = snapshot.runtime.filter(entry => entry.source.type !== "package" || entry.source.target !== id)
+    for (const control of snapshot.controls) if (control.id === id) control.orphan = true
     notify()
   },
   failNextAdd: (status: number, code?: string) => { nextError = { status, code } },

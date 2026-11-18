@@ -55,15 +55,17 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   source's `pluginId` in that document, never wildcards, prefixes, other plugins' rules or
   other documents: a bare `id` left without its package is a package spec that OpenCode
   installs from the registry. A source without `pluginId` (disabled, failed before
-  exporting an ID) keeps its rules. The result must parse to the original minus exactly
-  those elements, and OpenCode's package cache is never touched.
+  exporting an ID) keeps its rules, and so does a source whose plugin another declaration
+  in any applicable document still loads (same target, `pluginId` or package identity).
+  The result must parse to the original minus exactly those elements, and OpenCode's
+  package cache is never touched.
 - **Orphan rules**: a control is `orphan` when no runtime entry, verified descriptor or
-  source defines its ID and every source has a `pluginId` or a reported runtime target, so
-  no declaration can define it. Its row's **Remove from Global/Project** (per writable
+  source defines its ID and every source has a `pluginId` (a runtime entry exporting an ID,
+  or a verified descriptor), so no declaration can define it; a failed report without an ID
+  leaves its source unidentified. Its row's **Remove from Global/Project** (per writable
   scope holding its exact rules) sends `pluginId`; the server recomputes `orphan` and
   deletes those rules alone. Rule-only removal is refused for any other ID. An orphan row has no
-  Global/Project switches, and the activation route refuses to enable an orphan ID (`forbidden`):
-  its bare `id` would be a package spec OpenCode installs from the registry.
+  Global/Project switches.
   Source removal is independent of catalog, family or binding count.
   The trusted Cancel-first confirmation names the plugin and exact scope, warns of interrupted availability
   and connections (including other projects for Global), and enables its scoped removal action after 600 ms.
@@ -255,7 +257,11 @@ connection refuse with `stale` and require a fresh selection/confirmation.
    snapshot appending the rule would produce: every control's effective state and displayed switches, and
    every source. Otherwise it only appends. Entries the snapshot reads as source declarations (a package named
    like its ID), broad selectors and other files are never deleted, and a placeholder or watcher-lag projection
-   (not no-op safe) keeps the plain append. Each deleted entry is re-verified in the read document. Comments, source
+   (not no-op safe) keeps the plain append. A control enabled everywhere compares equal to its absence (deleting
+   the last rule of an unloaded ID removes its row). A positive bare `id` is a package spec unless a plugin defines it
+   earlier, so an enable writes one only when the runtime reports that ID, a verified descriptor defines it or it is a
+   reserved `opencode.*` selector; otherwise only the removal-only edit qualifies, and without it the route refuses
+   with `forbidden` before any write. Each deleted entry is re-verified in the read document. Comments, source
    objects, options, unknown keys, ordering, indentation, line endings, and a
    UTF-8 BOM are retained.
 4. Serialize in-process mutations and hold a per-target interprocess lock across
@@ -362,12 +368,13 @@ guessed paths.
   re-verified deletions: `plugin-control-document.test.ts`
 - rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
   selectors, rules in another scope, source declarations named like their ID, managed re-enable), and the
-  refused enable of an orphan ID: `plugin-controls.test.ts`
+  removal-only or refused enables of IDs no loaded plugin defines: `plugin-controls.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`
 - source add/remove ownership, scope availability, duplicates across scopes, rule removal with the source (active and
   failed plugins, wildcards, other plugins and scopes kept), rule retention for unknown IDs, bare names loaded as
-  packages, orphan rule removal and refusal, inventory correlation and the strict route:
+  packages, rules kept for a failed ID-less package or a remaining declaration, orphan rule removal and refusal,
+  inventory correlation and the strict route:
   `plugin-sources.test.ts`
 - confirmed-document revisions, full-options and connection replacement refusals, ordinary native removal
   without catalog/status/binding/census IO, and durable removal versus runtime state: `plugin-sources.test.ts`.

@@ -38,10 +38,12 @@ import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 
-/** The snapshot's reading of one edited document: its own sources and rules, and every control. */
+/** The snapshot's reading of one edited document: its own sources and rules, every applicable document's sources
+ * (`allSources`, sharing the own entries' objects) and every control. */
 export interface PluginDocumentDeclarations {
   sources: PluginConfiguredSource[]
   rules: PluginConfiguredRule[]
+  allSources: PluginConfiguredSource[]
   controls: PluginActivationControl[]
 }
 
@@ -295,8 +297,6 @@ export class PluginControls {
         })
         const control = before.controls.find((candidate) => candidate.id === request.pluginId)
         if (!control) throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
-        // A bare ID that no plugin defines is a package spec: OpenCode would install it from the registry.
-        if (request.enabled && control.orphan) throw new PluginControlsError("No plugin defines this ID", "forbidden")
 
         const desired: PluginScopeRuleState = request.enabled ? "enabled" : "disabled"
         assertCurrentConnection(context.connection)
@@ -321,14 +321,19 @@ export class PluginControls {
         const removable = projection.noOpSafe
           ? replaceableRuleIndexes(document.plugins, projection.plugins, before, target.path, request.scope, request.pluginId, context.paths) : []
         const kept = projection.plugins.filter((_, index) => !removable.includes(index))
+        // A positive bare ID is a package spec unless a plugin defines it earlier: OpenCode would install whatever registry
+        // package has that name. Write one only for an ID the runtime reports or a verified descriptor defines (or a
+        // reserved `opencode.*` selector); otherwise re-enabling may only delete this scope's `-id` rules.
+        const writesBareId = request.enabled && control.runtime?.id !== request.pluginId && !control.managedBy && !control.builtin
         // Prefer removing the earlier rules alone (re-enabling a plugin active without them), then replacing them.
-        let edit: { remove: number[]; rule?: string; snapshot: PluginControlsSnapshot } = { remove: [], rule, snapshot: appended }
+        let edit: { remove: number[]; rule?: string; snapshot: PluginControlsSnapshot } | undefined = writesBareId ? undefined : { remove: [], rule, snapshot: appended }
         if (removable.length > 0) {
-          for (const candidate of [{ remove: removable }, { remove: removable, rule }]) {
+          for (const candidate of writesBareId ? [{ remove: removable }] : [{ remove: removable }, { remove: removable, rule }]) {
             const snapshot = overlay(candidate.rule === undefined ? kept : [...kept, candidate.rule])
             if (sameActivation(snapshot, appended)) { edit = { ...candidate, snapshot }; break }
           }
         }
+        if (!edit) throw new PluginControlsError("No loaded plugin defines this ID", "forbidden")
         const updated = replacePluginControlRules(document, edit.remove, new Set([request.pluginId, `-${request.pluginId}`]), edit.rule)
         try {
           await replacePluginControlDocument(document, updated, {
@@ -542,7 +547,8 @@ function documentDeclarations(context: ReadContext, target: ResolvedTarget, docu
   if (!document.exists || !normalized || !isDeepStrictEqual(normalized.plugins, document.plugins)) return undefined
   const snapshot = controlsForDocuments(base, context)
   const own = (item: { path?: string }) => Boolean(item.path && samePath(context.paths, item.path, target.path))
-  return { sources: snapshot.configured.sources.filter(own), rules: snapshot.configured.rules.filter(own), controls: snapshot.controls }
+  return { sources: snapshot.configured.sources.filter(own), rules: snapshot.configured.rules.filter(own),
+    allSources: snapshot.configured.sources, controls: snapshot.controls }
 }
 
 function controlsForDocuments(
@@ -621,8 +627,8 @@ function controlsForDocuments(
   for (const rule of rules) {
     if (isExactSelector(rule.selector)) ids.add(rule.selector)
   }
-  // A declaration with no associated ID that OpenCode does not report (disabled, installing) may define any ID.
-  const identified = sources.every(source => source.pluginId || reportedTargets.has(source.target))
+  // A declaration without an exported or verified ID (disabled, installing, failed) may define any ID.
+  const identified = sources.every(source => source.pluginId)
   const declaredIds = new Set(sources.flatMap(source => source.pluginId ? [source.pluginId] : []))
   const controls = [...ids].filter(validPluginId).sort(controlIdCollator.compare).map((id) => {
     const matching = rules.filter((rule) => matchesSelector(rule.selector, id))
@@ -716,7 +722,8 @@ function replaceableRuleIndexes(
     (entry === pluginId || entry === `-${pluginId}`) && projected[index] === entry && !sources.has(index) ? [index] : [])
 }
 
-/** What a user and OpenCode observe: every control's effective state, its displayed switches, and the sources. */
+/** What a user and OpenCode observe: every control's effective state, its displayed switches, and the sources. A
+ * control enabled everywhere equals its absence: deleting the last rule of an unloaded ID removes its row. */
 function sameActivation(left: PluginControlsSnapshot, right: PluginControlsSnapshot): boolean {
   const checked = (control: PluginActivationControl, scope: PluginControlScope): boolean => {
     const state = control[scope]
@@ -724,7 +731,8 @@ function sameActivation(left: PluginControlsSnapshot, right: PluginControlsSnaps
     return scope === "project" ? checked(control, "global") : true
   }
   const view = (snapshot: PluginControlsSnapshot) => JSON.stringify([
-    snapshot.controls.map(control => [control.id, control.effective === "disabled" ? "disabled" : "enabled", control.managedBy ?? "", checked(control, "global"), checked(control, "project")]),
+    snapshot.controls.map(control => [control.id, control.effective === "disabled" ? "disabled" : "enabled", control.managedBy ?? "", checked(control, "global"), checked(control, "project")])
+      .filter(([, effective, managed, global, project]) => !(effective === "enabled" && managed === "" && global && project)),
     snapshot.configured.sources.map(source => [source.scope, source.path ?? "", source.target, source.pluginId ?? "", source.managedBy ?? ""]).sort(),
   ])
   return view(left) === view(right)

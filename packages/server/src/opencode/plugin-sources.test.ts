@@ -245,11 +245,15 @@ describe("plugin source mutations", () => {
       let snapshot = await f.controls.read("w", f.location)
       assert.deepEqual(snapshot.configured.sources.map(({ target, entryIndex }) => ({ target, entryIndex })),
         [{ target: "keep@1", entryIndex: 0 }, { target: "ponytail", entryIndex: 2 }])
-      assert.deepEqual(snapshot.controls.map(({ id, orphan }) => ({ id, orphan })), [{ id: "keep.id", orphan: undefined }, { id: "ponytail", orphan: true }])
-      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "keep.id", expectedRevision: await revision(f) }), code("stale"))
+      // A failed package that exported no ID may still define any ID: nothing is orphan while it is declared.
+      assert.deepEqual(snapshot.controls.map(({ id, orphan }) => ({ id, orphan })), [{ id: "keep.id", orphan: undefined }, { id: "ponytail", orphan: undefined }])
+      for (const pluginId of ["keep.id", "ponytail"]) {
+        await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId, expectedRevision: await revision(f) }), code("stale"), pluginId)
+      }
       await f.sources.remove("w", { location: f.location, scope: "global", target: "ponytail", entryIndex: 2, expectedRevision: await revision(f) })
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep@1", "-ponytail", "-keep.id"])
       f.state.runtime = f.state.runtime.slice(0, 1)
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "ponytail")?.orphan, true)
       const response = await f.sources.remove("w", { location: f.location, scope: "global", pluginId: "ponytail", expectedRevision: await revision(f) })
       assert.deepEqual(response, { scope: "global", spec: "ponytail", reloadPending: true })
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep@1", "-keep.id"])
@@ -259,6 +263,39 @@ describe("plugin source mutations", () => {
       assert.equal(snapshot.controls.find(control => control.id === "hidden.id")?.orphan, undefined)
       await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "hidden.id", expectedRevision: await revision(f) }), code("stale"))
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["disabled-package", "-hidden.id"])
+    } finally { await f.cleanup() }
+  })
+
+  it("keeps the disabling rule of a declared package that failed before exporting its ID", async () => {
+    const f = await fixture()
+    try {
+      // When the package recovers, removing "-acme.real" now would let it run despite the disable.
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["@acme/real-plugin", "-acme.real"] }))
+      f.state.runtime = [{ source: { type: "package", target: "@acme/real-plugin" }, features: {}, state: { status: "failed", error: "incompatible" } }]
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "acme.real")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "acme.real", expectedRevision: await revision(f) }), code("stale"))
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["@acme/real-plugin", "-acme.real"])
+    } finally { await f.cleanup() }
+  })
+
+  it("keeps a plugin's rules while another declaration of it remains in any applicable document", async () => {
+    const f = await fixture()
+    try {
+      const runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      for (const [globalPlugins, projectPlugins, entryIndex, expected] of [
+        // A second Global declaration, enabled only in this Project: other projects keep it disabled.
+        [["@acme/plugin@1", "@acme/plugin@1", "-acme.plugin"], ["acme.plugin"], 0, ["@acme/plugin@1", "-acme.plugin"]],
+        [["@acme/plugin@1", "@acme/plugin@1", "-acme.plugin"], ["acme.plugin"], 1, ["@acme/plugin@1", "-acme.plugin"]],
+        // Another spec of the same package in Project.
+        [["@acme/plugin@1", "-acme.plugin"], ["@acme/plugin@^1"], 0, ["-acme.plugin"]],
+      ] as const) {
+        await writeFile(f.globalFile, JSON.stringify({ plugins: globalPlugins }))
+        await writeFile(f.projectFile, JSON.stringify({ plugins: projectPlugins }))
+        f.state.runtime = runtime
+        await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex, expectedRevision: await revision(f) })
+        assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, expected, `${globalPlugins} / ${projectPlugins} @${entryIndex}`)
+      }
     } finally { await f.cleanup() }
   })
 

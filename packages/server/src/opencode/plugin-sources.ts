@@ -116,8 +116,9 @@ export class PluginSources {
 
   /**
    * Removes a source with every exact `id`/`-id` rule of its plugin ID in the same document, so no orphan rule is
-   * left for OpenCode to load as a package. A source whose ID is unknown (disabled, failed before exporting one)
-   * keeps the rules. With `pluginId`, removes the exact rules of an ID the snapshot reads as orphan.
+   * left for OpenCode to load as a package. A source whose ID is unknown (disabled, failed before exporting one), or
+   * whose plugin another declaration still loads, keeps the rules. With `pluginId`, removes the exact rules of an ID
+   * the snapshot reads as orphan.
    */
   async remove(workspaceId: string, request: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
     const { scope } = request
@@ -144,7 +145,12 @@ export class PluginSources {
           }
           const source = declarations.sources.find(entry => entry.entryIndex === request.entryIndex && entry.target === request.target)
           if (!source) throw stale()
-          const rules = source.pluginId ? rulesOf(source.pluginId) : undefined
+          // Another declaration of the plugin, in any applicable document, still loads it: its rules still apply.
+          const identities = new Set(pluginPackageIdentities(source.target))
+          const remains = declarations.allSources.some(other => other !== source && (other.target === source.target
+            || (source.pluginId !== undefined && other.pluginId === source.pluginId)
+            || pluginPackageIdentities(other.target).some(identity => identities.has(identity))))
+          const rules = source.pluginId && !remains ? rulesOf(source.pluginId) : undefined
           removedRules = rules?.indexes.length ?? 0
           return removePluginSourceEntry(document, request.entryIndex, request.target, rules)
         } catch (error) {

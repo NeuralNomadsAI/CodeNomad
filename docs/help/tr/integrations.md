@@ -47,7 +47,7 @@ Paket güncellemesi, araç ipucunda belirtildiği gibi, o paketi kullanan her Lo
 3. Eklenti yalnızca bu projede çalışmayacaksa **Genel** seçili kalsın, ardından **Ekle** öğesini seçin.
 4. Yeni satır, OpenCode bildirene kadar **Kuruluyor** gösterir.
 
-Bir eklentiyi kaldırmak için adının yanındaki menüyü açıp **Genel kapsamından kaldır** veya **Proje kapsamından kaldır** öğesini seçin. O kapsamın yapılandırma dosyasındaki bildirimi ve etkinleştirme kuralları silinir; diğer kapsamlar ve OpenCode'un paket önbelleği yerinde kalır. OpenCode'un tanımlayamadığı bir eklentinin (devre dışı ya da yüklenmeden önce başarısız) kuralları, menüsü aynı kaldırmayı sunan ayrı bir satırda kalır.
+Bir eklentiyi kaldırmak için adının yanındaki menüyü açıp **Genel kapsamından kaldır** veya **Proje kapsamından kaldır** öğesini seçin. O kapsamın yapılandırma dosyasındaki bildirimi ve, eklentiyi başka bir bildirim hâlâ yüklemiyorsa, etkinleştirme kuralları silinir; diğer kapsamlar ve OpenCode'un paket önbelleği yerinde kalır. OpenCode'un tanımlayamadığı bir eklentinin (devre dışı ya da yüklenmeden önce başarısız) kuralları, menüsü aynı kaldırmayı sunan ayrı bir satırda kalır.
 
 Eklentinin kodu OpenCode içinde sizin izinlerinizle çalışır. Bir **Proje** girdisi, o klasör OpenCode'da her açıldığında çalışır ve OpenCode masaüstü uygulaması bölümleri olan paketler bunları yalnızca **Genel** kapsamdan yükler; böyle bir paket başka yerde bildirildiğinde araç ipucu bunu belirtir. Yerel yollar, yapılandırma değişkenleri ve eklenti kimlikleri burada reddedilir: yerel eklentileri yapılandırma dosyasında bildirin. Bu Location için geçerli bir yapılandırmada zaten bildirilmiş bir paket, sürümü, aralığı veya biçimi ne olursa olsun reddedilir.
 
@@ -82,7 +82,7 @@ Satırın **…** menüsü bağlantı durumuyla başlar, örneğin **Blender: 1 
 
 Katalogdan kurulum, uygulama bölümünün kurulumu/güncellenmesi ve kaldırma onay gerektirir. Önce **İptal** odaklanır; onay eylemi 600 ms sonra kullanılabilir olur. Etkinleştirme, eklenti güncellemeleri, bağlama ve bağlantıyı kesme doğrudan çalışır.
 
-Kaldırma uyarısı eklentiyi ve tam kapsamı adlandırır. **İptal** odaklanır; **Genel/Proje kapsamından kaldır** 600 ms sonra kullanılabilir ve açık bir işlem gerektirir. Kullanan konuşmalarda kullanılabilirliği ve bağlantıları kesebilir; Genel kapsam diğer projeleri de etkileyebilir. Yalnızca onaylanan bildirim ve aynı dosyadaki o eklentinin etkinleştirme kuralları kaldırılır; önbellek, uygulama dosyaları ve kayıtlı bağlantı ipuçları korunur. Yapılandırma değişirse yeniden seçim ve onay gerekir.
+Kaldırma uyarısı eklentiyi ve tam kapsamı adlandırır. **İptal** odaklanır; **Genel/Proje kapsamından kaldır** 600 ms sonra kullanılabilir ve açık bir işlem gerektirir. Kullanan konuşmalarda kullanılabilirliği ve bağlantıları kesebilir; Genel kapsam diğer projeleri de etkileyebilir. Yalnızca onaylanan bildirim ve, eklentiyi başka bir bildirim hâlâ yüklemiyorsa, aynı dosyadaki etkinleştirme kuralları kaldırılır; önbellek, uygulama dosyaları ve kayıtlı bağlantı ipuçları korunur. Yapılandırma değişirse yeniden seçim ve onay gerekir.
 
 ## Uygulama entegrasyonunu kurun veya güncelleyin {#application-installation}
 
