@@ -1,19 +1,19 @@
 import { readdir, realpath, stat } from "node:fs/promises"
 import path from "node:path"
 
-/** More children than this in one plugin(s)/ folder makes the listing uncertain. */
+/** More children than this in one plugin(s)/ folder, or entries in one child folder, makes the listing uncertain. */
 export const DISCOVERY_MAX_CHILDREN = 256
 
-// Native module resolution infers these extensions for a directory's `server`/`index` entrypoint.
+// The extensions the Node resolver infers, in its order (`util/src/runtime/import.node.ts`). Only a selection that
+// every runtime makes alike is mirrored: Bun's resolver has its own order and directory rules.
 const ENTRYPOINT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs", ".cts", ".cjs"]
 
 /**
- * Whether `file` is the entrypoint native discovery loads for the plugin(s)/ folder child `child`
- * (`plugin/source-directory.ts`, `plugin/host.ts`): a `.ts`/`.js` file child loads as itself, a directory child through
- * its `server` or `index` module. Other resolutions (package `main`, nested `server/index`, any deeper module) are not
- * counted. The single rule for positive writes and for mapping discovery children to inventory.
+ * Whether `file`'s shape could be the entrypoint native discovery loads for the plugin(s)/ folder child `child`: the
+ * `.ts`/`.js` file child itself, or a `server`/`index` module directly in a directory child. A cheap filter for
+ * display; write decisions compare with `discoveryEntrypointOf`'s single selection.
  */
-export function discoveryEntrypointOf(paths: path.PlatformPath, child: string, file: string): boolean {
+export function discoveryEntrypointShape(paths: path.PlatformPath, child: string, file: string): boolean {
   const relative = paths.relative(child, file)
   if (relative === "") return child.endsWith(".ts") || child.endsWith(".js")
   if (relative.startsWith("..") || paths.isAbsolute(relative) || /[\\/]/.test(relative)) return false
@@ -22,11 +22,55 @@ export function discoveryEntrypointOf(paths: path.PlatformPath, child: string, f
 }
 
 /**
- * What native discovery could load from the reported plugin(s)/ folders (`plugin/source-directory.ts`): one entry per
- * immediate child it would examine, holding the plugin IDs that child provably maps to (an inventory entry or a
- * verified descriptor inside it, after resolving links). An empty list is an unclassified child that may load any ID.
- * `undefined` when a folder cannot be listed with certainty (unmapped path, read error, too many children).
- * Host file system only: one bounded `readdir` per folder, one `stat` per symlinked child, read-only.
+ * The single entrypoint native discovery loads for the host plugin(s)/ folder child `child` (`plugin/source-directory.ts`,
+ * `config/plugin/source.ts`, `plugin/host.ts`): a `.ts`/`.js` file child loads as itself; a directory child through
+ * `Host.resolve`, `server` before `index`, which must stay inside the folder. `null`: discovery skips the child.
+ * `undefined`: the selection is not certain (read error, an extensionless or unknown-extension candidate, several
+ * candidates for one name, a candidate that is not a regular file), so the child stays unclassified.
+ */
+export async function discoveryEntrypointOf(child: string): Promise<string | null | undefined> {
+  const name = path.basename(child)
+  let info
+  try {
+    info = await stat(child)
+  } catch (error) {
+    // A dangling link is skipped natively; any other failure is uncertain.
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : undefined
+  }
+  if (info.isFile()) return name.endsWith(".ts") || name.endsWith(".js") ? child : null
+  if (!info.isDirectory()) return null
+  let entries
+  try {
+    entries = await readdir(child, { withFileTypes: true })
+  } catch {
+    return undefined
+  }
+  if (entries.length > DISCOVERY_MAX_CHILDREN) return undefined
+  for (const base of ["server", "index"]) {
+    const found = entries.filter(entry => entry.name === base || entry.name.startsWith(`${base}.`))
+    if (found.length === 0) continue
+    const [only] = found
+    if (found.length > 1 || !ENTRYPOINT_EXTENSIONS.includes(path.extname(only!.name))) return undefined
+    const file = path.join(child, only!.name)
+    try {
+      if (!(await stat(file)).isFile()) return undefined
+      // A resolved entrypoint outside the folder drops the child.
+      const [root, server] = await Promise.all([realpath(child), realpath(file)])
+      const relative = path.relative(root, server)
+      return relative.startsWith("..") || path.isAbsolute(relative) ? null : file
+    } catch {
+      return undefined
+    }
+  }
+  return null
+}
+
+/**
+ * What native discovery could load from the reported plugin(s)/ folders: one entry per immediate child it would
+ * load, holding the plugin IDs that child provably maps to: inventory entries reporting exactly its selected
+ * entrypoint (as named or after resolving links and junctions), and verified descriptors. An empty list is an
+ * unclassified child that may load any ID. `undefined` when a folder cannot be listed with certainty (unmapped path,
+ * read error, too many children). Host file system only, read-only and bounded.
  */
 export async function discoveryLoaders(input: {
   folders: readonly string[]
@@ -54,21 +98,12 @@ export async function discoveryLoaders(input: {
     }
     if (children.length > DISCOVERY_MAX_CHILDREN) return undefined
     for (const child of children) {
-      const hostChild = path.join(hostFolder, child.name)
-      const source = child.name.endsWith(".ts") || child.name.endsWith(".js")
-      let candidate = child.isDirectory() || (child.isFile() && source)
-      if (child.isSymbolicLink()) {
-        // Native discovery follows the link: a source file or a directory loads, anything else is skipped.
-        candidate = await stat(hostChild).then(info => info.isDirectory() || (source && info.isFile()), () => false)
-      }
-      if (!candidate) continue
-      // An inventory entry identifies the child only when it is the very entrypoint discovery loads for it (as named,
-      // or after resolving links and junctions); a nested or sibling module leaves the child unclassified.
-      const real = await resolved(hostChild)
+      const entrypoint = await discoveryEntrypointOf(path.join(hostFolder, child.name))
+      if (entrypoint === null) continue
+      if (entrypoint === undefined) { loaders.push([]); continue }
+      const real = await resolved(entrypoint)
       const ids = new Set(input.managedIds(input.serviceJoin(folder, child.name)))
-      for (const entry of inventory) {
-        if (entry && (discoveryEntrypointOf(path, hostChild, entry.path) || discoveryEntrypointOf(path, real, entry.real))) ids.add(entry.id)
-      }
+      for (const entry of inventory) if (entry && (entry.path === entrypoint || entry.real === real)) ids.add(entry.id)
       loaders.push([...ids])
     }
   }

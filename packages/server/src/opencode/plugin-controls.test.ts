@@ -720,6 +720,28 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"])
   })
 
+  it("counts a discovered plugin only at the entrypoint the resolver selects, server before index", async () => {
+    const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+    const bundle = path.join(fixture.globalDirectory, "plugins", "bundle")
+    fs.mkdirSync(bundle, { recursive: true })
+    fs.writeFileSync(path.join(bundle, "index.js"), "export default {}\n")
+    fixture.runtime.push({ id: "bundle.other", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } })
+    // With server.js present, discovery loads server.js for "bundle": the reported index.js defines nothing there.
+    fs.writeFileSync(path.join(bundle, "server.js"), "export default {}\n")
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.other", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"])
+    // Two candidates for one name make the selection uncertain too.
+    fs.rmSync(path.join(bundle, "server.js"))
+    fs.writeFileSync(path.join(bundle, "index.ts"), "export default {}\n")
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.other", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    // index.js alone is the selection: the bare ID follows its definition.
+    fs.rmSync(path.join(bundle, "index.ts"))
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.other", scope: "global", enabled: true })
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "bundle.other"])
+  })
+
   it("never writes a Global bare ID for a nested plugin declared only in Project", async () => {
     // plugins/resources has no entrypoint, so discovery skips it: the reviewer is defined only by the Project entry.
     const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })

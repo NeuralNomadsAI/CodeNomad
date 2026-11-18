@@ -461,6 +461,34 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
+  it("maps a discovery folder only to its selected entrypoint, server before index", async t => {
+    const f = await fixture()
+    try {
+      // Host.resolve(bundle) selects server.js (the disabled bundle.disabled, absent from the inventory); the index.js
+      // module reported as bundle.other does not identify the child.
+      const plugins = path.join(path.dirname(f.globalFile), "plugins")
+      const bundle = path.join(plugins, "bundle")
+      await mkdir(bundle, { recursive: true })
+      await writeFile(path.join(bundle, "server.js"), "export default {}\n")
+      await writeFile(path.join(bundle, "index.js"), "export default {}\n")
+      f.state.runtime = [{ id: "bundle.other", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } }]
+      const text = JSON.stringify({ plugins: ["-bundle.disabled"] })
+      await writeFile(f.globalFile, text)
+      const orphan = async () => (await f.controls.read("w", f.location)).controls.find(control => control.id === "bundle.disabled")?.orphan
+      assert.equal(await orphan(), undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "bundle.disabled", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text)
+      // A separate discovered other.js linked to that index file is identified by it through its resolved path.
+      try {
+        await symlink(path.join(bundle, "index.js"), path.join(plugins, "other.js"), "file")
+        assert.equal(await orphan(), undefined, "the bundle child still selects server.js")
+      } catch (error) {
+        if (!["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+        t.diagnostic("file symbolic links unavailable: other.js case skipped")
+      }
+    } finally { await f.cleanup() }
+  })
+
   it("reads a bare name after its own -rule as a package declaration, never an orphan rule", async () => {
     const f = await fixture()
     try {

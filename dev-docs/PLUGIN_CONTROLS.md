@@ -84,12 +84,12 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   identity), any declaration lacks an exported ID (it may define any ID), an inventory entry
   reports the ID and is not the removed source (whatever its path), or a discovery child may
   load it. The immediate children of the reported plugin(s)/ folders are listed once
-  (`plugin-discovery-loaders.ts`, at most 256 per folder, one `stat` per symlinked child); a
+  (`plugin-discovery-loaders.ts`, at most 256 per folder and per child folder, read-only); a
   child is excluded only when native discovery would skip it or it maps to inventory entries
   or a verified descriptor of other IDs only. An inventory entry maps to a child only when its
-  path is that child's own entrypoint (`discoveryEntrypointOf`, as named or after resolving
-  links and junctions); a nested plugin or sibling module inside the child leaves it
-  unclassified. A
+  path is that child's single selected entrypoint (`discoveryEntrypointOf`, as named or after
+  resolving links and junctions); another module of the child (an `index` behind a `server`,
+  a nested plugin) or an uncertain selection leaves it unclassified. A
   listing that is not certain (unmapped path, read error, too many children, WSL) counts as
   a possible loader. Activation deletes `-id` rules only to perform a requested enable (or
   while replacing them with a disable), so it needs no proof.
@@ -193,14 +193,20 @@ plugins (including verified CodeNomad descriptors) are defined before every docu
 local plugin's resolved server entrypoint, so CodeNomad mirrors native discovery (`plugin/source-directory.ts`,
 `plugin/host.ts`): it examines only the immediate children of the `plugin/` and `plugins/` folders of each
 configuration directory `config.get` reports, a `.ts`/`.js` file child loading as itself and a directory child
-through its `server` or `index` module (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`, `.cjs`). One function,
-`discoveryEntrypointOf` in `plugin-discovery-loaders.ts`, states that rule for positive writes and for the loader
-proof's child mapping. A local entry counts as discovered only when its reported path is exactly one of these; nested modules, package `main`,
-`server/index` and symlinked real paths do not count. Any other undeclared inventory entry (a removed declaration
-the daemon still reports while it reloads) defines nothing. Write decisions (activation and removal, inside their
-mutation lock) also require each discovered entrypoint to exist as a regular file now: one inspection per candidate
-through the configuration's host or WSL file system, any error counting as absent, so an inventory entry outliving
-its deleted folder defines nothing and no bare `id` is written for it. Display reads skip that I/O. Each
+through `Host.resolve`, `server` before `index`. One function, `discoveryEntrypointOf` in
+`plugin-discovery-loaders.ts`, returns the child's single selected entrypoint for both positive writes and the loader
+proof's child mapping: the file child itself, or the one `server.<ext>` candidate (else the one `index.<ext>`) with a
+Node-inferred extension (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`, `.cjs`) that is a regular file resolving
+inside the folder. The Bun resolver has its own extension order and directory rules, so a selection is certain only
+when both runtimes agree: several candidates for one name, an extensionless or unknown-extension candidate, or a
+read error leaves the child unclassified; a folder without candidates, or whose entrypoint resolves outside it, is
+skipped as natively. Write decisions (activation and removal, inside their mutation lock) count a reported local
+entry as discovered only when that selection is exactly its path, as named or after resolving links, so a deleted
+folder or a `server` module taking precedence over a reported `index` defines nothing. Without a host listing (WSL)
+nothing is verified and the bare write is refused. Display reads keep the cheap shape check
+(`discoveryEntrypointShape`). Nested modules, package `main`, `server/index` and symlinked real paths never count, and
+any other undeclared inventory entry (a removed declaration the daemon still reports while it reloads) defines
+nothing. Each
 add carries the ID it verifiably defines: the runtime reports that exact ID for that source, or a verified managed
 descriptor. `-x` disables only plugins defined before it, and an add selects only plugins defined before it. The
 snapshot classifies each positive entry the same way: it is an activation rule only when a definition precedes it,
@@ -425,8 +431,8 @@ guessed paths.
 - rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
   selectors, rules in another scope, source declarations named like their ID, managed re-enable), and the
   removal-only or refused enables of IDs without a preceding verified definition, wildcards left disabling, undeclared
-  local inventory counted only at native discovery entrypoints that exist (nested plugins and deleted entrypoints
-  refused):
+  local inventory counted only at the entrypoint native discovery selects (nested plugins, deleted entrypoints, an
+  `index` behind a `server` and ambiguous candidates refused):
   `plugin-controls.test.ts`; the applied-order evaluator: `plugin-activation-order.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`
@@ -438,7 +444,8 @@ guessed paths.
   kept while a plugin(s)/ folder still discovers the plugin (also through a junction to the declared folder) or
   another inventory entry reports its ID, one loader proof for orphan rows, rule-only and source removal (a
   disabled discovered file, an unidentified declaration), a discovery child identified only by its own entrypoint (a
-  nested plugin's inventory leaves it unclassified), a bare name after its own `-id` read as a package,
+  nested plugin's inventory leaves it unclassified) and only by the selected entrypoint (`server` before `index`), a
+  bare name after its own `-id` read as a package,
   orphan rule removal and refusal,
   inventory correlation and the strict route:
   `plugin-sources.test.ts`

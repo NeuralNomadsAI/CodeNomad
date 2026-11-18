@@ -1,5 +1,6 @@
 import path from "node:path"
 import { createHmac, randomBytes } from "node:crypto"
+import { realpath } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { isDeepStrictEqual } from "node:util"
 import type { ConfigEntry, LocationRef, PluginInfo } from "@opencode/client"
@@ -38,7 +39,7 @@ import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 import { definedBefore, enabledThrough, matchesSelector, type AppliedEntry, type AppliedSequence } from "./plugin-activation-order"
-import { discoveryEntrypointOf, discoveryLoaders } from "./plugin-discovery-loaders"
+import { discoveryEntrypointOf, discoveryEntrypointShape, discoveryLoaders } from "./plugin-discovery-loaders"
 import { pluginPackageIdentities } from "./plugin-source-document"
 
 /** One writable target of a plugin-documents edit, with the snapshot's reading of it. `consistent`: the daemon's
@@ -275,22 +276,28 @@ export class PluginControls {
   }
 
   /**
-   * For a write decision, keeps the discovered local entrypoints that exist as regular files now: one inspection per
-   * candidate through the configuration's file system, any error counting as absent. A plugin whose folder was deleted
-   * while the inventory still reports it then defines nothing, and no bare ID is written for it.
+   * For a write decision, keeps the reported local entrypoints that native discovery selects right now: the child's
+   * single entrypoint (`discoveryEntrypointOf`) must be that very file, as named or after resolving links. A deleted
+   * folder, a `server` module taking precedence over a reported `index`, or an uncertain selection (read error, WSL,
+   * which has no host listing here) defines nothing, so no bare ID is written for it.
    */
   private async verifyDiscoveredEntrypoints(workspaceId: string, context: ReadContext): Promise<void> {
     const folders = discoveryFolders(context)
-    const candidates = new Set(context.runtime.flatMap(entry => entry?.source?.type === "local" && typeof entry.source.path === "string"
-      && discoveredEntrypoint(context.paths, folders, entry.source.path) ? [entry.source.path] : []))
-    const nativeWsl = Boolean(this.options.workspaceManager.getServiceWslDistro(workspaceId))
     const existing = new Set<string>()
-    await Promise.all([...candidates].map(async file => {
-      try {
-        const ioPath = nativeWsl ? file : await this.options.workspaceManager.getHostPathForServicePath(workspaceId, file)
-        if (ioPath && (await context.fileSystem.inspectMany([ioPath]))[0]?.exists === true) existing.add(file)
-      } catch { /* Unverifiable: not a definition. */ }
-    }))
+    if (!this.options.workspaceManager.getServiceWslDistro(workspaceId)) {
+      const reported = [...new Set(context.runtime.flatMap(entry => entry?.source?.type === "local" && typeof entry.source.path === "string"
+        ? [entry.source.path] : []))]
+      await Promise.all(reported.map(async file => {
+        const child = discoveryChild(context.paths, folders, file)
+        if (!child) return
+        try {
+          const [hostChild, hostFile] = await Promise.all([child, file].map(value => this.options.workspaceManager.getHostPathForServicePath(workspaceId, value)))
+          const selected = hostChild ? await discoveryEntrypointOf(hostChild) : undefined
+          if (!selected || !hostFile) return
+          if (selected === hostFile || await realpath(selected) === await realpath(hostFile)) existing.add(file)
+        } catch { /* Unverifiable: not a definition. */ }
+      }))
+    }
     assertCurrentConnection(context.connection)
     context.existingEntrypoints = existing
   }
@@ -1156,16 +1163,21 @@ function discoveryFolders(context: ReadContext): string[] {
 }
 
 /**
- * Whether native discovery loads the plugin whose resolved server entrypoint `plugin.list` reports at `file`: it is the
- * entrypoint (`discoveryEntrypointOf`) of an immediate child of a reported plugin(s)/ folder. Symlinked real paths
- * outside the folder are not counted.
+ * The immediate plugin(s)/ folder child whose entrypoint `file` could be (`discoveryEntrypointShape`), or `undefined`.
+ * Display uses the shape alone; write decisions also require `discoveryEntrypointOf` to select exactly `file`.
  */
-function discoveredEntrypoint(paths: path.PlatformPath, folders: readonly string[], file: string): boolean {
-  return folders.some(folder => {
+function discoveryChild(paths: path.PlatformPath, folders: readonly string[], file: string): string | undefined {
+  for (const folder of folders) {
     const relative = paths.relative(folder, file)
-    if (!relative || relative.startsWith("..") || paths.isAbsolute(relative)) return false
-    return discoveryEntrypointOf(paths, paths.join(folder, relative.split(/[\\/]/)[0]!), file)
-  })
+    if (!relative || relative.startsWith("..") || paths.isAbsolute(relative)) continue
+    const child = paths.join(folder, relative.split(/[\\/]/)[0]!)
+    if (discoveryEntrypointShape(paths, child, file)) return child
+  }
+  return undefined
+}
+
+function discoveredEntrypoint(paths: path.PlatformPath, folders: readonly string[], file: string): boolean {
+  return discoveryChild(paths, folders, file) !== undefined
 }
 
 function containsPath(paths: path.PlatformPath, candidate: string, directory: string): boolean {
