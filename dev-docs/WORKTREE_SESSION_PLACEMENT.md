@@ -76,10 +76,10 @@ Implementation:
   Family members left behind stay sessions of their own location
   (`stores/session-move-restore.test.ts`, `tests/browser/session-external-move.test.ts`).
   The workspace proxy's 403 for a session located outside the workspace carries
-  `reason: "session_located_elsewhere"` (`opencode/session-access-contract.ts`). Every
-  parent read (an ID reached through `parentID`, `hydrateRestoredSessionChain`) opts in
-  through the instance adapter (`lib/sdk-manager.ts`, a client-side header never sent),
-  which reads that refusal as a missing parent; every other 403 stays an error
+  `reason: "session_located_elsewhere"` (`opencode/session-access-contract.ts`).
+  Parent and saved-workspace reads opt in through the instance adapter
+  (`lib/sdk-manager.ts`, a client-side header never sent), which reads that refusal
+  as absent and preserves the reason for projection cleanup. Other 403s stay errors
   (`stores/session-list-startup.test.ts`, `lib/sdk-manager.test.ts`).
   Search traverses every local worktree's native cursor chain.
 - `scripts/test-native-worktree-management.mjs` (run by `test-opencode-location-native.mjs`,
@@ -129,12 +129,13 @@ shows its request
 or a registered worktree, plus the active session's family, so a session opened
 explicitly is shown where it was opened. A session located elsewhere (a directory
 the workspace proxy does not serve) stays out of scope until its moved-away record
-is released. A move, a typed parent-read refusal or a project inventory row can
+is released. A move, a typed restore/parent-read refusal or a project inventory row can
 establish that placement, including when an independent clone shares the native
 project ID and the row would otherwise be kept for a local descendant. Complete
 catalogue reconciliation uses merged placement, deferring to pending native moves,
-and clears the departed selection and transcript while preserving drafts and
-attachments. Rows, chevron activity and the tab indicator derive from one map
+and clears the departed projection. A selected local child stays selected using
+its surviving display root. Departure and catalogue absence preserve drafts and
+attachments; authoritative deletion clears them. Rows, chevron activity and the tab indicator derive from one map
 (`getListedSessionMap`): the
 sessions in scope connected to a listed root, so a row under an ancestor outside the
 scope is not shown, as for a missing parent. The scope is reactive, so a late worktree

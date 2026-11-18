@@ -66,7 +66,7 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
       })
       if (parentSessionId && response.status === 403) {
         const body = await response.clone().json().catch(() => undefined)
-        // A parent located in another project is absent from this one.
+        // Parent and restore reads reconcile a session located elsewhere as absent.
         if (body?.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
           return Response.json({ _tag: "SessionNotFoundError", sessionID: parentSessionId, message: "Session not found", reason: body.reason }, { status: 404 })
         }
@@ -109,8 +109,8 @@ export function withDeferredMedia(input: RequestInfo | URL, init: RequestInit | 
   return { ...init, headers }
 }
 
-/** Client-side opt-in of a parent session read (never sent): the workspace's
- * refusal of a parent located elsewhere reads as a missing session. */
+/** Client-side opt-in for parent or restore reads (never sent). Only a typed
+ * workspace departure becomes a missing session, retaining its reason. */
 const PARENT_SESSION_READ_HEADER = "x-codenomad-parent-read"
 export const parentSessionReadHeaders = { [PARENT_SESSION_READ_HEADER]: "1" } as const
 

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { sdkManager } from "../lib/sdk-manager"
+import { OpenCode } from "@opencode/client"
+import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
+import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "../lib/sdk-manager"
 import { serverApi } from "../lib/api-client"
 import { addInstance, removeInstance } from "./instances"
 import { setInstanceMetadata } from "./instance-metadata"
@@ -8,7 +10,7 @@ import { fetchSessions, hydrateRestoredSessionChain, removeSessionRuntimeState }
 import { hydrateRestoredWorkspaceState, seedRestoredWorkspaceState } from "./app-session-workspace-hydration"
 import { ensureWorktreesLoaded } from "./worktrees"
 import { captureSessionCatalog } from "./session-catalog-persistence"
-import { activeParentSessionId, activeSessionId, getInstanceSessionIndicatorStatusCached, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, setActiveParentSession, setSessionPendingPermission, setSessionStatus, sessions, setSessions } from "./session-state"
+import { activeParentSessionId, activeSessionId, getInstanceSessionIndicatorStatusCached, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, setActiveParentSession, setActiveSessionFromList, setSessionPendingPermission, setSessionStatus, sessions, setSessions } from "./session-state"
 import { messageStoreBus } from "./message-v2/bus"
 import { handleNativeSessionEvent } from "./session-events"
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
@@ -169,6 +171,64 @@ test("partial, unavailable and failed inventories preserve saved families; compl
     assert.deepEqual([...sessions().get(id)!.keys()], ["root"], "final-inventory evictions survive repeated hydration")
   } finally { serverApi.fetchWorktrees = original; f.cleanup() }
 })
+
+for (const scenario of ["typed restore refusal", "standalone outside inventory", "new local child selection"] as const) {
+  test(`restore reconciliation: ${scenario}`, async () => {
+    const id = `catalog-departure-${scenario.replaceAll(" ", "-")}`, f = fixture(id)
+    const originalWorktrees = serverApi.fetchWorktrees, originalFetch = globalThis.fetch
+    const started = deferred<void>(), inventory = deferred<any>()
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+    const root = { ...row("root"), location: { directory: "/repo" } }
+    const child = { ...row("child", "root"), location: { directory: "/repo" } }
+    const native = (session: Session) => ({ ...session, parentID: session.parentId ?? undefined, model: { providerID: "p", id: "m" } })
+    const moved = native({ ...root, location: { directory: "/independent-clone" } })
+    const store = messageStoreBus.getOrCreate(id)
+    try {
+      Object.assign(f.saved, {
+        activeSessionId: "root", drafts: { root: "keep draft" },
+        sessionCatalog: captureSessionCatalog(scenario === "standalone outside inventory" ? [root] : [root, child]),
+      })
+      seedRestoredWorkspaceState(id, f.saved)
+      store.upsertMessage({ id: "resident", sessionId: "root", role: "user", status: "complete", createdAt: 2,
+        parts: [{ id: "text", type: "text", text: "Cached conversation" }] })
+      setInstanceMetadata(id, { project: { id: "project" } as any })
+      f.client.session.list = async (input: any) => {
+        if (!input.project) return { data: [], cursor: {} }
+        started.resolve()
+        return inventory.promise
+      }
+      if (scenario === "typed restore refusal") {
+        const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
+        f.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
+        const restore = () => hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+        globalThis.fetch = async () => Response.json({ error: "Refused" }, { status: 403 })
+        await assert.rejects(restore(), /403/)
+        assert.equal(activeSessionId().get(id), "root")
+        globalThis.fetch = async () => Response.json({
+          error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON,
+        }, { status: 403 })
+        await restore()
+        assert.equal(activeSessionId().get(id), undefined, "typed departure reconciles before the catalogue arrives")
+      }
+      const refresh = fetchSessions(id, { strictStatus: true })
+      await started.promise
+      if (scenario === "new local child selection") setActiveSessionFromList(id, "child")
+      inventory.resolve({ data: scenario === "standalone outside inventory" ? [moved]
+        : scenario === "typed restore refusal" ? [native(child)] : [moved, native(child)], cursor: {} })
+      await refresh
+      assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
+      assert.equal(activeSessionId().get(id), scenario === "new local child selection" ? "child" : undefined)
+      assert.equal(activeParentSessionId().get(id), scenario === "new local child selection" ? "child" : undefined)
+      assert.equal(sessions().get(id)?.has("root"), false)
+      assert.deepEqual(store.getSessionMessageIds("root"), [])
+      if (scenario !== "standalone outside inventory") assert.equal(sessions().get(id)?.get("child")?.parentId, "root")
+    } finally {
+      globalThis.fetch = originalFetch
+      serverApi.fetchWorktrees = originalWorktrees
+      f.cleanup()
+    }
+  })
+}
 
 test("a concurrent rename survives selected-row revalidation and a concurrent root survives complete reconciliation", async () => {
   const id = "catalog-concurrent", f = fixture(id), read = deferred<any>()

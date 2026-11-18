@@ -47,7 +47,7 @@ export async function hydrateRestoredWorkspaceState(
   // first so its initial restore cannot mistake an unavailable snapshot for a
   // deliberate at-bottom state.
   seedRestoredWorkspaceState(instanceId, snapshot)
-  await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal, isCurrentBinding)
+  await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal, isCurrentBinding, true)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
   let sessions = getSessions(instanceId)
@@ -67,7 +67,7 @@ export async function hydrateRestoredWorkspaceState(
   await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
     Object.keys(snapshot.drafts),
     Object.keys(snapshot.attachments),
-  ]), signal, isCurrentBinding)
+  ]), signal, isCurrentBinding, true)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
   sessions = getSessions(instanceId)

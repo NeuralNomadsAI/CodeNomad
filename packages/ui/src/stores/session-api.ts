@@ -23,6 +23,7 @@ import {
   clearActiveSession,
   clearActiveParentSession,
   setActiveSession,
+  setActiveSessionFromList,
   clearSessionDraftPrompt,
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
@@ -504,18 +505,17 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   return active
 }
 
-/** `requestedAreParents`: the requested IDs are themselves some session's
- * `parentID`. Every parent read treats a parent located elsewhere as missing. */
+/** Parent reads and saved workspace references reconcile a typed departure. */
 async function hydrateRestoredSessionChain(
   instanceId: string,
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
-  requestedAreParents = false,
+  reconcileInitialDeparture = false,
 ): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
-    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent(), requestedAreParents)
+    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent(), reconcileInitialDeparture)
     signal?.throwIfAborted()
     if (!isCurrent() || generationCurrent()) return
   }
@@ -527,11 +527,11 @@ async function hydrateRestoredSessionChainAttempt(
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
-  requestedAreParents = false,
+  reconcileInitialDeparture = false,
 ): Promise<void> {
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
-  let parentLevel = requestedAreParents
+  let reconcileDeparture = reconcileInitialDeparture
   const isRequestCurrent = () => generationCurrent() && isCurrent()
   const foreground = () => activeInstanceId() === instanceId
     && requestedIds.some(id => id && (id === activeSessionId().get(instanceId) || id === activeParentSessionId().get(instanceId)))
@@ -543,8 +543,8 @@ async function hydrateRestoredSessionChainAttempt(
     const level = [...new Set(pending)].filter((sessionId) => !visited.has(sessionId))
     pending = []
     level.forEach((sessionId) => visited.add(sessionId))
-    const readOptions = { ...(signal ? { signal } : {}), ...(parentLevel ? { headers: parentSessionReadHeaders } : {}) }
-    parentLevel = true
+    const readOptions = { ...(signal ? { signal } : {}), ...(reconcileDeparture ? { headers: parentSessionReadHeaders } : {}) }
+    reconcileDeparture = true
     const parents = await Promise.all(level.map(async (sessionId) => {
       if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return null
 
@@ -578,8 +578,12 @@ async function hydrateRestoredSessionChainAttempt(
           if (!isRequestCurrent()) return null
           if (!isSessionNotFoundError(error)) throw error
           if ("reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON
-            && sessions().get(instanceId)?.get(sessionId) === captured && !getMovedAwaySessions(instanceId).has(sessionId)) {
+            && sessions().get(instanceId)?.get(sessionId) === captured
+            && !isSessionMovePending(instanceId, sessionId)
+            && !getMovedAwaySessions(instanceId).has(sessionId)
+            && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) {
             markSessionMovedAway(instanceId, sessionId, null)
+            removeSessionProjection(instanceId, sessionId)
           }
           log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
           return null
@@ -800,8 +804,9 @@ async function fetchSessions(instanceId: string, options?: {
         if (captured.catalogSnapshot && !fetchedIds.has(id) && currentSessions.get(id) === captured) staleIds.add(id)
       }
       for (const sessionId of staleIds) {
-        if (currentSessions.get(sessionId) !== existingSessions.get(sessionId)) continue
-        removeSessionRuntimeState(instanceId, sessionId, false)
+        if (currentSessions.get(sessionId) !== existingSessions.get(sessionId) || isSessionMovePending(instanceId, sessionId)) continue
+        // An absent row may still exist in another workspace.
+        removeSessionProjection(instanceId, sessionId)
       }
 
       // Native project IDs span clones. Let a pending move reconcile first;
@@ -1426,8 +1431,14 @@ function removeSessionProjection(instanceId: string, sessionId: string): void {
   })
 
   const parent = activeParentSessionId().get(instanceId), active = activeSessionId().get(instanceId)
-  if (sessionId === parent) clearActiveParentSession(instanceId)
-  else if (sessionId === active) {
+  if (sessionId === parent) {
+    const selected = active && sessions().get(instanceId)?.get(active)
+    const away = getMovedAwaySessions(instanceId)
+    if (away.has(sessionId) && selected && !away.has(selected.id)
+      && isWorkspaceServedDirectory(selected.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId))) {
+      setActiveSessionFromList(instanceId, selected.id)
+    } else clearActiveParentSession(instanceId)
+  } else if (sessionId === active) {
     if (parent && sessions().get(instanceId)?.has(parent)) setActiveSession(instanceId, parent)
     else clearActiveSession(instanceId)
   }
