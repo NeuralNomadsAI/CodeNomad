@@ -28,12 +28,9 @@ export function escapes(paths: path.PlatformPath, relative: string): boolean {
 
 /**
  * The single entrypoint native discovery loads for the host plugin(s)/ folder child `child` (`plugin/source-directory.ts`,
- * `config/plugin/source.ts`, `plugin/host.ts`): a `.ts`/`.js` file child loads as itself; a directory child through
- * `Host.resolve`, `server` before `index`. `null` only when discovery provably skips the child: a dangling link, a
- * file child without a `.ts`/`.js` name, an entry that is neither file nor directory, or a folder with no entry whose
- * name could resolve as `server`/`index` in any letter case. Every doubt is `undefined`, an unclassified child: a read
- * error, a candidate group other than exactly one `server.<ext>` (else `index.<ext>`) with a Node-inferred extension
- * and the exact name, a candidate that is not a regular file, or one resolving outside the folder.
+ * `config/plugin/source.ts`): a `.ts`/`.js` file child loads as itself; a directory child through `selectedEntrypoint`.
+ * `null` only when discovery provably skips the child: a dangling link, a file child without a `.ts`/`.js` name, an
+ * entry that is neither file nor directory, or a folder `selectedEntrypoint` proves empty. Every doubt is `undefined`.
  */
 export async function discoveryEntrypointOf(child: string): Promise<string | null | undefined> {
   const name = path.basename(child)
@@ -46,9 +43,35 @@ export async function discoveryEntrypointOf(child: string): Promise<string | nul
   }
   if (info.isFile()) return name.endsWith(".ts") || name.endsWith(".js") ? child : null
   if (!info.isDirectory()) return null
+  return selectedEntrypoint(child)
+}
+
+/**
+ * The single entrypoint an explicit local declaration loads (`config/plugin/source.ts`): only a directory loads,
+ * through `selectedEntrypoint`; a file target is dropped ("configured plugin path must be a directory"), and a missing
+ * path or an entry that is neither defines nothing. `null`: it defines no plugin; `undefined`: uncertain.
+ */
+export async function declaredEntrypointOf(target: string): Promise<string | null | undefined> {
+  let info
+  try {
+    info = await stat(target)
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : undefined
+  }
+  return info.isDirectory() ? selectedEntrypoint(target) : null
+}
+
+/**
+ * The single entrypoint `Host.resolve({ directory })` selects (`plugin/host.ts`, no package `main`): `server` before
+ * `index`. The one resolver for discovered folder children and explicit local declarations. `null` only for a folder
+ * with no entry whose name could resolve as `server`/`index` in any letter case. Every doubt is `undefined`: a read
+ * error, a candidate group other than exactly one `server.<ext>` (else `index.<ext>`) with a Node-inferred extension
+ * and the exact name, a candidate that is not a regular file, or one resolving outside the folder.
+ */
+export async function selectedEntrypoint(directory: string): Promise<string | null | undefined> {
   let entries
   try {
-    entries = await readdir(child, { withFileTypes: true })
+    entries = await readdir(directory, { withFileTypes: true })
   } catch {
     return undefined
   }
@@ -60,11 +83,11 @@ export async function discoveryEntrypointOf(child: string): Promise<string | nul
     const [only] = found
     const extension = path.extname(only!.name)
     if (found.length > 1 || only!.name !== `${base}${extension}` || !ENTRYPOINT_EXTENSIONS.includes(extension)) return undefined
-    const file = path.join(child, only!.name)
+    const file = path.join(directory, only!.name)
     try {
       if (!(await stat(file)).isFile()) return undefined
-      // Native discovery drops a folder whose entrypoint resolves outside it; not mirrored exactly, so it is uncertain.
-      const [root, server] = await Promise.all([realpath(child), realpath(file)])
+      // Native loading drops a folder whose entrypoint resolves outside it; not mirrored exactly, so it is uncertain.
+      const [root, server] = await Promise.all([realpath(directory), realpath(file)])
       return escapes(path, path.relative(root, server)) ? undefined : file
     } catch {
       return undefined
@@ -87,7 +110,7 @@ export async function discoveryLoaders(input: {
   managedIds: (serviceChild: string) => readonly string[]
   serviceJoin: (folder: string, name: string) => string
 }): Promise<string[][] | undefined> {
-  const resolved = async (file: string) => realpath(file).catch(() => file)
+  const resolved = async (file: string): Promise<string> => realpath(file).catch(() => file)
   const inventory = await Promise.all(input.inventory.map(async entry => {
     const host = await input.hostPath(entry.path)
     return host ? { id: entry.id, path: host, real: await resolved(host) } : undefined
@@ -109,11 +132,16 @@ export async function discoveryLoaders(input: {
       const entrypoint = await discoveryEntrypointOf(path.join(hostFolder, child.name))
       if (entrypoint === null) continue
       if (entrypoint === undefined) { loaders.push([]); continue }
-      const real = await resolved(entrypoint)
       const ids = new Set(input.managedIds(input.serviceJoin(folder, child.name)))
-      for (const entry of inventory) if (entry && (entry.path === entrypoint || entry.real === real)) ids.add(entry.id)
+      for (const entry of await reportingEntries(entrypoint, inventory)) ids.add(entry.id)
       loaders.push([...ids])
     }
   }
   return loaders
+}
+
+/** The inventory entries reporting exactly `entrypoint`, as named or after resolving links and junctions. */
+export async function reportingEntries<T extends { path: string; real: string }>(entrypoint: string, inventory: ReadonlyArray<T | undefined>): Promise<T[]> {
+  const real = await realpath(entrypoint).catch(() => entrypoint)
+  return inventory.filter((entry): entry is T => Boolean(entry && (entry.path === entrypoint || entry.real === real)))
 }

@@ -39,7 +39,7 @@ import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 import { definedBefore, enabledThrough, matchesSelector, type AppliedEntry, type AppliedSequence } from "./plugin-activation-order"
-import { discoveryEntrypointOf, discoveryEntrypointShape, discoveryLoaders, escapes } from "./plugin-discovery-loaders"
+import { declaredEntrypointOf, discoveryEntrypointOf, discoveryEntrypointShape, discoveryLoaders, escapes, reportingEntries } from "./plugin-discovery-loaders"
 import { pluginPackageIdentities } from "./plugin-source-document"
 
 /** One writable target of a plugin-documents edit, with the snapshot's reading of it. `consistent`: the daemon's
@@ -104,6 +104,9 @@ interface ReadContext {
   existingEntrypoints?: ReadonlySet<string>
   /** The plugin(s)/ folder children and the IDs each maps to (`discoveryLoaders`); absent or undefined: unknown. */
   discoveryLoaders?: string[][]
+  /** The plugin each explicit local declaration (by resolved target) provably loads, and the inventory paths reporting
+   * it. A target without an entry is unidentified. */
+  localIdentities: Map<string, { id: string; paths: string[] }>
 }
 
 interface ResolvedTarget extends PluginControlTarget {
@@ -554,9 +557,49 @@ export class PluginControls {
         if (parsed.success) for (const entry of parsed.data) packageVersions.set(entry.target, entry)
       } catch { /* Optional display metadata: the native commit remains available. */ }
     }
+    const localIdentities = await this.localIdentities(workspaceId, { entries, runtime, location, paths, style })
     assertCurrentConnection(connection)
     signal?.throwIfAborted()
-    return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem, managedPlugins, packageVersions }
+    return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem, managedPlugins, packageVersions, localIdentities }
+  }
+
+  /**
+   * Which plugin each explicit local declaration provably loads: an inventory entry identifies it only when its path
+   * is the declaration's single selected entrypoint (`declaredEntrypointOf`, as named or after resolving links);
+   * containment or a sibling module identifies nothing, and several IDs at that entrypoint leave it unidentified.
+   * Host file system only: through WSL, local declarations stay unidentified.
+   */
+  private async localIdentities(workspaceId: string, context: Pick<ReadContext, "entries" | "runtime" | "location" | "paths" | "style">):
+    Promise<Map<string, { id: string; paths: string[] }>> {
+    const identities = new Map<string, { id: string; paths: string[] }>()
+    if (this.options.workspaceManager.getServiceWslDistro(workspaceId)) return identities
+    const targets = new Set<string>()
+    for (const entry of context.entries) {
+      if (entry?.type !== "document") continue
+      for (const plugin of normalizePluginEntries(entry.info?.plugins)) {
+        const target = typeof plugin === "string" ? (plugin.startsWith("-") ? undefined : plugin) : plugin.package
+        const local = target ? configuredLocalTarget(context, typeof entry.path === "string" ? entry.path : undefined, target) : undefined
+        if (local) targets.add(local)
+      }
+    }
+    if (targets.size === 0) return identities
+    const host = (value: string) => this.options.workspaceManager.getHostPathForServicePath(workspaceId, value).catch(() => undefined)
+    const inventory = await Promise.all(context.runtime.flatMap(entry => typeof entry?.id === "string" && entry.source?.type === "local"
+      && typeof entry.source.path === "string" ? [{ id: entry.id, service: entry.source.path }] : []).map(async entry => {
+      const path = await host(entry.service)
+      return path ? { ...entry, path, real: await realpath(path).catch(() => path) } : undefined
+    }))
+    await Promise.all([...targets].map(async target => {
+      try {
+        const hostTarget = await host(target)
+        const selected = hostTarget ? await declaredEntrypointOf(hostTarget) : undefined
+        if (!selected) return
+        const reporting = await reportingEntries(selected, inventory)
+        const ids = new Set(reporting.map(entry => entry.id))
+        if (ids.size === 1) identities.set(target, { id: [...ids][0]!, paths: reporting.map(entry => entry.service) })
+      } catch { /* Unidentified. */ }
+    }))
+    return identities
   }
 
   private async resolveTargets(
@@ -1083,12 +1126,8 @@ function runtimeIdForConfiguredTarget(
     }
     if (installation.ids.length === 1 && !runtimeById.has(installation.ids[0])) return installation.ids[0]
   }
-  for (const entry of runtimeById.values()) {
-    if (!entry.id || entry.source.type !== "local") continue
-    if (samePath(context.paths, localTarget, entry.source.path)
-      || containsPath(context.paths, localTarget, entry.source.path)) return entry.id
-  }
-  return undefined
+  // Only the inventory entry reporting the declaration's selected entrypoint identifies it, never a module inside it.
+  return context.localIdentities.get(localTarget)?.id
 }
 
 /**
@@ -1104,15 +1143,17 @@ function anotherLoader(context: ReadContext, sources: readonly PluginConfiguredS
   if (sources.some(other => other !== except && (!other.pluginId || other.pluginId === id || (except !== undefined
     && (other.target === except.target || pluginPackageIdentities(other.target).some(identity => identities.has(identity))))))) return true
   const local = except && configuredLocalTarget(context, except.path, except.target)
+  // The removed source accounts only for the entries reporting its own selected entrypoint (or its package target).
   const accounted = (entry: PluginRuntimeInventoryEntry) => except !== undefined && (entry.source.type === "package"
-    ? entry.source.target === except.target : entry.source.type === "local" && Boolean(local && containsPath(context.paths, local, entry.source.path)))
+    ? entry.source.target === except.target
+    : entry.source.type === "local" && Boolean(local && context.localIdentities.get(local)?.paths.includes(entry.source.path)))
   if (runtime.some(entry => entry.id === id && !accounted(entry))) return true
   const loaders = context.discoveryLoaders
   return loaders === undefined || loaders.some(ids => ids.length === 0 || ids.includes(id))
 }
 
 /** The native path a local declaration names (`file://`, relative to its document, or absolute), as OpenCode resolves it. */
-function configuredLocalTarget(context: ReadContext, documentPath: string | undefined, target: string): string | undefined {
+function configuredLocalTarget(context: Pick<ReadContext, "style" | "paths" | "location">, documentPath: string | undefined, target: string): string | undefined {
   try {
     if (target.startsWith("file://")) return fileURLToPath(target, { windows: context.style === "win32" })
     if (target.startsWith("./") || target.startsWith("../")) {

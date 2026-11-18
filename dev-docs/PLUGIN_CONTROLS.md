@@ -122,7 +122,14 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   its unconfirmed source row carrying the Remove items. Removing that source leaves the
   ID row orphan, with its own Remove items.
 - **Correlation**: snapshot sources carry `pluginId` when runtime inventory or a verified
-  managed installation associates their source, so Remove items attach to ordinary plugin rows. A string or object
+  managed installation associates their source, so Remove items attach to ordinary plugin rows. A package source is
+  associated by its exact native target. An explicit local declaration (relative, `file://` or absolute) is associated
+  only through the one local resolver (`declaredEntrypointOf`, built on the same `selectedEntrypoint` as discovery):
+  native loading drops a declared file and resolves a declared folder `server` before `index`, so an inventory entry
+  identifies the declaration only when its path is that single selected entrypoint, as named or after resolving links.
+  Containment, a sibling module, several IDs at that entrypoint or an uncertain selection leave it without `pluginId`:
+  it then counts as a possible loader of any ID and never authorizes a bare write. Through WSL (no host listing) local
+  declarations stay unidentified. A string or object
   entry whose exact target `plugin.list` reports as a package is a source at its first declaration, even when an
   earlier rule names the same ID, so a failed package keeps its Remove items. A row offers removal only
   for declarations in a scope's own write target; inherited, inline and other
@@ -276,7 +283,7 @@ Global switch, even though it controls the plugin's final effective state.
 Object-form sources remain source records, but are also replayed as ordered add
 operations when they re-enable an already resolved plugin, matching OpenCode's
 native supervisor. Relative and `file://` local declarations are correlated with
-the resolved runtime entrypoint before that ordered replay.
+their selected entrypoint (see **Correlation**) before that ordered replay.
 
 Changing sessions inside one worktree reuses its snapshot, and the first read
 waits until the Plugins surface is visible and expanded. Location-scoped plugin events mark
@@ -436,7 +443,8 @@ guessed paths.
   selectors, rules in another scope, source declarations named like their ID, managed re-enable), and the
   removal-only or refused enables of IDs without a preceding verified definition, wildcards left disabling, undeclared
   local inventory counted only at the entrypoint native discovery selects (nested plugins, deleted entrypoints, an
-  `index` behind a `server` and ambiguous candidates refused):
+  `index` behind a `server` and ambiguous candidates refused), and an explicit local folder never defining a nested
+  plugin's ID:
   `plugin-controls.test.ts`; the applied-order evaluator: `plugin-activation-order.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`
@@ -449,7 +457,9 @@ guessed paths.
   another inventory entry reports its ID, one loader proof for orphan rows, rule-only and source removal (a
   disabled discovered file, an unidentified declaration), a discovery child identified only by its own entrypoint (a
   nested plugin's inventory leaves it unclassified) and only by the selected entrypoint (`server` before `index`), a
-  folder skipped only on proof (`Server.js`, a linked entrypoint inside or outside the folder keep the disable), a
+  folder skipped only on proof (`Server.js`, a linked entrypoint inside or outside the folder keep the disable), an
+  explicit local declaration identified only by its own selected entrypoint (a nested plugin neither identifies it
+  nor counts as the removed source's own entry), a
   bare name after its own `-id` read as a package,
   orphan rule removal and refusal,
   inventory correlation and the strict route:

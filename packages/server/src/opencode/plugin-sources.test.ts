@@ -527,6 +527,37 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
+  it("identifies an explicit local declaration only by its own selected entrypoint", async () => {
+    const f = await fixture()
+    try {
+      // bundle/index.js is the disabled outer plugin (absent from the inventory); bundle/other is a separate plugin.
+      const bundle = path.join(f.root, "bundle")
+      await mkdir(path.join(bundle, "other"), { recursive: true })
+      await writeFile(path.join(bundle, "index.js"), "export default {}\n")
+      await writeFile(path.join(bundle, "other", "index.js"), "export default {}\n")
+      const other = { id: "bundle.other", source: { type: "local", path: path.join(bundle, "other", "index.js") }, features: {}, state: { status: "active" } }
+      f.state.runtime = [other]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      await writeFile(f.projectFile, JSON.stringify({ plugins: [path.join(bundle, "other")] }))
+      const text = JSON.stringify({ plugins: [bundle, "-bundle.disabled"] })
+      await writeFile(f.globalFile, text)
+      const snapshot = await f.controls.read("w", f.location)
+      assert.deepEqual(snapshot.configured.sources.map(({ target, pluginId }) => ({ target, pluginId })),
+        [{ target: bundle, pluginId: undefined }, { target: path.join(bundle, "other"), pluginId: "bundle.other" }], "the nested plugin does not identify the outer declaration")
+      assert.equal(snapshot.controls.find(control => control.id === "bundle.disabled")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "bundle.disabled", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text)
+      // The removed source accounts only for the entry at its own entrypoint: another entry of its ID inside it is
+      // another loader, so its disable stays.
+      const outer = { id: "bundle.outer", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } }
+      f.state.runtime = [outer, { ...outer, source: { type: "local", path: path.join(bundle, "other", "index.js") } }]
+      await writeFile(f.projectFile, JSON.stringify({ plugins: [] }))
+      await writeFile(f.globalFile, JSON.stringify({ plugins: [bundle, "-bundle.outer"] }))
+      await f.sources.remove("w", { location: f.location, scope: "global", target: bundle, entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["-bundle.outer"])
+    } finally { await f.cleanup() }
+  })
+
   it("reads a bare name after its own -rule as a package declaration, never an orphan rule", async () => {
     const f = await fixture()
     try {

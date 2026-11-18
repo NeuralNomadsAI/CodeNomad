@@ -120,6 +120,9 @@ describe("OpenCode V2 plugin activation controls", () => {
         ? path.join(fixture.projectDirectory, "plugins", "reviewer")
         : path.join(fixture.projectDirectory, ".opencode", "plugins", "reviewer")
       const entrypoint = path.join(sourceDirectory, "server.js")
+      // The declared folder's selected entrypoint is the file plugin.list reports.
+      fs.mkdirSync(sourceDirectory, { recursive: true })
+      fs.writeFileSync(entrypoint, "export default {}\n")
       fixture.runtime.push({
         id: "acme.reviewer",
         source: { type: "local", path: entrypoint },
@@ -740,6 +743,21 @@ describe("OpenCode V2 plugin activation controls", () => {
     fs.rmSync(path.join(bundle, "index.ts"))
     await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.other", scope: "global", enabled: true })
     assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "bundle.other"])
+  })
+
+  it("never lets an explicit local folder define a nested plugin's ID for a bare write", async () => {
+    // bundle/other is defined only by the Project declaration: a bare ID in Global would precede it.
+    const fixture = createFixture({ globalPlugins: [], runtime: [] })
+    const bundle = path.join(fixture.projectDirectory, "..", "bundle")
+    fs.mkdirSync(path.join(bundle, "other"), { recursive: true })
+    fs.writeFileSync(path.join(bundle, "index.js"), "export default {}\n")
+    fs.writeFileSync(path.join(bundle, "other", "index.js"), "export default {}\n")
+    fixture.setGlobalPlugins([bundle, "-*"])
+    fixture.setProjectPlugins([path.join(bundle, "other")])
+    fixture.runtime.push({ id: "bundle.other", source: { type: "local", path: path.join(bundle, "other", "index.js") }, features: {}, state: { status: "active" } })
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.other", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [bundle, "-*"])
   })
 
   it("selects a linked server entrypoint whose internal name starts with ..", async t => {
