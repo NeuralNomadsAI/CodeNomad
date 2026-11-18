@@ -13,6 +13,11 @@ import { addInstance, instances, removeInstance, updateInstance } from "./instan
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { clearSessionDraftPrompt, getSessionDraftPrompt, setSessionDraftPrompt, setSessions } from "./session-state.ts"
 import { recoveredDraftIds, switchRecoveredDraft } from "./session-draft-recovery.ts"
+import { hydrateRestoredWorkspaceState } from "./app-session-workspace-hydration"
+import { serializeDraftAttachments } from "./client-state-attachments-codec"
+import { captureState } from "../lib/hooks/use-app-session-capture"
+import { attachInstanceTab } from "./app-tabs"
+import { encodeClientSnapshotV2, decodeClientSnapshotV2 } from "./client-state-partitions"
 
 const NO_SESSION = "__no_session_draft__"
 const opened: string[] = []
@@ -69,6 +74,73 @@ afterEach(() => {
 })
 
 describe("closed project drafts", () => {
+  for (const clear of [false, true]) for (const vaultFirst of [false, true]) {
+    it(`chooses the newer ${clear ? "clear" : "bundle"} independently of ${vaultFirst ? "vault" : "snapshot"} completion`, async () => {
+      const key = `draft-authority-${clear}-${vaultFirst}`, folder = `/${key}`, old = `${key}-old`, id = `${key}-reopened`
+      const binary = (n: number) => createFileAttachment("bytes.bin", "bytes.bin", "application/octet-stream", new Uint8Array([n]))
+      const snapshot = {
+        kind: "workspace" as const, folder, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+        ...serializeDraftAttachments({ [NO_SESSION]: "independent composer", gone: "old", unrelated: "independent session" },
+          { gone: [binary(1)] }),
+      }
+      open(old, folder, ["gone"])
+      setSessionDraftPrompt(old, "gone", "new")
+      addAttachment(old, "gone", binary(2))
+      if (clear) {
+        clearSessionDraftPrompt(old, "gone")
+        clearAttachments(old, "gone")
+      }
+      close(old)
+      const vaultRead = deferred<unknown>(), snapshotRead = deferred<unknown>()
+      open(id, folder, [], async sessionID => {
+        if (sessionID === "unrelated") return snapshotRead.promise
+        await vaultRead.promise
+        throw { _tag: "SessionNotFoundError", sessionID }
+      })
+      const restored = hydrateRestoredWorkspaceState(id, snapshot, new AbortController().signal, () => true)
+      await settle()
+      attachInstanceTab(id)
+      const pending = captureState(new Map()).state.tabs.find(tab => tab.kind === "workspace" && tab.workspaceId === id)
+      assert.equal(pending?.kind, "workspace")
+      assert.equal(pending.drafts.gone, clear ? undefined : "new")
+      if (vaultFirst) {
+        vaultRead.resolve(null)
+        await settle()
+        snapshotRead.resolve(apiSession("unrelated", folder))
+        await restored
+      } else {
+        snapshotRead.resolve(apiSession("unrelated", folder))
+        await restored
+        vaultRead.resolve(null)
+        await settle()
+      }
+      assert.equal(getSessionDraftPrompt(id, "unrelated"), "independent session")
+      assert.equal(getSessionDraftPrompt(id, NO_SESSION), "independent composer")
+      assert.equal(recoveredDraftIds(id).length, clear ? 0 : 1)
+      const captured = captureState(new Map()).state.tabs.find(tab => tab.kind === "workspace" && tab.workspaceId === id)
+      assert.equal(captured?.kind, "workspace")
+      const saved = await encodeClientSnapshotV2({ version: 1, revision: 1, savedAt: 1, layout: {},
+        session: { tabs: [captured], activeTabIndex: 0 } })
+      const decoded = await decodeClientSnapshotV2(saved.root, 1, async key => saved.partitions[key] ?? null)
+      const checkpoint = decoded?.session?.tabs[0]
+      assert.equal(checkpoint?.kind, "workspace")
+      close(id)
+      const second = id + "-again"
+      open(second, folder, ["unrelated"])
+      await settle()
+      await hydrateRestoredWorkspaceState(second, checkpoint, new AbortController().signal, () => true)
+      assert.equal(getSessionDraftPrompt(second, "unrelated"), "independent session")
+      assert.equal(getSessionDraftPrompt(second, NO_SESSION), "independent composer")
+      const slots = recoveredDraftIds(second)
+      assert.equal(slots.length, clear ? 0 : 1)
+      if (!clear) {
+        switchRecoveredDraft(second, slots[0])
+        assert.equal(getSessionDraftPrompt(second, NO_SESSION), "new")
+        const [file] = getAttachments(second, NO_SESSION)
+        assert.deepEqual(file.source.type === "file" && Array.from(file.source.data ?? []), [2])
+      }
+    })
+  }
   it("keeps an unresolved closed draft and recovers it exactly once across subsequent opens", async () => {
     const folder = "/closed-recovery"
     open("recovery-origin", folder)

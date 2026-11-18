@@ -503,14 +503,14 @@ async function hydrateRestoredSessionChain(
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
   verifyDrafts = false,
-): Promise<ReadonlySet<string>> {
+): Promise<ReadonlyMap<string, () => boolean>> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
-    const absent = new Set<string>()
+    const absent = new Map<string, () => boolean>()
     await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent(),
       verifyDrafts ? absent : undefined)
     signal?.throwIfAborted()
-    if (!isCurrent()) return new Set()
+    if (!isCurrent()) return new Map()
     if (generationCurrent()) return absent
   }
   throw new Error("Restored session hydration was superseded by reconnect")
@@ -521,7 +521,7 @@ async function hydrateRestoredSessionChainAttempt(
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
-  absentDrafts?: Set<string>,
+  absentDrafts?: Map<string, () => boolean>,
 ): Promise<void> {
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -567,8 +567,10 @@ async function hydrateRestoredSessionChainAttempt(
         } catch (error) {
           if (signal?.aborted) throw error
           if (!isRequestCurrent()) return null
-          if (verify && isSessionNotFoundError(error) && error.sessionID === sessionId
-            && sessions().get(instanceId)?.get(sessionId) === captured) absentDrafts.add(sessionId)
+          if (verify && isSessionNotFoundError(error) && error.sessionID === sessionId) {
+            const holds = () => isRequestCurrent() && !signal?.aborted && sessions().get(instanceId)?.get(sessionId) === captured
+            if (holds()) absentDrafts.set(sessionId, holds)
+          }
           if (!isSessionNotFoundError(error) && !absentDrafts) throw error
           log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
           return null

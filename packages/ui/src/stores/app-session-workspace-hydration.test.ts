@@ -26,7 +26,50 @@ import {
   clearSessionDraftPrompt,
   getSessionDraftPromptsForInstance,
   getAuthoritativelyDeletedSessionIdsForInstance,
+  getSessionRoot,
+  sessions,
 } from "./session-state.ts"
+
+it("rechecks each absent draft after a sibling read: a newly listed session survives", async () => {
+  const id = "restored-absence-race"
+  const originalToast = toast.custom
+  toast.custom = () => "recovered"
+  const held = deferred<unknown>(), observed = deferred<void>()
+  const client = { session: { get: async ({ sessionID }: { sessionID: string }) => {
+    if (sessionID === "hold") { observed.resolve(); return held.promise }
+    throw { _tag: "SessionNotFoundError", sessionID }
+  } } } as any
+  ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
+  addInstance({ id, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  try {
+    const restored = hydrateRestoredWorkspaceState(id, {
+      kind: "workspace", folder: "/work", scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      ...serializeDraftAttachments({ revived: "still on the session", gone: "recover only this", hold: "held draft" }, {
+        revived: [createFileAttachment("revived.bin", "revived.bin", "application/octet-stream", new Uint8Array([77]))],
+      }),
+    }, new AbortController().signal, () => true)
+    await observed.promise
+    await new Promise<void>(resolve => setImmediate(resolve))
+    setSessions(previous => new Map(previous).set(id, new Map(previous.get(id)).set("revived", {
+      ...apiSession("revived"), parentId: null, instanceId: id,
+    } as any)))
+    held.resolve(apiSession("hold"))
+    await restored
+    assert.equal(getSessionRoot(id, "revived")?.id, "revived")
+    assert.ok(sessions().get(id)?.has("revived"))
+    assert.equal(getAuthoritativelyDeletedSessionIdsForInstance(id).has("revived"), false)
+    assert.equal(getSessionDraftPrompt(id, "revived"), "still on the session")
+    const [file] = getAttachments(id, "revived")
+    assert.deepEqual(file.source.type === "file" && Array.from(file.source.data ?? []), [77])
+    assert.equal(getSessionDraftPrompt(id, "__no_session_draft__"), "recover only this")
+    assert.equal(getAuthoritativelyDeletedSessionIdsForInstance(id).has("gone"), true)
+  } finally {
+    held.resolve(null)
+    removeInstance(id, { drafts: "skip" })
+    sdkManager.destroyClientsForInstance(id)
+    toast.custom = originalToast
+  }
+})
 
 it("recovers a not-yet-hydrated draft when deletion arrives before the first checkpoint", async () => {
   const id = "early-deleted-draft"

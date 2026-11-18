@@ -9,6 +9,10 @@ import { recoverRemovedSessionDraft } from "./session-draft-recovery"
 
 type SavedPrompts = Pick<RestorableWorkspaceTabState, "drafts" | "attachments">
 
+export function currentDraftAbsences(proofs: ReadonlyMap<string, () => boolean>) {
+  return new Set([...proofs].filter(([, current]) => current()).map(([id]) => id))
+}
+
 /** Transfer before the source tombstone can purge persisted fallback data. */
 export function recoverDeletedWorkspacePrompts(
   instanceId: string,

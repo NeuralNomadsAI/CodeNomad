@@ -3,7 +3,7 @@ import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import { normalizeRestorableAttachmentRecord } from "./client-state-attachments-codec"
 import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsForInstance } from "./attachments"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
-import { hydrateWorkspacePromptState, recoverDeletedWorkspacePrompts } from "./app-session-prompt-hydration"
+import { currentDraftAbsences, hydrateWorkspacePromptState, recoverDeletedWorkspacePrompts } from "./app-session-prompt-hydration"
 import { getRestoredSessionIds } from "./app-session-restored-session-ids"
 import { NO_SESSION_DRAFT_SESSION_ID } from "./app-session-workspace-hydration"
 import { hydrateRestoredSessionChain } from "./session-api"
@@ -19,6 +19,9 @@ export const MAX_CLOSED_WORKSPACE_DRAFTS = 16
 
 const log = getLogger("session")
 const vault = new Map<string, ClosedWorkspaceDrafts>()
+// A close with no remaining content still supersedes older snapshots.
+const closedAuthority = new Map<string, Set<string>>()
+const restoreAuthority = new Map<string, { key: string; superseded: Set<string>; entry?: ClosedWorkspaceDrafts }>()
 /**
  * Entries taken by a reopened instance whose restore has not finished. They are
  * the only older drafts that can come back to the vault, so a later close
@@ -29,6 +32,22 @@ const claims = new Map<string, { key: string; entry: ClosedWorkspaceDrafts }>()
 /** Project identity: the backend (one per window today) and the normalized folder. */
 export function closedWorkspaceDraftKey(folder: string, backendId = ""): string {
   return `${backendId}\n${normalizeWorkspacePath(folder)}`
+}
+
+/** Snapshot fallback yields per session, including both fields of a clear. */
+export function closedDraftSnapshotAuthority(instanceId: string, folder?: string): ReadonlySet<string> {
+  const bound = restoreAuthority.get(instanceId)
+  return bound?.superseded ?? (folder === undefined ? undefined : closedAuthority.get(closedWorkspaceDraftKey(folder))) ?? new Set()
+}
+
+export function omitSupersededClosedDrafts<T extends ClosedWorkspaceDrafts>(instanceId: string, snapshot: T, folder?: string): T {
+  const superseded = closedDraftSnapshotAuthority(instanceId, folder)
+  return superseded.size ? { ...snapshot, ...pick(snapshot, id => !superseded.has(id)) } : snapshot
+}
+
+export function pendingClosedDrafts(instanceId: string): ClosedWorkspaceDrafts {
+  const entry = restoreAuthority.get(instanceId)?.entry
+  return entry ? emptySessionsOf(instanceId, entry) : empty
 }
 
 const contentSessions = (entry: ClosedWorkspaceDrafts) =>
@@ -96,14 +115,31 @@ export function retainClosedWorkspaceDrafts(
   const key = closedWorkspaceDraftKey(folder)
   const claim = claims.get(instanceId)
   claims.delete(instanceId)
+  restoreAuthority.delete(instanceId)
   if (mode !== "keep") {
-    if (mode === "discard") vault.delete(key)
+    if (mode === "discard") {
+      vault.delete(key)
+      closedAuthority.delete(key)
+    }
     return
   }
   const remaining = claim ? emptySessionsOf(instanceId, claim.entry) : null
   const captured = captureInstanceDrafts(instanceId)
   // Sessions emptied by typing, clearing or sending supersede older drafts too.
   const superseded = new Set([...contentSessions(captured), ...touchedSessions(instanceId)])
+  if (superseded.size) {
+    const authority = new Set([...(closedAuthority.get(key) ?? []), ...superseded])
+    closedAuthority.delete(key)
+    closedAuthority.set(key, authority)
+    while (closedAuthority.size > MAX_CLOSED_WORKSPACE_DRAFTS) closedAuthority.delete(closedAuthority.keys().next().value!)
+    // A sibling close can supersede a pending restoration of an older source.
+    for (const bound of restoreAuthority.values()) {
+      if (bound.key === key) {
+        for (const id of superseded) bound.superseded.add(id)
+        if (bound.entry) bound.entry = pick(bound.entry, id => !superseded.has(id))
+      }
+    }
+  }
   for (const pending of claims.values()) {
     if (pending.key === key) pending.entry = pick(pending.entry, (sessionId) => !superseded.has(sessionId))
   }
@@ -123,11 +159,22 @@ export function restoreClosedWorkspaceDrafts(
 ): Promise<void> | undefined {
   const key = closedWorkspaceDraftKey(folder)
   const entry = vault.get(key)
+  const bound = { key, superseded: new Set([...(closedAuthority.get(key) ?? []), ...(entry ? contentSessions(entry) : [])]), entry }
+  restoreAuthority.set(instanceId, bound)
   if (!entry) return
   vault.delete(key)
+  // A retry moves the unresolved source to its new claimant; only that binding captures it.
+  for (const other of restoreAuthority.values()) {
+    if (other !== bound && other.key === key && other.entry) other.entry = pick(other.entry, id => !bound.superseded.has(id))
+  }
   const claim = { key, entry }
   claims.set(instanceId, claim)
   const isCurrent = () => claims.get(instanceId) === claim
+  const finish = () => {
+    claims.delete(instanceId)
+    bound.entry = emptySessionsOf(instanceId, claim.entry)
+    requeue(key, bound.entry)
+  }
   // Reads `claim.entry`: closes of sibling tabs may supersede sessions meanwhile.
   const hydrate = () => hydrateWorkspacePromptState(
     instanceId,
@@ -139,22 +186,20 @@ export function restoreClosedWorkspaceDrafts(
   return (async () => {
     await sessionsReady()
     if (!isCurrent()) return
-    const absent = await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
+    const absenceProofs = await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
       Object.keys(claim.entry.drafts), Object.keys(claim.entry.attachments),
     ]), undefined, isCurrent, true)
     if (!isCurrent()) return
     hydrate()
-    recoverDeletedWorkspacePrompts(instanceId, emptySessionsOf(instanceId, claim.entry), absent)
+    recoverDeletedWorkspacePrompts(instanceId, emptySessionsOf(instanceId, claim.entry), currentDraftAbsences(absenceProofs))
     recoverDeletedWorkspacePrompts(instanceId, emptySessionsOf(instanceId, claim.entry))
-    claims.delete(instanceId)
-    requeue(key, emptySessionsOf(instanceId, claim.entry))
+    finish()
   })().catch((error) => {
     if (!isCurrent()) return
     log.warn("Failed to restore drafts of a closed project", { instanceId, error })
     hydrate()
     recoverDeletedWorkspacePrompts(instanceId, emptySessionsOf(instanceId, claim.entry))
-    claims.delete(instanceId)
-    requeue(key, emptySessionsOf(instanceId, claim.entry))
+    finish()
   })
 }
 
@@ -162,4 +207,6 @@ export function restoreClosedWorkspaceDrafts(
 export function clearClosedWorkspaceDrafts(): void {
   vault.clear()
   claims.clear()
+  closedAuthority.clear()
+  restoreAuthority.clear()
 }
