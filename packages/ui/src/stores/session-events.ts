@@ -40,7 +40,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, clearSessionDeletedAuthority, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
@@ -75,6 +75,8 @@ const nativeLifecycleGenerations = new Map<string, number>()
 // attempt starts or its run settles.
 let activeRetryToast: { key: string; handle: ToastHandle } | null = null
 const movedSessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+/** Per instance, the destination directory of each session moved since its last refresh. */
+const movedSessionDirectories = new Map<string, Map<string, string>>()
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
   const key = `${instanceId}\0${sessionId}`
@@ -264,16 +266,20 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
   speakCompletedAssistantText(instanceId, sessionId)
 }
 
+function ownsSessionDirectory(instanceId: string, directory: string): boolean {
+  const instance = instances().get(instanceId)
+  if (!instance) return false
+  const normalized = normalizeSessionDirectory(directory)
+  const directories = [
+    instance.folder,
+    ...getWorktrees(instanceId).flatMap((worktree) => [worktree.directory, worktree.serviceDirectory]),
+  ]
+  return directories.some((candidate) => normalizeSessionDirectory(candidate) === normalized)
+}
+
 function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {
   const { sessionID: sessionId, location } = data
-  const normalized = normalizeSessionDirectory(location.directory)
-  const targetInstanceIds = Array.from(instances().values()).flatMap((instance) => {
-    const directories = [
-      instance.folder,
-      ...getWorktrees(instance.id).flatMap((worktree) => [worktree.directory, worktree.serviceDirectory]),
-    ]
-    return directories.some((candidate) => normalizeSessionDirectory(candidate) === normalized) ? [instance.id] : []
-  })
+  const targetInstanceIds = Array.from(instances().keys()).filter((instanceId) => ownsSessionDirectory(instanceId, location.directory))
 
   // A location can be open in several instances. Keep the native event with
   // its source whenever that source still owns the destination instead of
@@ -294,13 +300,25 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
 
   const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]
   for (const instanceId of new Set(affectedInstanceIds)) {
+    movedSessionDirectories.set(instanceId, (movedSessionDirectories.get(instanceId) ?? new Map()).set(sessionId, location.directory))
     const pending = movedSessionRefreshTimers.get(instanceId)
     if (pending) clearTimeout(pending)
     movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
       movedSessionRefreshTimers.delete(instanceId)
-      void reloadWorktrees(instanceId).catch(error => {
+      const moved = movedSessionDirectories.get(instanceId) ?? new Map<string, string>()
+      movedSessionDirectories.delete(instanceId)
+      void reloadWorktrees(instanceId).then(() => true, error => {
         log.warn("Failed to refresh moved-session worktrees", { instanceId, error })
-      }).then(() => fetchSessions(instanceId, { reset: true })).then(() => (
+        return false
+      }).then((inventoryRead) => {
+        // A session that left this workspace leaves it as a deleted one does,
+        // even when family members stay behind in this location.
+        for (const [movedId, directory] of moved) {
+          if (ownsSessionDirectory(instanceId, directory)) clearSessionDeletedAuthority(instanceId, movedId)
+          else if (inventoryRead && sessions().get(instanceId)?.has(movedId)) removeSession(instanceId, movedId)
+        }
+        return fetchSessions(instanceId, { reset: true })
+      }).then(() => (
         activeSessionId().get(instanceId) ? refreshSessionCatalog(instanceId) : undefined
       )).catch((error) => {
         log.warn("Failed to reconcile moved sessions", { instanceId, error })
@@ -573,6 +591,10 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
   if (!sessionId) return
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
+  removeSession(instanceId, sessionId)
+}
+
+function removeSession(instanceId: string, sessionId: string): void {
   nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
   dismissRetryToast(instanceId, sessionId)
   removeSessionRuntimeState(instanceId, sessionId)

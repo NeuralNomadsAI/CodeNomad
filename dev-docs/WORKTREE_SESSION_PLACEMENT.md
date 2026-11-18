@@ -59,7 +59,12 @@ Implementation:
   returned identifier rather than guessing it from the branch name.
 - Native worktree events invalidate ownership and UI state. Opening the selector also
   discovers external Git changes. Native session moves refresh the catalogue before
-  list reconciliation. Search traverses every local worktree's native cursor chain.
+  list reconciliation. A moved session whose destination the refreshed catalogue does
+  not own then leaves that instance through the deletion path (selection, transcript
+  and rehydration through its descendants), whatever started the move; family members
+  left behind stay sessions of their own location, and a later move back lifts that
+  fence (`stores/session-move-restore.test.ts`, `tests/browser/session-external-move.test.ts`).
+  Search traverses every local worktree's native cursor chain.
 - `scripts/test-native-worktree-management.mjs` (run by `test-opencode-location-native.mjs`,
   isolated: no shared daemon or user database) covers selected HEAD, default parent,
   named branches, externally-created checkouts, independent clones, branch rename,

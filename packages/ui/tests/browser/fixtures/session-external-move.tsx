@@ -1,0 +1,89 @@
+import { createMemo } from "solid-js"
+import { render } from "solid-js/web"
+import SessionList from "../../../src/components/session-list"
+import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
+import { I18nProvider } from "../../../src/lib/i18n"
+import { serverApi } from "../../../src/lib/api-client"
+import { serverEvents } from "../../../src/lib/server-events"
+import { sdkManager } from "../../../src/lib/sdk-manager"
+import { addInstance } from "../../../src/stores/instances"
+import { setInstanceMetadata } from "../../../src/stores/instance-metadata"
+import { activeSessionId, getSessionListError, getSessionThreads, setActiveSession } from "../../../src/stores/session-state"
+import { fetchSessions } from "../../../src/stores/session-api"
+import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
+import "../../../src/index.css"
+
+// Two project tabs over one native service. Each client answers like its
+// workspace proxy: a session located elsewhere is refused with 403.
+const workspaces = { a: "/projects/a", b: "/projects/b" } as const
+type Tab = keyof typeof workspaces
+const make = (id: string, directory: string, parentID?: string) => ({ id, parentID, title: id, agent: "build",
+  projectID: directory, location: { directory }, model: { providerID: "fixture", id: "fixture" }, cost: 0, tokens: {},
+  time: { created: 1, updated: 1 } })
+const native = new Map<string, any>([
+  make("moving", workspaces.a), make("moving-child", workspaces.a, "moving"), make("staying", workspaces.a),
+  make("resident", workspaces.b),
+].map(row => [row.id, row]))
+const refused: string[] = []
+const owns = (tab: Tab, row: any) => row.location.directory === workspaces[tab]
+const client = (tab: Tab): any => ({ session: {
+  list: async (input: any) => ({ cursor: {}, data: [...native.values()].map(row => structuredClone(row)).filter(row =>
+    (input.project ? row.projectID === input.project : row.location.directory === input.directory)
+    && (input.parentID !== null || !row.parentID)) }),
+  get: async ({ sessionID }: any) => {
+    const row = native.get(sessionID)
+    if (row && !owns(tab, row)) {
+      refused.push(`${tab}:${sessionID}`)
+      throw Object.assign(new Error("Session does not belong to workspace"), { status: 403 })
+    }
+    return structuredClone(row)
+  },
+  active: async () => ({}),
+} })
+const instanceId = (tab: Tab) => `external-move-${tab}`
+serverApi.fetchWorktrees = async (id: string) => {
+  const tab = (Object.keys(workspaces) as Tab[]).find(key => instanceId(key) === id)!
+  return { isGitRepo: true, worktrees: [{ slug: "root", directory: workspaces[tab], kind: "root" }] } as any
+}
+const config = { settings: { locale: "en" } }
+serverApi.fetchConfigOwner = async () => config as any
+serverApi.patchConfigOwner = async (_owner, patch) => Object.assign(config, patch) as any
+serverApi.fetchStateOwner = async () => ({} as any)
+for (const tab of Object.keys(workspaces) as Tab[]) {
+  const id = instanceId(tab), sessionClient = client(tab)
+  ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, sessionClient)
+  addInstance({ id, folder: workspaces[tab], port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client: sessionClient })
+  setInstanceMetadata(id, { project: { id: workspaces[tab], canonical: workspaces[tab] } as any })
+  await ensureWorktreesLoaded(id)
+  await fetchSessions(id, { reset: true })
+}
+setActiveSession(instanceId("a"), "moving")
+
+let sequence = 10
+/** A native move outside CodeNomad: only the session itself changes location.
+ * The relay delivers it to every tab owning its old or new location. */
+const move = (sessionID: string, directory: string) => {
+  const row = native.get(sessionID), from = row.location.directory, created = ++sequence
+  row.location = { directory }
+  row.projectID = directory
+  const event = { id: `evt_move_${created}`, type: "session.moved", created, location: { directory: from },
+    data: { sessionID, projectID: directory, location: { directory } }, durable: { aggregateID: sessionID, seq: created, version: 1 } }
+  const recipients = (Object.keys(workspaces) as Tab[]).filter(tab => workspaces[tab] === from || workspaces[tab] === directory)
+  ;(serverEvents as any).dispatchBatch(recipients.map(tab => ({ type: "instance.event", instanceId: instanceId(tab), event })))
+}
+
+function Tab(props: { tab: Tab }) {
+  const id = instanceId(props.tab)
+  const threads = createMemo(() => getSessionThreads(id))
+  return <section aria-label={`Project ${props.tab}`} style={{ width: "420px", height: "600px", display: "flex" }}>
+    <SessionList instanceId={id} threads={threads()} activeSessionId={activeSessionId().get(id) ?? null}
+      onSelect={value => setActiveSession(id, value)} onNew={() => {}} showHeader={false} showFooter={false} />
+  </section>
+}
+render(() => <ConfigProvider><I18nProvider><div style={{ display: "flex", gap: "8px" }}>
+  <Tab tab="a" /><Tab tab="b" />
+</div></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+await updatePreferences({ locale: "en" })
+;(window as any).fixture = { move, refused,
+  selected: (tab: Tab) => activeSessionId().get(instanceId(tab)) ?? null,
+  listError: (tab: Tab) => getSessionListError(instanceId(tab)) ?? null }

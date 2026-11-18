@@ -121,6 +121,31 @@ test("session move and deletion barriers retain per-recipient order across a pen
   } finally { h.bridge.shutdown(); old.resolve(false) }
 })
 
+test("a session move reaches its old owner, its new owner and earlier recipients only", async () => {
+  const locations: Record<string, LocationRef> = { s: { directory: "/other" }, t: { directory: "/other" } }
+  const h = harness(async (id, loc) => (id === "fast" && loc.directory === "/repo") || (id === "slow" && loc.directory === "/other"),
+    async id => locations[id]!)
+  const move = (id: string, sessionID: string, envelope?: string) => ({ id, type: "session.moved",
+    ...(envelope ? { location: { directory: envelope } } : {}), data: { sessionID, location: { directory: "/other" } } }) as OpenCodeEvent
+  try {
+    await until(() => h.streams.length === 1)
+    h.streams[0].send(delta("before", "s", "/repo"))
+    h.streams[0].send(move("moved", "s", "/repo"))
+    h.streams[0].send(delta("after", "s"))
+    // Another client's move can arrive without the old envelope.
+    h.streams[0].send(delta("u-before", "u", "/repo"))
+    locations.u = { directory: "/other" }
+    h.streams[0].send(move("u-moved", "u"))
+    // A workspace owning neither location that never held the session learns nothing.
+    h.streams[0].send(move("t-moved", "t", "/elsewhere"))
+    await until(() => h.received.length === 8)
+    await turn()
+    const ids = (instanceId: string) => h.received.filter(x => x.instanceId === instanceId).map(x => "id" in x.event && x.event.id)
+    assert.deepEqual(ids("fast"), ["before", "moved", "u-before", "u-moved"])
+    assert.deepEqual(ids("slow"), ["moved", "after", "u-moved", "t-moved"])
+  } finally { h.bridge.shutdown() }
+})
+
 test("native and local inventory invalidations fence pending ownership before publication", async () => {
   for (const native of [false, true]) {
     const pending = deferred<boolean>()

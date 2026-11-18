@@ -273,17 +273,23 @@ export class InstanceEventBridge {
   private deliverEvent(event: OpenCodeEvent, location: LocationRef | undefined, route: EventRoute): void {
     const resolvedAt = Date.now()
     const sessionId = this.sessionId(event)
+    // Like native location subscriptions, a move reaches both owners. A
+    // recipient of the session's earlier events learns that it left even
+    // when the envelope names only its destination.
+    const destination = event.type === "session.moved" ? readLocationRef((event.data as { location?: unknown }).location) : undefined
     for (const { id: instanceId, epoch } of route.recipients) {
       const current = () => route.current() && (this.workspaceEpochs.get(instanceId) ?? 0) === epoch
       route.queue.enqueue(`deliver:${JSON.stringify([instanceId, route.key])}`, route.bytes, async () => {
         if (!current()) return
         const lookupStarted = Date.now()
+        const heldSession = Boolean(destination && sessionId && this.sessionRecipients.get(sessionId)?.has(instanceId))
         let allowed = !location
         let revision: number
         try {
           do {
             revision = this.ownershipRevision
-            if (location) allowed = await this.resolveLocationOwner(instanceId, location, current, route.signal)
+            if (location) allowed = heldSession || await this.resolveLocationOwner(instanceId, location, current, route.signal)
+            if (!allowed && destination) allowed = await this.resolveLocationOwner(instanceId, destination, current, route.signal)
             if (!current()) return
           } while (revision !== this.ownershipRevision)
         } catch {

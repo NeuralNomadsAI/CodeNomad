@@ -8,7 +8,7 @@ import { addInstance, removeInstance } from "./instances.ts"
 import { setInstanceMetadata } from "./instance-metadata.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
-import { getSessionListIds, prependSessionListId, sessions, setSessions } from "./session-state.ts"
+import { activeSessionId, getSessionListError, getSessionListIds, prependSessionListId, sessions, setActiveSession, setSessions } from "./session-state.ts"
 import { ensureWorktreesLoaded, setWorktreeSlugForParentSession } from "./worktrees.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
@@ -129,4 +129,46 @@ it("still removes the old instance projection when the session really leaves its
     assert.deepEqual(getSessionListIds(source.session.instanceId), [])
     assert.deepEqual(getSessionListIds(target.session.instanceId), ["restored"])
   } finally { serverApi.fetchWorktrees = original; source.cleanup(); target.cleanup() }
+})
+
+it("removes a single moved session from its old instance while its children stay there", async () => {
+  const source = setup("move-single-source", "/repo")
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  setInstanceMetadata(source.session.instanceId, { project: { id: "source-project", canonical: "/repo" } as any })
+  const child = { ...source.session, id: "left-child", parentId: "restored", title: "left-child" }
+  setSessions((previous) => new Map(previous).set(source.session.instanceId,
+    new Map([...previous.get(source.session.instanceId)!, [child.id, child]])))
+  setActiveSession(source.session.instanceId, "restored")
+  const reads: string[] = []
+  source.client.session.list = async (input: any) => ({ data: input.parentID === null ? [] : [{ ...child, parentID: "restored" }] })
+  // The workspace proxy refuses a session that now lives elsewhere.
+  source.client.session.get = async ({ sessionID }: any) => {
+    reads.push(sessionID)
+    throw Object.assign(new Error("Session does not belong to workspace"), { status: 403 })
+  }
+  try {
+    await ensureWorktreesLoaded(source.session.instanceId)
+    handleNativeSessionEvent(source.session.instanceId, {
+      id: "single-move", type: "session.moved", created: 1, location: { directory: "/repo" },
+      data: { sessionID: "restored", location: { directory: "/elsewhere" } },
+    } as any)
+    await delay(150)
+    assert.equal(sessions().get(source.session.instanceId)?.has("restored") ?? false, false)
+    assert.equal(activeSessionId().get(source.session.instanceId), undefined)
+    assert.deepEqual(getSessionListIds(source.session.instanceId), [])
+    assert.equal(getSessionListError(source.session.instanceId), undefined)
+    assert.deepEqual(reads, [], "a session that left the workspace is not read through it")
+
+    // Moving back makes it a session of this workspace again.
+    const returned = { ...source.session, parentID: undefined }
+    source.client.session.list = async (input: any) => ({ data: input.parentID === null ? [returned] : [returned, { ...child, parentID: "restored" }] })
+    handleNativeSessionEvent(source.session.instanceId, {
+      id: "single-move-back", type: "session.moved", created: 2, location: { directory: "/elsewhere" },
+      data: { sessionID: "restored", location: { directory: "/repo" } },
+    } as any)
+    await delay(150)
+    assert.deepEqual(getSessionListIds(source.session.instanceId), ["restored"])
+    assert.equal(sessions().get(source.session.instanceId)?.get("left-child")?.parentId, "restored")
+  } finally { serverApi.fetchWorktrees = original; source.cleanup() }
 })
