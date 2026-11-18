@@ -674,21 +674,40 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["@acme/reviewer"])
   })
 
-  it("counts an undeclared local plugin as defined only inside a configuration directory's plugin(s)/ folder", async () => {
-    for (const discovered of [false, true]) {
+  it("counts an undeclared local plugin as defined only where native discovery loads it", async () => {
+    // Native discovery loads the immediate children of a reported plugin(s)/ folder: a .ts/.js file as itself, a
+    // directory through its server or index module. Anything else is a removed declaration still reported while the
+    // daemon reloads, or a nested module discovery never loads.
+    for (const [relative, discovered] of [
+      [["plugins", "external.ts"], true], [["plugin", "external.js"], true],
+      [["plugins", "external", "server.js"], true], [["plugins", "external", "index.mts"], true],
+      [["plugins", "resources", "external", "server.js"], false], [["plugins", "external", "lib", "util.js"], false],
+      [["plugins", "external.json"], false], [["plugins", "external", "main.js"], false], [["..", "external", "index.js"], false],
+    ] as const) {
       const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
-      // Outside discovery, the entry is a removed declaration the daemon still reports while it reloads.
-      const local = discovered ? path.join(fixture.globalDirectory, "plugins", "external.ts") : path.join(fixture.projectDirectory, "..", "external", "index.js")
+      const local = path.join(fixture.globalDirectory, ...relative)
       fixture.runtime.push({ id: "acme.external", source: { type: "local", path: local }, features: {}, state: { status: "active" } })
       const enable = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.external", scope: "global", enabled: true })
+      const label = relative.join("/")
       if (discovered) {
         await enable
-        assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "acme.external"])
+        assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "acme.external"], label)
       } else {
-        await assert.rejects(enable, (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
-        assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"], "no bare ID without a definition")
+        await assert.rejects(enable, (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden", label)
+        assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"], `no bare ID without a definition: ${label}`)
       }
     }
+  })
+
+  it("never writes a Global bare ID for a nested plugin declared only in Project", async () => {
+    // plugins/resources has no entrypoint, so discovery skips it: the reviewer is defined only by the Project entry.
+    const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+    const nested = path.join(fixture.globalDirectory, "plugins", "resources", "reviewer")
+    fixture.setProjectPlugins([nested])
+    fixture.runtime.push({ id: "acme.reviewer", source: { type: "local", path: path.join(nested, "server.js") }, features: {}, state: { status: "active" } })
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"])
   })
 
   it("refuses an enable whose deletion leaves a wildcard disabling the plugin, writing nothing", async () => {

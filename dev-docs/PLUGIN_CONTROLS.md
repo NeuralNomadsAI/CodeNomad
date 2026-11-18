@@ -175,9 +175,15 @@ activation rule is written.
 
 `opencode/plugin-activation-order.ts` models that order for every mutation. Builtin, SDK and directory-discovered
 plugins (including verified CodeNomad descriptors) are defined before every document; documents then apply in
-`config.get` order (Global before Project), entries in array order. A local inventory entry counts as discovered
-only inside the `plugin/` or `plugins/` folder of a configuration directory `config.get` reports; any other
-undeclared inventory entry (a removed declaration the daemon still reports while it reloads) defines nothing. Each
+`config.get` order (Global before Project), entries in array order. `plugin.list` gives no discovery origin, only a
+local plugin's resolved server entrypoint, so CodeNomad mirrors native discovery (`plugin/source-directory.ts`,
+`plugin/host.ts`): it examines only the immediate children of the `plugin/` and `plugins/` folders of each
+configuration directory `config.get` reports, a `.ts`/`.js` file child loading as itself and a directory child
+through its `server` or `index` module (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`, `.cjs`). A local
+entry counts as discovered only when its reported path is exactly one of these; nested modules, package `main`,
+`server/index` and symlinked real paths do not count. Any other undeclared inventory entry (a removed declaration
+the daemon still reports while it reloads) defines nothing. A discovered folder deleted while the inventory still
+reports it keeps counting until the daemon reloads. Each
 add carries the ID it verifiably defines: the runtime reports that exact ID for that source, or a verified managed
 descriptor. `-x` disables only plugins defined before it, and an add selects only plugins defined before it. The
 snapshot classifies each positive entry the same way: it is an activation rule only when a definition precedes it,
@@ -400,7 +406,7 @@ guessed paths.
 - rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
   selectors, rules in another scope, source declarations named like their ID, managed re-enable), and the
   removal-only or refused enables of IDs without a preceding verified definition, wildcards left disabling, undeclared
-  local inventory outside discovery folders:
+  local inventory counted only at native discovery entrypoints (nested plugins refused):
   `plugin-controls.test.ts`; the applied-order evaluator: `plugin-activation-order.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`

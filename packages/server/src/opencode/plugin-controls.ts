@@ -623,13 +623,13 @@ function evaluateDocuments(
   // A runtime homonym from another source retains its ordinary controls.
   const managedIds = new Set(context.managedPlugins.flatMap(entry => entry.ids)
     .filter(id => !runtimeById.has(id) || runtimeById.get(id)?.managedBy === "codenomad"))
-  // Defined before every document, as OpenCode applies discovery first: builtin and SDK plugins, plugins inside a
-  // reported configuration directory's plugin(s)/ folder, and verified descriptors. Any other undeclared inventory
-  // entry (a declaration the daemon is still reloading) defines nothing.
+  // Defined before every document, as OpenCode applies discovery first: builtin and SDK plugins, plugins native
+  // discovery loads from a reported configuration directory's plugin(s)/ folder, and verified descriptors. Any other
+  // undeclared inventory entry (a declaration the daemon is still reloading) defines nothing.
   const discovery = context.entries.flatMap(entry => entry?.type === "directory" && typeof entry.path === "string"
     ? ["plugin", "plugins"].map(name => context.paths.join(entry.path, name)) : [])
   const startIds = new Set([...runtime.flatMap(entry => entry.id && (entry.source.type === "builtin" || entry.source.type === "sdk"
-    || (entry.source.type === "local" && discovery.some(directory => insideDirectory(context.paths, directory, (entry.source as { path: string }).path))))
+    || (entry.source.type === "local" && discoveredEntrypoint(context.paths, discovery, entry.source.path)))
     ? [entry.id] : []), ...managedIds])
   // Positive entries select only IDs defined before them in the applied order; a `-id` rule defines nothing.
   const knownDefinitions = new Set(startIds)
@@ -1067,8 +1067,25 @@ function samePath(paths: path.PlatformPath, left: string, right: string): boolea
   return paths === path.win32 ? a.toLowerCase() === b.toLowerCase() : a === b
 }
 
-function insideDirectory(paths: path.PlatformPath, directory: string, candidate: string): boolean {
-  return containsPath(paths, directory, candidate) && !samePath(paths, directory, candidate)
+// Native module resolution infers these extensions for a directory's `server`/`index` entrypoint.
+const ENTRYPOINT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs", ".cts", ".cjs"]
+
+/**
+ * Whether native discovery (`plugin/source-directory.ts`, `config/plugin/source.ts`) loads the plugin whose resolved
+ * server entrypoint `plugin.list` reports at `file`: it examines only the immediate children of each plugin(s)/
+ * folder, a `.ts`/`.js` file child loading as itself and a directory child through its `server` or `index` module.
+ * Other resolutions (package `main`, nested `server/index`, symlinked real paths) are not counted.
+ */
+function discoveredEntrypoint(paths: path.PlatformPath, folders: readonly string[], file: string): boolean {
+  return folders.some(folder => {
+    const relative = paths.relative(folder, file)
+    if (!relative || relative.startsWith("..") || paths.isAbsolute(relative)) return false
+    const parts = relative.split(/[\\/]/)
+    const extension = paths.extname(parts.at(-1)!)
+    if (parts.length === 1) return extension === ".ts" || extension === ".js"
+    return parts.length === 2 && ENTRYPOINT_EXTENSIONS.includes(extension)
+      && ["server", "index"].includes(parts[1]!.slice(0, -extension.length))
+  })
 }
 
 function containsPath(paths: path.PlatformPath, candidate: string, directory: string): boolean {
