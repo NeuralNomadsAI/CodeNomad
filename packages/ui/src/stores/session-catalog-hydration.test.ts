@@ -6,7 +6,7 @@ import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "../lib/sd
 import { serverApi } from "../lib/api-client"
 import { addInstance, removeInstance } from "./instances"
 import { setInstanceMetadata } from "./instance-metadata"
-import { fetchSessions, hydrateRestoredSessionChain, removeSessionRuntimeState } from "./session-api"
+import { fetchSessions, hydrateRestoredSessionChain, refreshSessionRuntimeStatus, removeSessionRuntimeState } from "./session-api"
 import { hydrateRestoredWorkspaceState, seedRestoredWorkspaceState } from "./app-session-workspace-hydration"
 import { ensureWorktreesLoaded } from "./worktrees"
 import { captureSessionCatalog } from "./session-catalog-persistence"
@@ -266,6 +266,56 @@ test("cold restore reconciles a departed parent after the local child read witho
         assert.equal(activeParentSessionId().get(id), selected)
         assert.equal(sessions().get(id)?.get("child")?.parentId, "root")
       } finally { childRead.resolve(Response.json({ data: local("child", "root") })); f.cleanup() }
+    }
+  } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees }
+})
+
+test("cold restore retains owned child evidence only for the same placement after a runtime refresh", async () => {
+  const originalFetch = globalThis.fetch
+  const originalWorktrees = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({
+    isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }],
+  })
+  try {
+    for (const changed of [null, "directory", "workspaceID", "projectID", "subpath"] as const) {
+      const id = `catalog-cold-placement-${changed ?? "same"}`, f = fixture(id)
+      const parentStarted = deferred<void>(), parentRead = deferred<Response>()
+      const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
+      const departure = () => Response.json({ reason: SESSION_LOCATED_ELSEWHERE_REASON }, { status: 403 })
+      let child = {
+        ...row("child"), parentID: "root", subpath: "pkg",
+        location: { directory: "/linked-worktree/pkg", workspaceID: "workspace" },
+        model: { providerID: "p", id: "m" },
+      }
+      try {
+        Object.assign(f.saved, { activeSessionId: "child", drafts: {}, sessionCatalog: undefined })
+        await ensureWorktreesLoaded(id)
+        globalThis.fetch = async (input) => {
+          const path = new URL(String(input)).pathname
+          if (path.endsWith("/child")) return Response.json({ data: child })
+          assert.ok(path.endsWith("/root"), path)
+          parentStarted.resolve()
+          return parentRead.promise
+        }
+        f.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
+        const restoring = hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+        await parentStarted.promise
+        await new Promise<void>(resolve => setImmediate(resolve))
+        const owned = sessions().get(id)!.get("child")!
+        assert.ok(owned, "the child read publishes before the parent's refusal")
+        setSessionStatus(id, "child", "working")
+        if (changed === "directory" || changed === "workspaceID") {
+          child = { ...child, location: { ...child.location, [changed]: "/another-checkout" } }
+        } else if (changed) child = { ...child, [changed]: "other" }
+        await refreshSessionRuntimeStatus(id)
+        const refreshed = sessions().get(id)!.get("child")!
+        assert.notEqual(refreshed.location, owned.location, "the runtime read replaced the location object")
+        parentRead.resolve(departure())
+        await restoring
+        const selected = changed ? undefined : "child"
+        assert.equal(activeSessionId().get(id), selected, changed ?? "equal placement")
+        assert.equal(activeParentSessionId().get(id), selected, changed ?? "equal placement")
+      } finally { parentRead.resolve(departure()); f.cleanup() }
     }
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees }
 })

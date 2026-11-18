@@ -575,8 +575,13 @@ async function hydrateRestoredSessionChainAttempt(
             return next
           })
           session = sessions().get(instanceId)?.get(sessionId)
-          ownedReads.set(sessionId, () => getPendingSessionMove(instanceId, sessionId) === move
-            && sessions().get(instanceId)?.get(sessionId)?.location === apiSession.location)
+          const readLocation = locationAuthorityKey(apiSession.location)
+          ownedReads.set(sessionId, () => {
+            const current = sessions().get(instanceId)?.get(sessionId)
+            return !!current && getPendingSessionMove(instanceId, sessionId) === move
+              && locationAuthorityKey(current.location) === readLocation
+              && current.projectID === apiSession.projectID && current.subpath === apiSession.subpath
+          })
           if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
         } catch (error) {
           if (signal?.aborted) throw error
