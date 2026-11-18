@@ -3,7 +3,7 @@ import { isSessionNotFoundError } from "@opencode/client"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { AuthManager } from "../../auth/manager"
 import type { DeveloperCdp } from "../../developer-cdp"
-import type { DeveloperCdpIdentity, DeveloperCdpSelection } from "../../developer-cdp"
+import type { DeveloperCdpDiagnostic, DeveloperCdpIdentity, DeveloperCdpSelection } from "../../developer-cdp"
 import type { NativeParent } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -62,7 +62,7 @@ interface DeveloperNativeStatus {
     cdpUrl?: string
     windowId?: string
   }
-  logs?: unknown[]
+  logs?: DeveloperCdpDiagnostic[]
 }
 
 export function isAutomationPluginRequest(
@@ -299,6 +299,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
       if (command.action === "inspect") {
         const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query })
+        result.diagnostics.push(...(native.logs ?? []).slice(-32))
         inspectedTargets.remember(body.sessionID, identity)
         return reply.send({ result })
       }
