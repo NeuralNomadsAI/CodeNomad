@@ -1,0 +1,120 @@
+import { createMemo, createSignal, Show } from "solid-js"
+import { render } from "solid-js/web"
+import SessionSidebar from "../../../src/components/instance/shell/SessionSidebar"
+import AlertDialog from "../../../src/components/alert-dialog"
+import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
+import { I18nProvider, useI18n } from "../../../src/lib/i18n"
+import { serverApi } from "../../../src/lib/api-client"
+import { serverEvents } from "../../../src/lib/server-events"
+import { sdkManager } from "../../../src/lib/sdk-manager"
+import { addInstance } from "../../../src/stores/instances"
+import { cleanupBlankSessions, getSessionThreads, sessions, setSessions, setSessionPage } from "../../../src/stores/session-state"
+import { createClientSession } from "../../../src/types/session"
+import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
+import "../../../src/index.css"
+
+const id = "favorites-workspace", main = "/bureau", ventes = "/bureau-ventes"
+const start = Date.UTC(2026, 0, 5, 8)
+const make = (key: string, title: string, age: number, directory = main, parentID?: string) => ({
+  id: `ses_${key}`, title, projectID: "bureau", agent: "build", location: { directory }, parentID,
+  model: { providerID: "fixture", id: "fixture" }, time: { created: start + age, updated: start + age },
+  ...(key === "briefing" ? { metadata: { thirdParty: { verified: "leave alone" } } } : {}),
+})
+const seed = [
+  make("briefing", "Briefing du matin", 1),
+  make("equipe", "Équipe", 2),
+  make("validation", "Validation budget", 3),
+  make("conseil", "Préparer conseil", 4, main, "ses_equipe"),
+  ...Array.from({ length: 60 }, (_, index) => {
+    const n = String(index + 1).padStart(2, "0")
+    return make(`dossier_${n}`, `Dossier ${n}`, index + 5, index % 2 ? ventes : main)
+  }),
+]
+const initial = seed.filter(row => row.id !== "ses_dossier_01")
+const native = new Map(seed.map(row => [row.id, row]))
+const gets: string[] = [], lists: unknown[] = [], removes: string[] = []
+const blank = new Set(["ses_briefing", "ses_conseil", "ses_dossier_01"])
+const active = { ses_dossier_60: { type: "busy" } }
+let sequence = 0
+const emit = (type: string, data: Record<string, unknown>, directory = main) => {
+  const seq = ++sequence
+  ;(serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: id, event: {
+    type, data, id: `evt_fixture_${seq}`, location: { directory }, created: start + 100 + seq,
+    durable: { aggregateID: data.sessionID, seq, version: 1 },
+  } }])
+}
+const client = {
+  session: {
+    get: async ({ sessionID }: { sessionID: string }) => {
+      gets.push(sessionID)
+      return structuredClone(native.get(sessionID))
+    },
+    list: async (input: { parentID?: string | null; directory?: string; search?: string; cursor?: string }) => {
+      lists.push(input)
+      const rows = [...native.values()]
+      const data = input.cursor ? rows.filter(row => row.id === "ses_dossier_01") : rows
+        .filter(row => input.parentID === undefined || (row.parentID ?? null) === input.parentID)
+        .filter(row => !input.directory || input.directory === row.location.directory)
+        .filter(row => !input.search || row.title.toLowerCase().includes(input.search))
+      return { data, cursor: {} }
+    },
+    inbox: { list: async () => [] },
+    active: async () => active,
+    remove: async ({ sessionID }: { sessionID: string }) => {
+      await fetch("/fixture-native-delete", { method: "POST", body: sessionID })
+      removes.push(sessionID)
+      native.delete(sessionID)
+      emit("session.deleted", { sessionID })
+    },
+    update: async () => { throw new Error("Favorites must not update native session metadata") },
+  },
+  message: { list: async ({ sessionID }: { sessionID: string }) => ({ data: blank.has(sessionID) ? [] : [{ type: "user" }], cursor: {} }) },
+}
+;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
+const config = { settings: { locale: "fr" } }
+serverApi.fetchConfigOwner = async () => config as any
+serverApi.patchConfigOwner = async (_owner, patch) => Object.assign(config, patch) as any
+serverApi.fetchStateOwner = async () => ({} as any)
+serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
+  { slug: "root", label: "main", directory: main, kind: "root" },
+  { slug: "ventes", label: "ventes", directory: ventes, kind: "worktree" },
+] })
+addInstance({ id, folder: main, port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client } as any)
+setSessions(previous => new Map(previous).set(id, new Map(initial.map(row => [row.id, {
+  ...createClientSession(row as any, id, "build", { providerId: "fixture", modelId: "fixture" }),
+  status: row.id === "ses_dossier_60" ? "working" : "idle",
+}]))))
+setSessionPage(id, initial.filter(row => !row.parentID).map(row => row.id), true, true, "fixture-older-page")
+await ensureWorktreesLoaded(id)
+const [search, setSearch] = createSignal(false)
+const [shown, setShown] = createSignal(true)
+const [activeId, setActiveId] = createSignal<string | null>(null)
+function Fixture() {
+  const { t } = useI18n()
+  const threads = createMemo(() => getSessionThreads(id))
+  return <main style={{ height: "100dvh", display: "flex" }}>
+    <Show when={shown()}>
+      <aside style={{ flex: "0 0 min(320px, 100vw)", height: "100%", "border-inline-end": "1px solid var(--border-base)" }}>
+        <SessionSidebar t={t} instanceId={id} threads={threads} activeSessionId={activeId}
+          showSearch={search} onToggleSearch={() => setSearch(value => !value)} drawerState={() => "pinned"}
+          onSelectSession={setActiveId} onNewSession={() => {}} panelId="fixture-sidebar" setContentEl={() => {}}
+          history={{ canGoBack: () => false, canGoForward: () => false, goBack: () => {}, goForward: () => {} }} />
+      </aside>
+    </Show>
+    <section class="p-3 flex-1 bg-surface-canvas">
+      <button type="button" class="button-tertiary" onClick={() => { setSearch(false); setShown(value => !value) }}>Bureau</button>
+    </section>
+    <AlertDialog />
+  </main>
+}
+render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+await updatePreferences({ locale: "fr" })
+void serverEvents.connect()
+emit("permission.asked", { sessionID: "ses_validation", id: "fixture-permission", action: "read", resources: ["budget"] })
+Object.assign(window, { favoriteFixture: {
+  gets, lists, removes, activeId,
+  metadata: () => native.get("ses_briefing")?.metadata,
+  automatic: () => cleanupBlankSessions(id),
+  deep: () => { blank.add("ses_dossier_02"); return cleanupBlankSessions(id, undefined, true) },
+  store: () => ({ loaded: sessions().get(id)?.size }),
+} })

@@ -5,6 +5,7 @@ import { messageStoreBus } from "./message-v2/bus"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
 import { getRootClient } from "./opencode-client"
 import { deleteSession } from "./session-api"
+import { allowsFavoriteCleanup } from "./session-favorites"
 import { getChildSessions, getSessionDraftPrompt, loading, sessions } from "./session-state"
 
 // A timestamp or an empty resident transcript is never proof of an empty native
@@ -64,7 +65,7 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
 
     // Recheck local activity, drafts and connection authority immediately before
     // dispatch. No asynchronous work between this check and deleteSession's call.
-    if (!current()) return false
+    if (!current() || !await allowsFavoriteCleanup(instanceId, sessionId) || !current()) return false
     await deleteSession(instanceId, sessionId)
     return true
   } catch (error) {

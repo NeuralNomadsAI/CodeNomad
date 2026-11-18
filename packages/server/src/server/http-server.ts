@@ -30,6 +30,7 @@ import type { PermissionReceipts } from "../permissions/receipts"
 import { registerSessionPruningRoutes } from "./routes/session-pruning"
 import { registerImagesConversationRoute } from "./routes/images-conversation"
 import { registerSessionGoalRoute } from "./routes/session-goal"
+import { registerSessionFavoritesRoutes } from "./routes/session-favorites"
 import { registerBackgroundShellRoutes } from "./routes/background-shells"
 import { ownedShellDirectory } from "../opencode/background-shells"
 import { registerSessionMediaRoutes } from "./routes/session-media"
@@ -470,6 +471,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
+  registerSessionFavoritesRoutes(app, { workspaceManager: deps.workspaceManager, settings: deps.settings, eventBus: deps.eventBus })
   registerBackgroundShellRoutes(app, deps.workspaceManager)
   registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts,

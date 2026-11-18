@@ -21,6 +21,14 @@ Normal browsing is hierarchical; search/filter results are flat entries with eac
 
 Back/Forward is a per-project-tab, per-window visit history, not list order. The palette's **Previous Session** / **Next Session** instead cycle the visible list.
 
+## Keep conversations in favorites {#favorites}
+
+On a session row, open **More actions** (⋯) and choose **Add to favorites** or **Remove from favorites**. In normal browsing, requests needing your input come first, then favorites and their branches, then other conversations by activity. A favorite subsession stays with its parent. Its branch opens once and can be collapsed again.
+
+In session search, choose **Favorites only**. **Show … hidden matches** enables both session types without changing the search, worktree or other filters. **Reset** restores the default filters and sort.
+
+Windows on the same CodeNomad backend share favorites for the same opened folder. Session cleanup keeps favorites and their ancestors; you can still delete them explicitly.
+
 ## Archive and restore {#archive}
 
 Choose **Archive session** in a session row's actions to keep its history while removing its idle branch from normal browsing. The selected conversation and conversations with running work or pending questions remain reachable. Archiving does not stop work, delete messages or change subsessions' own archive flags.

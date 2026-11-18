@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { after, afterEach, before, describe, it } from "node:test"
 import toast from "solid-toast"
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { createFileAttachment } from "../types/attachment.ts"
 import { addAttachment, clearInstanceAttachments } from "./attachments.ts"
@@ -21,8 +22,9 @@ const instanceId = "blank-cleanup"
 const sessionId = "existing"
 // Node's CJS interop for this browser-only toast package differs from Vite's.
 const originalToast = toast.custom
+const originalFavoriteRead = serverApi.fetchSessionFavorites
 before(() => { toast.custom = () => "cleanup-toast" })
-after(() => { toast.custom = originalToast })
+after(() => { toast.custom = originalToast; serverApi.fetchSessionFavorites = originalFavoriteRead })
 const emptyPage = () => ({ data: [], cursor: {} })
 const session = (id = sessionId, overrides: Partial<Session> = {}): Session => ({
   id, instanceId, parentId: null, title: id, agent: "", model: { providerId: "", modelId: "" },
@@ -32,6 +34,7 @@ const session = (id = sessionId, overrides: Partial<Session> = {}): Session => (
 })
 
 function setup(overrides: Partial<Session> = {}) {
+  serverApi.fetchSessionFavorites = async () => ({})
   const removed: string[] = []
   const reads: any[] = []
   const client = {
@@ -70,6 +73,16 @@ function residentMessage() {
 }
 
 describe("automatic blank-session cleanup", () => {
+  it("requires a fresh favorite snapshot and protects both a favorite and its parent", async () => {
+    const { removed } = setup()
+    serverApi.fetchSessionFavorites = async () => ({ [sessionId]: [] })
+    assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
+    serverApi.fetchSessionFavorites = async () => ({ child: [sessionId] })
+    assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
+    serverApi.fetchSessionFavorites = async () => { throw new Error("favorites unavailable") }
+    assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
+    assert.deepEqual(removed, [])
+  })
   it("creating a session preserves an unloaded conversation with equal timestamps (#754)", async () => {
     const { client, removed } = setup()
     client.message.list = async () => ({ data: [{ id: "prompt", type: "user", text: "Keep me" }], cursor: {} })

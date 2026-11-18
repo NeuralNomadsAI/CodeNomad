@@ -14,6 +14,7 @@ import { createHash } from "node:crypto"
 import path from "node:path"
 
 export type DocKind = "config" | "state"
+export const SESSION_FAVORITES_OWNER = "sessionFavorites"
 /** Refuses a config write by throwing, given the authoritative document and the would-be result. */
 export type ConfigWriteCheck = (before: SettingsDoc, after: SettingsDoc) => void
 
@@ -190,6 +191,11 @@ export class SettingsService {
     return value
   }
 
+  /** A cleanup decision requires readable persisted favorites, not the display fallback. */
+  getSessionFavoritesState(): SettingsDoc {
+    return this.stateStore.getAuthoritativeOwner(SESSION_FAVORITES_OWNER)
+  }
+
   /** See `mergePatchDoc` for the config write base and `check`. */
   mergePatchOwner(kind: DocKind, owner: string, patch: unknown, check?: ConfigWriteCheck): SettingsDoc {
     if (!isPlainObject(patch)) {
@@ -216,7 +222,8 @@ export class SettingsService {
     const payload: WorkspaceEventPayload = {
       type,
       owner,
-      value: kind === "config" ? sanitizeConfigOwner(owner, nextValue) : nextValue,
+      value: kind === "config" ? sanitizeConfigOwner(owner, nextValue)
+        : owner === SESSION_FAVORITES_OWNER ? {} : nextValue,
     } as any
     try {
       this.eventBus.publish(payload)

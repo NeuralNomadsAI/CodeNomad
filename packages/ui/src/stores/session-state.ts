@@ -15,6 +15,7 @@ import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 import { applySessionPendingState } from "./session-pending-state"
 import { cleanupBlankSession } from "./blank-session-cleanup"
+import { allowsFavoriteCleanup } from "./session-favorites"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { flushTranscriptProjections } from "./opencode-projection-frame"
 import {
@@ -1241,7 +1242,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
       if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
       continue
     }
-    if (!await isDeepCleanupCandidate(session, instanceId)) continue
+    if (!await isDeepCleanupCandidate(session, instanceId) || !await allowsFavoriteCleanup(instanceId, sessionId)) continue
     if (!current() || sessions().get(instanceId)?.get(sessionId) !== session) continue
     try {
       await deleteSession(instanceId, sessionId)

@@ -21,6 +21,14 @@ La navigation normale est hiérarchique ; les résultats de recherche/filtre son
 
 Retour/Avancer est un historique de visites par onglet de projet et par fenêtre, pas l’ordre de la liste. **Session précédente** / **Session suivante** dans la palette parcourent plutôt la liste visible.
 
+## Garder des conversations dans les favoris {#favorites}
+
+Dans **Plus d'actions** (⋯) sur une ligne, choisissez **Ajouter aux favoris** ou **Retirer des favoris**. En navigation, les demandes en attente de votre réponse passent en premier, puis les favoris et leurs branches, puis les autres conversations par activité. Une sous-session favorite reste sous son parent : sa branche s’ouvre une fois et peut être repliée.
+
+Dans la recherche de sessions, choisissez **Favoris uniquement**. **Afficher … résultats masqués** active les deux types de sessions sans changer la recherche, le worktree ni les autres filtres. **Réinitialiser** rétablit les filtres et le tri par défaut.
+
+Les fenêtres reliées au même serveur CodeNomad et ouvertes sur le même dossier partagent les favoris. Le nettoyage préserve les favoris et leurs ancêtres ; la suppression explicite reste possible.
+
 ## Archiver et restaurer {#archive}
 
 Choisissez **Archiver la session** dans les actions d’une ligne pour conserver son historique tout en retirant sa branche inactive de la navigation normale. La conversation sélectionnée et les conversations en cours de travail ou attendant une réponse restent accessibles. L’archivage n’arrête pas le travail, ne supprime aucun message et ne change pas l’état d’archivage propre aux sous-sessions.

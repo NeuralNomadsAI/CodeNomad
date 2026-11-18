@@ -626,6 +626,8 @@ export interface WorkspaceFileResponse {
 
 export type WorkspaceFileSearchResponse = FileSystemEntry[]
 
+export type SessionFavorites = Record<string, string[]>
+
 export interface InstanceData {
   messageHistory: string[]
   agentModelSelections: AgentModelSelection

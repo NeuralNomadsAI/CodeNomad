@@ -81,6 +81,25 @@ describe("session tree", () => {
     assert.equal(root.children[0].children[0].depth, 2)
   })
 
+  it("promotes a favorite's branch without moving the child above a pending request", () => {
+    const sessions = sessionMap([
+      ["favorite-parent", null, 1], ["favorite-child", "favorite-parent", 2],
+      ["newer-sibling", "favorite-parent", 9], ["waiting-parent", null, 3],
+      ["waiting-child", "waiting-parent", 4], ["recent", null, 10],
+    ])
+    sessions.get("waiting-child")!.pendingForm = true
+    const roots = ["favorite-parent", "waiting-parent", "recent"]
+    const original = buildSessionThreadsFromMap(sessions, roots)
+    const promoted = projectSessionFamilies(original, {
+      sort: "activity", getWorktreeLabel: () => "", favoriteIds: new Set(["favorite-child"]),
+    })
+    assert.deepEqual(collectSessionThreadIds(promoted), [
+      "waiting-parent", "waiting-child", "favorite-parent", "favorite-child", "newer-sibling", "recent",
+    ])
+    assert.equal(promoted[1].children[0].depth, 1)
+    assert.deepEqual(original.map(row => row.session.id), ["recent", "favorite-parent", "waiting-parent"])
+  })
+
   it("includes the complete ancestor path for filtered descendants", () => {
     const sessions = sessionMap([
       ["root", null, 100],
