@@ -450,17 +450,6 @@ function markSessionDeletedAuthoritative(instanceId: string, sessionId: string):
   addAuthoritativeKey(setAuthoritativelyDeletedSessionKeys, getDraftKey(instanceId, sessionId))
 }
 
-/** A session moved back into the instance it had left. */
-function clearSessionDeletedAuthority(instanceId: string, sessionId: string): void {
-  const key = getDraftKey(instanceId, sessionId)
-  setAuthoritativelyDeletedSessionKeys((prev) => {
-    if (!prev.has(key)) return prev
-    const next = new Set(prev)
-    next.delete(key)
-    return next
-  })
-}
-
 function clearInstanceDeletedSessionAuthority(instanceId: string): void {
   if (!instanceId) return
   const prefix = `${instanceId}:`
@@ -1311,7 +1300,6 @@ export {
   getAuthoritativelyDeletedSessionIdsForInstance,
   getAuthoritativeSessionExpansionIdsForInstance,
   markSessionDeletedAuthoritative,
-  clearSessionDeletedAuthority,
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
   hydrateSessionDraftPrompt,

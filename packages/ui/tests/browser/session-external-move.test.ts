@@ -16,6 +16,7 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
+const parentRead = "/workspaces/external-move-a/instance/api/session/moving"
 const row = (page: Page, tab: string, id: string) =>
   page.getByRole("region", { name: `Project ${tab}` }).locator(`[data-session-id="${id}"]`)
 
@@ -51,7 +52,7 @@ test("an external move of the selected conversation leaves its old tab and appea
     await page.evaluate(() => (window as any).fixture.move("moving", "/projects/b"))
     await row(page, "b", "moving").waitFor()
     await settled(page, errors)
-    assert.deepEqual(refused, [], "nothing reads the session through its old project")
+    assert.deepEqual(refused, [parentRead], "only its children's parent read, refused and treated as absent")
     assert.equal(await page.evaluate(() => (window as any).fixture.selected("b")), null, "the destination keeps its own selection")
   } finally { await page.close() }
 })
@@ -61,7 +62,7 @@ test("an external move to a folder open in no tab only leaves the old tab", asyn
   try {
     await page.evaluate(() => (window as any).fixture.move("moving", "/projects/elsewhere"))
     await settled(page, errors)
-    assert.deepEqual(refused, [])
+    assert.deepEqual(refused, [parentRead])
     assert.equal(await row(page, "b", "moving").count(), 0)
     await row(page, "b", "resident").waitFor()
   } finally { await page.close() }
@@ -73,6 +74,6 @@ test("a reloaded old tab lists its sessions without an error after the move", as
     await row(page, "b", "moving").waitFor()
     await settled(page, errors)
     // Its children's parent is read once, refused as located elsewhere, and treated as absent.
-    assert.deepEqual(refused, ["/workspaces/external-move-a/instance/api/session/moving"])
+    assert.deepEqual(refused, [parentRead])
   } finally { await page.close() }
 })

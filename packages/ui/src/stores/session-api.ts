@@ -1343,7 +1343,12 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
   deleteSessionAttachments(instanceId, sessionId)
   clearSessionDraftPrompt(instanceId, sessionId)
   setSessionExpanded(instanceId, sessionId, false)
+  removeSessionProjection(instanceId, sessionId)
+}
 
+/** Removes the session from this instance's list, selection and transcript
+ * caches only; its draft, attachments and other per-session state stay. */
+function removeSessionProjection(instanceId: string, sessionId: string): void {
   setSessions((prev) => {
     const next = new Map(prev)
     const instanceSessions = next.get(instanceId)
@@ -2058,6 +2063,7 @@ export {
   isCreatingSession,
   deleteSession,
   removeSessionRuntimeState,
+  removeSessionProjection,
   fetchAgents,
   fetchProviders,
   getActiveCatalogLocation,

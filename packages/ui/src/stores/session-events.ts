@@ -40,17 +40,17 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, clearSessionDeletedAuthority, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
 import { observeSessionInterruption, retireSessionInterruptionBoundary } from "./session-interruption-seen"
 import { tGlobal } from "../lib/i18n"
 
-import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
+import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionProjection, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
-import { getWorktrees, reloadWorktrees } from "./worktrees"
+import { getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
 import { normalizeSessionDirectory } from "./session-list-options"
 import {
   setSessionRevertV2,
@@ -75,8 +75,14 @@ const nativeLifecycleGenerations = new Map<string, number>()
 // attempt starts or its run settles.
 let activeRetryToast: { key: string; handle: ToastHandle } | null = null
 const movedSessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
-/** Per instance, the destination directory of each session moved since its last refresh. */
-const movedSessionDirectories = new Map<string, Map<string, string>>()
+interface SessionMove { directory: string; generation: number }
+/** Per instance, the latest move of each session since its last refresh. */
+const pendingSessionMoves = new Map<string, Map<string, SessionMove>>()
+/** Per `instance\0session`, the move whose placement decision still applies. */
+const latestSessionMoves = new Map<string, number>()
+let sessionMoveGeneration = 0
+/** Per instance, the destination of each session it removed as moved away. */
+const movedAwaySessions = new Map<string, Map<string, string>>()
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
   const key = `${instanceId}\0${sessionId}`
@@ -300,31 +306,64 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
 
   const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]
   for (const instanceId of new Set(affectedInstanceIds)) {
-    movedSessionDirectories.set(instanceId, (movedSessionDirectories.get(instanceId) ?? new Map()).set(sessionId, location.directory))
+    const generation = ++sessionMoveGeneration
+    latestSessionMoves.set(`${instanceId}\0${sessionId}`, generation)
+    movedAwaySessions.get(instanceId)?.delete(sessionId)
+    pendingSessionMoves.set(instanceId, (pendingSessionMoves.get(instanceId) ?? new Map()).set(sessionId, { directory: location.directory, generation }))
     const pending = movedSessionRefreshTimers.get(instanceId)
     if (pending) clearTimeout(pending)
     movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
       movedSessionRefreshTimers.delete(instanceId)
-      const moved = movedSessionDirectories.get(instanceId) ?? new Map<string, string>()
-      movedSessionDirectories.delete(instanceId)
-      void reloadWorktrees(instanceId).then(() => true, error => {
+      const moves = pendingSessionMoves.get(instanceId) ?? new Map<string, SessionMove>()
+      pendingSessionMoves.delete(instanceId)
+      void reloadWorktrees(instanceId).catch(error => {
         log.warn("Failed to refresh moved-session worktrees", { instanceId, error })
-        return false
-      }).then((inventoryRead) => {
-        // A session that left this workspace leaves it as a deleted one does,
-        // even when family members stay behind in this location.
-        for (const [movedId, directory] of moved) {
-          if (ownsSessionDirectory(instanceId, directory)) clearSessionDeletedAuthority(instanceId, movedId)
-          else if (inventoryRead && sessions().get(instanceId)?.has(movedId)) removeSession(instanceId, movedId)
-        }
-        return fetchSessions(instanceId, { reset: true })
-      }).then(() => (
-        activeSessionId().get(instanceId) ? refreshSessionCatalog(instanceId) : undefined
-      )).catch((error) => {
-        log.warn("Failed to reconcile moved sessions", { instanceId, error })
-      })
+      }).then(() => Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move))))
+        .then(() => fetchSessions(instanceId, { reset: true })).then(() => (
+          activeSessionId().get(instanceId) ? refreshSessionCatalog(instanceId) : undefined
+        )).catch((error) => {
+          log.warn("Failed to reconcile moved sessions", { instanceId, error })
+        })
     }, 100))
   }
+}
+
+/** A session moved to a directory this instance does not own leaves its list
+ * and selection; its draft and attachments stay for its return. Only a fresh
+ * inventory decides, and only for the latest move of that session. */
+async function settleSessionMove(instanceId: string, sessionId: string, move: SessionMove): Promise<void> {
+  const key = `${instanceId}\0${sessionId}`
+  const latest = () => latestSessionMoves.get(key) === move.generation
+  if (!latest()) return
+  if (!ownsSessionDirectory(instanceId, move.directory)) {
+    try {
+      await reloadWorktrees(instanceId, true)
+    } catch (error) {
+      log.warn("Failed to read the inventory for a moved session", { instanceId, sessionId, error })
+      if (latest()) latestSessionMoves.delete(key)
+      return
+    }
+  }
+  if (!latest()) return
+  latestSessionMoves.delete(key)
+  if (ownsSessionDirectory(instanceId, move.directory) || !sessions().get(instanceId)?.has(sessionId)) return
+  nativeLifecycleGenerations.delete(key)
+  dismissRetryToast(instanceId, sessionId)
+  removeSessionProjection(instanceId, sessionId)
+  movedAwaySessions.set(instanceId, (movedAwaySessions.get(instanceId) ?? new Map()).set(sessionId, move.directory))
+}
+
+/** A later inventory that owns a moved-away session's destination lists it again. */
+function relistReturnedSessions(instanceId: string): void {
+  const away = movedAwaySessions.get(instanceId)
+  if (!away) return
+  const returned = [...away].filter(([, directory]) => ownsSessionDirectory(instanceId, directory)).map(([id]) => id)
+  if (!returned.length) return
+  for (const id of returned) away.delete(id)
+  if (!away.size) movedAwaySessions.delete(instanceId)
+  void fetchSessions(instanceId, { reset: true }).catch((error) => {
+    log.warn("Failed to list returned moved sessions", { instanceId, error })
+  })
 }
 
 function isChildSession(instanceId: string, sessionId: string): boolean | null {
@@ -373,6 +412,7 @@ function notifySessionAttention(category: "needsInput" | "sessionDone", instance
 }
 
 queueMicrotask(() => {
+  onWorktreesPublished(relistReturnedSessions)
   setPendingFormAddedHandler((instanceId, form) => notifySessionAttention("needsInput", instanceId, form.sessionID))
 })
 
@@ -591,10 +631,6 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
   if (!sessionId) return
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
-  removeSession(instanceId, sessionId)
-}
-
-function removeSession(instanceId: string, sessionId: string): void {
   nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
   dismissRetryToast(instanceId, sessionId)
   removeSessionRuntimeState(instanceId, sessionId)

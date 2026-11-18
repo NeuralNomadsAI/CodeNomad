@@ -59,11 +59,16 @@ Implementation:
   returned identifier rather than guessing it from the branch name.
 - Native worktree events invalidate ownership and UI state. Opening the selector also
   discovers external Git changes. Native session moves refresh the catalogue before
-  list reconciliation. A moved session whose destination the refreshed catalogue does
-  not own then leaves that instance through the deletion path (selection, transcript
-  and rehydration through its descendants), whatever started the move; family members
-  left behind stay sessions of their own location, and a later move back lifts that
-  fence (`stores/session-move-restore.test.ts`, `tests/browser/session-external-move.test.ts`).
+  list reconciliation. A moved session whose destination neither the catalogue nor a
+  fresh inventory read (`?fresh=true`, only when the catalogue does not own it) owns
+  leaves that instance's list, selection and transcript caches
+  (`removeSessionProjection`), whatever started the move; a failed fresh read removes
+  nothing. Its draft and attachments stay, and no deletion marker is set: a session
+  refresh or a later published inventory that owns the destination lists it again.
+  Each instance applies only the latest move of a session (a per-session generation),
+  so an earlier decision still reading the inventory never overrides a later move.
+  Family members left behind stay sessions of their own location
+  (`stores/session-move-restore.test.ts`, `tests/browser/session-external-move.test.ts`).
   The workspace proxy's 403 for a session located outside the workspace carries
   `reason: "session_located_elsewhere"` (`opencode/session-access-contract.ts`). Every
   parent read (an ID reached through `parentID`, `hydrateRestoredSessionChain`) opts in

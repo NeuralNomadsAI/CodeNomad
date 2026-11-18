@@ -28,6 +28,14 @@ const defaultDirectories = new Map<string, string>()
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
+const publicationListeners = new Set<(instanceId: string) => void>()
+
+/** Called after each successfully read inventory is published. */
+export function onWorktreesPublished(listener: (instanceId: string) => void): () => void {
+  publicationListeners.add(listener)
+  return () => publicationListeners.delete(listener)
+}
+
 async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh = false): Promise<void> {
   const requests = fresh ? freshWorktreeRequests : worktreeRequests
   const existing = requests.get(instanceId)
@@ -59,6 +67,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
           next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
           return next
         })
+        for (const listener of publicationListeners) listener(instanceId)
       } catch (error) {
         log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
         if (!initialRead || fresh) throw error

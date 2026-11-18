@@ -1,14 +1,19 @@
 import assert from "node:assert/strict"
 import { it } from "node:test"
 
+import { OpenCode } from "@opencode/client"
 import { serverApi } from "../lib/api-client.ts"
-import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverEvents } from "../lib/server-events.ts"
+import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "../lib/sdk-manager.ts"
+import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract.ts"
+import { addAttachment, deleteSessionAttachments, getAttachments } from "./attachments.ts"
+import { fetchSessions } from "./session-api.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { setInstanceMetadata } from "./instance-metadata.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
-import { activeSessionId, getSessionListError, getSessionListIds, prependSessionListId, sessions, setActiveSession, setSessions } from "./session-state.ts"
+import { activeSessionId, getSessionDraftPrompt, getSessionListError, getSessionListIds, prependSessionListId, sessions, setActiveSession, setSessionDraftPrompt, setSessions } from "./session-state.ts"
 import { ensureWorktreesLoaded, setWorktreeSlugForParentSession } from "./worktrees.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
@@ -142,11 +147,12 @@ it("removes a single moved session from its old instance while its children stay
   setActiveSession(source.session.instanceId, "restored")
   const reads: string[] = []
   source.client.session.list = async (input: any) => ({ data: input.parentID === null ? [] : [{ ...child, parentID: "restored" }] })
-  // The workspace proxy refuses a session that now lives elsewhere.
-  source.client.session.get = async ({ sessionID }: any) => {
-    reads.push(sessionID)
-    throw Object.assign(new Error("Session does not belong to workspace"), { status: 403 })
-  }
+  // The workspace proxy refuses a session that now lives elsewhere, through the real adapter.
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => Response.json({ error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON }, { status: 403 })
+  const baseUrl = buildInstanceBaseUrl("/workspaces/move-single-source/instance", "http://fixture")
+  const proxy = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+  source.client.session.get = (input: any, options: any) => { reads.push(input.sessionID); return proxy.session.get(input, options) }
   try {
     await ensureWorktreesLoaded(source.session.instanceId)
     handleNativeSessionEvent(source.session.instanceId, {
@@ -158,7 +164,7 @@ it("removes a single moved session from its old instance while its children stay
     assert.equal(activeSessionId().get(source.session.instanceId), undefined)
     assert.deepEqual(getSessionListIds(source.session.instanceId), [])
     assert.equal(getSessionListError(source.session.instanceId), undefined)
-    assert.deepEqual(reads, [], "a session that left the workspace is not read through it")
+    assert.deepEqual(reads, ["restored"], "only as the parent left behind, read as absent")
 
     // Moving back makes it a session of this workspace again.
     const returned = { ...source.session, parentID: undefined }
@@ -170,5 +176,110 @@ it("removes a single moved session from its old instance while its children stay
     await delay(150)
     assert.deepEqual(getSessionListIds(source.session.instanceId), ["restored"])
     assert.equal(sessions().get(source.session.instanceId)?.get("left-child")?.parentId, "restored")
+  } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = original; source.cleanup() }
+})
+
+const moved = (id: string, sessionID: string, directory: string, created = 1) => ({
+  id, type: "session.moved", created, data: { sessionID, location: { directory } },
+}) as any
+const newWorktree = { slug: "new", directory: "/repo/.worktrees/new" }
+
+it("decides a move away only from a fresh worktree inventory", async () => {
+  const source = setup("move-fresh-inventory", "/repo")
+  const original = serverApi.fetchWorktrees
+  const reads: boolean[] = []
+  // The display snapshot predates the worktree the session just moved into.
+  serverApi.fetchWorktrees = async (_id: string, fresh = false) => {
+    reads.push(fresh)
+    return { isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }, ...(fresh ? [newWorktree] : [])] } as any
+  }
+  setActiveSession(source.session.instanceId, "restored")
+  source.client.session.list = async () => ({ data: [{ ...source.session, parentID: undefined, location: { directory: newWorktree.directory } }] })
+  try {
+    await ensureWorktreesLoaded(source.session.instanceId)
+    handleNativeSessionEvent(source.session.instanceId, moved("into-new", "restored", newWorktree.directory))
+    await delay(200)
+    assert.ok(reads.includes(true), "the move decision reads a fresh inventory")
+    assert.ok(sessions().get(source.session.instanceId)?.has("restored"))
+    assert.equal(activeSessionId().get(source.session.instanceId), "restored")
+    assert.deepEqual(getSessionListIds(source.session.instanceId), ["restored"])
   } finally { serverApi.fetchWorktrees = original; source.cleanup() }
+})
+
+it("lists a moved-away session again after a later inventory change or session refresh shows it belongs", async () => {
+  for (const recovery of ["inventory", "refresh"] as const) {
+    const source = setup(`move-recover-${recovery}`, "/repo")
+    const original = serverApi.fetchWorktrees
+    let registered = false
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true,
+      worktrees: [{ slug: "root", directory: "/repo", kind: "root" }, ...(registered ? [newWorktree] : [])] }) as any
+    const listed = { ...source.session, parentID: undefined, location: { directory: newWorktree.directory } }
+    source.client.session.list = async () => ({ data: registered ? [listed] : [] })
+    try {
+      await ensureWorktreesLoaded(source.session.instanceId)
+      // Even the fresh inventory has not registered the destination yet.
+      handleNativeSessionEvent(source.session.instanceId, moved("into-unregistered", "restored", newWorktree.directory))
+      await delay(200)
+      assert.equal(sessions().get(source.session.instanceId)?.has("restored") ?? false, false)
+      registered = true
+      if (recovery === "inventory") (serverEvents as any).dispatch({ type: "workspace.worktreesChanged", workspaceId: source.session.instanceId })
+      else await fetchSessions(source.session.instanceId, { reset: true })
+      await delay(100)
+      assert.deepEqual(getSessionListIds(source.session.instanceId), ["restored"], recovery)
+    } finally { serverApi.fetchWorktrees = original; source.cleanup() }
+  }
+})
+
+it("keeps the unsent draft and attachments of a moved-away session for its return", async () => {
+  const source = setup("move-keeps-draft", "/repo")
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  const id = source.session.instanceId
+  const attachment = { id: "attachment", type: "text", display: "notes", url: "data:text/plain,notes", filename: "notes.txt", mediaType: "text/plain" } as any
+  try {
+    await ensureWorktreesLoaded(id)
+    setSessionDraftPrompt(id, "restored", "unsent reply")
+    addAttachment(id, "restored", attachment)
+    const list = source.client.session.list
+    source.client.session.list = async () => ({ data: [] })
+    handleNativeSessionEvent(id, moved("away", "restored", "/elsewhere"))
+    await delay(200)
+    assert.equal(sessions().get(id)?.has("restored") ?? false, false)
+    assert.equal(getSessionDraftPrompt(id, "restored"), "unsent reply")
+    assert.deepEqual(getAttachments(id, "restored").map(value => value.id), ["attachment"])
+    source.client.session.list = list
+    handleNativeSessionEvent(id, moved("back", "restored", "/repo", 2))
+    await delay(200)
+    assert.deepEqual(getSessionListIds(id), ["restored"])
+    assert.equal(getSessionDraftPrompt(id, "restored"), "unsent reply")
+    assert.deepEqual(getAttachments(id, "restored").map(value => value.id), ["attachment"])
+  } finally { deleteSessionAttachments(id, "restored"); serverApi.fetchWorktrees = original; source.cleanup() }
+})
+
+it("applies only the latest move's placement when an earlier decision is still reading the inventory", async () => {
+  const source = setup("move-fenced", "/repo")
+  const original = serverApi.fetchWorktrees
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  let blocking = false
+  serverApi.fetchWorktrees = async (_id: string, fresh = false) => {
+    if (fresh && blocking) await blocked
+    return { isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] } as any
+  }
+  const id = source.session.instanceId
+  setActiveSession(id, "restored")
+  try {
+    await ensureWorktreesLoaded(id)
+    blocking = true
+    handleNativeSessionEvent(id, moved("out", "restored", "/elsewhere"))
+    await delay(150)
+    // Back home while the move-out decision still waits for its inventory.
+    handleNativeSessionEvent(id, moved("back", "restored", "/repo", 2))
+    await delay(50)
+    release()
+    await delay(250)
+    assert.ok(sessions().get(id)?.has("restored"))
+    assert.equal(activeSessionId().get(id), "restored", "a superseded move never removes the selection")
+    assert.deepEqual(getSessionListIds(id), ["restored"])
+  } finally { release(); serverApi.fetchWorktrees = original; source.cleanup() }
 })
