@@ -17,11 +17,12 @@ import { waitForInstanceInitialSessionHydration } from "./instances"
 type ClosedWorkspaceDrafts = Pick<RestorableWorkspaceTabState, "drafts" | "attachments">
 type DraftSnapshot = ClosedWorkspaceDrafts & Pick<RestorableWorkspaceTabState, "folder" | "workspaceId">
 type VaultEntry = ClosedWorkspaceDrafts & { origins: Record<string, readonly string[]> }
+type ProjectVault = { shared: VaultEntry; exact: Map<string, VaultEntry> }
 
 export const MAX_CLOSED_WORKSPACE_DRAFTS = 16
 
 const log = getLogger("session")
-const vault = new Map<string, VaultEntry>()
+const vault = new Map<string, ProjectVault>()
 // Folder fallback carries bytes; only a saved workspace identity can carry clears.
 const closedAuthority = new Map<string, Map<string, Set<string>>>()
 interface RestoreAuthority {
@@ -101,14 +102,28 @@ function merge(base: VaultEntry, top: VaultEntry, replaced: ReadonlySet<string>)
     origins: { ...kept.origins, ...top.origins } }
 }
 
-function stash(key: string, merged: VaultEntry): void {
+function stash(key: string, project: ProjectVault): void {
   vault.delete(key)
-  if (contentSessions(merged).size === 0) return
-  vault.set(key, merged)
+  if (!contentSessions(project.shared).size && !project.exact.size) return
+  vault.set(key, project)
   while (vault.size > MAX_CLOSED_WORKSPACE_DRAFTS) vault.delete(vault.keys().next().value!)
 }
 
 const empty: VaultEntry = { drafts: {}, attachments: {}, origins: {} }
+const emptyProject = (): ProjectVault => ({ shared: empty, exact: new Map() })
+
+function setExact(project: ProjectVault, owner: string, entry: VaultEntry) {
+  project.exact.delete(owner)
+  if (contentSessions(entry).size) project.exact.set(owner, entry)
+  while (project.exact.size > MAX_CLOSED_WORKSPACE_DRAFTS) project.exact.delete(project.exact.keys().next().value!)
+}
+
+function claimParts(bound: RestoreAuthority | undefined, entry: VaultEntry) {
+  return {
+    shared: pick(entry, id => !bound?.claimedIds.has(id)),
+    exact: pick(entry, id => Boolean(bound?.claimedIds.has(id))),
+  }
+}
 
 /** Sessions the user typed in, cleared or sent from in this instance. */
 const touchedSessions = (instanceId: string) => new Set([
@@ -132,17 +147,28 @@ function emptySessionsOf(instanceId: string, entry: VaultEntry): VaultEntry {
   return pick(entry, (sessionId) => !drafts[sessionId] && !attachments[sessionId]?.length && !touched.has(sessionId))
 }
 
-/** Returns what a restore could not apply underneath the project's newer drafts. */
-function requeue(key: string, older: VaultEntry): void {
-  stash(key, merge(older, vault.get(key) ?? empty, new Set()))
+/** A return uses the same ownership as the claim, beneath newer writes of that owner. */
+function requeue(bound: RestoreAuthority, older: VaultEntry): void {
+  const project = vault.get(bound.key) ?? emptyProject()
+  const { shared, exact } = claimParts(bound, older)
+  project.shared = merge(shared, project.shared, noSnapshotAuthority)
+  if (bound.snapshotId && contentSessions(exact).size) {
+    setExact(project, bound.snapshotId, merge(exact, project.exact.get(bound.snapshotId) ?? empty, noSnapshotAuthority))
+  }
+  stash(bound.key, project)
 }
 
 /** Keep capture and the native continuation on the same surviving bundles. */
-function supersedePendingDrafts(key: string, ids: ReadonlySet<string>, ownsExact: (sourceId: string) => boolean, except?: string) {
+function supersedePendingDrafts(
+  key: string,
+  ids: ReadonlySet<string>,
+  ownsExact: (sourceId: string, sessionId: string) => boolean,
+  except?: string,
+) {
   for (const [instanceId, bound] of restoreAuthority) {
     if (instanceId === except || bound.key !== key) continue
     const keep = (id: string) => !ids.has(id)
-      || (bound.claimedIds.has(id) && bound.snapshotId !== undefined && !ownsExact(bound.snapshotId))
+      || (bound.claimedIds.has(id) && bound.snapshotId !== undefined && !ownsExact(bound.snapshotId, id))
     if (bound.entry) bound.entry = pick(bound.entry, keep)
     const claim = claims.get(instanceId)
     if (claim) claim.entry = pick(claim.entry, keep)
@@ -150,10 +176,9 @@ function supersedePendingDrafts(key: string, ids: ReadonlySet<string>, ownsExact
 }
 
 /**
- * Called while an instance is removed, before its drafts are cleared. `keep`
- * hands its drafts over: the later close wins per session, clears and sends
- * included, over the vault and pending folder fallback or same-occurrence claims, and
- * whatever an unfinished restore into it had not applied goes back underneath.
+ * Called before the instance's drafts are cleared. `keep` saves its latest
+ * bundles and clears, separately for its exact claims and folder fallback,
+ * then returns untouched pending bundles beneath newer writes of their owner.
  * `skip` keeps nothing of this instance; `discard` also purges the project's
  * whole entry, because its folder is deleted.
  */
@@ -195,8 +220,17 @@ export function retainClosedWorkspaceDrafts(
     while (closedAuthority.size > MAX_CLOSED_WORKSPACE_DRAFTS) closedAuthority.delete(closedAuthority.keys().next().value!)
   }
   supersedePendingDrafts(key, superseded, sourceId => sourceId === instanceId || sourceId === snapshotId)
-  stash(key, merge(vault.get(key) ?? empty, captured, superseded))
-  if (remaining) requeue(key, remaining)
+  const project = vault.get(key) ?? emptyProject()
+  const { shared, exact } = claimParts(bound, captured)
+  project.shared = merge(project.shared, shared, superseded)
+  for (const owner of new Set([instanceId, ...(snapshotId ? [snapshotId] : [])])) {
+    const existing = project.exact.get(owner)
+    if (existing || (owner === snapshotId && contentSessions(exact).size)) {
+      setExact(project, owner, merge(existing ?? empty, owner === snapshotId ? exact : empty, superseded))
+    }
+  }
+  stash(key, project)
+  if (remaining && bound) requeue(bound, remaining)
 }
 
 /**
@@ -213,20 +247,30 @@ export function restoreClosedWorkspaceDrafts(
 ): Promise<void> | undefined {
   const key = closedWorkspaceDraftKey(folder)
   if (restoreAuthority.has(instanceId)) return
-  const available = vault.get(key)
+  const project = vault.get(key)
+  const available = project?.shared
   const occupied = snapshot ? contentSessions(snapshot) : noSnapshotAuthority
   const snapshotId = snapshot?.workspaceId
   const cleared = snapshotId ? closedAuthority.get(key)?.get(snapshotId) : undefined
   const matchesOrigin = (id: string) => Boolean(snapshotId && available?.origins[id]?.includes(snapshotId))
-  const entry = available && emptySessionsOf(instanceId, pick(available, id =>
-    !cleared?.has(id) && (!occupied.has(id) || matchesOrigin(id))))
-  const claimed = entry ? contentSessions(entry) : new Set<string>()
-  const bound: RestoreAuthority = { key, snapshotId, claimedIds: new Set([...claimed].filter(matchesOrigin)), entry }
+  const exact = snapshotId ? project?.exact.get(snapshotId) : undefined
+  const exactIds = exact ? contentSessions(exact) : noSnapshotAuthority
+  const eligible = (id: string) => !cleared?.has(id)
+  const shared = available ? emptySessionsOf(instanceId, pick(available, id =>
+    eligible(id) && !exactIds.has(id) && (!occupied.has(id) || matchesOrigin(id)))) : empty
+  const owned = exact ? emptySessionsOf(instanceId, pick(exact, eligible)) : empty
+  const sharedIds = contentSessions(shared)
+  const ownedIds = contentSessions(owned)
+  const entry = merge(shared, owned, noSnapshotAuthority)
+  const claimed = contentSessions(entry)
+  const bound: RestoreAuthority = { key, snapshotId, claimedIds: new Set([...ownedIds, ...[...sharedIds].filter(matchesOrigin)]), entry }
   restoreAuthority.set(instanceId, bound)
-  if (!available || !entry || !claimed.size) return
-  stash(key, pick(available, id => !claimed.has(id)))
+  if (!project || !claimed.size) return
+  project.shared = pick(project.shared, id => !sharedIds.has(id))
+  if (snapshotId && exact) setExact(project, snapshotId, pick(exact, id => !ownedIds.has(id)))
+  stash(key, project)
   // A retry moves unresolved bundles to the new claimant without taking another occurrence's exact claim.
-  supersedePendingDrafts(key, claimed, sourceId => sourceId === snapshotId, instanceId)
+  supersedePendingDrafts(key, claimed, (sourceId, id) => sourceId === snapshotId && bound.claimedIds.has(id), instanceId)
   const claim = { key, entry }
   claims.set(instanceId, claim)
   const isCurrent = () => claims.get(instanceId) === claim
@@ -234,7 +278,7 @@ export function restoreClosedWorkspaceDrafts(
     claims.delete(instanceId)
     bound.entry = emptySessionsOf(instanceId, claim.entry)
     // Once returned to the vault, only actual pending bytes are eligible for a new claim.
-    requeue(key, bound.entry)
+    requeue(bound, bound.entry)
   }
   // Reads `claim.entry`: closes of sibling tabs may supersede sessions meanwhile.
   const hydrate = () => hydrateWorkspacePromptState(

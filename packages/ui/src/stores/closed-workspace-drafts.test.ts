@@ -78,6 +78,112 @@ afterEach(() => {
 })
 
 describe("closed project drafts", () => {
+  for (const fail of [false, true]) for (const first of ["A", "B"] as const) {
+    it(`keeps A's exact draft alongside B after ${fail ? "read failure" : "closing the pending tab"} (${first} first)`, async () => {
+      const key = `returned-${fail}-${first}`, folder = `/${key}`, original = `${key}-original`, pending = `${key}-pending`, sibling = `${key}-sibling`
+      const snapshot = (workspaceId: string, text: string, byte: number) => ({
+        kind: "workspace" as const, folder, workspaceId, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+        ...serializeDraftAttachments({ shared: text }, { shared: [
+          createFileAttachment("draft.bin", "draft.bin", "application/octet-stream", new Uint8Array([byte])),
+        ] }),
+      })
+      const saved = { A: snapshot(original, "stale A", 1), B: snapshot(sibling, "stale B", 2) }
+      const edit = (id: string, text: string, byte: number) => {
+        setSessionDraftPrompt(id, "shared", text)
+        addAttachment(id, "shared", createFileAttachment("draft.bin", "draft.bin", "application/octet-stream", new Uint8Array([byte])))
+      }
+      open(original, folder)
+      edit(original, "recent A", 65)
+      close(original)
+      const entered = deferred<void>(), held = deferred<unknown>()
+      open(pending, folder, [], () => { entered.resolve(); return held.promise }, false, true)
+      const restore = hydrateRestoredWorkspaceState(pending, saved.A, new AbortController().signal, () => instances().has(pending))
+      await entered.promise
+      open(sibling, folder)
+      edit(sibling, "recent B", 66)
+      close(sibling)
+      if (fail) {
+        held.reject(new Error("temporary native read failure"))
+        await restore
+        await settle()
+      } else {
+        close(pending)
+        held.resolve(apiSession("shared", folder))
+        await restore
+      }
+
+      // A plain opening can take shared B, but it cannot take A's exact bundle.
+      const plain = `${key}-plain`
+      open(plain, folder, ["shared"])
+      await settle()
+      assert.equal(getSessionDraftPrompt(plain, "shared"), "recent B")
+      close(plain)
+
+      const ids = { A: `${key}-A`, B: `${key}-B` }
+      for (const letter of [first, first === "A" ? "B" : "A"] as const) {
+        open(ids[letter], folder, ["shared"], undefined, false, true)
+        // This snapshot names the occurrence that just published shared B.
+        await hydrateRestoredWorkspaceState(ids[letter], letter === "B" ? { ...saved.B, workspaceId: plain } : saved.A,
+          new AbortController().signal, () => true)
+        await settle()
+        attachInstanceTab(ids[letter], { source: "restore" })
+      }
+      const captured = captureState(new Map()).state
+      const encoded = await encodeClientSnapshotV2({ version: 1, revision: 1, savedAt: 1, layout: {},
+        session: { ...captured, activeTabIndex: 0 } })
+      const decoded = await decodeClientSnapshotV2(encoded.root, 1, async key => encoded.partitions[key] ?? null)
+      for (const [letter, byte] of [["A", 65], ["B", 66]] as const) {
+        const tab = decoded?.session?.tabs.find(tab => tab.kind === "workspace" && tab.workspaceId === ids[letter])
+        assert.equal(tab?.kind, "workspace")
+        assert.equal(tab.drafts.shared, `recent ${letter}`)
+        close(ids[letter], { drafts: "skip" })
+        const reopened = `${ids[letter]}-saved`
+        open(reopened, folder, ["shared"], undefined, false, true)
+        await hydrateRestoredWorkspaceState(reopened, tab, new AbortController().signal, () => true)
+        assert.equal(getSessionDraftPrompt(reopened, "shared"), `recent ${letter}`)
+        assert.deepEqual(getAttachments(reopened, "shared").map(({ source }) =>
+          source.type === "file" && Array.from(source.data ?? [])), [[byte]])
+      }
+    })
+  }
+
+  it("bounds returned exact bundles and honors a later clear by the same owner", async () => {
+    const folder = "/bounded-exact-returns"
+    const source = (n: number) => `bounded-exact-owner-${n}`
+    const snapshot = (n: number) => ({
+      kind: "workspace" as const, folder, workspaceId: source(n), scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      drafts: { shared: `stale ${n}` }, attachments: {},
+    })
+    for (let n = 0; n <= MAX_CLOSED_WORKSPACE_DRAFTS; n++) {
+      open(source(n), folder)
+      setSessionDraftPrompt(source(n), "shared", `exact ${n}`)
+      close(source(n))
+      const id = `${source(n)}-offline`
+      open(id, folder, [], async () => { throw new Error("offline") }, false, true)
+      await hydrateRestoredWorkspaceState(id, snapshot(n), new AbortController().signal, () => true)
+      await settle()
+      close(id, { drafts: "skip" })
+    }
+    for (const [n, expected] of [[0, "stale 0"], [1, "exact 1"]] as const) {
+      const id = `${source(n)}-reopen`
+      open(id, folder, ["shared"], undefined, false, true)
+      await hydrateRestoredWorkspaceState(id, snapshot(n), new AbortController().signal, () => true)
+      await settle()
+      assert.equal(getSessionDraftPrompt(id, "shared"), expected)
+    }
+
+    const newest = MAX_CLOSED_WORKSPACE_DRAFTS
+    open(source(newest), folder)
+    clearSessionDraftPrompt(source(newest), "shared")
+    clearAttachments(source(newest), "shared")
+    close(source(newest))
+    const id = `${source(newest)}-after-clear`
+    open(id, folder, ["shared"], undefined, false, true)
+    await hydrateRestoredWorkspaceState(id, snapshot(newest), new AbortController().signal, () => true)
+    assert.equal(getSessionDraftPrompt(id, "shared"), "")
+    assert.deepEqual(getAttachments(id, "shared"), [])
+  })
+
   it("keeps the exact pending draft when a sibling clears its own copy and closes", async () => {
     const folder = "/exact-pending-sibling-close", original = "pending-original-a", a = "pending-restored-a", b = "pending-cleared-b"
     const file = (byte: number) => createFileAttachment("draft.bin", "draft.bin", "application/octet-stream", new Uint8Array([byte]))
