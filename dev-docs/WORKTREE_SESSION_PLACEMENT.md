@@ -64,6 +64,12 @@ Implementation:
   and rehydration through its descendants), whatever started the move; family members
   left behind stay sessions of their own location, and a later move back lifts that
   fence (`stores/session-move-restore.test.ts`, `tests/browser/session-external-move.test.ts`).
+  The workspace proxy's 403 for a session located outside the workspace carries
+  `reason: "session_located_elsewhere"` (`opencode/session-access-contract.ts`). Every
+  parent read (an ID reached through `parentID`, `hydrateRestoredSessionChain`) opts in
+  through the instance adapter (`lib/sdk-manager.ts`, a client-side header never sent),
+  which reads that refusal as a missing parent; every other 403 stays an error
+  (`stores/session-list-startup.test.ts`, `lib/sdk-manager.test.ts`).
   Search traverses every local worktree's native cursor chain.
 - `scripts/test-native-worktree-management.mjs` (run by `test-opencode-location-native.mjs`,
   isolated: no shared daemon or user database) covers selected HEAD, default parent,

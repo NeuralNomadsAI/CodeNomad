@@ -75,6 +75,7 @@ import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { buildProviderCatalog } from "../lib/model-catalog"
 import { getRootClient } from "./opencode-client"
+import { parentSessionReadHeaders } from "../lib/sdk-manager"
 import { tGlobal } from "../lib/i18n"
 import {
   PROJECT_SESSION_LIST_LIMIT,
@@ -495,15 +496,18 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   return active
 }
 
+/** `requestedAreParents`: the requested IDs are themselves some session's
+ * `parentID`. Every parent read treats a parent located elsewhere as missing. */
 async function hydrateRestoredSessionChain(
   instanceId: string,
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
+  requestedAreParents = false,
 ): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
-    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent())
+    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent(), requestedAreParents)
     signal?.throwIfAborted()
     if (!isCurrent() || generationCurrent()) return
   }
@@ -515,9 +519,11 @@ async function hydrateRestoredSessionChainAttempt(
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
+  requestedAreParents = false,
 ): Promise<void> {
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  let parentLevel = requestedAreParents
   const isRequestCurrent = () => generationCurrent() && isCurrent()
   const foreground = () => activeInstanceId() === instanceId
     && requestedIds.some(id => id && (id === activeSessionId().get(instanceId) || id === activeParentSessionId().get(instanceId)))
@@ -529,6 +535,8 @@ async function hydrateRestoredSessionChainAttempt(
     const level = [...new Set(pending)].filter((sessionId) => !visited.has(sessionId))
     pending = []
     level.forEach((sessionId) => visited.add(sessionId))
+    const readOptions = { ...(signal ? { signal } : {}), ...(parentLevel ? { headers: parentSessionReadHeaders } : {}) }
+    parentLevel = true
     const parents = await Promise.all(level.map(async (sessionId) => {
       if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return null
 
@@ -538,7 +546,7 @@ async function hydrateRestoredSessionChainAttempt(
         try {
           signal?.throwIfAborted()
           const read = () => isRequestCurrent()
-            ? client.session.get({ sessionID: sessionId }, signal ? { signal } : undefined)
+            ? client.session.get({ sessionID: sessionId }, readOptions)
             : Promise.resolve(null)
           const apiSession = await prioritizedRead(foreground, signal ?? new AbortController().signal, read)
           signal?.throwIfAborted()
@@ -588,7 +596,7 @@ async function ensureV2ParentChainsLoaded(
   const missingChains = apiSessions
     .filter((session) => hasMissingParentChain(session, loaded))
     .map((session) => session.parentID)
-  if (missingChains.length > 0) await hydrateRestoredSessionChain(instanceId, missingChains, signal, isCurrent)
+  if (missingChains.length > 0) await hydrateRestoredSessionChain(instanceId, missingChains, signal, isCurrent, true)
 }
 
 async function fetchSessions(instanceId: string, options?: {

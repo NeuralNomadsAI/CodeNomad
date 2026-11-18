@@ -5,7 +5,8 @@ import { ConfigProvider, updatePreferences } from "../../../src/stores/preferenc
 import { I18nProvider } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
 import { serverEvents } from "../../../src/lib/server-events"
-import { sdkManager } from "../../../src/lib/sdk-manager"
+import { OpenCode } from "@opencode/client"
+import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
 import { setInstanceMetadata } from "../../../src/stores/instance-metadata"
 import { activeSessionId, getSessionListError, getSessionThreads, setActiveSession } from "../../../src/stores/session-state"
@@ -24,23 +25,26 @@ const native = new Map<string, any>([
   make("moving", workspaces.a), make("moving-child", workspaces.a, "moving"), make("staying", workspaces.a),
   make("resident", workspaces.b),
 ].map(row => [row.id, row]))
-const refused: string[] = []
+// "?moved": a fresh page after the conversation already moved to project b.
+if (new URL(location.href).searchParams.has("moved")) Object.assign(native.get("moving"), { location: { directory: workspaces.b }, projectID: workspaces.b })
 const owns = (tab: Tab, row: any) => row.location.directory === workspaces[tab]
+const instanceId = (tab: Tab) => `external-move-${tab}`
+// Reads of a session located elsewhere go through the real instance adapter
+// to the routed workspace proxy, which refuses them.
+const proxied = (tab: Tab) => {
+  const baseUrl = buildInstanceBaseUrl(`/workspaces/${instanceId(tab)}/instance`, location.origin)
+  return OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+}
 const client = (tab: Tab): any => ({ session: {
   list: async (input: any) => ({ cursor: {}, data: [...native.values()].map(row => structuredClone(row)).filter(row =>
     (input.project ? row.projectID === input.project : row.location.directory === input.directory)
     && (input.parentID !== null || !row.parentID)) }),
-  get: async ({ sessionID }: any) => {
+  get: async ({ sessionID }: any, options?: any) => {
     const row = native.get(sessionID)
-    if (row && !owns(tab, row)) {
-      refused.push(`${tab}:${sessionID}`)
-      throw Object.assign(new Error("Session does not belong to workspace"), { status: 403 })
-    }
-    return structuredClone(row)
+    return row && !owns(tab, row) ? proxied(tab).session.get({ sessionID }, options) : structuredClone(row)
   },
   active: async () => ({}),
 } })
-const instanceId = (tab: Tab) => `external-move-${tab}`
 serverApi.fetchWorktrees = async (id: string) => {
   const tab = (Object.keys(workspaces) as Tab[]).find(key => instanceId(key) === id)!
   return { isGitRepo: true, worktrees: [{ slug: "root", directory: workspaces[tab], kind: "root" }] } as any
@@ -55,9 +59,9 @@ for (const tab of Object.keys(workspaces) as Tab[]) {
   addInstance({ id, folder: workspaces[tab], port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client: sessionClient })
   setInstanceMetadata(id, { project: { id: workspaces[tab], canonical: workspaces[tab] } as any })
   await ensureWorktreesLoaded(id)
-  await fetchSessions(id, { reset: true })
+  await fetchSessions(id, { reset: true }).catch(() => undefined)
 }
-setActiveSession(instanceId("a"), "moving")
+if (native.get("moving").location.directory === workspaces.a) setActiveSession(instanceId("a"), "moving")
 
 let sequence = 10
 /** A native move outside CodeNomad: only the session itself changes location.
@@ -84,6 +88,6 @@ render(() => <ConfigProvider><I18nProvider><div style={{ display: "flex", gap: "
   <Tab tab="a" /><Tab tab="b" />
 </div></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-;(window as any).fixture = { move, refused,
+;(window as any).fixture = { move,
   selected: (tab: Tab) => activeSessionId().get(instanceId(tab)) ?? null,
   listError: (tab: Tab) => getSessionListError(instanceId(tab)) ?? null }

@@ -9,6 +9,7 @@ import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspace
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
+import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../opencode/session-access-contract"
 import { observePendingDiscovery, PENDING_RECONCILIATION_HEADER, PENDING_DISCOVERY_DEFERRED } from "../../workspaces/pending-discovery"
 
 const apps: FastifyInstance[] = []
@@ -287,6 +288,14 @@ describe("instance proxy location enforcement", () => {
       payload: { model: "gpt-realtime", transport: { type: "websocket" } } })
     assert.equal(voice.statusCode, 403)
     assert.equal(requestCount(), 1)
+  })
+
+  it("types its refusal of a session located outside the workspace", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, { foreign: "/other" })
+    const foreign = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/foreign" })
+    assert.equal(foreign.statusCode, 403)
+    assert.deepEqual(foreign.json(), { error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON })
+    assert.equal(requestCount(), 0)
   })
 
   it("rejects side generation for a foreign session and during worktree deletion", async () => {

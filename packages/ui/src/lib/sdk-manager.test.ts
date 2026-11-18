@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import { afterEach, describe, it } from "node:test"
-import { OpenCode } from "@opencode/client"
+import { isSessionNotFoundError, OpenCode } from "@opencode/client"
 
-import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "./sdk-manager.ts"
+import { buildInstanceBaseUrl, createInstanceFetch, parentSessionReadHeaders, sdkManager } from "./sdk-manager.ts"
+import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
 import { tGlobal } from "./i18n"
 import { getOpencodeErrorMessage } from "./opencode-api"
 
@@ -124,6 +125,24 @@ describe("SDKManager", () => {
         ["/tenant/workspaces/first/instance/api/session/owned/message", "deferred", "kept"],
         ["/tenant/workspaces/first/instance/api/session/owned/message/msg", null, null],
       ])
+    } finally { globalThis.fetch = original }
+  })
+  it("reads only an opted-in parent refused as located elsewhere as a missing session, without sending the opt-in", async () => {
+    const original = globalThis.fetch
+    const sent: Array<string | null> = []
+    let body: Record<string, string> = { error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON }
+    try {
+      globalThis.fetch = async (_input, init) => {
+        sent.push(new Headers(init?.headers).get("x-codenomad-parent-read"))
+        return Response.json(body, { status: 403 })
+      }
+      const baseUrl = buildInstanceBaseUrl("/workspaces/first/instance", "https://codenomad.test")
+      const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+      await assert.rejects(client.session.get({ sessionID: "moved" }, { headers: parentSessionReadHeaders }), error => isSessionNotFoundError(error))
+      await assert.rejects(client.session.get({ sessionID: "moved" }), { reason: "UnexpectedStatus", cause: { status: 403 } })
+      body = { error: "Session does not belong to workspace" }
+      await assert.rejects(client.session.get({ sessionID: "moved" }, { headers: parentSessionReadHeaders }), { reason: "UnexpectedStatus", cause: { status: 403 } })
+      assert.deepEqual(sent, [null, null, null])
     } finally { globalThis.fetch = original }
   })
   it("reports environment admission failures without exposing an upstream error body", async () => {
