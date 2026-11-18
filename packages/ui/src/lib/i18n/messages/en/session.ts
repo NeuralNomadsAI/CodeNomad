@@ -185,6 +185,7 @@ export const sessionMessages = {
   "sessionEvents.sessionError.message": "Error: {message}",
 
   "sessionState.cleanup.deepConfirm.message": "This cleanup may be slow, and may delete sessions you didn't intend to delete. Are you sure?",
+  "sessionState.cleanup.draftRecovered": "The unsent draft and its attachments are in the new-conversation composer.",
   "sessionState.cleanup.deepConfirm.title": "Deep Clean Sessions",
   "sessionState.cleanup.deepConfirm.detail": "Both cleanup modes remove only verified empty, inactive sessions without children. Favorites and their ancestors are kept across folders.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "Continue",

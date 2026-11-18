@@ -38,6 +38,7 @@ test("favorites persist, keep requests first and synchronize over the real route
   const app = Fastify(), bus = new EventBus(), cfg = resolveConfigLocation(tmp)
   const off = bus.onEvent(events.send)
   const removed: string[] = []
+  let holdRemoval: (() => Promise<void>) | undefined
   const serverSession = (sessionID: string) => ({ id: sessionID, projectID: "bureau", time: { created: 1, updated: 1 }, parentID: sessionID === "ses_conseil" ? "ses_equipe" : undefined,
     location: { directory: sessionID === "ses_foreign" ? "/unrelated" : "/bureau" },
     metadata: { thirdParty: { verified: "leave alone" } } })
@@ -50,7 +51,7 @@ test("favorites persist, keep requests first and synchronize over the real route
       list: async () => ({ data: [], cursor: {} }),
       inbox: { list: async () => [] }, active: async () => ({}),
       form: { list: async () => [] },
-      remove: async ({ sessionID }: { sessionID: string }) => { removed.push(sessionID) },
+      remove: async ({ sessionID }: { sessionID: string }) => { await holdRemoval?.(); removed.push(sessionID) },
     },
     message: { list: async ({ sessionID }: { sessionID: string }) =>
       ({ data: sessionID === "ses_dossier_02" ? [] : [{ type: "user" }], cursor: {} }) },
@@ -127,10 +128,20 @@ test("favorites persist, keep requests first and synchronize over the real route
     await page.waitForFunction(() => document.activeElement?.closest("[data-session-id]")?.getAttribute("data-session-id") === "ses_dossier_56")
     await page.evaluate(() => (window as any).favoriteFixture.navigate("session-next", "ses_validation"))
     await page.waitForFunction(() => (window as any).favoriteFixture.selected() === "ses_dossier_56")
+    await page.getByRole("button", { name: "Bureau", exact: true }).click()
+    await row(page, "dossier_56").waitFor({ state: "detached" })
+    await page.evaluate(() => (window as any).favoriteFixture.navigate("session-next", "ses_validation"))
+    assert.equal(await page.evaluate(() => (window as any).favoriteFixture.selected()), "ses_dossier_56")
+    await page.getByRole("button", { name: "Bureau", exact: true }).click()
+    await row(page, "dossier_56").locator(".session-item-favorite").waitFor()
+    failRefresh = false
+    const refreshed = page.waitForResponse(response => response.ok() && response.url().includes("/session-favorites")
+      && response.request().method() === "GET")
+    events.send({ type: "storage.stateChanged", owner: "sessionFavorites", value: {} })
+    await refreshed
     await chooseFavoriteWithKeyboard(page, "dossier_56", false)
     await row(page, "dossier_56").locator(".session-item-favorite").waitFor({ state: "detached" })
     await page.waitForFunction(() => document.activeElement?.closest("[data-session-id]")?.getAttribute("data-session-id") === "ses_dossier_56")
-    failRefresh = false
     await filters(page).click()
     await search(page).fill("projet secret")
     await row(page, "search_only").waitFor()
@@ -240,12 +251,28 @@ test("favorites persist, keep requests first and synchronize over the real route
     await selectFavorite(page, "briefing")
     await page.evaluate(() => (window as any).favoriteFixture.automatic())
     assert.deepEqual(removed, [])
+    let startRemoval!: () => void, resumeRemoval!: () => void
+    const nativeStarted = new Promise<void>(resolve => { startRemoval = resolve })
+    const nativeResume = new Promise<void>(resolve => { resumeRemoval = resolve })
+    holdRemoval = async () => { startRemoval(); await nativeResume }
     await page.evaluate(() => { void (window as any).favoriteFixture.deep() })
     await page.getByRole("button", { name: "Continuer", exact: true }).click()
+    try {
+      await nativeStarted
+      await page.evaluate(() => (window as any).favoriteFixture.draftDuringCleanup("ses_dossier_02"))
+    } finally { resumeRemoval() }
+    // The detached initiating request may never receive the 204; the native event is enough.
+    await page.evaluate(() => (window as any).favoriteFixture.deleteEvent("ses_dossier_02"))
+    const recovered = page.locator("[data-recovered-composer]")
+    await recovered.locator("textarea").waitFor()
+    await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("[data-recovered-composer] textarea")?.value === "À relire demain")
+    await recovered.getByText("@note.txt", { exact: true }).waitFor()
+    assert.deepEqual(await page.evaluate(() => (window as any).favoriteFixture.recoveredBytes()), [[98, 111, 110]])
     await row(page, "briefing").locator(".session-item-favorite").waitFor()
     await search(page).fill("Dossier 02")
     await page.waitForFunction(() => !(window as any).favoriteFixture.has("ses_dossier_02"))
     assert.deepEqual(removed, ["ses_dossier_02"])
+    holdRemoval = undefined
     await search(page).fill("briefing")
     await actions(page, "briefing").click()
     await menu(page).getByRole("menuitem", { name: "Supprimer la session" }).click()

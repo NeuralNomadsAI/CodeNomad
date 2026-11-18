@@ -50,7 +50,8 @@ import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
 import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
-import { getDescendantSessions, getSessionAncestorIds, isSessionInWorkspaceScope, registerSessionListProjection, revealSubsession } from "../stores/session-state"
+import { getDescendantSessions, getSessionAncestorIds, isSessionInWorkspaceScope, revealSubsession } from "../stores/session-state"
+import { getSessionListView } from "../stores/session-list-view"
 import { instances } from "../stores/instances"
 import { hydrateRestoredSessionChain } from "../stores/session-api"
 import { useSessionFavorites } from "../stores/session-favorites"
@@ -81,14 +82,15 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [renameTarget, setRenameTarget] = createSignal<{ id: string; title: string; label: string } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
 
-  const [filterQuery, setFilterQuery] = createSignal("")
-  const [sortBy, setSortBy] = createSignal<SessionFamilySort>("activity")
-  const [worktreeDirectory, setWorktreeDirectory] = createSignal("")
-  const [includeMainSessions, setIncludeMainSessions] = createSignal(true)
-  const [includeSubsessions, setIncludeSubsessions] = createSignal(false)
-  const [archiveFilter, setArchiveFilter] = createSignal<SessionArchiveFilter>("active")
-  const [favoritesOnly, setFavoritesOnly] = createSignal(false)
-  const favoriteStore = useSessionFavorites(() => props.instanceId)
+  const view = getSessionListView(props.instanceId)
+  const [filterQuery, setFilterQuery] = view.query
+  const [sortBy, setSortBy] = view.sort
+  const [worktreeDirectory, setWorktreeDirectory] = view.directory
+  const [includeMainSessions, setIncludeMainSessions] = view.main
+  const [includeSubsessions, setIncludeSubsessions] = view.children
+  const [archiveFilter, setArchiveFilter] = view.archive
+  const [favoritesOnly, setFavoritesOnly] = view.favoritesOnly
+  const favoriteStore = useSessionFavorites(() => props.instanceId, view)
   const favorites = createMemo(() => new Set(Object.keys(favoriteStore.records())))
   const includesFavorite = (id: string) => favorites().has(id)
     || getDescendantSessions(props.instanceId, id).some(session => favorites().has(session.id))
@@ -332,9 +334,10 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
     return { ids, rowsById, indexById }
   })
-  createEffect(on(() => props.instanceId, id => {
-    onCleanup(registerSessionListProjection(id, () => visibleProjection().ids))
-  }))
+  createEffect(() => {
+    view.ids = visibleProjection().ids
+    view.projected = true
+  })
   const keptMountedIndexes = createMemo(() => {
     const indexes = new Set<number>()
     for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId()]) {

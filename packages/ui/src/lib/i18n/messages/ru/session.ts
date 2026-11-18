@@ -185,6 +185,7 @@ export const sessionMessages = {
   "sessionEvents.sessionError.message": "Ошибка: {message}",
 
   "sessionState.cleanup.deepConfirm.message": "Эта очистка может быть медленной и может удалить сессии, которые вы не хотели удалять. Вы уверены?",
+  "sessionState.cleanup.draftRecovered": "Черновик и вложения находятся в поле ввода нового разговора.",
   "sessionState.cleanup.deepConfirm.title": "Глубокая очистка сессий",
   "sessionState.cleanup.deepConfirm.detail": "Оба режима очистки удаляют только подтверждённые пустые и неактивные сеансы без вложенных сеансов. Избранные сеансы и их предки сохраняются, даже если они отмечены в другой папке.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "Продолжить",

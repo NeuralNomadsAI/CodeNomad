@@ -1547,6 +1547,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard" } = {}) {
+  clearSessionListView(id)
   locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
   pendingCompactions.delete(id)
@@ -2552,3 +2553,4 @@ export {
   handleInstanceInvalidation,
   clearReloadableInstanceState,
 }
+import { clearSessionListView } from "./session-list-view"

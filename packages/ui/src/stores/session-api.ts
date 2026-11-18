@@ -65,6 +65,7 @@ import {
 } from "./session-state"
 import { settleAbandonedSessionListRestoration } from "./session-list-restoration"
 import { deleteSessionAttachments } from "./attachments"
+import { recoverRemovedSessionDraft } from "./session-draft-recovery"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -124,7 +125,7 @@ interface MessagePageRequest {
 
 const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
-const deleteSessionAuthorities = new Map<string, object>()
+const deleteSessionAuthorities = new Map<string, { cleanup: boolean }>()
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
 const MESSAGE_CURSOR_SEEK_LIMIT = 1000
@@ -564,11 +565,14 @@ async function hydrateRestoredSessionChainAttempt(
           return null
         }
       }
-      if (session?.parentId === null && isRequestCurrent() && !signal?.aborted
-        && !getSessionListIds(instanceId).includes(sessionId)) prependSessionListId(instanceId, sessionId)
       // In directory-only mode ancestors outside the inventory are not session
       // authority. Keep native parent metadata; local display roots are derived.
-      return getDirectoryOnlyWorktree(instanceId) ? null : session?.parentId ?? null
+      const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+      if (session && (directoryOnly || session.parentId === null) && isRequestCurrent() && !signal?.aborted) {
+        const root = getSessionRoot(instanceId, sessionId)
+        if (root && !getSessionListIds(instanceId).includes(root.id)) prependSessionListId(instanceId, root.id)
+      }
+      return directoryOnly ? null : session?.parentId ?? null
     }))
     pending = parents.filter((id): id is string => Boolean(id))
   }
@@ -771,7 +775,7 @@ async function fetchSessions(instanceId: string, options?: {
       }
       for (const sessionId of staleIds) {
         if (currentSessions.get(sessionId) !== existingSessions.get(sessionId)) continue
-        removeSessionRuntimeState(instanceId, sessionId, false)
+        removeSessionRuntimeState(instanceId, sessionId, false, true)
       }
     }
     const rootIds: string[] = []
@@ -1289,11 +1293,11 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   await removeSession(instanceId, sessionId, false)
 }
 
-export function deleteBlankSession(instanceId: string, sessionId: string): Promise<boolean> {
-  return removeSession(instanceId, sessionId, true)
+export function deleteBlankSession(instanceId: string, sessionId: string, signal: AbortSignal): Promise<boolean> {
+  return removeSession(instanceId, sessionId, true, signal)
 }
 
-async function removeSession(instanceId: string, sessionId: string, cleanup: boolean): Promise<boolean> {
+async function removeSession(instanceId: string, sessionId: string, cleanup: boolean, signal?: AbortSignal): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1301,7 +1305,7 @@ async function removeSession(instanceId: string, sessionId: string, cleanup: boo
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const loadingKey = messagePageKey(instanceId, sessionId)
-  const loadingAuthority = {}
+  const loadingAuthority = { cleanup }
   deleteSessionAuthorities.set(loadingKey, loadingAuthority)
 
   setLoading((prev) => {
@@ -1315,7 +1319,7 @@ async function removeSession(instanceId: string, sessionId: string, cleanup: boo
   try {
     log.info(`[HTTP] DELETE /session.remove for instance ${instanceId}`, { sessionId })
     if (cleanup) {
-      if (!(await serverApi.cleanupSession(instanceId, sessionId)).deleted) return false
+      if (!(await serverApi.cleanupSession(instanceId, sessionId, signal)).deleted) return false
     } else {
       await client.session.remove({ sessionID: sessionId })
     }
@@ -1342,7 +1346,9 @@ async function removeSession(instanceId: string, sessionId: string, cleanup: boo
   }
 }
 
-function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
+function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true, preserveUnrequestedDraft = false): void {
+  const requested = deleteSessionAuthorities.get(messagePageKey(instanceId, sessionId))
+  if (requested?.cleanup || (preserveUnrequestedDraft && !requested)) recoverRemovedSessionDraft(instanceId, sessionId)
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   clearSessionSeenInterruption(instanceId, sessionId)
   if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)

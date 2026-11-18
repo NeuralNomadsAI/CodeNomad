@@ -3,7 +3,7 @@ import type { SessionFavorites, SessionFavoritesSnapshot } from "../../../server
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 
-export function useSessionFavorites(instanceId: Accessor<string>) {
+export function useSessionFavorites(instanceId: Accessor<string>, displayCache?: { favoriteRecords: SessionFavorites }) {
   const [records, setRecords] = createSignal<SessionFavorites>({})
   const [ready, setReady] = createSignal(false)
   const [pending, setPending] = createSignal(new Set<string>())
@@ -12,7 +12,7 @@ export function useSessionFavorites(instanceId: Accessor<string>) {
   let generation = 0
   createEffect(on(instanceId, id => {
     const owner = ++generation
-    setRecords({})
+    setRecords(displayCache?.favoriteRecords ?? {})
     setReady(false)
     setPending(new Set<string>())
     const controller = new AbortController()
@@ -26,6 +26,7 @@ export function useSessionFavorites(instanceId: Accessor<string>) {
       if (published?.source === snapshot.source && snapshot.revision <= published.revision) return
       if (published && published.source !== snapshot.source) retired.add(published.source)
       published = snapshot
+      if (displayCache) displayCache.favoriteRecords = snapshot.records
       if (JSON.stringify(snapshot.records) !== JSON.stringify(records())) setRecords(snapshot.records)
       setReady(true)
     }

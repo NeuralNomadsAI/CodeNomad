@@ -69,4 +69,6 @@ Supprimer une session parente supprime aussi ses sous-sessions descendantes et l
 
 Les deux nettoyages suppriment uniquement les sessions vérifiées comme vides, inactives et sans sous-session. Les favoris et leurs ancêtres sont préservés même s’ils sont marqués dans un autre dossier.
 
+Si une conversation disparaît pendant le nettoyage, retrouvez son texte non envoyé et ses pièces jointes dans le composeur de nouvelle conversation du projet.
+
 La suppression retire des conversations, pas des commits Git, et n’annule pas les effets sur le système de fichiers ou les services externes. Si le nettoyage ne réussit qu’en partie, les sessions déjà supprimées le restent. Vérifiez la liste restante et les erreurs avant de réessayer. Voir [Conversations](conversations.md) pour les bifurcations/annulations et [Projets](projects.md) pour supprimer des dossiers temporaires ou worktrees.

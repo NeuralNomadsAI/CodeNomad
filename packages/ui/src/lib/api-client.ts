@@ -683,8 +683,8 @@ export const serverApi = {
       method: "PUT", body: JSON.stringify({ favorite }),
     })
   },
-  cleanupSession(instanceId: string, sessionId: string): Promise<{ deleted: boolean }> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-cleanup/${encodeURIComponent(sessionId)}`, { method: "POST" })
+  cleanupSession(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<{ deleted: boolean }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-cleanup/${encodeURIComponent(sessionId)}`, { method: "POST", signal })
   },
   patchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
     return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`, {

@@ -76,6 +76,24 @@ function residentMessage() {
 }
 
 describe("automatic blank-session cleanup", () => {
+  it("typing during backend preflight aborts admission without clearing the draft", async () => {
+    const { removed } = setup()
+    let entered!: () => void
+    const ready = new Promise<void>(resolve => { entered = resolve })
+    serverApi.cleanupSession = async (_instanceId, _sessionId, signal) => {
+      assert.ok(signal)
+      const done = new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }))
+      entered()
+      await done
+      return { deleted: false }
+    }
+    const sweep = cleanupBlankSession(instanceId, sessionId)
+    await ready
+    setSessionDraftPrompt(instanceId, sessionId, "keep this draft")
+    assert.equal(await sweep, false)
+    assert.deepEqual(removed, [])
+    assert.ok(sessions().get(instanceId)?.has(sessionId))
+  })
   it("does not fall back to explicit deletion when the cleanup broker refuses or fails", async () => {
     const { removed } = setup()
     serverApi.cleanupSession = async () => ({ deleted: false })

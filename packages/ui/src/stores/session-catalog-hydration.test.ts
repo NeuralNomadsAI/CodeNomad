@@ -195,6 +195,29 @@ test("directory-only seeding indexes an already loaded row without replacing its
   } finally { serverApi.fetchWorktrees = original; f.cleanup() }
 })
 
+test("favorite hydration indexes an off-page directory-only display root without querying its external parent", async () => {
+  const id = "catalog-directory-favorite", f = fixture(id), original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ gitAvailable: false, worktrees: [
+    { slug: "root", directory: "/repo", kind: "root", directoryOnly: true },
+  ] })
+  try {
+    await ensureWorktreesLoaded(id)
+    const gets: string[] = []
+    f.client.session.get = async ({ sessionID }: { sessionID: string }) => {
+      gets.push(sessionID)
+      assert.equal(sessionID, "local")
+      return { id: "local", parentID: "foreign", projectID: "project", location: { directory: "/repo" },
+        title: "favorite child", time: { created: 1, updated: 1 } }
+    }
+    assert.deepEqual(getSessionListIds(id), [])
+    await hydrateRestoredSessionChain(id, ["local"])
+    assert.deepEqual(gets, ["local"])
+    assert.deepEqual(getSessionListIds(id), ["local"])
+    assert.equal(getSessionThreads(id)[0].session.parentId, "foreign")
+    assert.equal(sessions().get(id)?.has("foreign"), false)
+  } finally { serverApi.fetchWorktrees = original; f.cleanup() }
+})
+
 test("complete directory-only reconciliation keeps concurrently changed and introduced local roots visible", async () => {
   const id = "catalog-concurrent-local-roots", f = fixture(id), original = serverApi.fetchWorktrees
   serverApi.fetchWorktrees = async () => ({ gitAvailable: false, worktrees: [

@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { test } from "node:test"
+import http from "node:http"
 import Fastify from "fastify"
 import { resolveConfigLocation } from "../../config/location"
 import { EventBus } from "../../events/bus"
@@ -28,9 +29,13 @@ const barrier = () => {
   return { wait: seen.promise, release: resume.resolve, async hold() { seen.resolve(); await resume.promise } }
 }
 
-async function fixture(t: import("node:test").TestContext) {
+async function fixture(t: import("node:test").TestContext, reconciliationDeadline?: () => AbortSignal) {
   const dir = await mkdtemp(path.join(tmpdir(), "codenomad-session-cleanup-"))
   const app = Fastify(), eventBus = new EventBus(), cfg = resolveConfigLocation(dir)
+  const disconnected = deferred()
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.headers["x-test-disconnect"] === "1") reply.raw.once("close", () => disconnected.resolve())
+  })
   t.after(async () => { try { await app.close() } finally { await rm(dir, { recursive: true, force: true }) } })
   const settings = new SettingsService(cfg, eventBus, createLogger({ level: "silent" }))
   const paths = { wide: { path: "/scope" }, narrow: { path: "/scope/narrow" } }
@@ -52,7 +57,7 @@ async function fixture(t: import("node:test").TestContext) {
     permissions: async (): Promise<unknown[]> => [],
     children: async (_id: string): Promise<unknown> => page(),
     active: async (): Promise<unknown> => ({}),
-    remove: async (id: string) => { removed.push(id); native.delete(id) },
+    remove: async (id: string, _signal?: AbortSignal) => { removed.push(id); native.delete(id) },
   }
   const connection = { assertCurrent() {}, client: {
     session: {
@@ -61,7 +66,7 @@ async function fixture(t: import("node:test").TestContext) {
       inbox: { list: () => controls.inbox() },
       form: { list: () => controls.forms() },
       active: () => controls.active(),
-      remove: ({ sessionID }: { sessionID: string }) => controls.remove(sessionID),
+      remove: ({ sessionID }: { sessionID: string }, options?: { signal: AbortSignal }) => controls.remove(sessionID, options?.signal),
     },
     message: { list: ({ sessionID }: { sessionID: string }) => controls.message(sessionID) },
     permission: { request: { list: async ({ location }: { location: { directory: string } }) => ({ location, data: await controls.permissions() }) } },
@@ -76,14 +81,14 @@ async function fixture(t: import("node:test").TestContext) {
     getWorktreeIdentityForPath: async () => "/scope",
   } as any
   const cleanup = new SessionCleanupFence()
-  const isProtected = registerSessionFavoritesRoutes(app, { settings, workspaceManager, eventBus, cleanup })
+  const isProtected = registerSessionFavoritesRoutes(app, { settings, workspaceManager, eventBus, cleanup, reconciliationDeadline })
   registerSessionCleanupRoute(app, { workspaceManager, isProtected, cleanup, worktreeDeletionFence: new WorktreeDeletionFence() })
   const save = (id: string, base = wide, favorite = true) =>
     app.inject({ method: "PUT", url: `${base}/session-favorites/${id}`, payload: { favorite } })
   const get = (base = wide, reconcile = false) =>
     app.inject({ url: `${base}/session-favorites${reconcile ? "?reconcile=1" : ""}` })
   const clean = (id: string) => app.inject({ method: "POST", url: `${wide}/session-cleanup/${id}` }).then(response => response.json().deleted)
-  return { controls, native, removed, cfg, eventBus, cleanup, clean, get, save, settings }
+  return { app, disconnected, controls, native, removed, cfg, eventBus, cleanup, clean, get, save, settings }
 }
 
 test("a favorite in a narrower workspace protects the session and its private foreign ancestor", async t => {
@@ -201,4 +206,89 @@ test("a full favorites quota reconciles deletions before admitting a new favorit
   const saved = await f.save(other)
   assert.equal(saved.statusCode, 200)
   assert.deepEqual(saved.json().records, { [other]: [] })
+})
+
+test("a disconnected cleanup keeps the reservation until the native delete returns", { timeout: 10_000 }, async t => {
+  const f = await fixture(t)
+  const base = await f.app.listen({ host: "127.0.0.1", port: 0 })
+  const native = barrier(), remove = f.controls.remove, completed = deferred()
+  let removerSignal: AbortSignal | undefined
+  f.controls.remove = async (id, signal) => { removerSignal = signal; await native.hold(); await remove(id); completed.resolve() }
+  const request = http.request(`${base}${wide}/session-cleanup/${root}`, { method: "POST", headers: { "x-test-disconnect": "1" } })
+  request.on("error", () => {})
+  request.end()
+  try {
+    await native.wait
+    request.destroy()
+    await f.disconnected.promise
+    assert.equal((await f.save(root)).statusCode, 409)
+    assert.deepEqual(f.removed, [])
+    assert.ok(removerSignal)
+    assert.equal(removerSignal.aborted, false)
+  } finally { native.release() }
+  await completed.promise
+  assert.equal((await f.save(root)).statusCode, 404)
+  assert.deepEqual(f.removed, [root])
+})
+
+test("cancelling cleanup during final preflight prevents native dispatch", { timeout: 10_000 }, async t => {
+  const f = await fixture(t)
+  const base = await f.app.listen({ host: "127.0.0.1", port: 0 })
+  const proof = barrier()
+  f.controls.message = async () => { await proof.hold(); return page() }
+  const request = http.request(`${base}${wide}/session-cleanup/${root}`, { method: "POST", headers: { "x-test-disconnect": "1" } })
+  request.on("error", () => {})
+  request.end()
+  try {
+    await proof.wait
+    request.destroy()
+    await f.disconnected.promise
+  } finally { proof.release() }
+  await f.app.close()
+  assert.deepEqual(f.removed, [])
+  assert.ok(f.native.has(root))
+})
+
+test("a lost native delete response blocks contradictory operations until exact absence", async t => {
+  const f = await fixture(t)
+  f.controls.remove = async () => { throw new Error("outcome unavailable") }
+  const rejected = await f.app.inject({ method: "POST", url: `${wide}/session-cleanup/${root}` })
+  assert.equal(rejected.statusCode, 503)
+  assert.equal((await f.save(root)).statusCode, 409)
+  assert.equal(await f.clean(root), false)
+  assert.equal((await f.save(root)).statusCode, 409)
+  f.native.delete(root)
+  assert.equal(await f.clean(root), false)
+  assert.equal(f.cleanup.hasUncertain(root), false)
+})
+
+test("quota reconciliation retains confirmed absences despite timeout and preserves re-added entries", { timeout: 10_000 }, async t => {
+  const deadline = new AbortController()
+  const f = await fixture(t, () => deadline.signal)
+  const key = createHash("sha256").update(canonicalWorktreeIdentity("/scope")).digest("hex")
+  const fillers = Array.from({ length: 510 }, (_, index) => `ses_slow_${index}`)
+  f.settings.mergePatchOwner("state", SESSION_FAVORITES_OWNER, {
+    [key]: Object.fromEntries([root, child, ...fillers].map(id => [id, []])),
+  })
+  const get = f.controls.get
+  const held = barrier()
+  f.controls.get = async id => {
+    if (id === child || id === root) throw { _tag: "SessionNotFoundError", sessionID: id, message: "gone" }
+    if (id.startsWith("ses_slow_")) { await held.hold(); throw new Error("unavailable") }
+    return get(id)
+  }
+  const request = f.save(other)
+  try {
+    await held.wait
+    assert.equal((await f.save(child, wide, false)).statusCode, 200)
+    const scanning = f.controls.get
+    f.controls.get = id => id === child || id === root ? get(id) : scanning(id)
+    assert.equal((await f.save(child)).statusCode, 200)
+    deadline.abort()
+  } finally { held.release() }
+  const response = await request
+  assert.equal(response.statusCode, 200)
+  const records = response.json().records
+  assert.equal(Object.hasOwn(records, root), false)
+  assert.deepEqual(Object.keys(records).sort(), [child, other, ...fillers].sort())
 })

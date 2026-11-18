@@ -35,6 +35,7 @@ export type { SessionThread } from "./session-tree"
 import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
 import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
 import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
+import { getSessionListView } from "./session-list-view"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -1035,17 +1036,13 @@ function getPersistentExpandedSessionIds(instanceId: string): string[] {
   return [...(expandedSessions().get(instanceId) ?? [])]
 }
 
-const listProjections = new Map<string, () => string[]>()
-
-/** The mounted sidebar owns displayed order, independent of visit history. */
-export function registerSessionListProjection(instanceId: string, ids: () => string[]) {
-  listProjections.set(instanceId, ids)
-  return () => { if (listProjections.get(instanceId) === ids) listProjections.delete(instanceId) }
-}
-
 function getVisibleSessionIds(instanceId: string): string[] {
-  const displayed = listProjections.get(instanceId)
-  if (displayed) return displayed()
+  const view = getSessionListView(instanceId)
+  if (view.projected) {
+    const known = sessions().get(instanceId)
+    const scope = getWorkspaceSessionScope(instanceId)
+    return view.ids.filter(id => known?.has(id) && (!scope || scope.has(id)))
+  }
   const threads = projectUnarchivedSessionThreads(getSessionThreads(instanceId), activeSessionId().get(instanceId))
   if (threads.length === 0) return []
 

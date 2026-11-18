@@ -64,7 +64,16 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
     // Recheck local activity, drafts and connection authority immediately before
     // dispatch. No asynchronous work between this check and deleteSession's call.
     if (!current()) return false
-    return await deleteBlankSession(instanceId, sessionId)
+    const controller = new AbortController()
+    const dispose = createRoot(dispose => {
+      createComputed(() => {
+        if (getSessionDraftPrompt(instanceId, sessionId) || getAttachments(instanceId, sessionId).length
+          || sessions().get(instanceId)?.get(sessionId)?.status !== "idle") controller.abort()
+      })
+      return dispose
+    })
+    try { return await deleteBlankSession(instanceId, sessionId, controller.signal) }
+    finally { dispose() }
   } catch (error) {
     // An unavailable/failed read is unknown, never empty. Failed deletions also
     // must not contribute to the cleanup toast's success count.
@@ -72,3 +81,4 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
     return false
   }
 }
+import { createComputed, createRoot } from "solid-js"

@@ -12,6 +12,12 @@ import { cleanupBlankSessions, getSessionThreads, sessions, setSessions, setSess
 import { activeSessionId, setActiveSessionId } from "../../../src/stores/session-selection-state"
 import { registerNavigationShortcuts } from "../../../src/lib/shortcuts/navigation"
 import { keyboardRegistry } from "../../../src/lib/keyboard-registry"
+import PromptInput from "../../../src/components/prompt-input"
+import PromptAttachmentsBar from "../../../src/components/prompt-input/PromptAttachmentsBar"
+import { addAttachment, getAttachments } from "../../../src/stores/attachments"
+import { setSessionDraftPrompt } from "../../../src/stores/session-state"
+import { NO_SESSION_DRAFT_SESSION_ID } from "../../../src/stores/app-session-workspace-hydration"
+import { createFileAttachment } from "../../../src/types/attachment"
 import { createClientSession } from "../../../src/types/session"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
@@ -109,7 +115,12 @@ function Fixture() {
       </aside>
     </Show>
     <section class="p-3 flex-1 bg-surface-canvas">
-      <button type="button" class="button-tertiary" onClick={() => { setSearch(false); setShown(value => !value) }}>Bureau</button>
+      <button type="button" class="button-tertiary" onClick={() => setShown(value => !value)}>Bureau</button>
+      <Show when={getAttachments(id, NO_SESSION_DRAFT_SESSION_ID).length > 0}><div data-recovered-composer>
+        <PromptAttachmentsBar attachments={getAttachments(id, NO_SESSION_DRAFT_SESSION_ID)} onRemoveAttachment={() => {}} />
+        <PromptInput instanceId={id} instanceFolder={main} sessionId={NO_SESSION_DRAFT_SESSION_ID}
+          onSend={() => {}} onCommand={() => {}} onRunShell={() => {}} />
+      </div></Show>
     </section>
     <AlertDialog />
   </main>
@@ -126,6 +137,13 @@ Object.assign(window, { favoriteFixture: {
     setActiveSessionId(new Map([[id, from]]))
     keyboardRegistry.get(command)?.handler()
   },
+  draftDuringCleanup: (target: string) => {
+    setSessionDraftPrompt(id, target, "À relire demain")
+    addAttachment(id, target, createFileAttachment("note.txt", "note.txt", "text/plain", new Uint8Array([98, 111, 110])))
+  },
+  recoveredBytes: () => getAttachments(id, NO_SESSION_DRAFT_SESSION_ID).map(value =>
+    value.source.type === "file" ? Array.from(value.source.data ?? []) : null),
+  deleteEvent: (sessionID: string) => emit("session.deleted", { sessionID }),
   metadata: () => native.get("ses_briefing")?.metadata,
   automatic: () => cleanupBlankSessions(id),
   deep: () => { blank.add("ses_dossier_02"); return cleanupBlankSessions(id, undefined, true) },

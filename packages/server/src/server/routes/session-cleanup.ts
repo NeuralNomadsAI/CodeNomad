@@ -26,7 +26,22 @@ export function registerSessionCleanupRoute(app: FastifyInstance, deps: Deps) {
     if (!connection) return reply.code(503).send()
     const skipped = { deleted: false }
     const release = deps.cleanup.enterCleanup(sessionId)
-    if (!release) return skipped
+    if (!release) {
+      if (deps.cleanup.hasUncertain(sessionId)) {
+        // A surviving session cannot establish the outcome of a lost write.
+        const signal = AbortSignal.timeout(3_000)
+        try { await connection.client.session.get({ sessionID: sessionId }, { signal }) }
+        catch (error) {
+          if (isSessionNotFoundError(error) && error.sessionID === sessionId && !signal.aborted) {
+            try {
+              sessionTargetCurrent(manager, id, workspace, connection, signal)()
+              deps.cleanup.observeAbsent(sessionId)
+            } catch { /* Retain the hold. */ }
+          }
+        }
+      }
+      return skipped
+    }
     const admission = requestAdmission(request, reply)
     const signal = AbortSignal.any([admission.signal, AbortSignal.timeout(10_000)])
     const current = sessionTargetCurrent(manager, id, workspace, connection, signal)
@@ -68,10 +83,11 @@ export function registerSessionCleanupRoute(app: FastifyInstance, deps: Deps) {
       // The public native remove accepts only an ID. Keep the backend reservation
       // through settlement; clients bypassing this backend remain outside it.
       dispatched = true
-      await client.session.remove({ sessionID: sessionId }, options)
-      return { deleted: true }
+      await client.session.remove({ sessionID: sessionId }, { signal: AbortSignal.timeout(60_000) })
+      if (!admission.signal.aborted) return { deleted: true }
     } catch {
-      return dispatched ? reply.code(503).send() : skipped
+      if (dispatched) deps.cleanup.markUncertain(sessionId)
+      if (!admission.signal.aborted) return dispatched ? reply.code(503).send() : skipped
     } finally {
       releaseWorktree?.()
       admission.dispose()
@@ -85,3 +101,4 @@ function isEmptyPage(value: { data: unknown; cursor?: { next?: unknown; previous
     && typeof value.cursor === "object" && !Array.isArray(value.cursor)
     && value.cursor.next == null && value.cursor.previous == null)
 }
+import { isSessionNotFoundError } from "@opencode/client"

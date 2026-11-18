@@ -1396,8 +1396,15 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           if (response.ok) { await confirmPermission?.(); await confirmDeletion?.() }
           return response
         } : runtimeFetch, release: releaseMutation,
+        retainMutation: ordinarySessionMutation && targetSessionId && args.sessionCleanup
+          ? confirmed => { if (!confirmed) args.sessionCleanup!.markUncertain(targetSessionId) }
+          : undefined,
         invalidate: () => connection ? connection.invalidate() : workspaceManager.invalidateSharedServiceConnection?.(),
       })
+    }
+    if (ordinarySessionMutation && targetSessionId && args.sessionCleanup) {
+      releaseMutation?.()
+      return reply.code(503).send({ error: "Session mutation transport is unavailable" })
     }
     signal.throwIfAborted()
     return reply.from(targetUrl.toString(), {

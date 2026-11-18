@@ -7,7 +7,7 @@ import type { EventBus } from "../../events/bus"
 import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
 import { SESSION_FAVORITES_OWNER, type SettingsService } from "../../settings/service"
 import { canonicalWorktreeIdentity, type WorkspaceManager } from "../../workspaces/manager"
-import type { ServiceConnection } from "../../workspaces/opencode-service"
+import { nativeEventConnections, type ServiceConnection } from "../../workspaces/opencode-service"
 import type { SessionCleanupFence } from "../session-cleanup-fence"
 
 export const favoriteSessionId = z.string().regex(/^ses[A-Za-z0-9_-]{1,511}$/)
@@ -21,6 +21,7 @@ interface Deps {
   workspaceManager: Manager
   eventBus: EventBus
   cleanup: SessionCleanupFence
+  reconciliationDeadline?: () => AbortSignal
 }
 
 export function sessionTargetCurrent(manager: Pick<Manager, "get">, id: string,
@@ -32,7 +33,9 @@ export function sessionTargetCurrent(manager: Pick<Manager, "get">, id: string,
   }
 }
 
-export function registerSessionFavoritesRoutes(app: FastifyInstance, { settings, workspaceManager, eventBus, cleanup }: Deps) {
+export function registerSessionFavoritesRoutes(app: FastifyInstance, {
+  settings, workspaceManager, eventBus, cleanup, reconciliationDeadline = () => AbortSignal.timeout(6_000),
+}: Deps) {
   let snapshot: { raw: object; state: FavoriteState; protectedIds: Set<string>; revision: number } | undefined
   const source = randomUUID()
   let revision = 0
@@ -49,25 +52,31 @@ export function registerSessionFavoritesRoutes(app: FastifyInstance, { settings,
   }
   const scope = (workspace: NonNullable<ReturnType<Manager["get"]>>) =>
     createHash("sha256").update(canonicalWorktreeIdentity(workspace.path)).digest("hex")
-  const publish = (patch: Record<string, Record<string, string[] | null>>) =>
+  const reconciling = new Map<string, { task: Promise<void>; changed: Set<string> }>()
+  const publish = (patch: Record<string, Record<string, string[] | null>>) => {
     settings.mergePatchOwner("state", SESSION_FAVORITES_OWNER, patch)
+    for (const [key, entries] of Object.entries(patch)) {
+      const scan = reconciling.get(key)
+      if (scan) for (const id of Object.keys(entries)) scan.changed.add(id)
+    }
+  }
   // All ancestry is private protection data, including ancestors outside the workspace.
   const display = (key: string, state = read()): SessionFavoritesSnapshot => ({
     source, revision: state.revision, records: Object.fromEntries(Object.keys(state.state[key] ?? {}).map(id => [id, []])),
   })
   const absent = (error: unknown, id: string) => isSessionNotFoundError(error) && error.sessionID === id
-  const reconciling = new Map<string, Promise<void>>()
   const lifetime = new AbortController()
   function reconcile(id: string, key: string, connection: ServiceConnection, observed: ReturnType<typeof read>): Promise<void> {
     const pending = reconciling.get(key)
-    if (pending) return pending
+    if (pending) return pending.task
     if (reconciling.size >= 4) return Promise.resolve()
     const workspace = workspaceManager.get(id)
     const ids = Object.keys(observed.state[key] ?? {})
     if (!ids.length) return Promise.resolve()
-    const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(6_000)])
-    const current = sessionTargetCurrent(workspaceManager, id, workspace, connection, signal)
+    const signal = AbortSignal.any([lifetime.signal, reconciliationDeadline()])
+    const current = sessionTargetCurrent(workspaceManager, id, workspace, connection, lifetime.signal)
     const missing: Record<string, null> = {}
+    const changed = new Set<string>()
     let offset = 0
     const scan = async () => {
       while (offset < ids.length && !signal.aborted) {
@@ -76,16 +85,24 @@ export function registerSessionFavoritesRoutes(app: FastifyInstance, { settings,
           current()
           await connection.client.session.get({ sessionID: target }, { signal })
         } catch (error) {
-          if (absent(error, target)) missing[target] = null
+          if (!signal.aborted && absent(error, target)) {
+            current()
+            missing[target] = null
+          }
         }
       }
     }
-    const task = Promise.all(Array.from({ length: Math.min(4, ids.length) }, scan)).then(() => {
+    const task = Promise.allSettled(Array.from({ length: Math.min(4, ids.length) }, scan)).then(() => {
       current()
-      if (read() === observed && Object.keys(missing).length) publish({ [key]: missing })
+      const entries = read().state[key] ?? {}
+      const confirmed = Object.fromEntries(Object.keys(missing).filter(target =>
+        !changed.has(target) && Object.hasOwn(entries, target)
+        && JSON.stringify(entries[target]) === JSON.stringify(observed.state[key]?.[target]))
+        .map(target => [target, null]))
+      if (Object.keys(confirmed).length) publish({ [key]: confirmed })
     }).catch(() => { /* Uncertain or superseded discovery retains the entries. */ })
       .finally(() => reconciling.delete(key))
-    reconciling.set(key, task)
+    reconciling.set(key, { task, changed })
     return task
   }
 
@@ -163,6 +180,10 @@ export function registerSessionFavoritesRoutes(app: FastifyInstance, { settings,
     if (event.type !== "instance.event" || event.event.type !== "session.deleted") return
     const target = (event.event.data as { sessionID?: string }).sessionID
     if (!target || !favoriteSessionId.safeParse(target).success) return
+    const provenance = nativeEventConnections.get(event.event)
+    if (provenance && provenance === workspaceManager.getExistingSharedServiceConnection(event.instanceId)) {
+      try { provenance.assertCurrent(); cleanup.observeAbsent(target) } catch { /* An old stream cannot release a hold. */ }
+    }
     try {
       const state = read()
       if (!state.protectedIds.has(target)) return
@@ -173,6 +194,6 @@ export function registerSessionFavoritesRoutes(app: FastifyInstance, { settings,
       if (Object.keys(patch).length) publish(patch)
     } catch { app.log.warn("Could not remove deleted favorites") }
   })
-  app.addHook("onClose", async () => { stop(); lifetime.abort(); await Promise.all(reconciling.values()) })
+  app.addHook("onClose", async () => { stop(); lifetime.abort(); await Promise.all([...reconciling.values()].map(scan => scan.task)) })
   return (id: string) => read().protectedIds.has(id)
 }

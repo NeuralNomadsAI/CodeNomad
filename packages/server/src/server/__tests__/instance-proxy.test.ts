@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { afterEach, describe, it } from "node:test"
 import { Readable } from "node:stream"
+import http from "node:http"
 import Fastify, { type FastifyInstance } from "fastify"
 import replyFrom from "@fastify/reply-from"
 import { OpenCode, isSessionNotFoundError, type OpenCodeClient, type SessionInfo } from "@opencode/client"
@@ -186,6 +187,41 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("disconnecting after native prompt dispatch leaves the cleanup reservation until native settlement", { timeout: 10_000 }, async () => {
+    const { app, sessionCleanup, delayedUpstreamStarted, releaseDelayedUpstream, requestCount } = await harness()
+    let disconnected!: () => void
+    const closed = new Promise<void>(resolve => { disconnected = resolve })
+    app.server.on("request", (request, response) => {
+      if (request.headers["x-test-delay-upstream"] === "1") response.once("close", disconnected)
+    })
+    const address = await app.listen({ host: "127.0.0.1", port: 0 })
+    const url = "/workspaces/workspace/instance/api/session/ses_thread/prompt"
+    const request = http.request(address + url, { method: "POST", headers: {
+      "x-test-delay-upstream": "1", "content-type": "application/json", "content-length": "2",
+    } })
+    request.on("error", () => {})
+    request.end("{}")
+    let settled!: () => void
+    const nativeSettled = new Promise<void>(resolve => { settled = resolve })
+    const open = sessionCleanup.enterMutation.bind(sessionCleanup)
+    // Install before request admission, observing its reservation release only.
+    sessionCleanup.enterMutation = id => {
+      const release = open(id)
+      return release && (() => { release(); settled() })
+    }
+    try {
+      await delayedUpstreamStarted
+      request.destroy()
+      await closed
+      assert.equal(sessionCleanup.enterCleanup("ses_thread"), undefined)
+      assert.equal(requestCount(), 1)
+    } finally { releaseDelayedUpstream() }
+    await nativeSettled
+    const release = sessionCleanup.enterCleanup("ses_thread")
+    assert.ok(release)
+    release()
+  })
+
   it("holds the cleanup fence across a real forwarded prompt and refuses a new prompt while cleaning", async () => {
     const { app, sessionCleanup, requestCount, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
     const url = "/workspaces/workspace/instance/api/session/ses_thread/prompt"
