@@ -144,6 +144,7 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
     setOpenCodeSetupPhase("check")
     await refreshOpenCodeSetup(true)
     if (epoch !== generation || openCodeSetupCheckError()) return
+    if (action === "reload" && !openCodeSetupStatus()?.canReload) return
     if (action !== "restart" && (openCodeSetupStatus()?.serviceState === "restart_required" || openCodeSetupStatus()?.serviceState === "incompatible")) return
     setOpenCodeSetupPhase(action === "install" ? "start" : action)
     const status = action === "reload" ? await serverApi.reloadOpenCodeConfiguration() : await serverApi.startOpenCode(action === "restart")

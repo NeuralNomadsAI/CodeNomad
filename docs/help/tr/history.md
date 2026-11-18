@@ -13,23 +13,19 @@ Saklanan geçmiş, konuşma dökümünün şu anda görüntüledikleri ve modeli
 
 Konuşma sayfaları gruplar geldikçe **Bu sayfa: … sonuç · … mesaj tarandı** bilgisini gösterir. Proje araması **En iyi sonuçlar: …** ile kısmi tarama veya hariç tutulan dizinlere ilişkin kısa bildirimler gösterir. Sıralanmış arama çalışma ortamında yoksa **Tüm oturum** kullanın. Atlanan mesajlar bildirilir; yeni mesajlar için yeniden arayın.
 
-Boş arama açmak geçmişi taramaz. Sorguyu/kapsamı değiştirmek, pencereyi kapatmak veya oturumdan ayrılmak geçerliliğini yitiren aramayı iptal eder. Okuma başarısızsa **Yeniden dene** eylemini kullanın; bu istem göndermez veya geçmişi değiştirmez.
-
 Proje taraması her konumdaki en yeni en fazla 16.384 kayıtlı mesajdan başlar. **Daha eskiyi ara**, listeyi sonraki eski pencerenin en iyi sonuçlarıyla değiştirir. Bildirim, projenin her konumunda yeniden eskiye incelenen aralığı gösterir. Sıralama yalnızca o pencere içinde geçerlidir. Sorgu, kapsam veya teknik içerik değişikliği, aramayı kapatma ya da oturumdan ayrılma pencereyi sıfırlar. Yeni arama yeni mesajları da içerir.
 
-Arama penceresinin süresi dolarsa veya geçmiş değişirse **Yeni arama başlat**, aynı sorgu ve seçeneklerle en yeni mesajlardan başlar. Bildirim bu kurtarmayı açıklar. Olağan okuma hatalarında **Yeniden dene**, geçerli pencereyi tekrar okur.
+Arama penceresinin süresi dolarsa veya geçmiş değişirse **Yeni arama başlat**, aynı sorgu ve seçeneklerle en yeni mesajlardan başlar.
 
 ## Sonuçları açın ve zaman çizelgesini kullanın {#timeline-navigation}
 
 1. Çevresindeki pasaja atlamak için geçerli oturum arama sonucunu seçin.
 2. Söz konusu mesajın ayrı bir önizlemesini açmak için başka bir oturumdan bir sonuç seçin; o konuşmaya isabetin olduğu yerde gitmek için **Oturumda aç** öğesini kullanın.
-3. **Mesaj zaman çizelgesi** bölümünde bir alıntı için işaretçinin üzerine gelin veya odaklanın, ardından gezinmek için onu seçin: bloğu en üste gelir ve siz kaydırana kadar işaretçi vurgulu kalır; sonra vurgu, konuşmanın en üstündeki bloğu izler. Saklanan geçmişin sonuna dönmek için ilk/en son mesaj kontrollerini kullanın.
+3. **Mesaj zaman çizelgesi** bölümünde bir alıntı için işaretçinin üzerine gelin veya odaklanın, ardından gezinmek için onu seçin: bloğu en üste gelir ve siz kaydırana kadar işaretçi vurgulu kalır; sonra vurgu, konuşmanın en üstündeki bloğu izler. Saklanan geçmişin uçlarına dönmek için ilk/en son mesaj oklarını kullanın. Oklar konuşmanın üzerinde yüzer; **Genel** bölümünde **İlk/en son mesaj oklarını zaman çizelgesinin altına yerleştir** etkinse zaman çizelgesinin altında, **Mesaj gönder** öğesinin sağındaki köşede dururlar ve bulunduğunuz ucun oku soluk görünür.
 
 Zaman çizelgesi, konuşma dökümü yalnızca sınırlı bir pasaj içerdiğinde bile tam oturum yapısını temsil eder. Atlamalar, araya giren her mesajı getirmek yerine hedefi yükler. Diğer oturum arama önizlemeleri o oturumun tüm metnini yüklemez veya onu seçmez; konuşmayı yalnızca **Oturumda aç** değiştirir.
 
 Araç işaretçileri **Mesaj içeriği** ayarlarını izler: orada gizlenen bir araç türünün işaretçisi olmaz (**Hiçbir şey** ile hiç işaretçi olmaz); izin bekleyen bir araç bunun istisnasıdır. Yalnızca araç çalıştıran bir adım, boş bir ajan işaretçisi olmadan yalnızca araç işaretçilerini gösterir.
-
-Atlama yüklenirken eski bölüm görünür kalır. Yeni atlama veya konuşma dökümüne elle müdahale, eski gezinmeyi geçersiz kılar; başarısız atlama görünür bölümü korur. Tüm projeyi tekrar tekrar yüklemek yerine hedefi yeniden deneyin. Geçmişi okumak ileti düzenleyicisindeki ajan/model seçimini değiştirmez.
 
 Konuşma çok dar olduğunda (420 CSS pikselinin altında) zaman çizelgesi gizlenir; orada arama ve konuşma dökümü kontrollerini kullanın. Kaydedilen görünürlük tercihi, bu duyarlı değişiklik nedeniyle silinmez.
 
@@ -44,7 +40,7 @@ Konuşma çok dar olduğunda (420 CSS pikselinin altında) zaman çizelgesi gizl
 | Oturumu sil | Oturum satırı **Session'ı sil** veya seçilen oturumun silinmesi | Onaylandıktan sonra yerel konuşmayı ve onun alt oturumlarını/geçmişini yinelemeli olarak siler; geri alma yok |
 | Session'ları Temizle | Komut paleti | Görüntüleme veya bağlam boyutu ayarı değil, daha kapsamlı oturum silme |
 
-**Mesaj içeriği** konuşmalar genelinde geçerlidir. Üst kısmından veya **Ayarlar → Sohbet** bölümünden bir hazır ayar (**Hiçbir şey**, **Minimal**, **Dengeli** veya **Her şey**) seçin, ardından satırları tek tek ayarlayın; **Mesaj içeriği** hazır ayar menüsü bundan sonra **Özel** gösterir. Araçları gizlemek araçları devre dışı bırakmaz, izinleri değiştirmez veya saklanan çıktıyı kaldırmaz. Arayüzün akıcı kalması için çok büyük mesajlar atlanan bölümün yerinde **… tane daha göster** kontrolünü gösterir; çok uzun metin veya araç çıktısı ise **Tümünü göster** ile birlikte **Bu mesajın akıcı kalması için … karakter daha gizlendi** satırında durur; çok fazla içerik kaldığında **Tümünü göster** yerine **… tane daha göster** görünür ve bu birkaç adım gerektirebilir. İkisini de açmak yalnızca görüntülemeyi etkiler ve silinmiş içeriği kurtarmaz.
+**Mesaj içeriği** konuşmalar genelinde geçerlidir. Üst kısmından veya **Ayarlar → Sohbet** bölümünden bir hazır ayar (**Hiçbir şey**, **Minimal**, **Dengeli** veya **Her şey**) seçin, ardından satırları tek tek ayarlayın; **Mesaj içeriği** hazır ayar menüsü bundan sonra **Özel** gösterir. Araçları gizlemek araçları devre dışı bırakmaz, izinleri değiştirmez veya saklanan çıktıyı kaldırmaz. Arayüzün akıcı kalması için çok büyük mesajlar atlanan bölümün yerinde **… tane daha göster** kontrolünü gösterir; çok uzun metin veya araç çıktısı ise **Tümünü göster** ile birlikte **Bu mesajın akıcı kalması için … karakter daha gizlendi** satırında durur; çok fazla içerik kaldığında **Tümünü göster** yerine **… tane daha göster** görünür ve bu birkaç adım gerektirebilir. İkisini de açmak yalnızca görüntülemeyi etkiler ve silinmiş içeriği kurtarmaz. Birden fazla satırı tek seferde ayarlamak için göz veya ok düğmelerinin üzerinde sürükleyin: ilk ayrıldığınız düğme değişir ve aynı sütunda üzerinden geçtiğiniz her düğme onun yeni durumunu alır. Konuşma, düğmeyi bıraktığınızda güncellenir.
 
 ## Bir oturumu sıkıştırın {#compact-session}
 
@@ -63,8 +59,6 @@ Sıkıştırma, OpenCode'un oturuma devam etmek için kullandığı bağlamı de
 Yalnızca uygun, tamamlanmış araçlar ve akıl yürütme parçaları kaldırılır. Etkin/tamamlanmamış içerik budanmaz; OpenCode'un okuduğu haliyle (ekli dosyalar dahil) boyutu 16 MB üzerinde olan bir mesaj da budanmaz ve atlanan içerik sayılır; onayladığınız kapsamı sessizce genişletmek yerine değişmiş içerik reddedilir. Son metin ve mesaj/oturum meta verileri korunur, ancak kaldırılan teknik çıktı geri alınamaz. Onaylamadan önce gereken her şeyi koruyun.
 
 Oturum temizliği bütün oturum için atomik değildir. Sonraki mesaj çakışır veya başarısız olursa önceki başarılı kaldırmalar kalır. **İptal sonraki toplu işlemleri durdurur; zaten gönderilmiş toplu işlemi geri almaz**; o işlem yine de tamamlanabilir.
-
-Meşgul depolama hatası durumunda mevcut yürütme/depolama işinin bitmesini bekleyin. Değiştirilen mesaj hatası için yeniden yükleyin ve tekrar seçin. Kullanılamayan bir eklenti için CodeNomad'i yeniden bağlayın/yeniden açın ve yeniden denemeden önce hatayı inceleyin. Belirsiz bir yanıtın ardından kalan içeriği yenileyin ve değerlendirin; hiçbir şeyin olmadığını ya da tüm oturumun temizlendiğini varsaymayın.
 
 ## Oturumları silme ve temizleme {#delete-scrub}
 

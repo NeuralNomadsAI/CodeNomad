@@ -40,13 +40,13 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
           || !sameLocation(deps.manager.getServiceLocation(request.params.id) ?? { directory: "" }, base)
           || recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId) throw new Error("Manual status changed")
       }
-      if (!await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, lifetime.signal))) throw new Error("Foreign Location")
+      if (!await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, { signal: lifetime.signal }))) throw new Error("Foreign Location")
       current()
       const result = recurrenceManualResultSchema.parse(await lifetime.wait(connection.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNowStatus({ ...input.data, ...hint },
         { location, ...locationRequestOptions(location), signal: lifetime.signal })))
       current()
       if (result.scheduleID !== input.data.scheduleID || result.requestID !== input.data.requestID || result.expectedRevision !== input.data.expectedRevision
-        || !sameLocation(result.location, location) || !await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, lifetime.signal))) throw new Error("Foreign manual status")
+        || !sameLocation(result.location, location) || !await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, { signal: lifetime.signal }))) throw new Error("Foreign manual status")
       current()
       if (result.outcome !== "unknown") {
         const owner = recurrenceControlHeldElsewhere(deps.fence, request.params.id, identity, connection)
@@ -74,23 +74,8 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
         { ...input.data, scheduleID: request.params.scheduleID, action: "run-now" }, deps, lifetime.signal)
       prepared.current(); prepared.hold.dispatched()
       dispatched = true
-      const options = { location: prepared.location, ...locationRequestOptions(prepared.location) }
-      let raw: unknown
-      try { raw = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNow(prepared.body, options) }
-      catch {
-        const identity = { scheduleID: prepared.body.scheduleID, requestID: input.data.requestID, expectedRevision: input.data.expectedRevision }
-        raw = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNowStatus({ ...identity,
-          ...recurrenceHoldProofHint(deps.fence, request.params.id, { ...identity, action: "run-now" }) }, { ...options, signal: AbortSignal.timeout(10_000) })
-      }
-      const result = recurrenceManualResultSchema.parse(raw)
-      if (result.scheduleID !== prepared.body.scheduleID || result.requestID !== input.data.requestID
-        || result.expectedRevision !== input.data.expectedRevision || !sameLocation(result.location, prepared.location)) throw new Error("Foreign manual reply")
-      if (result.outcome !== "unknown") prepared.hold.settled()
-      // Native proof that this Run now never reserved and never can: definitive, released.
-      if (result.outcome === "rejected" && result.reason) {
-        return reply.code(409).send({ error: "Manual passage refused; nothing was started", code: recurrenceRefusalCode(result.reason) })
-      }
-      return reply.code(result.outcome === "unknown" ? 503 : 200).send(result)
+      const result = await dispatchRecurrenceRunNow(prepared, deps.fence, request.params.id)
+      return reply.code(result.status).send(result.body)
     } catch (error) {
       if (!dispatched) prepared?.dispose()
       const refused = dispatched ? undefined : recurrenceNotDispatchedReply(error, { fence: deps.fence,
@@ -100,4 +85,24 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
     }
     finally { prepared?.dispose(); lifetime.dispose() }
   })
+}
+
+/** One manual passage with shared acknowledgement recovery and hold settlement. */
+export async function dispatchRecurrenceRunNow(prepared: Awaited<ReturnType<typeof prepareHumanRecurrenceControl>>,
+  fence: Parameters<typeof prepareHumanRecurrenceControl>[3]["fence"], workspaceID: string) {
+  const options = { location: prepared.location, ...locationRequestOptions(prepared.location) }
+  let raw: unknown
+  try { raw = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNow(prepared.body, options) }
+  catch {
+    const identity = { scheduleID: prepared.body.scheduleID, requestID: prepared.body.requestID, expectedRevision: prepared.body.expectedRevision }
+    raw = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNowStatus({ ...identity,
+      ...recurrenceHoldProofHint(fence, workspaceID, { ...identity, action: "run-now" }) }, { ...options, signal: AbortSignal.timeout(10_000) })
+  }
+  const result = recurrenceManualResultSchema.parse(raw)
+  if (result.scheduleID !== prepared.body.scheduleID || result.requestID !== prepared.body.requestID
+    || result.expectedRevision !== prepared.body.expectedRevision || !sameLocation(result.location, prepared.location)) throw new Error("Foreign manual reply")
+  if (result.outcome !== "unknown") prepared.hold.settled()
+  if (result.outcome === "rejected" && result.reason)
+    return { status: 409, body: { error: "Manual passage refused; nothing was started", code: recurrenceRefusalCode(result.reason) } }
+  return { status: result.outcome === "unknown" ? 503 : 200, body: result }
 }

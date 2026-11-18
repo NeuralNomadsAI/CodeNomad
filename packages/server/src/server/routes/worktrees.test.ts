@@ -61,6 +61,7 @@ it("reserves the physical worktree and rejects a same-HEAD replacement before de
     }
     let lists = 0
     const client = {
+      rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
       project: { list: async () => [{ id: "project" }] },
       debug: { location: { list: async () => [] } },
       shell: { list: async () => ({ data: [] }) },
@@ -150,6 +151,7 @@ it("fails a direct delete call closed when session evacuation fails", async () =
       const nativeSession = { id: "unloaded", projectID: "project", location: { directory: target }, cost: 0, tokens: {}, time: { created: 1, updated: 1 } } as SessionInfo
       let blocker: "shell" | "pty" | "persistent" | undefined = "shell"
       const client = {
+        rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
         project: { list: async () => [{ id: "project" }] },
         debug: { location: { list: async () => [{ directory: path.join(temp, "unrelated"), workspaceID: "root-location" }] } },
         shell: { list: async (_input: unknown, options?: { headers: Record<string, string> }) => ({

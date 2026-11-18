@@ -25,11 +25,12 @@ function Fixture() {
         <BrowserFrame sessionId={sessionId()} title="Preview" onClose={() => setMounted(false)}
           initialUrl={address()} initialAddress={address()}
           proxyBasePath="" addressMode="url"
-          labels={{ back: "Back", refresh: "Refresh", path: "Address", go: "Go", viewport: "Viewport",
+          labels={{ back: "Back", forward: "Forward", refresh: "Refresh", path: "Address", go: "Go", viewport: "Viewport",
             viewportResponsive: "Responsive", viewportDesktop: "Desktop (1440 × 900)",
             viewportTablet: "Tablet (768 × 1024)", viewportTabletLandscape: "Tablet landscape (1024 × 768)",
             viewportMobile: "Mobile (390 × 844)", viewportMobileLandscape: "Mobile landscape (844 × 390)" }}
           onNavigate={async url => url}
+          onHistoryChange={query.has("history") ? value => { Object.assign(nativeFixture, { history: value }) } : undefined}
           onFrameLocation={url => { nativeFixture.locations.push(url); setAddress(url) }}
           onNavigationError={reason => {
             nativeFixture.errors.push(String(reason))
@@ -38,7 +39,7 @@ function Fixture() {
           }} />
       </Show>
     </div>
-    <Show when={overlay()}><div role="alertdialog">{error() || "Overlay"}</div></Show>
+    <Show when={overlay()}><div role="alertdialog">{error() || "Overlay"}<button ref={element => queueMicrotask(() => element.focus())}>Dialog action</button></div></Show>
   </>
 }
 

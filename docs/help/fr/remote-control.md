@@ -21,7 +21,7 @@ Pour appairer un autre CodeNomad de bureau, choisissez **Se connecter au serveur
 
 La révocation termine les connexions HTTP/SSE actuelles de cet appareil ainsi que son accès futur. Appairez-le à nouveau avec un nouveau lien pour rétablir l’accès. Un appareil expire après **30 jours sans utilisation**. À la **limite de 32 appareils**, un nouvel appairage remplace l’appareil vu le moins récemment et ferme ses connexions.
 
-Le backend conserve des hachages d’identifiants, pas les identifiants d’appareil bruts, dans `remote-control-devices.json` sous sa base de configuration. Le client détient un cookie d’appareil limité à l’hôte, `Secure`, `HttpOnly`, `SameSite=Lax`. Sa durée côté navigateur peut dépasser la limite serveur de 30 jours d’inactivité ; le registre fait autorité. Effacer les données de site, changer de profil navigateur ou utiliser la navigation privée peut nécessiter un nouvel appairage.
+Effacer les données de site, changer de profil navigateur ou utiliser la navigation privée peut nécessiter un nouvel appairage.
 
 Changer le mot de passe d’accès direct ne révoque **pas** les appareils. **Arrêter le contrôle à distance** déconnecte le tunnel mais conserve la liste des appareils ; utilisez **Révoquer** pour retirer une autorisation.
 
@@ -42,7 +42,6 @@ La récupération préserve la page ouverte et les brouillons ; elle ne rejoue p
 | Arrêter le contrôle à distance | Déconnecte l’accès et efface la reprise automatique au lancement ; conserve les appareils enregistrés. |
 | Arrêt du backend / fermeture de la dernière fenêtre de bureau et sortie de l’application | Le Contrôle à distance passe hors ligne. Le service OpenCode partagé peut rester actif, mais ne peut pas servir cette interface via un backend arrêté. |
 | Lancement après avoir laissé le Contrôle à distance démarré | Reconnecte en arrière-plan sans émettre de nouveau lien. Les installations jamais démarrées ne s’activent pas d’elles-mêmes. |
-| Reprise échouée ou erreur fatale du tunnel | Le choix mémorisé reste et l’hôte affiche l’erreur ; l’icône d’actualisation de la carte Contrôle à distance relit son état. **Démarrer le contrôle à distance** réessaie aussitôt ; **Arrêter le contrôle à distance** efface le choix. Sinon, un lancement ultérieur réessaie. |
 
 La reprise automatique au lancement se limite à un backend par répertoire de configuration. Ne démarrez pas d’hôtes concurrents avec la même configuration pour obtenir une capacité de tunnel supplémentaire. Pour un hôte devant rester accessible après la fermeture du bureau, déployez un [serveur autonome](server.md) géré séparément ; le Contrôle à distance n’est pas un démon indépendant.
 
@@ -56,17 +55,21 @@ Les appareils appairés peuvent utiliser les API ordinaires de projet/conversati
 | Connexion/déconnexion par mot de passe, changements de mot de passe, initialisation locale par jeton | Indisponibles ; les identifiants d’appareil sont requis même si l’authentification directe est désactivée. |
 | État du Contrôle à distance | Lisible par un appareil appairé ; la gestion est indisponible. Démarrage/arrêt, création d’appairage, liste et révocation des appareils restent sur le chemin d’accès de l’hôte. |
 | Gestion des fenêtres distantes/serveurs de bureau et routes proxy | Indisponibles (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| **Proxy de contenu** SideCar | Indisponible (`/sidecars/`). Cela ne signifie **pas** que toutes les API SideCar sont bloquées : les clients appairés peuvent toujours accéder aux API d’enregistrement `/api/sidecars`. |
+| **Proxy de contenu** SideCar | Exige la boucle locale (`/sidecars/`), comme les WebSockets SideCar. Les API d’enregistrement `/api/sidecars` sont accessibles aux appareils appairés et aux clients LAN directs authentifiés. |
 | Contenu des aperçus web | Disponible tant que **Aperçus web** est activé (par défaut) dans **Paramètres → Accès distant → Contrôle à distance** sur l’hôte. Chaque adresse d’aperçu ouvre sa page sans appairage : gardez-la privée. Désactiver l’interrupteur arrête les aperçus servis et leurs WebSockets ; les appareils appairés masquent **Ouvrir l'aperçu web** une fois rechargés. |
 | Pont d’automatisation | Indisponible (`/api/opencode-plugin/`). Les capacités natives de bureau ne deviennent pas des capacités navigateur. |
 | Mises à niveau WebSocket | Disponibles pour les aperçus web uniquement. |
 
-Utilisez une [connexion directe](remote-access.md) convenablement protégée si un parcours nécessite une surface proxy/WebSocket bloquée. Le Contrôle à distance ne bascule pas automatiquement vers ce chemin.
+Utilisez une connexion en boucle locale sur l’hôte pour les proxys/WebSockets réservés à l’hôte et la gestion du Contrôle à distance (`/api/remote-control/`). L’accès LAN direct exige lui aussi la boucle locale pour ces opérations ; voir [Mise à niveau](remote-access.md#upgrading). Les aperçus web du Contrôle à distance utilisent un jeton de capacité dans leur adresse et restent disponibles lorsqu’ils sont activés sur l’hôte ; gardez cette adresse privée.
 
 ## Relais et confidentialité {#relay-privacy}
 
-CodeNomad utilise [OpenTunnel](https://github.com/anomalyco/opentunnel) et réserve une route aléatoire sur l’identité de tunnel par défaut partagée de la machine. L’arrêt libère le pont CodeNomad, pas l’identité partagée utilisée par d’autres applications.
+CodeNomad utilise [OpenTunnel](https://github.com/anomalyco/opentunnel) et réserve une route aléatoire sur l’identité de tunnel par défaut partagée de la machine.
 
 TLS se termine dans le backend CodeNomad. Le relais transfère du texte chiffré et ne peut pas lire le contenu applicatif, mais peut observer les noms d’hôte, horaires de connexion et volumes de trafic. Le certificat/la clé privée du tunnel restent sur l’hôte. Protégez le stockage du tunnel et la configuration CodeNomad comme des identifiants ; une adresse impossible à deviner n’est pas une autorisation.
 
 `CODENOMAD_REMOTE_CONTROL_API` sélectionne une API OpenTunnel auto-hébergée ; non définie, elle utilise le service hébergé. Cela change le déploiement du tunnel, pas les exigences d’appairage ni les surfaces bloquées. Voir [Sécurité](security.md) pour le traitement des identifiants et diagnostics.
+
+## Politique de l’administrateur {#administrator-policy}
+
+Un administrateur peut désactiver le contrôle à distance pour tous les utilisateurs d’un ordinateur : définissez la variable d’environnement `CODENOMAD_REMOTE_CONTROL=disabled` pour tout le système, puis redémarrez CodeNomad. Le backend ne connecte alors jamais de tunnel, refuse **Démarrer le contrôle à distance** et les liens d’appairage et ne se reconnecte pas au lancement ; les réglages affichent **Désactivé par l’administrateur**. Les appareils appairés auparavant ne peuvent pas se connecter et restent listés pour que vous puissiez les révoquer. Non définie ou vide, elle n’impose aucune politique ; toute autre valeur, même composée seulement d’espaces, empêche le backend de démarrer.

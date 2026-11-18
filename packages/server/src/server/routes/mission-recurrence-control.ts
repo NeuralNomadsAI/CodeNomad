@@ -25,45 +25,10 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
       // against downstream observer cancellation either.
       prepared = await prepareHumanRecurrenceControl(request, request.params.id, input.data, deps, lifetime.signal)
       prepared.current()
-      const options = { location: prepared.location, ...locationRequestOptions(prepared.location) }
       prepared.hold.dispatched()
       dispatched = true
-      try {
-        // Human admission linearizes here. The actual native write is awaited
-        // without the HTTP observer's cancellation signal/race; its permit is
-        // held even when the downstream socket disappears.
-        const result = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControl(prepared.body, options) as {
-          requestID: string; scheduleID: string; revision: number; controlsComplete: boolean
-        }
-        if (result.requestID !== prepared.body.requestID || result.scheduleID !== prepared.body.scheduleID
-          || result.revision !== prepared.body.expectedRevision + 1
-          || typeof result.controlsComplete !== "boolean") throw new Error("Foreign or incomplete control receipt")
-        const { targetsKnown: _known, ...record } = result as typeof result & { targetsKnown?: boolean }
-        recurrenceControlStatusSchema.parse({ expectedRevision: prepared.body.expectedRevision, ...record,
-          outcome: result.controlsComplete ? "committed" : "unknown" })
-        if (result.controlsComplete === false) prepared.hold.partial()
-        else prepared.hold.settled()
-        return result
-      } catch {
-        const body = prepared.body
-        const identity = { scheduleID: body.scheduleID, requestID: body.requestID, action: body.action, expectedRevision: body.expectedRevision }
-        // A reply lost after the proof expired lets native settle it now; otherwise unknown.
-        const result = recurrenceControlStatusSchema.parse(await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControlStatus({
-          ...identity, ...recurrenceHoldProofHint(deps.fence, request.params.id, identity),
-        }, { ...options, signal: AbortSignal.timeout(10_000) }))
-        if (result.scheduleID !== body.scheduleID || result.requestID !== body.requestID
-          || result.expectedRevision !== body.expectedRevision) throw new Error("Foreign control receipt")
-        // Refused before any record (stale revision or inadmissible state): proven
-        // no effect, so the permit is released and the refusal is definitive.
-        if (result.outcome === "rejected" && result.reason) {
-          prepared.hold.settled(false)
-          return reply.code(409).send({ error: "Recurrence control refused; nothing was applied", code: recurrenceRefusalCode(result.reason) })
-        }
-        if (result.outcome === "committed" && result.controlsComplete === true && result.revision === body.expectedRevision + 1
-          && recurrenceControlStateMatches(body.action, result.state)) prepared.hold.settled()
-        else if (result.controlsComplete === false) prepared.hold.partial()
-        return reply.code(result.outcome === "committed" ? 200 : 503).send(result)
-      }
+      const result = await dispatchRecurrenceControl(prepared, deps.fence, request.params.id)
+      return reply.code(result.status).send(result.body)
     } catch (error) {
       // Drop only this attempt's still-preparing admission before classification.
       // dispose is idempotent and preserves any original partial/uncertain permit.
@@ -77,4 +42,40 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
       return reply.code(503).send({ error: "Recurrence control uncertain; read exact status before another action" })
     } finally { prepared?.dispose(); lifetime.dispose() }
   })
+}
+
+/** Shared dispatch and exact acknowledgement settlement for human and agent controls. */
+export async function dispatchRecurrenceControl(prepared: Awaited<ReturnType<typeof prepareHumanRecurrenceControl>>,
+  fence: Parameters<typeof prepareHumanRecurrenceControl>[3]["fence"], workspaceID: string) {
+  const options = { location: prepared.location, ...locationRequestOptions(prepared.location) }
+  try {
+    const result = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControl(prepared.body, options) as {
+      requestID: string; scheduleID: string; revision: number; controlsComplete: boolean
+    }
+    if (result.requestID !== prepared.body.requestID || result.scheduleID !== prepared.body.scheduleID
+      || result.revision !== prepared.body.expectedRevision + 1
+      || typeof result.controlsComplete !== "boolean") throw new Error("Foreign or incomplete control receipt")
+    const { targetsKnown: _known, ...record } = result as typeof result & { targetsKnown?: boolean }
+    recurrenceControlStatusSchema.parse({ expectedRevision: prepared.body.expectedRevision, ...record,
+      outcome: result.controlsComplete ? "committed" : "unknown" })
+    if (result.controlsComplete === false) prepared.hold.partial()
+    else prepared.hold.settled()
+    return { status: 200, body: result }
+  } catch {
+    const body = prepared.body
+    const identity = { scheduleID: body.scheduleID, requestID: body.requestID, action: body.action, expectedRevision: body.expectedRevision }
+    const result = recurrenceControlStatusSchema.parse(await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControlStatus({
+      ...identity, ...recurrenceHoldProofHint(fence, workspaceID, identity),
+    }, { ...options, signal: AbortSignal.timeout(10_000) }))
+    if (result.scheduleID !== body.scheduleID || result.requestID !== body.requestID
+      || result.expectedRevision !== body.expectedRevision) throw new Error("Foreign control receipt")
+    if (result.outcome === "rejected" && result.reason) {
+      prepared.hold.settled(false)
+      return { status: 409, body: { error: "Recurrence control refused; nothing was applied", code: recurrenceRefusalCode(result.reason) } }
+    }
+    if (result.outcome === "committed" && result.controlsComplete === true && result.revision === body.expectedRevision + 1
+      && recurrenceControlStateMatches(body.action, result.state)) prepared.hold.settled()
+    else if (result.controlsComplete === false) prepared.hold.partial()
+    return { status: result.outcome === "committed" ? 200 : 503, body: result }
+  }
 }

@@ -6,6 +6,7 @@
 // no discovery directory, no claim protocol and no adoption across runs —
 // the endpoint and secret travel over the spawn, never through the
 // filesystem.
+import "./hide-console-windows.mjs"
 import { mkdir } from "node:fs/promises"
 import { createWriteStream } from "node:fs"
 import path from "node:path"

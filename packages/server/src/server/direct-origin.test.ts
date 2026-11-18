@@ -1,0 +1,90 @@
+import assert from "node:assert/strict"
+import { request } from "node:http"
+import { test } from "node:test"
+import Fastify from "fastify"
+import type { ServerMeta } from "../api-types"
+import { registerDirectOriginPolicy, sameOriginLoopbackAliases } from "./direct-origin"
+
+async function serve(host: string, allowedOrigins?: string[], devServerUrl?: string) {
+  const app = Fastify()
+  const meta = { localUrl: "", addresses: [] } as unknown as ServerMeta
+  registerDirectOriginPolicy(app, { meta, allowedOrigins, devServerUrl, publicHost: () => null, isPreview: () => false })
+  app.post("/api/workspaces", async () => ({ ok: true }))
+  await app.listen({ host, port: 0 })
+  const port = (app.server.address() as { port: number }).port
+  // index.ts publishes the loopback URL whenever a listener accepts loopback.
+  meta.localUrl = `http://127.0.0.1:${port}`
+  /** A browser mutation from `origin` that targets `target` (its Host); same-origin by default. */
+  const post = (origin?: string, target = origin && /^https?:\/\//.test(origin) ? new URL(origin).host : `127.0.0.1:${port}`) =>
+    new Promise<number>((resolve, reject) => {
+      const outgoing = request({ host: host === "::1" ? "::1" : "127.0.0.1", port, method: "POST", path: "/api/workspaces",
+        headers: { host: target, "content-type": "application/json", ...(origin ? { origin } : {}) } }, response => {
+        response.resume(); resolve(response.statusCode ?? 0)
+      })
+      outgoing.once("error", reject); outgoing.end("{}")
+    })
+  return { app, port, post }
+}
+
+const cases: Array<[bind: string, accepted: (port: number) => string[], rejected: (port: number) => string[]]> = [
+  ["127.0.0.1", p => [`http://127.0.0.1:${p}`, `http://localhost:${p}`], p => [`http://[::1]:${p}`, `http://127.0.0.2:${p}`]],
+  ["0.0.0.0", p => [`http://127.0.0.1:${p}`, `http://localhost:${p}`], p => [`http://[::1]:${p}`, `http://127.0.0.2:${p}`]],
+  ["::", p => [`http://127.0.0.1:${p}`, `http://localhost:${p}`, `http://[::1]:${p}`], p => [`http://127.0.0.2:${p}`]],
+]
+
+for (const [host, accepted, rejected] of cases) {
+  test(`a local page reaches its own ${host} listener under the loopback names that bind covers`, async () => {
+    const { app, port, post } = await serve(host)
+    try {
+      for (const origin of [...accepted(port), undefined]) assert.equal(await post(origin), 200, `${origin}`)
+      // Loopback addresses the socket does not own, another port, a foreign site, another scheme
+      // or a non-canonical origin stay rejected.
+      for (const origin of [...rejected(port), `http://localhost:${port + 1}`, "https://example.com", `ftp://localhost:${port}`,
+        "null", `http://localhost:${port}/path`, `http://LOCALHOST:${port}`]) {
+        assert.equal(await post(origin, `127.0.0.1:${port}`), 403, origin)
+      }
+    } finally { await app.close() }
+  })
+}
+
+test("an alias page targeting another loopback authority stays cross-origin", async () => {
+  // A `localhost:P` page may come from a sibling `[::1]:P` listener: it never mutates this server through 127.0.0.1.
+  const { app, port, post } = await serve("0.0.0.0")
+  try {
+    assert.equal(await post(`http://localhost:${port}`, `127.0.0.1:${port}`), 403)
+    assert.equal(await post(`http://localhost:${port}`, `localhost:${port + 1}`), 403)
+    assert.equal(await post(`http://127.0.0.1:${port}`, `localhost:${port}`), 200, "the published local origin stays exact")
+  } finally { await app.close() }
+})
+
+test("same-origin aliases match on default ports and fail closed on odd Host headers", () => {
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "0.0.0.0", port: 80 }, "http", "localhost"), ["http://localhost"])
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "0.0.0.0", port: 80 }, "http", "localhost:80"), ["http://localhost"])
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "::", port: 443 }, "https", "[::1]"), ["https://[::1]"])
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "127.0.0.1", port: 8080 }, "http", "LOCALHOST:8080"), ["http://localhost:8080"])
+  for (const host of [undefined, "", "localhost:81", "127.0.0.2:80", "localhost:80/x", "user@localhost"]) {
+    assert.deepEqual(sameOriginLoopbackAliases({ address: "0.0.0.0", port: 80 }, "http", host), [], String(host))
+  }
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "192.168.1.5", port: 80 }, "http", "localhost"), [])
+})
+
+test("configured and development origins stay exact: their ports open no loopback page", async () => {
+  const { app, port, post } = await serve("127.0.0.1", ["https://ui.example.test:64161"], "http://localhost:5173")
+  try {
+    assert.equal(await post("https://ui.example.test:64161", `127.0.0.1:${port}`), 200)
+    assert.equal(await post("http://localhost:5173", `127.0.0.1:${port}`), 200)
+    for (const origin of ["http://127.0.0.1:64161", "http://localhost:64161", "https://localhost:64161", "http://127.0.0.1:5173"]) {
+      assert.equal(await post(origin, `127.0.0.1:${port}`), 403, origin)
+    }
+    assert.notEqual(port, 64161)
+  } finally { await app.close() }
+})
+
+test("a request from another machine never passes as loopback", async () => {
+  const { app, port } = await serve("0.0.0.0")
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/workspaces", remoteAddress: "192.168.1.20",
+      headers: { host: `localhost:${port}`, "content-type": "application/json", origin: `http://localhost:${port}` }, payload: "{}" })
+    assert.equal(response.statusCode, 403)
+  } finally { await app.close() }
+})

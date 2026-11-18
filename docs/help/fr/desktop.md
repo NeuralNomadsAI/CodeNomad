@@ -8,7 +8,31 @@
 
 Les onglets de projet, conversations sélectionnées et dispositions appartiennent à une fenêtre. Les sessions/messages OpenCode appartiennent au service natif OpenCode partagé : une autre fenêtre peut voir la même conversation. Fermer un onglet de projet ferme ce projet dans CodeNomad, pas ses sessions OpenCode ; rouvrez-le pour les retrouver. Une autre fenêtre qui affiche la même connexion de projet ferme aussi son onglet et affiche une notification ; les onglets ouverts séparément sur le même dossier ne sont pas concernés. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration ; voir [Projets](projects.md). Ne considérez pas la fermeture des fenêtres comme une preuve qu’un agent ou une Mission planifiée s’est arrêté.
 
-Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics.
+Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics. **Aide → Soutenir CodeNomad** ouvre la page [Soutenir CodeNomad](sponsor.md) dans votre navigateur.
+
+## Arguments de lancement de l’application {#desktop-cli}
+
+Placez ces arguments après **l’exécutable desktop** (Tauri ou Electron), dans un terminal ou dans le champ **Cible** d’un raccourci Windows. Remplacez les chemins d’exemple par celui de votre exécutable.
+
+| Argument | Effet |
+| --- | --- |
+| `--connect-server <server>` | Ouvre un serveur CodeNomad distant à partir de son URL HTTP(S), de son nom enregistré ou de son identifiant enregistré. Voir [la connexion et l’authentification](remote-access.md#saved-servers). |
+| `--folder <path>` | Ouvre un dossier de projet existant. Répétez l’argument pour plusieurs dossiers ; les chemins relatifs partent du répertoire de lancement. |
+| `<path> ...` | Ouvre des dossiers de projet sans écrire `--folder`. **Tauri Windows, si l’application est déjà ouverte :** utilisez `--folder` devant chaque dossier. Mélanger des chemins seuls avec `--folder` annule aussi toute la demande d’ouverture de dossiers. |
+| `--new-window` | Demande une nouvelle fenêtre, même lorsqu’un second lancement devrait normalement sélectionner la fenêtre existante. |
+
+Les formes `--connect-server=<server>` et `--folder=<path>` fonctionnent aussi. Entourez de guillemets les chemins ou noms contenant des espaces. Pour ouvrir uniquement la fenêtre distante, utilisez `--connect-server` seul, sans dossier ni `--new-window` ; la restauration des fenêtres locales est différée sauf si la connexion échoue.
+
+Dans **PowerShell** :
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+Dans la **Cible** du raccourci Windows, placez `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` (le `&` appartient à PowerShell). Sous Linux, utilisez l’AppImage, par exemple `./CodeNomad.AppImage --connect-server "https://server.example:9898"`.
+
+Pour les profils desktop et la configuration, définissez `CODENOMAD_PROFILE` et `CLI_CONFIG` avant le lancement ; voir [Profils de données](#data-profiles). Les options d’écoute, TLS et d’authentification du backend sont dans la [référence CLI du serveur](server.md#cli-reference). Sous Tauri Windows, les arguments contenant `|` sont refusés ; utilisez une URL ou renommez le serveur enregistré.
 
 ## Préférences et restauration au démarrage {#preferences-startup}
 
@@ -18,9 +42,11 @@ Les menus natifs de l’application utilisent la langue de l’interface de Code
 
 La restauration peut rouvrir onglets d’espace de travail/SideCar et sessions actives, texte non envoyé, positions de défilement, panneaux, placement et zoom de fenêtre. C’est un état client par fenêtre, pas une copie de la base de conversations natives. L’effacer retire onglets, brouillons et disposition enregistrés ; cela ne supprime ni configuration CodeNomad ni conversations OpenCode. Enregistrez d’abord ailleurs tout brouillon non envoyé important.
 
+Chaque onglet de projet retrouve sa propre sélection du panneau droit, son mode Fichiers ainsi que son lecteur et sa sélection de Mission, y compris lorsque plusieurs onglets affichent la même conversation. Les URL et l’historique du navigateur enregistrés se rouvrent à la demande ; voir [Aperçus navigateur et SideCars](browser-sidecars.md#session-browser).
+
 La fenêtre Preferences ne possède pas d’état de restauration séparé : ces commandes ciblent la fenêtre qui l’a ouverte. Si cette fenêtre est fermée, ou inconnue parce que Preferences a été rouvert au lancement, elles suivent la dernière fenêtre utilisée ; une modification préparée pour une autre fenêtre n’est jamais appliquée, les commandes affichent d’abord la valeur de la nouvelle fenêtre. Pour régler une fenêtre précise, ouvrez Preferences depuis celle-ci. Les paramètres propres au projet utilisent aussi la Location d’origine ; ils restent indisponibles sans elle. Quand Preferences se rouvre au lancement, ils se reconnectent une fois ce projet ouvert ; tant que le dossier démarre encore, ou s’il est ouvert dans plusieurs onglets, ils restent indisponibles jusqu’à ce que vous ouvriez Preferences depuis la fenêtre voulue.
 
-Les paramètres navigateur et distants sont intégrés, plutôt qu’un second propriétaire natif de Preferences. Une erreur d’ouverture des préférences natives est signalée ; elle ne permet pas de supposer qu’un écran intégré caché s’est ouvert à la place.
+Les clients navigateur et distants utilisent les paramètres intégrés.
 
 ## Profils de données de bureau {#data-profiles}
 
@@ -54,7 +80,7 @@ Sur Tauri macOS, les profils délimités partagent le stockage WebKit système, 
 
 La suppression retire onglets, brouillons, disposition et stockage web/cache/connexions détenus de ce profil, y compris un profil listé depuis une autre configuration. Elle préserve le profil ouvert, les conversations OpenCode et les fichiers de projet. Un profil ouvert ou dans un état inconnu ne peut pas être supprimé ; fermez les fenêtres CodeNomad concernées, actualisez la liste et réessayez. Le contenu non reconnu est conservé et signalé plutôt que supprimé largement.
 
-Le stockage WebKit partagé de Tauri macOS est conservé, car le supprimer affecterait les autres profils. Ce nettoyage n’est pas annulable : une conversation native survivante ne restaure pas un brouillon non envoyé supprimé. **Effacer l’état de démarrage enregistré** est l’action plus limitée pour seulement réinitialiser la fenêtre actuelle.
+Le stockage web, les connexions et le cache partagés de Tauri sur macOS sont conservés. Ce nettoyage n’est pas annulable : une conversation native survivante ne restaure pas un brouillon non envoyé supprimé. **Effacer l’état de démarrage enregistré** est l’action plus limitée pour seulement réinitialiser la fenêtre actuelle.
 
 ## Zoom et géométrie des panneaux {#zoom-panels}
 

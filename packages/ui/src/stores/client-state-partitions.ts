@@ -5,6 +5,7 @@ import { canonicalJson, sha256 } from "./client-state-partition-json"
 export { canonicalJson, sha256 } from "./client-state-partition-json"
 import { encodeOutlinePartitions, decodeOutlinePartitions } from "./client-state-outline-partitions"
 import { encodeCatalogPartitions, decodeCatalogPartitions } from "./client-state-catalog-partitions"
+import { normalizeTabViewState } from "./tab-view-state-codec"
 
 const MAX_PARTITION_BYTES = 1024 * 1024
 const MAX_ROOT_BYTES = 1024 * 1024
@@ -42,6 +43,7 @@ interface SessionDocument {
   scrollSnapshot?: RestorableWorkspaceTabState["scrollSnapshots"][string]
   unseenIdleSince?: number
   generationRecovery?: RestorableWorkspaceTabState["generationRecovery"][string]
+  seenInterruption?: number
   outline?: object
 }
 
@@ -133,6 +135,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
         ...Object.keys(tab.scrollSnapshots),
         ...Object.keys(tab.unseenIdleSince),
         ...Object.keys(tab.generationRecovery),
+        ...Object.keys(tab.seenInterruptions ?? {}),
         ...Object.keys(tab.outlineIndexes ?? {}),
       ])
       const sessions: Record<string, { documentPartition: string; partitionKeys: string[] }> = Object.create(null)
@@ -145,6 +148,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
         if (hasOwn(tab.scrollSnapshots, sessionId)) document.scrollSnapshot = tab.scrollSnapshots[sessionId]
         if (hasOwn(tab.unseenIdleSince, sessionId)) document.unseenIdleSince = tab.unseenIdleSince[sessionId]
         if (hasOwn(tab.generationRecovery, sessionId)) document.generationRecovery = tab.generationRecovery[sessionId]
+        if (tab.seenInterruptions && hasOwn(tab.seenInterruptions, sessionId)) document.seenInterruption = tab.seenInterruptions[sessionId]
         const outline = tab.outlineIndexes?.[sessionId]
         const index = outline ? await encodeOutlinePartitions(outline) : undefined
         if (index) { document.outline = index.descriptor; Object.assign(generated, index.partitions) }
@@ -165,6 +169,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
       if (tab.activeSessionId !== undefined) workspace.activeSessionId = tab.activeSessionId
       if (tab.expandedSessionIds !== undefined) workspace.expandedSessionIds = tab.expandedSessionIds
       if (tab.sessionCatalog !== undefined) workspace.catalogPartitions = await encodeCatalogPartitions(tab.sessionCatalog, addPartition)
+      if (tab.viewState !== undefined) workspace.viewState = tab.viewState
       const shell: Record<string, unknown> = {
         kind: tab.kind,
         folder: tab.folder,
@@ -173,6 +178,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
       if (tab.occurrence !== undefined) shell.occurrence = tab.occurrence
       if (tab.projectName !== undefined) shell.projectName = tab.projectName
       if (tab.binaryPath !== undefined) shell.binaryPath = tab.binaryPath
+      if (tab.workspaceId !== undefined) shell.workspaceId = tab.workspaceId
       return shell
     })),
     activeTabIndex: session.activeTabIndex,
@@ -366,13 +372,13 @@ async function decodeGraph(
       continue
     }
     if (shell.kind !== "workspace"
-      || !hasExactKeys(shell, ["kind", "folder", "workspacePartition"], ["occurrence", "projectName", "binaryPath"])) return
+      || !hasExactKeys(shell, ["kind", "folder", "workspacePartition"], ["occurrence", "projectName", "binaryPath", "workspaceId"])) return
     if (typeof shell.workspacePartition !== "string" || !PARTITION_KEY.test(shell.workspacePartition)) return
     declaredGraph.add(shell.workspacePartition)
     const workspace = await loadCanonical(shell.workspacePartition)
     if (!workspace || (workspace.format !== 1 && workspace.format !== 2)
       || !hasExactKeys(workspace, ["format", "sessions"],
-        ["activeParentSessionId", "activeSessionId", "expandedSessionIds", "catalogPartitions"])
+        ["activeParentSessionId", "activeSessionId", "expandedSessionIds", "catalogPartitions", "viewState"])
       || !isRecord(workspace.sessions)) return
     legacyGraph ||= workspace.format === 1
     if (!Object.keys(workspace.sessions).every(isSafePersistedSessionId)
@@ -390,11 +396,16 @@ async function decodeGraph(
       unseenIdleSince: Object.create(null),
       generationRecovery: Object.create(null),
     }
-    for (const key of ["occurrence", "projectName", "binaryPath"] as const) {
+    for (const key of ["occurrence", "projectName", "binaryPath", "workspaceId"] as const) {
       if (hasOwn(shell, key)) tab[key] = shell[key]
     }
     for (const key of ["activeParentSessionId", "activeSessionId", "expandedSessionIds"] as const) {
       if (hasOwn(workspace, key)) tab[key] = workspace[key]
+    }
+    if (hasOwn(workspace, "viewState")) {
+      const viewState = normalizeTabViewState(workspace.viewState)
+      if (viewState) tab.viewState = viewState
+      if (!canonicalEquals(viewState, workspace.viewState)) degraded = true
     }
     if (workspace.catalogPartitions !== undefined) {
       const catalog = await decodeCatalogPartitions(workspace.catalogPartitions, new Set(persistedKeys), declaredGraph, loadCanonical)
@@ -426,7 +437,7 @@ async function decodeGraph(
       const referenced = new Set([documentKey])
       const validDocument = document && (document.format === 1 || document.format === 2)
         && hasExactKeys(document, ["format"],
-          ["draft", "attachments", "scrollSnapshot", "unseenIdleSince", "generationRecovery", "outline"])
+          ["draft", "attachments", "scrollSnapshot", "unseenIdleSince", "generationRecovery", "seenInterruption", "outline"])
         && Object.keys(document).length > 1
       if (!validDocument) {
         degraded = true
@@ -461,6 +472,7 @@ async function decodeGraph(
       }
       if (decodedAttachments !== undefined) leaf.attachments[sessionId] = decodedAttachments as RestorableAttachment[]
       if (outline) leaf.outlineIndexes = { [sessionId]: outline }
+      if (hasOwn(document, "seenInterruption")) leaf.seenInterruptions = { [sessionId]: document.seenInterruption as number }
       const normalizedLeaf = normalizeRestorableSession({ tabs: [leaf], activeTabIndex: 0 })?.tabs[0]
       if (!normalizedLeaf || !canonicalEquals(leaf, normalizedLeaf)) {
         degraded = true
@@ -471,6 +483,10 @@ async function decodeGraph(
         if (hasOwn(leaf[stateField], sessionId)) {
           (tab[stateField] as Record<string, unknown>)[sessionId] = leaf[stateField][sessionId]
         }
+      }
+      if (leaf.seenInterruptions) {
+        const seen = (tab.seenInterruptions ??= Object.create(null)) as Record<string, number>
+        seen[sessionId] = leaf.seenInterruptions[sessionId]!
       }
       if (hasOwn(leaf.attachments, sessionId)) {
         (tab.attachments as Record<string, unknown>)[sessionId] = leaf.attachments[sessionId]

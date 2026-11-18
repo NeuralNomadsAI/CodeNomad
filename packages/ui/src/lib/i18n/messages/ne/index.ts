@@ -15,10 +15,15 @@ import { missionRecoveryMessages } from "./mission-recovery"
 import { missionsPanelMessages } from "./missions-panel"
 import { missionCreateMessages } from "./missions-create"
 import { permissionReceiptMessages } from "./permission-receipts"
+import { pluginSourceMessages } from "./plugin-sources"
+import { integrationMessages } from "./integrations"
 import { remoteAccessMessages } from "./remoteAccess"
 import { remoteControlMessages } from "./remoteControl"
 import { sessionMessages } from "./session"
 import { settingsMessages } from "./settings"
+import { agentMemoryMessages } from "./agent-memory"
+import { openCodeLoginStartMessages } from "./opencode-login-start"
+import { missionSchedulingMessages } from "./mission-scheduling"
 import { timeMessages } from "./time"
 import { toolCallMessages } from "./toolCall"
 import { mergeMessageParts } from "../merge"
@@ -43,6 +48,11 @@ export const neMessages = mergeMessageParts(
   toolCallMessages,
   markdownMessages,
   settingsMessages,
+  agentMemoryMessages,
+  pluginSourceMessages,
+  integrationMessages,
+  openCodeLoginStartMessages,
+  missionSchedulingMessages,
   remoteAccessMessages,
   remoteControlMessages,
   commandMessages,

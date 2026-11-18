@@ -132,7 +132,8 @@ test(`${host} restores the active project and saved session identity before hydr
       const id = path.split("/")[path.startsWith("/api/") ? 3 : 2]
       const directory = `D:/${id}`
       const session = (sessionID: string, folder: string) => ({ id: sessionID, title: sessionID, projectID: id,
-        location: { directory: folder }, time: { created: 1, updated: 1 } })
+        location: { directory: folder }, time: { created: 1, updated: 1 }, cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } })
       const query = new URL(request.url()).searchParams
       if (query.has("cursor")) cursors.push(query.get("cursor")!)
       body = path.endsWith("/worktrees") ? { isGitRepo: true, worktrees: [

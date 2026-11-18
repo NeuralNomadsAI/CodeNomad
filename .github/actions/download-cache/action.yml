@@ -1,0 +1,54 @@
+name: Restore download cache
+description: >-
+  Restore one download cache written only by trusted dev runs, then check the
+  files that Cargo and the Tauri bundler would use unverified. Never saves; a
+  miss leaves every download to its tool.
+
+inputs:
+  kind:
+    description: electron, cargo, tauri or appimage-runtime
+    required: true
+  exact:
+    description: Restore only the exact key (seeding), without an older Cargo cache
+    required: false
+    default: "false"
+
+outputs:
+  key:
+    description: Cache key; empty when this kind has no cache on this runner
+    value: ${{ steps.spec.outputs.key }}
+  path:
+    description: Cached paths, one per line
+    value: ${{ steps.spec.outputs.path }}
+  cache-hit:
+    description: Whether the exact key was restored
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # Without a key the cache is skipped and every tool downloads as usual.
+    - name: Resolve ${{ inputs.kind }} cache
+      id: spec
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: node "$GITHUB_ACTION_PATH/../../scripts/download-cache.cjs" spec "${{ inputs.kind }}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore ${{ inputs.kind }} cache
+      id: restore
+      if: ${{ steps.spec.outputs.key != '' }}
+      uses: actions/cache/restore@v6.1.0
+      with:
+        key: ${{ steps.spec.outputs.key }}
+        path: ${{ steps.spec.outputs.path }}
+        restore-keys: ${{ inputs.exact != 'true' && steps.spec.outputs.restore-keys || '' }}
+
+    - name: Check restored ${{ inputs.kind }} files
+      if: ${{ steps.restore.outputs.cache-matched-key != '' && inputs.kind != 'electron' }}
+      shell: bash
+      env:
+        CACHE_KEY: ${{ steps.spec.outputs.key }}
+        CACHE_PATH: ${{ steps.spec.outputs.path }}
+      run: node "$GITHUB_ACTION_PATH/../../scripts/download-cache.cjs" verify "${{ inputs.kind }}"

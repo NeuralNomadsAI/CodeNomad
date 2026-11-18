@@ -176,7 +176,7 @@ test("latest bounded render reveals the rest in place, keeping the rendered pref
   assert.ok(!(await page.locator(".markdown-body").textContent())!.includes("END-SOURCE"))
   assert.equal(await page.locator(".markdown-source-copy").count(), 0, "the copy-only workaround is gone")
   const notice = page.locator(".message-hidden-text")
-  assert.match((await notice.textContent())!, /14,029 more characters hidden to keep this message responsive/)
+  assert.match((await notice.textContent())!, /14,029 more characters hidden/)
   assert.equal(await page.evaluate(() => (window as any).fixture.cached()), undefined, "a bounded window never caches as the whole part version")
 
   await page.evaluate(() => { (window as any).fixture.audit.holdResults = true })
@@ -191,6 +191,8 @@ test("latest bounded render reveals the rest in place, keeping the rendered pref
   await page.evaluate(() => (window as any).fixture.releaseResult())
   await page.waitForFunction(() => document.querySelector(".markdown-body")?.textContent?.includes("END-SOURCE"))
   assert.equal((await calls(page)).at(-1).text, source)
+  // Reveal transfers focus in requestAnimationFrame, independently of parser delivery.
+  await settle(page)
   assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("markdown-body")), true, "focus moves to the revealed text")
   const cached = await page.evaluate(() => (window as any).fixture.cached())
   assert.equal(cached?.html, await page.locator(".markdown-body").innerHTML())

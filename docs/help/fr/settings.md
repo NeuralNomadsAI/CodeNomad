@@ -6,7 +6,7 @@
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
 
-La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. La voix, les couleurs de palette personnalisées et les fichiers de configuration gardent un **Enregistrer** explicite. Un échec d’enregistrement ne confirme pas que le changement a pris effet ; rouvrez ou actualisez la section concernée avant de réessayer. Les explications se trouvent derrière le **i** à côté du titre d’un réglage : survolez-le ou focalisez-le, ou touchez-le sur un écran tactile.
+La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. La voix, les couleurs de palette personnalisées et les fichiers de configuration gardent un **Enregistrer** explicite. Survolez ou focalisez le **i** à côté du titre d’un réglage pour une courte explication. S’il mène à l’aide, cliquez, appuyez sur Entrée ou touchez-le pour ouvrir la section pertinente dans la langue de l’interface, dans le navigateur système ou un onglet séparé. Les icônes limitées à une infobulle affichent leur explication au toucher. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
 
 | État | Ce qu’il contrôle |
 | --- | --- |
@@ -15,28 +15,61 @@ La plupart des choix s’appliquent immédiatement, y compris les préférences 
 | Paramètres OpenCode Global/Projet | Changements de plugins/configuration natifs à la portée affichée. Les commandes Projet nécessitent un projet/une Location actif. |
 | Profil de données de bureau | Fenêtres natives, état de restauration et stockage navigateur, indépendamment du fichier de configuration et du service OpenCode partagé. Voir [Fenêtres de bureau et données](desktop.md). |
 
-**Stats** couvre tout le service OpenCode connecté (tous les projets, clones indépendants et sous-sessions), pas seulement le dossier ouvert, sur les 7, 30, 90 ou 365 derniers jours. Il nécessite un projet ouvert et affiche les tokens et coûts enregistrés par OpenCode, pas les factures des fournisseurs ni les allocations d’abonnement ; les derniers totaux enregistrés peuvent s’afficher pendant l’actualisation. Les quotas de forfait relèvent de la section Statut **Utilisation**.
+L’onglet sélectionné du panneau droit et le mode Fichiers sont enregistrés séparément pour chaque onglet de projet. Vos derniers choix explicites servent de valeurs par défaut aux nouveaux onglets ; les dimensions des panneaux, l’ordre des onglets, la personnalisation et l’apparence restent des éléments de disposition et de préférences partagés.
 
-Changer les préférences d’affichage ne redémarre pas OpenCode et ne rejoue pas de prompt. Configuration native, maintenance du service et identifiants ont des effets distincts : voir [Configuration d’OpenCode](opencode.md), [Fournisseurs](providers.md) et [Intégrations](integrations.md).
+**Stats** couvre tout le service OpenCode connecté (tous les projets, clones indépendants et sous-sessions), pas seulement le dossier ouvert, sur les 7, 30, 90 ou 365 derniers jours. Il nécessite un projet ouvert et affiche les tokens et coûts enregistrés par OpenCode, pas les factures des fournisseurs ni les allocations d’abonnement ; les derniers totaux enregistrés peuvent s’afficher pendant l’actualisation. Les quotas de forfait relèvent de la section Statut **Utilisation**.
 
 ## Langue et apparence {#language-appearance}
 
 1. Dans **Général**, sélectionnez **Langue** : anglais, espagnol, français, russe, japonais, chinois simplifié, hébreu, allemand, népalais ou turc.
 2. Dans **Palette de couleurs**, choisissez **Mode** : **Auto**, **Sombre** ou **Clair**. Auto suit le système d’exploitation.
-3. Choisissez une palette pour l’apparence affichée. Les sélections claire et sombre sont enregistrées indépendamment ; Auto utilise celle qui correspond.
-4. Pour des couleurs personnalisées, utilisez les échantillons et **Enregistrer** ; **Réinitialiser** restaure les couleurs d’une palette intégrée. Utilisez **Nouveau** pour nommer une palette distincte et **Supprimer** pour retirer une palette que vous avez créée.
+3. À côté de **Mode**, choisissez **Contraste** : **Auto** (par défaut) suit la préférence de contraste du système ; **Activé** renforce le contraste de toute palette ; **Désactivé** utilise le contraste normal.
+4. Choisissez une palette pour l’apparence affichée. Les sélections claire et sombre sont enregistrées indépendamment ; Auto utilise celle qui correspond.
+5. Pour des couleurs personnalisées, utilisez les échantillons et **Enregistrer** ; **Réinitialiser** restaure les couleurs d’une palette intégrée. Utilisez **Nouveau** pour nommer une palette distincte et **Supprimer** pour retirer une palette que vous avez créée.
+
+Le contraste s’applique et s’enregistre immédiatement, indépendamment d’**Enregistrer** pour les couleurs. Il adapte le rendu en conservant la palette sélectionnée, les couleurs éditables et le brouillon de conversation. Le **i** indique l’état actuel du contraste en Auto.
 
 L’interface se met à jour sans redémarrer de conversation. L’hébreu utilise une disposition de droite à gauche ; code et valeurs techniques restent lisibles dans leur propre sens. La sélection de langue change les textes d’interface, pas la langue des messages existants ou instructions d’agent. Les menus natifs du bureau passent à la langue de l’interface dès qu’une fenêtre CodeNomad est chargée.
 
-Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégrée ou réinitialisez celle modifiée. Changer de palette peut demander d’abandonner les modifications de couleur non enregistrées ; cela n’abandonne pas un brouillon de conversation.
+Si les couleurs deviennent difficiles à lire, choisissez **Contraste → Activé**. Vous pouvez aussi sélectionner une palette intégrée ou réinitialiser celle modifiée. Changer de palette peut demander d’abandonner les modifications de couleur non enregistrées ; votre brouillon de conversation est conservé.
+
+## Garder l’ordinateur éveillé {#keep-computer-awake}
+
+Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que CodeNomad tourne** est désactivé par défaut. Activez cette option pour empêcher la mise en veille tant qu’une fenêtre locale CodeNomad est ouverte (même minimisée), même sans session au travail ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille. Cette option apparaît uniquement dans les fenêtres locales de l’application de bureau et dans Preferences ; elle est masquée dans les vues navigateur et distantes.
+
+## Mémoire persistante de l’agent {#agent-memory}
+
+CodeNomad tente de retirer les instructions mémoire périmées de la session ; si ce nettoyage échoue aussi, les instructions précédentes peuvent rester jusqu’à une actualisation réussie.
+
+Ouvrez **Préférences → Général → Mémoire** (ou **Paramètres → Général** dans un navigateur). La mémoire est désactivée par défaut. Activez-la pour que l’agent conserve les faits et préférences utiles entre les conversations. L’interrupteur s’applique à la configuration CodeNomad connectée ; sa désactivation conserve les entrées et leur historique. Tant qu'elle est désactivée, les agents ne reçoivent aucun outil de mémoire ; le changement s'applique aux conversations en cours en quelques secondes, sans redémarrage.
+
+- **À propos de vous** : jusqu’à 60 entrées partagées entre les projets de cette configuration.
+- **Projet** : jusqu’à 200 entrées. Cette interface utilise le projet sélectionné dans les Préférences, ou le projet actif de la fenêtre principale dans les réglages intégrés. Le serveur identifie le dépôt par son adresse Git distante normalisée, avec repli sur son chemin local ; les worktrees partagent cette mémoire. Ouvrez un projet pour sélectionner cette portée.
+
+1. Sélectionnez une portée, dépliez son nombre d'entrées (par exemple **7/200**) puis sélectionnez une entrée. **Nouveau** et **Modifié** signalent les changements depuis le dernier affichage des entrées de cette portée dans cette vue navigateur ou bureau ; la ligne du compteur repliée les reprend, et ils restent visibles pendant la visite en cours.
+2. Modifiez **Titre**, **Type** (**Fait**, **Préférence** ou **Référence**) et **Texte**, puis **Enregistrer**. Le titre accepte 60 caractères et le texte 2 000. **Annuler** rétablit le contenu enregistré de l’entrée. Si elle a été modifiée ailleurs, utilisez **Recharger** et vérifiez avant d’enregistrer à nouveau.
+3. Pour retirer une entrée, ouvrez son menu d’actions et confirmez **Oublier**. Elle sort de la mémoire active ; Git conserve son historique local, ancien texte compris. Oublier retire l’entrée de l’usage de l’agent, sans constituer un effacement sécurisé.
+4. Si la mémoire est pleine, fusionnez ou oubliez des entrées avant de réessayer. Un titre identique ou un texte fortement similaire remplace une entrée existante, dont Git conserve le texte précédent.
+
+**À vérifier** signale des consignes suspectées de contourner les protections ou de divulguer des identifiants. Ces entrées restent modifiables ici, comptent dans le plafond et sont écartées des titres et lectures de l’agent. Les vérifications ont lieu à chaque lecture ; corrigez le contenu et enregistrez, ou utilisez **Oublier**.
+
+**Ranger** demande confirmation, puis ouvre une nouvelle conversation dans le projet affiché dans les Préférences pour vérifier et fusionner la portée sélectionnée. L’agent conserve les entrées invérifiables et les références externes et rend compte des changements. Il faut un projet ouvert et une mémoire activée, lisible, inscriptible, avec au moins une entrée non signalée.
+
+La mémoire est tenue par l’agent. S’il tient déjà une mémoire ailleurs, par exemple `.claude/…/MEMORY.md`, il enregistre une **Référence** vers ce fichier ; les mémoires externes gardent leur propre gestion. Le stockage reste local, sans synchronisation distante. Voir [Fenêtres et données du bureau](desktop.md) pour les limites entre configuration et profils.
 
 ## Panneaux et sections Statut {#panels-status}
 
+**Statut** est en premier par défaut ; un ordre d’onglets enregistré reste prioritaire. Il reste disponible. Dans **Personnaliser le panneau droit**, son chevron replie ou déplie la liste des cases de ses rubriques sans masquer les rubriques elles-mêmes.
+
+Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner.
+
 1. Utilisez **Volet gauche** et **Volet droit** aux coins extérieurs de l’en-tête, ou leurs entrées du menu **Affichage**, pour afficher ou masquer chaque panneau.
-2. Ouvrez **Personnaliser le panneau droit** dans le panneau droit. Utilisez les cases pour choisir les onglets intégrés et sections Statut ; au moins une section Statut reste visible.
+2. Ouvrez **Personnaliser le panneau droit** dans le panneau droit. Utilisez les cases pour choisir les onglets intégrés et sections Statut ; au moins une section Statut reste visible. Faites glisser le pointeur sur ces cases pour en régler plusieurs d'un coup.
 3. Faites glisser les onglets du panneau droit pour les réordonner. Utilisez **Réinitialiser** pour restaurer les choix de disposition intégrée.
 
-Statut inclut les informations de tokens, le mode Yolo, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
+Réordonnez toute section Statut par glisser-déposer ou avec les touches Haut/Bas. Le masquage et l’ordre persistent aux rechargements.
+
+Statut inclut les informations de tokens, le mode Yolo, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Tant que la conversation a un [objectif](conversations.md#goal), une ligne d’objectif au-dessus de ces sections l’affiche ; cette ligne n’est pas une section et ne peut être ni masquée ni déplacée. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
 
 La disposition intégrée est propre à la fenêtre, pas une modification du projet. Les cases d’extension sont différentes : elles activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
 
@@ -44,7 +77,7 @@ La disposition intégrée est propre à la fenêtre, pas une modification du pro
 
 1. Ouvrez **Chat** pour choisir les niveaux de détail par défaut. Les préréglages sont **Rien**, **Minimal**, **Équilibré** et **Tout** ; les changements individuels produisent **Personnalisé**.
 2. Réglez l’**État par défaut** de chaque ligne (**Masqué**, **Réduit** ou **Développé**) pour la réflexion, les diagnostics, les entrées d’outils, les tokens, les messages système et chaque type d’outil, ou utilisez le menu **Contenu des messages** de la conversation, qui partage ces choix.
-3. Dans **Général**, cochez au besoin **Afficher la chronologie des messages**, **Scinder les diffs des appels d’outils** et **Mettre les prompts envoyés en file d’attente** (mettre en file les prompts envoyés pendant qu’une session travaille au lieu de l’orienter).
+3. Dans **Général**, cochez au besoin **Afficher la chronologie des messages**, **Placer les flèches premier/dernier message sous la chronologie**, **Scinder les diffs des appels d’outils** et **Mettre les prompts envoyés en file d’attente** (mettre en file les prompts envoyés pendant qu’une session travaille au lieu de l’orienter).
 4. Redimensionnez la zone de saisie avec sa commande ; les longs brouillons défilent dans le champ.
 
 La chronologie a un marqueur pour chaque réponse, réflexion, outil, compactage et contexte système affiché dans la conversation, dans le même ordre. Ses marqueurs suivent **Contenu des messages** : masquer à cet endroit un type d’outil, la réflexion ou les messages système masque aussi leurs marqueurs, sauf celui d’un outil avec une autorisation en attente, et **Rien** masque tous les marqueurs d’outils. Les réglages de visibilité et de développement changent seulement la présentation. Ils ne retirent pas les outils/raisonnements enregistrés et ne compactent pas le contexte du modèle. Voir [Historique et nettoyage](history.md) pour les opérations destructrices.
@@ -53,21 +86,20 @@ La hauteur de saisie suit la conversation visible, y compris le clavier logiciel
 
 ## Notifications et badges {#notifications}
 
-1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation).
-2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander** relance la demande tant que l’autorisation manque.
+1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation). Faites glisser le pointeur sur une ligne ou une colonne de cases pour en régler plusieurs d'un coup.
+2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander l'autorisation** relance la demande tant que l’autorisation manque.
 3. Activez **Notifier lorsque l'application est au premier plan** pour garder les notifications système pendant que cette fenêtre est au premier plan. Sinon, elles s’affichent dès qu’elle ne l’est pas, même si elle reste ouverte à l’écran.
 
 Par défaut, **Une session attend votre réponse** et **Une session est terminée** vont uniquement vers Système, afin que les états passagers des sessions ne s’accumulent pas dans l’Historique ; elles concernent les sessions principales, pas les sous-agents, et une session que vous arrêtez vous-même n’est pas annoncée. Les erreurs apparaissent toujours à l’écran et dans l’Historique, quoi qu’indique le tableau, et les courts messages de progression restent uniquement à l’écran.
 
 La permission navigateur/système appartient à l’appareil et à l’origine applicative ; une préférence enregistrée ne peut pas contourner un refus. Si elle est bloquée, activez les notifications dans les paramètres du navigateur ou du système, puis revenez ici. Les environnements non pris en charge gardent la colonne Système désactivée.
 
-Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notifications dirigées vers l’Historique, pilote le point de favicon et le badge de l’application native. Les badges natifs agrègent les fenêtres principales actives ; ils ne comptent pas les sessions en cours et ne prouvent pas qu’une notification système a été livrée. Cette fonctionnalité ne fournit pas de badges de lanceur PWA.
+Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notifications dirigées vers l’Historique, pilote le point de favicon et le badge de l’application native.
 
 ## Options avancées {#advanced}
 
 1. Ouvrez **Avancé**.
 2. Cochez ou décochez seulement les options nécessaires ; chaque changement est enregistré via les préférences CodeNomad. Pour changer l’environnement d’exécution des sessions, dépliez le groupe replié **Variables d'environnement** à la fin.
-3. Vérifiez la vue résultante ou l’envoi suivant plutôt que de redémarrer spéculativement le service partagé.
 
 | Option | Effet et précaution |
 | --- | --- |

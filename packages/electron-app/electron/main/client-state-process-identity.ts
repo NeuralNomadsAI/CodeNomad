@@ -22,11 +22,15 @@ function readLinuxProcessStartIdentity(pid: number): string | undefined {
 }
 
 function readCommandIdentity(command: string, args: string[], prefix: string): string | undefined {
+  // One cold helper may use the existing two-attempt budget; retries share its remainder.
+  const deadline = performance.now() + 10_000
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const remaining = Math.ceil(deadline - performance.now())
+    if (remaining <= 0) break
     const result = spawnSync(command, args, {
       encoding: "utf8",
       windowsHide: true,
-      timeout: 5_000,
+      timeout: remaining,
     })
     if (result.status === 0 && !result.error) {
       const value = result.stdout.trim()

@@ -40,6 +40,7 @@ async function tryLaunch(candidate: BrowserCandidate, url: string, logger: Logge
     let resolved = false
     try {
       const args = candidate.args(url)
+      // console-window: opens a browser window, which windowsHide would hide.
       const child = spawn(candidate.command, args, { stdio: "ignore", detached: true })
 
       child.once("error", (error) => {

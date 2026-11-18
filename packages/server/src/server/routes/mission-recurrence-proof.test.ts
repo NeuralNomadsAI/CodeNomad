@@ -3,9 +3,9 @@ import test from "node:test"
 import { recurrenceControlRequestDigest } from "../../missions/recurrence-control-proof"
 import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
 
-test("recurrence proof requires a current real human session, exact request digest and owned Location", async () => {
+for (const action of ["play", "configure", "delete"] as const) test(`${action} proof requires a current real human session, exact request digest and owned Location`, async () => {
   const identity = { sessionID: "real-cookie", workspaceID: "workspace", requestID: "http_play_0",
-    location: { directory: "/owned" }, scheduleID: "daily_review", action: "play" as const, expectedRevision: 0,
+    location: { directory: "/owned" }, scheduleID: "daily_review", action, expectedRevision: 0,
     profileSource: { profileID: "profile", executionHost: "local", configYamlPath: "/selected/config.yaml" }, issuedAt: Date.now() }
   const body = { ...identity, digest: recurrenceControlRequestDigest(identity) }
   let authEnabled = true, sessionCurrent = true, owned = true

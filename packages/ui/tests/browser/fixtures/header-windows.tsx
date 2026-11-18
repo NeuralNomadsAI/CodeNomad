@@ -1,5 +1,5 @@
 import { render } from "solid-js/web"
-import { createSignal } from "solid-js"
+import { Show, createSignal } from "solid-js"
 import { useViewMenu } from "../../../src/lib/native/view-menu"
 import { useAppLifecycle } from "../../../src/lib/hooks/use-app-lifecycle"
 import { registerNavigationShortcuts } from "../../../src/lib/shortcuts/navigation"
@@ -8,6 +8,7 @@ import { ConfigProvider, updatePreferences } from "../../../src/stores/preferenc
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import AlertDialog from "../../../src/components/alert-dialog"
+import { SessionPreviewHost } from "../../../src/components/session-preview-view"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
@@ -17,6 +18,7 @@ import { getFormQueue } from "../../../src/stores/forms"
 import { focusInterruption } from "../../../src/stores/interruption-navigation"
 import { addInstance, addPendingForm, addPermissionToQueue, instances, setActiveInstanceId } from "../../../src/stores/instances"
 import { setSessions, setActiveSession, setActiveParentSession, clearActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
+import { clearSelectedSession, selectActiveParentSession, selectActiveSession } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
 import "../../../src/index.css"
@@ -50,7 +52,8 @@ const client: any = {
   message: { list: async () => ({ data: [{ id: "hello", type: "user", text: "Fixture message", time: { created: 1 } },
     // Opt-in assistant card (muted message surface) for toggle-colour checks.
     ...(new URLSearchParams(location.search).has("assistant") ? [{ id: "reply", type: "assistant", agent: "build",
-      model: { providerID: "fixture", id: "fixture" }, content: [{ type: "text", text: "Fixture reply" }], time: { created: 2, completed: 3 } }] : []),
+      model: { providerID: "fixture", id: "fixture" }, content: [{ type: "text", text: new URLSearchParams(location.search).has("links")
+        ? `[Local preview](http://localhost:${location.port}/page/a)` : "Fixture reply" }], time: { created: 2, completed: 3 } }] : []),
   ], cursor: {} }) },
   model: { default: async () => ({ data: { providerID: "fixture", id: "fixture" } }) },
   file: { status: async () => ({ data: [] }) },
@@ -66,7 +69,8 @@ serverApi.fetchSessionOutline = async () => ({ status: "outline", total: 1,
   entries: [{ id: "hello", seq: 0, type: "user", tools: 0, reasoning: 0 }],
   checkpoints: [{ after: -1, through: 0, digest: "0".repeat(64), changed: true }], cursor: null,
 })
-serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" },
+  ...(new URLSearchParams(location.search).has("worktrees") ? [{ slug: "other", directory: "/other", kind: "worktree" }] : [])] } as any)
 addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
 setActiveInstanceId(id)
 setSessions(previous => new Map(previous).set(id, new Map([[sessionId, session]])))
@@ -83,7 +87,21 @@ const [menuInstance, setMenuInstance] = createSignal<string | undefined>(id)
 let viewAction: (action: string) => boolean
 const [immersive, setImmersive] = createSignal(false)
 const [active, setActive] = createSignal(true)
+const duplicateId = "header-duplicate"
+const duplicate = new URLSearchParams(location.search).has("duplicate")
+const [selectedOccurrence, setSelectedOccurrence] = createSignal(id)
+if (duplicate) {
+  addInstance({ ...instances().get(id)!, id: duplicateId, proxyPath: `/workspaces/${duplicateId}/instance` })
+  ;(sdkManager as any).clients.set(`${duplicateId}:/workspaces/${duplicateId}/instance`, client)
+  setSessions(previous => new Map(previous).set(duplicateId, new Map([[sessionId, { ...session, instanceId: duplicateId }]])))
+  setProviders(previous => new Map(previous).set(duplicateId, [{ id: "fixture", name: "Fixture", models: [] }]))
+  setActiveSession(duplicateId, sessionId)
+  setActiveParentSession(duplicateId, sessionId)
+  setSessionPage(duplicateId, [sessionId], false, true)
+  await ensureWorktreesLoaded(duplicateId)
+}
 function Fixture() {
+  const instance = instances().get(id)!
   viewAction = useViewMenu(menuInstance)
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   useAppLifecycle({
@@ -98,11 +116,21 @@ function Fixture() {
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
     <button id="outside">Outside target</button>
     <AlertDialog />
-    <InstanceShell instance={instances().get(id)!} isActiveInstance={active()} escapeInDebounce={escapeInDebounce()}
+    <SessionPreviewHost />
+    <div data-occurrence={id} style={{ display: selectedOccurrence() === id ? "contents" : "none" }}>
+    <Show when={instances().has(id)}><InstanceShell instance={instance} isActiveInstance={active() && selectedOccurrence() === id} escapeInDebounce={escapeInDebounce()}
       paletteCommands={() => [{ id: "fixture", label: "Fixture command", description: "Execute the fixture", category: "System", action: () => {} }]}
       onExecuteCommand={() => { executions++ }} onCloseSession={() => {}} onNewSession={() => {}}
       handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0}
-      mobileFullscreenMode={immersive()} onEnterMobileFullscreen={() => setImmersive(true)} onExitMobileFullscreen={() => setImmersive(false)} />
+       mobileFullscreenMode={immersive()} onEnterMobileFullscreen={() => setImmersive(true)} onExitMobileFullscreen={() => setImmersive(false)} /></Show>
+    </div>
+    <Show when={duplicate && instances().has(duplicateId)}>
+      <div data-occurrence={duplicateId} style={{ display: selectedOccurrence() === duplicateId ? "contents" : "none" }}>
+        <InstanceShell instance={instances().get(duplicateId)!} isActiveInstance={active() && selectedOccurrence() === duplicateId} escapeInDebounce={escapeInDebounce()}
+          paletteCommands={() => []} onExecuteCommand={() => {}} onCloseSession={() => {}} onNewSession={() => {}}
+          handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0} />
+      </div>
+    </Show>
   </div>
   )
 }
@@ -114,6 +142,7 @@ await updatePreferences({ locale: "en" })
 bootStage("preferences-after")
 ;(window as any).fixture = {
   runtimeEnv, replies, deletedSessions, setImmersive, setActive,
+  selectOccurrence: (instanceId: string) => { setSelectedOccurrence(instanceId); setActiveInstanceId(instanceId) },
   readLayout: readClientLayoutValue,
   addSession: (sid: string, parentId: string | null = null) => {
     fixtureSessions.set(sid, { ...session, id: sid, parentId, title: `Fixture ${sid}` })
@@ -125,7 +154,12 @@ bootStage("preferences-after")
     setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
     setSessionPage(id, [...fixtureSessions.keys()], false, true)
   },
-  selectSession: (sid: string | null) => { if (sid === null) clearActiveParentSession(id); else { setActiveParentSession(id, sid); setActiveSession(id, sid) } },
+  moveSession: (sid: string, directory: string) => {
+    const current = fixtureSessions.get(sid)!
+    fixtureSessions.set(sid, { ...current, location: { directory } })
+    setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
+  },
+  selectSession: (sid: string | null) => { if (sid === null) clearSelectedSession(id); else selectActiveParentSession(id, sid) },
   selectedSession: () => activeSessionId().get(id) ?? null,
   focusRequest: (sid?: string, requestId?: string) => focusInterruption(id, sid, requestId),
   nativeQuestion: (sid = sessionId, formId = `question-${sid}`, long = false) => emit("form.created", {
@@ -147,8 +181,8 @@ bootStage("preferences-after")
   menuInstance: setMenuInstance,
   setPreferences: updatePreferences,
   executions: () => executions,
-  showInfo: () => setActiveSession(id, "info"),
-  showSession: () => setActiveSession(id, sessionId),
+  showInfo: () => selectActiveSession(id, "info"),
+  showSession: () => selectActiveSession(id, sessionId),
   setContext: (used: number, available: number) => setSessionInfoByInstance(previous => new Map(previous).set(id,
     new Map([[sessionId, { actualUsageTokens: used, contextAvailableTokens: available } as any]]))),
   setLocale: (locale: "en" | "he") => updatePreferences({ locale }),

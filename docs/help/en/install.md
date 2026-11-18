@@ -10,11 +10,11 @@ Choose a local desktop host or run the [standalone server](server.md). In both c
 
 | Platform | Electron release | Tauri release | Platform notes |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel or Apple Silicon | ZIP, Intel or Apple Silicon | macOS 13.5 or later is required by the bundled runtime. |
+| macOS | ZIP, Intel or Apple Silicon | ZIP, Intel or Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Installer, x64 | Windows 10 or later; Tauri uses WebView2. |
 | Linux | Debian package, x64 | AppImage, x64 | Built and tested on Ubuntu 24.04; compatibility with older distributions is not guaranteed. |
 
-Desktop releases include the runtime resources needed by the backend and OpenCode installer, so you do not need a separate Node.js/npm installation to use them. Git is not bundled. Native browser automation is supported in Electron and Windows Tauri; other Tauri platforms use iframe previews.
+Desktop releases include the runtime resources needed by the backend and OpenCode installer, so you do not need a separate Node.js/npm installation to use them. Git is not bundled. Native agent browser automation is supported in Electron and Tauri on Windows, macOS and Linux. Tauri macOS/Linux use WebKit previews and native mobile profiles with engine-specific density and input limits; see [browser previews](browser-sidecars.md#signins-automation).
 
 For a verified download blocked at launch, see [platform troubleshooting](troubleshooting.md#desktop-launch). Never run an untrusted archive merely to bypass a warning.
 
@@ -45,16 +45,16 @@ The Electron Debian installation configures Chromium's sandbox. Do not disable t
 
 | Requirement | Where it must be available | Current requirement |
 | --- | --- | --- |
-| OpenCode CLI | Selected execution host, including the selected WSL distribution where applicable | Minimum **2.1.2**; **2.2.1** is the recommended/qualified target. Newer or custom versions undergo contract validation rather than an untested-version ban. |
+| OpenCode CLI | Selected execution host, including the selected WSL distribution where applicable | Minimum **2.3.0**; **2.3.0** is the recommended/qualified target. Newer or custom versions undergo contract validation rather than an untested-version ban. |
 | Git | CodeNomad backend account's `PATH` | Required for repository identity, Git operations and worktrees. |
-| Node.js/npm | Standalone-server and source-build host | Node.js 24 LTS; reproducible source builds use `.node-version` (**24.20.0**). Bundled with desktop runtime/installation resources. |
+| Node.js/npm | Standalone-server and source-build host | Node.js 24 LTS; reproducible source builds use the version pinned in `.node-version`. Desktop releases include their own: Electron's integrated Node or Tauri's bundled Node, with npm. |
 | Workspace folder | Backend-accessible disk | An explicitly opened physical folder, not a device-local folder inferred by a remote browser. |
 
 On Windows, install [Git for Windows](https://gitforwindows.org/) with command-line/third-party access enabled. A user-writable, per-user installation is sufficient. On macOS/Linux, use [Git's platform instructions](https://git-scm.com/downloads).
 
 After changing `PATH`, fully quit and relaunch the desktop app, or restart the standalone backend under the intended account. Reloading a browser does not update the backend environment. Git available only inside WSL does not satisfy a Windows backend's Git requirement.
 
-Without Git, you can still open a physical folder and use directory-only conversations, including asking the agent for installation help. Repository/worktree operations remain unavailable; session access stays limited to that exact folder. CodeNomad tells the agent about backend Git availability before prompts/custom commands and removes that advisory after recovery. The agent's execution host can differ from the backend host, so install Git for the backend, not only for the agent's shell.
+Without Git, you can still open a physical folder and use directory-only conversations, including asking the agent for installation help. Repository/worktree operations remain unavailable; session access stays limited to that exact folder. The agent's execution host can differ from the backend host, so install Git for the backend, not only for the agent's shell.
 
 ## Select OpenCode on first launch {#first-launch}
 

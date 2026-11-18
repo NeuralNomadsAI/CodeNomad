@@ -18,6 +18,13 @@ pub use commands::{
     __cmd__client_state_load_partition, __cmd__client_state_navigation_flushed,
     __cmd__client_state_renderer_flushed, __cmd__client_state_save,
     __cmd__client_state_set_restore_enabled, __cmd__client_state_startup_command_result,
+    __tauri_command_name_client_state_claim_access, __tauri_command_name_client_state_clear,
+    __tauri_command_name_client_state_commit_partitions, __tauri_command_name_client_state_load,
+    __tauri_command_name_client_state_load_partition,
+    __tauri_command_name_client_state_navigation_flushed,
+    __tauri_command_name_client_state_renderer_flushed, __tauri_command_name_client_state_save,
+    __tauri_command_name_client_state_set_restore_enabled,
+    __tauri_command_name_client_state_startup_command_result,
 };
 pub use commands::{
     client_state_claim_access, client_state_clear, client_state_commit_partitions,

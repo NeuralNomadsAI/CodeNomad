@@ -1,6 +1,6 @@
 {
   "name": "codenomad-workspace",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "description": "CodeNomad monorepo workspace",
   "license": "MIT",
@@ -33,14 +33,51 @@
     "google-auth-library": "^10.5.0"
   },
   "devDependencies": {
-    "baseline-browser-mapping": "^2.9.11"
+    "baseline-browser-mapping": "^2.11.35"
+  },
+  "overrides": {
+    "@opencode/util": {
+      "glob": "14.0.4",
+      "minimatch": "11.0.6"
+    },
+    "@npmcli/arborist": {
+      "minimatch": "11.0.6"
+    },
+    "@npmcli/map-workspaces": {
+      "glob": "14.0.4",
+      "minimatch": "11.0.6"
+    },
+    "@npmcli/package-json": {
+      "glob": "14.0.4"
+    },
+    "cacache": {
+      "glob": "14.0.4"
+    },
+    "@tufjs/models": {
+      "minimatch": "11.0.6"
+    },
+    "ignore-walk": {
+      "minimatch": "11.0.6"
+    },
+    "@electron/universal": {
+      "minimatch@^9.0.3": "11.0.6"
+    },
+    "app-builder-lib": {
+      "minimatch@^10.2.5": "11.0.6"
+    },
+    "rimraf@>=5": {
+      "glob": "14.0.4"
+    },
+    "workbox-build": {
+      "glob": "14.0.4"
+    }
   },
   "optionalDependencies": {
-    "@rollup/rollup-darwin-arm64": "4.52.5",
-    "@rollup/rollup-darwin-x64": "4.52.5",
-    "@rollup/rollup-linux-arm64-gnu": "4.52.5",
-    "@rollup/rollup-linux-x64-gnu": "4.52.5",
-    "@rollup/rollup-win32-arm64-msvc": "4.52.5",
-    "@rollup/rollup-win32-x64-msvc": "4.52.5"
+    "@rollup/rollup-darwin-arm64": "4.68.1",
+    "@rollup/rollup-darwin-x64": "4.68.1",
+    "@rollup/rollup-linux-arm64-gnu": "4.68.1",
+    "@rollup/rollup-linux-x64-gnu": "4.68.1",
+    "@rollup/rollup-win32-arm64-msvc": "4.68.1",
+    "@rollup/rollup-win32-x64-msvc": "4.68.1"
   }
 }

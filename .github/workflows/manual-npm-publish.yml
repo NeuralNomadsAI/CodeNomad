@@ -69,10 +69,7 @@ jobs:
           node "$tool_dir/node_modules/npm/bin/npm-cli.js" --version
 
       - name: Install dependencies
-        run: node "$PINNED_NPM_CLI" ci --workspaces
-
-      - name: Ensure rollup native binary
-        run: node "$PINNED_NPM_CLI" install @rollup/rollup-linux-x64-gnu --no-save
+        run: node "$PINNED_NPM_CLI" ci --include=optional
 
       - name: Build server package (includes UI bundling)
         run: node "$PINNED_NPM_CLI" run build --workspace packages/server

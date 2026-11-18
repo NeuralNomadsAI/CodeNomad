@@ -21,7 +21,7 @@ Para emparejar otro CodeNomad de escritorio, elige **Conectar servidor CodeNomad
 
 La revocación finaliza las conexiones HTTP/SSE actuales del dispositivo y su acceso futuro. Vuelve a emparejarlo con un enlace nuevo para restaurar el acceso. Un dispositivo caduca tras **30 días sin uso**. Al alcanzar el **límite de 32 dispositivos**, un emparejamiento nuevo reemplaza el dispositivo con actividad más antigua y cierra sus conexiones.
 
-El backend almacena hashes de credenciales, no credenciales de dispositivo en bruto, en `remote-control-devices.json` bajo su base de configuración. El cliente conserva una cookie de dispositivo con ámbito del anfitrión, `Secure`, `HttpOnly` y `SameSite=Lax`. Su duración en el navegador puede superar el límite de inactividad de 30 días del servidor; el registro sigue siendo autoritativo. Borrar los datos del sitio, cambiar de perfil de navegador o usar navegación privada puede exigir emparejarse de nuevo.
+Borrar los datos del sitio, cambiar de perfil de navegador o usar navegación privada puede exigir emparejarse de nuevo.
 
 Cambiar la contraseña de acceso directo **no** revoca dispositivos. **Detener control remoto** desconecta el túnel, pero conserva la lista de dispositivos emparejados; usa **Revocar** cuando quieras retirar la autorización.
 
@@ -42,7 +42,6 @@ La recuperación conserva la página abierta y los borradores; no repite una acc
 | Detener control remoto | Desconecta el acceso y borra la reanudación automática al iniciar; conserva los registros de dispositivos. |
 | Apagado del backend / se cierra la última ventana de escritorio y la aplicación termina | Control remoto queda sin conexión. El servicio compartido de OpenCode puede seguir ejecutándose, pero no puede servir esta interfaz mediante un backend detenido. |
 | Iniciar después de dejar Control remoto activado | Reconecta en segundo plano sin emitir un enlace de emparejamiento nuevo. Las instalaciones donde nunca se inició no se activan solas. |
-| Reanudación fallida o error fatal del túnel | La elección recordada permanece y el anfitrión muestra el error; el icono de actualizar de la tarjeta de Control remoto vuelve a leer su estado. **Iniciar control remoto** reintenta ahora; **Detener control remoto** borra la elección. Si no, un inicio posterior reintenta. |
 
 La reanudación automática al iniciar se limita a un backend por directorio de configuración. No inicies anfitriones que compitan con la misma configuración para obtener más capacidad de túnel. Para un equipo que deba seguir accesible tras salir del escritorio, despliega un [servidor independiente](server.md) gestionado por separado; Control remoto no es un daemon independiente.
 
@@ -56,17 +55,21 @@ Los dispositivos emparejados pueden usar las API normales de proyectos/conversac
 | Inicio/cierre de sesión con contraseña, cambios de contraseña, inicialización local por token | No disponible; se requieren credenciales de dispositivo incluso si la autenticación directa está desactivada. |
 | Estado de Control remoto | Legible para un dispositivo emparejado; la gestión no está disponible. Iniciar/Detener, crear emparejamientos, la lista de dispositivos y la revocación permanecen en la vía de acceso del anfitrión. |
 | Gestión de ventanas remotas/servidores de escritorio y rutas proxy | No disponible (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| **Proxy de contenido** de SideCar | No disponible (`/sidecars/`). Esto **no** significa que todas las API de SideCar estén bloqueadas: los clientes emparejados pueden seguir accediendo a las API de registro `/api/sidecars`. |
+| **Proxy de contenido** de SideCar | Requiere loopback (`/sidecars/`), al igual que los WebSockets de SideCar. Las API de registro `/api/sidecars` están disponibles para dispositivos emparejados y clientes directos de LAN autenticados. |
 | Contenido de vistas previas web | Disponible mientras **Vistas previas web** esté activado (valor predeterminado) en **Configuración → Acceso remoto → Control remoto** en el equipo anfitrión. Cada dirección de vista previa abre su página sin emparejamiento, así que mantenla privada. Desactivar el interruptor detiene las vistas previas servidas y sus WebSockets; los dispositivos emparejados ocultan **Abrir vista previa web** al recargar. |
 | Puente de automatización | No disponible (`/api/opencode-plugin/`). Las capacidades nativas de escritorio no se convierten en capacidades del navegador. |
 | Actualizaciones de conexión a WebSocket | Disponibles solo para vistas previas web. |
 
-Usa una [conexión directa](remote-access.md) debidamente protegida cuando un flujo requiera una superficie proxy/WebSocket bloqueada. Control remoto no cambia automáticamente a esa vía.
+Usa una conexión loopback en el anfitrión para los proxies/WebSockets reservados al anfitrión y la gestión de Control remoto (`/api/remote-control/`). El acceso directo por LAN también requiere loopback para estas operaciones; consulta [Actualizar](remote-access.md#upgrading). Las vistas previas web de Control remoto usan un token de capacidad en su dirección y siguen disponibles mientras estén activadas en el anfitrión; mantén privada esa dirección.
 
 ## Relé y privacidad {#relay-privacy}
 
-CodeNomad usa [OpenTunnel](https://github.com/anomalyco/opentunnel) y reserva una ruta aleatoria en la identidad de túnel predeterminada compartida del equipo. Detener libera el puente de CodeNomad, no la identidad compartida usada por otras aplicaciones.
+CodeNomad usa [OpenTunnel](https://github.com/anomalyco/opentunnel) y reserva una ruta aleatoria en la identidad de túnel predeterminada compartida del equipo.
 
 TLS termina en el backend de CodeNomad. El relé reenvía texto cifrado y no puede leer el contenido de la aplicación, pero puede observar nombres de host, tiempos de conexión y tamaños de tráfico. El certificado/clave privada del túnel permanece en el anfitrión. Protege el almacenamiento del túnel del anfitrión y la configuración de CodeNomad como credenciales; una dirección imposible de adivinar no es autorización.
 
 `CODENOMAD_REMOTE_CONTROL_API` selecciona una API de OpenTunnel autoalojada; sin definir se usa el servicio alojado. Esto cambia el despliegue del túnel, no los requisitos de emparejamiento ni las superficies bloqueadas. Consulta [Seguridad](security.md) para el tratamiento de credenciales y diagnósticos.
+
+## Política del administrador {#administrator-policy}
+
+Un administrador puede desactivar el control remoto para todos los usuarios de un equipo: define la variable de entorno `CODENOMAD_REMOTE_CONTROL=disabled` para todo el sistema y reinicia CodeNomad. El backend nunca conecta un túnel, rechaza **Iniciar control remoto** y los enlaces de emparejamiento y no se reconecta al iniciar; Ajustes muestra **Desactivado por el administrador**. Los dispositivos emparejados antes no pueden conectarse y siguen en la lista para que puedas revocarlos. Sin definir o vacía no aplica ninguna política; cualquier otro valor, incluso solo espacios, impide que el backend se inicie.

@@ -1,4 +1,14 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "OK",
+  "window.menu.native.browserPromptCancel": "Abbrechen",
+  "window.menu.native.browserPermission": "{permission} für {origin} erlauben?",
+  "window.menu.native.browserPermissionUnknown": "Unbekannte Berechtigung blockiert: {permission}.",
+  "window.menu.native.browserAllow": "Erlauben",
+  "window.menu.native.browserDeny": "Ablehnen",
+  "window.menu.native.browserCopyLink": "Link kopieren",
+  "window.menu.native.browserSaveImage": "Bild speichern",
+  "window.menu.native.browserOpenLink": "Link in neuem Fenster öffnen",
+  "window.menu.native.browserInspect": "Untersuchen",
   "window.title.main": "CodeNomad",
   "window.controls.minimize": "Fenster minimieren",
   "window.controls.maximize": "Fenster maximieren oder wiederherstellen",
@@ -54,15 +64,6 @@ export const appMessages = {
 
   "app.closeInstance.toast.error": "Projekt konnte nicht geschlossen werden.",
   "app.closeInstance.toast.otherWindow": "{project} wurde in einem anderen Fenster geschlossen.",
-
-  "emptyState.logoAlt": "CodeNomad Logo",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "Wählen Sie einen Ordner aus, um mit dem AI-Coding zu beginnen",
-  "emptyState.actions.selectFolder": "Ordner auswählen",
-  "emptyState.actions.selecting": "Wird ausgewählt...",
-  "emptyState.keyboardShortcut": "Tastenkombination: {shortcut}",
-  "emptyState.examples": "Beispiele: {example}",
-  "emptyState.multipleInstances": "Sie können mehrere Instanzen desselben Ordners haben",
 
   "releases.upgradeRequired.title": "Update erforderlich",
   "releases.desktop.checking": "Suche nach einem CodeNomad-Update…",

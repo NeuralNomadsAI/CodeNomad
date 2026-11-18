@@ -1,4 +1,4 @@
-# Support and source builds
+# Bug reports and source builds
 
 Use the repository for bug reports, current releases and contributions. The [troubleshooting guide](troubleshooting.md) covers safe recovery before you report an issue.
 
@@ -11,8 +11,6 @@ Use the repository for bug reports, current releases and contributions. The [tro
 The action prefills the CodeNomad and OpenCode versions (including the running OpenCode service when it differs from the installed one), your operating system, the client type (with the browser's user agent in a web browser) and the server's operating system. It does not prefill listener addresses, workspace paths, credentials or conversation text. Opening the form is not submitting an issue.
 
 If you need more diagnostics, **Copy to clipboard** or **Download .txt** produces a separate report. That fuller report can contain local paths and network addresses: review and redact it before attaching it. A screenshot or log excerpt can still contain secrets even when the automatic diagnostic report excludes authentication secrets.
-
-If the GitHub form has incompatible fields, CodeNomad opens a plain issue with the same report information. A temporary failure reading the form does not prevent opening it. You can always use [the issue list](https://github.com/NeuralNomadsAI/CodeNomad/issues) manually.
 
 ## Community and releases {#community}
 
@@ -31,7 +29,7 @@ For issues with native OpenCode configuration rather than CodeNomad controls, co
 
 ## Build from source {#build-from-source}
 
-Use Node.js **24.20.0**, as pinned in `.node-version`, npm, Git and a compatible OpenCode CLI. Run the commands from a development checkout:
+Use the Node.js version pinned in `.node-version`, npm, Git and a compatible OpenCode CLI. Run the commands from a development checkout:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Development changes affect the development host, not an independently running OpenCode daemon's installed version. Native packaging needs the appropriate target tools; prefer builds on the target OS.
+Native packaging needs the appropriate target tools; prefer builds on the target OS.
 
 ### Build and validate {#build-and-validate}
 

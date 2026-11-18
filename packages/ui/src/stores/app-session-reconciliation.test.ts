@@ -12,6 +12,16 @@ describe("app session reconciliation", () => {
     ["does not match one live workspace to duplicate descriptors", [
       { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 0 }, { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 0 },
     ], [{ id: "only", folderPath: "/code/nomad" }], ["only", null]],
+    ["prefers a saved record that still exists when a closed sibling shifted occurrences", [
+      { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 1, workspaceId: "b" },
+    ], [{ id: "b", folderPath: "/code/nomad" }], ["b"]],
+    ["keeps a record matched by id away from occurrence matching", [
+      { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 0, workspaceId: "gone" },
+      { kind: "workspace" as const, folderPath: "/code/nomad", occurrence: 1, workspaceId: "a" },
+    ], [{ id: "a", folderPath: "/code/nomad" }, { id: "b", folderPath: "/code/nomad" }], [null, "a"]],
+    ["matches a saved id only within the same folder", [
+      { kind: "workspace" as const, folderPath: "/code/other", occurrence: 0, workspaceId: "a" },
+    ], [{ id: "a", folderPath: "/code/nomad" }, { id: "c", folderPath: "/code/other" }], ["c"]],
   ] as const
   for (const [label, saved, live, expected] of workspaceCases) it(label, () => assert.deepEqual(
     reconcileWorkspaceTabs([...saved], [...live]).map(({ existingWorkspaceId }) => existingWorkspaceId), expected,
@@ -42,7 +52,8 @@ describe("app session reconciliation", () => {
   const selectionCases = [
     ["falls back to a valid parent when the active session is stale", [{ id: "parent", parentId: null }, { id: "child", parentId: "parent" }], "parent", "deleted-child", { parentSessionId: "parent", activeSessionId: "parent" }],
     ["restores a grandchild under its root session", [{ id: "root", parentId: null }, { id: "child", parentId: "root" }, { id: "grandchild", parentId: "child" }], "root", "grandchild", { parentSessionId: "root", activeSessionId: "grandchild" }],
-    ["keeps the special info selection without requiring a session", [], null, "info", { parentSessionId: null, activeSessionId: "info" }],
+    ["drops a non-session selection once parent hydration confirms absence", [], null, "info", null],
+    ["restores the parent from a saved info selection", [{ id: "parent" }], "parent", "info", { parentSessionId: "parent", activeSessionId: "parent" }],
   ] as const
   for (const [label, sessions, parent, active, expected] of selectionCases) it(label, () => assert.deepEqual(
     resolveRestoredSessionSelection([...sessions], parent, active), expected,

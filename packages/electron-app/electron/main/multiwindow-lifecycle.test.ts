@@ -31,7 +31,7 @@ test("closing one local window removes only its V3 record and leaves backend run
   assert.deepEqual(calls, ["prevent", "renderer:one", "native:one", "remove:one", "close:one"])
 })
 
-test("closing the sole local window while a support window remains removes its V3 record", async () => {
+test("closing the last local window beside a remote window keeps its V3 record for the next local window", async () => {
   const calls: string[] = []
   const local = windowRecord("local", calls)
   const remote = { isDestroyed: () => false }
@@ -44,7 +44,29 @@ test("closing the sole local window while a support window remains removes its V
   lifecycle.attach(local)
   local.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
   await tick()
-  assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "remove:local", "close:local"])
+  // The remote window stays open; New Window, a later launch or the next start reopens this one.
+  assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "close:local"])
+})
+
+test("a local window on the sign-in page closes without waiting for a renderer that is not there", async () => {
+  const calls: string[] = []
+  const stuck = windowRecord("stuck", calls)
+  const other = windowRecord("other", calls)
+  ;(stuck.window as unknown as { webContents: unknown }).webContents = {
+    isDestroyed: () => false, getURL: () => "http://localhost/login",
+    executeJavaScript: async () => { throw new Error("Renderer client-state flush callback is unavailable") },
+  }
+  const local = [stuck, other]
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => local, getAllWindows: () => local.map((record) => record.window),
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(stuck)
+  stuck.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "native:stuck", "remove:stuck", "close:stuck"])
 })
 
 test("Preferences does not turn the final local close into a destructive window removal", async () => {
@@ -79,6 +101,79 @@ test("Preferences does not keep the final support window alive", async () => {
   remote.events.get("close")?.({ defaultPrevented: false, preventDefault: () => calls.push("prevent") })
   await tick()
   assert.deepEqual(calls, ["prevent", "quit"])
+})
+
+test("a hidden launch window never keeps the last visible local window from quitting", async () => {
+  const calls: string[] = []
+  const local = windowRecord("local", calls)
+  const launch = { ...windowRecord("launch", calls), persisted: false }
+  const loadingRemote = { isDestroyed: () => false }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [local, launch], getAllWindows: () => [local.window, launch.window, loadingRemote as never],
+    isLaunchWindow: (window) => window === launch.window || window === (loadingRemote as never),
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(local)
+  local.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "quit"], "the whole app quits and the window record is kept")
+})
+
+test("a hidden launch window never keeps the last remote window from quitting", async () => {
+  const calls: string[] = []
+  const remote = windowRecord("remote", calls)
+  const launch = { isDestroyed: () => false }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [], getAllWindows: () => [remote.window, launch as never],
+    isLaunchWindow: (window) => window === (launch as never),
+    removeWindowState: async () => true, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attachSupportWindow(remote.window)
+  remote.events.get("close")?.({ defaultPrevented: false, preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "quit"])
+})
+
+test("a launch window still on its loading page is disposed without a renderer flush", async () => {
+  const calls: string[] = []
+  const launch = { ...windowRecord("launch", calls), persisted: false, tracker: null }
+  // A backend startup failure hands the connection off before the App installs its flush callback.
+  launch.window.webContents.executeJavaScript = async () => { calls.push("renderer:launch"); throw new Error("Renderer client-state flush callback is unavailable") }
+  const fallback = { isDestroyed: () => false }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [launch], getAllWindows: () => [launch.window, fallback as never],
+    isLaunchWindow: (window) => window === launch.window,
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(launch)
+  launch.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "close:launch"], "only the fallback window remains")
+})
+
+test("an ordinary unpersisted window still flushes its renderer before closing", async () => {
+  const calls: string[] = []
+  // It may hold user work: only launch-owned windows skip the persistence safeguard.
+  const ephemeral = { ...windowRecord("ephemeral", calls), persisted: false }
+  const launch = { isDestroyed: () => false }
+  const remote = { isDestroyed: () => false }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [ephemeral], getAllWindows: () => [ephemeral.window, launch as never, remote as never],
+    isLaunchWindow: (window) => window === (launch as never),
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(ephemeral)
+  ephemeral.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "renderer:ephemeral", "native:ephemeral", "close:ephemeral"])
 })
 
 test("closing every window quits, Remote Control included", () => {
@@ -185,6 +280,26 @@ test("renderer persistence failure blocks destructive local close and remains re
   first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
   await tick()
   assert.deepEqual(calls, ["prevent", "renderer:1", "prevent", "renderer:2", "native:one", "remove", "close:one"])
+})
+
+test("quitting with a hidden launch window pending flushes and exits without asking its renderer", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const local = windowRecord("local", calls)
+  const launch = { ...windowRecord("launch", calls), persisted: false }
+  // Its connection is still pending: asking its renderer would fail or hang the whole shutdown.
+  launch.window.webContents.executeJavaScript = async () => { throw new Error("Script failed to execute") }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
+    cliManager: { shutdown: async () => calls.push("stop") } as never, getLocalWindows: () => [local, launch], getAllWindows: () => [local.window, launch.window],
+    isLaunchWindow: (window) => window === launch.window,
+    removeWindowState: async () => true, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.registerAppEvents()
+  events.get("before-quit")?.({ preventDefault: () => {} })
+  for (let index = 0; index < 5; index++) await tick()
+  assert.deepEqual(calls.filter((call) => !call.startsWith("hide:")), ["renderer:local", "native:local", "aggregate", "stop", "release", "exit"])
 })
 
 test("global shutdown asks all renderers concurrently before aggregate persistence", async () => {

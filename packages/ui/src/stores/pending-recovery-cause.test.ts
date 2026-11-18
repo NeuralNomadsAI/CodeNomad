@@ -33,10 +33,15 @@ test("an unanswered folder shows the server detail only when there is one", () =
 
 test("non-folder causes keep their own message and detail", () => {
   for (const [cause, expected] of [
-    [{ kind: "unsupported" }, "interruption.recoveryCause.unsupported(detail=)"],
     [{ kind: "unstable" }, "interruption.recoveryCause.unstable(detail=)"],
     [{ kind: "hydration", detail: "worktrees" }, "interruption.recoveryCause.hydration(detail=worktrees)"],
   ] as const) assert.equal(describePendingRecovery(cause, "repo", none, t).message, expected)
+})
+
+test("an unavailable plugin is one connection-wide notice that names no project", () => {
+  assert.deepEqual(describePendingRecovery({ kind: "unsupported" }, "repo", none, t), {
+    title: "interruption.recoveryUnsupported.title()", message: "interruption.recoveryCause.unsupported()",
+  })
 })
 
 test("folders sharing a name keep their parent so each one stays visible", () => {

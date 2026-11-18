@@ -1,4 +1,4 @@
-# 支持与源码构建
+# 错误报告与源码构建
 
 通过仓库报告错误、查看当前版本和贡献。[故障排查指南](troubleshooting.md)介绍报告问题前的安全恢复。
 
@@ -11,8 +11,6 @@
 该操作会预填 CodeNomad 和 OpenCode 版本（包括与已安装版本不同时的运行中 OpenCode 服务版本）、你的操作系统、客户端类型（在网页浏览器中还包括浏览器的用户代理）以及服务器的操作系统。不会预填监听地址、工作区路径、凭据或对话文本。打开表单不等于提交问题。
 
 如需更多诊断，**复制到剪贴板**或**下载 .txt**会生成单独报告。该完整报告可能包含本地路径和网络地址：附件前请检查并脱敏。即使自动诊断报告排除了认证秘密，截图或日志片段仍可能包含秘密。
-
-GitHub 表单字段不兼容时，CodeNomad 会打开包含相同报告信息的普通问题。临时读取表单失败不会阻止打开。你也可以随时手动使用[问题列表](https://github.com/NeuralNomadsAI/CodeNomad/issues)。
 
 ## 社区与版本 {#community}
 
@@ -31,7 +29,7 @@ GitHub 表单字段不兼容时，CodeNomad 会打开包含相同报告信息的
 
 ## 从源码构建 {#build-from-source}
 
-使用 `.node-version` 固定的 Node.js **24.20.0**、npm、Git 和兼容 OpenCode CLI。在开发检出目录运行：
+使用 `.node-version` 固定的 Node.js 版本、npm、Git 和兼容 OpenCode CLI。在开发检出目录运行：
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-开发更改影响开发宿主，而非独立运行的 OpenCode 守护进程已安装版本。原生打包需要相应目标工具；优先在目标操作系统构建。
+原生打包需要相应目标工具；优先在目标操作系统构建。
 
 ### 构建与验证 {#build-and-validate}
 

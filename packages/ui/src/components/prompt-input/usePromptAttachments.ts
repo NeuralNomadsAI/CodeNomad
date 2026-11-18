@@ -1,4 +1,4 @@
-import { createEffect, createSignal, type Accessor } from "solid-js"
+import { batch, createEffect, createSignal, type Accessor } from "solid-js"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import { createTextAttachment } from "../../types/attachment"
 import type { Attachment } from "../../types/attachment"
@@ -12,6 +12,7 @@ import {
   pastedDisplayCounterRegex,
 } from "./attachmentPlaceholders"
 import { useDeviceAttachments } from "./useDeviceAttachments"
+import { readClipboardAttachments } from "../../lib/native/clipboard-attachments"
 
 type PromptAttachmentsOptions = {
   instanceId: Accessor<string>
@@ -225,9 +226,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
 
   async function handlePaste(e: ClipboardEvent) {
     if (options.disabled?.() || options.active?.() === false) return
-    const items = e.clipboardData?.items
-    if (!items) return
-    const files = Array.from(items).filter(item => item.kind === "file").flatMap(item => {
+    const items = e.clipboardData?.items ?? []
+    const files = e.clipboardData?.files.length ? Array.from(e.clipboardData.files) : Array.from(items).filter(item => item.kind === "file").flatMap(item => {
       const file = item.getAsFile()
       return file ? [file] : []
     })
@@ -238,32 +238,51 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     }
 
     const pastedText = e.clipboardData?.getData("text/plain")
+    const hasFileUris = e.clipboardData?.getData("text/uri-list").split(/\r?\n/).some(uri => /^file:\/\//i.test(uri.trim()))
+    const nativeFiles = !pastedText || hasFileUris ? readClipboardAttachments(e) : null
+    if (nativeFiles) {
+      e.preventDefault()
+      // Without attachments the paste keeps the text the browser would have inserted.
+      await device.enqueue(nativeFiles, true, device.capture(),
+        pastedText ? () => isLongPaste(pastedText) ? addLongPaste(pastedText) : pastedText : undefined)
+      return
+    }
     if (!pastedText) return
+    if (isLongPaste(pastedText)) {
+      e.preventDefault()
+      pasteLongText(pastedText)
+    }
+  }
 
+  function isLongPaste(text: string) {
+    return text.length > 150 || text.split("\n").length > 3
+  }
+
+  /** Adds a long paste's text attachment and returns the placeholder that stands for it. */
+  function addLongPaste(pastedText: string) {
     const lineCount = pastedText.split("\n").length
     const charCount = pastedText.length
+    // Number above detached tokens too: a new placeholder lands before its
+    // attachment and must never revive an undone paste with the same number.
+    const { highestPaste } = findHighestAttachmentCounters(options.prompt())
+    const detachedPastes = [...(detached.get(draftKey())?.keys() ?? [])]
+      .filter((tokenKey) => tokenKey.startsWith("pasted:"))
+      .map((tokenKey) => Number(tokenKey.slice("pasted:".length)))
+    const count = Math.max(highestPaste, ...detachedPastes) + 1
+    setPasteCount(count)
 
-    const isLongPaste = charCount > 150 || lineCount > 3
+    const summary = lineCount > 1 ? `${lineCount} lines` : `${charCount} chars`
+    const display = `pasted #${count} (${summary})`
+    const filename = `paste-${count}.txt`
 
-    if (isLongPaste) {
-      e.preventDefault()
+    addAttachment(options.instanceId(), options.sessionId(), createTextAttachment(pastedText, display, filename))
+    return formatPastedPlaceholder(count)
+  }
 
-      // Number above detached tokens too: a new placeholder lands before its
-      // attachment and must never revive an undone paste with the same number.
-      const { highestPaste } = findHighestAttachmentCounters(options.prompt())
-      const detachedPastes = [...(detached.get(draftKey())?.keys() ?? [])]
-        .filter((tokenKey) => tokenKey.startsWith("pasted:"))
-        .map((tokenKey) => Number(tokenKey.slice("pasted:".length)))
-      const count = Math.max(highestPaste, ...detachedPastes) + 1
-      setPasteCount(count)
-
-      const summary = lineCount > 1 ? `${lineCount} lines` : `${charCount} chars`
-      const display = `pasted #${count} (${summary})`
-      const filename = `paste-${count}.txt`
-
-      const attachment = createTextAttachment(pastedText, display, filename)
+  function pasteLongText(pastedText: string) {
+    batch(() => {
       const owner = device.capture()
-      const placeholder = formatPastedPlaceholder(count)
+      const placeholder = addLongPaste(pastedText)
       const textarea = options.getTextarea()
       // A native insertion keeps the caret and the browser's undo history; the
       // resulting input event updates the prompt like typing.
@@ -285,9 +304,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       } else if (!insertedNatively) {
         options.setPrompt(options.prompt() + placeholder)
       }
-
-      addAttachment(options.instanceId(), options.sessionId(), attachment)
-    }
+    })
   }
 
   function handleDragOver(e: DragEvent) {

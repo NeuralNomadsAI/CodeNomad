@@ -30,7 +30,7 @@ export function ImageSettingsCard(props: { instanceId: string; location?: Locati
         return <div class="image-settings-generation">
           <label class="settings-toggle-row settings-toggle-row-compact">
             <span class="settings-toggle-title">
-              {t("settings.images.generation.title")}<SettingsInfoTip text={t("settings.images.generation.info")} />
+              {t("settings.images.generation.title")}<SettingsInfoTip text={t("settings.images.generation.info")} help={{ page: "providers", anchor: "images" }} />
             </span>
             <select class="selector-trigger" aria-label={t("settings.images.generation.title")} disabled={settings.busy() || Boolean(data().blockedBy)}
               value={encode(generation().global)} onChange={event => void settings.save({ generation: decode(event.currentTarget.value) })}>
@@ -56,8 +56,8 @@ export function ImageSettingsCard(props: { instanceId: string; location?: Locati
         </div>
       }}</Show>
       <Show when={data().mediaStorage}>{storage => <>
-        <SettingsChoiceRow checked={storage().global} title={t("settings.images.storage.title")}
-          info={t("settings.images.storage.info")} disabled={settings.busy() || Boolean(data().blockedBy)}
+        <SettingsChoiceRow checked={storage().project ? storage().effective : storage().global} title={t("settings.images.storage.title")}
+          info={t("settings.images.storage.info")} help={{ page: "providers", anchor: "images" }} disabled={settings.busy() || Boolean(data().blockedBy)}
           onChange={checked => void settings.save({ mediaStorage: checked })} />
         <Show when={storage().override}>{override =>
           <p class="settings-toggle-caption" title={override().path}>

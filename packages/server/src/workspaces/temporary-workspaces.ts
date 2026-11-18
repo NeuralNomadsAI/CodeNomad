@@ -5,6 +5,7 @@ import { isSessionNotFoundError, type OpenCodeClient, type SessionInfo } from "@
 import type { WorkspaceManager } from "./manager"
 import type { WorktreeDeletionFence } from "./worktree-session-evacuation"
 import { normalizeWslUncPath } from "./worktree-directory"
+import { assertOrdinaryMissionScheduleSession } from "../server/mission-schedule-input-guard"
 
 const PAGE_SIZE = 200
 const MAX_PAGES = 1_000
@@ -228,6 +229,7 @@ export class TemporaryWorkspaces {
     const serviceDirectory = manager.getServiceDirectory(workspaceId) ?? workspace.path
     await this.options.deletionFence.run(workspace.path, [workspace.path, serviceDirectory], async () => {
       const client = await manager.getSharedServiceClient()
+      await manager.desktopPluginsReady?.()
       const sessions = await listSessions(client, serviceDirectory)
       if (options.onlyIfEmpty) {
         if (sessions.length) {
@@ -241,6 +243,7 @@ export class TemporaryWorkspaces {
       if (sessions.some((session) => Object.prototype.hasOwnProperty.call(active, session.id))) {
         throw new TemporaryWorkspaceError("temporary_running", "A conversation is still running in this temporary instance", 409)
       }
+      for (const session of sessions) await assertOrdinaryMissionScheduleSession(client, session)
       for (const session of deepestFirst(sessions)) {
         try {
           await client.session.remove({ sessionID: session.id })

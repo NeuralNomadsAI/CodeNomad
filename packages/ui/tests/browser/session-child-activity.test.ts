@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { fixtureEventStream } from "./fixture-event-stream"
 
 let browser: Browser, url: string
-let cache: Awaited<ReturnType<typeof createFixtureCache>>
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "session-child-activity",
@@ -15,16 +15,18 @@ before(async () => {
       ],
     })
   url = fixture.url
+  events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { try { await browser?.close() } finally { await cache?.dispose() } })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
 test("a collapsed parent's chevron carries visible subsession statuses without reshaping the list", async () => {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
   const rows = () => page.locator(".session-item-base").evaluateAll(elements => elements.map(el => el.getAttribute("data-session-id")))
   const chevron = (sessionId: string) => page.locator(`[data-session-id="${sessionId}"] .session-item-expander`)
   const color = (sessionId: string) => chevron(sessionId).evaluate(el => getComputedStyle(el).color)
@@ -68,11 +70,11 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
     assert.equal(await chevron("other").locator(".disclosure-chevron").evaluate(el => getComputedStyle(el).animationName), "none")
     if (process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE })
 
-    // Expanding restores a plain chevron; the child rows show their own state.
+    // Expanded, the chevron keeps its colour; the child rows also show their own state.
     await chevron("other").click()
     await page.locator('[data-session-id="other-child"]').waitFor()
-    assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
-    assert.equal(await chevron("other").getAttribute("aria-label"), "Collapse session")
+    assert.equal(await chevron("other").getAttribute("data-child-activity"), "permission")
+    assert.equal(await chevron("other").getAttribute("aria-label"), "Collapse session — 1 subsession needs input, 1 subsession working")
     assert.equal(await chevron("other-child").getAttribute("data-child-activity"), "working")
 
     // Completing the nested helper turns its collapsed ancestors green, just like its Idle tag.
@@ -83,9 +85,10 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
     await settlesOn("other-child", "--session-status-idle-fg")
     assert.equal(await chevron("other-child").getAttribute("aria-label"), "Expand session — 1 subsession idle")
     await chevron("other-child").click()
-    await page.locator('[data-session-id="other-grandchild"] .session-idle').waitFor()
-    assert.equal(await chevron("other-child").getAttribute("data-child-activity"), null)
+    await page.locator('[data-session-id="other-grandchild"]').waitFor()
+    assert.equal(await chevron("other-child").getAttribute("data-child-activity"), "idle")
     await chevron("other").click()
+    await page.evaluate(() => (window as any).fixture.idle("other-grandchild", Date.now()))
     await settlesOn("other", "--session-status-idle-fg")
     assert.equal(await chevron("other").locator(".disclosure-chevron").evaluate(el => getComputedStyle(el).animationName), "none")
     if (process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE })
@@ -124,17 +127,258 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
     })
     assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
 
-    // Neither interrupted nor retrying badges may be misrepresented as green idle.
+    // Interrupted and retrying stay out of the idle projection.
     for (const extra of [{ generationRecovery: "interrupted" }, { retry: { attempt: 1, message: "Retry", next: 0 } }]) {
       await page.evaluate(extra => (window as any).fixture.idle("other-grandchild", Date.now(), extra), extra)
       assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
+      if (extra.generationRecovery) {
+        await page.evaluate(() => (window as any).fixture.acknowledgeInterruption("other-grandchild"))
+        assert.equal(await chevron("other").getAttribute("data-child-activity"), null, "acknowledged interruptions stay out of the idle projection too")
+      }
     }
 
-    // A subsession of the viewed conversation is revealed below it.
+    // A new activity in the viewed conversation reveals it without pointer interaction.
+    await page.mouse.move(1100, 850)
     await page.evaluate(() => (window as any).fixture.status("work-child", "working"))
     await page.locator('[data-session-id="work-child"]').waitFor()
     assert.deepEqual((await rows()).slice(0, 2), ["work", "work-child"])
     assert.deepEqual(await page.locator('[data-session-id="work"]').boundingBox(), workBox)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("the chevron's context menu marks the whole hierarchy as read and leaves work alone", async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
+  const chevron = (sessionId: string) => page.locator(`[data-session-id="${sessionId}"] .session-item-expander`)
+  const markRead = page.getByRole("menuitem", { name: "Mark as read", exact: true })
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.locator('[data-session-id="other"]').waitFor()
+    // Nothing to clear yet: the item is offered but disabled.
+    await chevron("other").click({ button: "right" })
+    assert.equal(await markRead.isDisabled(), true)
+    await page.keyboard.press("Escape")
+
+    await page.evaluate(() => {
+      ;(window as any).fixture.idle("other-child", Date.now())
+      ;(window as any).fixture.idle("other-grandchild", Date.now())
+      ;(window as any).fixture.add("other-busy", "other-child", "working")
+    })
+    await chevron("other").click()
+    await chevron("other-child").click()
+    await page.locator('[data-session-id="other-grandchild"] .session-status-clearable').waitFor()
+    assert.equal(await chevron("other").getAttribute("data-child-activity"), "working")
+
+    await chevron("other").click({ button: "right" })
+    await markRead.click()
+    await page.waitForFunction(() => !document.querySelector('[data-session-id="other-grandchild"] .session-status-clearable'))
+    assert.equal(await page.locator('[data-session-id="other-child"] .session-status-clearable').count(), 0)
+    // Work is not "read": it keeps its badge and the ancestors' colour.
+    assert.equal(await page.locator('[data-session-id="other-busy"] .session-status-list').count(), 1)
+    assert.equal(await chevron("other").getAttribute("data-child-activity"), "working")
+    assert.equal(await chevron("other").getAttribute("aria-expanded"), "true", "the right click does not toggle the branch")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("an open chevron menu keeps its row mounted while rows above push it out of the viewport", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
+  const chevron = (sessionId: string) => page.locator(`[data-session-id="${sessionId}"] .session-item-expander`)
+  const menu = page.getByRole("menu")
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.locator('[data-session-id="other"]').waitFor()
+    await chevron("work").click()
+    await chevron("other").click({ button: "right" })
+    await page.waitForFunction(() => Boolean(document.activeElement?.closest("[role=menu]")))
+    // A hundred new subsessions above move the row far beyond Virtua's buffer.
+    await page.evaluate(() => { for (let index = 0; index < 100; index++) (window as any).fixture.add(`work-extra-${index}`, "work", "idle") })
+    await page.locator('[data-session-id="work-extra-99"]').waitFor({ state: "attached" })
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await menu.isVisible(), true, "the menu stays open")
+    assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest("[role=menu]"))), true, "focus stays in the menu")
+    assert.equal(await chevron("other").count(), 1, "the menu's row stays mounted")
+    const chevronFocused = () => page.waitForFunction(() => document.activeElement?.matches('[data-session-id="other"] .session-item-expander') ?? false)
+    // Closing returns focus to the offscreen chevron before releasing the row.
+    await page.keyboard.press("Escape")
+    await chevronFocused()
+    await page.evaluate(() => (window as any).fixture.idle("other-child", Date.now()))
+    await page.keyboard.press("Shift+F10")
+    const markRead = page.getByRole("menuitem", { name: "Mark as read", exact: true })
+    await page.waitForFunction(() => document.querySelector("[role=menuitem]")?.getAttribute("aria-disabled") !== "true")
+    await markRead.focus()
+    await page.keyboard.press("Enter")
+    await chevronFocused()
+    assert.equal(await menu.count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("visible branches follow new chevron states recursively, restore all opened levels and can be disabled in General", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
+  const row = (id: string) => page.locator(`[data-session-id="${id}"]`)
+  const chevron = (id: string) => row(id).locator(".session-item-expander")
+  const expanded = () => chevron("work").getAttribute("aria-expanded")
+  const status = (value: string) => page.evaluate(value => (window as any).fixture.status("work-grandchild", value), value)
+  const settled = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const option = page.getByRole("checkbox", { name: "Automatically expand subsessions", exact: true })
+    assert.equal(await option.isChecked(), true, "enabled by default in General")
+
+    // A transition opens every required level without hover.
+    await page.mouse.move(1100, 850)
+    await status("working")
+    await row("work-grandchild").waitFor()
+    assert.equal(await expanded(), "true")
+    const saved = await page.evaluate(() => (window as any).fixture.expanded() as string[])
+    assert.deepEqual(saved.sort(), ["work", "work-child"])
+    await page.evaluate(saved => (window as any).fixture.restore(saved), saved)
+    await row("work-grandchild").waitFor()
+
+    // The visible grandchild is not selected. Its own chevron now becomes active:
+    // only that branch needs opening, while its ancestors are already expanded.
+    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "working"))
+    await row("work-great-grandchild").waitFor()
+    assert.equal(await chevron("work-grandchild").getAttribute("aria-expanded"), "true")
+    await chevron("work-grandchild").click()
+    await settled()
+    assert.equal(await chevron("work-grandchild").getAttribute("aria-expanded"), "false")
+    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "idle"))
+    await page.evaluate(() => (window as any).fixture.form("work-great-grandchild", true))
+    await row("work-great-grandchild").waitFor()
+    // Keep the next root-level transition independent of that recursive helper.
+    await page.evaluate(() => {
+      ;(window as any).fixture.form("work-great-grandchild", false)
+      ;(window as any).fixture.status("work-great-grandchild", "idle")
+    })
+    // A newly created recursive agent beneath a visible leaf opens that leaf too.
+    await page.evaluate(() => (window as any).fixture.add("work-deep-agent", "work-great-grandchild", "working"))
+    await row("work-deep-agent").waitFor()
+    await page.evaluate(() => (window as any).fixture.status("work-deep-agent", "idle"))
+
+    // Manual collapse itself is not a new status; a later start of the same helper reopens it.
+    await chevron("work").click()
+    await settled()
+    assert.equal(await expanded(), "false")
+    await row("work").locator(".session-item-title").hover()
+    await status("working")
+    await settled()
+    assert.equal(await expanded(), "false")
+    await status("idle")
+    await status("working")
+    await row("work-grandchild").waitFor()
+
+    // Turning it off blocks both work and requests.
+    await chevron("work").click()
+    await option.uncheck()
+    assert.equal(await page.evaluate(() => (window as any).fixture.preferences().autoExpandActiveSubsessions), false)
+    await row("work").locator(".session-item-title").hover()
+    await status("idle")
+    await status("compacting")
+    await page.evaluate(() => (window as any).fixture.permission("work-grandchild", true))
+    await settled()
+    assert.equal(await expanded(), "false")
+    assert.equal(await chevron("work").getAttribute("data-child-activity"), "permission")
+    await chevron("work").click()
+    await row("work-grandchild").waitFor()
+    await chevron("work").click()
+
+    // Re-enabling during an existing request is not a status transition either.
+    await option.check()
+    await row("work").locator(".session-item-title").hover()
+    await settled()
+    assert.equal(await expanded(), "false")
+    await page.evaluate(() => {
+      ;(window as any).fixture.permission("work-grandchild", false)
+      ;(window as any).fixture.status("work-grandchild", "idle")
+    })
+    await page.evaluate(() => (window as any).fixture.form("work-grandchild", true))
+    await row("work-grandchild").waitFor()
+
+    // A permission arriving after work started is a new chevron state too.
+    await chevron("work").click()
+    await row("work").locator(".session-item-title").hover()
+    await page.evaluate(() => (window as any).fixture.form("work-grandchild", false))
+    await page.evaluate(() => (window as any).fixture.permission("work-grandchild", true))
+    await row("work-grandchild").waitFor()
+
+    // Pointer position is irrelevant to a new transition.
+    await chevron("work").click()
+    await row("work").locator(".session-item-title").hover()
+    await page.mouse.move(1100, 850)
+    await page.evaluate(() => (window as any).fixture.permission("work-grandchild", false))
+    await status("working")
+    await settled()
+    await row("work-grandchild").waitFor()
+    assert.equal(await expanded(), "true")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("buffered offscreen subsessions wait for a fresh transition while visible", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
+  const row = page.locator('[data-session-id="work-grandchild"]')
+  const chevron = row.locator(".session-item-expander")
+  const event = (sessionID: string, type: string) => page.evaluate(({ sessionID, type }) => (window as any).fixture.event(sessionID, type), { sessionID, type })
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    // Virtua enables its offscreen buffer after measured content exceeds the viewport.
+    // Four rows overflow this initial port; the grandchild itself still fits inside it.
+    await page.locator(".session-list-container").evaluate(el => { el.parentElement!.style.height = "120px" })
+    await event("work-grandchild", "session.execution.started")
+    await row.waitFor()
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    const identity = await row.elementHandle()
+    const initial = await row.evaluate(el => {
+      const viewport = el.closest(".session-list")!
+      const row = el.getBoundingClientRect(), port = viewport.getBoundingClientRect()
+      return { top: viewport.scrollTop + row.top - port.top, overflows: viewport.scrollHeight > viewport.clientHeight,
+        fits: row.top >= port.top && row.bottom <= port.bottom }
+    })
+    assert.equal(initial.overflows, true, "measured rows exceed the initial viewport")
+    assert.equal(initial.fits, true, "the grandchild starts fully visible")
+    await page.locator(".session-list-container").evaluate(el => { el.parentElement!.style.height = "40px" })
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await identity!.evaluate(el => el.isConnected), true, "the real virtualizer retains the same buffered row after resizing")
+    assert.equal(await row.evaluate(el => el.getBoundingClientRect().top >= el.closest(".session-list")!.getBoundingClientRect().bottom), true, "the mounted row lies beyond the scroll viewport")
+    await event("work-great-grandchild", "session.execution.started")
+    assert.equal(await chevron.getAttribute("data-child-activity"), "working", "the native event reached the offscreen row")
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false", "a buffered row beyond the scroll viewport stays closed")
+    await page.locator(".session-list").evaluate((el, top) => { el.scrollTop = top }, initial.top)
+    await page.waitForFunction(() => {
+      const row = document.querySelector('[data-session-id="work-grandchild"]')?.getBoundingClientRect()
+      const viewport = document.querySelector(".session-list")?.getBoundingClientRect()
+      return row && viewport && row.top < viewport.bottom && row.bottom > viewport.top
+    })
+    assert.equal(await identity!.evaluate(el => el.isConnected), true, "scrolling retains the row's activity observer")
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false", "scrolling into view alone does not open it")
+    await event("work-great-grandchild", "session.execution.started")
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false", "a repeated native working event is not a fresh transition")
+    await event("work-great-grandchild", "session.execution.succeeded")
+    await page.waitForFunction(() => document.querySelector('[data-session-id="work-grandchild"] .session-item-expander')?.getAttribute("data-child-activity") === "idle")
+    await event("work-great-grandchild", "session.execution.started")
+    assert.equal(await chevron.getAttribute("aria-expanded"), "true")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

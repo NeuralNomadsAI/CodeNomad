@@ -21,7 +21,7 @@ Başka masaüstü CodeNomad istemcisini eşleştirmek için onun ana sayfasında
 
 İptal, cihazın mevcut HTTP/SSE bağlantılarını ve gelecekteki erişimini sonlandırır. Yeniden erişim için yeni bağlantıyla eşleştirin. Cihazın süresi **30 gün kullanılmadığında** dolar. **32 cihaz sınırında**, yeni eşleştirme en uzun süredir görülmeyen cihazın yerini alır ve bağlantılarını kapatır.
 
-Arka uç, ham cihaz kimlik bilgilerini değil, kimlik bilgisi karmalarını kendi yapılandırma tabanı altında `remote-control-devices.json`'de saklar. İstemci, ana bilgisayar kapsamlı `Secure`, `HttpOnly`, `SameSite=Lax` cihaz çerezine sahiptir. Tarayıcının ömrü, sunucunun 30 günlük hareketsizlik sınırından daha uzun olabilir; kayıt defteri yetkili kalır. Site verilerini temizlemek, tarayıcı profillerini değiştirmek veya özel taramayı kullanmak yeniden eşleştirme gerektirebilir.
+Site verilerini temizlemek, tarayıcı profillerini değiştirmek veya özel taramayı kullanmak yeniden eşleştirme gerektirebilir.
 
 Doğrudan erişim parolasını değiştirmek cihazları **iptal etmez**. **Uzaktan Kontrolü durdur** tünelin bağlantısını keser ancak eşleştirilmiş cihaz listesini korur; yetkiyi kaldırmak için **İptal et** eylemini kullanın.
 
@@ -42,7 +42,6 @@ Kurtarma, açık sayfayı ve taslakları korur; başarısız bir eylemi tekrarla
 | Uzaktan Kontrolü durdur | Erişimi keser ve başlangıçta otomatik sürdürme tercihini temizler; cihaz kayıtlarını korur. |
 | Arka uç kapatma / son masaüstü penceresi kapatılır ve uygulama sonlandırılır | Uzaktan Kontrol çevrimdışı oluyor. OpenCode'un paylaşılan hizmeti çalışmaya devam edebilir ancak bu kullanıcı arayüzüne durdurulmuş bir arka uç aracılığıyla hizmet veremez. |
 | Uzaktan Kontrol başlatıldıktan sonra başlat | Yeni bir eşleştirme bağlantısı vermeden arka planda yeniden bağlanır. Hiç başlatılmayan kurulumlar kendilerini etkinleştirmez. |
-| Başlangıçta sürdürmenin başarısız olması veya kritik tünel hatası | Hatırlanan tercih korunur ve ana bilgisayar hatayı gösterir; Uzaktan Kontrol kartının yenileme simgesi durumu yeniden okur. **Uzaktan Kontrolü başlat** hemen yeniden dener; **Uzaktan Kontrolü durdur** tercihi temizler. Aksi halde sonraki başlatma yeniden dener. |
 
 Başlangıçta otomatik sürdürme yapılandırma dizini başına tek arka uçla sınırlıdır. Ek tünel kapasitesi için aynı yapılandırmayla birbiriyle yarışan ana bilgisayar süreçleri başlatmayın. Masaüstünden çıktıktan sonra erişilebilir kalması gereken ana bilgisayar için ayrıca yönetilen [bağımsız sunucu](server.md) kurun; Uzaktan Kontrol bağımsız bir daemon değildir.
 
@@ -56,17 +55,21 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | Parolayla giriş/çıkış, parola değişiklikleri, yerel belirteç önyüklemesi | Mevcut değil; doğrudan kimlik doğrulama devre dışı bırakılsa bile cihaz kimlik bilgileri gereklidir. |
 | Uzaktan Kontrol durumu | Eşleştirilmiş bir cihaz tarafından okunabilir; yönetim mevcut değildir. Başlat/Durdur, eşleştirme oluşturma, cihaz listesi ve iptal etme, ana bilgisayar erişim yolunda kalır. |
 | Masaüstü uzak pencere/sunucu yönetimi ve proxy rotaları | Kullanılamıyor (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| SideCar **içerik proxy'si** | Kullanılamaz (`/sidecars/`). Bu, tüm SideCar API'lerinin engellendiği anlamına **gelmez**: eşleştirilmiş istemciler yine de `/api/sidecars` kayıt API'lerine erişebilir. |
+| SideCar **içerik proxy'si** | SideCar WebSocket'leri gibi loopback gerektirir (`/sidecars/`). `/api/sidecars` kayıt API'leri, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. |
 | Web önizleme içeriği | Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında **Web önizlemeleri** açık olduğu sürece (varsayılan) kullanılabilir. Her önizleme adresi sayfasını eşleştirme olmadan açar; bu yüzden gizli tutun. Anahtarı kapatmak sunulan önizlemeleri ve WebSocket bağlantılarını durdurur; eşleştirilmiş cihazlar yeniden yüklendiğinde **Web önizlemesini aç** seçeneğini gizler. |
 | Otomasyon köprüsü | Kullanılamaz (`/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. |
 | WebSocket yükseltmeleri | Yalnızca web önizlemeleri için kullanılabilir. |
 
-Bir iş akışı engellenmiş bir proxy/WebSocket yüzeyi gerektirdiğinde uygun şekilde korunan bir [doğrudan bağlantı](remote-access.md) kullanın. Uzaktan Kontrol otomatik olarak bu yola geçmez.
+Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`/api/remote-control/`) için ana bilgisayarda loopback bağlantısı kullanın. Doğrudan LAN erişiminde de bu işlemler loopback gerektirir; bkz. [Yükseltme](remote-access.md#upgrading). Uzaktan Kontrol web önizlemeleri, adreslerindeki yetenek belirtecini kullanır ve ana bilgisayarda etkin oldukları sürece kullanılabilir kalır; bu adresi gizli tutun.
 
 ## Aktarma ve gizlilik {#relay-privacy}
 
-CodeNomad [OpenTunnel](https://github.com/anomalyco/opentunnel) kullanır ve makinenin ortak varsayılan tünel kimliğinde rastgele bir rota alır. Durdurmak, diğer uygulamaların kullandığı ortak kimliği değil, CodeNomad köprüsünü serbest bırakır.
+CodeNomad [OpenTunnel](https://github.com/anomalyco/opentunnel) kullanır ve makinenin ortak varsayılan tünel kimliğinde rastgele bir rota alır.
 
 TLS, CodeNomad arka ucunda sonlanır. Röle şifreli metni iletir ve uygulama içeriğini okuyamaz ancak ana bilgisayar adlarını, bağlantı zamanlamasını ve trafik boyutlarını gözlemleyebilir. Tünel sertifikası/özel anahtar ana bilgisayarda kalır. Ana bilgisayarın tünel depolamasını ve CodeNomad yapılandırmasını kimlik bilgileri olarak koruyun; Tahmin edilemeyen bir adres yetkilendirme değildir.
 
 `CODENOMAD_REMOTE_CONTROL_API`, kendi barındırdığınız OpenTunnel API hizmetini seçer; tanımsızsa barındırılan hizmet kullanılır. Bu, eşleştirme gereksinimlerini veya engelli yüzeyleri değil, tünel kurulumunu değiştirir. Kimlik bilgileri ve tanılama işlemleri için [Güvenlik](security.md) sayfasına bakın.
+
+## Yönetici ilkesi {#administrator-policy}
+
+Bir yönetici, bir bilgisayardaki tüm kullanıcılar için Uzaktan Kontrol'ü kapatabilir: `CODENOMAD_REMOTE_CONTROL=disabled` ortam değişkenini sistem genelinde ayarlayın ve CodeNomad'ı yeniden başlatın. Arka uç hiçbir zaman tünel bağlamaz, **Uzaktan Kontrolü başlat** ve eşleştirme bağlantılarını reddeder ve açılışta yeniden bağlanmaz; ayarlarda **Yönetici tarafından devre dışı** görünür. Daha önce eşleştirilmiş cihazlar bağlanamaz ve iptal edebilmeniz için listede kalır. Ayarlanmamış veya boş değer ilke uygulamaz; yalnızca boşluk dahil başka herhangi bir değer arka ucun başlamasını engeller.

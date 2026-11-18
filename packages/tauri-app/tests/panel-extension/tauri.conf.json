@@ -12,5 +12,5 @@
       "permissions": ["allow-probe"]
     }] }
   },
-  "bundle": { "active": false, "icon": ["../../src-tauri/icon.ico"] }
+  "bundle": { "active": false, "icon": ["../../src-tauri/icon.ico", "../../src-tauri/icon.png"] }
 }

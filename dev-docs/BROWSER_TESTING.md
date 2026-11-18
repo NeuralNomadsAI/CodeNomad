@@ -13,15 +13,14 @@ for every Chromium launch).
 - Local, tiered: `npm run test:browser --workspace @codenomad/ui` runs
   `tests/browser/run.mjs` — one file at a time in both tiers by default (the
   Git fixtures rebuild one checkout-wide Monaco asset directory that is
-  concurrently unsafe, and wide runs grow load-sensitive failures on slow
-  machines), with the daemon serving the borrowed tier.
+  concurrently unsafe), with the daemon serving the borrowed tier.
   `CODENOMAD_TIERED_LIGHT_WIDTH`/`CODENOMAD_TIERED_HEAVY_WIDTH` raise the
-  widths for braver machines.
+  widths.
 - One file: `xvfb-run -a node --import tsx --test tests/browser/<file>.test.ts`
   from `packages/ui` (without `xvfb-run -a` on Windows and macOS). Without a
   runner the borrower process gets its own daemon child, which follows it.
 - CI: each matrix shard runs `node tests/browser/shard.mjs <index 1-based> 4`
-  — one interleaved serial slice per runner, wall clock divided by four.
+  — one interleaved serial slice per runner.
 
 ## The fixture daemon model
 
@@ -29,19 +28,23 @@ One canonical Vite server serves every borrowed fixture of a run, namespaced
 under the fixture's name. `tests/browser/fixture-daemon/run.ts` spawns it as
 a child of the runner (run.mjs, shard.mjs): the endpoint and its secret are
 announced as one stdout line and handed to the test processes through the
-environment; `daemon.log` records the endpoint without its secret, and there
-is no discovery directory and no adoption across runs. The runner stops the
-daemon with an authenticated HTTP request when its slice ends — portable, the
-daemon runs its own cleanup — and fails the run when that cleanup fails or
+environment; `daemon.log` records the endpoint without its secret. Never discover
+or adopt a daemon across runs. The runner stops it with an authenticated HTTP
+request when its slice ends and fails the run when cleanup fails or
 has to be forced. The daemon also watches its owner's pid and cleans up after
 an owner that ended without stopping it (on Windows it is spawned detached,
-so the owner's exit does not end it first). A test file invoked outside a
+so the owner's exit does not end it first).
+`fixture-daemon/hide-console-windows.mjs`, imported first, hides child console
+windows (including Vite's `net use`). A test file invoked outside a
 runner gets the same treatment from `borrowFixture`: one daemon child for the
 process, no warmup, stopping shortly after the process ends.
 
-Edits made while a daemon is serving are an accepted blind spot: every run
-binds a fresh daemon, so only a mid-run edit can be missed, and mid-run
-edits are the developer's own signal to restart the run.
+Restart the run after mid-run edits; its daemon can miss them.
+
+The daemon serves the browser's implicit `GET /favicon.ico` as a small PNG.
+Other missing resources retain their HTTP errors and strict browser collectors.
+Its dependency optimizer scans `tests/browser/fixtures/*.tsx`, keeping dependency
+module URLs stable across the daemon's dynamically registered HTML routes.
 
 ## Logs, cleanup and platform limits
 
@@ -52,17 +55,129 @@ edits are the developer's own signal to restart the run.
   land in `codenomad-browser-vite-*` directories and are disposed by
   protected shutdown. Never clear the checkout's shared cache to repair a
   fixture.
-- The control plane is plain HTTP over loopback with endpoint secrets that
-  travel from spawner to borrower through the environment, so the same code
-  runs on every platform the suite runs on.
+- The control plane is plain HTTP over loopback with endpoint secrets passed
+  from spawner to borrower through the environment.
+
+## Native fixtures
+
+Native product fixtures (`scripts/test-*-native.mjs`) run an isolated OpenCode daemon through
+`withProductRuntime` in `scripts/native-product-fixture.mjs`: a private home, profile, temp, XDG and npm tree,
+an allowlisted environment (`fixtureEnvironment`) that every fixture-owned child also receives, and a loopback
+synthetic provider.
+
+Plugin-dependent native checks await the named plugin's active state in each newly
+admitted Location before their first RPC, and surface failed setup immediately.
+
+- Package installs go to a loopback fake npm registry, `scripts/fixtures/fake-npm-registry.mjs`, passed as the
+  `registry` option (`npm_config_registry`); it serves what a test publishes and answers 404 for every other name.
+- The fake OpenCode integration, `scripts/fixtures/fake-integration/`, is an installable plugin package with the
+  integration marker, the native RPC contract on an injectable clock, a marker-mismatch mode and a fake host with
+  sentinel secrets; its Python driver runs the reference discovery client against the fixture's own service
+  registration (`writeFixtureServiceRegistration`). [OpenCode integrations](OPENCODE_INTEGRATIONS.md#test-fixtures)
+  describes their options and commands.
 
 ## Agent conventions
 
+- Mermaid initialization-deadline checks use the file preview's single renderer
+  consumer and await the held Tiny module's evaluation before checking late
+  iframe creation. Markdown's deferred highlight pass can remount a fence and
+  admit a separate initialization attempt; fence rendering has its own coverage.
+- Fixture shutdown tracks Vite 7 optimizer disposal and pending requests across every server environment before deleting its owned cache. Qualify the optimized-load hook and native cleanup acknowledgements together when changing Vite.
 - A new browser test either borrows via `borrowFixture({ name, routes })` or
-  joins `fixture-exemptions.ts` with a reason that matches reality (the
-  checker's failure text is the review).
+  joins `fixture-exemptions.ts` with its actual reason.
 - Fixture names must stay free of route fragments: borrowed URLs are
   namespaced `/<name><route>` and tests derive sibling URLs by substitution.
+- Fixtures exercising host-local actions serve valid `/api/meta` data with
+  `localRequest: true`; non-local, missing and failed metadata retain their
+  fail-closed coverage in `host-only-controls.test.ts`.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
+- Mission dataset routes use `missionPanelRoute` (also installed by the Mission
+  navigation-budget wrapper); persistent automation contexts wrap their routes
+  explicitly. Mutation collectors match the exact HTTP method and path. Hold the
+  intended panel source independently of schedule reads, and await lifecycle
+  feedback settlement before asserting its final status.
+  Project ABA cases with held inventory discovery restore an exact target through
+  view state and await its point-read detail, keeping the mutation's view fence
+  independent of later row-click intent.
+- Mission selection helpers retain `data-mission-key` and resolve row/chevron
+  Locators at each action across retitling and panel remounts. Wait for the row's
+  visibility before distinguishing a leaf from an expandable row; use native clicks.
+- Before pointer/keyboard selection in a Monaco diff, wait for its computed
+  diff decoration (`.line-insert` in the Git fixture), then locate the line.
+  Plain model text can paint before the worker result inserts deleted-code view
+  zones. `git-history.test.ts` holds a real worker reply and defers Monaco's
+  repaint to exercise that geometry change with native pointer checks intact.
+  Its main-world DOM readiness probe releases the reply and repaint; a direct
+  native click instead receives the reply at pointer movement and releases
+  repaint on pointer-up, keeping the stale geometry through mouse-down.
+- Fixtures importing the production event transport serve `/api/events` with
+  `text/event-stream`, including when native frames enter through the real
+  dispatcher directly. Keep network-failure collectors strict for failed streams
+  and unrelated cancelled requests.
+- Projection-only fixtures provide a valid empty outline through the API adapter
+  before mounting and reject outline HTTP reads.
+- Shell fixtures share `tests/browser/panel-read-fixture.ts` to observe optional
+  panel-extension list cancellations: the exact request identity, its owning
+  aborted signal and its native `AbortError` receipt must agree. Drain pending
+  classifications before asserting; retain raw failures alongside the classified
+  cancellations. Same-URL network aborts and missing, unknown or reused identities
+  remain failures. Hold a controller-owned read across a native SSE open to
+  exercise supersession with the navigation ownership assertions intact.
+- Fixtures consuming EventSource serve a persistent `text/event-stream` response
+  and let the real connection close with its page. Never answer that path with
+  the generic JSON fallback. Composer bootstrap awaits DOM readiness and its
+  explicit rendered-fixture signal; stream headers are observed before navigation.
+- Native document-focus checks launch full headless Chromium (`channel: "chromium"`),
+  disable Playwright's focus emulation through CDP and switch real tabs. Assert
+  `document.hasFocus()` on both blur and return, and exercise the same layout
+  observation in each state. Headless-shell keeps background tabs focused.
+- Session-list buffer checks first overflow the initial viewport with measured rows
+  so Virtua can finish its size estimate. After resizing, assert that the same row
+  remains connected outside the viewport before dispatching activity, then retain
+  its identity through scrolling and the fresh visible transition.
+- Mission task fixtures target `.mission-tree-node` independently of Virtua's item
+  wrapper. Reveal offscreen targets with `revealMissionTask` before focus/click
+  observation begins; continuation assertions track exact source reads rather than
+  mounted row counts. Scroll geometry is sampled after the virtual viewport settles.
+  Rail checks compare mounted icons with fresh bounds and unmounted icons with
+  independently measured SVG-local anchors; endpoint counts and tolerances stay explicit.
+- Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
+  `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
+  navigation and readiness close the page through `runWithDiagnosticCleanup`;
+  bounded bootstrap snapshots go to owned TEMP files. The rendered-fixture wait
+  retains its 30-second deadline. A held initial HTTP state read exercises that
+  deadline and its release control through the real Solid bootstrap.
+- Middle-button fixtures use `fixture-native-gesture.ts`: browser-native reveal,
+  a point inside the viewport and clipping ancestors, real hit testing, and a
+  trusted press captured by the original `.message-stream`. Native release and
+  capture cleanup run even after failed assertions. Targets preserve shell,
+  horizontal-code, transcript and summary ownership; left-button selection keeps
+  its own gesture. Tool copy actions hover the owning header before the native
+  click. Capture tests mount the real `VirtualFollowList` around isolated tools.
+- A fixture entry with top-level asynchronous restoration exposes its ready signal
+  after instance registration. Tests await that signal before connecting its native
+  client: the document load event can precede module continuation, and a later
+  `addInstance` publishes the fixture's initial client value.
+- Fixture owners use `runWithDiagnosticCleanup` from allocation through bootstrap,
+  test body and teardown, preserving the primary error and distinct observation and
+  cleanup failures. Failed setup closes owned contexts before rejecting. Attachment
+  failure snapshots and resource receipts stay in an owned TEMP directory; runner
+  output uses fixed phase/category labels. Never print raw observer snapshots.
+- Attachment diagnostics use `fixture-console.ts` before bootstrap: each native
+  console notification carries its original arguments and a synchronous JSON copy
+  with Error message/stack, document nonce and sequence. Callback and string init
+  scripts explicitly compose the idempotent capture before application code.
+  A single ordered Chromium CDP channel owns console previews, browser network
+  logs, exceptions and context retirement. Completion follows native page closure,
+  requires both target retirement receipts, detaches its observer and reconciles
+  every received packet, context and message/copy association. Missing, duplicated,
+  malformed or unserializable diagnostics fail closed, as do workers, OOPIFs and
+  related application targets outside this fixture's coverage. Never substitute a
+  silence delay, a string-only copy or Playwright event completion for these receipts.
+  Playwright console events serve only as refusal/format witnesses; the test-only
+  preview/error adapter follows the installed Playwright Chromium contract and its
+  native text/type/cardinality regression must pass on dependency updates. Keep raw
+  values and rejection details in owned private TEMP evidence; public assertions
+  report fixed categories or sentinel names.

@@ -1,4 +1,4 @@
-# Soporte y compilaciones desde el código fuente
+# Informes de errores y compilaciones desde el código fuente
 
 Usa el repositorio para informes de errores, versiones actuales y contribuciones. La [guía de solución de problemas](troubleshooting.md) cubre la recuperación segura antes de informar de una incidencia.
 
@@ -11,8 +11,6 @@ Usa el repositorio para informes de errores, versiones actuales y contribuciones
 La acción rellena las versiones de CodeNomad y OpenCode (incluido el servicio OpenCode en ejecución cuando difiere del instalado), tu sistema operativo, el tipo de cliente (con el agente de usuario del navegador en un navegador web) y el sistema operativo del servidor. No rellena direcciones de escucha, rutas de espacios de trabajo, credenciales ni texto de conversaciones. Abrir el formulario no envía una incidencia.
 
 Si necesitas más diagnósticos, **Copiar al portapapeles** o **Descargar .txt** produce un informe separado. Ese informe más completo puede contener rutas locales y direcciones de red: revísalo y oculta datos antes de adjuntarlo. Una captura o fragmento de registro puede contener secretos aunque el informe automático de diagnóstico excluya los secretos de autenticación.
-
-Si el formulario de GitHub tiene campos incompatibles, CodeNomad abre una incidencia sencilla con la misma información del informe. Un fallo temporal al leer el formulario no impide abrirlo. Siempre puedes usar manualmente [la lista de incidencias](https://github.com/NeuralNomadsAI/CodeNomad/issues).
 
 ## Comunidad y versiones {#community}
 
@@ -31,7 +29,7 @@ Para problemas de configuración nativa de OpenCode en lugar de controles de Cod
 
 ## Compilar desde el código fuente {#build-from-source}
 
-Usa Node.js **24.20.0**, fijado en `.node-version`, npm, Git y una CLI OpenCode compatible. Ejecuta los comandos desde una copia de desarrollo:
+Usa la versión de Node.js fijada en `.node-version`, npm, Git y una CLI OpenCode compatible. Ejecuta los comandos desde una copia de desarrollo:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Los cambios de desarrollo afectan al anfitrión de desarrollo, no a la versión instalada de un daemon OpenCode en ejecución independiente. El empaquetado nativo necesita las herramientas adecuadas del destino; prefiere compilar en el sistema operativo de destino.
+El empaquetado nativo necesita las herramientas adecuadas del destino; prefiere compilar en el sistema operativo de destino.
 
 ### Compilar y validar {#build-and-validate}
 

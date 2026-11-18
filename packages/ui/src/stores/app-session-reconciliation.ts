@@ -1,4 +1,4 @@
-export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number }
+export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number; workspaceId?: string }
 type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string }
 export type SessionDescriptor = { id: string; parentId?: string | null }
 export interface RestoredSessionReferences {
@@ -34,13 +34,25 @@ export function reconcileWorkspaceTabs(
     liveByPath.set(path, [...(liveByPath.get(path) ?? []), workspace])
   }
   const nextOccurrences = new Map<string, number>()
-  const claimed = new Set<string>()
+  // A saved record that still exists for the same folder wins: occurrences shift
+  // when another client closes a sibling record of that folder.
+  const byId = new Map<number, string>()
+  for (const [tabIndex, tab] of tabs.entries()) {
+    if (tab.kind !== "workspace" || typeof tab.folderPath !== "string" || !tab.workspaceId) continue
+    const path = normalizeWorkspacePath(tab.folderPath)
+    if (liveByPath.get(path)?.some(workspace => workspace.id === tab.workspaceId) && ![...byId.values()].includes(tab.workspaceId)) {
+      byId.set(tabIndex, tab.workspaceId)
+    }
+  }
+  const claimed = new Set<string>(byId.values())
   return tabs.flatMap((tab, tabIndex) => {
     if (tab.kind !== "workspace" || typeof tab.folderPath !== "string") return []
     const path = normalizeWorkspacePath(tab.folderPath)
     const inferred = nextOccurrences.get(path) ?? 0
     const occurrence = Number.isInteger(tab.occurrence) && Number(tab.occurrence) >= 0 ? Number(tab.occurrence) : inferred
     nextOccurrences.set(path, Math.max(inferred, occurrence) + 1)
+    const savedId = byId.get(tabIndex)
+    if (savedId) return [{ tabIndex, descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence }, existingWorkspaceId: savedId }]
     const workspace = liveByPath.get(path)?.[occurrence]
     const existingWorkspaceId = workspace && !claimed.has(workspace.id) ? workspace.id : null
     if (existingWorkspaceId) claimed.add(existingWorkspaceId)
@@ -68,7 +80,6 @@ export function resolveRestoredSessionSelection(
     return current?.id ?? null
   }
   const parentSessionId = rootId(requestedParentSessionId)
-  if (requestedActiveSessionId === "info") return { parentSessionId, activeSessionId: "info" }
   const active = requestedActiveSessionId ? sessions.get(requestedActiveSessionId) : undefined
   const activeParentId = rootId(active?.id)
   if (active && activeParentId && (!parentSessionId || parentSessionId === activeParentId)) {

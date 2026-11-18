@@ -10,6 +10,7 @@ import { OTHER_TOOL_NAME, resolveToolVisibility } from "../../components/tool-ca
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
 import { isLocalTauriHost } from "../runtime-env"
+import type { HelpDestination } from "../help-url"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -20,6 +21,7 @@ export type BehaviorToggleSetting = {
   subtitleKey?: string
   /** Secondary explanation shown behind an "i" beside the title. */
   infoKey?: string
+  help?: HelpDestination
   get: (preferences: Preferences) => boolean
   set: (next: boolean) => void | Promise<unknown>
   disabled?: () => boolean
@@ -31,6 +33,7 @@ export type BehaviorEnumSetting<T extends string = string> = {
   titleKey: string
   subtitleKey?: string
   infoKey?: string
+  help?: HelpDestination
   get: (preferences: Preferences) => T
   set: (next: T) => void
   options: Array<{ value: T; labelKey: string }>
@@ -81,7 +84,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.thinkingBlocks",
       titleKey: "settings.behavior.thinking.title",
-      subtitleKey: "settings.behavior.thinking.subtitle",
       get: (p) => Boolean(p.showThinkingBlocks),
       set: (next) => {
         if (updatePreferences) {
@@ -99,7 +101,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "enum",
       id: "behavior.thinkingBlocksDefault",
       titleKey: "settings.behavior.thinkingDefault.title",
-      subtitleKey: "settings.behavior.thinkingDefault.subtitle",
       get: (p) => (p.thinkingBlocksExpansion ?? "expanded") as ExpansionPreference,
       set: (next) => {
         if (updatePreferences) {
@@ -132,6 +133,13 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
     },
     {
       kind: "toggle",
+      id: "behavior.scrollControlsInTimelineCorner",
+      titleKey: "settings.behavior.scrollControlsInTimelineCorner.title",
+      get: (p) => Boolean(p.scrollControlsInTimelineCorner ?? false),
+      set: (next) => updatePreferences?.({ scrollControlsInTimelineCorner: next }),
+    },
+    {
+      kind: "toggle",
       id: "behavior.diffViewMode",
       titleKey: "settings.behavior.diffView.title",
       // Checked shows split diffs; unchecked shows the unified view.
@@ -149,7 +157,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "enum",
       id: "behavior.toolOutputsDefault",
       titleKey: "settings.behavior.toolOutputsDefault.title",
-      subtitleKey: "settings.behavior.toolOutputsDefault.subtitle",
       get: getToolOutputVisibility,
       set: (next) => {
         if (updatePreferences) {
@@ -177,7 +184,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "enum",
       id: "behavior.diagnosticsDefault",
       titleKey: "settings.behavior.diagnosticsDefault.title",
-      subtitleKey: "settings.behavior.diagnosticsDefault.subtitle",
       get: (p) => (p.diagnosticsExpansion ?? "expanded") as VisibilityPreference,
       set: (next) => {
         if (updatePreferences) {
@@ -196,7 +202,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "enum",
       id: "behavior.toolInputsVisibility",
       titleKey: "settings.behavior.toolInputsVisibility.title",
-      subtitleKey: "settings.behavior.toolInputsVisibility.subtitle",
+      infoKey: "settings.behavior.toolInputsVisibility.subtitle",
       get: (p) => (p.toolInputsVisibility ?? "hidden") as ToolInputsVisibilityPreference,
       set: (next) => {
         if (updatePreferences) {
@@ -215,7 +221,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.usageMetrics",
       titleKey: "settings.behavior.usageMetrics.title",
-      subtitleKey: "settings.behavior.usageMetrics.subtitle",
+      infoKey: "settings.behavior.usageMetrics.subtitle",
       get: (p) => Boolean(p.showUsageMetrics ?? false),
       set: (next) => {
         if (updatePreferences) {
@@ -233,7 +239,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.autoCleanupBlankSessions",
       titleKey: "settings.behavior.autoCleanup.title",
-      subtitleKey: "settings.behavior.autoCleanup.subtitle",
+      infoKey: "settings.behavior.autoCleanup.subtitle",
       get: (p) => Boolean(p.autoCleanupBlankSessions),
       set: (next) => {
         if (updatePreferences) {
@@ -251,7 +257,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.keepUnseenSubagentIdleStatus",
       titleKey: "settings.behavior.keepUnseenSubagentIdle.title",
-      subtitleKey: "settings.behavior.keepUnseenSubagentIdle.subtitle",
+      infoKey: "settings.behavior.keepUnseenSubagentIdle.subtitle",
       get: (p) => Boolean(p.keepUnseenSubagentIdleStatus),
       set: (next) => {
         if (updatePreferences) {
@@ -261,9 +267,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
     },
     {
       kind: "toggle",
+      id: "behavior.autoExpandActiveSubsessions",
+      titleKey: "settings.behavior.autoExpandActiveSubsessions.title",
+      infoKey: "settings.behavior.autoExpandActiveSubsessions.info",
+      help: { page: "conversations", anchor: "navigate-conversations" },
+      get: (p) => p.autoExpandActiveSubsessions,
+      set: (next) => updatePreferences?.({ autoExpandActiveSubsessions: next }),
+    },
+    {
+      kind: "toggle",
       id: "behavior.focusExistingWindowOnSecondLaunch",
       titleKey: "settings.behavior.focusExistingWindowOnSecondLaunch.title",
-      subtitleKey: "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle",
+      infoKey: "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle",
       get: (p) => p.focusExistingWindowOnSecondLaunch,
       set: async (next) => {
         if (await updatePreferences?.({ focusExistingWindowOnSecondLaunch: next }) === false) {
@@ -275,7 +290,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.providerUsageCreditBalance",
       titleKey: "settings.behavior.providerUsageCreditBalance.title",
-      subtitleKey: "settings.behavior.providerUsageCreditBalance.subtitle",
+      infoKey: "settings.behavior.providerUsageCreditBalance.subtitle",
       get: (p) => Boolean(p.showProviderUsageCreditBalance),
       set: (next) => {
         updatePreferences?.({ showProviderUsageCreditBalance: next })
@@ -286,6 +301,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.hideDiffWhitespaceChanges",
       titleKey: "advancedSettings.hideDiffWhitespace.title",
       infoKey: "advancedSettings.hideDiffWhitespace.subtitle",
+      help: { page: "files", anchor: "whitespace-line-endings" },
       get: (p) => p.hideDiffWhitespaceChanges ?? true,
       set: (next) => updatePreferences?.({ hideDiffWhitespaceChanges: next }),
     },
@@ -308,6 +324,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.promptVoiceInput",
       titleKey: "settings.behavior.promptVoiceInput.title",
       infoKey: "settings.behavior.promptVoiceInput.subtitle",
+      help: { page: "voice", anchor: "dictate" },
       get: (p) => Boolean(p.showPromptVoiceInput ?? true),
       set: (next) => {
         if (updatePreferences) {
@@ -328,6 +345,19 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       // Checked queues prompts sent during a task; unchecked steers the running task.
       get: (p) => p.followUpBehavior === "queue",
       set: (next) => updatePreferences?.({ followUpBehavior: (next ? "queue" : "steer") satisfies FollowUpBehavior }),
+    },
+    {
+      kind: "toggle",
+      id: "behavior.keepComputerAwake",
+      titleKey: "settings.behavior.keepComputerAwake.title",
+      infoKey: "settings.behavior.keepComputerAwake.info",
+      help: { page: "settings", anchor: "keep-computer-awake" },
+      get: (p) => p.keepComputerAwake === true,
+      set: async (next) => {
+        if (await updatePreferences?.({ keepComputerAwake: next }) === false) {
+          throw new Error("Failed to persist keep-awake behavior")
+        }
+      },
     },
   ]
 }

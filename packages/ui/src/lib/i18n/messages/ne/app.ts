@@ -1,4 +1,14 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "ठीक छ",
+  "window.menu.native.browserPromptCancel": "रद्द गर्नुहोस्",
+  "window.menu.native.browserPermission": "{origin} का लागि {permission} अनुमति दिने?",
+  "window.menu.native.browserPermissionUnknown": "अज्ञात अनुमति रोकियो: {permission}।",
+  "window.menu.native.browserAllow": "अनुमति दिनुहोस्",
+  "window.menu.native.browserDeny": "अस्वीकार गर्नुहोस्",
+  "window.menu.native.browserCopyLink": "लिङ्क प्रतिलिपि गर्नुहोस्",
+  "window.menu.native.browserSaveImage": "तस्बिर सुरक्षित गर्नुहोस्",
+  "window.menu.native.browserOpenLink": "लिङ्क नयाँ विन्डोमा खोल्नुहोस्",
+  "window.menu.native.browserInspect": "निरीक्षण गर्नुहोस्",
   "window.title.main": "CodeNomad",
   "window.controls.minimize": "सञ्झ्याल सानो पार्नुहोस्",
   "window.controls.maximize": "सञ्झ्याल ठूलो पार्नुहोस् वा पुनर्स्थापना गर्नुहोस्",
@@ -54,15 +64,6 @@ export const appMessages = {
 
   "app.closeInstance.toast.error": "परियोजना बन्द गर्न असफल भयो।",
   "app.closeInstance.toast.otherWindow": "{project} अर्को विन्डोबाट बन्द गरियो।",
-
-  "emptyState.logoAlt": "CodeNomad लोगो",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "AI सँग कोडिङ सुरु गर्न फोल्डर चयन गर्नुहोस्",
-  "emptyState.actions.selectFolder": "फोल्डर चयन गर्नुहोस्",
-  "emptyState.actions.selecting": "चयन गर्दै...",
-  "emptyState.keyboardShortcut": "किबोर्ड सर्टकट: {shortcut}",
-  "emptyState.examples": "उदाहरणहरू: {example}",
-  "emptyState.multipleInstances": "तपाईंसँग एउटै फोल्डरका धेरै उदाहरणहरू हुन सक्छन्",
 
   "releases.upgradeRequired.title": "अपग्रेड आवश्यक छ",
   "releases.desktop.checking": "CodeNomad को अद्यावधिक जाँच गर्दै…",

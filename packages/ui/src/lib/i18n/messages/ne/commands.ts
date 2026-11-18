@@ -1,5 +1,6 @@
 export const commandMessages = {
   "commands.openHelp.failed": "ब्राउजरमा मद्दत खोल्न सकिएन। https://neuralnomadsai.github.io/CodeNomad/ आफैँ खोल्नुहोस्।",
+  "commands.openSponsor.failed": "ब्राउजरमा CodeNomad आर्थिक सहयोग पृष्ठ खोल्न सकिएन। {url} आफैँ खोल्नुहोस्।",
   "commandPalette.title": "कमाण्ड प्यालेट (Command Palette)",
   "commandPalette.description": "कमाण्डहरू खोज्नुहोस् र कार्यान्वयन गर्नुहोस्",
   "commandPalette.searchPlaceholder": "कमाण्ड टाइप गर्नुहोस् वा खोज्नुहोस्...",
@@ -33,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "पहिले परियोजना खोल्नुहोस्।",
 
   "commands.closeInstance.label": "ट्याब बन्द गर्नुहोस्",
-  "commands.closeInstance.description": "हालको शीर्ष-स्तरको ट्याब बन्द गर्नुहोस्",
   "commands.closeInstance.keywords": "रोक्नुहोस्, बन्द गर्नुहोस्, ट्याब",
 
   "commands.nextInstance.label": "अर्को ट्याब",
-  "commands.nextInstance.description": "अर्को शीर्ष-स्तरको ट्याबमा जानुहोस्",
   "commands.nextInstance.keywords": "परिवर्तन, नेभिगेट, ट्याब",
 
   "commands.previousInstance.label": "अघिल्लो ट्याब",
-  "commands.previousInstance.description": "अघिल्लो शीर्ष-स्तरको ट्याबमा फर्कनुहोस्",
   "commands.previousInstance.keywords": "परिवर्तन, नेभिगेट, ट्याब",
 
   "commands.newSession.label": "नयाँ सत्र (New Session)",
@@ -61,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "जानकारी, लग, कन्सोल, आउटपुट",
 
   "commands.nextSession.label": "अर्को सत्र",
-  "commands.nextSession.description": "अर्को सत्र ट्याबमा जानुहोस्",
   "commands.nextSession.keywords": "परिवर्तन, नेभिगेट",
 
   "commands.previousSession.label": "अघिल्लो सत्र",
-  "commands.previousSession.description": "अघिल्लो सत्र ट्याबमा फर्कनुहोस्",
   "commands.previousSession.keywords": "परिवर्तन, नेभिगेट",
 
   "commands.previousUserMessage.label": "अघिल्लो प्रयोगकर्ता सन्देश",
-  "commands.previousUserMessage.description": "यो वार्तालापमा तपाईंले पठाएको अघिल्लो सन्देशमा जानुहोस्",
   "commands.previousUserMessage.keywords": "जानुहोस्, नेभिगेट, प्रम्प्ट, प्रयोगकर्ता सन्देश",
   "commands.nextUserMessage.label": "अर्को प्रयोगकर्ता सन्देश",
-  "commands.nextUserMessage.description": "यो वार्तालापमा तपाईंले पठाएको अर्को सन्देशमा जानुहोस्",
   "commands.nextUserMessage.keywords": "जानुहोस्, नेभिगेट, प्रम्प्ट, प्रयोगकर्ता सन्देश",
 
   "commands.compactSession.label": "सत्र संक्षिप्त गर्नुहोस्",
@@ -90,13 +84,12 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "उपकरण आउटपुट: {toolCount}; तर्क ब्लक: {reasoningCount}। अन्तिम जवाफ सुरक्षित रहनेछ।",
   "commands.removeSessionTechnicalParts.confirm.label": "हटाउनुहोस्",
   "commands.removeSessionTechnicalParts.failed.title": "हटाउन असफल",
-  "commands.removeSessionTechnicalParts.failed.message": "{count} जवाफ सफा गर्न सकिएन।",
+  "commands.removeSessionTechnicalParts.failed.message.one": "{count} जवाफ सफा गर्न सकिएन।",
+  "commands.removeSessionTechnicalParts.failed.message.other": "{count} जवाफ सफा गर्न सकिएन।",
 
   "commands.undoLastMessage.label": "अन्तिम सन्देश फिर्ता लिनुहोस् (Undo)",
   "commands.undoLastMessage.description": "अन्तिम सन्देश उल्टाउनुहोस्",
   "commands.undoLastMessage.keywords": "उल्टाउनुहोस्, फिर्ता",
-  "commands.undoLastMessage.none.title": "फिर्ता लिनको लागि कुनै कार्य छैन",
-  "commands.undoLastMessage.none.message": "फिर्ता लिनको लागि केहि छैन",
   "commands.undoLastMessage.failed.title": "फिर्ता लिन असफल",
   "commands.undoLastMessage.failed.message": "सन्देश उल्टाउन असफल भयो",
   "commands.redoLastMessage.label": "अन्तिम सन्देश फेरि गर्नुहोस्",
@@ -106,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "तयार गरिएको पूर्ववत् हटाउन असफल भयो",
 
   "commands.openModelSelector.label": "मोडेल चयनकर्ता खोल्नुहोस्",
-  "commands.openModelSelector.description": "फरक मोडेल छनौट गर्नुहोस्",
   "commands.openModelSelector.keywords": "मोडेल, एआई",
 
   "commands.selectModelVariant.label": "मोडेल संस्करण चयन गर्नुहोस्",
@@ -114,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "संस्करण, सोच, तर्क",
 
   "commands.openAgentSelector.label": "एजेन्ट चयनकर्ता खोल्नुहोस्",
-  "commands.openAgentSelector.description": "फरक एजेन्ट छनौट गर्नुहोस्",
   "commands.openAgentSelector.keywords": "एजेन्ट, मोड",
 
   "commands.clearInput.label": "इनपुट सफा गर्नुहोस्",
-  "commands.clearInput.description": "प्रम्प्ट पाठ क्षेत्र सफा गर्नुहोस्",
   "commands.clearInput.keywords": "सफा, रिसेट",
 
   "commands.thinkingBlocks.label.show": "सोचाइ देखाउनुहोस् (Show Thinking)",
@@ -174,6 +164,9 @@ export const commandMessages = {
   "commands.openHelp.label": "मद्दत खोल्नुहोस्",
   "commands.openHelp.description": "आफ्नो ब्राउजरमा CodeNomad प्रयोगकर्ता मार्गदर्शिका खोल्नुहोस्",
   "commands.openHelp.keywords": "मद्दत, मार्गदर्शिका, दस्तावेज",
+  "commands.openSponsor.label": "CodeNomad लाई आर्थिक सहयोग गर्नुहोस्",
+  "commands.openSponsor.description": "CodeNomad लाई प्रायोजन गर्ने र मद्दत गर्ने अन्य तरिकाबारेको पृष्ठ खोल्नुहोस्",
+  "commands.openSponsor.keywords": "सहयोग, आर्थिक सहयोग, प्रायोजन, प्रायोजक, दान, योगदान",
   "commands.openAbout.label": "CodeNomad बारे",
   "commands.openAbout.description": "सेटिङहरूमा संस्करण, अपडेटहरू र निदान देखाउनुहोस्",
   "commands.openAbout.keywords": "बारे, संस्करण, अपडेट, निदान",

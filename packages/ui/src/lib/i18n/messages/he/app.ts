@@ -1,4 +1,14 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "אישור",
+  "window.menu.native.browserPromptCancel": "ביטול",
+  "window.menu.native.browserPermission": "לאפשר {permission} עבור {origin}?",
+  "window.menu.native.browserPermissionUnknown": "הרשאה לא מוכרת נחסמה: {permission}.",
+  "window.menu.native.browserAllow": "אפשר",
+  "window.menu.native.browserDeny": "דחה",
+  "window.menu.native.browserCopyLink": "העתקת קישור",
+  "window.menu.native.browserSaveImage": "שמירת תמונה",
+  "window.menu.native.browserOpenLink": "פתיחת קישור בחלון חדש",
+  "window.menu.native.browserInspect": "בדיקה",
   "window.title.main": "CodeNomad",
   "window.controls.minimize": "מזער חלון",
   "window.controls.maximize": "הגדל או שחזר חלון",
@@ -54,15 +64,6 @@ export const appMessages = {
 
   "app.closeInstance.toast.error": "סגירת הפרויקט נכשלה.",
   "app.closeInstance.toast.otherWindow": "{project} נסגר מחלון אחר.",
-
-  "emptyState.logoAlt": "לוגו CodeNomad",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "בחר תיקייה כדי להתחיל לתכנת עם AI",
-  "emptyState.actions.selectFolder": "בחר תיקייה",
-  "emptyState.actions.selecting": "בוחר...",
-  "emptyState.keyboardShortcut": "קיצור מקלדת: {shortcut}",
-  "emptyState.examples": "דוגמאות: {example}",
-  "emptyState.multipleInstances": "ניתן לפתוח מספר מופעים של אותה תיקייה",
 
   "releases.upgradeRequired.title": "נדרש שדרוג",
   "releases.desktop.checking": "בודק עדכון עבור CodeNomad…",

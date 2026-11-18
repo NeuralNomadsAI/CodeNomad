@@ -50,12 +50,6 @@ button {
   color: var(--text-primary, #1a1a1a);
 }
 
-.loading-status {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--text-muted, #666666);
-}
-
 .loading-card {
   margin-top: 12px;
   width: 100%;
@@ -84,21 +78,30 @@ button {
   animation: spin 0.9s linear infinite;
 }
 
-.phrase-controls {
-  margin-top: 12px;
-  font-size: 0.9rem;
-  color: var(--text-muted, #666666);
-}
-
-.phrase-controls button {
-  color: var(--accent-primary, #0066ff);
-  cursor: pointer;
-}
-
 .loading-error {
   margin-top: 12px;
   color: var(--status-error, #dc2626);
   font-size: 0.95rem;
+}
+
+.loading-remote-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.loading-remote-message {
+  margin: 8px 0 0;
+  font-size: 0.95rem;
+  color: var(--text-muted, #666666);
+}
+
+.loading-remote-actions {
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -119,10 +122,6 @@ button {
     color: var(--text-primary, #f4f6fb);
   }
 
-  :root:not([data-theme="light"]) .loading-status {
-    color: var(--text-muted, #aeb3c4);
-  }
-
   :root:not([data-theme="light"]) .loading-card {
     background: rgba(13, 16, 24, 0.85);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -132,10 +131,6 @@ button {
   :root:not([data-theme="light"]) .spinner {
     border: 2px solid rgba(255, 255, 255, 0.18);
     border-top-color: var(--accent-primary, #6ce3ff);
-  }
-
-  :root:not([data-theme="light"]) .phrase-controls {
-    color: var(--text-muted, #8f96a9);
   }
 
   :root:not([data-theme="light"]) .loading-error {

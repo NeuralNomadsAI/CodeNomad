@@ -60,20 +60,29 @@ function replaceOnce(source, before, after) {
   return source.replace(before, after)
 }
 
+const metadata = JSON.parse(cargo(["metadata", "--locked", "--format-version", "1"]))
+const tao = metadata.packages.filter(item => item.name === "tao")
+assert.equal(tao.length, 1)
+const vendoredTao = path.join(workspace, `vendor/tao-${tao[0].version}`)
+assert.equal(path.resolve(tao[0].manifest_path), path.join(vendoredTao, "Cargo.toml"))
+for (const name of ["tauri-runtime", "tauri-runtime-wry"]) {
+  assert.equal(metadata.packages.filter(item => item.name === name).length, 1, `The fixture must exercise the application's ${name}`)
+}
+
 if (process.argv.includes("--baseline")) {
   const temporaryRoot = path.join(os.tmpdir(), "opencode")
   await mkdir(temporaryRoot, { recursive: true })
   const baseline = await mkdtemp(path.join(temporaryRoot, "tauri-runner-baseline-"))
   try {
     await cp(path.join(workspace, fixture), path.join(baseline, fixture), { recursive: true })
-    await cp(path.join(workspace, "vendor/tao-0.34.6"), path.join(baseline, "tao"), { recursive: true })
+    await cp(vendoredTao, path.join(baseline, "tao"), { recursive: true })
     await cp(path.join(workspace, "Cargo.lock"), path.join(baseline, "Cargo.lock"))
     const manifest = "src-tauri/examples/window_constraints_windows.manifest"
     await mkdir(path.dirname(path.join(baseline, manifest)), { recursive: true })
     await cp(path.join(workspace, manifest), path.join(baseline, manifest))
     await writeFile(path.join(baseline, "Cargo.toml"), `[workspace]\nmembers = ["${fixture}"]\nresolver = "2"\n[patch.crates-io]\ntao = { path = "tao" }\n`)
-    // Reverse only this correction in a temporary copy. Existing input and macOS
-    // backports, dependencies and the public Wry API exercised remain identical.
+    // Reverse only this correction in a temporary copy. The rest of Tao, the
+    // dependencies and the public Wry API exercised remain identical.
     const runner = path.join(baseline, "tao/src/platform_impl/windows/event_loop/runner.rs")
     let source = await readFile(runner, "utf8")
     source = replaceOnce(source, "  sync::Arc,", "  rc::Rc,")
@@ -87,9 +96,5 @@ if (process.argv.includes("--baseline")) {
   } finally { await rm(baseline, { recursive: true, force: true }) }
 }
 
-const metadata = JSON.parse(cargo(["metadata", "--locked", "--format-version", "1"]))
-const tao = metadata.packages.filter(item => item.name === "tao")
-assert.equal(tao.length, 1)
-assert.equal(path.resolve(tao[0].manifest_path), path.join(workspace, "vendor/tao-0.34.6/Cargo.toml"))
 cargo(["build", "--locked", "--release", "-p", "codenomad-windows-runner-fixture"])
 run(true, 5)

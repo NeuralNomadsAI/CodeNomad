@@ -60,6 +60,12 @@ function defaultConfigFileEntries(): ConfigFileEntry[] {
   return resolveOpenCodeGlobalConfigPaths()
 }
 
+/** Exact inventory membership only; a supplied path never grants file access. */
+export function configFileEditorID(filePath: string): string | undefined {
+  const same = (value: string) => process.platform === "win32" ? path.normalize(value).toLowerCase() : path.normalize(value)
+  return defaultConfigFileEntries().find(file => same(file.absolutePath) === same(filePath))?.id
+}
+
 function listConfigFiles(files: ConfigFileEntry[]): ConfigFileDescriptor[] {
   return files.map(({ absolutePath: _absolutePath, ...file }) => file)
 }

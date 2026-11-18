@@ -9,11 +9,13 @@ to the official V2 docs for native configuration details.
 
 - `docs/help/site.json`: the ten app locales and the ordered section/page list.
   Section ids are `start`, `workflows`, `opencode-setup`, `remote-access`,
-  `customize`, `extensions`, `desktop`, `help`. The approved 26 pages each appear once; `index` comes first,
-  then `download`, which the header **Download** link (`download.label`) opens on every page.
+  `customize`, `extensions`, `desktop`, `help`. The approved 28 pages each appear once; `index` comes first,
+  then `download`, which the header **Download** link (`download.label`) opens on every page. The `help`
+  section ends with `support` (bug reports and source builds) and `sponsor` (**Support CodeNomad**:
+  why and how to fund development).
 - `docs/help/<locale>/<page>.md`: one H1 supplies the title and navigation label.
   Locales are `en`, `fr`, `de`, `es`, `he`, `ja`, `ne`, `ru`, `tr`, `zh-Hans`.
-- `docs/help/i18n/<locale>.json`: translated site chrome, section labels, release strings and download-button labels.
+- `docs/help/i18n/<locale>.json`: translated site chrome, section labels, release strings, download-button and funding labels.
   Keep the same non-empty keys in every language. Page titles belong in Markdown, not here.
 - `docs/help/help.css`: square, responsive chrome, light/dark palettes and
   logical properties for Hebrew RTL. Never import application styles/runtime.
@@ -83,6 +85,11 @@ player without a video appears. A browser that loads a narrow page and is then w
 keeps that sourceless player until reload. Keep the clip silent H.264 4:2:0, 1280x720,
 40-50 s, faststart and at most 3.5 MB, and the poster a 1280x720 JPEG of at most 200 KB;
 provenance and encoding live in `docs/screenshots/README.md`.
+`{{funding}}` is allowed only on `sponsor.md` and `download.md` (`#support-development`, the
+download page's last section, never gating the download) and renders `ul.funding`: one outlined
+44px button per channel of `docs/help/funding.json`, in file order, labelled `funding.action`
+with the channel name in `<bdi>`.
+With an empty `funding.json` a page using it is a fatal `missing-funding` problem.
 Each directive appears at most once per page (`duplicate-directive`) and every
 translation of a page carries the same directives as English (`directive-mismatch`).
 Any other `{{` in rendered text, including a directive inside a list item, table
@@ -102,6 +109,23 @@ real UTC timestamp, exactly the `downloads.json` ids, each URL equal to
 with URI-encoded components, and safe positive integer sizes. Version, date and
 size are escaped before they fill chrome templates. Tests use the offline fixture
 `scripts/fixtures/help-release.json` (v1.0.0) and fail if `fetch` is called.
+
+## Funding channels
+
+`docs/help/funding.json` (untranslated, read from this repository even with `--content`) lists
+the funding channels in display order: each entry has exactly `id` (unique kebab-case), `name`
+(non-empty display text, escaped) and `url`. URLs must match an allowlisted
+canonical form, currently `https://github.com/sponsors/<login>` (a valid GitHub login) and
+`https://ko-fi.com/<page>` (1-50 letters, digits or underscores), each with a lowercase host and
+no `www`, credentials, port, query, fragment or trailing path; add a pattern to
+`FUNDING_URLS` in `scripts/build-help.mjs`, with tests, before listing another platform.
+Adding a channel needs no retranslation: pages reach channels only through `{{funding}}`.
+Tests may inject channels with `buildHelp({ funding })`, validated like the file. The header
+**Sponsor** link (`funding.label`, after **Download**) opens `sponsor.html` on every page only
+when at least one channel exists and the `sponsor` page is built. Tests allow sponsorship URLs
+(GitHub Sponsors, Open Collective, Liberapay, Polar, thanks.dev, PayPal, Patreon, Buy Me a
+Coffee, Ko-fi) only inside the generated block, which must list exactly `funding.json`, and only
+on `sponsor.html` and `download.html`; never hand-write a funding link in Markdown.
 
 ## Translation workflow
 
@@ -151,7 +175,9 @@ and validation. Rebuilds delete only paths recorded by the previous build in
 Tests create and remove only their own temporary directories.
 
 The optional Playwright check renders English, Hebrew, Nepali, Japanese and Chinese
-at desktop/intermediate/mobile widths in light/dark mode, checks project-site links,
+at desktop/intermediate/mobile widths in light/dark mode with all four header items
+(Download, Sponsor, GitHub, language) inside the viewport, checks project-site links,
+the funding buttons (exact label, square 44px targets spanning 390px screens, English and Hebrew),
 search states/keyboard/IME, skip-link focus and the script-free fallback, the home tour
 (muted playback at 1440px; at 720px, 390px and with reduced motion an empty `currentSrc`,
 no clip request and the visible poster; 16:9 boxes without overflow), and writes captures to `%TEMP%/codenomad-help/` (the OS
@@ -201,12 +227,15 @@ code/key chords isolate LTR, and selected rows follow the app's 40%/50% accent-i
 
 ## Application entry points
 
-Electron and both Tauri Help-menu branches put **CodeNomad Help** first, before
-the update/About items. The hosts send `open-help` to the primary renderer; its palette-command dispatch
-executes the localized **Open help** command and uses the current UI locale.
-Browser and remote users can run the same command from the palette.
+Electron and both Tauri Help-menu branches put **CodeNomad Help** first, then
+**Support CodeNomad**, before the update/About items. The hosts send `open-help`
+or `open-sponsor` to the primary renderer; its palette-command dispatch executes
+the localized **Open help** or **Support CodeNomad** command and uses the current
+UI locale. Browser and remote users can run the same commands from the palette;
+Settings → Info's Support CodeNomad card opens the same `sponsor` page.
 
-`packages/ui/src/lib/help-url.ts` owns the base URL and locale→path mapping;
+`packages/ui/src/lib/help-url.ts` owns the base URL and locale→path mapping
+(`helpUrl(locale, page, anchor)` accepts ASCII kebab-case page names and section ids, falling back to the locale home for an invalid page and omitting an invalid anchor). Contextual `SettingsInfoTip.help` destinations use published page/section pairs checked across all ten locales by `lib/help-url.test.ts`;
 `openExternalUrl` opens the system browser on native hosts (Electron's
 new-window policy handles `window.open` and reports asynchronous opener failures
 through a visible host error) or a separate browser tab. Tauri remote windows
@@ -216,7 +245,8 @@ on port 443 to the system browser, denying other external targets and native gue
 New-window callbacks recheck the registered window generation before opening.
 Help never
 navigates the application renderer. Preferences/remote/loading windows without
-a primary menu listener fall back to the root chooser. The custom Windows
+a primary menu listener fall back to the root chooser for help and to the
+English `sponsor` page for Support CodeNomad (Tauri `SPONSOR_URL`). The custom Windows
 titlebar's `help` menu opens the same native submenu.
 Malformed locale tags are rejected before prefix mapping. Opening failures use
 localized renderer alerts or a native host error; actions are never replayed.
@@ -259,8 +289,7 @@ the API; locally, omit `--release` or pass the fixture. It lists every release p
 (`per_page=100`, at most 10 pages, 20-second timeout per request, no redirects) and
 follows a `Link` `rel="next"` only to `https://api.github.com` release listings of
 this repository. `selectRelease(releases, downloads)` is pure. Only non-draft,
-non-prerelease `vMAJOR.MINOR.PATCH` tags are candidates (early builds such as
-`v0.2.8-dev` were published without the prerelease flag). It rejects malformed
+non-prerelease `vMAJOR.MINOR.PATCH` tags are candidates. It rejects malformed
 entries or assets, a candidate's invalid `published_at`, duplicate candidate tags
 and duplicate asset names, orders candidates by `published_at` and picks the
 newest where each `downloads.json` asset is exactly one
@@ -274,9 +303,8 @@ before the resolver exits successfully. It reads release metadata only; never ad
 binary downloads to it.
 
 Tests run the resolver offline against trimmed recordings of the real listing,
-`scripts/fixtures/help-release-api-page1.json` (newer dev prereleases around `v1.0.0`)
-and `help-release-api-page2.json` (older stable releases whose asset names predate
-`downloads.json`, and `v0.2.8-dev`), with an injected fake `fetch`; the recorded `v1.0.0` must resolve
+`scripts/fixtures/help-release-api-page1.json` and `help-release-api-page2.json`,
+with an injected fake `fetch`; the recorded `v1.0.0` must resolve
 exactly to `scripts/fixtures/help-release.json`. A workflow test parses
 `help-pages.yml` and checks the trigger, gate, permissions, token scope, concurrency
 and pull-request path.

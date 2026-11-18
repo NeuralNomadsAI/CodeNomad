@@ -21,7 +21,7 @@ To pair another desktop CodeNomad, choose **Connect CodeNomad Server** on its ho
 
 Revocation ends that device's current HTTP/SSE connections as well as future access. Pair again with a new link to restore access. A device expires after **30 days without use**. At the **32-device limit**, a new pairing replaces the least recently seen device and closes its connections.
 
-The backend stores credential hashes, not raw device credentials, in `remote-control-devices.json` under its configuration base. The client holds a host-scoped `Secure`, `HttpOnly`, `SameSite=Lax` device cookie. Its browser lifetime can be longer than the server's 30-day inactivity limit; the registry remains authoritative. Clearing site data, switching browser profiles or using private browsing can require pairing again.
+Clearing site data, switching browser profiles or using private browsing can require pairing again.
 
 Changing the direct-access password does **not** revoke devices. **Stop Remote Control** disconnects the tunnel but retains the paired-device list; use **Revoke** when you want to remove authorization.
 
@@ -42,7 +42,6 @@ Recovery preserves the open page and drafts; it does not replay a failed action.
 | Stop Remote Control | Disconnects access and clears automatic launch-resume; keeps device records. |
 | Backend shutdown / last desktop window closes and the app quits | Remote Control goes offline. OpenCode's shared service can remain running, but cannot serve this UI through a stopped backend. |
 | Launch after leaving Remote Control started | Reconnects in the background without issuing a new pairing link. Installations never started do not enable themselves. |
-| Failed resume or fatal tunnel error | The remembered choice remains and the host shows the error; the Remote Control card's refresh icon rereads its state. **Start Remote Control** retries now; **Stop Remote Control** clears the choice. Otherwise a later launch retries. |
 
 Automatic launch-resume is limited to one backend per configuration directory. Do not start competing hosts with the same configuration to obtain extra tunnel capacity. For a host that must stay reachable after a desktop exit, deploy a separately managed [standalone server](server.md); Remote Control is not an independent daemon.
 
@@ -56,17 +55,21 @@ Paired devices can use ordinary project/conversation APIs, send prompts, inspect
 | Password login/logout, password changes, local token bootstrap | Unavailable; device credentials are required even if direct authentication is disabled. |
 | Remote Control status | Readable by a paired device; management is unavailable. Start/Stop, pairing creation, device list and revocation stay on the host access path. |
 | Desktop remote-window/server management and proxy routes | Unavailable (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| SideCar **content proxy** | Unavailable (`/sidecars/`). This does **not** mean all SideCar APIs are blocked: paired clients can still access the `/api/sidecars` registration APIs. |
+| SideCar **content proxy** | Requires loopback (`/sidecars/`), as do SideCar WebSockets. The `/api/sidecars` registration APIs are available to paired devices and authenticated direct LAN clients. |
 | Web preview content | Available while **Web previews** is on (the default) under **Settings → Remote Access → Remote Control** on the host. Each preview address opens its page without pairing, so keep it private. Turning the switch off stops served previews and their WebSockets; paired devices hide **Open web preview** once they reload. |
 | Automation bridge | Unavailable (`/api/opencode-plugin/`). Native desktop capabilities do not become browser capabilities. |
 | WebSocket upgrades | Available for web previews only. |
 
-Use a suitably protected [direct connection](remote-access.md) when a workflow requires a blocked proxy/WebSocket surface. Remote Control does not automatically switch to that path.
+Use a loopback connection on the host for host-only proxy/WebSocket surfaces and Remote Control management (`/api/remote-control/`). Direct LAN access also requires loopback for these operations; see [Upgrading](remote-access.md#upgrading). Remote Control web previews use a capability token in the preview address and remain available while enabled on the host; keep that address private.
 
 ## Relay and privacy {#relay-privacy}
 
-CodeNomad uses [OpenTunnel](https://github.com/anomalyco/opentunnel) and claims one random route on the machine's shared default tunnel identity. Stopping releases CodeNomad's bridge, not the shared identity used by other applications.
+CodeNomad uses [OpenTunnel](https://github.com/anomalyco/opentunnel) and claims one random route on the machine's shared default tunnel identity.
 
 TLS terminates in the CodeNomad backend. The relay forwards ciphertext and cannot read application contents, but can observe hostnames, connection timing and traffic sizes. The tunnel certificate/private key remain on the host. Protect the host's tunnel storage and CodeNomad configuration as credentials; an unguessable address is not authorization.
 
 `CODENOMAD_REMOTE_CONTROL_API` selects a self-hosted OpenTunnel API; unset uses the hosted service. This changes the tunnel deployment, not pairing requirements or the blocked surfaces. See [Security](security.md) for credential and diagnostic handling.
+
+## Administrator policy {#administrator-policy}
+
+An administrator can turn Remote Control off for everyone on a computer: set the environment variable `CODENOMAD_REMOTE_CONTROL=disabled` machine-wide, then restart CodeNomad. The backend never connects a tunnel, refuses **Start Remote Control** and pairing links and does not reconnect at launch; Settings shows **Disabled by administrator**. Devices paired earlier cannot connect and stay listed so you can revoke them. Unset or empty means no policy; any other value, including spaces only, prevents the backend from starting.

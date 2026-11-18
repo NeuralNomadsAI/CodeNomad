@@ -1,5 +1,5 @@
 import { compareEvents, type MissionCleanup, type MissionCleanupReason, type MissionDeletedEvent, type MissionEvent } from "./model"
-import { cleanupReference, isCleanupReason, pendingCleanupTargets, projectMissionCleanups } from "./cleanup-projection"
+import { cleanupReference, documentCleanupPending, isCleanupReason, pendingCleanupTargets, projectMissionCleanups } from "./cleanup-projection"
 import { missionTaskSessionMatcher } from "./session-identity"
 
 /** What remains of a purged deleted mission, outside the bounded journal scan:
@@ -12,6 +12,7 @@ export interface MissionDeletionRecord {
   requestID: string
   expectedRevision: number
   deleteManagedSessions: boolean
+  documentCleanup?: true
   /** The cleanup summary's bounded label, as the tombstone projected it. */
   objective: string
   createdAt: number
@@ -38,11 +39,13 @@ export function parseDeletionRecord(value: unknown, projectID: string, missionID
     || !Number.isSafeInteger(record.createdAt) || Number(record.createdAt) <= 0
     || !count(record.removed) || !count(record.retained)
     || !Array.isArray(record.reasons) || !record.reasons.every(isCleanupReason)) return undefined
+  if (record.documentCleanup !== undefined && record.documentCleanup !== true) return undefined
   return {
     version: 1, projectID, missionID, deletionID: record.deletionID, requestID: record.requestID,
     expectedRevision: Number(record.expectedRevision), deleteManagedSessions: record.deleteManagedSessions,
     objective: record.objective, createdAt: Number(record.createdAt), removed: Number(record.removed), retained: Number(record.retained),
     reasons: [...record.reasons] as MissionCleanupReason[],
+    ...(record.documentCleanup === true ? { documentCleanup: true as const } : {}),
   }
 }
 
@@ -50,7 +53,8 @@ export function parseDeletionRecord(value: unknown, projectID: string, missionID
 export function deletionRecordCleanup(record: MissionDeletionRecord): MissionCleanup {
   return { missionID: record.missionID, deletionID: record.deletionID, requestID: record.requestID,
     expectedRevision: record.expectedRevision, deleteManagedSessions: record.deleteManagedSessions, objective: record.objective,
-    removed: record.removed, retained: record.retained, pending: 0, reasons: [...record.reasons], createdAt: record.createdAt }
+    removed: record.removed, retained: record.retained, pending: 0, reasons: [...record.reasons], createdAt: record.createdAt,
+    ...(record.documentCleanup ? { documentPending: false } : {}) }
 }
 
 /**
@@ -86,7 +90,7 @@ export function planDeletionPurge(events: readonly MissionEvent[], retainRecent:
     }
     const pending = deletions.flatMap(deletion => pendingCleanupTargets(deletion, group))
     for (const sessionID of pending) pendingTargets.add(sessionID)
-    if (!pending.length) settled.push({ group, deletions })
+    if (!pending.length && !deletions.some(deletion => documentCleanupPending(deletion, group))) settled.push({ group, deletions })
   }
   const liveTaskRoot = missionTaskSessionMatcher(liveTasks)
   const cleanable = (sessionID: string) => pendingTargets.has(sessionID) || liveTaskRoot(sessionID)
@@ -102,6 +106,7 @@ export function planDeletionPurge(events: readonly MissionEvent[], retainRecent:
       requestID: summary.requestID, expectedRevision: summary.expectedRevision, deleteManagedSessions: summary.deleteManagedSessions,
       objective: summary.objective, createdAt: summary.createdAt, removed: summary.removed, retained: summary.retained,
       reasons: [...summary.reasons],
+      ...(deletions[0].documentCleanup ? { documentCleanup: true as const } : {}),
     }
     // Creation first: from then on readers resolve the incomplete group through
     // the record. Intents precede their receipts so no reservation reappears.

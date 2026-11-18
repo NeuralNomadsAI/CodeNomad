@@ -15,7 +15,8 @@ after(async () => {
   // Recheck after subsequent optimizer work, not just immediately after rm.
   for (const cacheDir of disposedCaches) await assert.rejects(stat(cacheDir), { code: "ENOENT" })
 })
-const pending = (server: ViteDevServer) => (server as ViteDevServer & { _pendingRequests: Map<unknown, unknown> })._pendingRequests.size
+const pending = (server: ViteDevServer) => Object.values(server.environments).reduce((count, environment) =>
+  count + (environment as typeof environment & { _pendingRequests: Map<unknown, unknown> })._pendingRequests.size, 0)
 async function setup(fault?: Plugin) {
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   const server = await createServer({ configFile: false, root, logLevel: "error", cacheDir: cache.cacheDir,

@@ -9,7 +9,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "CodeNomad Discord",
 
   "folderSelection.empty.title": "No Recent Folders",
-  "folderSelection.empty.description": "Browse for a folder to get started",
 
   "folderSelection.recent.title": "Recent Folders",
   "folderSelection.recent.subtitle.one": "{count} folder available",
@@ -39,9 +38,8 @@ export const folderSelectionMessages = {
   "folderSelection.temporary.button": "New temporary instance",
   "folderSelection.temporary.description": "Start in an empty folder managed by CodeNomad; keep or discard it when you close the tab",
   "folderSelection.clone.destination.title": "Select Clone Destination",
-  "folderSelection.clone.destination.description": "Select the folder where the repository should be cloned.",
+  "folderSelection.clone.destination.description": "Select the folder that will contain the clone; the repository's folder is created inside it.",
   "folderSelection.clone.dialog.title": "Clone Git Repository",
-  "folderSelection.clone.dialog.description": "Clone a Git repository into a local folder, then open it as your workspace.",
   "folderSelection.clone.dialog.repositoryUrl": "Repository URL",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "Destination folder",
@@ -63,10 +61,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "Browse",
 
   "folderSelection.loading.title": "Starting instance...",
-  "folderSelection.loading.subtitle": "Hang tight while we prepare your workspace.",
 
   "folderSelection.drop.title": "Drop a folder to open it",
-  "folderSelection.drop.subtitle": "Start a new instance in the dropped folder.",
   "folderSelection.drop.invalidTitle": "Couldn't open dropped item",
   "folderSelection.drop.invalidMessage": "Drop a folder to start a new instance.",
 
@@ -79,7 +75,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "Open a saved remote CodeNomad server in a new window",
   "folderSelection.servers.count": "{count} Servers",
   "folderSelection.servers.empty.title": "No Saved Servers",
-  "folderSelection.servers.empty.description": "Add a remote server to reconnect quickly from this device",
   "folderSelection.servers.connectTitle": "Connect to Server",
   "folderSelection.servers.connectSubtitle": "Save a remote CodeNomad server and open it in a new window",
   "folderSelection.servers.connectButton": "Connect to Server",
@@ -87,7 +82,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "Self-signed TLS",
   "folderSelection.servers.errorTitle": "Remote Connection Failed",
   "folderSelection.servers.dialog.title": "Connect to Server",
-  "folderSelection.servers.dialog.description": "Add a remote CodeNomad server and optionally open it right away.",
   "folderSelection.servers.dialog.name": "Server name",
   "folderSelection.servers.dialog.namePlaceholder": "Production Server",
   "folderSelection.servers.dialog.url": "Server URL",
@@ -105,6 +99,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "Continue",
   "folderSelection.servers.certificateInstall.cancelLabel": "Cancel",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad needs the local certificate to be trusted before it can open self-signed HTTPS remote windows.",
+  "folderSelection.servers.launch.error.missing": "--connect-server needs a saved server name or an http(s) URL.",
+  "folderSelection.servers.launch.error.invalid": "\"{value}\" is not a valid http:// or https:// server address.",
+  "folderSelection.servers.launch.error.credentials": "\"{value}\" carries credentials or a pairing code. Launch addresses cannot include them: pair the server from Connect to Server instead.",
+  "folderSelection.servers.launch.error.unknown": "No saved server is named \"{value}\". Use the name of a saved server or an http(s) URL.",
+  "folderSelection.servers.launch.error.ambiguous": "Several saved servers are named \"{value}\". Rename one of them, or use its URL.",
   "folderSelection.sidecars.button": "Open SideCar",
 
   "projectRenameDialog.title": "Rename workspace",

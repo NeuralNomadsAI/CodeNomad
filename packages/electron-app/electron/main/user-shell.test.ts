@@ -7,6 +7,21 @@ import { resolveSelectedConfig } from "./startup"
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { spawn, spawnSync } from "node:child_process"
+import { once } from "node:events"
+import { setTimeout as delay } from "node:timers/promises"
+
+const processState = (pid: number) => {
+  const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "stat="], { encoding: "utf8" })
+  assert.ifError(result.error)
+  assert.ok(result.status === 0 || result.status === 1)
+  return result.stdout.trim()
+}
+
+async function assertProcessesGone(pids: number[]) {
+  for (let attempt = 0; attempt < 40 && pids.some(pid => processState(pid)); attempt++) await delay(25)
+  for (const pid of pids) assert.equal(processState(pid), "", `owned process ${pid} must be reaped`)
+}
 
 describe("desktop POSIX shell selection", () => {
   it("falls back from incompatible user shells", () => {
@@ -54,6 +69,119 @@ describe("bounded desktop shell environment", () => {
     assert.ok(shellEnvironmentScript("/a b/'$x;node").startsWith("exec '/a b/'\\''$x;node' -e '"))
   })
 
+  for (const background of [false, true]) it(`keeps the framed emitter alive for a delayed consumer${background ? " with a descendant" : ""} and removes its group`, {
+    skip: process.platform === "win32", timeout: 5000,
+  }, async (t) => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "codenomad-lifetime-"))
+    const original = { SHELL: process.env.SHELL, ZDOTDIR: process.env.ZDOTDIR }
+    const kill = process.kill.bind(process)
+    const owned: number[] = []
+    let state = ""
+    try {
+      process.env.SHELL = process.env.CODENOMAD_TEST_ZSH || "/bin/zsh"
+      process.env.ZDOTDIR = directory
+      writeFileSync(path.join(directory, ".zshrc"), 'print banner\nexport FIXTURE_VALUE="owned\nvalue"\n'
+        + (background ? 'sleep 30 &\nprint $! > "$ZDOTDIR/background"\n' : ""))
+      const hook = t.mock.method(process, "kill", (pid: number, signal?: NodeJS.Signals | number) => {
+        assert.ok(pid < -1 && signal === "SIGKILL")
+        owned.push(-pid)
+        if (background) owned.push(Number(readFileSync(path.join(directory, "background"), "utf8").trim()))
+        // Delay the real consumer, not the emitter or the kernel's signal result.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150)
+        state = processState(-pid)
+        return kill(pid, signal)
+      })
+      try {
+        const result = await resolveShellEnvironment(process.execPath, new AbortController().signal)
+        assert.equal(result.executable, process.execPath)
+        assert.equal(result.env.FIXTURE_VALUE, "owned\nvalue")
+        assert.ok(state && !state.includes("Z"), "emitter must remain live until group cleanup")
+      } finally {
+        hook.mock.restore()
+      }
+      assert.equal(owned.length, background ? 2 : 1)
+      await assertProcessesGone(owned)
+      t.diagnostic(`owned processes ${owned.join("/")}: live emitter ${state}, all reaped after cleanup`)
+    } finally {
+      for (const [key, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("bounds an emitter even without its discovery parent", {
+    skip: process.platform === "win32", timeout: 5000,
+  }, async () => {
+    const start = Date.now()
+    const child = spawn("/bin/sh", ["-c", shellEnvironmentScript(process.execPath)], {
+      detached: true, stdio: ["ignore", "pipe", "ignore"],
+    })
+    const closed = once(child, "close")
+    try {
+      const [frame] = await once(child.stdout, "data")
+      assert.ok(parseShellEnvironment(frame.toString()))
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150)
+      assert.ok(processState(child.pid!) && !processState(child.pid!).includes("Z"))
+      await closed
+      assert.equal(child.exitCode, 0)
+      assert.ok(Date.now() - start < 4000)
+      await assertProcessesGone([child.pid!])
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
+      await closed
+    }
+  })
+
+  it("rejects a real permission-denied shell", { skip: process.platform === "win32" }, async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "codenomad-denied-"))
+    const original = process.env.SHELL
+    try {
+      process.env.SHELL = path.join(directory, "bash")
+      writeFileSync(process.env.SHELL, "#!/bin/sh\n", { mode: 0o600 })
+      const denied = spawnSync(process.env.SHELL)
+      assert.equal((denied.error as NodeJS.ErrnoException)?.code, "EACCES")
+      await assert.rejects(resolveShellEnvironment(process.execPath, new AbortController().signal), /spawn failed/)
+    } finally {
+      if (original === undefined) delete process.env.SHELL
+      else process.env.SHELL = original
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects cleanup refusals without exposing their message", { skip: process.platform === "win32" }, async (t) => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "codenomad-cleanup-denied-"))
+    const original = { SHELL: process.env.SHELL, ZDOTDIR: process.env.ZDOTDIR }
+    const kill = process.kill.bind(process)
+    try {
+      process.env.SHELL = process.env.CODENOMAD_TEST_ZSH || "/bin/zsh"
+      process.env.ZDOTDIR = directory
+      for (const code of ["EPERM", "EACCES"]) {
+        const owned: number[] = []
+        const hook = t.mock.method(process, "kill", (pid: number, signal?: NodeJS.Signals | number) => {
+          assert.ok(pid < -1 && signal === "SIGKILL")
+          owned.push(-pid)
+          kill(pid, signal) // Clean the actual owned process before injecting a refusal.
+          throw Object.assign(new Error("private environment must stay hidden"), { code })
+        })
+        try {
+          await assert.rejects(resolveShellEnvironment(process.execPath, new AbortController().signal), { message: "Shell environment cleanup failed" })
+        } finally {
+          hook.mock.restore()
+        }
+        assert.equal(owned.length, 1)
+        await assertProcessesGone(owned)
+      }
+    } finally {
+      for (const [key, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it("does not source startup files a second time", { skip: process.platform === "win32" }, () => {
     const original = process.env.SHELL
     try {
@@ -67,20 +195,30 @@ describe("bounded desktop shell environment", () => {
     }
   })
 
-  it("bounds a blocked shell and aborts an active probe", { skip: process.platform === "win32", timeout: 10000 }, async () => {
+  it("bounds a blocked shell and aborts an active probe", { skip: process.platform === "win32", timeout: 10000 }, async (t) => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "codenomad-shell-test-"))
     const original = process.env.SHELL
     try {
       const shell = path.join(directory, "bash")
-      writeFileSync(shell, "#!/bin/sh\nsleep 30 &\nwait\n", { mode: 0o700 })
+      const pids = path.join(directory, "pids")
+      const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`
+      writeFileSync(shell, `#!/bin/sh\nsleep 30 &\nprintf '%s %s' "$$" "$!" > ${quote(pids)}\nwait\n`, { mode: 0o700 })
       process.env.SHELL = shell
       const start = Date.now()
       await assert.rejects(resolveShellEnvironment(process.execPath, new AbortController().signal), /timed out/)
       assert.ok(Date.now() - start < 5000)
+      const timedOut = readFileSync(pids, "utf8").split(" ").map(Number)
+      await assertProcessesGone(timedOut)
+      rmSync(pids)
       const controller = new AbortController()
       const pending = resolveShellEnvironment(process.execPath, controller.signal)
+      for (let attempt = 0; attempt < 40 && !existsSync(pids); attempt++) await delay(25)
+      assert.ok(existsSync(pids), "abort must exercise an active shell and descendant")
+      const aborted = readFileSync(pids, "utf8").split(" ").map(Number)
       controller.abort()
       await assert.rejects(pending, /cancelled/)
+      await assertProcessesGone(aborted)
+      t.diagnostic(`timeout group ${timedOut.join("/")} and aborted group ${aborted.join("/")}: all reaped`)
     } finally {
       if (original === undefined) delete process.env.SHELL
       else process.env.SHELL = original

@@ -30,6 +30,18 @@ function toolMessage(sessionID: string, index: number, target?: string) {
         content: [{ type: "text", text: target ? "Task completed" : `Untruncated ${id}: ${"長い output\n".repeat(500)}` }] } }] }
 }
 
+function subagentReport(created: number, state: string, body: string) {
+  // Native message ids derive from event ids (`evt_…` → `msg_…`), so a reload finds the same row.
+  return { id: `msg_report${created}`, type: "synthetic", time: { created }, description: `Explore ${childId}`,
+    text: `<subagent sessionID="${childId}" state="${state}" description="Explore ${childId}">\n${body}\n</subagent>`,
+    metadata: { source: "subagent", childID: childId, agent: "explore", state: state === "running" ? "completed" : state } }
+}
+
+/** The parent's synthetic message clock: background scenarios rebase it onto the launch's
+ * wall clock so live durations render (>=1s) and reports stay after their launch. */
+let parentClock = 10
+const nextParentTime = () => (parentClock += 1_000)
+
 const scenario = new URLSearchParams(location.search).get("steps")
 const history: Record<string, any[]> = {
   [parentId]: [toolMessage(parentId, 0, childId)],
@@ -44,6 +56,24 @@ if (scenario) {
     const message = toolMessage(childId, 0)
     message.content = Array.from({ length: scenario === "overflow" ? 201 : 200 }, (_, index) => ({ ...message.content[0], id: `overflow-${index}` }))
     history[childId] = [message]
+  }
+  if (scenario === "background" || scenario === "background-quiet") {
+    // A background launch only acknowledges; the child reports through hidden synthetic messages.
+    history[childId] = [toolMessage(childId, 0)]
+    const launch = history[parentId][0].content[0]
+    // Realistic epochs: the header's live duration must render and keep counting from the
+    // delegation. The instant is minted once per tab and survives page reloads, the way the
+    // daemon persists it across a full browser restart.
+    const launchTime = Number(sessionStorage.getItem("task-copy-launch-time")) || (() => {
+      const value = Date.now() - 65_000
+      sessionStorage.setItem("task-copy-launch-time", String(value))
+      return value
+    })()
+    launch.time = { created: launchTime, ran: launchTime, completed: launchTime + 1_000 }
+    parentClock = launchTime + 2_000
+    launch.state.metadata = { sessionID: childId, status: "running" }
+    launch.state.content = [{ type: "text", text: "The subagent is working in the background (sessionID: child). You will receive a <subagent> message when it goes idle." }]
+    if (scenario === "background") history[parentId].push(subagentReport(nextParentTime(), "running", "Partial findings\n\nBackground work still running:\n- subagent (explore, sessionID: grandchild): Deeper"))
   }
   if (scenario === "text-tail") {
     history[childId] = [toolMessage(childId, 0), ...Array.from({ length: 200 }, (_, index) => ({
@@ -98,8 +128,34 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={mounted()}
       isActive={activeInstance() && selectedSession() === parentId} />
   </main>
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+/** The parent continues the same child with a second call, as the native transcript stores it. */
+const continuationMessage = (created: number) => ({ id: `msg_continue${created}`, type: "assistant", agent: "build", model, time: { created, completed: created },
+  content: [{ id: "continued-task", type: "tool", name: "subagent", time: { created, completed: created },
+    state: { status: "completed", input: { agent: "explore", description: "Continue child" },
+      metadata: { sessionID: childId, status: "running" }, content: [{ type: "text", text: "The subagent is working in the background (sessionID: child)." }] } }] })
 ;(window as any).fixture = {
   probeOlder: () => loadOlderMessageWindow(instanceId, childId),
+  /** One later idle period's report, delivered as the native event stream does. */
+  report: (state: string, body: string) => {
+    const message = subagentReport(nextParentTime(), state, body)
+    history[parentId].push(message)
+    ;(sseManager as any).handleEvent(instanceId, { id: message.id.replace(/^msg_/, "evt_"), type: "session.synthetic", created: message.time.created,
+      durable: { aggregateID: parentId, seq: history[parentId].length, version: 1 }, location: { directory: "/fixture" },
+      data: { sessionID: parentId, text: message.text, description: message.description, metadata: message.metadata } })
+  },
+  reload: () => loadMessages(instanceId, parentId, { force: true }),
+  /** The parent continues the same child with a second call, then gets that call's report. */
+  continueChild: async (body: string) => {
+    const created = nextParentTime()
+    history[parentId].push(continuationMessage(created))
+    history[parentId].push(subagentReport(created + 1, "completed", body))
+    await loadMessages(instanceId, parentId, { force: true })
+  },
+  /** The parent continues the same child with a second call whose round has not reported yet. */
+  continueChildQuiet: async () => {
+    history[parentId].push(continuationMessage(nextParentTime()))
+    await loadMessages(instanceId, parentId, { force: true })
+  },
   hold: () => { held = true },
   release: () => { held = false; gates.splice(0).forEach(resolve => resolve()) },
   selectSession: (id: string) => { setSelectedSession(id); setActiveSession(instanceId, id) },

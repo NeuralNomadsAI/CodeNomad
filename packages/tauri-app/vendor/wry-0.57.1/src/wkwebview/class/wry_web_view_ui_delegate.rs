@@ -1,0 +1,502 @@
+// Copyright 2020-2024 Tauri Programme within The Commons Conservancy
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
+
+#[cfg(target_os = "macos")]
+use std::{cell::RefCell, ptr::null_mut, rc::Rc};
+
+use block2::Block;
+use objc2::{
+  DefinedClass, MainThreadOnly, define_class, msg_send, rc::Retained, runtime::NSObject,
+};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSOpenPanel, NSWindowDelegate};
+use objc2_foundation::{MainThreadMarker, NSObjectProtocol};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSArray, NSURL};
+
+#[cfg(target_os = "macos")]
+use objc2_web_kit::WKOpenPanelParameters;
+use objc2_web_kit::{
+  WKFrameInfo, WKMediaCaptureType, WKPermissionDecision, WKSecurityOrigin, WKUIDelegate,
+};
+
+use crate::{NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, WryWebView};
+
+#[cfg(target_os = "macos")]
+struct NewWindow {
+  #[allow(dead_code)]
+  ns_window: Retained<objc2_app_kit::NSWindow>,
+  #[allow(dead_code)]
+  webview: Retained<objc2_web_kit::WKWebView>,
+  #[allow(dead_code)]
+  delegate: Retained<WryNSWindowDelegate>,
+}
+
+// SAFETY: we are not using the new window at all, just dropping it on another thread
+#[cfg(target_os = "macos")]
+unsafe impl Send for NewWindow {}
+
+#[cfg(target_os = "macos")]
+impl Drop for NewWindow {
+  fn drop(&mut self) {
+    self.webview.removeFromSuperview();
+  }
+}
+
+#[cfg(target_os = "macos")]
+struct WryNSWindowDelegateIvars {
+  on_close: Box<dyn Fn()>,
+}
+
+#[cfg(target_os = "macos")]
+define_class!(
+  #[unsafe(super(NSObject))]
+  #[thread_kind = MainThreadOnly]
+  #[ivars = WryNSWindowDelegateIvars]
+  struct WryNSWindowDelegate;
+
+  unsafe impl NSObjectProtocol for WryNSWindowDelegate {}
+
+  unsafe impl NSWindowDelegate for WryNSWindowDelegate {
+    #[unsafe(method(windowWillClose:))]
+    unsafe fn will_close(&self, _notification: &objc2_foundation::NSNotification) {
+      let on_close = &self.ivars().on_close;
+      on_close();
+    }
+  }
+);
+
+#[cfg(target_os = "macos")]
+impl WryNSWindowDelegate {
+  pub fn new(mtm: MainThreadMarker, on_close: Box<dyn Fn()>) -> Retained<Self> {
+    let delegate = mtm
+      .alloc::<WryNSWindowDelegate>()
+      .set_ivars(WryNSWindowDelegateIvars { on_close });
+    unsafe { msg_send![super(delegate), init] }
+  }
+}
+
+pub struct WryWebViewUIDelegateIvars {
+  #[cfg(target_os = "macos")]
+  new_window_req_handler: Option<Box<dyn Fn(String, NewWindowFeatures) -> NewWindowResponse>>,
+  #[cfg(target_os = "macos")]
+  new_windows: Rc<RefCell<Vec<NewWindow>>>,
+  permission_handler: Option<Box<dyn Fn(PermissionKind) -> PermissionResponse + Send + Sync>>,
+  preview_dialogs: bool,
+  popup: bool,
+}
+
+define_class!(
+  #[unsafe(super(NSObject))]
+  #[thread_kind = MainThreadOnly]
+  #[ivars = WryWebViewUIDelegateIvars]
+  pub struct WryWebViewUIDelegate;
+
+  unsafe impl NSObjectProtocol for WryWebViewUIDelegate {}
+
+  // WebKit's native window.print/beforeunload hooks are declared in
+  // Source/WebKit/UIProcess/API/Cocoa/WKUIDelegatePrivate.h (macOS 12+).
+  // They are confined to preview delegates; the page receives no app bridge.
+  impl WryWebViewUIDelegate {
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:printFrame:))]
+    fn print_frame(&self, webview: &WryWebView, _frame: &NSObject) {
+      if self.ivars().preview_dialogs { preview_print(webview); }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:printFrame:pdfFirstPageSize:completionHandler:))]
+    fn print_frame_with_completion(&self, webview: &WryWebView, _frame: &NSObject,
+      _size: objc2_foundation::NSSize, completion: &Block<dyn Fn()>) {
+      if self.ivars().preview_dialogs { preview_print(webview); }
+      completion.call(());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:runBeforeUnloadConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
+    fn before_unload(&self, webview: &WryWebView, message: &objc2_foundation::NSString,
+      frame: &WKFrameInfo, completion: &Block<dyn Fn(objc2::runtime::Bool)>) {
+      if !self.ivars().preview_dialogs { completion.call((true.into(),)); return; }
+      self.javascript_confirm(objc2::sel!(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:), webview, message, frame, completion);
+    }
+  }
+
+  unsafe impl WKUIDelegate for WryWebViewUIDelegate {
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:requestDeviceOrientationAndMotionPermissionForOrigin:initiatedByFrame:decisionHandler:))]
+    fn request_orientation_permission(
+      &self,
+      _webview: &WryWebView,
+      _origin: &WKSecurityOrigin,
+      _frame: &WKFrameInfo,
+      completion: &Block<dyn Fn(WKPermissionDecision)>,
+    ) {
+      let decision = if self.ivars().preview_dialogs {
+        match self
+          .ivars()
+          .permission_handler
+          .as_ref()
+          .map(|handler| handler(PermissionKind::Sensors))
+        {
+          Some(PermissionResponse::Deny) => WKPermissionDecision::Deny,
+          _ => WKPermissionDecision::Prompt,
+        }
+      } else {
+        WKPermissionDecision::Prompt
+      };
+      completion.call((decision,));
+    }
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webViewDidClose:))]
+    fn web_view_did_close(&self, webview: &WryWebView) {
+      if self.ivars().popup {
+        if let Some(window) = webview.window() {
+          window.close();
+        }
+      }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:))]
+    fn javascript_alert(
+      &self,
+      webview: &WryWebView,
+      message: &objc2_foundation::NSString,
+      frame: &WKFrameInfo,
+      completion: &Block<dyn Fn()>,
+    ) {
+      let Some(window) = webview.window().filter(|_| self.ivars().preview_dialogs) else {
+        completion.call(());
+        return;
+      };
+      let alert = preview_alert(message, frame, false);
+      let completion = completion.copy();
+      let callback = block2::RcBlock::new(move |_| completion.call(()));
+      alert.beginSheetModalForWindow_completionHandler(&window, Some(&callback));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
+    fn javascript_confirm(
+      &self,
+      webview: &WryWebView,
+      message: &objc2_foundation::NSString,
+      frame: &WKFrameInfo,
+      completion: &Block<dyn Fn(objc2::runtime::Bool)>,
+    ) {
+      let Some(window) = webview.window().filter(|_| self.ivars().preview_dialogs) else {
+        completion.call((false.into(),));
+        return;
+      };
+      let alert = preview_alert(message, frame, true);
+      let completion = completion.copy();
+      let callback = block2::RcBlock::new(move |response| {
+        completion.call(((response == objc2_app_kit::NSAlertFirstButtonReturn).into(),))
+      });
+      alert.beginSheetModalForWindow_completionHandler(&window, Some(&callback));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:))]
+    fn javascript_prompt(
+      &self,
+      webview: &WryWebView,
+      message: &objc2_foundation::NSString,
+      default_text: Option<&objc2_foundation::NSString>,
+      frame: &WKFrameInfo,
+      completion: &Block<dyn Fn(*const objc2_foundation::NSString)>,
+    ) {
+      let Some(window) = webview.window().filter(|_| self.ivars().preview_dialogs) else {
+        completion.call((std::ptr::null(),));
+        return;
+      };
+      let mtm = MainThreadMarker::new().unwrap();
+      let alert = preview_alert(message, frame, true);
+      let input = objc2_app_kit::NSTextField::initWithFrame(
+        mtm.alloc(),
+        objc2_foundation::NSRect::new(
+          objc2_foundation::NSPoint::new(0.0, 0.0),
+          objc2_foundation::NSSize::new(320.0, 24.0),
+        ),
+      );
+      if let Some(text) = default_text {
+        input.setStringValue(text);
+      }
+      alert.setAccessoryView(Some(&input));
+      let completion = completion.copy();
+      let callback = block2::RcBlock::new(move |response| {
+        if response == objc2_app_kit::NSAlertFirstButtonReturn {
+          let value = input.stringValue();
+          completion.call((Retained::as_ptr(&value),));
+        } else {
+          completion.call((std::ptr::null(),));
+        }
+      });
+      alert.beginSheetModalForWindow_completionHandler(&window, Some(&callback));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:))]
+    fn run_file_upload_panel(
+      &self,
+      _webview: &WryWebView,
+      open_panel_params: &WKOpenPanelParameters,
+      _frame: &WKFrameInfo,
+      handler: &block2::Block<dyn Fn(*const NSArray<NSURL>)>,
+    ) {
+      unsafe {
+        if let Some(mtm) = MainThreadMarker::new() {
+          let open_panel = NSOpenPanel::openPanel(mtm);
+          open_panel.setCanChooseFiles(true);
+          let allow_multi = open_panel_params.allowsMultipleSelection();
+          open_panel.setAllowsMultipleSelection(allow_multi);
+          let allow_dir = open_panel_params.allowsDirectories();
+          open_panel.setCanChooseDirectories(allow_dir);
+          let ok: NSModalResponse = open_panel.runModal();
+          if ok == NSModalResponseOK {
+            let url = open_panel.URLs();
+            (*handler).call((Retained::as_ptr(&url),));
+          } else {
+            (*handler).call((null_mut(),));
+          }
+        }
+      }
+    }
+
+    // TODO: Remove in objc2 0.7.0, ref <https://github.com/madsmtm/objc2/issues/645>
+    // Using not(unavailable) instead of available to prevent false positives if the build script failed to set the cfg
+    #[cfg(not(macos_12_unavailable))]
+    #[unsafe(method(webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:))]
+    fn request_media_capture_permission(
+      &self,
+      _webview: &WryWebView,
+      _origin: &WKSecurityOrigin,
+      _frame: &WKFrameInfo,
+      capture_type: WKMediaCaptureType,
+      decision_handler: &Block<dyn Fn(WKPermissionDecision)>,
+    ) {
+      // Call user's permission handler if set
+      let decision = if let Some(handler) = &self.ivars().permission_handler {
+        let translate_response = |res: PermissionResponse| match res {
+          PermissionResponse::Allow => WKPermissionDecision::Grant,
+          PermissionResponse::Deny => WKPermissionDecision::Deny,
+          PermissionResponse::Default => WKPermissionDecision::Prompt,
+        };
+
+        match capture_type {
+          WKMediaCaptureType::Camera => translate_response(handler(PermissionKind::Camera)),
+          WKMediaCaptureType::Microphone => translate_response(handler(PermissionKind::Microphone)),
+          WKMediaCaptureType::CameraAndMicrophone => {
+            let mic_res = handler(PermissionKind::Microphone);
+            let cam_res = handler(PermissionKind::Camera);
+
+            match (mic_res, cam_res) {
+              (PermissionResponse::Allow, PermissionResponse::Allow) => WKPermissionDecision::Grant,
+              (PermissionResponse::Deny, _) | (_, PermissionResponse::Deny) => {
+                WKPermissionDecision::Deny
+              }
+              _ => WKPermissionDecision::Prompt,
+            }
+          }
+          _ => translate_response(handler(PermissionKind::Other)),
+        }
+      } else {
+        WKPermissionDecision::Grant
+      };
+
+      (*decision_handler).call((decision,));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method_id(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
+    unsafe fn create_web_view_for_navigation_action(
+      &self,
+      webview: &WryWebView,
+      configuration: &objc2_web_kit::WKWebViewConfiguration,
+      action: &objc2_web_kit::WKNavigationAction,
+      window_features: &objc2_web_kit::WKWindowFeatures,
+    ) -> Option<Retained<objc2_web_kit::WKWebView>> {
+      if let Some(new_window_req_handler) = &self.ivars().new_window_req_handler {
+        let request = unsafe { action.request() };
+        let url = request.URL().unwrap().absoluteString().unwrap();
+
+        let current_window = webview.window().unwrap();
+        let screen = current_window.screen().unwrap();
+        let screen_frame = screen.frame();
+
+        match new_window_req_handler(
+          url.to_string(),
+          NewWindowFeatures {
+            size: if let (Some(width), Some(height)) =
+              unsafe { (window_features.width(), window_features.height()) }
+            {
+              Some(dpi::LogicalSize::new(
+                width.doubleValue(),
+                height.doubleValue(),
+              ))
+            } else {
+              None
+            },
+            position: if let (Some(x), Some(y)) =
+              unsafe { (window_features.x(), window_features.y()) }
+            {
+              Some(dpi::LogicalPosition::new(x.doubleValue(), y.doubleValue()))
+            } else {
+              None
+            },
+            opener: crate::NewWindowOpener {
+              webview: webview.into(),
+              target_configuration: configuration.into(),
+            },
+          },
+        ) {
+          NewWindowResponse::Allow => {
+            let mtm = MainThreadMarker::new().unwrap();
+
+            let defaults = current_window.frame();
+            let size = objc2_foundation::NSSize::new(
+              unsafe { window_features.width() }
+                .map_or(defaults.size.width, |width| width.doubleValue()),
+              unsafe { window_features.height() }
+                .map_or(defaults.size.height, |height| height.doubleValue()),
+            );
+            let position = objc2_foundation::NSPoint::new(
+              unsafe { window_features.x() }.map_or(defaults.origin.x, |x| x.doubleValue()),
+              unsafe { window_features.y() }.map_or(defaults.origin.y, |y| {
+                screen_frame.size.height - y.doubleValue() - size.height
+              }),
+            );
+            let rect = objc2_foundation::NSRect::new(position, size);
+
+            let mut flags = objc2_app_kit::NSWindowStyleMask::Titled
+              | objc2_app_kit::NSWindowStyleMask::Closable
+              | objc2_app_kit::NSWindowStyleMask::Miniaturizable;
+            let resizable = unsafe { window_features.allowsResizing() }
+              .is_none_or(|resizable| resizable.boolValue());
+            if resizable {
+              flags |= objc2_app_kit::NSWindowStyleMask::Resizable;
+            }
+
+            let window = unsafe {
+              objc2_app_kit::NSWindow::initWithContentRect_styleMask_backing_defer(
+                mtm.alloc::<objc2_app_kit::NSWindow>(),
+                rect,
+                flags,
+                objc2_app_kit::NSBackingStoreType::Buffered,
+                false,
+              )
+            };
+
+            // SAFETY: Disable auto-release when closing windows.
+            // This is required when creating `NSWindow` outside a window
+            // controller.
+            unsafe { window.setReleasedWhenClosed(false) };
+
+            let webview = unsafe {
+              objc2_web_kit::WKWebView::initWithFrame_configuration(
+                mtm.alloc::<objc2_web_kit::WKWebView>(),
+                window.frame(),
+                configuration,
+              )
+            };
+
+            let new_windows = self.ivars().new_windows.clone();
+            let window_id = Retained::as_ptr(&window) as usize;
+            let delegate = WryNSWindowDelegate::new(
+              mtm,
+              Box::new(move || {
+                new_windows
+                  .borrow_mut()
+                  .retain(|window| Retained::as_ptr(&window.ns_window) as usize != window_id);
+              }),
+            );
+            window.setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*delegate)));
+
+            window.setContentView(Some(&webview));
+            window.makeKeyAndOrderFront(None);
+
+            self.ivars().new_windows.borrow_mut().push(NewWindow {
+              ns_window: window,
+              webview: webview.clone(),
+              delegate,
+            });
+
+            Some(webview)
+          }
+          NewWindowResponse::Create { webview } => Some(webview),
+          NewWindowResponse::Deny => None,
+        }
+      } else {
+        None
+      }
+    }
+  }
+);
+
+impl WryWebViewUIDelegate {
+  pub fn new(
+    mtm: MainThreadMarker,
+    new_window_req_handler: Option<Box<dyn Fn(String, NewWindowFeatures) -> NewWindowResponse>>,
+    permission_handler: Option<Box<dyn Fn(PermissionKind) -> PermissionResponse + Send + Sync>>,
+    preview_dialogs: bool,
+    popup: bool,
+  ) -> Retained<Self> {
+    #[cfg(target_os = "ios")]
+    let _new_window_req_handler = new_window_req_handler;
+
+    let delegate = mtm
+      .alloc::<WryWebViewUIDelegate>()
+      .set_ivars(WryWebViewUIDelegateIvars {
+        #[cfg(target_os = "macos")]
+        new_window_req_handler,
+        #[cfg(target_os = "macos")]
+        new_windows: Rc::new(RefCell::new(vec![])),
+        permission_handler,
+        preview_dialogs,
+        popup,
+      });
+    unsafe { msg_send![super(delegate), init] }
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn preview_print(webview: &WryWebView) {
+  // Use the same public print operation as Wry's host-initiated printing.
+  unsafe {
+    if webview.window().is_none()
+      || objc2_app_kit::NSPrintOperation::currentOperation(MainThreadMarker::new().unwrap())
+        .is_some()
+    {
+      return;
+    }
+    let info = objc2_app_kit::NSPrintInfo::sharedPrintInfo();
+    let operation = webview.printOperationWithPrintInfo(&info);
+    operation.setCanSpawnSeparateThread(true);
+    operation.runOperation();
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn preview_alert(
+  message: &objc2_foundation::NSString,
+  frame: &WKFrameInfo,
+  cancel: bool,
+) -> Retained<objc2_app_kit::NSAlert> {
+  use objc2::ClassType;
+  use objc2_foundation::{NSBundle, NSString};
+  let alert = objc2_app_kit::NSAlert::new(MainThreadMarker::new().unwrap());
+  // Site-controlled text is always identified by the initiating frame's host.
+  let host = unsafe { frame.securityOrigin().host() };
+  alert.setMessageText(&host);
+  alert.setInformativeText(message);
+  if cancel {
+    let bundle = unsafe { NSBundle::bundleForClass(objc2_app_kit::NSAlert::class()) };
+    for key in ["OK", "Cancel"] {
+      let key = NSString::from_str(key);
+      let title = bundle.localizedStringForKey_value_table(&key, Some(&key), None);
+      alert.addButtonWithTitle(&title);
+    }
+  }
+  alert
+}

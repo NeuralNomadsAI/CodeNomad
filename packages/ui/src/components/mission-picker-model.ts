@@ -1,14 +1,9 @@
-/** One visual state per Mission or schedule, on the session palette: colour shows
- * only what needs attention now. Red asks for an answer, yellow works, orange is
- * stopped (interrupted, or paused) with an action to continue, green finished
- * since last seen, blue is prepared and ready to start like a composed prompt;
- * anything else is idle. Outcomes themselves are status text. */
-export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "idle"
+import type { RecurrenceSchedule } from "../stores/mission-recurrence"
+import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 
-/** Most urgent first; like a collapsed session parent's chevron (`session-child-activity.ts`),
- * which leaves interrupted children on their own rows. */
-export const MISSION_PICKER_ATTENTION = ["permission", "working", "done"] as const
-export type MissionPickerAttention = (typeof MISSION_PICKER_ATTENTION)[number]
+/** Colour carries attention; the waiting underline and pause/warning shapes
+ * distinguish states independently of the palette's accent contrast. */
+export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "waiting" | "unconfirmed" | "idle"
 
 export interface MissionPickerEntry {
   /** `mission:<id>` or `schedule:<id>`. */
@@ -17,41 +12,24 @@ export interface MissionPickerEntry {
   /** Full localized state for tooltips and screen readers. */
   status: string
   mark: MissionMark
+  /** The most urgent state of a Mission's tasks, carried by its chevron like a
+   * session's children: a task asks for an answer, works, or finished unseen. */
+  childActivity?: "permission" | "working" | "idle"
+  /** A Mission whose plan holds no task: like a session without children, no chevron. */
+  leaf?: boolean
 }
 
-type Translate = (key: string, params?: Record<string, string>) => string
-export type MissionPickerAttentionCounts = Record<MissionPickerAttention, number>
-
-const attentionOf = (mark: MissionMark): MissionPickerAttention | undefined =>
-  (MISSION_PICKER_ATTENTION as readonly string[]).includes(mark) ? mark as MissionPickerAttention : undefined
-
-/** Attention among the entries other than the selected one. */
-export function missionPickerAttention(entries: readonly MissionPickerEntry[], selectedKey?: string): {
-  kind?: MissionPickerAttention; counts: MissionPickerAttentionCounts
-} {
-  const counts: MissionPickerAttentionCounts = { permission: 0, working: 0, done: 0 }
-  for (const entry of entries) {
-    const attention = attentionOf(entry.mark)
-    if (entry.key !== selectedKey && attention) counts[attention]++
-  }
-  return { kind: MISSION_PICKER_ATTENTION.find(kind => counts[kind] > 0), counts }
-}
-
-/** Counted states, e.g. "1 waiting, 2 running". */
-export function missionPickerAttentionLabel(t: Translate, counts: MissionPickerAttentionCounts): string {
-  return MISSION_PICKER_ATTENTION.filter(kind => counts[kind] > 0)
-    .map(kind => t(`missionsPanel.attention.${kind}.${counts[kind] === 1 ? "one" : "other"}`, { count: String(counts[kind]) }))
-    .join(", ")
-}
-
-/** A one-time Mission's state from native requests and observed actor activity.
+/** A one-time Mission's own state from native requests and observed actor activity:
+ * red only for the questions its flag carries (`openRequests`, each one it can
+ * open); observed actor states, the coordinator's included, cover whole families
+ * and never redden it. Its tasks' questions belong to its chevron.
  * A failed mission can be resumed unless the user stopped it since, so it reads
  * as interrupted; a completed one is green until seen. */
 export function missionMark(mission: { status: string; runState?: string }, input: {
   openRequests: number; actorStates?: readonly string[]; coordinatorState?: string; seen: boolean
 }): MissionMark {
   const states = input.actorStates ?? []
-  if (input.openRequests > 0 || states.some(state => state === "permission" || state === "form")) return "permission"
+  if (input.openRequests > 0) return "permission"
   const run = mission.runState ?? "running"
   if (mission.status === "failed") return run === "running" ? "interrupted" : "idle"
   if (mission.status === "completed") return input.seen ? "idle" : "done"
@@ -63,18 +41,57 @@ export function missionMark(mission: { status: string; runState?: string }, inpu
   return input.coordinatorState === "idle-without-report" ? "interrupted" : "idle"
 }
 
-/** Recurring schedule: an open request of its live passage asks for an answer; a
- * stopped schedule rests and a paused one stays paused; an interrupted schedule,
- * or a running one whose latest run failed (Run now retries), is orange; a live
- * passage works. */
-export function scheduleMark(schedule: { state: string; pending: { status: string } | null; latestResult: { outcome: string } | null },
-  openRequests = 0): MissionMark {
-  if (openRequests > 0) return "permission"
-  if (schedule.state === "paused") return "paused"
-  if (schedule.state === "interrupted") return "interrupted"
-  if (schedule.state !== "running") return "idle"
-  if (schedule.pending) return schedule.pending.status === "uncertain" ? "idle" : "working"
-  return schedule.latestResult?.outcome === "failed" ? "interrupted" : "idle"
+interface ScheduleMarkFacts {
+  state: string; prepared: boolean; uncertain: boolean; interrupted: boolean
+  pending: boolean; waiting: boolean; outcome?: string
+}
+/** Both document adapters use the same priority, including Pause over pending work.
+ * Only a positive native observation can supply waiting or working. */
+function projectScheduleMark(facts: ScheduleMarkFacts, openRequests: number, seen: boolean): MissionMark {
+  if (openRequests) return "permission"
+  if (facts.state === "stopped") return "idle"
+  if (facts.interrupted) return "interrupted"
+  if (facts.uncertain) return "unconfirmed"
+  if (facts.prepared) return "prepared"
+  if (facts.state === "paused") return "paused"
+  if (facts.pending) return "working"
+  if (facts.outcome === "failed") return "interrupted"
+  if (facts.outcome === "completed" && !seen) return "done"
+  return facts.waiting ? "waiting" : "idle"
+}
+
+export function scheduleMark(schedule: RecurrenceSchedule, openRequests = 0, seen = true, fresh = true, now = Date.now()): MissionMark {
+  return projectScheduleMark({ state: schedule.state, prepared: false,
+    interrupted: schedule.state === "interrupted" || schedule.state === "running" && !schedule.pending
+      && schedule.latestResult?.outcome === "failed",
+    uncertain: !fresh || schedule.controls.some(control => !control.controlsComplete) || Boolean(schedule.lastError)
+      || schedule.state !== "paused" && (schedule.pending?.status === "uncertain"
+      || schedule.state === "running" && !schedule.pending && !(schedule.nextDueAt !== null && schedule.nextDueAt > now)),
+    pending: schedule.state !== "paused" && Boolean(schedule.pending),
+    waiting: schedule.state === "running" && schedule.nextDueAt !== null && schedule.nextDueAt > now,
+    outcome: schedule.latestResult?.outcome }, openRequests, seen)
+}
+
+export function unifiedScheduleMark(doc: UnifiedMissionSchedule, openRequests = 0, seen = true, fresh = true, now = Date.now()): MissionMark {
+  const prepared = doc.firstPlayedAt === null && doc.state === "paused"
+  const observed = doc.observation.state === "known" && doc.observation.timeGeneration === doc.timeGeneration
+  const failure = Boolean(doc.blockReason && ["failed", "ended-without-report"].includes(doc.blockReason))
+    || doc.state !== "paused" && !doc.pendingPassage && Boolean(doc.latestResult && doc.latestResult.outcome !== "completed")
+  const waiting = observed && doc.state === "running" && (doc.observation.nativeStatus === "active" || doc.observation.nativeStatus === "mixed")
+    && doc.observation.nextDueAt !== null && doc.observation.nextDueAt > now
+  const uncertain = !fresh || Boolean(doc.control?.pending) || Boolean(doc.blockReason && !failure)
+    || !prepared && (doc.observation.state === "unknown" || doc.observation.timeGeneration !== doc.timeGeneration
+      || doc.state === "running" && !doc.pendingPassage && !waiting)
+  return projectScheduleMark({ state: doc.state, prepared, interrupted: Boolean(failure),
+    uncertain, pending: doc.state !== "paused" && Boolean(doc.pendingPassage),
+    waiting,
+    outcome: doc.latestResult?.outcome }, openRequests, seen)
+}
+
+export function missionMarkStateKey(mark: MissionMark): string | undefined {
+  return mark === "waiting" ? "missionsPanel.state.waiting" : mark === "done" ? "missionsPanel.state.unreadSuccess"
+    : mark === "unconfirmed" ? "missionsPanel.state.unconfirmed" : mark === "prepared" ? "missions.control.run.prepared"
+    : mark === "interrupted" ? "missionsPanel.state.interrupted" : undefined
 }
 
 export function filterMissionPickerEntries(entries: readonly MissionPickerEntry[], query: string): MissionPickerEntry[] {

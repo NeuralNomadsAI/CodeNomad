@@ -15,8 +15,6 @@ Las preguntas nativas, los formularios y las solicitudes de permiso se responden
 | Otra conversación | Empieza como una vista previa compacta; expándela explícitamente para responder sin salir de la conversación actual |
 | Solicitud del proyecto / Solicitud del servicio | Un formulario puede no tener una conversación propietaria; no se muestra un enlace de conversación inventado |
 
-Las solicitudes nuevas no reemplazan la que estás editando ni provocan navegación. La selección permanece en la misma solicitud durante las actualizaciones de la cola; las flechas no vuelven al otro extremo al llegar al final. Tras resolverse, la solicitud de otra conversación no relacionada permanece compacta hasta que la abras.
-
 **Contraer solicitudes** oculta el cuerpo; no deniega, cancela ni responde nada. Un editor expandido reduce temporalmente el editor de mensajes a su altura mínima sin cambiar su tamaño guardado ni el borrador. Su contenido se desplaza de forma independiente de las acciones fijas de respuesta.
 
 ## Responder preguntas y formularios {#answer-questions-forms}
@@ -25,7 +23,7 @@ Las solicitudes nuevas no reemplazan la que estás editando ni provocan navegaci
 2. Cuando un campo de selección permite respuestas personalizadas, aparece un campo de texto adicional: escribe allí tu propia respuesta en lugar de una opción ofrecida (o añade valores personalizados en un campo de selección múltiple). Responde todas las preguntas obligatorias.
 3. Elige **Enviar**; usa **Cancelar** para una pregunta o formulario solo cuando quieras esa cancelación nativa.
 
-Las respuestas parciales y los borradores de rechazo sobreviven a las actualizaciones de la cola y a la navegación entre conversaciones dentro del cliente en ejecución. No son una decisión enviada ni una garantía de recuperación después de borrar los datos del cliente. Una respuesta fallida sigue siendo editable; inspecciona la solicitud pendiente antes de reintentar. CodeNomad no repite automáticamente una respuesta.
+Las respuestas parciales y los borradores de rechazo sobreviven a las actualizaciones de la cola y a la navegación entre conversaciones dentro del cliente en ejecución. No son una decisión enviada ni una garantía de recuperación después de borrar los datos del cliente.
 
 Algunos formularios ofrecen **Abrir formulario externo** para un flujo en el navegador. Sigue las instrucciones de la solicitud y vuelve a su estado en lugar de considerar una página abierta como una respuesta correcta. Los formularios arbitrarios de proveedor/autenticación no son necesariamente artefactos de una conversación.
 
@@ -45,7 +43,7 @@ Las herramientas nativas de preguntas completadas muestran en el historial la pr
 
 La aprobación de permisos puede liberar la ejecución de herramientas inmediatamente. No es una simulación. Los límites de diferencias/lectura y las comprobaciones de identidad de origen pueden impedir la aprobación cuando no se puede validar el contenido solicitado; actualiza y revisa la solicitud real en lugar de aprobar por suposición una operación distinta.
 
-Si otro cliente resuelve una solicitud, puede desaparecer de aquí. Un tiempo de espera agotado o una respuesta fallida no demuestra si el servicio nativo aceptó la decisión: deja que la reconciliación de solicitudes pendientes actualice el panel antes de tomar otra decisión deliberada. Una respuesta ambigua nunca se muestra como una decisión confirmada inventada.
+Si otro cliente resuelve una solicitud, puede desaparecer de aquí. Un tiempo de espera agotado o una respuesta fallida no demuestra si el servicio nativo aceptó la decisión: deja que la reconciliación de solicitudes pendientes actualice el panel antes de tomar otra decisión deliberada.
 
 ## Leer los comprobantes de permisos {#permission-receipts}
 
@@ -73,6 +71,5 @@ Desactivar Yolo no revoca una decisión ya aceptada ni revierte efectos sobre ar
 
 1. Comprueba el indicador de conexión y reconecta al mismo backend/proyecto.
 2. Deja que la recuperación reconcilie las solicitudes nativas pendientes; las solicitudes conocidas y los borradores se conservan si la cobertura es incompleta.
-3. Si aparece el aviso **preguntas y permisos no recuperados por completo**, indica el proyecto, la causa, las carpetas y las sesiones afectadas. Resuelve esa causa (por ejemplo, un worktree eliminado o una sesión que trabaja fuera de este proyecto); el siguiente paso de recuperación reintenta automáticamente.
 
-La recuperación no carga todos los worktrees inactivos solo para enumerar solicitudes. Una respuesta incompleta no es una cola vacía autoritativa, y la advertencia no autoriza a repetir un mensaje, una respuesta o una aprobación. Recargar la configuración puede cancelar formularios/permisos nativos; no lo uses como botón habitual para actualizar solicitudes. Consulta [Solución de problemas](troubleshooting.md) y [configuración de OpenCode](opencode.md).
+Una respuesta incompleta no es una cola vacía autoritativa, y la advertencia no autoriza a repetir un mensaje, una respuesta o una aprobación. Recargar la configuración puede cancelar formularios/permisos nativos; no lo uses como botón habitual para actualizar solicitudes. Consulta [Solución de problemas](troubleshooting.md) y [configuración de OpenCode](opencode.md).

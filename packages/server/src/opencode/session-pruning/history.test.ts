@@ -90,7 +90,7 @@ test("text-only searches project readable fields, preserve part positions and sk
       const statement = prepare(sql)
       if (sql.includes("AS data")) {
         const iterate = statement.iterate.bind(statement)
-        statement.iterate = function* (...params) {
+        statement.iterate = function* (...params): Generator<any, undefined> {
           for (const row of Reflect.apply(iterate, statement, params)) {
             materialized += typeof row.data === "string" ? row.data.length : 0
             yield row

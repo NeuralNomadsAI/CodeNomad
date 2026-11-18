@@ -4,7 +4,25 @@ import { describe, it } from "node:test"
 import { getIdleSinceForStatusTransition } from "../types/session.ts"
 import { clearSessionIdleFade, getSessionIdleFadeClass, IDLE_STATUS_VISIBILITY_MS, markSessionIdleFadeStarted, shouldShowIdleStatus, shouldShowSessionStatus } from "./session-status.ts"
 import { setSessions } from "./session-state.ts"
-import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
+import { shouldAppHoldWakeLock, shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
+
+describe("shouldAppHoldWakeLock", () => {
+  it("keeps local application windows awake for the preference or eligible session work", () => {
+    assert.equal(shouldAppHoldWakeLock(false, false, "local"), false)
+    assert.equal(shouldAppHoldWakeLock(false, true, "local"), true)
+    assert.equal(shouldAppHoldWakeLock(true, false, "local"), true)
+    assert.equal(shouldAppHoldWakeLock(true, true, "local"), true)
+  })
+
+  for (const context of ["remote", "preferences"] as const) {
+    it(`ignores the preference in ${context} windows and preserves session-based holds`, () => {
+      assert.equal(shouldAppHoldWakeLock(false, false, context), false)
+      assert.equal(shouldAppHoldWakeLock(false, true, context), true)
+      assert.equal(shouldAppHoldWakeLock(true, false, context), false)
+      assert.equal(shouldAppHoldWakeLock(true, true, context), true)
+    })
+  }
+})
 
 describe("shouldSessionHoldWakeLock", () => {
   it("holds wake lock only for qualifying active work", () => {

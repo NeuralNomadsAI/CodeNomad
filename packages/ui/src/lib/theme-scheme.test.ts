@@ -185,6 +185,14 @@ describe("applyColorScheme", () => {
     assert.ok(contrastRatio(text ?? "", "#8FA8FF") >= 4.5)
   })
 
+  it("keeps normal filled text selected by the strongest black/white contrast ratio", () => {
+    assert.equal(textOnColor("#4D7AFE"), "#000000")
+    const root = target()
+    applyColorScheme(normalizeColorScheme("classic"), { target: root.value })
+    assert.equal(root.properties.get("--text-on-accent"), "#000000")
+    assert.equal(root.properties.has("--text-on-accent-hover"), false)
+  })
+
   it("keeps neutral selection independent of accent-colored actions", () => {
     const root = target()
     applyColorScheme(normalizeColorScheme("fjord"), { target: root.value })

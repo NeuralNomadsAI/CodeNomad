@@ -1,16 +1,20 @@
 import { createMemo, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import SessionList from "../../../src/components/session-list"
-import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
+import { ConfigProvider, preferences, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
+import { ThemeProvider } from "../../../src/lib/theme"
+import { GeneralSettingsSection } from "../../../src/components/settings/general-settings-section"
 import { serverApi } from "../../../src/lib/api-client"
+import { serverEvents } from "../../../src/lib/server-events"
 import { addInstance } from "../../../src/stores/instances"
 import {
   sessions, setActiveSession, setSessionPage, setSessionPendingPermission, setSessionStatus, setSessions,
-  markSessionIdleSeen, withSession,
+  markSessionIdleSeen, withSession, getPersistentExpandedSessionIds, clearInstanceSessionExpansionState, hydrateSessionExpansion,
 } from "../../../src/stores/session-state"
 import { clearSessionIdleFade, markSessionIdleFadeStarted } from "../../../src/stores/session-status"
 import { buildSessionThreadsFromMap } from "../../../src/stores/session-tree"
+import { markSessionInterruptionSeen } from "../../../src/stores/session-interruption-seen"
 import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
 
@@ -23,6 +27,8 @@ function make(sessionId: string, title: string, updated: number, parentId: strin
 const items = [
   make("work", "Work conversation", 3),
   make("work-child", "Work helper", 3, "work"),
+  make("work-grandchild", "Work nested helper", 3, "work-child"),
+  make("work-great-grandchild", "Work recursive helper", 3, "work-grandchild"),
   make("other", "Other conversation", 2),
   make("other-child", "Other helper", 2, "other"),
   make("other-grandchild", "Other nested helper", 2, "other-child"),
@@ -42,17 +48,33 @@ setActiveSession(id, "work")
 const [active, setActive] = createSignal<string | null>("work")
 function Fixture() {
   const threads = createMemo(() => buildSessionThreadsFromMap(sessions().get(id)!, ["work", "other"]))
-  return <ConfigProvider><I18nProvider><div style={{ width: "440px", height: "500px", display: "flex" }}>
+  return <ConfigProvider><I18nProvider><ThemeProvider><div style={{ width: "440px", height: "500px", display: "flex" }}>
     <SessionList instanceId={id} threads={threads()} activeSessionId={active()} onSelect={value => { setActive(value); setActiveSession(id, value) }}
       onNew={() => {}} enableFilterBar={false} showHeader={false} showFooter={false} />
-  </div></I18nProvider></ConfigProvider>
+  </div><aside style={{ position: "absolute", left: "480px", top: "0", width: "600px", "max-height": "600px", overflow: "auto" }}><GeneralSettingsSection showStartupState={false} /></aside></ThemeProvider></I18nProvider></ConfigProvider>
 }
 render(() => <Fixture />, document.getElementById("root")!)
 await updatePreferences({ locale: "en", keepUnseenSubagentIdleStatus: true })
+let eventSequence = 0
 ;(window as any).fixture = {
+  preferences,
+  event: (sessionID: string, type: "session.execution.started" | "session.execution.succeeded") => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: id, event: {
+    id: `evt_${crypto.randomUUID()}`, type, created: Date.now(), location: { directory: "/repo" }, data: { sessionID },
+    durable: { aggregateID: sessionID, seq: ++eventSequence, version: 1 },
+  } }]),
   status: (sessionId: string, status: Session["status"]) => setSessionStatus(id, sessionId, status, { force: true }),
+  add: (sessionId: string, parentId: string, status: Session["status"]) => setSessions(previous => {
+    const next = new Map(previous), entries = new Map(next.get(id))
+    entries.set(sessionId, { ...make(sessionId, sessionId, 3, parentId), status })
+    next.set(id, entries)
+    return next
+  }),
   permission: (sessionId: string, pending: boolean) => setSessionPendingPermission(id, sessionId, pending),
+  form: (sessionId: string, pendingForm: boolean) => withSession(id, sessionId, session => { session.pendingForm = pendingForm }),
+  expanded: () => getPersistentExpandedSessionIds(id),
+  restore: (saved: string[]) => { clearInstanceSessionExpansionState(id); hydrateSessionExpansion(id, saved) },
   seen: (sessionId: string) => markSessionIdleSeen(id, sessionId),
+  acknowledgeInterruption: (sessionId: string) => markSessionInterruptionSeen(id, sessions().get(id)!.get(sessionId)!),
   idle: (sessionId: string, idleSince: number, extra = {}) => withSession(id, sessionId, session => {
     Object.assign(session, { status: "idle", idleSince, retry: null, generationRecovery: null }, extra)
   }),

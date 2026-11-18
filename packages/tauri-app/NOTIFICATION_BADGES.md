@@ -25,15 +25,15 @@ This avoids native-handler/AppHandle ownership cycles. The subscriptions are
 released with their native controller/widget; no native callback retains itself
 or its owning view. No polling, new dependencies or guest capabilities are added.
 
-**macOS limitation:** renderer termination while its window survives cannot be
-observed safely through the pinned Tauri public API (2.10.3). Wry 0.54.4 exposes
-`WebViewBuilderExtDarwin::with_on_web_content_process_terminate_handler`, but
-Tauri/runtime-wry do not forward it to application builders or events. WKWebView's
-public delegate method `webViewWebContentProcessDidTerminate` belongs to the
-runtime-owned navigation delegate; this feature does not replace/swizzle that
-delegate or invent process monitoring. Thus a macOS crash can retain its last
-count until reload/navigation/close. Normal badge updates and those lifecycle
-resets remain supported.
+**macOS:** when a renderer's web content process terminates while its window
+survives, Tauri's runtime reloads that webview, because the application registers
+no `Builder::on_web_content_process_terminate` hook. The reload's page-load start
+resets the window's count like any other page start. The remaining gap is a
+reload that fails (or that the runtime cannot start); the count then stays until
+navigation or close. Registering that application-wide, label-keyed hook would
+replace the runtime's reload and carries no physical-window binding to fence a
+replaced window. WKWebView's navigation delegate stays runtime-owned: never
+replace/swizzle it or invent process monitoring.
 
 Windows overlays are generated from
 trusted native RGBA pixels (`99+` above 99); macOS/Linux use the native count API.

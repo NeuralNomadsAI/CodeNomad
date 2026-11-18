@@ -1,5 +1,9 @@
 import { z } from "zod"
-import type { MissionMap, MissionTask } from "./model"
+import type { MissionMap, MissionSnapshot, MissionTask } from "./model"
+import type { NativeMissionSession } from "./control-types"
+import { MissionControlError } from "./control-error"
+import { isReservedMissionScheduleSessionID } from "./mission-schedule-carrier-identity"
+import { sameLocation } from "../opencode/compatibility/location"
 
 /** Bridge replies are revalidated before they reach a model: bounded and credential-free. */
 const sessionID = z.string().min(1).max(240)
@@ -41,14 +45,42 @@ export function liveContinuations(tasks: readonly MissionTask[], taskKey: string
   return tasks.filter(task => task.key !== taskKey && !["withdrawn", "completed", "failed"].includes(task.status) && reaches(task)).map(task => task.key)
 }
 
-/** Missions a session may read: those it belongs to, and hand-offs it prepared (read-only). */
+/** Display relation; project ownership authorizes reads independently. */
 export function missionRelation(mission: MissionMap, sessionID: string): "member" | "prepared" | undefined {
   if (mission.actors.some(actor => actor.sessionId === sessionID)) return "member"
   if (mission.preparedBy?.coordinatorSessionId === sessionID) return "prepared"
   return undefined
 }
 
-export function missionListEntry(mission: MissionMap, relation: "member" | "prepared") {
+/** Actual native authors retain their identity; ancestry supplies source provenance.
+ * Passage and historical actor markers remain usable outside the ordinary journal. */
+export async function missionPreparationSource(snapshot: MissionSnapshot, session: NativeMissionSession,
+  get: (sessionID: string) => Promise<NativeMissionSession>): Promise<Pick<MissionMap, "id"> | undefined> {
+  const refuse = (): never => { throw new MissionControlError("This session cannot prepare a separate mission", "prepare-refused") }
+  if (snapshot.discardedEvents || snapshot.controlUnavailable) return refuse()
+  const seen = new Set<string>(), location = session.location
+  for (let depth = 0; depth <= 32; depth++) {
+    if (seen.has(session.id) || session.projectID !== snapshot.projectID || !sameLocation(session.location, location)
+      || isReservedMissionScheduleSessionID(session.id)) return refuse()
+    seen.add(session.id)
+    const memberships = snapshot.missions.filter(mission => mission.actors.some(actor => actor.sessionId === session.id))
+    const active = memberships.filter(mission => mission.status === "active")
+    if (active.length > 1) return refuse()
+    const marker = session.metadata?.["codenomad.mission"]
+    if (marker !== undefined && (!marker || typeof marker !== "object" || Array.isArray(marker)
+      || typeof marker.missionID !== "string")) return refuse()
+    if (active[0]) return active[0]
+    if (marker && typeof marker === "object" && typeof marker.missionID === "string") return { id: marker.missionID }
+    if (memberships.length) return memberships.sort((a, b) => b.updatedAt - a.updatedAt)[0]
+    if (!session.parentID) return undefined
+    const parentID = session.parentID
+    session = await get(parentID)
+    if (session.id !== parentID) return refuse()
+  }
+  return refuse()
+}
+
+export function missionListEntry(mission: MissionMap, relation: "member" | "prepared" | "project") {
   return {
     missionID: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }), relation,
     template: mission.template, status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }),

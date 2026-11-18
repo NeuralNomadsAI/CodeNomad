@@ -1,14 +1,14 @@
 # Standalone server
 
-Run CodeNomad where your projects and tools live, then use its browser UI locally or remotely. The backend supplies filesystem access, Git operations, authentication and event delivery. OpenCode's shared service owns conversations and execution; it is not a child server to stop when a browser disconnects.
+Run CodeNomad where your projects and tools live, then use its browser UI locally or remotely.
 
-The same UI supports [multiple project tabs and worktrees](projects.md), [conversation families and background activity](conversations.md), [bounded history loading, search and timeline navigation](history.md), a [command palette and shortcuts](shortcuts.md), and [Missions](missions.md). Browser and tablet access do not move execution off the host.
+Browser and tablet access do not move execution off the host.
 
 ## Prepare the host {#prerequisites}
 
-1. Install Node.js 24 LTS and npm; the repository's pinned build runtime is 24.20.0. Desktop packages include Node/npm.
+1. Install Node.js 24 LTS and npm.
 2. Put Git on the **backend process's PATH**. Git inside WSL alone does not satisfy a Windows backend.
-3. Install or select OpenCode: the required minimum is **2.1.2**, with **2.2.1** the recommended qualification target. Newer or custom builds undergo compatibility checks, not a tested-version allowlist. See [OpenCode setup](opencode.md).
+3. Install or select OpenCode: **2.3.0** is the required minimum. See [OpenCode setup](opencode.md).
 4. Choose the folder from which to start the server, or pass `--workspace-root` explicitly.
 
 Without Git, conversations remain available only in the explicitly opened physical folder; Git and worktree operations fail. Install Git and restart the backend after a PATH change. A workspace root limits opening/browsing, not agent execution: see [Security](security.md).
@@ -45,7 +45,7 @@ npx codenomad --generate-token --launch
 
 The commands run in the foreground. Closing the terminal or sending Ctrl+C stops that backend and its Remote Control connection. `--launch` only opens a browser; it does not daemonize the server. For unattended availability, run the same command under your OS process/service manager with explicit configuration, working directory, environment and restart policy. Do not put secrets in service logs or a public unit file.
 
-Closing a browser does not stop a separately running standalone backend. Closing a project tab removes that project's CodeNomad connection, but sessions continue in OpenCode; reopen the project to find them again. CodeNomad never unloads its native Location. Closing a whole window, quitting or reloading preserves project connections for restoration. Backend shutdown likewise leaves the OpenCode service running. Backend-dependent features are unavailable until CodeNomad returns; see [Missions](missions.md) for the separate native scheduling lifetime.
+Closing a browser does not stop a separately running standalone backend. Closing a project tab removes that project's CodeNomad connection, but sessions continue in OpenCode; reopen the project to find them again. Closing a whole window, quitting or reloading preserves project connections for restoration. Backend shutdown likewise leaves the OpenCode service running. Backend-dependent features are unavailable until CodeNomad returns; see [Missions](missions.md) for the separate native scheduling lifetime.
 
 ## Addresses and ports {#addresses}
 
@@ -53,11 +53,11 @@ Startup prints **Local Connection URL**, and **Remote Connection URL** when one 
 
 HTTPS prefers port **9898** and HTTP prefers **9899**. With no port override, an occupied preferred port falls back to an OS-assigned port. An explicit nonzero port does not fall back; `0` requests an OS-assigned port. Ports accept integers from 0 through 65535.
 
-The backend can also open an unannounced, authenticated HTTP listener on a random `127.0.0.1` port for its own OpenCode plugins, such as Missions. It is not printed and is not a client address.
-
 For listener exposure, certificates, VPN/SSH and reverse proxies, use [Direct remote access](remote-access.md). For access without an inbound port, use [Remote Control](remote-control.md).
 
 ## Public CLI reference {#cli-reference}
+
+Launching Tauri or Electron? See [Desktop launch arguments](desktop.md#desktop-cli) for `--connect-server`, `--folder`, `--new-window` and executable/shortcut examples. This table covers the standalone server executable.
 
 Flags override their environment counterparts. Value-taking flags use the shown argument; switches do not. HTTPS/HTTP values recognize `1`, `true`, `yes`, `y` and `on` as enabled, case-insensitively; use explicit `true`/`false` for clarity. UI auto-update recognizes `1`, `true` and `yes`.
 
@@ -94,17 +94,15 @@ Flags override their environment counterparts. Value-taking flags use the shown 
 | `--launch` | `CLI_LAUNCH` | `false`; open the local UI in a browser after startup. |
 | `--upgrade [version]` | — | No upgrade by default. When requested, globally install `@neuralnomads/codenomad@latest`, or the supplied version, and exit. |
 
-The public reference lists user-facing options; desktop hosts manage their own private launch coordination.
-
 ### Additional deployment environment {#deployment-environment}
 
 | Variable | Default and scope |
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; repository queried for release offers. |
 | `CODENOMAD_REMOTE_CONTROL_API` | Unset: hosted OpenTunnel API. Set an API origin for a self-hosted relay deployment. |
+| `CODENOMAD_REMOTE_CONTROL` | Unset: users may start Remote Control. `disabled`: turned off by an administrator ([policy](remote-control.md#administrator-policy)); unset or empty means no policy, any other value (spaces included) refuses startup. |
+| `CODENOMAD_LOCKED_HOST` | Unset or empty: `--host` applies; spaces only refuse startup. An address: the server listens there whatever `--host`, `CLI_HOST` or the listening switch request ([policy](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Node's optional additional CA file; passed with allowed startup environment when starting a missing OpenCode daemon. Does not change an already running daemon. |
-
-Provider-specific usage credentials are covered in [Providers](providers.md). Desktop data-profile selection is covered in [Desktop](desktop.md), not controlled by the release feed.
 
 ## Configuration and storage ownership {#storage}
 
@@ -124,13 +122,11 @@ Default paths below use the backend user's home. An explicit `--config` director
 | OpenCode conversations, messages, service registration and provider connections | OpenCode's own global storage on the execution host, not the CodeNomad instance directory. |
 | Desktop restore state | Default `~/.codenomad/client-state/v2/`; see [Desktop](desktop.md) for profile/window scope. |
 
-CodeNomad connects to the existing shared daemon or starts it if missing. Startup environment affects a newly started daemon only. Separately, the configured complete session environment is applied before each prompt, custom command or session shell request, not when preferences are merely viewed or edited. See [OpenCode setup](opencode.md).
+Startup environment affects a newly started daemon only. Separately, the configured complete session environment is applied before each prompt, custom command or session shell request, not when preferences are merely viewed or edited. See [OpenCode setup](opencode.md).
 
 ## Events and reconnects {#events}
 
-The backend consumes a shared native OpenCode event stream and multiplexes workspace and CodeNomad events to browser clients using Server-Sent Events. Delivery is live and volatile: there is **no guaranteed event replay**.
-
-After reconnecting, the UI refetches authoritative session and pending-request state; file/configuration invalidations also trigger fresh reads. A reconnect is not permission to repeat a send, delete, answer or other mutation whose reply was lost. Check the resulting state first. Known pending requests and drafts are retained when recovery is incomplete; see [Permissions](permissions.md) and [Troubleshooting](troubleshooting.md).
+A reconnect is not permission to repeat a send, delete, answer or other mutation whose reply was lost. Check the resulting state first. Known pending requests and drafts are retained when recovery is incomplete; see [Permissions](permissions.md) and [Troubleshooting](troubleshooting.md).
 
 ## Preview packages and maintenance {#maintenance}
 
@@ -144,4 +140,4 @@ Use a deliberately separate configuration if you need isolated CodeNomad setting
 
 `codenomad --upgrade` updates the global stable CLI package using the detected npm/pnpm/bun manager (npm if none is detected). It neither restarts a running server nor updates OpenCode. For a project-local or preview installation, update that exact npm package explicitly. Restart your managed CodeNomad process deliberately after updating; check its printed addresses again.
 
-See [Updates](updates.md) for desktop maintenance, [Support](support.md) for source-build commands, and [Providers](providers.md) for provider plan usage.
+See [Updates](updates.md) for desktop maintenance, [Build from source](support.md#build-from-source) for source-build commands, and [Providers](providers.md) for provider plan usage.

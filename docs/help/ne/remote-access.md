@@ -29,12 +29,10 @@ binding ले firewall नियम, port forwarding, DNS वा VPN बना�
 
 | Launch/mode | HTTP bind | HTTPS bind |
 | --- | --- | --- |
-| Standalone, HTTPS मात्र (default) | निजी loopback listener मात्र (तल हेर्नुहोस्) | `--host` |
+| Standalone, HTTPS मात्र (default) | निजी loopback listener मात्र | `--host` |
 | Standalone, HTTP मात्र | LAN/wildcard ठेगानासमेत **`--host`** | सक्षम छैन |
 | Standalone, दुवै listener | `127.0.0.1`, `--host` जे भए पनि | `--host` |
 | नेटिभ desktop backend | host-internal listener समेत HTTP `127.0.0.1` मै रहन्छ | HTTPS enabled हुँदा `--host` |
-
-हरेक backend ले Missions जस्ता CodeNomad कै bundled OpenCode plugin का लागि `127.0.0.1` मा HTTP listener पनि राख्छ। HTTP माग नगरिएको भए, वा मागिएको HTTP listener `127.0.0.1` वा `0.0.0.0` बाहेक अर्को ठेगानामा bind भएको भए, backend ले अनियमित `127.0.0.1` port मा निजी HTTP listener थप्छ। यो कहिल्यै छापिँदैन वा जडान ठेगानाका रूपमा दिइँदैन, अरू मेसिनबाट पहुँचयोग्य हुँदैन, र उही प्रमाणीकृत application सेवा दिन्छ।
 
 ठोस LAN ठेगानाले loopback connection स्वीकार नगर्न सक्छ। `0.0.0.0` सबै IPv4 interface हुन्; `::` dual-stack wildcard listener हो। browser मा wildcard होइन वास्तविक पहुँचयोग्य ठेगाना प्रयोग गर्नुहोस्। `--host` मा IPv6 zone identifier समर्थित छैनन्।
 
@@ -51,6 +49,18 @@ codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
 9898 वा 9899 port नमान्नुहोस्: नदिएका port व्यस्त भए अर्कोमा जान सक्छन्। स्पष्ट nonzero `--https-port`, वा HTTP सक्षम हुँदा `--http-port`, ले port स्थिर गरी bind नसके असफल हुन्छ; `0` ले OS लाई चयन गर्न दिन्छ। छापिएका **Local Connection URL**, **Remote Connection URL** र ताजा **पहुँचयोग्य ठेगानाहरू** त्यस run का आधिकारिक हुन्। पूर्ण [server CLI सन्दर्भ](server.md) हेर्नुहोस्।
+
+## प्रशासक नीति {#administrator-policy}
+
+प्रशासकले सुन्ने ठेगाना तोक्न सक्छ: सर्भरले प्रयोग गर्नुपर्ने ठेगानामा `CODENOMAD_LOCKED_HOST` सम्पूर्ण प्रणालीमा सेट गर्नुहोस्, त्यसपछि CodeNomad पुनः सुरु गर्नुहोस्। यसले `--host`, `CLI_HOST` र **अन्य IP हरूबाट जडान अनुमति दिनुहोस्** लाई उछिन्छ; स्विचले नतिजा देखाउँछ तर परिवर्तन गर्न सक्दैन। सहकर्मीहरूले कम्पनीको नेटवर्कबाट सर्भरमा पुग्न इन्ट्रानेट ठेगाना, वा यो कम्प्युटरमै राख्न `127.0.0.1` प्रयोग गर्नुहोस्। सबै पहुँच कम्पनीको नेटवर्कभित्रै राख्न `CODENOMAD_REMOTE_CONTROL=disabled` पनि सेट गर्नुहोस् ([रिमोट कन्ट्रोल](remote-control.md#administrator-policy))।
+
+## स्तरोन्नति {#upgrading}
+
+स्तरोन्नतिपछि फेरि साइन इन गर्नुहोस्। होस्टनामको उपनाम, रिभर्स प्रोक्सी वा छुट्टै होस्ट गरिएको इन्टरफेसका लागि backend मा `CODENOMAD_ALLOWED_ORIGINS` लाई इन्टरफेसका विश्वसनीय origin (स्किम, होस्टनाम र पोर्ट) मा सेट गर्नुहोस्। नेटिभ LAN क्लाइन्टले डेटा परिवर्तन गर्ने अनुरोधमा अनुमति दिइएको `Origin` हेडर पठाउनुपर्छ।
+
+होस्टमा सीमित कार्यका लागि loopback जडान प्रयोग गर्नुहोस्: SideCar सामग्री (`/sidecars/`) र WebSocket, Remote Control व्यवस्थापन (`/api/remote-control/`), प्लगइन ब्रिज (`/api/opencode-plugin/`), रिमोट प्रोक्सी (`/api/remote-proxy/`), सुरक्षित सर्भर व्यवस्थापन (`/api/remote-servers/`), पासवर्ड परिवर्तन र टोकनबाट प्रारम्भिक सेटअप। प्रत्यक्ष LAN पहुँचबाट साइन इन गरे पनि यी कार्यलाई loopback चाहिन्छ। SideCars मा मात्र अपवाद छ: होस्टको **HTTPS मार्फत SideCars खोल्नुहोस्** सेटिङले विश्वसनीय HTTPS origin बाट साइन इन गरिएका ब्राउजरका लागि तिनको सामग्री र WebSocket खोल्छ ([SideCars](browser-sidecars.md#register-sidecar))। सक्रिय पूर्वावलोकन सामग्री (`/previews/`) वैध क्षमता टोकनसहित प्रत्यक्ष LAN पहुँचमा उपलब्ध छ।
+
+`/api/sidecars` दर्ता API प्रमाणीकृत प्रत्यक्ष LAN क्लाइन्ट र जोडी बनाइएका उपकरणलाई उपलब्ध रहन्छन्। होस्टमा सक्षम रहँदा Remote Control का वेब पूर्वावलोकन आफ्नो क्षमता टोकनसहित उपलब्ध रहन्छन्।
 
 ## Trusted TLS कन्फिगर {#tls}
 
@@ -77,7 +87,7 @@ HTTPS enabled र key/certificate pair नदिँदा CodeNomad ले confi
 2. certificate generate/recheck गर्न backend restart गर्नुहोस्।
 3. trusted माध्यमबाट host/CA प्रमाणित गरी हरेक अभिप्रेत client/browser trust store मा **CA certificate मात्र** import गर्नुहोस्। वैकल्पिक रूपमा public trusted certificate वा TLS reverse proxy प्रयोग गर्नुहोस्।
 
-generated server certificate 30 दिन चल्छ। expiry को तीन दिनभित्र, आवश्यक SAN छुट्दा, certificate जाँच असफल हुँदा वा private-key फाइल हराउँदा startup ले renew गर्छ। generated CA 365 दिन चल्छ र expiry, certificate जाँच असफल वा private-key फाइल हराउँदा बदलिन्छ; बदल्दा server certificate पनि फेरि जारी हुन्छ। विद्यमान भ्रष्ट, अपठनीय वा नमिलेका private key स्वतः मर्मत हुँदैनन्। client ले replacement CA trust गर्नुपर्छ। निरन्तर in-process renewal छैन: दीर्घकालीन deployment मा expiry अघि सचेत restart मिलाउनुहोस्।
+generated server certificate 30 दिन चल्छ। expiry को तीन दिनभित्र, आवश्यक SAN छुट्दा, certificate जाँच असफल हुँदा वा private-key फाइल हराउँदा startup ले renew गर्छ। generated CA 365 दिन चल्छ र expiry, certificate जाँच असफल वा private-key फाइल हराउँदा बदलिन्छ; बदल्दा server certificate पनि फेरि जारी हुन्छ। client ले replacement CA trust गर्नुपर्छ। निरन्तर in-process renewal छैन: दीर्घकालीन deployment मा expiry अघि सचेत restart मिलाउनुहोस्।
 
 certificate चेतावनी आए रोकिएर hostname, SAN, trust store र expiry जाँच्नुहोस्। verification अक्षम वा चेतावनी क्लिक गरेर जानुलाई deployment प्रक्रिया नबनाउनुहोस्। [PWA स्थापना र microphone पहुँच](mobile.md) जस्ता remote browser सुविधालाई पनि trusted HTTPS चाहिन्छ।
 
@@ -88,5 +98,9 @@ certificate चेतावनी आए रोकिएर hostname, SAN, trust
 3. bookmark गर्न **बचत गर्नुहोस्**, वा बचत र खोल्न **जडान गर्नुहोस्** रोज्नुहोस्। त्यो server मा sign in गर्नुहोस्।
 
 सुरक्षित सर्भर फेरि खोल्न गृह पृष्ठको **सर्भरहरू** ट्याबमा त्यसलाई चयन गर्नुहोस्। bookmark यो CodeNomad कन्फिगरेसनका हुन्, remote server का project होइनन्। URL बचतले server सुरु वा access प्रदान गर्दैन। **बचत गरिएको सर्भर हटाउनुहोस्** ले bookmark हटाउँछ, remote कुराकानी, backend वा credential होइन।
+
+सुरक्षित सर्भर command line बाट सिधै खोल्न, सर्भरको सुरक्षित नाम वा यसको `https://` URL सहित desktop app लाई `--connect-server <name>` (वा `--connect-server=<name>`) सँग सुरु गर्नुहोस्। CodeNomad ले remote window मात्र खोल्छ, **जडान गर्नुहोस्** जस्तै उही जाँच र sign in सहित; CodeNomad पहिले नै चलिरहेको छ भने, नयाँ window को सट्टा यसको हालको window ले त्यसलाई खोल्छ। कुनै सुरक्षित सर्भरसँग नमिल्ने URL यसको host नाममा बचत हुन्छ। सुरु गर्दा दिइने मानमा credential कहिल्यै हुँदैन: user नाम, password वा pairing code भएको URL अस्वीकार हुन्छ। Windows मा, सुरु गर्ने argument मा `|` भए Tauri build सुरु हुँदैन; बरु सर्भरको URL प्रयोग गर्नुहोस्, वा सर्भरको नाम बदल्नुहोस्।
+
+रिमोट विन्डोहरू खुला रहँदा अन्तिम स्थानीय विन्डो बन्द गर्दा त्यसका ट्याबहरू रहन्छन्: रिमोट विन्डोमा **सञ्झ्याल → नयाँ विन्डो**, वा CodeNomad फेरि सुरु गर्दा त्यो फेरि खुल्छ।
 
 Remote Control मा **सर्भर URL** मा नयाँ pairing link paste गर्नुहोस्। bookmark ले tunnel origin मात्र राख्छ, one-use code कहिल्यै होइन; device-cookie हराएपछि पुनःpair गर्न [Remote Control](remote-control.md) हेर्नुहोस्।

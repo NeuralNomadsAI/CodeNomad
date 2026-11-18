@@ -296,7 +296,8 @@ export class ServerStorage {
     }
   }
 
-  private trackWrite<T>(write: Promise<T>): Promise<T> {
+  /** Joins `flushWrites`, which native shutdown awaits; callers chaining writes track the whole chain. */
+  trackWrite<T>(write: Promise<T>): Promise<T> {
     this.pendingWrites.add(write)
     void write.finally(() => this.pendingWrites.delete(write)).catch(() => undefined)
     return write

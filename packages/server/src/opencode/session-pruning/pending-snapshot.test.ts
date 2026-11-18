@@ -182,7 +182,16 @@ test("untested, custom and missing version labels do not block a capable reader"
 
 test("production entry shares one presence lifecycle for old/new RPCs, never double-registers and disposes scopes", async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-pending-entry-"))
-  t.after(() => fs.rm(directory, { recursive: true, force: true }))
+  let close = async () => {}
+  t.after(async () => {
+    try {
+      await close()
+    } finally {
+      t.mock.restoreAll()
+      t.mock.timers.reset()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
   const a = path.join(directory, "abc.lease"), b = path.join(directory, "def.lease")
   let monotonic = 0
   t.mock.method(performance, "now", () => monotonic)
@@ -212,14 +221,18 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   // Unrelated native domains reject calls; presence owns RPCs and the search tool.
   const unused: any = new Proxy(() => { throw new Error("Unexpected native API or hook") }, { get: () => unused })
   const rpc = Object.assign(() => {}, { register })
-  const ctx = new Proxy({ app: { version: "2.0.22" }, rpc, tool, location: origin, options: {} }, {
+  // The Design transforms register at load, outside presence; no lease here requests Design.
+  const designTransforms: string[] = []
+  const designDomain = (name: string) => ({ reload: () => Effect.die(new Error("Unexpected Design reload")),
+    transform: () => Effect.sync(() => { designTransforms.push(name); return { dispose: Effect.void } }) })
+  const ctx = new Proxy({ app: { version: "2.0.22" }, rpc, tool, agent: designDomain("agent"), skill: designDomain("skill"), location: origin, options: {} }, {
     get: (target, property) => Reflect.get(target, property) ?? unused,
   }) as unknown as Plugin.Context
   const scope = await Effect.runPromise(Scope.make())
-  const close = () => Effect.runPromise(Scope.close(scope, Exit.void))
-  t.after(close)
+  close = () => Effect.runPromise(Scope.close(scope, Exit.void))
   await Effect.runPromise(desktopPlugin(directory).effect(ctx).pipe(Effect.provideService(Scope.Scope, scope)))
   assert.equal(entries.length, 0)
+  assert.deepEqual(designTransforms, ["agent", "skill"])
   const tick = async (check: () => boolean) => {
     monotonic += PRESENCE_INTERVAL_MS
     t.mock.timers.tick(PRESENCE_INTERVAL_MS)
@@ -227,16 +240,18 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
     assert(check(), "Expected serial presence reconciliation")
   }
   await fs.writeFile(a, "")
-  await tick(() => entries.length === 2)
-  assert.deepEqual(entries.map(entry => entry.id), ["codenomad.session-pruning", "codenomad.pending-requests"])
-  assert.deepEqual(entries[0].methods, ["assetRead", "assets", "history", "historyRanked", "outline", "outlineLayout", "outlinePreview", "preview", "prune", "pruneBatch", "window"])
+  const presenceRpcs = ["codenomad.session-pruning", "codenomad.pending-requests", "codenomad.plugin-versions"]
+  await tick(() => entries.length === 3)
+  assert.deepEqual(entries.map(entry => entry.id), presenceRpcs)
+  assert.deepEqual(entries[0].methods, ["assetRead", "assets", "history", "historyRanked", "imageRead", "imageReference", "images", "imagesConversation", "outline", "outlineLayout", "outlinePreview", "preview", "prune", "pruneBatch", "window"])
   assert.deepEqual(entries[1].methods, ["snapshot"])
+  assert.deepEqual(entries[2].methods, ["list"])
   assert.equal(tools.length, 1)
   await fs.writeFile(b, "")
   await fs.unlink(a)
   await tick(() => true)
   await delay(20)
-  assert.equal(entries.length, 2)
+  assert.equal(entries.length, 3)
   assert(entries.every(entry => !entry.closed), "Another backend lease retains both registrations")
   assert(tools.every(entry => !entry.closed))
   const expired = new Date(Date.now() - PRESENCE_EXPIRY_MS - 1000)
@@ -244,23 +259,23 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   await tick(() => entries.every(entry => entry.closed))
   assert(tools.every(entry => entry.closed))
   await fs.writeFile(a, "returned")
-  await tick(() => entries.length === 4)
+  await tick(() => entries.length === 6)
   await tick(() => true)
   await delay(20)
-  assert.equal(entries.length, 4, "Stable presence must not double-register")
+  assert.equal(entries.length, 6, "Stable presence must not double-register")
   assert.equal(tools.length, 2)
   await close()
   assert(entries.every(entry => entry.closed))
   assert(tools.every(entry => entry.closed))
   await tick(() => true)
   await delay(20)
-  assert.equal(entries.length, 4, "Unloaded entry must not resurrect")
+  assert.equal(entries.length, 6, "Unloaded entry must not resurrect")
   await fs.utimes(a, new Date(Date.now()), new Date(Date.now()))
   for (const version of ["2.0.23", undefined]) {
     Object.assign(ctx.app, { version })
     await Effect.runPromise(Effect.scoped(desktopPlugin(directory).effect(ctx)))
-    assert.equal(entries.at(-1)?.id, "codenomad.pending-requests", "Untested/missing version does not block loaded-only recovery")
-    assert(entries.at(-1)?.closed)
+    assert.deepEqual(entries.slice(-3).map(entry => entry.id), presenceRpcs, "Untested/missing version does not block loaded-only recovery")
+    assert(entries.slice(-3).every(entry => entry.closed))
   }
   Object.assign(ctx.app, { version: "2.0.22" })
   rejectNew = true

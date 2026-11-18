@@ -82,8 +82,7 @@ async function getTauriPermission(): Promise<OsNotificationPermission> {
   const mod = await getTauriNotificationModule()
   if (!mod) return "unsupported"
   try {
-    // Ask the native plugin: its page script reports "denied" on Windows until the
-    // page requests permission, though Windows never asks.
+    // Ask the native plugin directly rather than the page script's cached state.
     const granted = await invoke<boolean | null>("plugin:notification|is_permission_granted")
     return granted ? "granted" : "default"
   } catch (error) {

@@ -10,6 +10,7 @@ import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { prepareInterruptionDock } from "./fixtures/interruption-dock-preparation"
+import { messagingMessages } from "../../src/lib/i18n/messages/en/messaging"
 
 let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
@@ -114,10 +115,12 @@ test("ordinary question answers settle through the ordinary reply; the human hea
   } finally { await page.close() }
 })
 
-/** Recovery warnings of any cause in the history (one title for all causes); a question
- *  asked meanwhile adds its own "needs your answer" entry. */
+/** Recovery warnings of any cause in the history: a project's own title, or the single
+ *  connection-wide title of an unavailable plugin; a question asked meanwhile adds its
+ *  own "needs your answer" entry. */
 const recoveryWarnings = (page: Page) => page.evaluate(() => (window as any).fixture.notifications()
-  .filter((item: { title?: string }) => /questions and permissions not fully recovered/.test(item.title ?? "")).length)
+  .filter((item: { title?: string }) => /questions and permissions not fully recovered|^Some waiting questions may be missing$/.test(item.title ?? "")).length)
+const unsupportedNotice = messagingMessages["interruption.recoveryCause.unsupported"]
 
 test("removed idle worktree inventory heals before warning while real-event questions keep their draft", async () => {
   const { page, errors } = await fixture()
@@ -162,14 +165,16 @@ test("persistently incomplete recovery uses existing notifications once until re
   const { page, errors } = await fixture(393)
   try {
     await page.evaluate(() => (window as any).fixture.recover("empty"))
-    const warning = page.getByText(/^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./)
+    const warning = page.getByText(unsupportedNotice)
+    const title = page.getByText("Some waiting questions may be missing", { exact: true })
     // A single transient failure is retried by the liveness pass without a warning.
     assert.equal(await recoveryWarnings(page), 0)
     await page.evaluate(() => (window as any).fixture.recover("unsupported"))
     await warning.waitFor()
     assert.equal(await warning.count(), 1)
+    assert.equal(await title.count(), 1, "the plugin notice names no project")
     assert.equal(await recoveryWarnings(page), 1)
-    assert.equal(await page.getByRole("button", { name: /^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./ }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: unsupportedNotice }).count(), 0)
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await warning.waitFor({ state: "detached" })
     assert.equal(await page.locator(".interruption-dock").count(), 0)
@@ -433,8 +438,8 @@ test("failed native questions use the shared error shell, never an answered rece
   const { page, errors } = await fixture()
   try {
     await page.evaluate(() => { (window as any).fixture.liveAsk(); (window as any).fixture.toolError() })
-    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().question?.parts["question-tool"]?.data?.state?.status), "error")
     await page.locator(".tool-call-error-content").filter({ hasText: "Question cancelled" }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().question?.parts["question-tool"]?.data?.state?.status), "error")
     assert.equal(await page.locator(".question-receipt").count(), 0)
     assert.deepEqual(errors, [])
   } finally { await page.close() }

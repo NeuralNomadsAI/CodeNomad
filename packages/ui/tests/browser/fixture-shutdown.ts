@@ -2,7 +2,7 @@ import { version, type Plugin, type ViteDevServer } from "vite"
 
 interface OwnedCache { cacheDir: string; dispose(): Promise<void> }
 
-/** Vite 5's optimized load waits on info.processing, which optimizer.close
+/** Vite 7's optimized load waits on info.processing, which optimizer.close
  * doesn't always settle. Cancel ONLY this cache's read-only load hook before
  * the container tracks its returned promise; never resolve native metadata.
  * The optimizer itself still has to acknowledge both native close passes. */
@@ -15,15 +15,17 @@ export function createFixtureShutdown(cache: OwnedCache) {
   const plugin: Plugin = {
     name: "owned-fixture-optimized-load-cancellation",
     configResolved(config) {
-      if (!version.startsWith("5.")) throw new Error("Fixture shutdown requires reviewed Vite 5 load lifecycle")
+      if (!version.startsWith("7.")) throw new Error("Fixture shutdown requires reviewed Vite 7 load lifecycle")
       const native = config.plugins.find(item => item.name === "vite:optimized-deps")
       if (typeof native?.load !== "function") throw new Error("Unsupported Vite optimized dependency load hook")
       const load = native.load
       // native optimizer.close awaits cancel, not every context's disposal.
       // In particular onCrawlEnd may hold an optimizationResult locally, out
       // of close's reach. Track its actual native context terminal callback.
-      config.optimizeDeps.esbuildOptions = { ...config.optimizeDeps.esbuildOptions, plugins: [
-        ...(config.optimizeDeps.esbuildOptions?.plugins ?? []), {
+      for (const environment of Object.values(config.environments)) {
+        const optimize = environment.optimizeDeps
+        optimize.esbuildOptions = { ...optimize.esbuildOptions, plugins: [
+        ...(optimize.esbuildOptions?.plugins ?? []), {
           name: "owned-fixture-optimizer-disposal",
           setup(build) {
             createdContexts++
@@ -33,8 +35,9 @@ export function createFixtureShutdown(cache: OwnedCache) {
             build.onDispose(() => { disposedContexts++; contexts.delete(disposed); done() })
           },
         },
-      ] }
-      const prefix = `${config.cacheDir.replace(/\\/g, "/")}/deps/`
+        ] }
+      }
+      const prefix = `${config.cacheDir.replace(/\\/g, "/")}/`
       native.load = function (...args) {
         if (!args[0].replace(/\\/g, "/").startsWith(prefix)) return load.apply(this, args)
         if (stopped) return Promise.reject(error)
@@ -60,7 +63,8 @@ export function createFixtureShutdown(cache: OwnedCache) {
         await nativeClose()
         const contextsAfterNativeClose = contexts.size
         await Promise.all([...contexts])
-        const pending = (server as ViteDevServer & { _pendingRequests: Map<unknown, unknown> })._pendingRequests.size
+        const pending = Object.values(server.environments).reduce((count, environment) =>
+          count + (environment as typeof environment & { _pendingRequests: Map<unknown, unknown> })._pendingRequests.size, 0)
         if (pending || waiting.size || contexts.size || createdContexts !== disposedContexts || server.httpServer?.listening) {
           throw new Error("Fixture server did not drain; cache retained")
         }

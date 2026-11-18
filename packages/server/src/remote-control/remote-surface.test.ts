@@ -101,6 +101,26 @@ test("pairing requires the public origin and issues a host-only secure cookie on
   assert.equal(replay.status, 401)
 })
 
+test("server-to-server pairing uses its one-use code without Origin, while browser pairing requires its origin", async t => {
+  const { target, code } = await startRemoteSurface(t)
+  const browserHeaders: Record<string, string>[] = [{ origin: "https://other.tunnel.test" }, { "sec-fetch-site": "cross-site" }, { referer: "https://other.tunnel.test/" }]
+  for (const headers of browserHeaders) {
+    const denied = await send(target(), "/api/remote-control/pair", { method: "POST",
+      headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ code }) })
+    assert.equal(denied.status, 403)
+  }
+  const native = await send(target(), "/api/remote-control/pair", { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) })
+  assert.equal(native.status, 200)
+  assert.ok(native.headers["set-cookie"])
+  const replay = await send(target(), "/api/remote-control/pair", { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) })
+  assert.equal(replay.status, 401)
+  const cookie = String(native.headers["set-cookie"]).split(";")[0]!
+  const mutation = await send(target(), "/api/test/echo", { method: "POST", headers: { cookie } })
+  assert.equal(mutation.status, 403)
+})
+
 test("a paired device uses the app without loopback privileges or spoofed metadata", async (t) => {
   const { target, code } = await startRemoteSurface(t)
   const cookie = await pair(target(), code)
@@ -147,6 +167,20 @@ test("host-only interfaces stay closed to paired devices, including encoded path
     })
     assert.equal(response.status, 404, `${method} ${pathname}`)
   }
+})
+
+test("paired devices retain SideCar registration API access without content or local privileges", async t => {
+  const { target, code } = await startRemoteSurface(t)
+  assert.equal((await send(target(), "/api/sidecars")).status, 401)
+  const cookie = await pair(target(), code)
+  const headers = { cookie, origin: ORIGIN, "content-type": "application/json" }
+  assert.equal((await send(target(), "/api/sidecars", { headers })).status, 200)
+  const created = await send(target(), "/api/sidecars", { method: "POST", headers,
+    body: JSON.stringify({ name: "Fixture", port: 3000 }) })
+  assert.equal(created.status, 201, created.body)
+  assert.equal((await send(target(), "/sidecars/fixture/", { headers })).status, 404)
+  const meta = JSON.parse((await send(target(), "/api/meta", { headers })).body)
+  assert.equal(meta.localRequest, false)
 })
 
 // Writes a raw request line, which the HTTP client would otherwise normalize.
@@ -269,6 +303,22 @@ test("web previews reach Remote Control through their capability while the host 
   assert.notEqual((await asset()).body, "{\"ok\":true}")
   assert.equal(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body).previewsUnavailable, true)
   assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined]])
+})
+
+test("web previews served through Remote Control stay on the preview origin", async (t) => {
+  const { previewManager, target, code } = await startRemoteSurface(t)
+  const cookie = await pair(target(), code)
+  const upstream = await startPreviewUpstream(t)
+  const other = await startPreviewUpstream(t)
+  const { token } = previewManager.create("session", upstream.url)
+  const host = other.url.slice("http://".length)
+  for (const pathname of [`/previews/${token}/%5C%5C${host}/x`, `/previews/${token}/%5C/${host}/x`, `/previews/${token}/\\\\${host}/x`]) {
+    await send(target(), pathname)
+  }
+  await send(target(), `/\\\\${host}/x`, { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })
+  assert.deepEqual(other.requests, [])
+  assert.equal((await send(target(), `/previews/${token}/@vite/client?t=1`)).status, 200)
+  assert.deepEqual(upstream.requests.at(-1), ["GET", "/@vite/client?t=1", undefined])
 })
 
 test("revoking a device ends its live streams and later requests", async (t) => {

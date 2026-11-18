@@ -16,7 +16,7 @@ before(async () => {
   harness = await startHighlightHarness()
   if (host === "electron") {
     electronProfile = await mkdtemp(join(process.env.CODENOMAD_TEST_TEMP || os.tmpdir(), "highlight-electron-"))
-    const env = { ...process.env, CODENOMAD_TEST_PROFILE: electronProfile }; delete env.ELECTRON_RUN_AS_NODE
+    const env = { ...process.env, CODENOMAD_TEST_PROFILE: electronProfile }; delete env.ELECTRON_RUN_AS_NODE; delete env.ELECTRON_NO_ASAR
     app = await _electron.launch({ executablePath: process.env.CODENOMAD_TEST_ELECTRON,
       args: [fileURLToPath(new URL("fixtures/tab-chrome-electron.cjs", import.meta.url))], env })
   } else browser = await (host === "webkit" ? webkit : chromium).launch({

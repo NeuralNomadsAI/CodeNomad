@@ -1,5 +1,5 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { Component, For, Show, createEffect, createSignal } from "solid-js"
+import { Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { alertDialogState, dismissAlertDialog } from "../stores/alerts"
 import type { AlertVariant, AlertDialogState } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
@@ -109,6 +109,10 @@ const AlertDialog: Component = () => {
         const cancelLabel = payload.cancelLabel || t("alertDialog.actions.cancel")
 
         const [inputValue, setInputValue] = createSignal(payload.inputDefaultValue ?? "")
+        const openedAt = Date.now()
+        const [confirmationReady, setConfirmationReady] = createSignal(!payload.confirmDelayMs)
+        const timer = payload.confirmDelayMs ? setTimeout(() => setConfirmationReady(true), payload.confirmDelayMs) : undefined
+        onCleanup(() => clearTimeout(timer))
 
         return (
           <Dialog
@@ -126,6 +130,10 @@ const AlertDialog: Component = () => {
               <Dialog.Content
                 class="alert-dialog modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl"
                 tabIndex={-1}
+                classList={{ "guarded-confirmation": Boolean(payload.confirmDelayMs) }}
+                onCloseAutoFocus={event => {
+                  if (payload.returnFocus) { event.preventDefault(); payload.returnFocus() }
+                }}
                 onOpenAutoFocus={(event) => {
                   // Confirms keep Kobalte's default focus on Cancel, so Enter never
                   // confirms a destructive action; the focus ring shows it from the
@@ -136,7 +144,7 @@ const AlertDialog: Component = () => {
                   primaryButtonRef.focus()
                 }}
               >
-                   <div class="flex items-start gap-3">
+                   <div class="flex items-start gap-3" classList={{ "window-body": Boolean(payload.confirmDelayMs) }}>
                      <div
                        class="flex h-12 w-12 shrink-0 items-center justify-center border text-base font-semibold"
                        style={{
@@ -207,7 +215,7 @@ const AlertDialog: Component = () => {
                    </Show>
 
                    <Show when={payload.type !== "choice"}>
-                   <div class="mt-6 flex justify-end gap-3">
+                    <div class="mt-6 flex justify-end gap-3" classList={{ "window-footer": Boolean(payload.confirmDelayMs) }}>
                      {(isConfirm || isPrompt) && (
                        <button
                          type="button"
@@ -218,9 +226,13 @@ const AlertDialog: Component = () => {
                        </button>
                      )}
                      <button
-                       type="button"
-                       class="button-primary"
-                       onClick={() => dismiss(true, payload, inputValue())}
+                        type="button"
+                        class="button-primary"
+                        disabled={!confirmationReady()}
+                        onClick={() => {
+                          if (!confirmationReady() || Date.now() - openedAt < (payload.confirmDelayMs ?? 0)) return
+                          dismiss(true, payload, inputValue())
+                        }}
                      >
                        {confirmLabel}
                      </button>

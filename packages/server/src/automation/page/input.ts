@@ -1,5 +1,5 @@
 import { keyChord } from "./keys"
-import { callOn, Handle, markedInput, OBJECT_GROUP, resolveElement, type PageSession } from "./protocol"
+import { callOn, Handle, markedInput, resolveElement, PageDriverUnsupportedError, type PageSession } from "./protocol"
 
 /** Trusted pointer, wheel and keyboard input through DevTools, aimed like a user would:
  * at the element's visible centre, only when that point actually reaches the element. */
@@ -8,12 +8,10 @@ export interface Point { x: number; y: number }
 
 /** The point a user would click, or undefined for an element without a visible box. */
 export async function aim(session: PageSession, ref: string, backendNodeId: number, options: { hitTest?: boolean; scroll?: boolean } = {}): Promise<Point | undefined> {
-  const { channel } = session
-  if (options.scroll !== false) await channel.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => undefined)
+  if (options.scroll !== false) await session.driver.scrollIntoView(backendNodeId).catch(error => { if (error instanceof PageDriverUnsupportedError) throw error })
   await session.checkpoint()
-  const result = await channel.send("DOM.getContentQuads", { backendNodeId }).catch(() => ({} as Record<string, unknown>))
+  const quads = await session.driver.geometry(backendNodeId).catch(error => { if (error instanceof PageDriverUnsupportedError) throw error; return [] })
   await session.checkpoint()
-  const quads = Array.isArray(result.quads) ? result.quads as number[][] : []
   const viewport = await layoutViewport(session)
   const quad = quads.find(item => item.length === 8 && area(item) >= 1)
   if (!quad) return undefined
@@ -30,29 +28,18 @@ export async function aim(session: PageSession, ref: string, backendNodeId: numb
 /** Refuses a point that another element covers, instead of acting on whatever is on top. */
 async function assertReceives(session: PageSession, ref: string, backendNodeId: number, point: Point): Promise<void> {
   // Like real events, hit testing passes through `pointer-events: none` layers (toasts, overlays' gaps).
-  const hit = await session.channel.send("DOM.getNodeForLocation", { x: Math.floor(point.x), y: Math.floor(point.y),
-    includeUserAgentShadowDOM: false, ignorePointerEventsNone: false }).catch(() => undefined)
+  const hitNode = await session.driver.hitTest(Math.floor(point.x), Math.floor(point.y)).catch(error => { if (error instanceof PageDriverUnsupportedError) throw error; return undefined })
   await session.checkpoint()
-  const hitNode = hit?.backendNodeId
   if (typeof hitNode !== "number" || hitNode === backendNodeId) return
   const target = await resolveElement(session, ref, backendNodeId)
   const other = await resolveElement(session, ref, hitNode).catch(() => undefined)
   if (!other) return
-  const covered = await callOn(session, ref, target, RECEIVES, [new Handle(other)])
+  const covered = await callOn(session, ref, target, "receives", [new Handle(other)])
   if (typeof covered === "string") throw new Error(`${ref} is covered by ${covered}; close or move it first, then inspect again`)
 }
 
-const RECEIVES = `const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);
-  if (!hit || element === hit || element.contains(hit)) return null;
-  const label = hit.closest("label");
-  if (label && (label.control === element || label.contains(element))) return null;
-  const name = (hit.getAttribute("aria-label") || hit.getAttribute("title") || hit.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 60);
-  return hit.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : "");`
-
 async function layoutViewport(session: PageSession): Promise<{ width: number; height: number }> {
-  const metrics = await session.channel.send("Page.getLayoutMetrics").catch(() => ({} as Record<string, unknown>))
-  const viewport = (metrics.cssLayoutViewport ?? metrics.layoutViewport) as { clientWidth?: number; clientHeight?: number } | undefined
-  return { width: viewport?.clientWidth ?? Number.POSITIVE_INFINITY, height: viewport?.clientHeight ?? Number.POSITIVE_INFINITY }
+  return session.driver.viewport().catch(error => { if (error instanceof PageDriverUnsupportedError) throw error; return { width: Infinity, height: Infinity } })
 }
 
 function area(quad: number[]): number {
@@ -69,42 +56,42 @@ export type MouseButton = keyof typeof BUTTONS
 
 export async function clickAt(session: PageSession, point: Point, button: MouseButton = "left"): Promise<void> {
   await markedInput(session, async dispatch => {
-    await dispatch("Input.dispatchMouseEvent", { type: "mouseMoved", ...point })
-    await dispatch("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button, buttons: BUTTONS[button], clickCount: 1 })
-    await dispatch("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button, buttons: 0, clickCount: 1 })
+    await dispatch("pointer", { type: "mouseMoved", ...point })
+    await dispatch("pointer", { type: "mousePressed", ...point, button, buttons: BUTTONS[button], clickCount: 1 })
+    await dispatch("pointer", { type: "mouseReleased", ...point, button, buttons: 0, clickCount: 1 })
   })
 }
 
 export async function hoverAt(session: PageSession, point: Point): Promise<void> {
-  await markedInput(session, dispatch => dispatch("Input.dispatchMouseEvent", { type: "mouseMoved", ...point }))
+  await markedInput(session, dispatch => dispatch("pointer", { type: "mouseMoved", ...point }))
 }
 
 export async function wheelAt(session: PageSession, point: Point | undefined, delta: { x: number; y: number }): Promise<void> {
   const at = point ?? await viewportCentre(session)
   await markedInput(session, async dispatch => {
-    await dispatch("Input.dispatchMouseEvent", { type: "mouseMoved", ...at })
-    await dispatch("Input.dispatchMouseEvent", { type: "mouseWheel", ...at, deltaX: delta.x, deltaY: delta.y })
+    await dispatch("pointer", { type: "mouseMoved", ...at })
+    await dispatch("wheel", { type: "mouseWheel", ...at, deltaX: delta.x, deltaY: delta.y })
   })
 }
 
 /** A pointer drag in small steps, so pointer-based drag libraries pass their activation distance. */
 export async function dragBetween(session: PageSession, from: Point, to: Point): Promise<void> {
   await markedInput(session, async dispatch => {
-    await dispatch("Input.dispatchMouseEvent", { type: "mouseMoved", ...from })
-    await dispatch("Input.dispatchMouseEvent", { type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 })
+    await dispatch("pointer", { type: "mouseMoved", ...from })
+    await dispatch("pointer", { type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 })
     const steps = 10
     for (let step = 1; step <= steps; step++) {
-      await dispatch("Input.dispatchMouseEvent", { type: "mouseMoved", x: from.x + (to.x - from.x) * step / steps,
+      await dispatch("pointer", { type: "mouseMoved", x: from.x + (to.x - from.x) * step / steps,
         y: from.y + (to.y - from.y) * step / steps, button: "left", buttons: 1 })
     }
-    await dispatch("Input.dispatchMouseEvent", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 })
+    await dispatch("pointer", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 })
   })
 }
 
 export async function pressKeys(session: PageSession, chord: string): Promise<void> {
   const events = keyChord(chord)
   await markedInput(session, async dispatch => {
-    for (const event of events) await dispatch("Input.dispatchKeyEvent", event)
+    for (const event of events) await dispatch("keyboard", event)
   })
 }
 
@@ -117,10 +104,10 @@ async function viewportCentre(session: PageSession): Promise<Point> {
 export async function waitForText(session: PageSession, text: string, gone: boolean, timeoutMs: number): Promise<{ found: boolean; waitedMs: number }> {
   const started = Date.now()
   for (;;) {
-    const root = await session.channel.send("Runtime.evaluate", { expression: "document.documentElement", objectGroup: OBJECT_GROUP })
+    const root = await session.driver.call("document-root", undefined, [])
     await session.checkpoint()
-    const objectId = (root.result as { objectId?: unknown } | undefined)?.objectId
-    const found = typeof objectId === "string" && await callOn(session, "the page", objectId, CONTAINS, [text]) === true
+    const objectId = root.handle
+    const found = typeof objectId === "string" && await callOn(session, "the page", objectId, "contains", [text]) === true
     const waitedMs = Date.now() - started
     if (found !== gone) return { found, waitedMs }
     if (waitedMs >= timeoutMs) {
@@ -129,12 +116,3 @@ export async function waitForText(session: PageSession, text: string, gone: bool
     await new Promise(resolve => setTimeout(resolve, Math.min(200, timeoutMs - waitedMs)))
   }
 }
-
-const CONTAINS = `const needle = String(args[0]).replace(/\\s+/g, " ").trim().toLowerCase();
-  const root = element;
-  const text = value => String(value || "").replace(/\\s+/g, " ").toLowerCase();
-  if (text(root.innerText || root.textContent).includes(needle)) return true;
-  for (const item of root.querySelectorAll("[aria-label], [title], [placeholder], input, textarea")) {
-    if ([item.getAttribute("aria-label"), item.getAttribute("title"), item.getAttribute("placeholder"), item.value].some(value => text(value).includes(needle))) return true;
-  }
-  return false;`

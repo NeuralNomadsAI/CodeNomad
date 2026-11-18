@@ -1,6 +1,7 @@
 import type { WorkspaceEventPayload } from "../../../server/src/api-types"
 import { serverEvents } from "../lib/server-events"
 import { pluginControlsCache } from "./plugin-controls"
+import { pluginSourcesStore } from "./plugin-sources"
 
 type InstanceEvent = Extract<WorkspaceEventPayload, { type: "instance.event" }>
 
@@ -33,5 +34,7 @@ serverEvents.on("instance.eventStatus", (event) => {
 serverEvents.onOpen(() => pluginControlsCache.invalidateAll())
 
 serverEvents.on("workspace.stopped", (event) => {
-  if (event.type === "workspace.stopped") pluginControlsCache.clearInstance(event.workspaceId)
+  if (event.type !== "workspace.stopped") return
+  pluginControlsCache.clearInstance(event.workspaceId)
+  pluginSourcesStore.clearInstance(event.workspaceId)
 })

@@ -4,6 +4,9 @@ import type {
 import { CODENOMAD_API_BASE } from "./api-base"
 import { authenticatedFetch } from "./auth-recovery"
 import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server/src/opencode/session-pruning/assets-contract"
+import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
+import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
+import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
 
 async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(`${CODENOMAD_API_BASE ?? ""}/api/panel-extensions${suffix}`, {
@@ -11,6 +14,28 @@ async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) throw new Error("Panel extension request failed")
   return response.json()
+}
+/** One API 4 method of one exact package; the host supplies instance and digest. */
+const api4 = <T>(id: string, method: string, body: Record<string, unknown>, signal: AbortSignal) =>
+  request<T>(`/${encodeURIComponent(id)}/${method}`, { method: "POST", body: JSON.stringify(body), signal })
+type Authority = { instanceId: string; id: string; digest: string }
+export const panelExtensionsApi4 = {
+  images: ({ id, ...authority }: Authority, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>
+    api4<ImagesResult>(id, "images", { ...authority, sessionID, cursor }, signal),
+  imageRead: ({ id, ...authority }: Authority, sessionID: string, target: AssetTarget, signal: AbortSignal) =>
+    api4<AssetReadResult>(id, "imageRead", { ...authority, sessionID, target }, signal),
+  imagesStatus: ({ id, ...authority }: Authority, scope: { sessionID: string } | { directory: string }, signal: AbortSignal) =>
+    api4<PanelImagesStatus>(id, "imagesStatus", { ...authority, ...scope }, signal),
+  prefillReferences: ({ id, ...authority }: Authority, sessionID: string, targets: Array<AssetTarget | GenerationTarget>, signal: AbortSignal) =>
+    api4<{ paths: Array<string | null> }>(id, "prefillReferences", { ...authority, sessionID, targets }, signal),
+  conversationStatus: ({ id, ...authority }: Authority, directory: string, sessionID: string | undefined, signal: AbortSignal) =>
+    api4<PanelConversationStatus>(id, "conversationStatus", { ...authority, directory, sessionID }, signal),
+  conversation: ({ id, ...authority }: Authority, { mode, ...input }: ImagesConversationRequest, signal: AbortSignal) =>
+    api4<ImagesConversationResponse>(id, mode === "new" ? "conversationNew" : "conversationOpen", { ...authority, ...input }, signal),
+  preferencesGet: ({ id, ...authority }: Authority, signal: AbortSignal) =>
+    api4<{ status: "ok"; value: Record<string, unknown> } | { status: "unavailable" }>(id, "preferencesGet", authority, signal),
+  preferencesSet: ({ id, ...authority }: Authority, value: unknown, signal: AbortSignal) =>
+    api4<{ status: PanelPreferencesSetStatus }>(id, "preferencesSet", { ...authority, value }, signal),
 }
 export const panelExtensionsApi = {
   assets: (instanceId: string, id: string, digest: string, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>

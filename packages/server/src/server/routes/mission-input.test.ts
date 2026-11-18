@@ -75,6 +75,65 @@ test("mission inputs refresh profile environment on every admission, including s
   assert.equal(f.calls[4].input.sessionID, "ses_coordinator")
 })
 
+test("mission assignment and report synchronize memory before admission and preserve authority fences", async () => {
+  const f = fixture(), original = f.manager.getSharedServiceConnection
+  const entries = "/api/experimental/session/{sessionID}/instructions/entries"
+  f.manager.getSharedServiceConnection = async () => ({ ...await original(), endpoint: { url: "http://127.0.0.1", auth: { type: "none" } },
+    fetch: async () => Response.json({ openapi: "3.1.0", paths: { [entries]: { get: {} }, [`${entries}/{key}`]: { put: {}, delete: {} } } }) }) as never
+  let allowed = true, value: any = { global: [], project: [] }
+  const authority = { prepare: async () => {}, current: () => { if (!allowed) throw new Error("authority retired"); return true as const } }
+  const memory = { getSettings: () => ({ enabled: true }), sessionTitles: async () => value }
+  const send = (command: unknown) => admitMissionInput(f.manager as never, f.fence, "ses_coordinator", command, new AbortController().signal, authority, memory as never)
+  await send(f.command)
+  assert.equal(f.gitContext.at(-1)?.input.key, "codenomad.memory")
+  assert.equal(f.gitContext.at(-1)?.input.sessionID, "ses_actor")
+  f.mission.tasks[0].report = { id: "rpt_1", sessionId: "ses_actor", taskKey: "review", outcome: "completed", summary: "Done", evidence: [], next: [], createdAt: 1 }
+  value = null
+  await send({ kind: "synthetic", input: reportInput(f.mission, f.mission.tasks[0].report) })
+  assert.deepEqual(f.gitContext.at(-1), { kind: "remove", input: { sessionID: "ses_coordinator", key: "codenomad.memory" } })
+  const before = f.calls.length
+  memory.sessionTitles = async () => { allowed = false; return {} }
+  const writes = f.gitContext.length
+  await assert.rejects(send(f.command), /policy-unqualified/)
+  assert(f.gitContext.slice(writes).every(call => call.input.key !== "codenomad.memory"))
+  assert.deepEqual(f.calls.slice(before).map(call => call.kind), ["environment"])
+})
+
+test("optional memory outages admit assignments and report synthetics with best-effort removal", async () => {
+  const f = fixture()
+  const client = (await f.manager.getSharedServiceConnection()).client
+  client.session.instructions.entry.remove = async (input: any) => { f.gitContext.push({ kind: "remove", input }); throw new Error("503") }
+  const memory = { getSettings: () => ({ enabled: false }), sessionTitles: async () => { throw new Error("must not read") } }
+  const send = (command: unknown) => admitMissionInput(f.manager as never, f.fence, "ses_coordinator", command, new AbortController().signal, undefined, memory as never)
+  await send(f.command)
+  f.mission.tasks[0].report = { id: "rpt_1", sessionId: "ses_actor", taskKey: "review", outcome: "completed", summary: "Done", evidence: [], next: [], createdAt: 1 }
+  await send({ kind: "synthetic", input: reportInput(f.mission, f.mission.tasks[0].report) })
+  assert.deepEqual(f.calls.map(call => call.kind), ["environment", "prompt", "environment", "synthetic"])
+  assert.deepEqual(f.gitContext.filter(call => call.input.key === "codenomad.memory").map(call => call.input.sessionID), ["ses_actor", "ses_coordinator"])
+})
+
+test("hanging optional memory cleanup admits both assignments and report synthetics at its deadline", async t => {
+  const f = fixture(), client = (await f.manager.getSharedServiceConnection()).client
+  const memory = { getSettings: () => ({ enabled: false }) }
+  f.mission.tasks[0].report = { id: "rpt_1", sessionId: "ses_actor", taskKey: "review", outcome: "completed", summary: "Done", evidence: [], next: [], createdAt: 1 }
+  for (const command of [f.command, { kind: "synthetic", input: reportInput(f.mission, f.mission.tasks[0].report) }]) {
+    let reached!: () => void
+    const started = new Promise<void>(resolve => { reached = resolve })
+    client.session.instructions.entry.remove = async (input: any) => {
+      if (input.key === "codenomad.memory") { reached(); await new Promise(() => {}) }
+    }
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    try {
+      const pending = admitMissionInput(f.manager as never, f.fence, "ses_coordinator", command, new AbortController().signal, undefined, memory as never)
+      await started
+      t.mock.timers.tick(2_000)
+      await pending
+    } finally { t.mock.timers.reset() }
+  }
+  assert.deepEqual(f.calls.map(call => call.kind), ["environment", "prompt", "environment", "synthetic"])
+  await f.fence.run("delete", ["/repo"], async () => {})
+})
+
 test("targeted recovery refuses native waits, then uses environment and one correlated synthetic", async () => {
   const f = fixture()
   f.mission.revision = 7

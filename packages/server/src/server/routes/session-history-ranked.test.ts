@@ -6,6 +6,7 @@ import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuat
 import { DatabaseSync } from "node:sqlite"
 import { queryRankedHistory, RANKED_LIMITS } from "../../opencode/session-pruning/history-ranked-store"
 import { historyRankedInputSchema } from "../../opencode/session-pruning/history-ranked-contract"
+import { brokerIdentities } from "./rpc-broker-test-fixture"
 
 const url = "/api/workspaces/w/session-history/ranked"
 const payload = { version: 1, query: "needle", limit: 40 }
@@ -19,6 +20,7 @@ function page(directory = "/repo", id = "s") {
 function fixture(options: { root?: string; directories?: string[] } = {}) {
   const app = Fastify(), fence = new WorktreeDeletionFence(), calls: any[] = [], ownership: string[] = []
   let root = options.root ?? "/repo"
+  let identities = brokerIdentities(root)
   const directories = options.directories ?? [root]
   let handler = async (input: any): Promise<any> => ({ output: page(input.location.directory, input.location.directory) })
   let active: any
@@ -31,7 +33,8 @@ function fixture(options: { root?: string; directories?: string[] } = {}) {
   }
   replace()
   registerSessionHistoryRoutes(app, { worktreeDeletionFence: fence, workspaceManager: {
-    getServiceLocation: () => root ? { directory: root } : undefined,
+    get: () => identities.get(),
+    getServiceLocation: () => root ? identities.getServiceLocation() : undefined,
     getSharedServiceConnection: async () => active,
     getSharedServiceClient: async () => active.client,
     desktopPluginsReady: async () => {},
@@ -39,7 +42,7 @@ function fixture(options: { root?: string; directories?: string[] } = {}) {
     getWorktreeIdentityForPath: async (_id: string, directory: string) => `identity:${directory}`,
     ownsLocation: async (_id: string, location: { directory: string; workspaceID?: string }) => { ownership.push(location.directory); return directories.includes(location.directory) && location.workspaceID === undefined },
   } as any })
-  return { app, fence, calls, ownership, replace, setRoot: (value: string) => { root = value },
+  return { app, fence, calls, ownership, replace, setRoot: (value: string) => { root = value; identities = brokerIdentities(value) },
     handle: (value: typeof handler) => { handler = value } }
 }
 

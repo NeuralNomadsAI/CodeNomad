@@ -18,6 +18,7 @@ const workspace = (occurrence: number, draft: string): RestorableWorkspaceTabSta
   folder: "/same-folder",
   occurrence,
   projectName: "same-project",
+  ...(occurrence === 1 ? { workspaceId: "record-b" } : {}),
   activeParentSessionId: "parent",
   activeSessionId: "session-1",
   expandedSessionIds: ["parent", "session-1"],
@@ -38,6 +39,7 @@ const workspace = (occurrence: number, draft: string): RestorableWorkspaceTabSta
   },
   unseenIdleSince: { "session-1": occurrence + 20 },
   generationRecovery: { "session-1": occurrence === 0 ? "working" : "interrupted" },
+  seenInterruptions: { "session-1": occurrence + 10, "acknowledged-only": occurrence + 15 },
 })
 const graphSnapshot = (): ClientSnapshotV1 => ({
   version: 1,

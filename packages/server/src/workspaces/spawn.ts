@@ -308,6 +308,7 @@ function executeBinaryProbe(spec: SpawnSpec, timeoutMs?: number): BinaryProbeExe
     cwd: spec.cwd,
     env: spec.env,
     timeout: timeoutMs,
+    windowsHide: true,
     windowsVerbatimArguments: Boolean(spec.options.windowsVerbatimArguments),
   })
   return {

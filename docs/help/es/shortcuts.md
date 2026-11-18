@@ -4,9 +4,9 @@
 
 1. Abre **Paleta de comandos** con `Ctrl+Shift+P` en Windows/Linux o `Cmd+Shift+P` en macOS, o usa su botón/opción de menú visible.
 2. Escribe el nombre de una acción. La paleta incluye acciones de la aplicación y los comandos personalizados de la Location actual; la disponibilidad depende de la vista activa.
-3. Ejecuta **Abrir ayuda** para abrir esta guía en el idioma actual de la interfaz en un contexto de navegador externo. **Ayuda → Ayuda de CodeNomad** nativo abre la misma guía.
+3. Ejecuta **Abrir ayuda** para abrir esta guía en el idioma actual de la interfaz en un contexto de navegador externo. **Ayuda → Ayuda de CodeNomad** nativo abre la misma guía. **Apoyar a CodeNomad** (**Ayuda → Apoyar a CodeNomad** nativo) abre del mismo modo la página [Apoyar a CodeNomad](sponsor.md).
 
-La ayuda deja intactos la vista de la aplicación y el borrador. Si no se abre, visita directamente [Ayuda de CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Que un comando se pueda descubrir no significa que tenga un atajo personalizable: el gestor de atajos cubre un catálogo fijo de 74 acciones del renderer, no todas las acciones de la paleta o del menú nativo. Incluye comandos de la paleta como **Compactar sesión**, **Deshacer último mensaje** o **Abrir ayuda**, que empiezan con **Sin atajo**; las acciones de carpeta del proyecto, terminal y editor solo se ejecutan en ventanas locales de escritorio.
+La ayuda deja intactos la vista de la aplicación y el borrador. Que un comando se pueda descubrir no significa que tenga un atajo personalizable: el gestor de atajos cubre un catálogo fijo de 75 acciones del renderer, no todas las acciones de la paleta o del menú nativo. Incluye comandos de la paleta como **Compactar sesión**, **Deshacer último mensaje** o **Abrir ayuda**, que empiezan con **Sin atajo**; las acciones de carpeta del proyecto, terminal y editor solo se ejecutan en ventanas locales de escritorio.
 
 ## Grabar, desactivar y restablecer {#customize}
 
@@ -16,8 +16,6 @@ La ayuda deja intactos la vista de la aplicación y el borrador. Si no se abre, 
 4. Resuelve las advertencias de todas las filas en conflicto; los conflictos se notifican, no se desactivan silenciosamente.
 
 Las asignaciones se guardan en la configuración de interfaz de CodeNomad y afectan a los clientes que la comparten. No editan las asignaciones CLI/TUI de OpenCode ni los aceleradores del menú nativo. La grabación suprime los atajos del renderer, pero no puede suprimir el sistema operativo ni el menú nativo. **Cancelar**, perder el foco, cerrar la sección o salir de la ventana termina la grabación. Se ignoran los modificadores solos y la composición IME; Tab/Shift+Tab sin modificadores adicionales mueve el foco.
-
-Si el guardado falla, conserva disponible el atajo anterior y reintenta tras comprobar la asignación mostrada. Restablecer es la recuperación segura de una asignación accidental.
 
 ## Valores predeterminados del renderer {#renderer-defaults}
 
@@ -35,9 +33,9 @@ Si el guardado falla, conserva disponible el atajo anterior y reintenta tras com
 | Cerrar sesión | `Mod+Shift+W` |
 | Sesión anterior / siguiente | `Mod+Shift+[` / `Mod+Shift+]` |
 | Pestaña de sesión 1–9 | `Mod+Shift+1` a `Mod+Shift+9` |
-| Info de la instancia | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | Buscar en el historial de sesión | `Mod+F` |
-| Mensaje de usuario anterior / siguiente | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) o `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
+| **Mensaje de usuario anterior** / **Siguiente mensaje de usuario**, también en **Más acciones** del cuadro de entrada | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) o `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Resultado de búsqueda siguiente / anterior (búsqueda enfocada) | `Enter` / `Shift+Enter` |
 | Enfocar entrada / Borrar entrada | `Mod+P` / `Mod+K` |
 | Abrir selector de modelo / agente | `Mod+Shift+M` / `Mod+Shift+A` |
@@ -74,4 +72,4 @@ Las ventanas normales del navegador también conservan sus atajos. Si una asigna
 
 Los atajos de la fila de dígitos y los corchetes usan las posiciones físicas de las teclas para grabar, ejecutar y comprobar conflictos, incluidas las distribuciones AZERTY/QWERTZ. Las demás teclas usan sus valores lógicos. Graba con el teclado que quieras usar y comprueba después el resultado mostrado.
 
-Durante la composición IME, la entrada de texto tiene prioridad. El historial de entradas y las acciones de Escape también dependen del foco, el estado del selector/shell y la operación actual; no supongas que cada ArrowUp o Escape es una acción global incondicional. En el escritorio, enviar mueve el foco a la conversación para que las flechas, las teclas de página y Espacio la desplacen; escribir un carácter vuelve al editor con ese carácter, y **Enfocar entrada** vuelve a él antes de usar el historial de entradas. Las informaciones emergentes indican el atajo actual de controles como la paleta de comandos, la búsqueda, Nueva sesión, Info y los selectores del editor; junto con el gestor de atajos muestran las asignaciones sin añadir una franja permanente de ayuda de teclado.
+Durante la composición IME, la entrada de texto tiene prioridad. El historial de entradas y las acciones de Escape también dependen del foco, el estado del selector/shell y la operación actual; no supongas que cada ArrowUp o Escape es una acción global incondicional. En el escritorio, enviar mueve el foco a la conversación para que las flechas, las teclas de página y Espacio la desplacen; escribir un carácter vuelve al editor con ese carácter, y **Enfocar entrada** vuelve a él antes de usar el historial de entradas.

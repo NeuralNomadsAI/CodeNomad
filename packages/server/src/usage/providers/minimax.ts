@@ -61,10 +61,15 @@ function createMiniMaxProvider(input: {
         }
         if (!payload) {
           tokenPlan = false
-          const codingPayload = await fetchJson(input.codingPlanUrl, { headers: { Authorization: `Bearer ${key}` } })
-          if (isUsablePayload(codingPayload)) payload = codingPayload
+          payload = await fetchJson(input.codingPlanUrl, { headers: { Authorization: `Bearer ${key}` } })
         }
-        if (!payload) throw new Error("Provider returned no usable quota data")
+        if (!isUsablePayload(payload)) {
+          if (payload?.base_resp?.status_code === 0 && (payload.model_remains === undefined ||
+            (Array.isArray(payload.model_remains) && payload.model_remains.length === 0))) {
+            return result(this.id, this.name, { ok: false, configured: true, unavailableReason: "minimax-limits-not-shared" })
+          }
+          throw new Error("Provider returned no usable quota data")
+        }
         const model = pickChatModel(Array.isArray(payload?.model_remains) ? payload.model_remains : [])
         if (!model) throw new Error("No model quota data available")
         const intervalResetAt = toTimestamp(model?.end_time)

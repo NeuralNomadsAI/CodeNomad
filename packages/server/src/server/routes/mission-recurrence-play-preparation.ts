@@ -8,7 +8,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { physical } from "../../missions/physical-path"
 import { resolveStandingProfileSource } from "../../missions/host-authority/profile-source"
-import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../../missions/recurrence-control-proof"
+import { recurrenceControlRequestDigest, signNativeRecurrenceControl, type SchedulePrincipal } from "../../missions/recurrence-control-proof"
 import { recurrenceControlHttpSchema, recurrenceControlStatusSchema } from "../../missions/recurrence-control-contract"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
@@ -21,13 +21,28 @@ import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
 /** Exact Settings profile and currently owned physical root are resolved only
  * inside the authenticated human request, never from native RPC path options. */
-export async function prepareHumanRecurrenceControl(request: FastifyRequest, workspaceID: string, raw: unknown,
-  deps: { auth: AuthManager; settings: Pick<SettingsService, "getProfileScope" | "configYamlPathForAuthority">;
+export type RecurrenceControlDeps = { auth: AuthManager; settings: Pick<SettingsService, "getProfileScope" | "configYamlPathForAuthority">;
     manager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection"
       | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle" | "getWorktreeIdentityForPath" | "getHostPathForServicePath">;
-    fence: WorktreeDeletionFence; bridgeToken: string; remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized"> }, signal: AbortSignal) {
-  const input = recurrenceControlHttpSchema.parse(raw), session = recurrenceHumanSession(request, deps)
+    fence: WorktreeDeletionFence; bridgeToken: string; remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized"> }
+
+export async function prepareHumanRecurrenceControl(request: FastifyRequest, workspaceID: string, raw: unknown,
+  deps: RecurrenceControlDeps, signal: AbortSignal) {
+  const session = recurrenceHumanSession(request, deps)
   if (!session) throw new Error("Human authentication required")
+  return prepareRecurrenceControl(workspaceID, raw, deps, signal, {
+    principal: { kind: "human", sessionID: session.sessionId },
+    current() { if (recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId) throw new Error("Recurrence principal changed") },
+    refresh: async () => {},
+  })
+}
+
+/** Shared physical admission; only the private bridge supplies an agent principal. */
+export async function prepareRecurrenceControl(workspaceID: string, raw: unknown,
+  deps: Omit<RecurrenceControlDeps, "auth" | "remoteDevices">, signal: AbortSignal,
+  caller: { principal: SchedulePrincipal; current(): void; refresh(): Promise<void> }) {
+  const input = recurrenceControlHttpSchema.parse(raw)
+  await caller.refresh(); caller.current()
   const workspace = deps.manager.get(workspaceID), base = deps.manager.getServiceLocation(workspaceID)
   if (!workspace || !base) throw new Error("Workspace unavailable")
   const profile = deps.settings.getProfileScope(), distro = deps.manager.getServiceWslDistro(workspaceID)
@@ -42,19 +57,19 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
   const display = previousHold ?? await captureDisplayIdentities(deps.fence, deps.manager, workspaceID, [base.directory, directory]) ?? (() => false)
   const current = (): true => {
     signal.throwIfAborted(); connection.assertCurrent()
-    if (recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId
-      || deps.manager.get(workspaceID) !== workspace || !sameLocation(deps.manager.getServiceLocation(workspaceID) ?? { directory: "" }, base)
+    caller.current()
+    if (deps.manager.get(workspaceID) !== workspace || !sameLocation(deps.manager.getServiceLocation(workspaceID) ?? { directory: "" }, base)
       || deps.manager.getServiceWslDistro(workspaceID) !== distro || !display()
       || canonicalAuthority(deps.settings.getProfileScope()) !== canonicalAuthority(profile)) throw new Error("Human recurrence admission changed")
     return true
   }
   const client = connection.client
-  if (!await deps.manager.ownsLocation(workspaceID, { directory }, client, signal)) throw new Error("Location is not owned")
+  if (!await deps.manager.ownsLocation(workspaceID, { directory }, client, { signal })) throw new Error("Location is not owned")
   const location = await client.location.get({ location: { directory } }, { signal })
   const baseInfo = await client.location.get({ location: { directory: base.directory } }, { ...locationRequestOptions(base), signal })
   current()
   if (location.project.id !== baseInfo.project.id || location.project.canonical !== baseInfo.project.canonical
-    || !sameLocation(location, { directory }) || !await deps.manager.ownsLocation(workspaceID, location, client, signal)) throw new Error("Foreign native Location")
+    || !sameLocation(location, { directory }) || !await deps.manager.ownsLocation(workspaceID, location, client, { signal })) throw new Error("Foreign native Location")
   const checkout = await deps.manager.getWorktreeIdentityForPath(workspaceID, directory)
   if (!checkout) throw new Error("Checkout unavailable")
   const physicalRoot = await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)
@@ -95,7 +110,7 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
       current()
       if (await deps.manager.getWorktreeIdentityForPath(workspaceID, directory) !== checkout
         || canonicalAuthority(await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)) !== canonicalAuthority(physicalRoot)
-        || !await deps.manager.ownsLocation(workspaceID, location, client, signal)) throw new Error("Physical root changed")
+        || !await deps.manager.ownsLocation(workspaceID, location, client, { signal })) throw new Error("Physical root changed")
       current()
     }
     const yaml = deps.settings.configYamlPathForAuthority(), executionHost = distro ? `wsl:${distro}` : "local"
@@ -104,7 +119,9 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
       binding: { profileID: profile.key, executionHost, projectID: location.project.id, projectCanonical: location.project.canonical,
         roots: [{ mode: "directory-only", directory }] }, manager: deps.manager, roots: { assertRoots }, workspaceID, assertCurrent: current })
     await assertRoots()
-    const identity = { sessionID: session.sessionId, workspaceID, requestID: input.requestID,
+    await caller.refresh()
+    const identity = { ...(caller.principal.kind === "human" ? { sessionID: caller.principal.sessionID } : { principal: caller.principal }),
+      workspaceID, requestID: input.requestID,
       location: { directory },
       scheduleID: input.scheduleID, action: input.action, expectedRevision: input.expectedRevision,
       profileSource, issuedAt: Date.now() }

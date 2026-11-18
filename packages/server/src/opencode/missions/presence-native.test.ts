@@ -9,7 +9,11 @@ import { fileURLToPath } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
 import { build } from "esbuild"
 import { OpenCode } from "@opencode/client"
+import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 
+// Opt-in: MISSIONS_LIFETIME_NATIVE_CLI=<absolute isolated opencode CLI> npx tsx --test <this file>.
+// Mission tools and their context hook load once with the plugin, independently of
+// presence (MISSIONS_RECURRING.md); presence gates the typed RPC and the ordinary route.
 const cli = process.env.MISSIONS_LIFETIME_NATIVE_CLI
 test("private native mission plugin retains only unsettled work across presence loss", {
   skip: !cli, timeout: 90_000,
@@ -27,9 +31,11 @@ test("private native mission plugin retains only unsettled work across presence 
   await writeFile(lease, "")
   const definition = { id: "missions.lifetime.fixture", methods: {
     invoke: { input: { type: "object" }, output: { type: "string" } },
+    refusal: { input: { type: "object" }, output: { type: "string" } },
     corrupt: { input: { type: "object" }, output: { type: "boolean" } },
     count: { input: { type: "object" }, output: { type: "integer" } },
     setups: { input: { type: "object" }, output: { type: "integer" } },
+    transforms: { input: { type: "object" }, output: { type: "integer" } },
     hold: { input: { type: "object" }, output: { type: "boolean" } },
     held: { input: { type: "object" }, output: { type: "boolean" } },
     release: { input: { type: "object" }, output: { type: "boolean" } },
@@ -37,11 +43,13 @@ test("private native mission plugin retains only unsettled work across presence 
   }, events: {} }
   const source = fileURLToPath(new URL("./desktop-plugin.ts", import.meta.url))
   let releaseModel: (() => void) | undefined
+  const primaryTools: string[][] = []
   const provider = createServer(async (request, response) => {
     let raw = ""
     for await (const chunk of request) raw += chunk
     const body = JSON.parse(raw)
     if (request.headers["x-lifetime-kind"] === "primary") {
+      primaryTools.push((body.tools ?? []).map((tool: { function?: { name?: string } }) => String(tool.function?.name)))
       await new Promise<void>(resolve => { releaseModel = resolve; response.once("close", resolve) })
     }
     if (response.destroyed) return
@@ -64,27 +72,34 @@ test("private native mission plugin retains only unsettled work across presence 
 const desktop = desktopPlugin(${JSON.stringify(presence)});
 export default { ...desktop, async setup(ctx) {
   await ctx.session.hook('http.request', event => event.request.headers.set('x-lifetime-kind', event.kind));
-  let setups = 0, hold = false, release;
+  let setups = 0, transforms = 0, hold = false, release;
+  const invoke = async input => {
+    const tool = (await ctx.tool.list()).find(tool => tool.id === 'mission_' + input.tool);
+    if (!tool) throw new Error('Mission tool unavailable');
+    const result = await tool.execute(input.input, { sessionID: input.sessionID,
+      messageID: 'msg_fixture', id: input.callID, progress: async () => {}, signal: new AbortController().signal });
+    return result.content;
+  };
   const dispose = await desktop.setup({ ...ctx, tool: { ...ctx.tool,
-    transform: async callback => { setups++; return ctx.tool.transform(callback); }
-  }, storage: { ...ctx.storage, scan: async input => {
+    transform: async callback => { transforms++; return ctx.tool.transform(callback); }
+  }, rpc: { ...ctx.rpc, register: async (rpc, handlers) => {
+    if (rpc.id === ${JSON.stringify(CODENOMAD_MISSIONS_RPC_ID)}) setups++;
+    return ctx.rpc.register(rpc, handlers);
+  } }, storage: { ...ctx.storage, scan: async input => {
     if (hold) { hold = false; await new Promise(resolve => { release = resolve; }); }
     return ctx.storage.scan(input);
   } } });
   await ctx.rpc.register(${JSON.stringify(definition)}, {
     count: async () => (await ctx.tool.list()).filter(tool => tool.id === 'mission_inspect').length,
     setups: async () => setups,
+    transforms: async () => transforms,
     hold: async () => { hold = true; return true; },
     held: async () => Boolean(release),
     release: async () => { release?.(); release = undefined; return true; },
     cleanup: async () => { await dispose(); return true; },
-    invoke: async input => {
-      const tool = (await ctx.tool.list()).find(tool => tool.id === 'mission_' + input.tool);
-      if (!tool) throw new Error('Mission tool unavailable');
-      const result = await tool.execute(input.input, { sessionID: input.sessionID,
-        messageID: 'msg_fixture', id: input.callID, progress: async () => {}, signal: new AbortController().signal });
-      return result.content;
-    },
+    invoke,
+    // Native RPC masks handler errors; return the executor's own refusal ('' when it ran).
+    refusal: async input => invoke(input).then(() => '', error => String(error?.message ?? error)),
     corrupt: async () => {
       const page = await ctx.storage.scan({ prefix: 'codenomad-missions/v2', limit: 100 });
       const key = page.entries[0].key;
@@ -134,38 +149,58 @@ export default { ...desktop, async setup(ctx) {
     const location = { directory: project }
     await client.plugin.list({ location })
     const rpc = client.rpc(definition)
+    const missions = client.rpc(CODENOMAD_MISSIONS_RPC)
+    // Registered tools, and the presence-gated registration the backend reads.
     const count = async () => rpc.count({}, { location }) as Promise<number>
-    await until(async () => await count() === 1)
+    const registered = () => missions.snapshot({}, { location }).then(() => true, (error: { type?: unknown }) => {
+      if (error?.type === "rpc.unavailable" || error?.type === "rpc.method_not_found") return false
+      throw error
+    })
+    const call = (sessionID: string, tool: string, input: unknown, callID: string, method: "invoke" | "refusal" = "invoke") =>
+      rpc[method]({ tool, input, sessionID, callID }, { location }) as Promise<string>
+    const idle = await client.session.create({ location, title: "Presence fixture" })
+    await until(registered)
+    assert.equal(await count(), 1)
+    assert.deepEqual(JSON.parse(await call(idle.id, "inspect", { list: true }, "present")), { missions: [] })
     await unlink(lease)
-    await until(async () => await count() === 0)
+    await until(async () => !await registered())
+    assert.equal(await count(), 1, "tools stay registered without presence")
+    assert.match(await call(idle.id, "inspect", { list: true }, "absent", "refusal"), /no longer available/,
+      "the ordinary route refuses without presence")
+    await client.session.prompt({ sessionID: idle.id, text: "Presence-less fixture" })
+    await until(() => Boolean(releaseModel))
+    assert.deepEqual(primaryTools.at(-1)!.filter(name => name.startsWith("mission_")), [],
+      "model requests omit Missions tools without presence")
+    releaseModel!(); releaseModel = undefined
+    await client.session.wait({ sessionID: idle.id }, { signal: AbortSignal.timeout(10_000) })
     await writeFile(lease, "")
-    await until(async () => await count() === 1)
+    await until(registered)
     assert.equal(await rpc.setups({}, { location }), 2)
+    assert.equal(await rpc.transforms({}, { location }), 1, "presence never registers tools again")
     const coordinator = await client.session.create({ location, title: "Lifetime fixture" })
-    const invoke = (tool: string, input: unknown, callID: string) => rpc.invoke({
-      tool, input, sessionID: coordinator.id, callID,
-    }, { location })
+    const invoke = (tool: string, input: unknown, callID: string) => call(coordinator.id, tool, input, callID)
     await invoke("inspect", { start: { objective: "Finish after close", template: "custom" } }, "start")
     await client.session.prompt({ sessionID: coordinator.id, text: "Deterministic lifetime fixture" })
     await until(() => Boolean(releaseModel))
+    assert(primaryTools.at(-1)!.includes("mission_inspect"), "model requests offer Missions tools with presence")
     await unlink(lease)
     await delay(2_500)
-    assert.equal(await count(), 1, "active work survives close")
+    assert.equal(await registered(), true, "active work survives close")
     releaseModel!()
     await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(10_000) })
     await writeFile(lease, "")
     await delay(2_500)
-    assert.equal(await count(), 1, "reopen retains one registration")
+    assert.equal(await registered(), true, "reopen retains the registration")
     assert.equal(await rpc.setups({}, { location }), 2, "reopen does not run setup again")
     await unlink(lease)
     await invoke("report", { outcome: "completed", summary: "Done", evidence: [], next: [], final: true }, "finish")
-    await until(async () => await count() === 0)
+    await until(async () => !await registered())
     await writeFile(lease, "")
-    await until(async () => await count() === 1)
+    await until(registered)
     await rpc.corrupt({}, { location })
     await unlink(lease)
     await delay(2_500)
-    assert.equal(await count(), 1, "unknown damaged storage retains conservatively")
+    assert.equal(await registered(), true, "unknown damaged storage retains conservatively")
     await rpc.hold({}, { location })
     await until(async () => await rpc.held({}, { location }) === true)
     const setups = await rpc.setups({}, { location })
@@ -177,10 +212,12 @@ export default { ...desktop, async setup(ctx) {
     await rpc.release({}, { location })
     await cleanup
     assert.equal(await count(), 0)
+    assert.equal(await registered(), false)
     await delay(2_500)
     assert.equal(await count(), 0, "late callback and renewed presence cannot resurrect cleaned plugin")
+    assert.equal(await registered(), false, "late callback and renewed presence cannot resurrect cleaned plugin")
     assert.equal(await rpc.setups({}, { location }), setups)
-    console.log(JSON.stringify({ cli, root, cases: ["close idle", "close native model busy", "native model settles after close",
+    console.log(JSON.stringify({ cli, root, cases: ["close idle", "tools stay registered but hidden and refused", "close native model busy", "native model settles after close",
       "reopen once", "finish after close", "unknown retained", "actual plugin cleanup fences pending lifetime callback"] }))
   } finally {
     releaseModel?.()

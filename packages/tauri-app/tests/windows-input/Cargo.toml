@@ -5,5 +5,5 @@ edition = "2021"
 publish = false
 
 [target.'cfg(windows)'.dependencies]
-tao = "=0.34.6"
+tao = "=0.37.2"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

@@ -9,6 +9,7 @@ import { compareRank, dateBounds, diverseHits, idfWeights, rankedExcerpt, termMa
 import { mayContainHistoryTerms } from "./history-ranked-prefilter"
 import type { HistoryRankedInput, HistoryRankedPage } from "./history-ranked-contract"
 import { rankedDirectoryOwnership, type CheckRankedDirectory } from "./history-ranked-ownership"
+import { messageStorage } from "./message-storage"
 
 export const RANKED_LIMITS = { chunk: 128, messages: 16_384, candidates: 30_000, sessions: 600, judged: 600, prefilterBytes: 64 * 1024, scanMs: 1500, totalMs: 2000 } as const
 interface Candidate { position: number; messageID: string; sessionID: string; createdAt: number; flags?: boolean[]; score: number }
@@ -85,11 +86,12 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
       return present
     } catch { return -2 }
   })
+  const storage = messageStorage(db)
   const rows = db.prepare(`SELECT m.rowid AS position,m.id,m.session_id,m.time_created,s.directory,s.workspace_id,s.title,
-    CASE WHEN length(CAST(m.data AS BLOB)) <= ${MAX_MESSAGE_BYTES}
-      THEN codenomad_ranked_mask(CAST(${input.includeTechnical ? "m.data" : `CASE WHEN length(CAST(m.data AS BLOB)) > ${RANKED_LIMITS.prefilterBytes}
+    CASE WHEN ${storage.bytes("m")} <= ${MAX_MESSAGE_BYTES}
+      THEN codenomad_ranked_mask(CAST(${input.includeTechnical ? "m.data" : `CASE WHEN ${storage.bytes("m")} > ${RANKED_LIMITS.prefilterBytes}
         THEN ${textProjection} ELSE m.data END`} AS BLOB),m.type) ELSE -2 END AS mask
-    FROM session_message m CROSS JOIN session_v2 s ON s.id=m.session_id
+    FROM ${storage.table} m CROSS JOIN session_v2 s ON s.id=m.session_id
     WHERE ${where}${dates} AND m.rowid > ? AND m.rowid <= ? ORDER BY m.rowid DESC LIMIT ${RANKED_LIMITS.chunk}`)
   let candidates: Candidate[] = []
   const owners = new Map<string, HistoryRankedPage["sessions"][number]>()
@@ -188,8 +190,8 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
   candidates.sort((a, b) => Number(!a.flags) - Number(!b.flags) || b.score - a.score || b.createdAt - a.createdAt || b.position - a.position)
   const judge = textJudge(terms, input.query, weights)
   const body = db.prepare(`SELECT m.type,m.time_created,s.directory,s.workspace_id,s.title,
-    CASE WHEN length(CAST(m.data AS BLOB)) <= ${MAX_MESSAGE_BYTES} THEN ${input.includeTechnical ? "m.data" : textProjection} END AS data
-    FROM session_message m JOIN session_v2 s ON s.id=m.session_id
+    CASE WHEN ${storage.bytes("m")} <= ${MAX_MESSAGE_BYTES} THEN ${input.includeTechnical ? "m.data" : textProjection} END AS data
+    FROM ${storage.table} m JOIN session_v2 s ON s.id=m.session_id
     WHERE ${where}${dates} AND m.rowid=? AND m.id=? AND m.session_id=?`)
   const judged: Judged[] = []
   if (candidates.length > RANKED_LIMITS.judged) cap("judge_limit")

@@ -1,9 +1,61 @@
+import { StringDecoder } from "node:string_decoder"
+
 type ShutdownLogger = Pick<import("./logger").Logger, "info" | "warn" | "error">
 type ShutdownOperation = () => void | Promise<void>
 
 export type ServerShutdownTrigger = NodeJS.Signals | "stdin"
 export const SERVER_SHUTDOWN_COMPLETE = "CODENOMAD_SHUTDOWN_STATUS:complete"
 export const SERVER_SHUTDOWN_INCOMPLETE = "CODENOMAD_SHUTDOWN_STATUS:incomplete"
+export const STDIN_SHUTDOWN_COMMAND = "codenomad:shutdown"
+
+interface ShutdownSignalSource {
+  on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => unknown
+}
+
+export function installShutdownSignalHandlers(
+  source: ShutdownSignalSource,
+  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
+): void {
+  source.on("SIGINT", () => void shutdown("SIGINT"))
+  source.on("SIGTERM", () => void shutdown("SIGTERM"))
+}
+
+interface ShutdownStdinSource {
+  on(event: "data", listener: (chunk: Buffer | string) => void): unknown
+  off?(event: "data", listener: (chunk: Buffer | string) => void): unknown
+  destroy?(): unknown
+}
+
+export function installShutdownStdinHandler(
+  source: ShutdownStdinSource,
+  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
+  handleLine?: (line: string) => boolean,
+): void {
+  let buffer = ""
+  const decoder = new StringDecoder("utf8")
+  let requested = false
+  const onData = (chunk: Buffer | string) => {
+    buffer += decoder.write(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() ?? ""
+    let shutdownRequested = false
+    for (const line of lines) {
+      if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
+      else handleLine?.(line)
+    }
+    if (!shutdownRequested || requested) return
+
+    requested = true
+    // Accepted requests can still need a native-parent response while draining.
+    // The entry point destroys stdin once resource cleanup completes.
+    if (!handleLine) {
+      source.off?.("data", onData)
+      source.destroy?.()
+    }
+    void shutdown("stdin")
+  }
+  source.on("data", onData)
+}
 
 export type ServerShutdownOperations = Record<
   "stopInstanceEventBridge" | "stopSidecars" | "stopClientConnections" | "stopRemoteControl" | "stopRemoteProxySessions" | "stopWorkspaces" |
@@ -75,7 +127,11 @@ export async function orchestrateServerShutdown(
     }
   }
 
+  // Drain accepted HTTP handlers while their workspace and native-parent
+  // authority is still available for receipt and mission commits.
+  const httpShutdown = settle([["stopHttpServers", operations.stopHttpServers]])
   const workspaceShutdown = (async () => {
+    await httpShutdown
     const attempts = Math.max(1, Math.floor(workspaceAttempts))
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       const [result] = await Promise.allSettled([Promise.resolve().then(operations.stopWorkspaces)])
@@ -94,9 +150,9 @@ export async function orchestrateServerShutdown(
       ["stopInstanceEventBridge", operations.stopInstanceEventBridge], ["stopSidecars", operations.stopSidecars],
       ["stopClientConnections", operations.stopClientConnections], ["stopRemoteControl", operations.stopRemoteControl],
       ["stopRemoteProxySessions", operations.stopRemoteProxySessions],
+      ["stopReleaseMonitor", operations.stopReleaseMonitor],
     ]),
     workspaceShutdown,
   ])
-  await settle([["stopHttpServers", operations.stopHttpServers], ["stopReleaseMonitor", operations.stopReleaseMonitor]])
   if (errors.length) throw new AggregateError(errors, "Server shutdown failed")
 }

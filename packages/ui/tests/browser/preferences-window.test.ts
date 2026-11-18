@@ -129,3 +129,41 @@ test("a session error is announced in the windows showing sessions, never again 
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("a row hint from another window focuses the linked setting row on the native request and on later storage events", async () => {
+  const context = await browser.newContext({ viewport: { width: 1100, height: 760 }, locale: "en-US" })
+  const page = await context.newPage(), errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript({ content: `{
+    const w = window
+    w.__CODENOMAD_RUNTIME_HOST__ = "electron"
+    w.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
+    localStorage.setItem("codenomad.settings.rowTarget", JSON.stringify({ section: "opencode", row: "opencode-login-start", at: Date.now() }))
+    w.electronAPI = {
+      getPreferencesRequest: async () => ({ section: "opencode" }),
+      acceptPreferencesRequest: async () => {},
+      preferencesReady: async () => { w.ready = true },
+      onPreferencesSection: (listener) => { w.section = listener; return () => {} },
+      onPreferencesCloseRequested: () => () => {},
+      onPreferencesTransitionRequested: () => () => {},
+      closeWindow: async () => {},
+    }
+  }` })
+  await context.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  const focused = () => page.waitForFunction(() => document.activeElement?.id === "opencode-login-start")
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => (window as any).ready)
+    await focused()
+    assert.equal(await page.evaluate(() => localStorage.getItem("codenomad.settings.rowTarget")), null, "the hint is consumed once")
+    await page.getByRole("button", { name: "OpenCode", exact: true }).focus()
+    // Another window of the same origin links again while this one already shows the section.
+    const other = await context.newPage()
+    await other.goto(new URL("/api/fixture-origin", url).href)
+    await other.evaluate(() => localStorage.setItem("codenomad.settings.rowTarget",
+      JSON.stringify({ section: "opencode", row: "opencode-login-start", at: Date.now() })))
+    await focused()
+    await other.close()
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})

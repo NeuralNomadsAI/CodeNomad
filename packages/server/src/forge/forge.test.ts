@@ -61,7 +61,8 @@ describe("forge remotes", () => {
     assert.deepEqual(parseRemoteUrl("ssh://git@codeberg.org:2222/forgejo/forgejo"), { host: "codeberg.org", path: "forgejo/forgejo" })
     assert.deepEqual(parseRemoteUrl("https://user:secret@git.example.com/team/app/"), { host: "git.example.com", path: "team/app" })
     for (const url of ["C:/repos/app", "C:\\repos\\app", "/srv/git/app.git", "file:///srv/app", "https://github.com/only-owner", "git@host:../escape/x", "",
-      "git@localhost#ignored:team/app", "git@host?x:team/app", "git@host\\evil:team/app", "https://host/team/app%3Fq", "https://ho_st/team/app"]) {
+      "git@localhost#ignored:team/app", "git@host?x:team/app", "git@host\\evil:team/app", "https://host/team/app%3Fq", "https://ho_st/team/app",
+      "https://dev.azure.com/Org/My%20Project/_git/Repo", "https://host/team/r%C3%A9po", "https://host/team/My Project"]) {
       assert.equal(parseRemoteUrl(url), undefined, url)
     }
   })
@@ -90,6 +91,17 @@ describe("forge remotes", () => {
     assert.equal(forgeWebUrl("github", "github.com", "o/r", "pullRequest", 7), "https://github.com/o/r/pull/7")
     assert.equal(forgeWebUrl("gitlab", "gitlab.com", "g/s/p", "pullRequest", 7), "https://gitlab.com/g/s/p/-/merge_requests/7")
     assert.equal(forgeWebUrl("gitea", "codeberg.org", "o/r", "issue", 7), "https://codeberg.org/o/r/issues/7")
+  })
+
+  it("repository detection ignores inherited Git directory redirection and observes cancellation", async () => {
+    const root = checkout({ origin: "https://gitlab.com/group/project.git" }), foreign = checkout({ origin: "https://github.com/other/repo.git" })
+    const previous = process.env.GIT_DIR
+    try {
+      process.env.GIT_DIR = path.join(foreign, ".git")
+      assert.deepEqual(await readForgeRemote(root), { host: "gitlab.com", path: "group/project" })
+      const controller = new AbortController(); controller.abort(new Error("cancelled"))
+      await assert.rejects(readForgeRemote(root, controller.signal), /cancelled/)
+    } finally { if (previous === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = previous }
   })
 })
 

@@ -1,14 +1,15 @@
-import { Show, createSignal } from "solid-js"
+import { Show, createSignal, onCleanup } from "solid-js"
 import { render } from "solid-js/web"
 import { MissionReader } from "../../../src/components/mission-reader"
 import { MissionTaskTree } from "../../../src/components/mission-task-tree"
 import { missionTaskConversation } from "../../../src/components/mission-task-navigation"
 import type { MissionTask } from "../../../../server/src/api-types"
 import { initializeClientState } from "../../../src/stores/client-state"
-import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
+import { missionProjectView, navigateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { missionStore } from "../../../src/stores/missions"
+import { openSessionPreview } from "../../../src/stores/session-previews"
 import { addInstance, updateInstance } from "../../../src/stores/instances"
-import { activeSessionId, seedRestoredSessionSelection, setSessions, sessions } from "../../../src/stores/session-state"
+import { activeSessionId, seedRestoredSessionSelection, selectActiveSession, setSessions, sessions } from "../../../src/stores/session-state"
 import { sseManager } from "../../../src/lib/sse-manager"
 import type { V2Event } from "@opencode/client"
 import { applyOpenCodeDataEvent } from "../../../src/stores/opencode-data"
@@ -34,12 +35,16 @@ seedRestoredSessionSelection(instanceId, null, "coordinator")
 function Fixture() {
   const [mounted, mount] = createSignal(true)
   const mission = () => missionStore.state(instanceId).missions[0]
-  const show = (itemId: string) => updateMissionProjectView(scope, { reader: { missionId: "mission", kind: "task", itemId } })
-  const reading = (task: MissionTask) => { const reader = missionProjectView(scope).reader; return reader?.kind === "task" && reader.itemId === task.id }
+  const show = (itemId: string) => navigateMissionProjectView(instanceId, { reader: { missionId: "mission", kind: "task", itemId } })
+  // As in the panel, a row selects its task, and an open reader follows the selection.
+  const selected = (task: MissionTask) => { const key = missionProjectView(instanceId).selectedTask; return key?.missionId === "mission" && key.taskId === task.id }
+  const select = (task: MissionTask) => navigateMissionProjectView(instanceId, { selectedTask: { missionId: "mission", taskId: task.id },
+    ...(missionProjectView(instanceId).reader ? { reader: { missionId: "mission", kind: "task" as const, itemId: task.id } } : {}) })
   ;(window as any).taskReader = {
     show, refresh: () => missionStore.refresh(instanceId),
     mount,
-    conversation: (id: string) => seedRestoredSessionSelection(instanceId, null, id),
+    openPreview: () => openSessionPreview("coordinator", "https://example.com", instanceId),
+    conversation: (id: string) => selectActiveSession(instanceId, id),
     reconnect: () => applyOpenCodeDataEvent(instanceId, scope, { id: "reconnected", type: "server.connected", created: 2, data: {} } as V2Event),
     directory: (folder: string) => updateInstance(instanceId, { folder }),
     removeActor: () => setSessions(previous => new Map(previous).set(instanceId, new Map([["coordinator", session("coordinator")]]))),
@@ -47,19 +52,23 @@ function Fixture() {
       id: "deleted-actor", type: "session.deleted", created: 2, location: { directory: scope }, data: { sessionID: "actor" },
       durable: { aggregateID: "actor", seq: 2, version: 2 },
     } as V2Event),
-    snapshot: () => ({ view: missionProjectView(scope), active: activeSessionId().get(instanceId),
+    snapshot: () => ({ view: missionProjectView(instanceId), active: activeSessionId().get(instanceId),
       actor: sessions().get(instanceId)?.get("actor"), parent: sessions().get(instanceId)?.get("native-parent") }),
   }
-  void missionStore.ensure(instanceId)
+   missionStore.setDemand(instanceId, true)
+   missionStore.want(instanceId, "fixture-panel", "mission")
+   onCleanup(() => { missionStore.want(instanceId, "fixture-panel", undefined); missionStore.setDemand(instanceId, false) })
+   void missionStore.ensure(instanceId)
   return <div style={{ display: "grid", "grid-template-columns": "minmax(0, 1fr) 390px", height: "800px" }}>
     <main class="mission-transcript-surface">
       <textarea id="draft" /><div id="transcript" style={{ height: "70px", overflow: "auto" }}><div style={{ height: "500px" }}>Retained transcript</div></div>
-      <Show when={mounted() && missionProjectView(scope).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
+      <Show when={mounted() && missionProjectView(instanceId).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
     </main>
     <aside class="mission-control" style={{ overflow: "auto" }}><Show when={mission()}>{value =>
       <MissionTaskTree mission={value()} instanceId={instanceId} activity={missionStore.state(instanceId).activity?.missions[0]?.actors}
-        reading={reading} onRead={task => show(task.id)} onRecoveryAdmitted={() => missionStore.refresh(instanceId)}
-        conversation={task => missionTaskConversation(value(), task, missionStore.state(instanceId).activity?.missions[0]?.family)}
+        selected={selected} onSelect={select}
+        conversation={task => missionTaskConversation(value(), task, missionStore.state(instanceId).activity?.missions[0]?.family, undefined,
+          [...value().actors, ...missionStore.observations(instanceId, value().id).flatMap(page => page.context.actors)])}
         onOpenConversation={id => { (window as any).openedConversations = [...(window as any).openedConversations ?? [], id] }} />
     }</Show></aside>
   </div>

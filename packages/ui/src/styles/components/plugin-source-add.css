@@ -1,0 +1,63 @@
+/* Plugins surface: the transient Add window and rows of sources the inventory has not confirmed. */
+.plugin-source-add {
+  background-color: var(--surface-overlay);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-base);
+  width: min(20rem, calc(100vw - 1rem));
+  max-height: min(calc(100dvh - 2rem), var(--kb-popper-content-available-height, calc(100dvh - 2rem)));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 1000;
+}
+
+.plugin-source-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-source-add-body label {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.plugin-source-add-body select {
+  width: 100%;
+}
+
+.plugin-source-add-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.plugin-source-add-error {
+  margin: 0;
+  color: var(--status-error);
+  font-size: var(--font-size-xs);
+}
+
+.plugin-source-add-error:empty {
+  display: none;
+}
+
+.plugin-controls-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.plugin-control-row[data-source-target] .plugin-control-identity {
+  grid-column: 1 / -1;
+}
+
+.plugin-source-state {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+}

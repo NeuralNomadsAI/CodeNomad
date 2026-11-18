@@ -15,7 +15,7 @@ type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ow
 type Deps = { auth: AuthManager; manager: Manager; settings: Pick<SettingsService, "getProfileScope">; bridgeToken: string
   /** Live Remote Control device authorization; absent means no remote principal qualifies. */
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized"> }
-const answerSchema = z.object({ answer: z.record(z.union([z.string().max(20000), z.array(z.string().max(20000)).max(32)])) }).strict()
+const answerSchema = z.object({ answer: z.record(z.string(), z.union([z.string().max(20000), z.array(z.string().max(20000)).max(32)])) }).strict()
 
 /** Called INSIDE the normal proxy's owned native-session/request/deletion and
  * connection admission. It handles only the dock's real human answer path.
@@ -76,7 +76,7 @@ async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: s
     if (seen.has(id)) throw new Error("Human answer ancestry cycle")
     seen.add(id)
     const session = await client.session.get({ sessionID: id }, { signal })
-    if (session.id !== id || !await deps.manager.ownsLocation(workspaceID, session.location, client, signal)
+    if (session.id !== id || !await deps.manager.ownsLocation(workspaceID, session.location, client, { signal })
       || ownedLocation && !sameLocation(session.location, ownedLocation)) {
       throw new Error("Human answer session changed")
     }
@@ -137,7 +137,7 @@ export async function verifyMissionHumanAnswer(raw: unknown, deps: Omit<Deps, "b
   const session = await connection.client.session.get({ sessionID: body.sessionID }, { signal })
   current(); connection.assertCurrent()
   if (session.id !== body.sessionID || session.projectID !== body.projectID || !sameLocation(session.location, body.location)
-    || !await deps.manager.ownsLocation(body.workspaceID, body.location, connection.client, signal)) throw new Error("Human answer Location changed")
+    || !await deps.manager.ownsLocation(body.workspaceID, body.location, connection.client, { signal })) throw new Error("Human answer Location changed")
   current(); connection.assertCurrent()
   if (deps.manager.get(body.workspaceID) !== workspace) throw new Error("Human answer workspace changed")
   return { admitted: true as const }

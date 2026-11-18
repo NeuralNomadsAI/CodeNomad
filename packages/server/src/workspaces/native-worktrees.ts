@@ -4,9 +4,22 @@ import path from "node:path"
 import type { LocationRef, OpenCodeClient } from "@opencode/client"
 import type { WorktreeDescriptor, WorktreeListResponse } from "../api-types"
 import { locationRequestOptions } from "../opencode/compatibility/location"
-import { readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot, prepareWorktreeBranch, attachWorktreeBranch } from "./git-worktrees"
+import {
+  readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot,
+  prepareWorktreeBranch, attachWorktreeBranch, revisionContainsFolder,
+} from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
 import { GitRequiredError } from "./git-requirement"
+
+export class NestedFolderUnavailableError extends Error {
+  readonly code = "nested_folder_unavailable"
+  readonly statusCode = 409
+
+  constructor() {
+    super("nested_folder_unavailable: Git does not track the opened folder on this branch, so a new worktree would not contain it.")
+    this.name = "NestedFolderUnavailableError"
+  }
+}
 
 export interface NativeWorktreeContext {
   client: OpenCodeClient
@@ -21,6 +34,16 @@ const identifier = (directory: string) => `worktree-${createHash("sha256").updat
 async function sameDirectory(left: string, right: string): Promise<boolean> {
   const [a, b] = await Promise.all([stat(left), stat(right)])
   return a.isDirectory() && b.isDirectory() && a.dev === b.dev && a.ino === b.ino && a.birthtimeMs === b.birthtimeMs
+}
+
+async function isDirectory(directory: string): Promise<boolean> {
+  try {
+    return (await stat(directory)).isDirectory()
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT" || code === "ENOTDIR") return false
+    throw error
+  }
 }
 
 export async function listNativeWorktrees(context: NativeWorktreeContext, options: { refresh?: boolean } = {}): Promise<WorktreeListResponse> {
@@ -94,10 +117,15 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
     if (seen.has(registeredDirectory)) return
     seen.add(registeredDirectory)
     const root = await sameDirectory(local.root, registeredDirectory)
+    const directory = root ? workspacePath : path.join(registeredDirectory, ...relative.split(/[\\/]/).filter(Boolean))
+    // A nested workspace folder (ignored, untracked or branch-specific) can be absent
+    // from a sibling checkout. The checkout keeps owning the sessions placed there.
+    const nestedFolderMissing = !root && directory !== registeredDirectory && !await isDirectory(directory)
     worktrees.push({
+      ...(nestedFolderMissing ? { nestedFolderMissing } : {}),
       slug: root ? "root" : identifier(registeredDirectory),
       label: annotation.branch ?? `${path.basename(registeredDirectory)} @ ${annotation.head?.slice(0, 7) ?? "HEAD"}`,
-      directory: root ? workspacePath : path.join(registeredDirectory, ...relative.split(/[\\/]/).filter(Boolean)),
+      directory,
       serviceDirectory: root ? current.directory : paths.join(entry.directory, relative),
       registeredDirectory,
       serviceRoot: entry.directory,
@@ -132,8 +160,12 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
 export async function createNativeWorktree(context: NativeWorktreeContext, branch: string, fromSlug = "root") {
   const catalogue = await listNativeWorktrees(context)
   const source = catalogue.worktrees.find(entry => entry.slug === fromSlug)
-  if (!catalogue.isGitRepo || !source?.serviceRoot || !catalogue.defaultDirectory) throw new Error("Source worktree not found")
+  if (!catalogue.isGitRepo || !source?.serviceRoot || source.nestedFolderMissing || !catalogue.defaultDirectory) {
+    throw new Error("Source worktree not found")
+  }
   const policy = await prepareWorktreeBranch(source.registeredDirectory!, branch)
+  // An ignored or untracked opened folder would be absent from the new checkout.
+  if (!await revisionContainsFolder(source.directory, policy.revision)) throw new NestedFolderUnavailableError()
   await ensureCodenomadGitExclude(context.workspacePath)
   const { client, location } = context
   const current = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))

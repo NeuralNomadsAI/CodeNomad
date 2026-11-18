@@ -40,11 +40,13 @@ describe("shell store", () => {
   it("keeps state location-scoped and refreshes on shell events and reconnect", async () => {
     const lists: string[] = []
     const api: ShellApi = {
-      list: async (directory) => { lists.push(directory); return [shell(directory, directory)] },
+      list: async (directory) => { lists.push(directory); return { data: [shell(directory, directory)] } },
       remove: async () => {},
       output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
     }
     const store = createShellStore(() => api)
+    store.watch("instance", "/repo")
+    const hideWorktree = store.watch("instance", "/repo/worktree")
     await store.load("instance", "/repo")
     await store.load("instance", "/repo/worktree")
     lists.length = 0
@@ -56,11 +58,15 @@ describe("shell store", () => {
     lists.length = 0
     await store.refreshForEvent("instance", { type: "server.connected" })
     assert.deepEqual(lists.sort(), ["/repo", "/repo/worktree"])
+    lists.length = 0
+    hideWorktree()
+    await store.refreshForEvent("instance", { type: "session.tool.success", location: { directory: "/repo/worktree" } })
+    assert.deepEqual(lists, [], "hidden locations do not refresh")
   })
 
   it("keeps loaded shells visible when removal fails", async () => {
     const api: ShellApi = {
-      list: async () => [shell("shell")],
+      list: async () => ({ data: [shell("shell")] }),
       remove: async () => { throw new Error("failed") },
       output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
     }
@@ -72,16 +78,84 @@ describe("shell store", () => {
     assert.equal(store.getState("instance", "/repo").items.length, 1)
   })
 
+  it("matches WSL native events and host aliases without refreshing unrelated worktrees", async () => {
+    const host = "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo", native = "/home/user/repo"
+    const calls: string[] = []
+    const store = createShellStore(() => ({
+      list: async directory => { calls.push(directory); return { data: [], location: { directory: directory === host ? native : directory } } },
+      remove: async () => {}, output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
+    }))
+    store.watch("instance", host)
+    store.watch("instance", "/home/user/other")
+    await store.load("instance", host)
+    await store.load("instance", "/home/user/other")
+    calls.length = 0
+    for (const directory of [native, host]) {
+      await store.refreshForEvent("instance", { type: "session.tool.success", location: { directory } })
+    }
+    assert.deepEqual(calls, [host, host])
+    calls.length = 0
+    await store.refreshForEvent("instance", { type: "shell.exited", location: { directory: "/home/user/unwatched" } })
+    await store.refreshForEvent("instance", { type: "shell.exited", location: { directory: native, workspaceID: "foreign" } })
+    assert.deepEqual(calls, [])
+  })
+
+  it("an event before the initial native alias arrives schedules one fresh inventory", async () => {
+    const host = "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo", native = "/home/user/repo"
+    let calls = 0, release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const store = createShellStore(() => ({
+      list: async () => {
+        if (++calls === 1) { await gate; return { data: [], location: { directory: native } } }
+        return { data: [shell("new-background")], location: { directory: native } }
+      },
+      remove: async () => {}, output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
+    }))
+    store.watch("instance", host)
+    const read = store.load("instance", host)
+    await Promise.resolve()
+    const event = store.refreshForEvent("instance", { type: "shell.created", location: { directory: native } })
+    release()
+    await Promise.all([read, event])
+    assert.equal(calls, 2)
+    assert.equal(store.getState("instance", host).items[0].id, "new-background")
+    assert.equal(store.getState("instance", host).nativeDirectory, native)
+  })
+
+  it("a native event recovers a failed first WSL inventory before its alias is known", async () => {
+    const host = "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo", native = "/home/user/repo"
+    let calls = 0
+    const store = createShellStore(() => ({
+      list: async () => {
+        if (++calls === 1) throw new Error("native inventory temporarily unavailable")
+        return { data: [shell("recovered")], location: { directory: native } }
+      },
+      remove: async () => {}, output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
+    }))
+    const hide = store.watch("instance", host)
+    await store.load("instance", host)
+    assert.equal(store.getState("instance", host).failed, true)
+    await store.refreshForEvent("instance", { type: "session.tool.success", location: { directory: native } })
+    assert.equal(calls, 2)
+    assert.equal(store.getState("instance", host).items[0].id, "recovered")
+    assert.equal(store.getState("instance", host).failed, false)
+    hide()
+    await store.refreshForEvent("instance", { type: "shell.created", location: { directory: native } })
+    assert.equal(calls, 2, "hidden sections keep their demand fence")
+  })
+
   it("keeps same-directory native Shell states and refresh identities separate", async () => {
     const lists: Array<string | undefined> = []
     const removals: Array<string | undefined> = []
     const store = createShellStore(() => ({
-      list: async (_directory, workspaceID) => { lists.push(workspaceID); return [shell(workspaceID!)] },
+      list: async (_directory, workspaceID) => { lists.push(workspaceID); return { data: [shell(workspaceID!)] } },
       remove: async (_directory, _id, workspaceID) => { removals.push(workspaceID) },
       output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
     }))
     await store.load("instance", "/repo", "one")
     await store.load("instance", "/repo", "two")
+    store.watch("instance", "/repo", "one")
+    store.watch("instance", "/repo", "two")
     assert.equal(store.getState("instance", "/repo", "one").items[0].id, "one")
     assert.equal(store.getState("instance", "/repo", "two").items[0].id, "two")
     lists.length = 0

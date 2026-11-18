@@ -3,6 +3,8 @@ import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionExecution } from "../../../server/src/missions/execution"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTaskMode } from "../lib/mission-defaults"
+import { serverApi } from "../lib/api-client"
+import type { MissionCreationReceipt } from "../../../server/src/missions/creation-receipt"
 
 export interface UncertainMissionCreation {
   requestId: string
@@ -13,18 +15,29 @@ export interface UncertainMissionCreation {
   directory?: string
   profiles?: MissionProfiles
   taskMode?: MissionTaskMode
+  watchedConversationIDs?: readonly string[]
+  /** Display-only draft choice; recovered creation never continues Play. */
+  startOnCreation?: boolean
 }
 
 export type MissionCreationHoldState = "pending" | "uncertain"
-interface HeldCreation { operation: Readonly<UncertainMissionCreation>; state: MissionCreationHoldState }
+export interface MissionCreationOwner { client: unknown; generation: number }
+interface HeldCreation {
+  operation: Readonly<UncertainMissionCreation>; state: MissionCreationHoldState
+  confirmed?: { owner: MissionCreationOwner; receipt: MissionCreationReceipt; current(): boolean }
+}
 
 // Window-memory only, not native settlement authority or restart persistence.
-// Retain dispatched/unknown operations by their original scope/request; reads cannot
-// clear these holds. No drafts are written into the identity-only native view layout.
+// Retain dispatched/unknown operations by their original scope/request until the
+// original response or its exact receipt settles them.
 const held = new Map<string, Map<string, HeldCreation>>()
 const [version, setVersion] = createSignal(0)
+interface ReceiptRead { owner: MissionCreationOwner; controller: AbortController; promise: Promise<MissionCreationReceipt | undefined> }
+const reading = new Map<string, ReceiptRead>()
+const sameOwner = (left: MissionCreationOwner, right: MissionCreationOwner) => left.client === right.client && left.generation === right.generation
 const freeze = (operation: UncertainMissionCreation): Readonly<UncertainMissionCreation> => Object.freeze({
   ...operation, ...(operation.profiles === undefined ? {} : { profiles: copyMissionProfiles(operation.profiles) }),
+  ...(operation.watchedConversationIDs === undefined ? {} : { watchedConversationIDs: Object.freeze([...operation.watchedConversationIDs]) }),
 })
 
 /** Register the exact intent BEFORE dispatch so a closed/remounted editor in the
@@ -43,6 +56,39 @@ export function releaseMissionCreation(scope: string, requestId: string): void {
   operations.delete(requestId)
   if (!operations.size) held.delete(scope)
   setVersion(value => value + 1)
+}
+
+/** Reads the original request only. Absence, transport loss and mismatches keep its hold. */
+export function reconcileMissionCreation(scope: string, instanceId: string, owner: MissionCreationOwner, current: () => boolean): Promise<MissionCreationReceipt | undefined> {
+  const operation = missionCreationHold(scope)
+  if (operation?.state !== "uncertain" || !current()) return Promise.resolve(undefined)
+  if (operation.confirmed && sameOwner(operation.confirmed.owner, owner)) return Promise.resolve(operation.confirmed.receipt)
+  const key = JSON.stringify([scope, operation.operation.requestId])
+  const existing = reading.get(key)
+  if (existing && sameOwner(existing.owner, owner)) return existing.promise
+  existing?.controller.abort()
+  const controller = new AbortController()
+  let entry: ReceiptRead
+  const promise = serverApi.missionCreationReceipt(instanceId, operation.operation.requestId, controller.signal).then(receipt => {
+    if (!current() || controller.signal.aborted || missionCreationHold(scope) !== operation || receipt.requestId !== operation.operation.requestId
+      || receipt.state !== "created" && receipt.state !== "rejected"
+      || receipt.state === "created" && (!receipt.mission || typeof receipt.mission.id !== "string")) return
+    held.get(scope)!.get(receipt.requestId)!.confirmed = { owner, receipt, current }
+    return receipt
+  }).catch(() => undefined).finally(() => { if (reading.get(key) === entry) reading.delete(key) })
+  entry = { owner, controller, promise }
+  reading.set(key, entry)
+  return promise
+}
+
+/** Only a current owning view consumes its exact confirmed outcome. */
+export function consumeMissionCreation(scope: string, receipt: MissionCreationReceipt, owner: MissionCreationOwner): boolean {
+  const operation = missionCreationHold(scope)
+  if (!operation?.confirmed || !operation.confirmed.current() || !sameOwner(operation.confirmed.owner, owner) || operation.confirmed.receipt !== receipt) return false
+  held.get(scope)!.delete(receipt.requestId)
+  if (!held.get(scope)!.size) held.delete(scope)
+  setVersion(value => value + 1)
+  return true
 }
 
 export function retainUncertainMissionCreation(scope: string, operation: UncertainMissionCreation): void {
@@ -86,6 +132,7 @@ export function missionCreationPayloadIdentity(operation: Omit<UncertainMissionC
     value.model ? [value.model.providerID, value.model.id, value.model.variant ?? null] : null]
   const profiles = operation.profiles
   return JSON.stringify([operation.title ?? null, operation.objective, operation.notes, operation.template, operation.directory ?? null, operation.taskMode ?? null,
+    operation.watchedConversationIDs ?? null,
     profiles === undefined ? null : [execution(profiles.coordinator), profiles.roles === undefined ? null
       : Object.keys(profiles.roles).sort().map(role => [role, execution(profiles.roles![role])])]])
 }

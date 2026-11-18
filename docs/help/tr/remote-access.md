@@ -29,12 +29,10 @@ Bu, tek projeyi veya Uzaktan Kontrolü değil, ana bilgisayarın doğrudan dinle
 
 | Başlatma/mod | HTTP şuraya bağlanır: | HTTPS bağlanır |
 | --- | --- | --- |
-| Bağımsız, yalnızca HTTPS (varsayılan) | Yalnızca özel geri döngü dinleyicisi (aşağıya bakın) | `--host` |
+| Bağımsız, yalnızca HTTPS (varsayılan) | Yalnızca özel geri döngü dinleyicisi | `--host` |
 | Bağımsız, yalnızca HTTP | **`--host`**, LAN/joker karakter adresi dahil | Etkin değil |
 | Bağımsız, her iki dinleyici | `127.0.0.1`, `--host`'den bağımsız olarak | `--host` |
 | Yerel masaüstü arka ucu | HTTP dinleyicisi, ana bilgisayar dahili dinleyicisi de dahil olmak üzere `127.0.0.1`'de kalır | HTTPS etkinleştirildiğinde `--host` |
-
-Her arka uç, Görevler gibi CodeNomad'in kendi paketlenmiş OpenCode eklentileri için `127.0.0.1` üzerinde ayrıca bir HTTP dinleyicisi tutar. HTTP istenmediğinde veya istenen HTTP dinleyicisi `127.0.0.1` ya da `0.0.0.0` dışında bir adrese bağlandığında, arka uç rastgele bir `127.0.0.1` portunda özel bir HTTP dinleyicisi ekler. Bu dinleyici hiçbir zaman yazdırılmaz veya bağlantı adresi olarak sunulmaz, başka makinelerden erişilemez ve aynı kimlik doğrulamalı uygulamayı sunar.
 
 Somut bir LAN adresinin geridöngü bağlantılarını kabul etmesi gerekmez. `0.0.0.0`, tüm IPv4 arayüzleri anlamına gelir; `::` çift yığınlı joker karakter dinleyicisidir. Bir tarayıcıda joker karakter değil, gerçek ulaşılabilir bir adres kullanın. IPv6 bölge tanımlayıcıları `--host`'de desteklenmez.
 
@@ -51,6 +49,18 @@ codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
 9898 veya 9899 portunu varsaymayın: belirtilmeyen portlar doluyken başka port kullanılabilir. Açıkça verilen sıfır olmayan `--https-port` veya HTTP etkinken `--http-port` portu sabitler ve bağlanamazsa başarısız olur; `0` işletim sisteminden port atamasını ister. Yazdırılan **Local Connection URL** ve **Remote Connection URL** ile yenilenen **Erişilebilir adresler** o çalıştırma için yetkili bilgidir. Tam [sunucu CLI başvurusuna](server.md) bakın.
+
+## Yönetici ilkesi {#administrator-policy}
+
+Bir yönetici dinleme adresini sabitleyebilir: `CODENOMAD_LOCKED_HOST` değişkenini sistem genelinde sunucunun kullanması gereken adrese ayarlayın ve CodeNomad'ı yeniden başlatın. Bu adres `--host`, `CLI_HOST` ve **Diğer IP'lerden bağlantılara izin ver** üzerinde önceliklidir; anahtar sonucu gösterir ama değiştiremez. Çalışma arkadaşlarınızın sunucuya şirket ağı üzerinden ulaşması için bir intranet adresi, bu bilgisayarda tutmak için `127.0.0.1` kullanın. Tüm erişimin şirket ağı içinde kalması için ayrıca `CODENOMAD_REMOTE_CONTROL=disabled` ayarlayın ([Uzaktan Kontrol](remote-control.md#administrator-policy)).
+
+## Yükseltme {#upgrading}
+
+Yükseltmeden sonra yeniden oturum açın. Ana bilgisayar adı takma adı, ters proxy veya ayrı barındırılan arayüz için arka uçta `CODENOMAD_ALLOWED_ORIGINS` değerini arayüzün güvenilir origin adreslerine (şema, ana bilgisayar adı ve port) ayarlayın. Yerel LAN istemcileri, değişiklik isteklerinde izin verilen bir `Origin` başlığı göndermelidir.
+
+Ana bilgisayara özel işlemler için loopback bağlantısı kullanın: SideCar içeriği (`/sidecars/`) ve WebSocket'ler, Uzaktan Kontrol yönetimi (`/api/remote-control/`), eklenti köprüsü (`/api/opencode-plugin/`), uzak proxy'ler (`/api/remote-proxy/`), kayıtlı sunucu yönetimi (`/api/remote-servers/`), parola değişikliği ve belirteçle ilk kurulum. Doğrudan LAN erişimiyle oturum açıldığında da bu işlemler loopback gerektirir. Tek istisna SideCars'tır: ana bilgisayardaki **SideCars'ı HTTPS üzerinden aç** ayarı, içeriklerini ve WebSocket'lerini güvenilir bir HTTPS origin üzerinden oturum açmış tarayıcılara açar ([SideCars](browser-sidecars.md#register-sidecar)). Etkin önizleme içeriği (`/previews/`), geçerli bir yetenek belirteciyle doğrudan LAN erişiminde kullanılabilir.
+
+`/api/sidecars` kayıt API'leri, kimliği doğrulanmış doğrudan LAN istemcileri ve eşleştirilmiş cihazlar için kullanılabilir kalır. Uzaktan Kontrol web önizlemeleri, ana bilgisayarda etkin oldukları sürece yetenek belirteçleriyle kullanılabilir.
 
 ## Güvenilir TLS'yi yapılandırın {#tls}
 
@@ -77,7 +87,7 @@ HTTPS etkinken ve anahtar/sertifika çifti sağlanmadığında, CodeNomad, yapı
 2. Sertifikayı oluşturmak/yeniden kontrol etmek için arka ucu yeniden başlatın.
 3. Ana makineyi/CA'yı güvenilir bir kanal aracılığıyla doğrulayın ve ardından **yalnızca CA sertifikasını** amaçlanan her istemci/tarayıcı güven deposuna aktarın. Alternatif olarak genel olarak güvenilen bir sertifika veya TLS ters proxy kullanın.
 
-Oluşturulan sunucu sertifikası 30 gün geçerlidir. Başlangıçta, bitimine üç gün veya daha az kaldığında, gerekli SANs eksikse, sertifika kontrolleri başarısızsa veya özel anahtar dosyası yoksa yenilenir. Oluşturulan CA 365 gün geçerlidir; süresi dolunca, sertifika kontrolleri başarısızsa veya özel anahtarı yoksa değiştirilir; değiştirilmesi sunucu sertifikasını da yeniden üretir. Mevcut bozuk, okunamayan veya eşleşmeyen özel anahtarlar otomatik onarılmaz. İstemciler yeni CA'ya güvenmelidir. Süreç içinde sürekli yenileme yoktur: uzun süre çalışan kurulumlarda süre dolmadan bilinçli yeniden başlatma planlayın.
+Oluşturulan sunucu sertifikası 30 gün geçerlidir. Başlangıçta, bitimine üç gün veya daha az kaldığında, gerekli SANs eksikse, sertifika kontrolleri başarısızsa veya özel anahtar dosyası yoksa yenilenir. Oluşturulan CA 365 gün geçerlidir; süresi dolunca, sertifika kontrolleri başarısızsa veya özel anahtarı yoksa değiştirilir; değiştirilmesi sunucu sertifikasını da yeniden üretir. İstemciler yeni CA'ya güvenmelidir. Süreç içinde sürekli yenileme yoktur: uzun süre çalışan kurulumlarda süre dolmadan bilinçli yeniden başlatma planlayın.
 
 Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adını, SANs'yi, güven deposunu ve son kullanma tarihini kontrol edin. Doğrulamayı devre dışı bırakmayın veya uyarılara tıklamayı dağıtım prosedürünüz haline getirmeyin. Güvenilir HTTPS, [PWA kurulumu ve mikrofon erişimi](mobile.md) gibi uzak tarayıcı özellikleri için de gereklidir.
 
@@ -88,5 +98,9 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 3. Yer imlerine eklemek için **Kaydet** öğesini veya kaydedip açmak için **Bağlan** öğesini seçin. Bu sunucuda oturum açın.
 
 Kayıtlı bir sunucuyu yeniden açmak için ana sayfanın **Sunucular** sekmesinde onu seçin. Yer imleri uzak sunucunun projelerine değil, bu CodeNomad yapılandırmasına aittir. Bir URL'nin kaydedilmesi sunucuyu başlatmaz veya erişim sağlamaz. **Kayıtlı sunucuyu kaldır**, uzak konuşmaları, arka ucu veya kimlik bilgilerini değil, yer işaretini kaldırır.
+
+Kayıtlı bir sunucuyu doğrudan komut satırından açmak için masaüstü uygulamasını sunucunun kayıtlı adıyla veya `https://` URL'siyle `--connect-server <ad>` (ya da `--connect-server=<ad>`) seçeneğiyle başlatın. CodeNomad yalnızca uzak pencereyi açar; denetimler ve oturum açma **Bağlan** ile aynıdır. CodeNomad zaten çalışıyorsa sunucuyu yeni bir pencere yerine geçerli penceresi açar. Hiçbir kayıtlı sunucuyla eşleşmeyen bir URL, ana bilgisayar adıyla kaydedilir. Başlatma değerleri hiçbir zaman kimlik bilgisi taşımaz: kullanıcı adı, parola veya eşleştirme kodu içeren bir URL reddedilir. Windows'ta bir başlatma bağımsız değişkeni `|` içerdiğinde Tauri derlemesi başlamaz; bunun yerine sunucunun URL'sini kullanın veya sunucuyu yeniden adlandırın.
+
+Uzak pencereler açık kalırken son yerel pencereyi kapatmak sekmelerini korur: uzak penceredeki **Pencere → Yeni pencere** ya da CodeNomad'ı yeniden başlatmak onu yeniden açar.
 
 Uzaktan Kontrol için bunun yerine **Sunucu URL'si** öğesine yeni bir eşleştirme bağlantısı yapıştırın. Yer imi yalnızca tünelin kökenini korur, asla tek kullanımlık eşleştirme kodunu içermez; Cihaz çerezi kaybından sonra yeniden eşleştirme için bkz. [Uzaktan Kontrol](remote-control.md).

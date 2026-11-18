@@ -5,7 +5,10 @@ import { chromium, type Browser } from "playwright"
 import { fixture } from "../../../server/src/missions/journal-history-fixture"
 import { registerMissionRoutes } from "../../../server/src/server/routes/missions"
 import { borrowFixture } from "./fixture-borrow"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
+import { panelMissions } from "./mission-content-fixture"
+import { missionMenuItem, missionToolbar } from "./mission-actions"
+import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 
 // "Request an update" sends an application-authored native prompt: its admission
 // reads the authoritative full snapshot, never the panel's hints.
@@ -52,7 +55,7 @@ test("project damage the hints have not seen refuses the coordinator request: no
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     if (pathname.includes("/instructions/") && request.method() !== "GET") return route.fulfill({ status: 204, body: "" })
     // The panel still holds the healthy map it listed before the damage landed.
-    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [display], generatedAt: 2, discardedEvents: 0 } })
+    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([display]), generatedAt: 2, discardedEvents: 0 } })
     if (pathname.includes(`/missions/${mission.id}`)) {
       reads.push(pathname)
       const response = await app.inject({ method: "GET", url: pathname.replace(/^.*\/api\/workspaces\/[^/]+/, "/api/workspaces/fixture") })
@@ -70,9 +73,14 @@ test("project damage the hints have not seen refuses the coordinator request: no
     assert.equal((await app.inject({ method: "GET", url: `/api/workspaces/fixture/missions/${mission.id}` })).json().mission.controlUnavailable, undefined)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionNavigation))
-    await page.evaluate(async id => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("/fixture", { selected: id }), mission.id)
-    await page.locator("section.mission-detail .mission-action-request").click()
-    await page.locator(".mission-briefing-feedback").getByText("No prompt was sent", { exact: false }).waitFor()
+    await page.evaluate(async id => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { selected: id }), mission.id)
+    // A new Mission has no tasks: its row is a leaf and its detail stays folded.
+    await page.locator("section.mission-detail").waitFor({ state: "attached" })
+    await (await missionMenuItem(page, "request")).click()
+    // The refusal is announced (visually hidden) and joins the primary button's tooltip.
+    const error = en["missions.briefing.request.error"]
+    await page.locator(".mission-briefing-feedback").getByRole("alert").getByText(error, { exact: true }).waitFor({ state: "attached" })
+    assert.ok((await missionToolbar(page).locator("button").first().getAttribute("title") ?? "").endsWith(` — ${error}`))
     assert.deepEqual(reads, [`/api/workspaces/fixture/missions/${mission.id}/admission`], "admission reads the full snapshot only")
     assert.deepEqual(writes.filter(path => path.endsWith("/prompt")), [], "no prompt reached the coordinator")
   } finally { await page.close(); await app.close() }

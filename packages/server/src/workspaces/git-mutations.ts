@@ -15,7 +15,7 @@ class GitMutationError extends Error {
 
 function runGit(args: string[], cwd: string): Promise<GitResult> {
   return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
     let stdout = ""
     let stderr = ""
 

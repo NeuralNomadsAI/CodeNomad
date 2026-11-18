@@ -1,4 +1,4 @@
-# सहयोग र source build
+# bug report र source build
 
 bug report, current release र contribution का लागि repository प्रयोग गर्नुहोस्। issue report अघिको सुरक्षित recovery [समस्या समाधान गाइड](troubleshooting.md) मा छ।
 
@@ -11,8 +11,6 @@ bug report, current release र contribution का लागि repository प�
 कार्यले CodeNomad र OpenCode version (स्थापित भन्दा फरक हुँदा चलिरहेको OpenCode सेवासमेत), तपाईंको operating system, client प्रकार (web browser मा browser को user agent सहित) र server को operating system पूर्वभर्छ। listener address, workspace path, credential वा conversation text भर्दैन। form खोल्नु issue बुझाउनु होइन।
 
 थप निदान चाहिए **क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्** वा **.txt डाउनलोड गर्नुहोस्** ले छुट्टै report बनाउँछ। त्यस विस्तृत report मा local path र network address हुन सक्छन्: attach अघि review/redact गर्नुहोस्। automatic diagnostic report ले authentication secret हटाए पनि screenshot वा log अंशमा secret हुन सक्छन्।
-
-GitHub form मा incompatible field भए CodeNomad ले उही report जानकारीसहित plain issue खोल्छ। form पढ्दाको अस्थायी failure ले खोल्न रोक्दैन। सधैं [issue सूची](https://github.com/NeuralNomadsAI/CodeNomad/issues) हातैले प्रयोग गर्न सकिन्छ।
 
 ## समुदाय र release {#community}
 
@@ -31,7 +29,7 @@ CodeNomad नियन्त्रणभन्दा native OpenCode configurati
 
 ## source बाट build {#build-from-source}
 
-`.node-version` मा pinned Node.js **24.20.0**, npm, Git र compatible OpenCode CLI प्रयोग गर्नुहोस्। development checkout बाट आदेश चलाउनुहोस्:
+`.node-version` मा pinned Node.js संस्करण, npm, Git र compatible OpenCode CLI प्रयोग गर्नुहोस्। development checkout बाट आदेश चलाउनुहोस्:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-development परिवर्तनले development host प्रभावित गर्छन्, स्वतन्त्र चलिरहेको OpenCode daemon को installed version होइन। native packaging लाई उचित target tool चाहिन्छ; target OS मै build प्राथमिकता दिनुहोस्।
+native packaging लाई उचित target tool चाहिन्छ; target OS मै build प्राथमिकता दिनुहोस्।
 
 ### build र validation {#build-and-validate}
 

@@ -1,0 +1,41 @@
+.browser-native-dialog,
+.browser-native-dialog form {
+  height: 100%;
+  margin: 0;
+}
+
+.browser-native-dialog {
+  color-scheme: light dark;
+  font: menu;
+}
+
+.browser-native-dialog form {
+  display: flex;
+  flex-direction: column;
+}
+
+.browser-native-dialog .window-body {
+  flex: 1;
+  padding: 12px;
+  overflow: auto;
+}
+
+.browser-native-dialog label {
+  display: block;
+  margin-block-end: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.browser-native-dialog input,
+.browser-native-dialog select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.browser-native-dialog .window-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px;
+}

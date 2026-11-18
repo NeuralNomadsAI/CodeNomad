@@ -16,14 +16,45 @@ filters by fixed mode; Auto exposes both slots for editing.
 
 The first three light IDs stay stable so saved selections and overrides remain
 addressable. Classic (with its canvas/panel/tool relationship), Basalt, Fjord,
-Lichen, Velvet and Ember keep their declared surface colors. Custom colors are
-never silently recolored.
+Lichen, Velvet and Ember use their declared surface colors in normal contrast.
+The six soft light palettes put the lightest surface in Base, followed by Secondary.
+
+## Contrast curve
+
+Effective high contrast transforms every palette input before the shared token
+and Classic surface derivation. `HIGH_CONTRAST_CURVE` in `lib/high-contrast.ts`
+sets contrast `1.3` and pivot shift `0.3`. Each normalized sRGB channel uses
+`c' = clamp(pivot + (c - pivot) * contrast, 0, 1)`, rounded to an 8-bit channel.
+The pivot mirrors around `0.5`: `0.5 - pivotShift` (`0.2`) for dark palettes,
+`0.5 + pivotShift` (`0.8`) for light palettes. All palette inputs share this
+image-editor contrast operation. Ordinary token derivation then uses these colors.
+Filled-action ink (`--text-on-accent`, `--text-inverted`) chooses black or white
+by the higher contrast ratio against the palette's original accent, keeping the
+same ink in normal and high contrast. Saved palette inputs remain intact, and
+Off derives the normal tokens directly from them.
+
+Palette style mutations refresh concrete-color consumers through their existing
+palette observers (Monaco and extension frames); CSS consumers follow tokens.
 
 The soft light canvases are darker than the original editor whites. Dark
-canvases use mid-dark grays instead of near-black. Text is adjusted for at least
-4.5:1 on base, panel, tool and user-message surfaces; participant colors are
-checked at full opacity for at least 3:1. These thresholds apply at full
-opacity; decorative resting icons keep their partial opacity.
+canvases use mid-dark grays instead of near-black. `palette-quality.test.ts`
+checks text at 4.5:1 on base, panel, muted, user-message and assistant/tool
+surfaces, with exact `textMuted` exceptions: Slate `#9DB5D2` on `#404E65`
+uses 3.99:1; Clay `#C6B9A5` on `#55524E` uses 4.02:1. Participant colors
+use 3:1, except Porcelain `compactionAccent` `#A07AFF` on `#CFD1D4`,
+`#E1E3E5`, `#BDC1C6` or `#C5CBD0`, which uses 1.72:1.
+
+The 3:1 emphasis check on base/panel surfaces exempts these exact pairs:
+
+- Porcelain `compactionAccent` `#A07AFF` on `#CFD1D4` / `#E1E3E5`.
+- Dawn `accentPrimary` `#7F69E2` on `#BCD2E5`.
+- Parchment `accentPrimary` `#A9BA45` on `#D5C09E` / `#E2CEB0`.
+- Linen `accentPrimary` `#9D8325` and `statusSuccess` `#699245` on `#E6E0CE`.
+- Iris `accentPrimary` `#6B7CFF` on `#E0D4E5` / `#EDDFEF`.
+- Sage Light `accentPrimary` `#6C7FCB` on `#CBD8C1` / `#DCE6D2`.
+
+These thresholds apply at full opacity; decorative resting icons keep their
+partial opacity.
 
 ## Reference revisions
 

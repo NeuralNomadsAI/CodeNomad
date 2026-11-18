@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "Yapılandırılan workspace kökü altındaki klasörlere göz at.",
   "directoryBrowser.close": "Kapat",
   "directoryBrowser.currentFolder": "Klasör seç veya yol gir",
   "directoryBrowser.currentFolder.inputAriaLabel": "Klasör yolu",

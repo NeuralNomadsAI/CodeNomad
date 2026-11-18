@@ -1,14 +1,14 @@
 # Eigenständiger Server
 
-Betreiben Sie CodeNomad dort, wo Ihre Projekte und Werkzeuge liegen, und verwenden Sie dessen Browseroberfläche lokal oder entfernt. Das Backend bietet Dateisystemzugriff, Git-Vorgänge, Authentifizierung und Ereigniszustellung. OpenCodes gemeinsamer Dienst verwaltet Unterhaltungen und Ausführung; er ist kein untergeordneter Server, der bei Browsertrennung gestoppt werden soll.
+Betreiben Sie CodeNomad dort, wo Ihre Projekte und Werkzeuge liegen, und verwenden Sie dessen Browseroberfläche lokal oder entfernt.
 
-Dieselbe Oberfläche unterstützt [mehrere Projekt-Tabs und Worktrees](projects.md), [Unterhaltungsfamilien und Hintergrundaktivität](conversations.md), [begrenztes Verlaufsladen, Suche und Timeline-Navigation](history.md), [Befehlspalette und Tastenkürzel](shortcuts.md) sowie [Missionen](missions.md). Browser- und Tablet-Zugriff verlagern die Ausführung nicht vom Host.
+Browser- und Tablet-Zugriff verlagern die Ausführung nicht vom Host.
 
 ## Host vorbereiten {#prerequisites}
 
-1. Installieren Sie Node.js 24 LTS und npm; die festgelegte Build-Laufzeit des Repositorys ist 24.20.0. Desktop-Pakete enthalten Node/npm.
+1. Installieren Sie Node.js 24 LTS und npm.
 2. Stellen Sie Git im **PATH des Backend-Prozesses** bereit. Git allein in WSL genügt für ein Windows-Backend nicht.
-3. Installieren oder wählen Sie OpenCode: Erforderliches Minimum ist **2.1.2**, empfohlenes Qualifizierungsziel **2.2.1**. Neuere/angepasste Builds durchlaufen Kompatibilitätsprüfungen, keine Positivliste getesteter Versionen. Siehe [OpenCode-Einrichtung](opencode.md).
+3. Installieren oder wählen Sie OpenCode: **2.3.0** ist das erforderliche Minimum. Siehe [OpenCode-Einrichtung](opencode.md).
 4. Wählen Sie den Startordner des Servers oder übergeben Sie `--workspace-root` ausdrücklich.
 
 Ohne Git bleiben Unterhaltungen nur im ausdrücklich geöffneten physischen Ordner verfügbar; Git- und Worktree-Vorgänge schlagen fehl. Installieren Sie Git und starten Sie das Backend nach einer PATH-Änderung neu. Das Arbeitsbereichs-Stammverzeichnis begrenzt Öffnen/Durchsuchen, nicht Agentenausführung: siehe [Sicherheit](security.md).
@@ -45,7 +45,7 @@ npx codenomad --generate-token --launch
 
 Die Befehle laufen im Vordergrund. Terminal-Schließen oder Ctrl+C stoppt dieses Backend und dessen Fernsteuerungsverbindung. `--launch` öffnet nur einen Browser; es macht den Server nicht zum Daemon. Für unbeaufsichtigte Verfügbarkeit führen Sie denselben Befehl über Ihre OS-Prozess-/Dienstverwaltung mit expliziter Konfiguration, Arbeitsverzeichnis, Umgebung und Neustartrichtlinie aus. Schreiben Sie keine Geheimnisse in Dienstlogs oder öffentliche Unit-Dateien.
 
-Browser-Schließen stoppt kein separat laufendes eigenständiges Backend. Das Schließen eines Projekt-Tabs entfernt die CodeNomad-Verbindung dieses Projekts, aber Sitzungen laufen in OpenCode weiter; öffnen Sie das Projekt erneut, um sie wiederzufinden. CodeNomad entlädt niemals seine native Location. Das Schließen eines ganzen Fensters, Beenden oder Neuladen bewahrt Projektverbindungen für die Wiederherstellung. Auch Backend-Ende lässt den OpenCode-Dienst laufen. Backend-abhängige Funktionen fehlen bis zur Rückkehr von CodeNomad; die separate Lebensdauer nativer Planung erläutert [Missionen](missions.md).
+Browser-Schließen stoppt kein separat laufendes eigenständiges Backend. Das Schließen eines Projekt-Tabs entfernt die CodeNomad-Verbindung dieses Projekts, aber Sitzungen laufen in OpenCode weiter; öffnen Sie das Projekt erneut, um sie wiederzufinden. Das Schließen eines ganzen Fensters, Beenden oder Neuladen bewahrt Projektverbindungen für die Wiederherstellung. Auch Backend-Ende lässt den OpenCode-Dienst laufen. Backend-abhängige Funktionen fehlen bis zur Rückkehr von CodeNomad; die separate Lebensdauer nativer Planung erläutert [Missionen](missions.md).
 
 ## Adressen und Ports {#addresses}
 
@@ -53,11 +53,11 @@ Beim Start werden **Local Connection URL**, gegebenenfalls **Remote Connection U
 
 HTTPS bevorzugt Port **9898**, HTTP **9899**. Ohne Portüberschreibung wird bei belegtem bevorzugtem Port ein OS-zugewiesener Port verwendet. Ein expliziter Nichtnull-Port weicht nicht aus; `0` fordert einen OS-zugewiesenen Port. Ports akzeptieren Ganzzahlen von 0 bis 65535.
 
-Das Backend kann außerdem einen nicht angekündigten, authentifizierten HTTP-Listener auf einem zufälligen `127.0.0.1`-Port für seine eigenen OpenCode-Plugins wie Missionen öffnen. Er wird nicht ausgegeben und ist keine Client-Adresse.
-
 Listenerfreigabe, Zertifikate, VPN/SSH und Reverse-Proxys erläutert [Direkter Fernzugriff](remote-access.md). Für Zugriff ohne eingehenden Port verwenden Sie [Fernsteuerung](remote-control.md).
 
 ## Öffentliche CLI-Referenz {#cli-reference}
+
+Für Tauri oder Electron siehe [Desktop-Startargumente](desktop.md#desktop-cli): `--connect-server`, `--folder`, `--new-window` und Beispiele für Programmaufrufe und Verknüpfungen. Die folgende Tabelle beschreibt die Programmdatei des eigenständigen Servers.
 
 Flags übersteuern ihre Umgebungsentsprechungen. Flags mit Wert verwenden das gezeigte Argument; Schalter nicht. HTTPS-/HTTP-Werte erkennen `1`, `true`, `yes`, `y` und `on` unabhängig von Groß-/Kleinschreibung als aktiviert; verwenden Sie zur Klarheit explizites `true`/`false`. Automatische UI-Updates erkennen `1`, `true` und `yes`.
 
@@ -94,17 +94,15 @@ Flags übersteuern ihre Umgebungsentsprechungen. Flags mit Wert verwenden das ge
 | `--launch` | `CLI_LAUNCH` | `false`; nach Start lokale UI im Browser öffnen. |
 | `--upgrade [version]` | — | Standardmäßig kein Upgrade. Auf Anfrage `@neuralnomads/codenomad@latest` oder die angegebene Version global installieren und beenden. |
 
-Die öffentliche Referenz listet benutzerseitige Optionen; Desktop-Hosts verwalten ihre eigene private Startkoordination.
-
 ### Zusätzliche Bereitstellungsumgebung {#deployment-environment}
 
 | Variable | Standard und Geltungsbereich |
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; Repository für Release-Angebote. |
 | `CODENOMAD_REMOTE_CONTROL_API` | Nicht gesetzt: gehostete OpenTunnel-API. Für selbst gehostetes Relay eine API-Origin setzen. |
+| `CODENOMAD_REMOTE_CONTROL` | Nicht gesetzt: Benutzer können die Fernsteuerung starten. `disabled`: von einem Administrator ausgeschaltet ([Richtlinie](remote-control.md#administrator-policy)); nicht gesetzt oder leer bedeutet keine Richtlinie, jeder andere Wert (auch Leerzeichen) verhindert den Start. |
+| `CODENOMAD_LOCKED_HOST` | Nicht gesetzt oder leer: `--host` gilt; nur Leerzeichen verhindern den Start. Eine Adresse: Der Server lauscht dort, unabhängig von `--host`, `CLI_HOST` oder dem Abhörschalter ([Richtlinie](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Optionale zusätzliche CA-Datei von Node; wird mit zulässiger Startumgebung beim Start eines fehlenden OpenCode-Daemons übergeben. Ändert keinen bereits laufenden Daemon. |
-
-Anbieterspezifische Nutzungszugangsdaten behandelt [Anbieter](providers.md). Desktop-Datenprofilauswahl beschreibt [Desktop](desktop.md); der Release-Kanal steuert sie nicht.
 
 ## Konfiguration und Speicherzuständigkeit {#storage}
 
@@ -124,13 +122,11 @@ Die folgenden Standardpfade verwenden das Home des Backend-Benutzers. Ein expliz
 | OpenCode-Unterhaltungen, Nachrichten, Dienstregistrierung und Anbieterverbindungen | OpenCodes eigener globaler Speicher auf dem Ausführungshost, nicht das CodeNomad-Instanzverzeichnis. |
 | Desktop-Wiederherstellungszustand | Standard `~/.codenomad/client-state/v2/`; Profil-/Fensterumfang siehe [Desktop](desktop.md). |
 
-CodeNomad verbindet sich mit dem vorhandenen gemeinsamen Daemon oder startet ihn, falls er fehlt. Die Startumgebung betrifft nur einen neu gestarteten Daemon. Separat wird die konfigurierte vollständige Sitzungsumgebung vor jedem Prompt, benutzerdefinierten Befehl oder Sitzungs-Shell-Aufruf angewandt, nicht beim bloßen Ansehen/Bearbeiten von Einstellungen. Siehe [OpenCode-Einrichtung](opencode.md).
+Die Startumgebung betrifft nur einen neu gestarteten Daemon. Separat wird die konfigurierte vollständige Sitzungsumgebung vor jedem Prompt, benutzerdefinierten Befehl oder Sitzungs-Shell-Aufruf angewandt, nicht beim bloßen Ansehen/Bearbeiten von Einstellungen. Siehe [OpenCode-Einrichtung](opencode.md).
 
 ## Ereignisse und Wiederverbindungen {#events}
 
-Das Backend konsumiert einen gemeinsamen nativen OpenCode-Ereignisstrom und verteilt Arbeitsbereichs-/CodeNomad-Ereignisse per Server-Sent Events an Browser-Clients. Zustellung ist live und flüchtig: Es gibt **keine garantierte Ereigniswiederholung**.
-
-Nach Wiederverbindung liest die Oberfläche maßgeblichen Sitzungs- und Anfragezustand erneut; Datei-/Konfigurationsinvalidierungen lösen ebenfalls frische Lesevorgänge aus. Wiederverbindung erlaubt kein erneutes Senden, Löschen, Antworten oder andere Änderungen mit verlorener Antwort. Prüfen Sie zuerst den Ergebniszustand. Bekannte offene Anfragen und Entwürfe bleiben bei unvollständiger Wiederherstellung erhalten; siehe [Berechtigungen](permissions.md) und [Fehlerbehebung](troubleshooting.md).
+Wiederverbindung erlaubt kein erneutes Senden, Löschen, Antworten oder andere Änderungen mit verlorener Antwort. Prüfen Sie zuerst den Ergebniszustand. Bekannte offene Anfragen und Entwürfe bleiben bei unvollständiger Wiederherstellung erhalten; siehe [Berechtigungen](permissions.md) und [Fehlerbehebung](troubleshooting.md).
 
 ## Vorschaupakete und Wartung {#maintenance}
 
@@ -144,4 +140,4 @@ Verwenden Sie für isolierte CodeNomad-Einstellungen bewusst eine separate Konfi
 
 `codenomad --upgrade` aktualisiert das globale stabile CLI-Paket mit dem erkannten npm-/pnpm-/bun-Manager (npm, falls keiner erkannt wird). Es startet weder einen laufenden Server neu noch aktualisiert es OpenCode. Aktualisieren Sie bei projektlokaler oder Vorschauinstallation ausdrücklich genau dieses npm-Paket. Starten Sie den verwalteten CodeNomad-Prozess nach dem Update bewusst neu und prüfen Sie seine ausgegebenen Adressen erneut.
 
-Desktop-Wartung siehe [Updates](updates.md), Quellcode-Build-Befehle [Support](support.md) und Anbieterplannutzung [Anbieter](providers.md).
+Desktop-Wartung siehe [Updates](updates.md), Build-Befehle [Aus Quellcode bauen](support.md#build-from-source) und Anbieterplannutzung [Anbieter](providers.md).

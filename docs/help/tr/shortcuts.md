@@ -4,9 +4,9 @@
 
 1. Windows/Linux'ta `Ctrl+Shift+P`'yi veya macOS'ta `Cmd+Shift+P`'yi kullanarak **Komut Paleti** öğesini açın veya görünür düğmesini/menü öğesini kullanın.
 2. Bir eylem adı yazın. Palet, uygulama eylemlerini ve mevcut Location bağlamının özel komutlarını içerir; Kullanılabilirlik aktif görünüme bağlıdır.
-3. Bu kılavuzu harici bir tarayıcı bağlamında mevcut kullanıcı arayüzü dilinde açmak için **Yardımı aç** komutunu çalıştırın. Yerel **Yardım → CodeNomad Yardımı** aynı kılavuzu açar.
+3. Bu kılavuzu harici bir tarayıcı bağlamında mevcut kullanıcı arayüzü dilinde açmak için **Yardımı aç** komutunu çalıştırın. Yerel **Yardım → CodeNomad Yardımı** aynı kılavuzu açar. **CodeNomad'i destekleyin** (yerel **Yardım → CodeNomad'i destekleyin**) aynı şekilde [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
 
-Yardım, uygulama görünümünü ve taslağını değiştirmez. Açılamazsa doğrudan [CodeNomad Yardımı](https://neuralnomadsai.github.io/CodeNomad/) adresini ziyaret edin. Komutun bulunabilir olması özelleştirilebilir kısayolu olduğu anlamına gelmez: kısayol yöneticisi her palet/native menü eylemini değil, 74 arayüz eyleminden oluşan sabit bir kataloğu kapsar. Bu katalog, **Kısayol yok** ile başlayan **Session'ı Sıkıştır**, **Son Mesajı Geri Al** veya **Yardımı aç** gibi palet komutlarını da içerir; proje klasörü, terminal ve düzenleyici eylemleri yalnızca yerel masaüstü pencerelerinde çalışır.
+Yardım, uygulama görünümünü ve taslağını değiştirmez. Komutun bulunabilir olması özelleştirilebilir kısayolu olduğu anlamına gelmez: kısayol yöneticisi her palet/native menü eylemini değil, 75 arayüz eyleminden oluşan sabit bir kataloğu kapsar. Bu katalog, **Kısayol yok** ile başlayan **Session'ı Sıkıştır**, **Son Mesajı Geri Al** veya **Yardımı aç** gibi palet komutlarını da içerir; proje klasörü, terminal ve düzenleyici eylemleri yalnızca yerel masaüstü pencerelerinde çalışır.
 
 ## Kaydedin, devre dışı bırakın ve sıfırlayın {#customize}
 
@@ -16,8 +16,6 @@ Yardım, uygulama görünümünü ve taslağını değiştirmez. Açılamazsa do
 4. Çakışan her satırdaki uyarıları çözün; çatışmalar sessizce devre dışı bırakılmaz, raporlanır.
 
 Atamalar CodeNomad arayüz yapılandırmasına kaydedilir ve bunu paylaşan istemcileri etkiler. OpenCode CLI/TUI atamalarını veya native menü kısayollarını düzenlemez. Kayıt uygulamanın arayüz kısayollarını bastırır ancak işletim sistemi/native menü kısayollarını bastıramaz. **İptal**, odak kaybı, bölümün kapanması veya pencereden çıkış kaydı bitirir. Tek başına değiştirici tuşlar ve IME birleşimi yok sayılır; yalın Tab/Shift+Tab odağı taşır.
-
-Kaydetme başarısız olursa eski kısayolu kullanılabilir durumda tutun ve görüntülenen bağlamayı kontrol ettikten sonra yeniden deneyin. Sıfırlama, kazara yapılan bir atamanın güvenli bir şekilde kurtarılmasıdır.
 
 ## Arayüz varsayılanları {#renderer-defaults}
 
@@ -35,9 +33,9 @@ Kaydetme başarısız olursa eski kısayolu kullanılabilir durumda tutun ve gö
 | Oturumu kapat | `Mod+Shift+W` |
 | Önceki / sonraki oturum | `Mod+Shift+[` / `Mod+Shift+]` |
 | Oturum sekmesi 1-9 | `Mod+Shift+1`'den `Mod+Shift+9`'ye kadar |
-| Örnek bilgisi | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | Oturum geçmişini ara | `Mod+F` |
-| Önceki / sonraki kullanıcı mesajı | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) veya `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
+| **Önceki Kullanıcı Mesajı** / **Sonraki Kullanıcı Mesajı**, istemin **Diğer eylemler** menüsünde de bulunur | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) veya `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Sonraki/önceki arama sonucu (arama odaklı) | `Enter` / `Shift+Enter` |
 | İsteme odaklan / İstemi temizle | `Mod+P` / `Mod+K` |
 | Model / temsilci seçiciyi aç | `Mod+Shift+M` / `Mod+Shift+A` |
@@ -74,4 +72,4 @@ Normal tarayıcı pencereleri tarayıcı kısayollarını da korur. Tuş birleş
 
 Rakam sırası ve köşeli parantez kısayolları AZERTY/QWERTZ dahil kayıt, yürütme ve çakışma kontrolünde fiziksel tuş konumlarını kullanır. Diğer tuşlar mantıksal değerlerini kullanır. Kullanacağınız klavyeyle kaydedip gösterilen sonucu kontrol edin.
 
-IME birleşimi sırasında metin girişi önceliklidir. İstem geçmişi ve Escape eylemleri ayrıca odağa, seçici/Shell durumuna ve devam eden işleme bağlıdır; her ArrowUp veya Escape basışının koşulsuz genel eylem olduğunu varsaymayın. Masaüstünde gönderme odağı konuşmaya taşır; böylece oklar, sayfa tuşları ve Boşluk konuşmayı kaydırır. Bir karakter yazmak o karakterle birlikte ileti düzenleyicisine döner; **Girdiye odaklan** ise istem geçmişini kullanmadan önce odağı oraya döndürür. Araç ipuçları komut paleti, arama, Yeni oturum, Bilgi ve ileti düzenleyicisi seçicileri gibi kontrollerin geçerli kısayolunu belirtir; kısayol yöneticisiyle birlikte kalıcı bir klavye yardım şeridi eklemeden atamaları gösterir.
+IME birleşimi sırasında metin girişi önceliklidir. İstem geçmişi ve Escape eylemleri ayrıca odağa, seçici/Shell durumuna ve devam eden işleme bağlıdır; her ArrowUp veya Escape basışının koşulsuz genel eylem olduğunu varsaymayın. Masaüstünde gönderme odağı konuşmaya taşır; böylece oklar, sayfa tuşları ve Boşluk konuşmayı kaydırır. Bir karakter yazmak o karakterle birlikte ileti düzenleyicisine döner; **Girdiye odaklan** ise istem geçmişini kullanmadan önce odağı oraya döndürür.

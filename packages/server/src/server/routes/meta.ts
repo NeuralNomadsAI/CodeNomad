@@ -1,6 +1,6 @@
-import { FastifyInstance } from "fastify"
+import type { FastifyInstance, FastifyRequest } from "fastify"
 import { ServerMeta } from "../../api-types"
-import { isRemoteRequest } from "../../remote-control/request-origin"
+import { isLocalRequest, isRemoteRequest } from "../../remote-control/request-origin"
 import { isLoopbackHost, isWildcardHost } from "../network-host"
 import { serverOperatingSystemName } from "../os-name"
 
@@ -8,11 +8,15 @@ interface RouteDeps {
   serverMeta: ServerMeta
   /** Whether the host lets Remote Control serve web previews. */
   remotePreviewsAllowed: () => boolean
+  /** Whether a non-local request may open SideCars (the host's direct HTTPS opt-in). */
+  sidecarsOverDirectHttps?: (request: FastifyRequest) => boolean
 }
 
 export function registerMetaRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/meta", async (request) => ({
     ...buildMetaResponse(deps.serverMeta),
+    localRequest: isLocalRequest(request),
+    sidecarsAllowed: isLocalRequest(request) || deps.sidecarsOverDirectHttps?.(request) === true,
     ...(isRemoteRequest(request) && !deps.remotePreviewsAllowed() ? { previewsUnavailable: true as const } : {}),
   }))
 }

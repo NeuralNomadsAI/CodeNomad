@@ -8,6 +8,7 @@ import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
+import { useDesktopConnectionLaunch } from "./lib/hooks/use-desktop-connection-launch"
 import { installKeyboardOffset } from "./lib/keyboard-offset"
 import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
@@ -43,7 +44,6 @@ import {
   claimNativeBrowserOpen,
   onNativeBrowserOpen,
   releaseNativeBrowserOpen,
-  selectBrowserOpenOwner,
 } from "./lib/native/browser"
 import { useViewMenu } from "./lib/native/view-menu"
 import {
@@ -68,7 +68,7 @@ import {
   getSessions,
   getSessionRoot,
   activeSessionId,
-  clearActiveParentSession,
+  clearSelectedSession,
   fetchSessions,
   loadMessages,
   setActiveSessionFromList,
@@ -77,10 +77,13 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 import { openSessionPreview } from "./stores/session-previews"
+import { SessionPreviewHost } from "./components/session-preview-view"
+import { beginGesture } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
 import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
+import { shouldAppHoldWakeLock } from "./stores/wake-lock-eligibility"
 import { openSettings } from "./stores/settings-screen"
 import { showCommandPalette } from "./stores/command-palette"
 import {
@@ -224,15 +227,11 @@ const App: Component = () => {
     initReleaseNotifications()
   })
 
-  const shouldHoldWakeLock = createMemo(() => {
-    const map = instances()
-    for (const id of map.keys()) {
-      if (hasWakeLockEligibleWork(id)) {
-        return true
-      }
-    }
-    return false
-  })
+  const shouldHoldWakeLock = createMemo(() => shouldAppHoldWakeLock(
+    preferences().keepComputerAwake,
+    [...instances().keys()].some(hasWakeLockEligibleWork),
+    runtimeEnv.windowContext,
+  ))
 
   createEffect(() => {
     const hold = shouldHoldWakeLock()
@@ -263,17 +262,15 @@ const App: Component = () => {
       }
     }, 30_000)
     const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
-      const findOwners = () => [...instances().values()].filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
+      const findOwners = () => appTabs().flatMap(tab => tab.kind === "instance"
+        && getSessions(tab.instance.id).some(session => session.id === sessionID) ? [tab.instance] : [])
       let owners = findOwners()
       if (owners.length === 0) {
         await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
         owners = findOwners()
       }
       const activeTab = activeAppTab()
-      const owner = selectBrowserOpenOwner(
-        owners,
-        activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
-      )
+      const owner = owners.find(instance => activeTab?.kind === "instance" && instance.id === activeTab.instance.id) ?? owners[0]
       if (disposed || !owner) {
         if (!disposed) log.warn("Failed to route agent-requested web preview", {
           sessionID,
@@ -282,17 +279,19 @@ const App: Component = () => {
         })
         return
       }
-      if (!await claimNativeBrowserOpen(requestID)) return
+      const intent = beginGesture({ instanceId: owner.id, sessionId: sessionID })
       try {
+        if (!await claimNativeBrowserOpen(requestID)) return
         const instance = owner
-        await openSessionPreview(sessionID, url, instance.folder)
-        if (disposed) {
+        const stillOwned = () => !disposed && findOwners().some(candidate => candidate.id === instance.id)
+        await openSessionPreview(sessionID, url, instance.id, async () => stillOwned() && await claimNativeBrowserOpen(requestID) && stillOwned(), intent)
+        if (!stillOwned() || !intent.current()) {
           await releaseNativeBrowserOpen(requestID)
           return
         }
         setShowFolderSelection(false)
         selectInstanceTab(instance.id)
-        setActiveSessionFromList(instance.id, sessionID)
+        setActiveSessionFromList(instance.id, sessionID, intent)
       } catch (error) {
         await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
           log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
@@ -507,6 +506,7 @@ const App: Component = () => {
   }
 
   useDesktopFolderLaunch(handleSelectFolder)
+  useDesktopConnectionLaunch()
 
   async function handleNewTemporaryInstance(): Promise<void> {
     clearLaunchError()
@@ -608,7 +608,7 @@ const App: Component = () => {
     const parentSession = getSessionRoot(instanceId, sessionId)
     if (!parentSession) return
 
-    clearActiveParentSession(instanceId)
+    clearSelectedSession(instanceId)
 
     try {
       await fetchSessions(instanceId, { reset: true })
@@ -746,15 +746,13 @@ const App: Component = () => {
                </div>
 
                <div class="flex justify-end gap-2">
-                 <Show when={launchError()?.missingBinary}>
-                   <button
-                     type="button"
-                     class="selector-button selector-button-secondary"
-                    onClick={handleLaunchErrorAdvanced}
-                  >
-                    {t("app.launchError.openAdvancedSettings")}
-                  </button>
-                </Show>
+                 <button
+                   type="button"
+                   class="selector-button selector-button-secondary"
+                   onClick={handleLaunchErrorAdvanced}
+                 >
+                   {t("app.launchError.openAdvancedSettings")}
+                 </button>
                 <button type="button" class="selector-button selector-button-primary" onClick={handleLaunchErrorClose}>
                   {t("app.launchError.close")}
                 </button>
@@ -888,6 +886,7 @@ const App: Component = () => {
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
+        <SessionPreviewHost />
         <AuthRecoveryDialog />
 
         <Toaster

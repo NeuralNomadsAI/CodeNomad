@@ -152,13 +152,9 @@ export function usePromptState(options: PromptStateOptions): PromptState {
   const focusTextareaEnd = (getTextarea: GetTextarea) => {
     const textarea = getTextarea()
     if (!textarea) return
-    setTimeout(() => {
-      const next = getTextarea()
-      if (!next) return
-      const pos = next.value.length
-      next.setSelectionRange(pos, pos)
-      next.focus()
-    }, 0)
+    const pos = textarea.value.length
+    textarea.setSelectionRange(pos, pos)
+    textarea.focus()
   }
 
   const selectPreviousHistory = (selectOptions: HistorySelectOptions) => {

@@ -1,4 +1,14 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "OK",
+  "window.menu.native.browserPromptCancel": "キャンセル",
+  "window.menu.native.browserPermission": "{origin} に {permission} を許可しますか？",
+  "window.menu.native.browserPermissionUnknown": "不明な権限をブロックしました: {permission}。",
+  "window.menu.native.browserAllow": "許可",
+  "window.menu.native.browserDeny": "拒否",
+  "window.menu.native.browserCopyLink": "リンクをコピー",
+  "window.menu.native.browserSaveImage": "画像を保存",
+  "window.menu.native.browserOpenLink": "新しいウィンドウでリンクを開く",
+  "window.menu.native.browserInspect": "検証",
   "window.title.main": "CodeNomad",
   "window.controls.minimize": "ウィンドウを最小化",
   "window.controls.maximize": "ウィンドウを最大化または元に戻す",
@@ -54,15 +64,6 @@ export const appMessages = {
 
   "app.closeInstance.toast.error": "プロジェクトを閉じられませんでした。",
   "app.closeInstance.toast.otherWindow": "{project} は別のウィンドウから閉じられました。",
-
-  "emptyState.logoAlt": "CodeNomad ロゴ",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "フォルダを選択して AI でコーディングを開始",
-  "emptyState.actions.selectFolder": "フォルダを選択",
-  "emptyState.actions.selecting": "選択中...",
-  "emptyState.keyboardShortcut": "キーボードショートカット: {shortcut}",
-  "emptyState.examples": "例: {example}",
-  "emptyState.multipleInstances": "同じフォルダのインスタンスを複数作成できます",
 
   "releases.upgradeRequired.title": "アップグレードが必要です",
   "releases.desktop.checking": "CodeNomadの更新を確認しています…",

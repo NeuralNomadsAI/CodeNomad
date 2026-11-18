@@ -27,8 +27,8 @@ Use `getRootClient(instanceId)` from `packages/ui/src/stores/opencode-client.ts`
 - Shell mode calls `client.session.shell({ sessionID, command })`.
 - Conversation mode adds/removes `client.session.instructions.entry` before `client.session.prompt`.
 - Session Shell remains separate from background Shell and native PTY management.
-- Background Shells are location-scoped and listed with `client.shell.list`; the Status panel refreshes on Shell lifecycle events and reconnect and displays native metadata.
-- Shell ID operations are ownership-checked against the native `cwd`; output preserves the native cursor and removal uses `client.shell.remove`.
+- Background Shells use `GET /api/experimental/job?kind=shell&status=running` joined to `client.shell.list` in the requested Location. The owned CodeNomad background-shells route returns only owned matches. The visible Status section refreshes on Shell lifecycle, tool completion and reconnect; an unavailable job inventory reports a load error.
+- Shell ID operations are ownership-checked against the tool's originating session Location, or `cwd` for direct API shells; output preserves the native cursor and removal uses `client.shell.remove`.
 - Interactive terminals use separate `client.pty.*` APIs.
 
 ## Event Flow

@@ -3,7 +3,10 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Comp
 import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
+import { openExternalUrl } from "../../lib/external-url"
 import { useConfig } from "../../stores/preferences"
+import { openSettings } from "../../stores/settings-screen"
+import { ProviderUsageConsole } from "./provider-usage-console"
 import { serverEvents } from "../../lib/server-events"
 import { createProviderUsageState, providerUsageKey, shouldShowProviderUsageWindow, type ProviderUsageSource } from "./provider-usage-state"
 
@@ -19,7 +22,7 @@ interface ProviderUsagePanelProps {
 const REFRESH_INTERVAL_MS = 60_000
 
 const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const { preferences } = useConfig()
   const source = createMemo<ProviderUsageSource | null>(() => {
     if (!props.active) return null
@@ -79,9 +82,32 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const displayedLabels = createMemo(() =>
     entries().map(([label]) => label).filter(label => shouldShowProviderUsageWindow(label, preferences().showProviderUsageCreditBalance)),
   )
+  const hasReadings = createMemo(() => displayedLabels().length > 0 || Boolean(usage()?.console))
+  const unavailableMessage = createMemo(() => {
+    const data = usage()
+    const consoleMessage = data ? consoleError(data) : undefined
+    if (consoleMessage) return t(consoleMessage)
+    if (data?.unavailableReason === "openai-token-sharing-unsupported") return t("providerUsage.openaiTokenSharingUnsupported")
+    if (data?.unavailableReason === "opencode-go-key-expired") return t("providerUsage.openCodeGoKeyExpired")
+    if (data?.unavailableReason === "minimax-limits-not-shared") return t("providerUsage.minimaxLimitsNotShared")
+    if (data?.unavailableReason === "invalid-base-url") return t("providerUsage.invalidBaseURL")
+    if (data?.unavailableReason === "cursor-token-expired") return t("providerUsage.cursorTokenExpired")
+    if (data?.unavailableReason === "cursor-team-unavailable") return t("providerUsage.cursorTeamUnavailable")
+    if (data?.unavailableReason === "cursor-access-denied") return t("providerUsage.cursorAccessDenied")
+    if (data?.unavailableReason === "cursor-usage-unavailable") return t("providerUsage.cursorUsageUnavailable")
+    if (data?.unavailableReason === "provider-error") return data.providerErrorCode && /^\d{1,8}$/.test(data.providerErrorCode) && data.providerErrorCode.trim() === data.providerErrorCode
+      ? t("providerUsage.providerErrorCode", { code: data.providerErrorCode }) : t("providerUsage.unavailable")
+    return null
+  })
+  // Destinations and labels belong to the UI, never to upstream response text.
+  const unavailableLink = createMemo(() => usage()?.unavailableReason === "openai-token-sharing-unsupported"
+    && usage()?.unavailableAction === "chatgpt-usage"
+    ? { href: "https://chatgpt.com/settings/usage", label: t("providerUsage.viewChatGPTUsage") }
+    : usage()?.unavailableReason === "opencode-go-key-expired" && usage()?.unavailableAction === "opencode-go-new-key"
+      ? { href: "https://opencode.ai/console/login", label: t("providerUsage.createOpenCodeGoKey") } : null)
 
   const windowLabel = (label: string): string => {
-    // Model-scoped limits arrive as `window:Model`, e.g. `7d:Opus`.
+    // Model-scoped limits arrive as `window:Model`, e.g. `requests:gemini-2.5-pro` or `7d:Opus`.
     const scope = label.indexOf(":")
     if (scope > 0) return `${windowLabel(label.slice(0, scope))} · ${label.slice(scope + 1)}`
     const key = ({
@@ -92,7 +118,16 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       weekly: "weekly",
       daily: "daily",
       monthly: "monthly",
+      tokens: "tokens",
+      input_tokens: "inputTokens",
+      output_tokens: "outputTokens",
+      usage: "usage",
+      "monthly-code": "monthlyCode",
       credits: "credits",
+      key_limit: "keyLimit",
+      per_user_limit: "perUserLimit",
+      team_limit: "teamLimit",
+      requests: "requests",
       credits_balance: "credits",
       billing_cycle: "billingCycle",
       session: "session",
@@ -104,17 +139,40 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     return key ? t(`providerUsage.windows.${key}`) : label
   }
 
+  const usedValue = (key: string, value: string) => {
+    const [before, after] = t(key).split("{used}")
+    return <>{before}<bdi dir="ltr">{value}</bdi>{after}</>
+  }
+
   const displayValue = (window: ProviderUsageWindow) => {
-    if (window.valueLabel) return window.valueLabel
+    const consumption = window.consumption
+    const number = new Intl.NumberFormat(locale(), { maximumFractionDigits: 8 })
+    if (consumption && "used" in consumption) return usedValue("providerUsage.usedCountOnly", consumption.limit === undefined
+      ? number.format(consumption.used) : `${number.format(consumption.used)} / ${number.format(consumption.limit)}`)
+    if (consumption && "creditsUsed" in consumption) return usedValue("providerUsage.creditsUsed", number.format(consumption.creditsUsed))
+    if (consumption && "unlimited" in consumption) return t("providerUsage.unlimited")
+    if (window.limitUSD !== undefined) return <bdi dir="ltr">{new Intl.NumberFormat(locale(), { style: "currency", currency: "USD" }).format(window.limitUSD)}</bdi>
+    if (window.balanceUSD) {
+      const money = new Intl.NumberFormat(locale(), { style: "currency", currency: "USD" })
+      // Currency formatters may include RTL marks; isolate each amount as well as the ratio.
+      return <bdi dir="ltr"><bdi dir="ltr">{money.format(window.balanceUSD.remaining)}</bdi>
+        <Show when={window.balanceUSD.total !== undefined}>{" / "}<bdi dir="ltr">{money.format(window.balanceUSD.total!)}</bdi></Show>
+      </bdi>
+    }
+    const estimate = usage()?.freeEstimate
+    if (window.valueLabel && estimate && estimate.requests !== null) {
+      return <bdi dir="ltr">{number.format(estimate.requests)} / {number.format(estimate.reference)}</bdi>
+    }
+    if (window.valueLabel) return <bdi dir="ltr">{window.valueLabel}</bdi>
     if (window.usedPercent === null) return t("providerUsage.unavailableValue")
-    return t("providerUsage.usedPercent", { percent: Math.round(window.usedPercent) })
+    return t("providerUsage.usedPercent", { percent: new Intl.NumberFormat(locale()).format(Math.round(window.usedPercent)) })
   }
 
   const resetLabel = (resetAt: number | null) => {
     if (!resetAt) return null
     const date = new Date(resetAt)
     if (!Number.isFinite(date.getTime())) return null
-    return t("providerUsage.resets", { time: date.toLocaleString([], { dateStyle: "short", timeStyle: "short" }) })
+    return t("providerUsage.resets", { time: date.toLocaleString(locale(), { dateStyle: "short", timeStyle: "short" }) })
   }
 
   const barColor = (percent: number | null) => {
@@ -125,37 +183,49 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
 
   return (
     <div>
-      <Show when={usage() !== undefined} fallback={<div class="right-panel-empty-text">{t("providerUsage.loading")}</div>}>
-        <Show when={usage()} fallback={<div class="right-panel-empty-text">{t("providerUsage.unavailable")}</div>}>
+      <Show when={usage() !== undefined} fallback={<div role="status" class="right-panel-empty-text">{t("providerUsage.loading")}</div>}>
+        <Show when={usage()} fallback={<div role="status" class="right-panel-empty-text">{t("providerUsage.unavailable")}</div>}>
           {(data) => (
             <Show
-              when={data().supported && data().configured && data().ok && entries().length > 0}
+              when={data().supported && data().configured && data().ok && !unavailableMessage() && hasReadings()}
               fallback={
-                <div class="right-panel-empty-text">
+                <Show when={unavailableMessage()} fallback={<div role="status" class="right-panel-empty-text">
                   {t(
                     !data().supported
                       ? "providerUsage.unsupported"
                       : !data().configured
                         ? "providerUsage.notConfigured"
-                        : data().unavailableReason === "openai-token-sharing-unsupported"
-                          ? "providerUsage.openaiTokenSharingUnsupported"
-                          : "providerUsage.unavailable",
+                        : "providerUsage.unavailable",
                   )}
-                </div>
+                </div>}>
+                  {message => <div role="status" class="space-y-2 border border-base bg-surface-inset p-2 text-xs text-primary">
+                    <div>{message()}</div>
+                    <Show when={unavailableLink()}>{link => <a href={link().href} target="_blank" rel="noopener noreferrer"
+                      class="text-accent underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+                      onClick={event => { event.preventDefault(); void openExternalUrl(link().href, "provider-usage") }}>
+                      {link().label}
+                    </a>}</Show>
+                    <Show when={["opencode-console-missing-credential", "opencode-console-access-denied", "opencode-console-invalid-credential"].includes(data().unavailableReason ?? "")}>
+                      <button type="button" class="window-action mt-1" onClick={() => void openSettings("providers")}>{t("providerUsage.console.settings")}</button>
+                    </Show>
+                  </div>}
+                </Show>
               }
             >
               <div class="space-y-2">
+                <Show when={data().console}>{console => <ProviderUsageConsole usage={console()} />}</Show>
                 <For each={displayedLabels()}>
                   {(label) => {
                     // Retain this row's value until For reconciles a removed
                     // label; its effects must not read an absent window.
                     const window = createMemo<ProviderUsageWindow>(previous => usage()?.windows[label] ?? previous, usage()!.windows[label])
+                    const usedPercent = () => window().usedPercent
                     return (
                       <div>
-                        <div class="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-primary">
-                          <span class="font-medium">{windowLabel(label)}</span>
-                          <div class="flex min-w-0 items-baseline gap-1.5 text-right">
-                            <span class="shrink-0 font-medium">{displayValue(window())}</span>
+                        <div class="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 text-[11px] text-primary">
+                          <span class="max-w-full shrink-0 font-medium">{windowLabel(label)}</span>
+                          <div class="ms-auto flex min-w-0 max-w-full flex-wrap items-baseline justify-end gap-1.5 text-end">
+                            <span class="min-w-0 font-medium [overflow-wrap:anywhere]">{displayValue(window())}</span>
                             <Show when={resetLabel(window().resetAt)}>
                               {(reset) => (
                                 <>
@@ -166,16 +236,16 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                             </Show>
                           </div>
                         </div>
-                        <Show when={window().usedPercent !== null}>
+                        <Show when={usedPercent() !== null}>
                           <div class="h-2 overflow-hidden border border-base" style={{ "background-color": "var(--surface-inset)" }}>
                             <div
                               class="h-full transition-[width] duration-300"
-                              style={{ width: `${Math.max(0, Math.min(100, window().usedPercent ?? 0))}%`, "background-color": barColor(window().usedPercent) }}
+                              style={{ width: `${Math.max(0, Math.min(100, usedPercent() ?? 0))}%`, "background-color": barColor(usedPercent()) }}
                               role="progressbar"
                               aria-label={t("providerUsage.progressLabel", { window: windowLabel(label) })}
                               aria-valuemin={0}
                               aria-valuemax={100}
-                              aria-valuenow={Math.round(window().usedPercent ?? 0)}
+                              aria-valuenow={Math.round(usedPercent() ?? 0)}
                             />
                           </div>
                         </Show>
@@ -188,11 +258,24 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
           )}
         </Show>
       </Show>
-      <Show when={usage()?.supported && usage()?.configured && usage()?.ok && entries().length > 0}>
-        <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">{usage()?.providerName ?? props.providerId}</div>
+      <Show when={usage()?.supported && usage()?.configured && usage()?.ok && !unavailableMessage() && hasReadings()}>
+        <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">
+          {usage()?.providerName ?? props.providerId}
+          <Show when={usage()?.copilotPlan}>{plan => ` · ${t(`providerUsage.copilotPlans.${plan()}`)}`}</Show>
+        </div>
       </Show>
     </div>
   )
 }
 
 export default ProviderUsagePanel
+
+function consoleError(data: ProviderUsageResponse) {
+  return ({
+    "opencode-console-missing-credential": "providerUsage.console.missingCredential",
+    "opencode-console-access-denied": "providerUsage.console.accessDenied",
+    "opencode-console-invalid-credential": "providerUsage.console.invalidCredential",
+    "opencode-console-invalid-response": "providerUsage.console.malformed",
+    "opencode-console-network-error": "providerUsage.console.network",
+  } as Record<string, string>)[data.unavailableReason ?? ""]
+}

@@ -59,11 +59,13 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
   if (previewToken && deps.servesPreview(previewToken)) return false
 
   const method = request.method.toUpperCase()
-  if (!SAFE_METHODS.has(method) && request.headers.origin !== `https://${host}`) {
+  const nativePairing = pathname === PAIR_EXCHANGE_PATH && request.headers.origin === undefined
+    && request.headers.referer === undefined && request.headers["sec-fetch-site"] === undefined
+  if (!SAFE_METHODS.has(method) && request.headers.origin !== `https://${host}` && !nativePairing) {
     reject(reply, 403, "Cross-origin request rejected")
     return true
   }
-  if (isLocalOnly(pathname) && !PUBLIC_PATHS.has(pathname) && !(method === "GET" && REMOTE_MANAGEMENT_READS.has(pathname))) {
+  if (isHostOnlyPath(pathname, method) && !PUBLIC_PATHS.has(pathname)) {
     reject(reply, 404, "Not found")
     return true
   }
@@ -113,6 +115,9 @@ function isStaticBundlePath(pathname: string): boolean {
     && !pathname.startsWith("/api/") && !pathname.startsWith("/workspaces/")
 }
 
-function isLocalOnly(pathname: string): boolean {
+export function isHostOnlyPath(pathname: string, method: string, direct = false): boolean {
+  // Direct browsers sign in/out with the password; token bootstrap stays local.
+  if (direct && ["/login", "/api/auth/login", "/api/auth/logout"].includes(pathname)) return false
+  if (method === "GET" && REMOTE_MANAGEMENT_READS.has(pathname)) return false
   return LOCAL_ONLY_PATHS.has(pathname) || LOCAL_ONLY_PREFIXES.some((prefix) => pathname.startsWith(prefix) || `${pathname}/` === prefix)
 }

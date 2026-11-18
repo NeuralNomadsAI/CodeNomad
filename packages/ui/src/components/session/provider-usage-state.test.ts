@@ -90,3 +90,29 @@ test("failed quota refresh does not retain a possibly different account's old re
   await state.refresh()
   assert.equal(displayed, null)
 })
+
+test("Console responses remain authoritative when a read crosses midnight", async t => {
+  let now = Date.UTC(2026, 10, 5, 23, 59, 59)
+  t.mock.method(Date, "now", () => now)
+  const free = { ...source, providerId: "opencode", modelId: "big-pickle" }
+  const requests: Array<(value: ProviderUsageResponse) => void> = []
+  let displayed: ProviderUsageResponse | null | undefined
+  const snapshot = () => displayed
+  const state = createProviderUsageState(() => new Promise(resolve => requests.push(resolve)), value => { displayed = value })
+  const counters = { ...response(0), windows: {}, console: { requests: { "24h": 790, "7d": 1200, "30d": 3000 },
+    models: [], budgets: { status: "unavailable" as const, items: [] } } }
+  state.select(free)
+  const initial = state.refresh()
+  requests[0](counters); await initial
+  const pending = state.refresh()
+  now += 2000
+  assert.equal(snapshot(), counters)
+  requests[1](counters)
+  await pending
+  assert.equal(snapshot(), counters)
+  assert.equal(requests.length, 2)
+  state.select(null)
+  now += 86400000
+  await state.refresh()
+  assert.equal(requests.length, 2, "hidden panels never refresh")
+})

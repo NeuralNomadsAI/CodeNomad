@@ -9,6 +9,7 @@ import { join } from "node:path"
 import { createConnection } from "node:net"
 import { setTimeout as delay } from "node:timers/promises"
 import { captureProcessTree, forceCapturedProcessTree } from "./process-stop"
+import { WindowsProcessWorker } from "./windows-process-worker"
 
 function request(script: string) {
   return { file: process.execPath, args: ["-e", script], env: { ...process.env, FIXTURE_VALUE: "a b \" c" },
@@ -35,6 +36,7 @@ test("parent-started service survives backend process-tree enforcement", { timeo
   const ready = join(root, "port")
   const backend = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" })
   const exited = once(backend, "exit")
+  const worker = process.platform === "win32" ? new WindowsProcessWorker() : undefined
   let port: number | undefined
   async function query(value: string) {
     const socket = createConnection({ host: "127.0.0.1", port: port! })
@@ -60,15 +62,16 @@ test("parent-started service survives backend process-tree enforcement", { timeo
     }
     assert.ok(port)
     assert.equal(await query("health"), "alive")
-    const tree = await captureProcessTree(backend.pid!)
+    const tree = await captureProcessTree(backend.pid!, process.platform, worker?.run, worker ? 15_000 : 1_500)
     assert.ok(tree)
     // POSIX termination may still report the just-killed child as a zombie
     // until Node processes SIGCHLD. Production retries this confirmation too.
-    await forceCapturedProcessTree(tree)
+    await forceCapturedProcessTree(tree, undefined, worker?.run)
     await exited
-    assert.equal(await forceCapturedProcessTree(tree), true)
+    assert.equal(await forceCapturedProcessTree(tree, undefined, worker?.run), true)
     assert.equal(await query("health"), "alive")
   } finally {
+    worker?.dispose()
     if (port) await query("stop").catch(() => undefined)
     backend.kill("SIGKILL")
     await exited

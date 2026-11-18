@@ -8,7 +8,31 @@
 
 Las pestañas de proyectos, conversaciones seleccionadas y disposición pertenecen a una ventana. Las sesiones/mensajes OpenCode pertenecen al servicio nativo compartido de OpenCode: otra ventana puede ver la misma conversación. Cerrar una pestaña de proyecto cierra ese proyecto en CodeNomad, no sus sesiones OpenCode; vuelve a abrirlo para encontrarlas. Otra ventana que muestre la misma conexión de proyecto también cierra su pestaña y muestra una notificación; las pestañas de la misma carpeta abiertas por separado no se ven afectadas. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas; consulta [Proyectos](projects.md). No uses el cierre de ventanas como prueba de que se ha detenido un agente o una Misión programada.
 
-Los menús nativos de la aplicación usan el idioma de la interfaz de CodeNomad en cuanto se ha cargado una ventana; hasta entonces se muestran en inglés. **Ayuda → Acerca de CodeNomad** (también en el menú de la aplicación en macOS) abre **Configuración → Info** con la versión, las actualizaciones y los diagnósticos.
+Los menús nativos de la aplicación usan el idioma de la interfaz de CodeNomad en cuanto se ha cargado una ventana; hasta entonces se muestran en inglés. **Ayuda → Acerca de CodeNomad** (también en el menú de la aplicación en macOS) abre **Configuración → Info** con la versión, las actualizaciones y los diagnósticos. **Ayuda → Apoyar a CodeNomad** abre la página [Apoyar a CodeNomad](sponsor.md) en el navegador.
+
+## Argumentos de inicio de escritorio {#desktop-cli}
+
+Añade estos argumentos después del **ejecutable de escritorio** (Tauri o Electron), en una terminal o en el campo **Destino** de un acceso directo de Windows. Sustituye las rutas de ejemplo por la de tu ejecutable.
+
+| Argumento | Efecto |
+| --- | --- |
+| `--connect-server <server>` | Abre un servidor CodeNomad remoto mediante su URL HTTP(S), nombre guardado o ID guardado. Consulta [conexión e inicio de sesión](remote-access.md#saved-servers). |
+| `--folder <path>` | Abre una carpeta de proyecto existente. Repite el argumento para varias carpetas; las rutas relativas parten del directorio de inicio. |
+| `<path> ...` | Abre carpetas de proyecto sin escribir `--folder`. **Tauri en Windows, si ya está abierto:** usa `--folder` para cada carpeta. Mezclar rutas posicionales con `--folder` también descarta toda la solicitud de apertura de carpetas. |
+| `--new-window` | Solicita una ventana nueva, incluso si otro inicio normalmente enfocaría la existente. |
+
+También funcionan `--connect-server=<server>` y `--folder=<path>`. Entrecomilla rutas o nombres con espacios. Para abrir solo la ventana remota, usa únicamente `--connect-server`, sin carpetas ni `--new-window`; la restauración local se aplaza salvo que falle la conexión.
+
+En **PowerShell**:
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+En el **Destino** del acceso directo de Windows, escribe `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` (`&` corresponde a PowerShell). En Linux usa el ejecutable AppImage, por ejemplo `./CodeNomad.AppImage --connect-server "https://server.example:9898"`.
+
+Para perfiles y configuración, define `CODENOMAD_PROFILE` y `CLI_CONFIG` antes de iniciar; consulta [Perfiles de datos](#data-profiles). Las opciones del backend sobre escucha, TLS y autenticación están en la [referencia CLI del servidor](server.md#cli-reference). Tauri en Windows rechaza argumentos con `|`; usa una URL o cambia el nombre guardado del servidor.
 
 ## Preferencias y restauración al iniciar {#preferences-startup}
 
@@ -18,9 +42,11 @@ Los menús nativos de la aplicación usan el idioma de la interfaz de CodeNomad 
 
 La restauración puede reabrir pestañas de espacios de trabajo/SideCar y sesiones activas, texto sin enviar, posiciones de desplazamiento, paneles, posición de ventanas y zoom. Es estado del cliente por ventana, no una copia de la base de datos nativa de conversaciones. Borrarlo elimina pestañas guardadas, borradores y disposición; no elimina la configuración de CodeNomad ni conversaciones OpenCode. Guarda primero cualquier borrador importante sin enviar en otro lugar.
 
+Cada pestaña de proyecto restaura su propia selección del panel derecho, modo de Archivos y lector y selección de Misión, incluidas las pestañas duplicadas de la misma conversación. Las URL y el historial guardados del navegador se reabren a petición; consulta [Vistas previas del navegador y SideCars](browser-sidecars.md#session-browser).
+
 La ventana de Preferencias no tiene un estado de restauración independiente: estos controles apuntan a la ventana que la abrió. Si esa ventana se cerró, o es desconocida porque Preferencias se reabrió al iniciar, siguen la ventana usada más recientemente; un cambio preparado para otra ventana nunca se aplica, y los controles muestran primero el valor de la nueva ventana. Para configurar una ventana concreta, abre Preferencias desde ella. Los ajustes con ámbito de proyecto usan igualmente la Location de origen; sin ella no están disponibles. Cuando Preferencias se reabre al iniciar, se vuelven a conectar en cuanto ese proyecto termina de abrirse; mientras la carpeta sigue iniciándose, o está abierta en varias pestañas, permanecen no disponibles hasta que abras Preferencias desde la ventana deseada.
 
-La configuración del navegador y remota está integrada en lugar de tener un segundo propietario nativo de Preferencias. Se informa de un error al abrir Preferencias nativas; no es motivo para suponer que se abrió una pantalla integrada oculta en su lugar.
+Los clientes de navegador y remotos usan la configuración integrada.
 
 ## Perfiles de datos de escritorio {#data-profiles}
 
@@ -54,7 +80,7 @@ En Tauri para macOS, los perfiles separados comparten almacenamiento WebKit del 
 
 La eliminación borra las pestañas, borradores, disposición y almacenamiento web/caché/inicios de sesión propios de ese perfil, incluido un perfil enumerado de otra configuración. Conserva el perfil abierto, las conversaciones OpenCode y los archivos del proyecto. Un perfil abierto o en estado desconocido no se puede eliminar; cierra las ventanas de CodeNomad relevantes, actualiza la lista y reintenta. El contenido no reconocido se conserva y se notifica en lugar de eliminarse indiscriminadamente.
 
-El almacén WebKit compartido de Tauri en macOS se conserva porque borrarlo afectaría a otros perfiles. Esta limpieza no se puede deshacer: que sobreviva una conversación nativa no restaura un borrador sin enviar eliminado. **Borrar el estado de inicio guardado** es la acción más limitada cuando solo quieres restablecer la ventana actual.
+Se conservan el almacenamiento web, los inicios de sesión y la caché compartidos de Tauri en macOS. Esta limpieza no se puede deshacer: que sobreviva una conversación nativa no restaura un borrador sin enviar eliminado. **Borrar el estado de inicio guardado** es la acción más limitada cuando solo quieres restablecer la ventana actual.
 
 ## Zoom y geometría de paneles {#zoom-panels}
 

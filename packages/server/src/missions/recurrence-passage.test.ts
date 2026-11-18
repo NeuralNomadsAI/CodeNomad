@@ -86,9 +86,13 @@ test("passage journal reads its mission range like the whole isolated journal", 
   const snapshot = await scope.journal.snapshot()
   prefixes.length = 0
   const view = await scope.journal.missionView(scope.missionID)
-  assert.ok(prefixes.length > 1 && prefixes.every(prefix => prefix.endsWith(`/${scope.missionID}/`)), "the native scan stays on the mission's range")
+  const physical = [...values.keys()][0].split(`/${scope.missionID}/`)[0] + "/"
+  assert.ok(prefixes.length > 1 && prefixes.every(prefix => prefix === physical && prefix.endsWith(`/${scope.passageID}/`)),
+    "the native scan validates the entire exact single-mission passage")
   assert.deepEqual(view.mission, snapshot.missions[0])
   assert.equal(view.mission?.revision, 121)
   assert.deepEqual(view.events, (await scope.journal.events()).events)
   await assert.rejects(scope.journal.missionView(`msn_${"0".repeat(24)}`), /scan conflict/)
+  values.set(`${physical}msn_foreign/evt_created`, {})
+  await assert.rejects(scope.journal.missionView(scope.missionID), /scope conflict/, "foreign siblings cannot hide outside a point-read prefix")
 })

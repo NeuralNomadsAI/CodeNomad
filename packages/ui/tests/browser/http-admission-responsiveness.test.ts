@@ -108,7 +108,7 @@ async function harness() {
     getWorktreeIdentityForPath: async () => "/fixture",
     getSessionEnvironment: async () => ({}),
     ownsDirectory: async (_id: string, directory: string) => directory === "/fixture",
-    ownsLocation: async (_id: string, location: { directory: string }, _client: unknown, signal?: AbortSignal) =>
+    ownsLocation: async (_id: string, location: { directory: string }, _client: unknown, { signal }: { signal?: AbortSignal } = {}) =>
       location.directory === "/fixture" && (await native.location.get({ location }, { signal })).directory === "/fixture",
   } as unknown as InstanceProxyWorkspaceManager
   const backend = Fastify({ forceCloseConnections: true })

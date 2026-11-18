@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-tauri = { version = "2.5.2", features = ["unstable"] }
+tauri = { version = "2.12.5", features = ["unstable"] }
 
 [build-dependencies]
-tauri-build = "2.5.2"
+tauri-build = "2.7.4"

@@ -1,6 +1,6 @@
 import path from "node:path"
 import { readFile, realpath, stat } from "node:fs/promises"
-import { gitLocationOverridden, readGitCommonDirectory } from "./git-common-directory"
+import { discoverCheckoutCommonDirectory, gitLocationOverridden, readGitCommonDirectory } from "./git-common-directory"
 export { readCheckoutIdentity } from "./git-common-directory"
 import { runWorktreeGit as git } from "./git-process"
 import { GitRequiredError } from "./git-requirement"
@@ -27,11 +27,18 @@ export async function isGitAvailable(folder: string): Promise<boolean> {
 // A different physical common directory cannot belong to this local repository,
 // even when independent clones share OpenCode's project ID. This is only a
 // negative preflight; a match still requires the native worktree inventory.
-export async function sharesGitCommonDirectory(left: string, right: string): Promise<boolean> {
+export async function sharesGitCommonDirectory(left: string, right: string, { strict = false } = {}): Promise<boolean> {
   try {
-    const [a, b] = await Promise.all([readGitCommonDirectory(left), readGitCommonDirectory(right)])
-    return a === b
-  } catch { return false }
+    // Strict discovery preserves verified absence separately from ambiguous/read failures.
+    const read = strict ? discoverCheckoutCommonDirectory : readGitCommonDirectory
+    const [a, b] = await Promise.allSettled([read(left), read(right)])
+    if (a.status === "rejected") throw a.reason
+    if (b.status === "rejected") throw b.reason
+    return a.value !== undefined && a.value === b.value
+  } catch (error) {
+    if (strict) throw error
+    return false
+  }
 }
 
 // Git annotations and branch policy, not another worktree registry. Native
@@ -90,6 +97,14 @@ export async function prepareWorktreeBranch(directory: string, branch: string): 
   await git(directory, ["check-ref-format", "--branch", branch])
   const revision = await git(directory, ["rev-parse", "--verify", `refs/heads/${branch}`]).catch(() => undefined)
   return { existing: Boolean(revision), revision: revision ?? await git(directory, ["rev-parse", "--verify", "HEAD"]) }
+}
+
+/** Whether `revision` tracks the folder `directory` (inside its checkout); a new
+ * checkout of it holds only tracked content. */
+export async function revisionContainsFolder(directory: string, revision: string): Promise<boolean> {
+  const prefix = (await git(directory, ["rev-parse", "--show-prefix"])).replace(/\/$/, "")
+  if (!prefix) return true
+  return git(directory, ["cat-file", "-t", `${revision}:${prefix}`]).then(type => type === "tree", () => false)
 }
 
 export async function attachWorktreeBranch(directory: string, branch: string, existing: boolean): Promise<void> {

@@ -13,7 +13,20 @@ export interface RendererFlushWindow {
   webContents: RendererFlushWebContents
 }
 
-export type RendererFlushResult = "flushed" | "not-primary" | "window-unavailable" | "untrusted-origin"
+export type RendererFlushResult = "flushed" | "not-primary" | "window-unavailable" | "untrusted-origin" | "no-application"
+
+/**
+ * The loading page and the server's sign-in and pairing pages never run the application, so nothing
+ * there could answer a flush: waiting for one would keep the window from closing and CodeNomad from quitting.
+ */
+export function isListenerlessDocument(url: string): boolean {
+  try {
+    const { pathname } = new URL(url)
+    return pathname.endsWith("/loading.html") || pathname === "/login" || pathname === "/remote-pair" || pathname.startsWith("/auth/")
+  } catch {
+    return false
+  }
+}
 
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation = "Renderer client-state flush"): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -45,6 +58,7 @@ export async function flushRendererClientStateBeforeShutdown(
 
   const currentUrl = window.webContents.getURL()
   if (!isTrustedOrigin(currentUrl)) return "untrusted-origin"
+  if (isListenerlessDocument(currentUrl)) return "no-application"
 
   const callbackName = JSON.stringify(RENDERER_CLIENT_STATE_FLUSH_CALLBACK)
   const expectedOrigin = JSON.stringify(new URL(currentUrl).origin)

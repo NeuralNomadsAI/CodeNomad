@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, type MissionStorage } from "./journal"
-import { MISSION_MAX_ACTORS, MISSION_MAX_EVENTS, type MissionEvent, type MissionJsonValue,
+import { MISSION_MAX_EVENTS, missionTerminalShare, type MissionEvent, type MissionJsonValue,
   type MissionNativeBinding, type MissionTaskNativeBoundEvent, type MissionTaskNativeReturnedEvent,
   type MissionTaskNativeCallStartedEvent, type MissionTaskNativeCallEndedEvent } from "./model"
 import { controlReceiptID, reportAdmissionID, reportNotificationID } from "./receipt-identity"
@@ -336,17 +336,18 @@ test("Stop ACK is not a native return; settled lifecycle controls cannot release
   assert.deepEqual(mission.reports, [])
 })
 
-test("native actor capacity rejection never creates a ghost assignment/claim", async () => {
+test("native actors bind without a count limit, each with its own assignment and claim", async () => {
   const f = fixture(); await f.create()
-  for (let index = 0; index < MISSION_MAX_ACTORS; index++) {
+  const children = 12
+  for (let index = 0; index < children; index++) {
     await f.task(`work${index}`); await f.journal.append(f.bound(`work${index}`, `ses_child_${index}`))
   }
   const mission = await f.mission()
-  assert.equal(mission.actors.length, MISSION_MAX_ACTORS)
-  assert.equal(mission.tasks.at(-1)?.actorSessionId, undefined)
-  assert.equal(mission.tasks.at(-1)?.nativeBinding, undefined)
-  assert.equal(mission.claims.length, MISSION_MAX_ACTORS - 1)
-  assert.equal((await f.journal.snapshot()).discardedEvents, 1)
+  assert.equal(mission.actors.length, children + 1)
+  assert.equal(mission.tasks.at(-1)?.actorSessionId, `ses_child_${children - 1}`)
+  assert.ok(mission.tasks.at(-1)?.nativeBinding)
+  assert.equal(mission.claims.length, children)
+  assert.equal((await f.journal.snapshot()).discardedEvents, 0)
 })
 
 test("old root assignment and explicit report-notification receipts retain exact behavior", async () => {
@@ -371,7 +372,9 @@ test("old root assignment and explicit report-notification receipts retain exact
 for (const kind of ["lifecycle", "cleanup"] as const) {
 test(`native binding/return cannot spend reserved ${kind} receipt capacity, even at its deterministic key`, async () => {
   const f = fixture(); await f.setup()
-  for (let index = f.values.size; f.values.size < MISSION_MAX_EVENTS - 2; index++) {
+  // Room for exactly the one-target intent beside the two actors' terminal share.
+  const filled = MISSION_MAX_EVENTS - missionTerminalShare(2) - 2
+  for (let index = f.values.size; f.values.size < filled; index++) {
     const event: MissionEvent = { ...f.base(), type: "mission.updated", requestID: `fill_${index}`, expectedRevision: 1,
       objective: "Capacity filler", notesSpecified: false }
     f.inject(event)
@@ -387,11 +390,11 @@ test(`native binding/return cannot spend reserved ${kind} receipt capacity, even
     await assert.rejects(f.journal.append(native), /2000-event safety limit/)
     await assert.rejects(f.journal.append({ ...native, id: receiptID }), /2000-event safety limit/)
   }
-  assert.equal(f.values.size, MISSION_MAX_EVENTS - 1)
+  assert.equal(f.values.size, filled + 1)
   await f.journal.append(kind === "lifecycle"
     ? { ...f.base(), id: receiptID, type: "mission.control-applied", operationID: intent.id, sessionID: "ses_child" }
     : { ...f.base(), id: receiptID, type: "mission.session-cleaned", deletionID: intent.id, sessionID: "ses_child", outcome: "removed" })
-  assert.equal(f.values.size, MISSION_MAX_EVENTS)
+  assert.equal(f.values.size, filled + 2)
   assert.equal((await f.journal.events()).events.filter(event => event.type === "task.native-returned").length, 0)
 })
 }

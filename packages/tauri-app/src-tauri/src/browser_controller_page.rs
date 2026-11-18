@@ -1,5 +1,10 @@
 //! Private backend-only protocol adapter. Never register these methods as Tauri commands.
 use super::*;
+#[path = "browser_page_operation.rs"]
+mod operations;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "browser_page_webkit.rs"]
+mod webkit;
 
 #[derive(Clone)]
 pub(super) struct PageLease {
@@ -8,34 +13,9 @@ pub(super) struct PageLease {
     operation_id: String,
     pub(super) generation: String,
     pub(super) expires: Instant,
-}
-
-fn page_method_allowed(method: &str) -> bool {
-    matches!(
-        method,
-        "Accessibility.getFullAXTree"
-            | "DOM.resolveNode"
-            | "DOM.scrollIntoViewIfNeeded"
-            | "DOM.getContentQuads"
-            | "DOM.getNodeForLocation"
-            | "Page.getLayoutMetrics"
-            | "Runtime.callFunctionOn"
-            | "Runtime.evaluate"
-            | "Runtime.releaseObjectGroup"
-            | "Input.insertText"
-            | "Input.dispatchMouseEvent"
-            | "Input.dispatchKeyEvent"
-    )
-}
-
-fn page_params(method: &str, params: Value) -> Result<Value, String> {
-    if !page_method_allowed(method) {
-        return Err("Unsupported browser page command".into());
-    }
-    if !params.is_object() || params.to_string().len() > 256 * 1024 {
-        return Err("Invalid or oversized browser page parameters".into());
-    }
-    Ok(params)
+    pub(super) document: Option<String>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) held: crate::embedded_view::input::Held,
 }
 
 impl BrowserController {
@@ -84,6 +64,9 @@ impl BrowserController {
             generation: self.page_generation(&registration, navigation),
             registration,
             expires: Instant::now() + Duration::from_secs(30),
+            document: None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            held: Default::default(),
         };
         inner.page_leases.insert(operation_id.into(), lease.clone());
         Ok(lease)
@@ -121,12 +104,13 @@ impl BrowserController {
             })
             || inner.registrations.get(&lease.registration.registration_id)
                 != Some(&lease.registration)
-            || !inner
-                .navigation_versions
-                .get(&lease.registration.registration_id)
-                .is_some_and(|navigation| {
-                    self.page_generation(&lease.registration, *navigation) == lease.generation
-                })
+            || (lease.document.is_none()
+                && !inner
+                    .navigation_versions
+                    .get(&lease.registration.registration_id)
+                    .is_some_and(|navigation| {
+                        self.page_generation(&lease.registration, *navigation) == lease.generation
+                    }))
         {
             return Err("Browser page lease is no longer current".into());
         }
@@ -176,13 +160,15 @@ impl BrowserController {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn check_page(
         &self,
         app: &AppHandle,
         lease: &PageLease,
         deadline: Instant,
+        fence: &crate::native_request::RequestFence,
     ) -> Result<tauri::Url, String> {
+        fence.check()?;
         self.check_page_state(lease, deadline)?;
         if self.resolve(app, &lease.session_id)? != lease.registration {
             return Err("Browser page lease is no longer current".into());
@@ -197,17 +183,28 @@ impl BrowserController {
             return Err("Browser page lease is no longer current".into());
         }
         self.check_page_state(lease, deadline)?;
+        fence.check()?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(document) = &lease.document {
+            let response =
+                self.webkit_read(app, lease, &json!({"op":"checkpoint"}), deadline, fence)?;
+            if response["document"].as_str() != Some(document.as_str()) {
+                return Err("Browser page document changed; inspect again".into());
+            }
+        }
         Ok(url)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub(super) fn page_request(
         &self,
         app: &AppHandle,
         method: &str,
         input: &Value,
         deadline: Instant,
+        fence: &crate::native_request::RequestFence,
     ) -> Result<Value, String> {
+        operations::envelope(method, input)?;
         let session_id = input["sessionID"]
             .as_str()
             .ok_or("Invalid browser page identity")?;
@@ -219,85 +216,137 @@ impl BrowserController {
             return Err("Invalid browser page identity".into());
         }
         if method == "browser.page.end" {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            self.webkit_cleanup(app, session_id, operation_id, deadline, fence);
             self.end_page(session_id, operation_id);
             return Ok(json!({}));
         }
         let begin = method == "browser.page.begin";
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if begin {
+            self.webkit_expire(app, deadline, fence);
+        }
         let lease = if begin {
             self.reserve_page(self.resolve(app, session_id)?, operation_id)?
         } else {
             self.page_lease(input)?
         };
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let mut lease = lease;
+        let operation = if method == "browser.page.send" {
+            Some(operations::parse(
+                input
+                    .get("operation")
+                    .cloned()
+                    .ok_or("Invalid browser page operation")?,
+            )?)
+        } else {
+            None
+        };
         let result = (|| {
-            let url = self.check_page(app, &lease, deadline)?;
+            let url = self.check_page(app, &lease, deadline, fence)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if begin {
+                let response =
+                    self.webkit_read(app, &lease, &json!({"op":"checkpoint"}), deadline, fence)?;
+                let document = response["document"]
+                    .as_str()
+                    .ok_or("Missing WebKit document identity")?
+                    .to_string();
+                self.check_page_state(&lease, deadline)?;
+                lease.generation = format!(
+                    "{}:{}:{}",
+                    self.run_id, lease.registration.generation, document
+                );
+                lease.document = Some(document);
+                self.inner
+                    .0
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .page_leases
+                    .insert(operation_id.into(), lease.clone());
+            }
             if method == "browser.page.check" {
                 return Ok(json!({ "url": url }));
             }
+            if !begin && method != "browser.page.send" {
+                return Err("Invalid browser page method".into());
+            }
+            #[cfg(windows)]
             let command = if begin {
-                "Accessibility.enable"
+                Some(("Accessibility.enable", json!({})))
             } else {
-                input["method"]
-                    .as_str()
-                    .ok_or("Invalid browser page command")?
+                operation.as_ref().and_then(operations::Operation::cdp)
             };
-            let params = if begin {
+            #[cfg(windows)]
+            let response = if let Some((command, params)) = command {
+                let webview = app
+                    .get_webview(&lease.registration.webview_label)
+                    .ok_or("Browser preview is no longer available")?;
+                let controller = self.clone();
+                let guard_lease = lease.clone();
+                let guard_app = app.clone();
+                let guard_fence = fence.clone();
+                cdp_guarded(
+                    &webview,
+                    command,
+                    params,
+                    deadline.min(lease.expires),
+                    move || {
+                        controller
+                            .check_page(&guard_app, &guard_lease, deadline, &guard_fence)
+                            .map(|_| ())
+                    },
+                    4 * 1024 * 1024,
+                )?
+            } else {
                 json!({})
-            } else {
-                page_params(command, input.get("params").cloned().unwrap_or(json!({})))?
             };
-            let webview = app
-                .get_webview(&lease.registration.webview_label)
-                .ok_or("Browser preview is no longer available")?;
-            let controller = self.clone();
-            let guard_lease = lease.clone();
-            let guard_app = app.clone();
-            let response = cdp_guarded(
-                &webview,
-                command,
-                params,
-                deadline.min(lease.expires),
-                move || {
-                    controller
-                        .check_page(&guard_app, &guard_lease, deadline)
-                        .map(|_| ())
-                },
-                4 * 1024 * 1024,
-            )?;
-            let url = self.check_page(app, &lease, deadline)?;
-            if begin {
-                Ok(json!({ "generation": lease.generation, "url": url }))
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let response = if let Some(_) = &operation {
+                let response =
+                    self.webkit_read(app, &lease, &input["operation"], deadline, fence)?;
+                if response["document"].as_str() != lease.document.as_deref() {
+                    return Err("Browser page document changed; inspect again".into());
+                }
+                response["result"].clone()
             } else {
-                Ok(response)
+                json!({})
+            };
+            let url = self.check_page(app, &lease, deadline, fence)?;
+            if begin {
+                Ok(
+                    json!({ "generation": lease.generation, "url": url, "driver": if cfg!(windows) {"cdp"} else {"webkit"}, "contractVersion":1 }),
+                )
+            } else {
+                #[cfg(windows)]
+                {
+                    let operation = operation.as_ref().ok_or("Invalid browser page operation")?;
+                    Ok(operation.result(response))
+                }
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                {
+                    Ok(response)
+                }
             }
         })();
         if result.is_err() {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if std::env::var_os("CN_INPUT_TRACE").is_some() {
+                eprintln!(
+                    "native page {method} op={} function={}: {}",
+                    input["operation"]["op"],
+                    input["operation"]["function"],
+                    result.as_ref().unwrap_err()
+                );
+            }
+            #[cfg(windows)]
             self.release_page(&lease);
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if lease.held.lock().is_ok_and(|held| held.is_empty()) {
+                self.release_page(&lease);
+            }
         }
         result
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn protocol_allowlist_and_parameter_budget_are_fixed() {
-        for method in [
-            "Page.navigate",
-            "Network.enable",
-            "Browser.close",
-            "DOM.getBoxModel",
-            "Accessibility.enable",
-        ] {
-            assert!(page_params(method, json!({})).is_err());
-        }
-        assert!(page_params("Input.insertText", json!({ "text": "x" })).is_ok());
-        assert!(page_params(
-            "Runtime.evaluate",
-            json!({ "expression": "x".repeat(256 * 1024) })
-        )
-        .is_err());
-        assert!(page_params("Runtime.evaluate", Value::Null).is_err());
     }
 }

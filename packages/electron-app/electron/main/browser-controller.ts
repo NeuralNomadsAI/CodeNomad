@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto"
 import type { BrowserWindow, WebContents } from "electron"
 import { isBrowserUrlAllowed } from "./browser-webview-security"
 import { setBrowserEmulation } from "./browser-emulation"
+import { executeCdpOperation } from "../../../server/src/automation/page/cdp-driver"
+import { parsePageOperation, pageEnvelope } from "../../../server/src/automation/page/operations"
+import { PAGE_DRIVER_VERSION } from "../../../server/src/automation/page/protocol"
 
 const electron = () => createRequire(import.meta.url)("electron") as typeof import("electron")
 
@@ -44,12 +47,6 @@ interface PageLease {
   ownsDebugger: boolean
   timer: NodeJS.Timeout
 }
-
-const PAGE_METHODS = new Set([
-  "Accessibility.getFullAXTree", "DOM.resolveNode", "DOM.scrollIntoViewIfNeeded", "DOM.getContentQuads",
-  "DOM.getNodeForLocation", "Page.getLayoutMetrics", "Runtime.callFunctionOn", "Runtime.evaluate",
-  "Runtime.releaseObjectGroup", "Input.insertText", "Input.dispatchMouseEvent", "Input.dispatchKeyEvent",
-])
 
 export class BrowserController {
   private readonly registrations = new Map<string, Registration>()
@@ -318,6 +315,7 @@ export class BrowserController {
 
   // Only handleNativeBrowserRequest (the private backend transport) calls this.
   async page(method: string, input: Record<string, unknown>, deadline: number): Promise<unknown> {
+    pageEnvelope(method, input)
     const { sessionID, operationID } = input
     if (!validId(sessionID, 256) || typeof operationID !== "string"
       || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(operationID)) {
@@ -351,7 +349,7 @@ export class BrowserController {
           if (!guest.debugger.isAttached()) { guest.debugger.attach("1.3"); lease.ownsDebugger = true }
           await withDeadline(() => guest.debugger.sendCommand("Accessibility.enable"), Math.min(deadline, expires))
           const url = this.checkLease(lease, deadline)
-          return { generation: lease.generation, url }
+          return { generation: lease.generation, url, driver: "cdp", contractVersion: PAGE_DRIVER_VERSION }
         })
       } catch (error) {
         this.releaseLease(lease)
@@ -367,23 +365,24 @@ export class BrowserController {
       try { return { url: this.checkLease(lease, deadline) } }
       catch (error) { this.releaseLease(lease); throw error }
     }
-    if (typeof input.method !== "string" || !PAGE_METHODS.has(input.method)) throw new Error("Unsupported browser page command")
-    const command = input.method
-    const params = input.params === undefined ? {} : input.params
-    if (!params || typeof params !== "object" || Array.isArray(params) || Buffer.byteLength(JSON.stringify(params)) > 256 * 1024) {
-      throw new Error("Invalid or oversized browser page parameters")
-    }
+    const operation = parsePageOperation(input.operation)
     return this.enqueue(lease.registration.guest, async () => {
       try {
         this.checkLease(lease, deadline)
-        const result = await withDeadline(
+        const result = await executeCdpOperation({ send: async (command, params = {}) => {
+          this.checkLease(lease, deadline)
+          const response = await withDeadline(
           // Electron's native insertion targets the guest's focused frame even when
           // CDP Input.insertText is silently ignored by an embedded/background view.
           () => command === "Input.insertText" && typeof (params as { text?: unknown }).text === "string"
             ? lease.registration.guest.insertText((params as { text: string }).text).then(() => ({}))
             : command === "Input.dispatchKeyEvent" ? sendGuestKey(lease.registration.guest, params as Record<string, unknown>)
             : lease.registration.guest.debugger.sendCommand(command, params), Math.min(deadline, lease.expires),
-        )
+          )
+          this.checkLease(lease, deadline)
+          if (Buffer.byteLength(JSON.stringify(response ?? null)) > 4 * 1024 * 1024) throw new Error("Browser page response is too large")
+          return response as Record<string, unknown>
+        } }, operation)
         this.checkLease(lease, deadline)
         if (Buffer.byteLength(JSON.stringify(result ?? null)) > 4 * 1024 * 1024) throw new Error("Browser page response is too large")
         return result

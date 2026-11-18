@@ -15,8 +15,6 @@ OpenCode soruları, Formları ve izin istekleri, konuşma dökümündeki bekleye
 | Diğer konuşma | Kompakt bir önizleme olarak başlar; Mevcut görüşmeden ayrılmadan yanıtlamak için açıkça genişletin |
 | Proje isteği / Hizmet isteği | Formun sahibi olan bir konuşma bulunmayabilir; uydurma konuşma bağlantısı gösterilmez |
 
-Yeni istekler düzenlediğiniz isteği değiştirmez veya başka yere yönlendirmez. Kuyruk yenilendiğinde seçim aynı istekte kalır; oklar uçtan başa dönmez. Sonuçlandırmadan sonra ilgisiz başka konuşmanın isteği siz açana kadar küçük önizleme halinde kalır.
-
 **İstekleri daralt** içeriği gizler; hiçbir şeyi reddetmez, iptal etmez veya yanıtlamaz. Genişletilmiş düzenleyici, kayıtlı boyut veya taslağı değiştirmeden ileti düzenleyicisini geçici olarak en düşük yüksekliğe indirir. İçerik sabit yanıt eylemlerinden bağımsız kaydırılır.
 
 ## Soruları ve Formları yanıtlayın {#answer-questions-forms}
@@ -25,7 +23,7 @@ Yeni istekler düzenlediğiniz isteği değiştirmez veya başka yere yönlendir
 2. Bir seçim alanı özel yanıtlara izin verdiğinde ek bir metin alanı gösterilir: sunulan bir seçenek yerine kendi yanıtınızı buraya yazın (veya çoklu seçim alanına özel değerler ekleyin). Gerekli tüm soruları yanıtlayın.
 3. **Gönder** öğesini seçin; **İptal** öğesini yalnızca yerel iptali istediğinizde bir soru veya Form için kullanın.
 
-Kısmi yanıtlar ve ret taslakları çalışan istemcide kuyruk yenilemeleri ve konuşma değişimleri boyunca korunur. Bunlar gönderilmiş karar veya istemci verileri temizlendikten sonra kurtarma garantisi değildir. Başarısız yanıt düzenlenebilir kalır; yeniden denemeden önce bekleyen isteği inceleyin. CodeNomad yanıtı otomatik yeniden göndermez.
+Kısmi yanıtlar ve ret taslakları çalışan istemcide kuyruk yenilemeleri ve konuşma değişimleri boyunca korunur. Bunlar gönderilmiş karar veya istemci verileri temizlendikten sonra kurtarma garantisi değildir.
 
 Bazı Formlar, tarayıcı akışı için **Harici formu aç** sağlar. Açılan sayfayı başarılı bir yanıt olarak değerlendirmek yerine isteğin talimatlarını izleyin ve durumuna geri dönün. Rastgele sağlayıcı/yetkilendirme Formlarının mutlaka konuşma eserleri olması gerekmez.
 
@@ -45,7 +43,7 @@ Tamamlanan OpenCode soru araçları geçmişte soruyu, seçili yanıtı, seçene
 
 İzin onayı araç yürütmesini hemen serbest bırakabilir. Bu bir deneme çalıştırması değildir. Fark/okuma sınırları ve kaynak kimliği kontrolleri, istenen içerik doğrulanamadığında onayı engelleyebilir; başka işlemi varsayımla onaylamak yerine gerçek isteği yenileyip inceleyin.
 
-Başka istemci isteği sonuçlandırırsa burada kaybolabilir. Zaman aşımı veya başarısız yanıt, OpenCode hizmetinin kararı kabul edip etmediğini kanıtlamaz: yeniden bilinçli seçim yapmadan önce bekleyen istek uzlaştırmasının paneli güncellemesini bekleyin. Belirsiz yanıt asla uydurma doğrulanmış karar olarak gösterilmez.
+Başka istemci isteği sonuçlandırırsa burada kaybolabilir. Zaman aşımı veya başarısız yanıt, OpenCode hizmetinin kararı kabul edip etmediğini kanıtlamaz: yeniden bilinçli seçim yapmadan önce bekleyen istek uzlaştırmasının paneli güncellemesini bekleyin.
 
 ## İzin makbuzlarını okuma {#permission-receipts}
 
@@ -73,6 +71,5 @@ Yolo'nun kapatılması halihazırda kabul edilmiş bir kararı iptal etmez veya 
 
 1. Bağlantı göstergesini kontrol edin ve aynı arka uca/projeye yeniden bağlanın.
 2. Kurtarmanın bekleyen yerel istekleri uzlaştırmasına izin verin; Kapsamın eksik olması durumunda bilinen talepler ve taslaklar korunur.
-3. **Sorular ve izinler tam olarak kurtarılamadı** uyarısı görünürse, projeyi, nedeni, klasörleri ve etkilenen oturumları belirtir. Bu nedeni giderin (örneğin silinmiş bir çalışma ağacı veya bu projenin dışında çalışan bir oturum); bir sonraki kurtarma geçişi otomatik olarak yeniden dener.
 
-Kurtarma, yalnızca istekleri numaralandırmak için etkin olmayan her çalışma ağacını yüklemez. Eksik bir yanıt, yetkili bir boş kuyruk değildir ve uyarı, bir istemin, yanıtın veya onayın tekrarlanmasına izin vermez. Yapılandırmanın yeniden yüklenmesi yerel Formları/izinleri iptal edebilir; bunu rutin bir istek yenileme düğmesi olarak kullanmayın. Bkz. [Sorun Giderme](troubleshooting.md) ve [OpenCode kurulumu](opencode.md).
+Eksik bir yanıt, yetkili bir boş kuyruk değildir ve uyarı, bir istemin, yanıtın veya onayın tekrarlanmasına izin vermez. Yapılandırmanın yeniden yüklenmesi yerel Formları/izinleri iptal edebilir; bunu rutin bir istek yenileme düğmesi olarak kullanmayın. Bkz. [Sorun Giderme](troubleshooting.md) ve [OpenCode kurulumu](opencode.md).

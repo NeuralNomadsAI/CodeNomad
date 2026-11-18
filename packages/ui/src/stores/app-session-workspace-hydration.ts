@@ -8,6 +8,8 @@ import { getSessionAncestorIdsFromMap } from "./session-tree"
 import { seedRestoredSessionSelection } from "./session-state"
 import { seedSessionOutlineIndexes } from "./session-outline"
 import { seedSessionCatalog } from "./session-catalog-hydration"
+import { hydrateSeenInterruptions } from "./session-interruption-seen"
+import { seedTabViewState } from "./tab-view-state"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
   hydrateRestoredSessionChain, hydrateSessionExpansion, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
@@ -19,6 +21,7 @@ export function seedRestoredWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
 ): void {
+  seedTabViewState(instanceId, snapshot.viewState)
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
     .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_STREAM_SCROLL_SCOPE, snapshot: scrollSnapshot }))
   messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
@@ -26,6 +29,7 @@ export function seedRestoredWorkspaceState(
   seedSessionCatalog(instanceId, snapshot.sessionCatalog)
   hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
+  hydrateSeenInterruptions(instanceId, snapshot.seenInterruptions)
   if (snapshot.expandedSessionIds !== undefined) hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds)
   hydrateWorkspacePromptState(instanceId, snapshot, new Set(getSessions(instanceId).map(session => session.id)), NO_SESSION_DRAFT_SESSION_ID)
   seedRestoredSessionSelection(instanceId, snapshot.activeParentSessionId ?? null, snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null)
@@ -48,8 +52,10 @@ export async function hydrateRestoredWorkspaceState(
   if (!isCurrentBinding()) return null
   let sessions = getSessions(instanceId)
   let selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  const hydrateSelection = () => hydrateActiveSessionSelection(instanceId, snapshot.activeParentSessionId ?? null,
+    snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null, () => !signal.aborted && isCurrentBinding())
   if (!hasAuthoritativeSessionSelection(instanceId)) {
-    hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
+    hydrateSelection()
   }
   hydrateWorkspacePromptState(
     instanceId,
@@ -71,7 +77,7 @@ export async function hydrateRestoredWorkspaceState(
     activeParentSessionId: snapshot.activeParentSessionId, activeSessionId: snapshot.activeSessionId,
     draftSessionIds: Object.keys(snapshot.drafts), attachmentSessionIds: Object.keys(snapshot.attachments),
     scrollSessionIds: Object.keys(snapshot.scrollSnapshots), idleMarkerSessionIds: Object.keys(snapshot.unseenIdleSince),
-    generationRecoverySessionIds: Object.keys(snapshot.generationRecovery),
+    generationRecoverySessionIds: [...Object.keys(snapshot.generationRecovery), ...Object.keys(snapshot.seenInterruptions ?? {})],
     expandedSessionIds: snapshot.expandedSessionIds ?? [],
   }, [NO_SESSION_DRAFT_SESSION_ID])
   hydrateWorkspacePromptState(instanceId, snapshot, validIds, NO_SESSION_DRAFT_SESSION_ID)
@@ -81,6 +87,6 @@ export async function hydrateRestoredWorkspaceState(
     ? getSessionAncestorIdsFromMap(new Map(sessions.map((session) => [session.id, session])), selection.activeSessionId)
     : [])
   hydrateSessionExpansion(instanceId, expandedSessionIds)
-  if (!hasAuthoritativeSessionSelection(instanceId)) hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
+  if (!hasAuthoritativeSessionSelection(instanceId)) hydrateSelection()
   return unavailable
 }

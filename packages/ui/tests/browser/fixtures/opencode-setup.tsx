@@ -7,7 +7,6 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
 import { openOpenCodeSetup, refreshOpenCodeSetup, invalidateOpenCodeSetup } from "../../../src/stores/opencode-setup"
 import { createInstanceFetch } from "../../../src/lib/sdk-manager"
-import InstanceInfo from "../../../src/components/instance-info"
 import AlertDialog from "../../../src/components/alert-dialog"
 import { getToastHistory } from "../../../src/lib/notifications"
 import { showAlertDialog, showConfirmDialog, showPromptDialog } from "../../../src/stores/alerts"
@@ -15,18 +14,14 @@ import "../../../src/index.css"
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 serverApi.patchConfigOwner = async (_owner, patch) => patch as any
+serverApi.getOpenCodeLoginStart = async () => ({ state: "off" })
 let resumed = 0
 let replacementResult: boolean | string | null | undefined
 const params = new URLSearchParams(location.search)
 const settings = params.has("settings")
-const info = params.has("info")
 render(() => <ConfigProvider><ThemeProvider><I18nProvider>
   {settings && <main style={{ padding: "24px", "max-width": "900px" }}><OpenCodeSettingsSection /></main>}
-  {info && <main style={{ padding: "24px", "max-width": "600px" }}><InstanceInfo showReloadButton instance={{
-    id: "fixture-instance", folder: "C:/fixture/project", status: "ready", port: 49374, pid: 123,
-    client: {}, metadata: { mcpStatus: { data: [] }, plugins: [] },
-   } as any} /></main>}
-   <OpenCodeSetup automatic={!settings && !info} />
+   <OpenCodeSetup automatic={!settings} />
    <AlertDialog />
 </I18nProvider></ThemeProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: params.get("locale") === "fr" ? "fr" : "en" })

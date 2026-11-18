@@ -1,8 +1,8 @@
 import { createSignal } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionLifecycleInput } from "../lib/mission-lifecycle-request"
 
-export function missionLifecycleSource(instanceId: string, mission: MissionMap, location: {
+export function missionLifecycleSource(instanceId: string, mission: MissionPanelMap, location: {
   directory?: string; proxyPath?: string; projectID?: string; snapshotProjectID?: string
 }): string {
   const coordinator = mission.actors?.find(actor => actor.kind === "coordinator" && actor.sessionId === mission.coordinatorSessionId)
@@ -26,7 +26,7 @@ export interface MissionLifecycleRejection {
   readonly requestId?: string
 }
 const sameInput = (a: MissionLifecycleInput, b: MissionLifecycleInput) =>
-  a.requestId === b.requestId && a.action === b.action && a.expectedRevision === b.expectedRevision
+  a.requestId === b.requestId && a.action === b.action && a.expectedRevision === b.expectedRevision && Boolean(a.graceful) === Boolean(b.graceful)
 const key = (source: string, missionId: string, input: MissionLifecycleInput) => JSON.stringify([source, missionId, input.requestId])
 
 export function createMissionLifecycleIntents(capacity = 64) {

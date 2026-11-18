@@ -1,35 +1,46 @@
 # Aperçus navigateur et SideCars
 
+Les aperçus iframe et les SideCars refusent les connexions aux adresses et ports d'écoute de CodeNomad, y compris via des alias DNS. Utilisez le port distinct du serveur de votre application.
+
 ## Ouvrir un navigateur de session {#session-browser}
 
 1. Dans la barre d’outils d’une conversation, choisissez **Ouvrir l'aperçu web**.
 2. Saisissez une **URL de l'aperçu** `http://` ou `https://` sans identifiants, puis choisissez **Ouvrir l'aperçu**. Utilisez la barre d’outils pour naviguer, actualiser et aller en arrière/en avant.
-3. Utilisez le bouton de fermeture de l’aperçu pour revenir au chat. Rouvrez-le dans cette conversation pour poursuivre.
+3. Utilisez le bouton de fermeture de l’aperçu pour revenir au chat. Rouvrez-le dans le même onglet et la même conversation pour poursuivre.
 
-Cliquer sur un lien `localhost` ou `127.0.0.1` dans une conversation l'ouvre dans l'aperçu web de cette session, sur tout client où les aperçus sont disponibles. Via Remote Control lorsque l'hôte garde les aperçus web désactivés, ou sur un client où les aperçus sont autrement indisponibles, ces liens conservent leur comportement normal dans le navigateur. Ctrl+clic (⌘-clic sur macOS) ou clic milieu ouvre le lien dans votre navigateur à la place. Dans le cadre d'aperçu sandboxé, où aucun stockage réel n'est disponible, la page reçoit un `localStorage`, un `sessionStorage` et un `document.cookie` en mémoire pour le chargement actuel de la page ; un hôte d'aperçu par jeton ouvert seul conserve son stockage réel.
+Cliquer sur un lien `localhost` ou `127.0.0.1` dans une conversation l'ouvre dans l'aperçu web de cette session, sur tout client où les aperçus sont disponibles. Via Remote Control lorsque l'hôte garde les aperçus web désactivés, ou sur un client où les aperçus sont autrement indisponibles, ces liens conservent leur comportement normal dans le navigateur. Ctrl+clic (⌘-clic sur macOS) ou clic milieu ouvre le lien dans votre navigateur à la place.
 
-Chaque aperçu appartient à son dossier de projet et sa session. Changer de conversation, projet, Info ou chat masque un invité natif explicitement ouvert sans abandonner son document/historique actif. Les invités masqués ne sont pas des cibles d’automatisation. Fermer le projet/la fenêtre ou redémarrer le moteur de rendu termine le document actif.
+Chaque session possède un aperçu dans la fenêtre. Les onglets dupliqués choisissent indépendamment entre le chat et ce même aperçu actif, partageant page, URL, historique et modèle de viewport. Le bouton de fermeture ramène seulement son onglet au chat. Changer d’onglet, de conversation, de projet ou d’Info conserve le document ; fermer un doublon le conserve tant qu’une autre occurrence de la session reste ouverte. Fermer la dernière occurrence ou la fenêtre, ou redémarrer le moteur de rendu, termine le document actif.
 
-L’historique enregistré se restaure seulement à la réouverture explicite du navigateur de cette session, pas au démarrage/à la sélection de session. Il stocke des URL et un curseur, pas les formulaires non envoyés, le DOM, les corps POST ou la mémoire JavaScript. L’historique est borné à 32 URL par session et à un budget de disposition partagé ; les anciennes entrées peuvent être retirées. Restaurer une URL peut recharger la page ; ce n’est pas un rejeu de transaction.
+Chaque onglet enregistre son choix chat/aperçu ; la session enregistre l’URL, le modèle de viewport et l’historique partagés. Les pages enregistrées se chargent seulement à la réouverture explicite du navigateur de session. La persistance conserve les URL et un curseur ; formulaires actifs, DOM, corps POST et mémoire JavaScript disparaissent avec le document. L’historique est limité à 32 URL par session et à un budget partagé par fenêtre ; les anciennes entrées peuvent être retirées. Restaurer une URL peut recharger la page.
 
 ## Connexions partagées et limites d’automatisation {#signins-automation}
 
-Les aperçus natifs partagent cookies, connexions et stockage de site entre projets/sessions dans le même moteur de bureau et périmètre profil/configuration, séparément du moteur de rendu de confiance CodeNomad. Se déconnecter d’un site dans un aperçu affecte les autres qui utilisent ce stockage. Documents, formulaires, stockage de session, historiques de navigation et rattachements d’automatisation restent propres à la session. Les aperçus iframe ne sont pas un profil de navigateur natif partagé complet.
+Les aperçus natifs partagent cookies, connexions et stockage de site entre projets/sessions dans le même moteur de bureau et périmètre profil/configuration, séparément du moteur de rendu de confiance CodeNomad. Se déconnecter d’un site dans un aperçu affecte les autres qui utilisent ce stockage. Documents, formulaires, stockage de session, historiques de navigation et rattachements d’automatisation appartiennent à chaque session.
+
+Un agent ouvre le navigateur partagé de la session dans un onglet qui la contient, de préférence l’onglet actif. L’onglet choisi reste fixé pendant l’ouverture ; sa fermeture annule cette ouverture. Les actions sur la page ciblent l’aperçu natif visible de la session ; les aperçus masqués sont exclus.
 
 | Client | Implémentation de l’aperçu | Automatisation navigateur par agent | Modèles mobiles |
 | --- | --- | --- | --- |
-| Electron sur les plateformes de bureau prises en charge | Invité Chromium natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
-| Tauri Windows | Enfant WebView2 natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
-| Tauri macOS/Linux | Iframe en bac à sable | Pas d’automatisation navigateur native | Dimensions seules |
+| Electron sur les plateformes de bureau prises en charge | Invité Chromium natif ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
+| Tauri Windows | Enfant WebView2 natif ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
+| Tauri macOS (14+) | Vue enfant WKWebView native ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Identité mobile WebKit et viewport CSS ; limites de saisie natives |
+| Tauri Linux | Vue enfant WebKitGTK native ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Identité mobile WebKit et viewport CSS ; limites natives de densité/saisie |
 | Navigateur ordinaire/vue distante | Iframe de repli | Aucune cible locale d’aperçu natif | Dimensions seules |
 
-L’automatisation native est préparée au démarrage du bureau et utilise l’outil `codenomad.browser` lié à la session pour ouvrir, naviguer, capturer l’état, prendre une capture d’écran et agir sur la page : cliquer, saisir, sélectionner, survoler, glisser, faire défiler, appuyer sur des touches et attendre un texte. La disponibilité d’un outil n’autorise pas toutes les fenêtres : l’exécution vérifie le backend propriétaire, les capacités natives, la session et la cible visible. Une action dont la page a été masquée, remplacée ou a changé d’adresse entre-temps est refusée plutôt qu’envoyée à une autre page, et une action n’est jamais répétée automatiquement. Le contenu des pages reste non fiable. Une iframe peut échouer si la cible interdit l’intégration ; utilisez un navigateur externe plutôt que d’affaiblir ses protections.
+Les commentaires sur éléments sont indisponibles en mode natif. Sous GTK, la lecture du presse-papiers passe par Ctrl+V explicite ; écriture et copier/coller natifs fonctionnent. Pour les sites bloquant l’iframe, utilisez un navigateur externe.
+
+Les pop-ups natifs partagent les connexions de l’aperçu, conservent `opener`/`postMessage` et se ferment avec leur page d’origine. Les adresses saisies/restaurées acceptent HTTP(S) sans identifiants ; les sites peuvent aussi ouvrir des documents vierges et blob de même origine. Les schémas de fichiers et applicatifs sont bloqués. Les téléchargements vont dans Téléchargements, avec des noms assainis et uniques, sans écrasement ni ouverture automatique. Caméra, microphone, localisation et notifications sont refusés ; les permissions classifiées demandent un consentement, les requêtes inconnues affichent une erreur. Tauri et Electron prennent en charge `alert`/`confirm`/`prompt` ; le dialogue prompt d’Electron couvre les pages principales de l’aperçu, les pop-ups et les sous-frames.
+
+Les sites peuvent demander confirmation à la fermeture d’un pop-up natif. Les versions de WebKitGTK affectées par [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), dont 2.52.6, nécessitent le sélecteur de fichiers de la page pour les envois : l’accès aux fichiers déposés est bloqué pour des raisons de sécurité. Enregistrez le travail de la page avant de fermer ou recharger la fenêtre CodeNomad qui l’héberge.
+
+Sur Tauri macOS/Linux, donnez le focus à l’aperçu pour le zoomer avec ⌘/Ctrl +, − ou 0, ou avec le menu de zoom de l’application. Si le focus est ailleurs, ces commandes de menu zooment l’application.
 
 ## Choisir parmi six modèles de zone d’affichage {#templates}
 
 1. Ouvrez le menu de zone d’affichage de l’aperçu.
 2. Sélectionnez un modèle ci-dessous. Utilisez directement les entrées portrait/paysage ; aucune commande de rotation séparée.
-3. Attendez-vous à un rechargement natif en entrant/changeant l’émulation mobile ou en revenant à un modèle de dimensions seules.
+3. Sur Electron et Tauri Windows, attendez-vous à un rechargement natif en entrant/changeant l’émulation mobile ou en revenant à un modèle de dimensions seules.
 
 | Modèle | Zone d’affichage CSS |
 | --- | --- |
@@ -40,7 +51,7 @@ L’automatisation native est préparée au démarrage du bureau et utilise l’
 | Zone mobile | 390 × 844 |
 | Mobile paysage | 844 × 390 |
 
-Les modèles mobiles natifs définissent identité Android/Chromium, orientation, tactile et DPR 2.75 sur l’invité détenu seulement. Revenir à adaptatif/bureau/tablette efface ces remplacements et recharge. L’iframe de repli change seulement de taille. Ce sont des références de disposition reproductibles, pas une émulation Safari/Firefox ou des simulations de clavier téléphonique, barres navigateur/système ou réglages de texte mobile. Enregistrez le travail de page avant de changer de modèle, car le rechargement peut perdre l’état non envoyé.
+Sur Electron et Tauri Windows, les modèles mobiles définissent identité Android/Chromium, orientation, tactile et DPR 2.75 sur l’invité détenu seulement. Revenir à adaptatif/bureau/tablette efface ces remplacements et recharge. Tauri macOS/Linux appliquent une identité mobile WebKit générique en HTTP et JavaScript et ajustent les viewports CSS indépendamment du zoom/DPI de l’application, avec rechargement au changement ou à la réinitialisation. macOS utilise un DPR natif de 2,75 si disponible ; la densité GTK suit le zoom d’ajustement et le moniteur. L’iframe de repli redimensionne seulement. Ces profils servent de références de disposition ; claviers téléphoniques, barres système et réglages de texte mobile restent hors périmètre. Enregistrez le travail de page avant de changer de modèle, car le rechargement peut perdre l’état non envoyé.
 
 ## Enregistrer un SideCar {#register-sidecar}
 
@@ -56,11 +67,13 @@ Les modèles mobiles natifs définissent identité Android/Chromium, orientation
 | Retirer le préfixe (défaut) | `/sidecars/<id>/path` est transmis à l’amont comme `/path`. |
 | Conserver le préfixe | `/sidecars/<id>/path` est transmis à l’amont inchangé. Configurez le chemin de base du service pour correspondre. |
 
-L’enregistrement est une configuration serveur partagée par ses clients ; il n’installe ni ne démarre le service. Le port est sur l’hôte du backend, pas votre portable ou téléphone. **En cours d'exécution** indique l’accessibilité, pas le bon état de l’application/authentification de l’outil. Retirer l’enregistrement n’arrête pas le processus lancé séparément. Fermer son onglet ne l’arrête pas non plus.
+L’enregistrement est une configuration serveur partagée par ses clients ; il n’installe ni ne démarre le service. Le port est sur l’hôte du backend, pas votre portable ou téléphone. Retirer l’enregistrement n’arrête pas le processus lancé séparément. Fermer son onglet ne l’arrête pas non plus.
 
 Si le service est inaccessible, vérifiez le processus et le port sur le backend. Si HTML charge mais pas les ressources/WebSockets, vérifiez le chemin de base et le mode de préfixe. Recréez un enregistrement erroné avec les paramètres voulus ; n’exposez pas l’amont publiquement pour contourner une erreur de proxy. Les applications SideCar peuvent exposer un terminal ou des fichiers avec l’autorité du compte serveur ; faites confiance à leurs utilisateurs et configuration.
 
-Un SideCar est une extension de confiance de CodeNomad, pas un aperçu en bac à sable : sa page s’exécute avec l’origine même de CodeNomad, si bien que ses scripts peuvent utiliser CodeNomad avec votre accès connecté. N’enregistrez que des services dont vous jugez le code fiable. CodeNomad ne transmet pas ses propres cookies de connexion au service, tandis que les cookies propres au service sont conservés. Le Contrôle à distance n’expose pas le trafic proxy des applications SideCar ; utilisez le chemin direct approprié décrit dans [Accès distant](remote-access.md) et [Contrôle à distance](remote-control.md).
+Un SideCar est une extension de confiance de CodeNomad, pas un aperçu en bac à sable : sa page s’exécute avec l’origine même de CodeNomad, si bien que ses scripts peuvent utiliser CodeNomad avec votre accès connecté. N’enregistrez que des services dont vous jugez le code fiable. CodeNomad ne transmet pas ses propres cookies de connexion au service, tandis que les cookies propres au service sont conservés.
+
+Le contenu SideCar (`/sidecars/`) et les WebSockets SideCar exigent une connexion en boucle locale sur l’hôte. Pour les ouvrir aussi depuis d’autres appareils, activez **Ouvrir les SideCars en HTTPS** dans **Paramètres → SideCars** sur l’hôte : les navigateurs connectés via les adresses HTTPS de ce serveur ou une origine HTTPS de `CODENOMAD_ALLOWED_ORIGINS`, comme un proxy inverse TLS, peuvent alors ouvrir les SideCars. HTTP simple, les adresses `localhost` et le Contrôle à distance restent réservés à l’hôte. L’enregistrement via `/api/sidecars` est accessible aux appareils appairés et aux clients LAN directs authentifiés. Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide ; les aperçus web du [Contrôle à distance](remote-control.md#remote-surface) restent accessibles avec leur jeton de capacité lorsqu’ils sont activés. Voir [Mise à niveau](remote-access.md#upgrading) pour les conditions de l’accès direct.
 
 ## Recette OpenVSCode Server {#openvscode}
 

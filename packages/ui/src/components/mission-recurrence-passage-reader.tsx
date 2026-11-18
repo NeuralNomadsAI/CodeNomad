@@ -73,7 +73,7 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
   return <div class="mission-recurrence-result" data-passage-id={props.receipt.passageID}>
     <Show when={loading()}><p role="status">{t("missions.control.loading")}</p></Show>
     <Show when={error()}><p role="alert" class="mission-recurrence-failure">{t("missionsPanel.reader.resultFailed")}{" "}
-      <button type="button" class="window-text-button" onClick={() => setRefresh(value => value + 1)}>{t("missionsPanel.reader.retry")}</button>
+      <button type="button" class="window-action" onClick={() => setRefresh(value => value + 1)}>{t("missionsPanel.reader.retry")}</button>
     </p></Show>
     <Show when={value()}>{result => <>
       <Show when={result().sectionCount > 1}><div class="window-toolbar">

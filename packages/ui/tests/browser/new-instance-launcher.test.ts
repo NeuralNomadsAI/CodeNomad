@@ -1,12 +1,11 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { fileURLToPath } from "node:url"
+import type { ServerMeta } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
 let browser: Browser, url: string
-let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "new-instance-launcher",
@@ -18,7 +17,7 @@ before(async () => {
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await cache?.dispose() })
+after(async () => { await browser?.close() })
 
 async function prepare(width = 1100, home = false) {
   const page = await browser.newPage({ viewport: { width, height: 760 }, locale: "en-US" })
@@ -33,7 +32,10 @@ async function prepare(width = 1100, home = false) {
     (window as any).__CODENOMAD_RUNTIME_HOST__ = "electron"
     window.__CODENOMAD_WINDOW_CONTEXT__ = "local"
   })
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/meta" ? {
+    localRequest: true, localUrl: new URL(url).origin, eventsUrl: "/api/events", host: "127.0.0.1",
+    listeningMode: "local", localPort: Number(new URL(url).port), hostLabel: "Fixture", workspaceRoot: "D:/", addresses: [],
+  } satisfies ServerMeta : {} }))
   await page.goto(home ? `${url}?home` : url)
   await page.waitForFunction(() => Boolean((window as any).launcherFixture))
   return { page, errors, remoteRequests, calls: () => page.evaluate(() => [...(window as any).launcherFixture.calls]) }
@@ -131,6 +133,55 @@ test("project actions stay available in a narrow launcher and close it before ru
         await page.getByRole("dialog").waitFor({ state: "detached" })
       }
     }
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a clone is suggested as the repository's folder beside the last clone, a browsed folder holds it and a typed path wins", async () => {
+  const { page, errors, calls } = await prepare()
+  try {
+    const clones: Array<{ destinationPath: string }> = []
+    await page.route("**/api/workspaces/clone", async route => {
+      const body = route.request().postDataJSON()
+      clones.push(body)
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ path: body.destinationPath }) })
+    })
+    const dialog = page.getByRole("dialog")
+    const url = dialog.getByRole("textbox").nth(0)
+    const destination = dialog.getByRole("textbox").nth(1)
+    const openClone = async () => {
+      await plus(page).click({ button: "right" })
+      await launcher(page).getByRole("button", { name: /^Clone/ }).click()
+      await dialog.getByRole("heading", { name: "Clone Git Repository", exact: true }).waitFor()
+    }
+
+    await openClone()
+    // Without a previous clone: beside the most recent project (D:/CodeNomad).
+    await url.fill("https://github.com/pascalandr/open-design")
+    assert.equal(await destination.inputValue(), "D:/open-design")
+    // The native folder picker; a string, so the compiled test adds no helpers the page lacks.
+    await page.evaluate(`window.browsedFrom = []; window.electronAPI = { openDialog: async (options) => {
+      window.browsedFrom.push(options.defaultPath)
+      return { paths: ["C:\\\\GITHUB"] }
+    } }`)
+    await dialog.getByRole("button", { name: "Browse", exact: true }).click()
+    await page.waitForFunction(() => (window as any).browsedFrom.length === 1)
+    assert.equal(await destination.inputValue(), "C:\\GITHUB\\open-design")
+    assert.deepEqual(await page.evaluate(() => (window as any).browsedFrom), ["D:/"], "the picker opens where the folder will be created")
+    await destination.fill("C:\\GITHUB\\design-fork")
+    await url.fill("https://github.com/pascalandr/open-design.git")
+    assert.equal(await destination.inputValue(), "C:\\GITHUB\\design-fork", "a typed path is kept")
+    // The next clone is suggested before the server confirms what to remember.
+    await page.evaluate(`window.holdStatePatches = true`)
+    await dialog.getByRole("button", { name: "Clone", exact: true }).click()
+    await dialog.waitFor({ state: "detached" })
+    assert.deepEqual(clones.map(clone => clone.destinationPath), ["C:\\GITHUB\\design-fork"])
+    assert.equal((await calls()).at(-1), "folder:C:\\GITHUB\\design-fork")
+
+    // The folder above the last clone is remembered for the next one.
+    await openClone()
+    await url.fill("git@github.com:user/next.git")
+    assert.equal(await destination.inputValue(), "C:\\GITHUB\\next")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

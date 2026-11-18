@@ -2,7 +2,7 @@
 
 ## Configurar la voz {#configure}
 
-1. Abre **Configuración → Voz**. La tarjeta **Voz** usa un adaptador del servidor compatible con OpenAI, independiente del proveedor de modelos de tu conversación.
+1. Abre **Configuración → Voz** para configurar un proveedor de voz compatible con OpenAI por separado del proveedor de modelos de tu conversación.
 2. Introduce **Clave API**, opcionalmente **URL base**, **Modelo de transcripción**, **Modelo de voz** y **Voz predeterminada**.
 3. Si entrada y salida necesitan servicios distintos, activa **Proveedores separados para entrada y salida** y rellena los campos de clave, URL base y modelo de entrada/salida.
 4. Elige **Modo de reproducción** y **Formato de salida** y después **Guardar** (disponible mientras haya cambios sin guardar). Comprueba el estado junto a los botones de prueba, **Configurado**, **Parcialmente configurado** o **Falta la clave API**, antes de probar; un guardado fallido muestra **Error al guardar**.
@@ -21,7 +21,7 @@ El backend también puede usar `OPENAI_API_KEY` y `OPENAI_BASE_URL` como valores
 | Con búfer | Espera la respuesta de audio completa antes de reproducir. |
 | Formato de salida | `mp3`, `wav`, `opus` o `aac`; por defecto `mp3`. La compatibilidad varía según navegador/proveedor. |
 
-Son solicitudes al servicio configurado, no una garantía de que todos los endpoints compatibles implementen todos los modelos, voces o formatos. Un guardado fallido deja un error; inspecciona la configuración antes de hacer otro cambio.
+Son solicitudes al servicio configurado, no una garantía de que todos los endpoints compatibles implementen todos los modelos, voces o formatos.
 
 ## Probar entrada y salida {#test}
 
@@ -30,8 +30,6 @@ Son solicitudes al servicio configurado, no una garantía de que todos los endpo
 3. Elige **Probar reproducción** para escuchar la muestra; **Detener muestra** la finaliza.
 
 La prueba de reproducción usa inmediatamente el modo/formato de reproducción seleccionado, pero endpoint, clave, modelo y voz proceden de los ajustes guardados. Probar entrada no envía un mensaje de conversación. Las pruebas sí envían audio/texto al proveedor de voz configurado y pueden generar cargos.
-
-Si falla el streaming, selecciona **Con búfer**, prueba `mp3`, guarda y vuelve a probar. «Configurado» confirma los ajustes, no la autenticación correcta del proveedor ni la reproducción del códec. Comprueba la disponibilidad del endpoint desde el servidor, los nombres de modelo/voz del proveedor y la cuota antes de reintentar.
 
 ## Dictar un mensaje {#dictate}
 
@@ -42,17 +40,17 @@ Si falla el streaming, selecciona **Con búfer**, prueba `mp3`, guarda y vuelve 
 
 La transcripción inserta texto en la selección actual; no lo envía automáticamente a OpenCode. La entrada del menú aparece solo cuando STT está configurado y el cliente admite grabación. La grabación usa el micrófono del dispositivo cliente, incluso si CodeNomad se ejecuta en un servidor remoto.
 
-Si falta la entrada, comprueba el interruptor y la configuración STT. Ante errores de permiso, permite el micrófono tanto en los ajustes de privacidad del navegador como del sistema operativo. La grabación en navegador remoto necesita un contexto seguro, normalmente HTTPS de confianza; consulta [Acceso móvil](mobile.md) y [Acceso remoto directo](remote-access.md). Cambiar de vista o cerrar el editor termina su ciclo de grabación; no confíes en poder recuperar audio sin enviar. El borrador escrito sigue siendo el lugar donde revisar el resultado.
+La grabación en navegador remoto necesita un contexto seguro, normalmente HTTPS de confianza; consulta [Acceso móvil](mobile.md) y [Acceso remoto directo](remote-access.md). Cambiar de vista o cerrar el editor termina su ciclo de grabación; no confíes en poder recuperar audio sin enviar.
 
 ## Leer mensajes en voz alta {#playback}
 
 1. Usa **Reproducir mensaje** en un mensaje, o la misma acción en una llamada a herramienta, cuando TTS esté disponible.
-2. Usa **Detener reproduccion** en el mismo control para terminarla; iniciar otra lectura detiene la actual.
+2. Usa **Detener reproducción** en el mismo control para terminarla; iniciar otra lectura detiene la actual.
 3. Cambia la voz, el modelo, el modo o el formato guardados en **Voz** para solicitudes posteriores.
 
-La reproducción usa la proyección de texto de CodeNomad, no una captura narrada: los bytes binarios/de imágenes y los comprobantes de permisos no son contenido de voz. No ejecuta un mensaje ni cambia el modelo OpenCode seleccionado. La compatibilidad de audio del navegador y las respuestas del proveedor aún pueden impedir la reproducción aunque se pueda seleccionar un formato.
+La reproducción usa la proyección de texto de CodeNomad, no una captura narrada: los bytes binarios/de imágenes y los comprobantes de permisos no son contenido de voz. No ejecuta un mensaje ni cambia el modelo OpenCode seleccionado.
 
-Para voz automática de conversación, usa **Activar modo conversacion** en el menú **Más acciones** del editor; se aplica a esa pestaña de proyecto y no se conserva tras recargar. Mientras está activado, CodeNomad pide al agente, con cada mensaje que envías, que empiece su respuesta con un breve resumen delimitado `spoken`. Solo se lee ese bloque completado, en la sesión principal activa; no lee automáticamente todas las respuestas ni subagentes. **Desactivar modo conversacion** detiene su cola y deja de pedir el resumen. Iniciar la entrada de micrófono también detiene la voz de conversación activa. El interruptor aparece con la entrada de voz o mientras el modo conversación ya está activado y requiere TTS operativo para activarse.
+Para voz automática de conversación, usa **Activar modo conversación** en el menú **Más acciones** del editor; se aplica a esa pestaña de proyecto y no se conserva tras recargar. Mientras está activado, CodeNomad pide al agente, con cada mensaje que envías, que empiece su respuesta con un breve resumen delimitado `spoken`. Solo se lee ese bloque completado, en la sesión principal activa; no lee automáticamente todas las respuestas ni subagentes. **Desactivar modo conversación** detiene su cola y deja de pedir el resumen. Iniciar la entrada de micrófono también detiene la voz de conversación activa. El interruptor aparece con la entrada de voz o mientras el modo conversación ya está activado y requiere TTS operativo para activarse.
 
 ## Flujo de datos y privacidad {#privacy}
 

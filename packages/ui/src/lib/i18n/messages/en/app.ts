@@ -1,4 +1,14 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "OK",
+  "window.menu.native.browserPromptCancel": "Cancel",
+  "window.menu.native.browserPermission": "Allow {permission} for {origin}?",
+  "window.menu.native.browserPermissionUnknown": "Unknown permission blocked: {permission}.",
+  "window.menu.native.browserAllow": "Allow",
+  "window.menu.native.browserDeny": "Deny",
+  "window.menu.native.browserCopyLink": "Copy Link",
+  "window.menu.native.browserSaveImage": "Save Image",
+  "window.menu.native.browserOpenLink": "Open Link in New Window",
+  "window.menu.native.browserInspect": "Inspect",
   "window.title.main": "CodeNomad",
   "window.controls.minimize": "Minimize window",
   "window.controls.maximize": "Maximize or restore window",
@@ -54,15 +64,6 @@ export const appMessages = {
 
   "app.closeInstance.toast.error": "Failed to close project.",
   "app.closeInstance.toast.otherWindow": "{project} was closed from another window.",
-
-  "emptyState.logoAlt": "CodeNomad logo",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "Select a folder to start coding with AI",
-  "emptyState.actions.selectFolder": "Select Folder",
-  "emptyState.actions.selecting": "Selecting...",
-  "emptyState.keyboardShortcut": "Keyboard shortcut: {shortcut}",
-  "emptyState.examples": "Examples: {example}",
-  "emptyState.multipleInstances": "You can have multiple instances of the same folder",
 
   "releases.upgradeRequired.title": "Upgrade required",
   "releases.desktop.checking": "Checking for a CodeNomad update…",

@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { isDeepStrictEqual } from "node:util"
-import type { MissionAction, MissionLifecycleInput, MissionNativeAcknowledgement, MissionLifecycleOperation } from "./lifecycle-model"
+import type { MissionAction, MissionLifecycleInput, MissionNativeAcknowledgement } from "./lifecycle-model"
 import { controlResumeAdmissionID, recurrenceMessageID } from "./receipt-identity"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
 import { MAX_CONTROL_FAMILY_SESSIONS } from "./native-session-family"
@@ -23,7 +23,7 @@ const startAcknowledgement = z.object({ ...identity, action: z.literal("start"),
   admission: z.object({ id, sessionID: id, type: z.literal("synthetic"), delivery: z.literal("queue"),
     time: z.object({ created: z.number().finite().nonnegative() }).strict(),
     payload: z.object({ text: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), description: z.string().max(1_024).optional(),
-      metadata: z.record(z.unknown()).refine(boundedJson).optional() }).strict(),
+      metadata: z.record(z.string(), z.unknown()).refine(boundedJson).optional() }).strict(),
   }).strict() }).strict()
 const acknowledgement = z.union([startAcknowledgement, interruptAcknowledgement,
   z.object({ ...identity, action: z.enum(["pause", "stop"]), disposition: z.literal("target-missing") }).strict(),
@@ -69,26 +69,6 @@ export function parseMissionLifecycleReply(value: unknown, expected: Parameters<
   return parseMissionNativeAcknowledgement(value.nativeAcknowledgement, expected)
 }
 
-/** Bounded strict lifecycle receipt projection for native recurrence snapshots. */
-export const lifecycleOperationReadSchema = z.object({ id, missionID: id, requestID: id,
-  expectedRevision: z.number().int().positive().safe(), action: z.enum(["start", "pause", "stop"]),
-  recurrence: recurrence.optional(), completedRevision: z.number().int().positive().safe().optional(),
-  pausedDescendants: z.object({ sessions: z.array(id).max(MAX_REPORTED_DESCENDANTS), partial: z.boolean() }).strict().optional(),
-  targets: z.array(z.object({ sessionID: id, location: z.object({ directory: z.string().min(1).max(4096), workspaceID: id.optional() }).strict() }).strict()).max(32),
-  pending: z.array(id).max(32),
-  receipts: z.array(z.union([
-    z.object({ receiptID: id, sessionID: id, acknowledgementState: z.literal("known"), nativeAcknowledgement: acknowledgement }).strict(),
-    z.object({ receiptID: id, sessionID: id, acknowledgementState: z.literal("unknown") }).strict(),
-  ])).max(32).optional(),
-}).strict().refine(value => new Set(value.targets.map(target => target.sessionID)).size === value.targets.length
-  && new Set(value.pending).size === value.pending.length && value.pending.every(session => value.targets.some(target => target.sessionID === session))
-  && new Set(value.receipts?.map(receipt => receipt.sessionID)).size === (value.receipts?.length ?? 0)
-  && (value.receipts ?? []).every(receipt => value.targets.some(target => target.sessionID === receipt.sessionID)
-    && (receipt.acknowledgementState === "unknown" ? value.pending.includes(receipt.sessionID)
-      : !value.pending.includes(receipt.sessionID) && !!parseMissionNativeAcknowledgement(receipt.nativeAcknowledgement,
-        { missionID: value.missionID, operationID: value.id, sessionID: receipt.sessionID, action: value.action, recurrence: value.recurrence }))))
-  .transform(value => value as MissionLifecycleOperation)
-
 function boundedJson(value: unknown): boolean {
   const pending = [{ value, depth: 0 }]
   let nodes = 0, bytes = 0
@@ -114,6 +94,7 @@ export const lifecycleInputSchema = {
   type: "object", properties: {
     missionID: { type: "string", minLength: 1, maxLength: 100 }, requestID: { type: "string", minLength: 1, maxLength: 128 },
     expectedRevision: { type: "integer", minimum: 1 }, action: { type: "string", enum: ["start", "pause", "stop"] },
+    graceful: { const: true },
   }, required: ["missionID", "requestID", "expectedRevision", "action"], additionalProperties: false,
 } as const
 const ackIdentityProperties = { missionID: { type: "string", minLength: 1, maxLength: 240 },
@@ -149,10 +130,10 @@ export const lifecycleOperationSchema = {
     id: { type: "string" }, pending: { type: "array", items: { type: "string" } },
     completedRevision: { type: "integer", minimum: 1 },
     pausedDescendants: { type: "object", properties: { sessions: { type: "array", maxItems: MAX_REPORTED_DESCENDANTS,
-      items: ackIdentityProperties.sessionID }, partial: { type: "boolean" } }, required: ["sessions", "partial"], additionalProperties: false },
+      items: ackIdentityProperties.sessionID }, partial: { type: "boolean" }, graceful: { const: true } }, required: ["sessions", "partial"], additionalProperties: false },
     // Native V2's JSON Schema decoder does not support `not`. Complete,
     // disjoint object branches retain the exact known/unknown evidence rule.
-    receipts: { type: "array", maxItems: 8, items: { oneOf: [
+    receipts: { type: "array", items: { oneOf: [
       { type: "object", properties: { receiptID: { type: "string" }, sessionID: { type: "string" },
         acknowledgementState: { const: "known" }, nativeAcknowledgement: nativeAcknowledgementSchema },
         required: ["receiptID", "sessionID", "acknowledgementState", "nativeAcknowledgement"], additionalProperties: false },

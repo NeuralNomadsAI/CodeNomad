@@ -6,13 +6,15 @@ Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. S
 
 1. Ana sayfayı açmak için **Yeni instance** (`+`) öğesine tıklayın.
 2. **Klasörlere Göz At** öğesini seçin, arka uç klasörünü seçin ve açın; veya **Son Klasörler** altında bir giriş seçin.
-3. Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin.
+3. Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
 
 Uzak bir sunucuya göz atmak, telefonunuzun veya dizüstü bilgisayarınızın değil, o sunucunun dosya sistemine göz atmak anlamına gelir. Bir projeyi açmak, her sekme için ayrı bir OpenCode arka plan programı oluşturmaz. Konuşmalar yerel OpenCode oturumlarıdır; bunların ömrü sekmenin ömrü değildir.
 
-Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın.** yıkıcıdır: yalnızca zaten orada olan her şeyin silinebildiği durumlarda etkinleştirin. Emin değilseniz yeni bir hedef kullanın. Başarısız bir klon, mevcut bir projeyi silmek için bir neden değildir; yeniden denemeden önce bildirilen hedefi ve hatayı inceleyin.
+Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın.** yıkıcıdır: yalnızca zaten orada olan her şeyin silinebildiği durumlarda etkinleştirin. Emin değilseniz yeni bir hedef kullanın.
 
 Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** görünen adı değiştirir; **Son kullanılanlardan kaldır** dosyaları veya konuşmaları değil, kısayolu kaldırır. Zaten açık olan bir son kullanılan projeye tıklamak yeni bir sekme açar; mevcut sekmeyi seçmek için bunun yerine projenin **Aç** düğmesini (**Açık projeye geç**) kullanın.
+
+Aynı klasörü iki kez açıp her iki sekmede de aynı konuşmayı seçerek birinde sohbeti, diğerinde web önizlemesini, dosyayı veya Görev raporunu tutun. Her sekme kendi görünümünü, konuşmanın kaydırma konumunu, sağ panel seçimini ve Dosyalar modunu korur; iletiler, yürütme ve proje verileri ortak kalır.
 
 ## Yeni örnek başlatıcıyı kullanın {#new-instance-launcher}
 
@@ -32,9 +34,11 @@ Normal bir tıklama yine de tam ana sayfayı açar. Başlatıcı, yönetim yüze
 | Sekmeyi Kapat | O sekmenin CodeNomad proje bağlantısını kaldırır; aynı klasörde ayrı açılmış başka bir sekme etkilenmez | Proje dosyalarını veya yerel geçmişi silmez, oturumları durdurmaz veya OpenCode'un Location bağlamını kaldırmaz |
 | Oturumu durdur | Seçilen görüşmenin yürütülmesi | Projeyi kapatmaz veya geçmişini silmez |
 
-Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de kapanır ve o pencere bir bildirim gösterir. Kapatmayı başlatan pencere bildirim göstermez. Kapatma hemen gerçekleşir; arka uç projeyi kapatamazsa bir hata görünür ve ana sayfadaki **Açık projeye geç** yine projeye ulaşır. Otomatik yeniden deneme yoktur. Kapatılan sekmenin gönderilmemiş taslakları başlangıç geri yüklemesinde korunmaz.
+Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de kapanır ve o pencere bir bildirim gösterir. Kapatılan sekmenin gönderilmemiş taslakları ve ekleri, aynı klasörü o pencerede yeniden açtığınızda geri gelir; pencere bunları yeniden yüklenene veya kapanana kadar en son kapatılan 16 proje için tutar. Başlangıç geri yüklemesine dahil değildir.
 
 Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını kapatmaz; normal başlangıç geri yüklemesi yine uygulanır. Yürütmenin bittiğini doğrulamak istiyorsanız ilgili çalıştırmaları açıkça durdurun. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz; paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
+
+Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, Görev seçimini ve okuyucusunu, sohbet veya web önizlemesi seçimini geri yükler. Tarayıcı URL'leri ve geçmişi oturum başına paylaşılır; kayıtlı sayfalar yalnızca web önizlemesi açıkça yeniden açıldığında yüklenir. Bir örneği kapatmak yalnızca o örneğin kayıtlı görünümünü kaldırır; klasörü yeniden açmak yeni bir örnek oluşturur.
 
 ## Geçici çalışma alanları {#temporary-workspaces}
 
@@ -45,7 +49,7 @@ Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek 
 | Seçim | Etki | Kurtarma |
 | --- | --- | --- |
 | Sakla | Projeyi CodeNomad'de kapatır, klasörü ve konuşmaları korur, geçici durumunu kaldırır ve son kullanılan projelere ekler | Son kullanılanlardan yeniden açın; klasör taşınmaz |
-| At | Geçici çalışma alanının konuşmalarını ve dosyalarını siler | Geri alma yok; ihtiyaç duyulan her şeyi önce başka bir yere kaydedin |
+| At | Geçici çalışma alanının konuşmalarını, dosyalarını ve gönderilmemiş taslaklarını siler | Geri alma yok; ihtiyaç duyulan her şeyi önce başka bir yere kaydedin |
 | İptal | Geçici çalışma alanını açık bırakır | Çalışmaya devam edin veya daha sonra karar verin |
 
 Hiçbir konuşma, dosya veya gönderilmemiş taslak içermeyen, dokunulmamış bir geçici sekme, kapatıldığında sessizce atılır. Açık geçici sekmeler normal başlangıç geri yüklemesine katılır, ancak ana sayfada kapatılan geçici klasörlerin devam ettirilmesi için ayrı bir liste yoktur.
@@ -58,7 +62,7 @@ Bir konuşma çalışırken veya klasör başka sekmede/pencerede açıkken At i
 2. Mevcut keşfedilen bir çalışma ağacını seçin veya **+ Worktree oluştur** öğesini seçin.
 3. Oluşturmak için **Ad** girin ve **Worktree oluştur ve kullan** öğesini seçin.
 
-CodeNomad çalışma ağaçlarını OpenCode aracılığıyla keşfeder ve açılan depoya ait olduklarını doğrular. Yeni dal adı seçili çalışma kopyasının HEAD revizyonundan başlar. Mevcut dal adı o dalın güncel revizyonunu kullanır; Git başka yerde kullanıma alınmış dalı reddedebilir. Çalışma ağaçları varsayılan `.codenomad/worktrees` konumunu kullanır. Commit edilmemiş değişiklikler özgün çalışma kopyasında kalır; oluşturma bunları yeni çalışma ağacına kopyalamaz.
+Proje bir depo içindeki klasörse yalnızca o klasörü içeren çalışma ağaçları listelenir. Böyle bir klasörden çalışma ağacı oluşturmak için Git'in onu izlemesi gerekir. Yeni dal adı seçili çalışma kopyasının HEAD revizyonundan başlar. Mevcut dal adı o dalın güncel revizyonunu kullanır; Git başka yerde kullanıma alınmış dalı reddedebilir. Çalışma ağaçları varsayılan `.codenomad/worktrees` konumunu kullanır. Commit edilmemiş değişiklikler özgün çalışma kopyasında kalır; oluşturma bunları yeni çalışma ağacına kopyalamaz.
 
 İleti düzenleyicisindeki seçici, üst konuşmayı ve tüm alt konuşmalarını doğrulanmış bir aile olarak taşır. Alt oturum bu seçiciyi bağımsız değiştiremez. Etkin oturumlar işlemi engeller: önce ailenin tamamlanmasını bekleyin veya yürütmesini durdurun. Yeni taşıma istemeden önce mevcut taşımanın sonuçlanmasını bekleyin; hata durumunda yeniden denemeden önce yenilenen konuşma/çalışma ağacı durumunu inceleyin.
 
@@ -72,7 +76,7 @@ Buna karşılık [Dosyalar](files.md) bölümündeki **İncelenecek çalışma a
 
 Silme, çalışma ağacının yerel klasörünü kaldırır. Git'in ana çalışma kopyası silinebilir bir hedef değildir. CodeNomad etkilenen konuşma ailelerini kök çalışma kopyasına geri taşır ve çalışma ağacını kaldırmadan önce yerleşimlerini doğrular; etkin oturumlar kaldırmayı engelleyebilir. Silme, commit edilmemiş dosyaların arşivi veya yedeği değildir.
 
-Git değiştirilmiş/izlenmeyen dosyaları reddederse yeniden denemeden önce bu dosyaları koruyun veya temizleyin. Zorla silme bunları açıkça siler. Kilitli dizinde onu kullanan terminalleri, düzenleyicileri, izleyicileri ve arka plan süreçlerini kapatın. Eksik kayıt için çalışma ağaçlarını yenileyip yeniden denemeden önce yolu inceleyin. Tanılama paylaşımı için hata penceresi **Temizlenmiş sürümü kopyala** eylemini sunar; temizlenmiş metni bile önce gözden geçirin.
+Git değiştirilmiş/izlenmeyen dosyaları reddederse yeniden denemeden önce bu dosyaları koruyun veya temizleyin. Zorla silme bunları açıkça siler. Kilitli dizinde onu kullanan terminalleri, düzenleyicileri, izleyicileri ve arka plan süreçlerini kapatın. Tanılama paylaşımı için hata penceresi **Temizlenmiş sürümü kopyala** eylemini sunar; temizlenmiş metni bile önce gözden geçirin.
 
 ## Git'i başlatın veya Git olmadan çalışın {#initialize-git}
 
@@ -80,6 +84,6 @@ Git değiştirilmiş/izlenmeyen dosyaları reddederse yeniden denemeden önce bu
 2. **Git'i başlat** öğesini seçin. Ekstra bir onay gerektirmeden anında harekete geçer.
 3. Proje meta verilerinin ve konuşmalarının yenilenmesini bekleyin; Git, CodeNomad dışında başlatılmışsa **Yenile** öğesini kullanın.
 
-Başlatma, depoyu üst dizinde değil, açıkça açılan klasörde oluşturur. Commit oluşturmaz. Başarısızlık durumunda yeniden denemeden önce mesajı inceleyip yenileyin: belirsiz yanıt otomatik yeniden gönderilmez.
+Başlatma, depoyu üst dizinde değil, açıkça açılan klasörde oluşturur. Commit oluşturmaz.
 
 Arka uç Git'i çalıştıramazsa, konuşmalar ve sınırlı dosya tarama, yalnızca dizin modunda açıkça açılan klasör için kullanılabilir durumda kalır. Worktree işlemleri ve Git başlatma, bu arka uçta Git gerektirir. Bkz. [kurulum](install.md) ve [Dosyalar](files.md).

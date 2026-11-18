@@ -13,23 +13,19 @@ Gespeicherter Verlauf, aktuell angezeigter Gesprächsverlauf und komprimierter M
 
 Unterhaltungsseiten zeigen beim Eintreffen der Stapel **Diese Seite: … Ergebnisse · … Nachrichten durchsucht**. Die Projektsuche zeigt **Beste Ergebnisse: …** sowie kompakte Hinweise auf Teilsuchen oder ausgeschlossene Verzeichnisse. Ist die sortierte Suche in der Laufzeit nicht verfügbar, verwenden Sie **Gesamte Sitzung**. Übersprungene Nachrichten werden gemeldet; starten Sie für neue Nachrichten eine neue Suche.
 
-Das Öffnen einer leeren Suche durchsucht keinen Verlauf. Änderungen an Begriff/Umfang, Schließen des Fensters oder Verlassen der Sitzung brechen veraltete Sucharbeit ab. Verwenden Sie bei einem Lesefehler **Erneut versuchen**; dies sendet keinen Prompt und ändert keinen Verlauf.
-
 Projektsuchen beginnen bei höchstens 16.384 neuesten gespeicherten Nachrichten je Ort. **Weiter zurück suchen** ersetzt die Liste durch die besten Treffer des nächsten älteren Fensters. Der Hinweis nennt den geprüften Bereich, je Projektort von neu nach alt. Die Rangfolge gilt nur innerhalb dieses Fensters. Änderungen an Suchtext, Bereich oder technischen Inhalten, Schließen der Suche oder Verlassen der Sitzung setzen das Fenster zurück. Eine neue Suche berücksichtigt neue Nachrichten.
 
-Läuft ein Suchfenster ab oder ändert sich sein Verlauf, beginnt **Neue Suche starten** mit denselben Suchbegriffen und Optionen bei den neuesten Nachrichten. Ein Hinweis erklärt die Wiederherstellung. Bei gewöhnlichen Lesefehlern wiederholt **Erneut versuchen** das aktuelle Fenster.
+Läuft ein Suchfenster ab oder ändert sich sein Verlauf, beginnt **Neue Suche starten** mit denselben Suchbegriffen und Optionen bei den neuesten Nachrichten.
 
 ## Ergebnisse öffnen und Timeline nutzen {#timeline-navigation}
 
 1. Wählen Sie ein Suchergebnis der aktuellen Sitzung, um zur umgebenden Passage zu springen.
 2. Wählen Sie ein Ergebnis einer anderen Sitzung, um eine separate Vorschau dieser Nachricht zu öffnen; verwenden Sie **In Sitzung öffnen**, um an der Trefferstelle zu dieser Unterhaltung zu wechseln.
-3. Zeigen Sie in **Nachrichten-Timeline** auf eine Markierung oder fokussieren Sie sie für einen Auszug und wählen Sie sie dann zur Navigation: Ihr Block rückt nach oben, und die Markierung bleibt hervorgehoben, bis Sie scrollen; danach folgt die Hervorhebung dem Block oben im Gespräch. Über die Bedienelemente für erste/neueste Nachricht gelangen Sie zu den Enden des gespeicherten Verlaufs.
+3. Zeigen Sie in **Nachrichten-Timeline** auf eine Markierung oder fokussieren Sie sie für einen Auszug und wählen Sie sie dann zur Navigation: Ihr Block rückt nach oben, und die Markierung bleibt hervorgehoben, bis Sie scrollen; danach folgt die Hervorhebung dem Block oben im Gespräch. Über die Pfeile für erste/neueste Nachricht gelangen Sie zu den Enden des gespeicherten Verlaufs. Sie schweben über dem Gespräch; ist unter **Allgemein** die Option **Pfeile für erste/neueste Nachricht unter der Zeitleiste anzeigen** aktiviert, sitzen sie stattdessen in der Ecke unter der Zeitleiste rechts von **Nachricht senden**, und der Pfeil des Endes, an dem Sie sich befinden, ist abgeblendet.
 
 Die Timeline stellt die gesamte Sitzungsstruktur dar, auch wenn die Verlaufsanzeige nur eine begrenzte Passage enthält. Sprünge laden das Ziel, nicht jede dazwischenliegende Nachricht. Suchvorschauen anderer Sitzungen laden weder deren gesamten Verlauf noch wählen sie diese aus; nur **In Sitzung öffnen** wechselt die Unterhaltung.
 
 Werkzeugmarkierungen folgen **Nachrichteninhalt**: Ein dort ausgeblendeter Werkzeugtyp hat keine Markierung (bei **Nichts** gar keine), außer einem Werkzeug, das auf eine Berechtigung wartet. Ein Schritt, der nur Werkzeuge ausgeführt hat, zeigt nur seine Werkzeugmarkierungen, ohne leere Agentenmarkierung.
-
-Während ein Sprung lädt, bleibt die alte Passage sichtbar. Ein neuerer Sprung oder manueller Eingriff in den Verlauf ersetzt veraltete Navigation; ein fehlgeschlagener Sprung lässt die sichtbare Passage unverändert. Versuchen Sie das Ziel erneut, statt wiederholt das ganze Projekt neu zu laden. Historisches Lesen ändert nicht die Agenten-/Modellauswahl des Eingabefelds.
 
 Bei zu schmaler Unterhaltung (unter 420 CSS-Pixeln) ist die Timeline ausgeblendet; verwenden Sie dort Suche und Verlaufssteuerung. Die gespeicherte Sichtbarkeitseinstellung wird durch diese responsive Änderung nicht gelöscht.
 
@@ -44,7 +40,7 @@ Bei zu schmaler Unterhaltung (unter 420 CSS-Pixeln) ist die Timeline ausgeblende
 | Sitzung löschen | Sitzungszeile **Sitzung löschen** oder Löschung ausgewählter Sitzungen | Löscht die native Unterhaltung und ihre nachgeordneten Untersitzungen/Verläufe nach Bestätigung rekursiv; nicht rückgängig zu machen |
 | Sitzungen bereinigen | Befehlspalette | Weiter gefasste Sitzungslöschung, keine Anzeige- oder Kontextgrößeneinstellung |
 
-**Nachrichteninhalt** gilt unterhaltungsübergreifend. Wählen Sie oben darin oder in **Einstellungen → Chat** eine Voreinstellung (**Nichts**, **Minimal**, **Ausgewogen** oder **Alles**) und passen Sie dann einzelne Zeilen an; das Voreinstellungsmenü von **Nachrichteninhalt** zeigt dann **Benutzerdefiniert**. Werkzeuge auszublenden deaktiviert sie nicht, ändert keine Berechtigungen und entfernt keine gespeicherten Ausgaben. Damit die Darstellung reaktionsfähig bleibt, zeigen sehr große Nachrichten an einer Auslassung **… weitere anzeigen**, und sehr langer Text oder sehr lange Werkzeugausgabe endet an einer Zeile **… weitere Zeichen ausgeblendet** mit **Alles anzeigen** oder, wenn noch viel übrig ist, **… weitere anzeigen**, was mehrere Schritte erfordern kann. Beides einzublenden betrifft nur die Anzeige und stellt keine gelöschten Inhalte wieder her.
+**Nachrichteninhalt** gilt unterhaltungsübergreifend. Wählen Sie oben darin oder in **Einstellungen → Chat** eine Voreinstellung (**Nichts**, **Minimal**, **Ausgewogen** oder **Alles**) und passen Sie dann einzelne Zeilen an; das Voreinstellungsmenü von **Nachrichteninhalt** zeigt dann **Benutzerdefiniert**. Werkzeuge auszublenden deaktiviert sie nicht, ändert keine Berechtigungen und entfernt keine gespeicherten Ausgaben. Damit die Darstellung reaktionsfähig bleibt, zeigen sehr große Nachrichten an einer Auslassung **… weitere anzeigen**, und sehr langer Text oder sehr lange Werkzeugausgabe endet an einer Zeile **… weitere Zeichen ausgeblendet** mit **Alles anzeigen** oder, wenn noch viel übrig ist, **… weitere anzeigen**, was mehrere Schritte erfordern kann. Beides einzublenden betrifft nur die Anzeige und stellt keine gelöschten Inhalte wieder her. Ziehen Sie über die Augen- oder Pfeilschaltflächen, um mehrere Zeilen auf einmal einzustellen: Die erste Schaltfläche, die Sie verlassen, wird umgeschaltet, und jede überstrichene Schaltfläche derselben Spalte übernimmt ihren neuen Zustand. Die Unterhaltung wird aktualisiert, sobald Sie loslassen.
 
 ## Sitzung komprimieren {#compact-session}
 
@@ -63,8 +59,6 @@ Komprimierung ändert den Kontext, mit dem OpenCode die Sitzung fortsetzt. Sie g
 Nur geeignete abgeschlossene Werkzeuge und Denkprozesse werden entfernt. Aktive/unvollständige Inhalte werden nicht bereinigt, ebenso wenig eine Nachricht, die in der von OpenCode gelesenen Form (einschließlich angehängter Dateien) größer als 16 MB ist und als übersprungener Inhalt zählt; geänderte Inhalte werden abgelehnt, statt den bestätigten Umfang stillschweigend auszuweiten. Endgültiger Text und Nachrichten-/Sitzungsmetadaten bleiben erhalten, entfernte technische Ausgaben lassen sich aber nicht wiederherstellen. Sichern Sie benötigte Inhalte vor der Bestätigung.
 
 Sitzungsbereinigung ist nicht über die gesamte Sitzung atomar. Frühere erfolgreiche Entfernungen bleiben bestehen, wenn eine spätere Nachricht einen Konflikt oder Fehler verursacht. **Abbrechen stoppt künftige Stapel; ein bereits versandter Stapel wird nicht zurückgerollt** und kann weiterhin festgeschrieben werden.
-
-Warten Sie bei belegtem Speicher, bis aktuelle Ausführungs-/Speicherarbeit beendet ist. Laden Sie bei einer geänderten Nachricht neu und wählen Sie erneut aus. Verbinden/öffnen Sie bei nicht verfügbarem Plugin CodeNomad erneut und prüfen Sie vor dem Wiederholen den Fehler. Aktualisieren und beurteilen Sie nach ungewisser Antwort die verbleibenden Inhalte; nehmen Sie weder an, dass nichts geschehen ist, noch dass die gesamte Sitzung bereinigt wurde.
 
 ## Sitzungen löschen und bereinigen {#delete-scrub}
 

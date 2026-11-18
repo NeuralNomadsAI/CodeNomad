@@ -5,6 +5,12 @@ on:
     # Nightly build of dev (only if dev has new commits)
     - cron: "0 1 * * *"
   workflow_dispatch:
+    inputs:
+      signpath_test_signing:
+        description: "Sign the Windows artifacts with the SignPath test certificate (untrusted by Windows; publishes a test-signed prerelease)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -77,4 +83,5 @@ jobs:
       dist_tag: latest
       prerelease: true
       release_ui: false
+      windows_signing_policy: ${{ inputs.signpath_test_signing && 'test-signing' || '' }}
     secrets: inherit

@@ -97,7 +97,9 @@ test("coordinator readout cannot settle a tracked native invocation or fabricate
     taskKey: "work", childSessionID: f.child.id, binding: call, outcome: "returned" })
   assert.equal((await f.control.report(f.parent.id, { ...report, final: true })).mission.status, "completed")
   const human = await fixture(false, true)
-  await assert.rejects(human.control.report(human.parent.id, { ...report, taskKey: "work" }), /human-decision evidence unavailable/)
+  await assert.rejects(human.control.report(human.parent.id, { ...report, taskKey: "work" }), /Decision outcome required/)
+  await assert.rejects(human.control.report(human.parent.id, { ...report, taskKey: "work", artifact: { kind: "decision", question: "Choose?", answer: "Yes" } }),
+    /human-decision evidence unavailable/, "a model-written answer without a gate never passes as the human's")
   assert.equal((await human.control.snapshot()).missions[0].reports.length, 0)
 })
 

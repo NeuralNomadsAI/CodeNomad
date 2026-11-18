@@ -1,4 +1,4 @@
-# Destek ve kaynak derlemeleri
+# Hata raporları ve kaynaktan derleme
 
 Hata raporları, güncel sürümler ve katkılar için depoyu kullanın. [Sorun giderme kılavuzu](troubleshooting.md), bir sorunu bildirmeden önce güvenli kurtarmayı kapsar.
 
@@ -11,8 +11,6 @@ Hata raporları, güncel sürümler ve katkılar için depoyu kullanın. [Sorun 
 Eylem, CodeNomad ve OpenCode sürümlerini (kurulu olandan farklıysa çalışan OpenCode hizmetininki dahil), işletim sisteminizi, istemci türünü (web tarayıcısında tarayıcının kullanıcı aracısıyla birlikte) ve sunucunun işletim sistemini önceden doldurur. Dinleyici adreslerini, çalışma alanı yollarını, kimlik bilgilerini veya konuşma metnini önceden doldurmaz. Formu açmak bir sorun göndermiyor.
 
 Daha fazla tanılama gerekiyorsa **Panoya kopyala** veya **.txt indir** ayrı rapor üretir. Bu kapsamlı rapor yerel yolları ve ağ adreslerini içerebilir: eklemeden önce inceleyip hassas bilgileri gizleyin. Otomatik rapor kimlik doğrulama sırlarını hariç tutsa da ekran görüntüsü veya günlük alıntısı sır içerebilir.
-
-GitHub formunun alanları uyumsuzsa CodeNomad aynı rapor bilgileriyle düz bir sorun bildirimi açar. Formu okumadaki geçici hata açılmasını engellemez. Her zaman [sorun listesini](https://github.com/NeuralNomadsAI/CodeNomad/issues) elle kullanabilirsiniz.
 
 ## Topluluk ve sürümler {#community}
 
@@ -31,7 +29,7 @@ CodeNomad kontrolleri yerine yerel OpenCode yapılandırmasıyla ilgili sorunlar
 
 ## Kaynaktan derleyin {#build-from-source}
 
-`.node-version` ile sabitlenen Node.js **24.20.0**, npm, Git ve uyumlu OpenCode CLI kullanın. Komutları geliştirme çalışma kopyasında çalıştırın:
+`.node-version` dosyasında sabitlenen Node.js sürümü, npm, Git ve uyumlu OpenCode CLI kullanın. Komutları geliştirme çalışma kopyasında çalıştırın:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Geliştirme değişiklikleri, bağımsız olarak çalışan OpenCode arka plan programının yüklü sürümünü değil, geliştirme ana bilgisayarını etkiler. Yerel paketlemenin uygun hedef araçlara ihtiyacı vardır; hedef işletim sistemi üzerinde derlemeleri tercih edin.
+Yerel paketlemenin uygun hedef araçlara ihtiyacı vardır; hedef işletim sistemi üzerinde derlemeleri tercih edin.
 
 ### Derleyin ve doğrulayın {#build-and-validate}
 

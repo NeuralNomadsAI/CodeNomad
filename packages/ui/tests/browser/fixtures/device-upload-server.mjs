@@ -7,11 +7,18 @@ import { createFixtureShutdown } from "../fixture-shutdown.ts"
 export async function startDeviceUploadFixture() {
   const cache = await createFixtureCache()
   const shutdown = createFixtureShutdown(cache)
+  const events = { opened: 0 }
   let server
   try {
     server = await createServer({ configFile: false, root: fileURLToPath(new URL("../../..", import.meta.url)), logLevel: "error",
       cacheDir: cache.cacheDir,
       plugins: [shutdown.plugin, solid(), { name: "device-upload-fixture", configureServer(s) {
+        s.middlewares.use("/api/events", (req, res) => {
+          events.opened++
+          res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" })
+          res.write(": isolated device-upload events\n\n")
+          req.once("close", () => res.end())
+        })
         s.middlewares.use("/device-upload-fixture", async (_req, res) => {
           res.setHeader("Content-Type", "text/html")
           res.end(await s.transformIndexHtml("/device-upload-fixture", '<html><body><div id="root" style="display:flex;height:700px;width:1000px"></div><script type="module" src="/tests/browser/fixtures/device-upload.tsx"></script></body></html>'))
@@ -22,7 +29,7 @@ export async function startDeviceUploadFixture() {
     })
     shutdown.own(server)
     await server.listen()
-    return { server, url: `http://127.0.0.1:${server.httpServer.address().port}/device-upload-fixture` }
+    return { server, events, url: `http://127.0.0.1:${server.httpServer.address().port}/device-upload-fixture` }
   } catch (error) {
     try {
       if (server) await server.close()

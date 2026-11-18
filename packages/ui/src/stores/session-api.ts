@@ -29,6 +29,7 @@ import {
   getSessionMessagesLoadError,
   providers,
   setAgents,
+  setAgentCatalogLocations,
   setMessagesLoaded,
   advanceMessageLoadEpoch,
   finishMessageLoad,
@@ -72,6 +73,7 @@ import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
+import { buildProviderCatalog } from "../lib/model-catalog"
 import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
 import {
@@ -82,6 +84,7 @@ import {
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
+import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
 import {
   MESSAGE_WINDOW_PAGE_SIZE,
@@ -1111,15 +1114,15 @@ function trackCreation(instanceId: string, delta: 1 | -1): void {
   })
 }
 
-async function createSession(instanceId: string, agent?: string): Promise<Session> {
+async function createSession(instanceId: string, agent?: string, location?: { directory: string }): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
   const activeId = activeSessionId().get(instanceId)
-  const activeLocation = activeId && activeId !== "info"
+  const activeLocation = location ?? (activeId && activeId !== "info"
     ? sessions().get(instanceId)?.get(activeId)?.location
-    : undefined
+    : undefined)
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
@@ -1327,6 +1330,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
   cancelSessionGenerationAdmissions(instanceId, sessionId)
+  clearSessionSeenInterruption(instanceId, sessionId)
   if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)
   clearSessionDraftPrompt(instanceId, sessionId)
@@ -1370,16 +1374,11 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
     return next
   })
 
-  const selectedParentId = activeParentSessionId().get(instanceId)
-  const selectedSessionId = activeSessionId().get(instanceId)
-  if (selectedParentId === sessionId) {
-    clearActiveParentSession(instanceId)
-  } else if (selectedSessionId === sessionId) {
-    if (selectedParentId && sessions().get(instanceId)?.has(selectedParentId)) {
-      setActiveSession(instanceId, selectedParentId)
-    } else {
-      clearActiveSession(instanceId)
-    }
+  const parent = activeParentSessionId().get(instanceId), active = activeSessionId().get(instanceId)
+  if (sessionId === parent) clearActiveParentSession(instanceId)
+  else if (sessionId === active) {
+    if (parent && sessions().get(instanceId)?.has(parent)) setActiveSession(instanceId, parent)
+    else clearActiveSession(instanceId)
   }
 }
 
@@ -1450,6 +1449,7 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
       next.set(instanceId, agentList)
       return next
     })
+    setAgentCatalogLocations((prev) => new Map(prev).set(instanceId, catalogLocationKey(location)))
     return true
   } catch (error) {
     log.error("Failed to fetch agents:", error)
@@ -1498,23 +1498,7 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
       rootClient.model.list(request, requestLocationOptions(location)),
       rootClient.model.default(request, requestLocationOptions(location)),
     ])
-    const providersById = new Map(response.data.map((provider) => [provider.id, provider]))
-    const modelsById = new Map(models.data.map((model) => [`${model.providerID}:${model.id}`, model]))
-    if (defaultModel.data) modelsById.set(`${defaultModel.data.providerID}:${defaultModel.data.id}`, defaultModel.data)
-    const providerIds = new Set([...providersById.keys(), ...Array.from(modelsById.values(), (model) => model.providerID)])
-    const providerList = Array.from(providerIds).sort().map((providerId) => ({
-      id: providerId,
-      name: providersById.get(providerId)?.name ?? providerId,
-      defaultModelId: defaultModel.data?.providerID === providerId ? defaultModel.data.id : undefined,
-      models: Array.from(modelsById.values()).filter((model) => model.providerID === providerId && model.status !== "deprecated").sort((a, b) => a.id.localeCompare(b.id)).map((model) => ({
-        id: model.id,
-        name: model.name,
-        providerId,
-        limit: model.limit,
-        cost: model.cost[0],
-        variantKeys: model.variants.map((variant) => variant.id),
-      })),
-    }))
+    const providerList = buildProviderCatalog(response.data, models.data, defaultModel.data)
 
     if (!generationCurrent() || providerRequestIds.get(requestKey) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
     setProviders((prev) => {
@@ -1773,7 +1757,10 @@ async function loadMessages(
         if (!isCurrent()) return false
       }
     }
-    const olderCursor = (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
+    // The first ascending page is the oldest: its boundary cursor promises no older page.
+    const olderCursor = intent === "oldest"
+      ? undefined
+      : (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
     const newerCursor = (responseAscending ? response.cursor?.next : response.cursor?.previous) ?? undefined
     const responseCursor = intent === "oldest" || planned.forward ? newerCursor : olderCursor
     if (planned.cursor && responseCursor === planned.cursor) {
@@ -1790,6 +1777,8 @@ async function loadMessages(
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
     let apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
+    // The reducer seed records which fragments the page itself installed.
+    const fetchedMessages = [...apiMessages]
     if (rowSnapshot) {
       apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, apiMessages.reverse(), rowSnapshot).reverse()
     }
@@ -1886,11 +1875,14 @@ async function loadMessages(
         reconcilePendingPermissionsV2(instanceId, sessionId)
         committed = true
         // Streamed events reach the display only through the session reducer,
-        // which ignores them for messages it does not hold. A session known
-        // to be idle has no such message.
+        // which ignores them for messages it does not hold: every committed
+        // latest page offers it a seed. A first load's page is merged with the
+        // rows streamed during its fetch; any other latest commit passed the
+        // revision check, so no event changed the transcript during its fetch.
         const current = sessions().get(instanceId)?.get(sessionId)
-        if (initialSeed && (current?.status !== "idle" || current.runtimeStatusKnown !== true)) {
-          void seedOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder, authoritativeApiMessages)
+        if (nextWindow.kind === "latest") {
+          void seedOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder, authoritativeApiMessages,
+            current?.status === "idle" && current.runtimeStatusKnown === true, fetchedMessages)
         }
       }
     }

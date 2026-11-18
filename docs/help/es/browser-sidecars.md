@@ -1,35 +1,46 @@
 # Vistas previas de navegador y SideCars
 
+Las vistas previas iframe y los SideCars rechazan conexiones a las direcciones y puertos de escucha del propio CodeNomad, incluidos los alias DNS. Use el puerto independiente del servidor de su aplicación.
+
 ## Abrir el navegador de una sesión {#session-browser}
 
 1. En la barra de herramientas de una conversación, elige **Abrir vista previa web**.
 2. Introduce una **URL de vista previa** `http://` o `https://` sin credenciales y elige **Abrir vista previa**. Usa la barra de herramientas para navegar, actualizar e ir Atrás/Adelante.
-3. Usa el botón de cierre de la vista previa para volver al chat. Ábrela de nuevo en esa conversación para continuar.
+3. Usa el botón de cierre de la vista previa para volver al chat. Ábrela de nuevo en la misma pestaña y conversación para continuar.
 
-Pulsar un enlace `localhost` o `127.0.0.1` en una conversación lo abre en la vista previa web de esa sesión, en cualquier cliente donde las vistas previas estén disponibles. A través de Remote Control cuando el host mantiene las vistas previas web desactivadas, o en un cliente donde las vistas previas no están disponibles de otro modo, esos enlaces conservan su comportamiento normal del navegador. Ctrl+clic (⌘-clic en macOS) o clic central abre el enlace en tu navegador en su lugar. Dentro del marco de vista previa aislado (sandbox), donde no hay almacenamiento real disponible, la página recibe un `localStorage`, `sessionStorage` y `document.cookie` en memoria para la carga actual de la página; un host de vista previa por token abierto por sí mismo conserva su almacenamiento real.
+Pulsar un enlace `localhost` o `127.0.0.1` en una conversación lo abre en la vista previa web de esa sesión, en cualquier cliente donde las vistas previas estén disponibles. A través de Remote Control cuando el host mantiene las vistas previas web desactivadas, o en un cliente donde las vistas previas no están disponibles de otro modo, esos enlaces conservan su comportamiento normal del navegador. Ctrl+clic (⌘-clic en macOS) o clic central abre el enlace en tu navegador en su lugar.
 
-Cada vista previa pertenece a su carpeta de proyecto y sesión. Cambiar de conversación, proyecto, Info o chat oculta un navegador invitado nativo abierto explícitamente sin descartar su documento/historial activo. Los navegadores invitados ocultos no son objetivos de automatización. Cerrar el proyecto/ventana o reiniciar el renderer termina el documento activo.
+Cada sesión tiene una vista previa en la ventana. Las pestañas duplicadas eligen independientemente entre el chat y esa misma vista previa activa, compartiendo página, URL, historial y plantilla de viewport. El botón de cierre devuelve solo su pestaña al chat. Cambiar de pestaña, conversación, proyecto o Info conserva el documento; cerrar un duplicado lo conserva mientras otra instancia de la sesión siga abierta. Cerrar la última instancia o la ventana, o reiniciar el renderer, termina el documento activo.
 
-El historial guardado solo se restaura cuando vuelves a abrir explícitamente el navegador de esa sesión, no al iniciar/seleccionar una sesión. Guarda URL y un cursor, no formularios sin enviar, DOM, cuerpos POST ni memoria JavaScript. El historial se limita a 32 URL por sesión y a un presupuesto compartido de disposición; pueden recortarse las entradas antiguas. Restaurar una URL puede realizar una carga nueva de página; no es una repetición de transacciones.
+Cada pestaña guarda su elección de chat/vista previa; la sesión guarda la URL, la plantilla de viewport y el historial compartidos. Las páginas guardadas se cargan solo al reabrir explícitamente el navegador de sesión. Se conservan URL y un cursor; formularios activos, DOM, cuerpos POST y memoria JavaScript terminan con el documento. El historial se limita a 32 URL por sesión y a un presupuesto compartido por ventana; las entradas antiguas pueden recortarse. Restaurar una URL puede cargar de nuevo la página.
 
 ## Inicios de sesión compartidos y límites de automatización {#signins-automation}
 
-Las vistas previas nativas comparten cookies, inicios de sesión y almacenamiento de sitios entre proyectos/sesiones dentro del mismo motor de escritorio y ámbito de perfil/configuración, separados del renderer de confianza de CodeNomad. Cerrar sesión en un sitio desde una vista previa afecta a las demás que usen ese almacén. Documentos, formularios, almacenamiento de sesión, historiales de navegación y vínculos de automatización siguen perteneciendo a cada sesión. Las vistas previas iframe no son un perfil completo compartido de navegador nativo.
+Las vistas previas nativas comparten cookies, inicios de sesión y almacenamiento de sitios entre proyectos/sesiones dentro del mismo motor de escritorio y ámbito de perfil/configuración, separados del renderer de confianza de CodeNomad. Cerrar sesión en un sitio desde una vista previa afecta a las demás que usen ese almacén. Documentos, formularios, almacenamiento de sesión, historiales de navegación y vínculos de automatización pertenecen a cada sesión.
+
+Un agente abre el navegador compartido de la sesión en una pestaña que la contiene, preferiblemente la activa. La pestaña elegida permanece fija durante la apertura; cerrarla cancela esa apertura. Las acciones sobre la página se dirigen a la vista previa nativa visible de la sesión; las ocultas quedan excluidas.
 
 | Cliente | Implementación de vista previa | Automatización de navegador del agente | Plantillas móviles |
 | --- | --- | --- | --- |
-| Electron en plataformas de escritorio compatibles | Navegador invitado Chromium nativo | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
-| Tauri para Windows | Ventana hija nativa WebView2 | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
-| Tauri para macOS/Linux | Iframe aislado | Sin automatización nativa de navegador | Solo dimensiones |
+| Electron en plataformas de escritorio compatibles | Navegador invitado Chromium nativo; ventanas OAuth, descargas y diálogos | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
+| Tauri para Windows | Ventana hija nativa WebView2; ventanas OAuth, descargas y diálogos | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
+| Tauri para macOS (14+) | Ventana hija nativa WKWebView; ventanas OAuth, descargas y diálogos | Compatible para la vista previa visible de la sesión propia | Identidad móvil WebKit y viewport CSS; límites nativos de entrada |
+| Tauri para Linux | Ventana hija nativa WebKitGTK; ventanas OAuth, descargas y diálogos | Compatible para la vista previa visible de la sesión propia | Identidad móvil WebKit y viewport CSS; límites nativos de densidad/entrada |
 | Navegador normal/vista remota | Alternativa iframe | Sin objetivo local de vista previa nativa | Solo dimensiones |
 
-La automatización nativa se prepara al iniciar el escritorio y usa la herramienta `codenomad.browser` vinculada a la sesión para abrir, navegar, obtener una instantánea, capturar pantalla y realizar acciones en la página: hacer clic, escribir, seleccionar, pasar el cursor, arrastrar, desplazarse, pulsar teclas y esperar un texto. Que una herramienta esté disponible no autoriza todas las ventanas: la ejecución comprueba el backend propietario, las capacidades nativas, la sesión y el objetivo visible. Una acción cuya página se ocultó, se sustituyó o navegó mientras tanto se rechaza en lugar de enviarse a otra página, y una acción nunca se repite automáticamente. El contenido de las páginas sigue sin ser fiable. Un iframe puede fallar porque el destino prohíbe incrustarlo; usa un navegador externo en lugar de debilitar sus protecciones.
+Los comentarios sobre elementos no están disponibles en modo nativo. En GTK se lee el portapapeles mediante Ctrl+V explícito; escritura y copiar/pegar nativos funcionan. Si el sitio bloquea iframe, usa un navegador externo.
+
+Las ventanas emergentes nativas comparten las sesiones de la vista previa, conservan `opener`/`postMessage` y se cierran con su página de origen. Las direcciones introducidas/restauradas permiten HTTP(S) sin credenciales; los sitios también pueden abrir documentos vacíos y blob del mismo origen. Se bloquean los esquemas de archivos y de la aplicación. Las descargas usan nombres saneados y únicos en Descargas, sin sobrescribir ni abrir archivos automáticamente. Se deniegan cámara, micrófono, ubicación y notificaciones; los permisos clasificados requieren consentimiento y las solicitudes desconocidas muestran un error. Tauri y Electron admiten `alert`/`confirm`/`prompt`; el diálogo prompt de Electron cubre las páginas principales de la vista previa, las ventanas emergentes y los submarcos.
+
+Los sitios pueden pedir confirmación al cerrar una ventana emergente nativa. Las versiones de WebKitGTK afectadas por [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), incluida 2.52.6, requieren el selector de archivos de la página para subir archivos, ya que el acceso a archivos arrastrados está bloqueado por seguridad. Guarde el trabajo de la página antes de cerrar o recargar la ventana de CodeNomad que la contiene.
+
+En Tauri macOS/Linux, enfoque la vista previa para ampliarla con ⌘/Ctrl +, − o 0, o con el menú de zoom de la aplicación. Con el foco en otro lugar, estas acciones del menú amplían la aplicación.
 
 ## Elegir una de seis plantillas de área visible {#templates}
 
 1. Abre el menú de área visible de la vista previa.
 2. Selecciona una plantilla de las siguientes. Usa directamente las entradas vertical/horizontal; no hay un control de giro separado.
-3. Espera una recarga nativa al entrar/cambiar la emulación móvil o volver a una plantilla de solo dimensiones.
+3. En Electron y Tauri para Windows, espera una recarga nativa al entrar/cambiar la emulación móvil o volver a una plantilla de solo dimensiones.
 
 | Plantilla | Área visible CSS |
 | --- | --- |
@@ -40,7 +51,7 @@ La automatización nativa se prepara al iniciar el escritorio y usa la herramien
 | Área visible móvil | 390 × 844 |
 | Móvil horizontal | 844 × 390 |
 
-Las plantillas móviles nativas establecen identidad Android/Chromium, orientación, entrada táctil y DPR 2.75 solo en el navegador invitado propio. Volver a adaptable/escritorio/tableta borra esos valores y recarga. La alternativa iframe solo cambia el tamaño. Son referencias de disposición reproducibles, no emulación Safari/Firefox ni simulaciones de teclados de teléfono, barras del navegador/sistema o ajustes de texto del sistema móvil. Guarda el trabajo de la página antes de cambiar plantillas porque la recarga puede descartar estado sin enviar.
+En Electron y Tauri para Windows, las plantillas móviles establecen identidad Android/Chromium, orientación, entrada táctil y DPR 2.75 solo en el navegador invitado propio. Volver a adaptable/escritorio/tableta borra esos valores y recarga. Tauri para macOS/Linux aplica una identidad móvil WebKit genérica en HTTP y JavaScript y ajusta el viewport CSS con independencia del zoom/DPI de la aplicación; cambiar o restablecer plantillas recarga. macOS usa DPR nativo 2,75 cuando está disponible; la densidad GTK sigue el zoom de ajuste y el monitor. La alternativa iframe solo redimensiona. Los perfiles son referencias de disposición; teclados de teléfono, barras del sistema y ajustes de texto móvil quedan fuera de su alcance. Guarda el trabajo de la página antes de cambiar plantillas porque la recarga puede descartar estado sin enviar.
 
 ## Registrar un SideCar {#register-sidecar}
 
@@ -56,11 +67,13 @@ Las plantillas móviles nativas establecen identidad Android/Chromium, orientaci
 | Quitar prefijo (predeterminado) | `/sidecars/<id>/path` se reenvía al destino como `/path`. |
 | Conservar prefijo | `/sidecars/<id>/path` se reenvía al destino sin cambios. Configura la ruta base del servicio para que coincida. |
 
-El registro es configuración del servidor, compartida por sus clientes; no instala ni inicia el servicio. El puerto está en el equipo del backend, no en el portátil o teléfono desde el que miras. **En ejecución** indica accesibilidad, no que la aplicación/autenticación de la herramienta funcione correctamente. Eliminar el registro no detiene el proceso iniciado por separado. Cerrar su pestaña tampoco lo detiene.
+El registro es configuración del servidor, compartida por sus clientes; no instala ni inicia el servicio. El puerto está en el equipo del backend, no en el portátil o teléfono desde el que miras. Eliminar el registro no detiene el proceso iniciado por separado. Cerrar su pestaña tampoco lo detiene.
 
 Si no es accesible, comprueba el proceso y el puerto en el backend. Si carga el HTML pero fallan los recursos/WebSockets, comprueba la ruta base y el modo de prefijo de la herramienta. Recrea un registro incorrecto con los ajustes previstos; no expongas públicamente el destino solo para eludir un error de proxy. Las aplicaciones SideCar pueden exponer una terminal o archivos con la autoridad de la cuenta del servidor; confía en sus usuarios y configuración.
 
-Un SideCar es una extensión de confianza de CodeNomad, no una vista previa aislada: su página se ejecuta con el propio origen de CodeNomad, por lo que sus scripts pueden usar CodeNomad con tu acceso de sesión iniciada. Registra solo servicios cuyo código sea de tu confianza. CodeNomad no reenvía al servicio sus propias cookies de inicio de sesión, mientras que las cookies propias del servicio se conservan. Control remoto no expone el tráfico proxy de aplicaciones SideCar; usa la vía adecuada de acceso directo descrita en [Acceso remoto](remote-access.md) y [Control remoto](remote-control.md).
+Un SideCar es una extensión de confianza de CodeNomad, no una vista previa aislada: su página se ejecuta con el propio origen de CodeNomad, por lo que sus scripts pueden usar CodeNomad con tu acceso de sesión iniciada. Registra solo servicios cuyo código sea de tu confianza. CodeNomad no reenvía al servicio sus propias cookies de inicio de sesión, mientras que las cookies propias del servicio se conservan.
+
+El contenido de SideCar (`/sidecars/`) y sus WebSockets requieren una conexión loopback en el anfitrión. Para abrirlos también desde otros dispositivos, activa **Abrir SideCars por HTTPS** en **Configuración → SideCars** en el anfitrión: los navegadores con sesión iniciada a través de las direcciones HTTPS de este servidor o de un origen HTTPS de `CODENOMAD_ALLOWED_ORIGINS`, como un proxy inverso TLS, podrán abrir SideCars. HTTP sin cifrar, las direcciones `localhost` y Control remoto siguen reservados al anfitrión. El registro mediante `/api/sidecars` está disponible para dispositivos emparejados y clientes directos de LAN autenticados. El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido; las vistas previas web de [Control remoto](remote-control.md#remote-surface) siguen disponibles con su token de capacidad mientras estén activadas. Consulta [Actualizar](remote-access.md#upgrading) para los requisitos del acceso directo.
 
 ## Ejemplo de OpenVSCode Server {#openvscode}
 

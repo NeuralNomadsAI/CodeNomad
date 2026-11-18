@@ -2,7 +2,9 @@ import { createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import StatusTab from "../../../src/components/instance/shell/right-panel/tabs/StatusTab"
 import { ChatSettingsSection } from "../../../src/components/settings/chat-settings-section"
+import { NotificationRoutingTable } from "../../../src/components/settings/notification-routing-table"
 import TranscriptFilters from "../../../src/components/transcript-filters"
+import { transcriptVisibility, transcriptVisibilityRows } from "../../../src/components/transcript-visibility"
 import { ConfigProvider, preferences, toggleUsageMetrics, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -25,10 +27,16 @@ const client: any = {
     list: async () => ({ data: nativeSessions, cursor: {} }), get: async ({ sessionID }: any) => nativeSessions.find(s => s.id === sessionID) },
   model: { default: async () => model }, shell: { list: async () => ({ data: [] }) },
 }
-const saved = new URLSearchParams(location.search).get("saved")
+const query = new URLSearchParams(location.search)
+const saved = query.get("saved"), saveDelay = Number(query.get("saveDelay") ?? 0)
 let config: any = { settings: { locale: "en", ...(saved === null ? {} : { showUsageMetrics: saved === "true", usageMetricsExpansion: "expanded" }) } }
 serverApi.fetchConfigOwner = async () => config
+let saves = 0, inFlight = 0, maxInFlight = 0, systemChecks = 0
 serverApi.patchConfigOwner = async (_owner, patch: any) => {
+  saves += 1
+  maxInFlight = Math.max(maxInFlight, ++inFlight)
+  // ?saveDelay=<ms> keeps each save pending like a slow server.
+  try { if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay)) } finally { inFlight -= 1 }
   config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
   return config
 }
@@ -64,10 +72,13 @@ const Fixture = () => {
         expandedItems={expanded} onExpandedItemsChange={setExpanded}
         customization={customization} onCustomizationChange={setCustomization} />
     </aside>
-    <main style={{ width: "600px", "flex-shrink": 0 }}><TranscriptFilters /><ChatSettingsSection /></main>
+    <main style={{ width: "600px", "flex-shrink": 0 }}><TranscriptFilters /><ChatSettingsSection />
+      <NotificationRoutingTable systemUnavailable={false} onSystemChecked={() => { systemChecks += 1 }} /></main>
   </div>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-;(window as any).fixture = { preferences, updatePreferences, toggleUsageMetrics, width: setWidth,
+;(window as any).fixture = { preferences, updatePreferences, toggleUsageMetrics, width: setWidth, saves: () => saves,
+  maxInFlight: () => maxInFlight, systemChecks: () => systemChecks,
+  savedModes: () => transcriptVisibilityRows((key) => key).map(row => transcriptVisibility(preferences(), row)),
   select: (id: string) => { setActiveSession(instanceId, id); select(id) }, usage }

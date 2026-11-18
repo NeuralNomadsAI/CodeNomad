@@ -2,20 +2,30 @@ import { MissionControlError } from "./control-error"
 import type { MissionInputTransport } from "./control-types"
 import { MissionJournal, parseMissionEvent } from "./journal"
 import { isDeepStrictEqual } from "node:util"
-import { parseMissionLifecycleReply } from "./lifecycle-schema"
+import { parseMissionLifecycleReply, parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { controlOperationID, controlReceiptID, recurrenceMessageID } from "./receipt-identity"
-import type { MissionLifecycleInput, MissionControlRequestedEvent } from "./lifecycle-model"
+import type { MissionLifecycleInput, MissionControlRequestedEvent, MissionNativeAcknowledgement } from "./lifecycle-model"
 import { MISSION_SCHEMA_VERSION, type MissionMap, type MissionSnapshot } from "./model"
 
-// Explicit user actions only. Report recovery never calls this module.
-// The caller owns the same project lock used by dispatch and report admission.
-export async function controlMission(input: MissionLifecycleInput, options: {
+/** Targets controlled at once. Each one is a bridge call that walks and interrupts a
+ * whole native family, so a mission with many actors controls them in waves. */
+export const MISSION_CONTROL_CONCURRENCY = 8
+
+export interface MissionLifecycleOptions {
   journal: MissionJournal
   transport?: MissionInputTransport
   isActive?: () => boolean
   timestamp(snapshot: MissionSnapshot): number
   changed(missionID: string, revision: number): Promise<void>
-}): Promise<{ mission: MissionMap }> {
+  beforeIntent?(mission: MissionMap, input: MissionLifecycleInput, at: number): Promise<void>
+  acknowledged?(mission: MissionMap, acknowledgement: MissionNativeAcknowledgement): Promise<void>
+  recordedAcknowledgement?(mission: MissionMap, sessionID: string, operationID: string): Promise<MissionNativeAcknowledgement | undefined>
+  startText?(mission: MissionMap, operationID: string): Promise<string | undefined>
+}
+
+// Explicit user actions only. Report recovery never calls this module.
+// The caller owns the same project lock used by dispatch and report admission.
+export async function controlMission(input: MissionLifecycleInput, options: MissionLifecycleOptions): Promise<{ mission: MissionMap }> {
   const { journal } = options
   const eventID = controlOperationID(input.missionID, input.requestID)
   let snapshot = await journal.snapshot()
@@ -25,7 +35,7 @@ export async function controlMission(input: MissionLifecycleInput, options: {
   const previous = await journal.event(input.missionID, eventID)
   if (previous) {
     if (previous.type !== "mission.control-requested" || previous.requestID !== input.requestID || previous.action !== input.action || previous.expectedRevision !== input.expectedRevision
-      || !isDeepStrictEqual(previous.recurrence, input.recurrence)) {
+      || Boolean(previous.graceful) !== Boolean(input.graceful) || !isDeepStrictEqual(previous.recurrence, input.recurrence)) {
       throw new MissionControlError("Control request ID already used", "request-conflict")
     }
     // A completed old action must never undo a newer pause or terminal stop.
@@ -40,11 +50,16 @@ export async function controlMission(input: MissionLifecycleInput, options: {
     if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before controlling it", "revision-conflict")
     if (mission.control?.pending.length && input.action === "start") throw new MissionControlError("Retry the pending control action first", "control-pending")
     const state = mission.runState ?? "running"
+    if (input.graceful && input.action !== "pause") throw new MissionControlError("Only Pause can be graceful", "control-conflict")
+    // A graceful Pause can be followed by an immediate one for work still finishing.
+    const interruptsGracefulPause = input.action === "pause" && !input.graceful && state === "paused"
+      && mission.control?.action === "pause" && Boolean(mission.control.graceful)
     if ((input.action === "start" && state !== "prepared" && state !== "paused")
-      || (input.action === "pause" && mission.status === "active" && state !== "running" && state !== "prepared")) {
+      || (input.action === "pause" && mission.status === "active" && state !== "running" && state !== "prepared" && !interruptsGracefulPause)) {
       throw new MissionControlError("Action is not valid in the current mission state", "control-conflict")
     }
-    const targets = mission.actors.filter(actor => !mission!.tasks.some(task => task.actorSessionId === actor.sessionId && task.nativeBinding))
+    // A graceful Pause has no native effect: the paused context stops the family.
+    const targets = input.graceful ? [] : mission.actors.filter(actor => !mission!.tasks.some(task => task.actorSessionId === actor.sessionId && task.nativeBinding))
       .filter(actor => input.action !== "start" || actor.kind === "coordinator"
       || mission!.tasks.some(task => task.actorSessionId === actor.sessionId && (task.status === "queued" || task.status === "dispatching" || task.outstandingExecution)))
       .map(actor => ({ sessionID: actor.sessionId, location: { ...actor.location } }))
@@ -57,6 +72,7 @@ export async function controlMission(input: MissionLifecycleInput, options: {
       targets, createdAt: options.timestamp(snapshot),
     }
     await journal.assertCanAppend(event)
+    await options.beforeIntent?.(mission, input, event.createdAt)
     await journal.append(event)
     snapshot = await journal.snapshot()
     mission = snapshot.missions.find(mission => mission.id === input.missionID)!
@@ -74,16 +90,26 @@ export async function controlMission(input: MissionLifecycleInput, options: {
       || !isDeepStrictEqual(fresh.control.targets, operation.targets)) throw new Error("Mission control authority changed")
     return fresh
   }
-  const results = await Promise.allSettled(operation.pending.map(async sessionID => {
+  const results = await settleBounded(operation.pending, MISSION_CONTROL_CONCURRENCY, async sessionID => {
     const before = await journal.snapshot()
     const fresh = currentMission(before)
     if (!fresh.control!.pending.includes(sessionID)) return
-    if (options.isActive?.() === false || !options.transport?.lifecycle) throw new Error("Mission controls unavailable")
-    const reply = await options.transport.lifecycle(fresh.coordinatorSessionId, { missionID: fresh.id, operationID: operation.id, sessionID,
-      ...(operation.recurrence ? { recurrence: operation.recurrence } : {}) })
-    const nativeAcknowledgement = parseMissionLifecycleReply(reply, { missionID: fresh.id, operationID: operation.id, sessionID,
-      action: operation.action, ...(operation.recurrence ? { recurrence: operation.recurrence } : {}) })
+    if (options.isActive?.() === false) throw new Error("Mission controls unavailable")
+    const expected = { missionID: fresh.id, operationID: operation.id, sessionID,
+      action: operation.action, ...(operation.recurrence ? { recurrence: operation.recurrence } : {}) }
+    const recorded = await options.recordedAcknowledgement?.(fresh, sessionID, operation.id)
+    let nativeAcknowledgement: MissionNativeAcknowledgement | undefined
+    if (recorded !== undefined) nativeAcknowledgement = parseMissionNativeAcknowledgement(recorded, expected)
+    else {
+      if (options.isActive?.() === false || !options.transport?.lifecycle) throw new Error("Mission controls unavailable")
+      const startText = operation.action === "start" ? await options.startText?.(fresh, operation.id) : undefined
+      const reply = await options.transport.lifecycle(fresh.coordinatorSessionId, { missionID: fresh.id, operationID: operation.id, sessionID,
+        ...(startText === undefined ? {} : { startText }),
+        ...(operation.recurrence ? { recurrence: operation.recurrence } : {}) })
+      nativeAcknowledgement = parseMissionLifecycleReply(reply, expected)
+    }
     if (!nativeAcknowledgement) throw new Error("Unknown native control acknowledgement")
+    await options.acknowledged?.(fresh, nativeAcknowledgement)
     const after = await journal.snapshot()
     const settled = currentMission(after)
     if (!settled.control!.pending.includes(sessionID)) return
@@ -99,9 +125,23 @@ export async function controlMission(input: MissionLifecycleInput, options: {
       throw new Error("Journal cannot retain native control acknowledgement")
     }
     await journal.append(receipt, () => { if (options.isActive?.() === false) throw new Error("Mission controls unavailable") })
-  }))
+  })
   mission = (await journal.snapshot()).missions.find(mission => mission.id === input.missionID)!
   await options.changed(mission.id, mission.revision)
   if (results.some(result => result.status === "rejected")) throw new MissionControlError("Mission state saved; retry the remaining native controls", "control-pending")
   return { mission }
+}
+
+/** `Promise.allSettled` over at most `limit` running calls. */
+async function settleBounded<T>(items: readonly T[], limit: number, run: (item: T) => Promise<void>): Promise<PromiseSettledResult<void>[]> {
+  const results: PromiseSettledResult<void>[] = []
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await run(items[index]).then(value => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }))
+    }
+  }))
+  return results
 }

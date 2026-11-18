@@ -4,9 +4,9 @@
 
 1. Ouvrez **Palette de commandes** avec `Ctrl+Shift+P` sous Windows/Linux ou `Cmd+Shift+P` sous macOS, ou utilisez son bouton/entrée de menu visible.
 2. Tapez un nom d’action. La palette inclut les actions de l’application et les commandes personnalisées de la Location actuelle ; leur disponibilité dépend de la vue active.
-3. Exécutez **Ouvrir l’aide** pour ouvrir ce guide dans la langue actuelle de l’interface, dans un contexte de navigateur externe. Le menu natif **Aide → Aide de CodeNomad** ouvre le même guide.
+3. Exécutez **Ouvrir l’aide** pour ouvrir ce guide dans la langue actuelle de l’interface, dans un contexte de navigateur externe. Le menu natif **Aide → Aide de CodeNomad** ouvre le même guide. **Soutenir CodeNomad** (menu natif **Aide → Soutenir CodeNomad**) ouvre de la même façon la page [Soutenir CodeNomad](sponsor.md).
 
-L’aide laisse la vue et le brouillon intacts. Si l’ouverture échoue, visitez directement [Aide CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Une commande découvrable n’a pas nécessairement un raccourci personnalisable : le gestionnaire couvre un catalogue fixe de 74 actions du moteur de rendu, pas toutes les actions de palette ou de menu natif. Il inclut des commandes de palette comme **Compacter la session**, **Annuler le dernier message** ou **Ouvrir l’aide**, qui commencent sans raccourci (**Aucun raccourci**) ; les actions de dossier de projet, de terminal et d’éditeur ne s’exécutent que dans les fenêtres de bureau locales.
+L’aide laisse la vue et le brouillon intacts. Une commande découvrable n’a pas nécessairement un raccourci personnalisable : le gestionnaire couvre un catalogue fixe de 75 actions du moteur de rendu, pas toutes les actions de palette ou de menu natif. Il inclut des commandes de palette comme **Compacter la session**, **Annuler le dernier message** ou **Ouvrir l’aide**, qui commencent sans raccourci (**Aucun raccourci**) ; les actions de dossier de projet, de terminal et d’éditeur ne s’exécutent que dans les fenêtres de bureau locales.
 
 ## Enregistrer, désactiver et réinitialiser {#customize}
 
@@ -16,8 +16,6 @@ L’aide laisse la vue et le brouillon intacts. Si l’ouverture échoue, visite
 4. Résolvez les avertissements de chaque ligne en conflit ; les conflits sont signalés, pas désactivés silencieusement.
 
 Les affectations sont enregistrées dans la configuration d’interface CodeNomad et affectent les clients qui la partagent. Elles ne modifient pas les raccourcis CLI/TUI d’OpenCode ni les accélérateurs de menu natif. La capture suspend les raccourcis du moteur de rendu, mais ne peut pas suspendre ceux du système ou du menu natif. **Annuler**, la perte de focus, la fermeture de la section ou la sortie de la fenêtre termine la capture. Les modificateurs seuls et la composition IME sont ignorés ; Tab/Shift+Tab simple déplace le focus.
-
-Si l’enregistrement échoue, gardez l’ancien raccourci disponible et réessayez après vérification de l’affectation affichée. Réinitialiser est le moyen sûr de corriger une affectation accidentelle.
 
 ## Valeurs par défaut du moteur de rendu {#renderer-defaults}
 
@@ -35,9 +33,9 @@ Si l’enregistrement échoue, gardez l’ancien raccourci disponible et réessa
 | Fermer la session | `Mod+Shift+W` |
 | Session précédente / suivante | `Mod+Shift+[` / `Mod+Shift+]` |
 | Onglet de session 1–9 | `Mod+Shift+1` à `Mod+Shift+9` |
-| Infos de l’instance | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | Rechercher dans l’historique de session | `Mod+F` |
-| Message utilisateur précédent / suivant | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) ou `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
+| **Message utilisateur précédent** / **Message utilisateur suivant**, aussi dans **Plus d'actions** du prompt | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) ou `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Résultat suivant / précédent (recherche focalisée) | `Enter` / `Shift+Enter` |
 | Focaliser / Effacer la saisie | `Mod+P` / `Mod+K` |
 | Ouvrir le sélecteur de modèle / d’agent | `Mod+Shift+M` / `Mod+Shift+A` |
@@ -74,4 +72,4 @@ Les fenêtres ordinaires de navigateur gardent aussi leurs raccourcis. Si une af
 
 Les raccourcis de la rangée de chiffres et des crochets utilisent les positions physiques des touches pour la capture, l’exécution et les conflits, y compris sur AZERTY/QWERTZ. Les autres touches utilisent leurs valeurs logiques. Capturez sur le clavier prévu, puis vérifiez le résultat affiché.
 
-Pendant la composition IME, la saisie de texte prime. L’historique des prompts et les actions Échap dépendent aussi du focus, de l’état du sélecteur/shell et de l’opération actuelle ; ne supposez pas qu’ArrowUp ou Échap soit toujours une action globale inconditionnelle. Sur ordinateur, l’envoi place le focus sur la conversation pour que les flèches, les touches de défilement par page et Espace la fassent défiler ; taper un caractère revient à la zone de saisie avec ce caractère, et **Activer la saisie** y revient avant d’utiliser l’historique des prompts. Les infobulles indiquent le raccourci actuel de commandes comme la palette de commandes, la recherche, Nouvelle session, Info et les sélecteurs de la zone de saisie ; avec le gestionnaire de raccourcis, elles montrent les affectations sans ajouter de bande permanente d’aide clavier.
+Pendant la composition IME, la saisie de texte prime. L’historique des prompts et les actions Échap dépendent aussi du focus, de l’état du sélecteur/shell et de l’opération actuelle ; ne supposez pas qu’ArrowUp ou Échap soit toujours une action globale inconditionnelle. Sur ordinateur, l’envoi place le focus sur la conversation pour que les flèches, les touches de défilement par page et Espace la fassent défiler ; taper un caractère revient à la zone de saisie avec ce caractère, et **Activer la saisie** y revient avant d’utiliser l’historique des prompts.

@@ -1,5 +1,6 @@
-import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron"
+import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainInvokeEvent } from "electron"
 import fs from "node:fs"
+import { setupDialogIPC } from "./dialog-ipc"
 import { requestMicrophoneAccess } from "./permissions"
 import type { CliProcessManager } from "./process-manager"
 import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
@@ -17,24 +18,19 @@ interface CliIPCDependencies {
   resolveLocal(sender: IpcMainInvokeEvent["sender"]): LocalSender | undefined
   resolvePreferences?(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
   getAllowedOrigins(window: BrowserWindow): string[]
-  openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }): Promise<void>
+  openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }): Promise<void>
   newWindow(): Promise<unknown>
+  /**
+   * The retry of the unavailable-server document the host loaded in a remote window, when `token` and
+   * the sender's committed main frame are exactly that document's; undefined for any other request.
+   */
+  resolveRemoteRecovery(event: IpcMainInvokeEvent, token: unknown): (() => Promise<void>) | undefined
+  openLocalWindow(): Promise<unknown>
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
+  nextConnection(windowId: string): { target: string; failure?: string; hidden: boolean } | null
+  acknowledgeConnection(windowId: string, target: string, failure: string | null, handOff: boolean): void
   browserController: BrowserController
-}
-
-interface DialogOpenRequest {
-  mode: "directory" | "file"
-  title?: string
-  defaultPath?: string
-  filters?: Array<{ name?: string; extensions: string[] }>
-  multiple?: boolean
-}
-
-interface DialogOpenResult {
-  canceled: boolean
-  paths: string[]
 }
 
 async function resolveLocalWorkspaceFolder(window: BrowserWindow, cliManager: CliProcessManager, instanceId: string, worktreeSlug: string): Promise<string> {
@@ -79,6 +75,11 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     validateMainFrame(event, window, dependencies.getAllowedOrigins(window))
     return window
   }
+  const remoteRecovery = (event: IpcMainInvokeEvent, token: unknown): (() => Promise<void>) => {
+    const retry = dependencies.resolveRemoteRecovery(event, token)
+    if (!retry) throw new Error("Remote recovery is limited to the unavailable-server page")
+    return retry
+  }
   const updateWakeLock = (): boolean => {
     if (wakeLockWindows.size > 0) {
       if (wakeLockId === null || !powerSaveBlocker.isStarted(wakeLockId)) wakeLockId = powerSaveBlocker.start("prevent-app-suspension")
@@ -97,6 +98,13 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     const { id } = local(event)
     if (typeof folder !== "string" || typeof opened !== "boolean") throw new Error("Invalid folder acknowledgement")
     dependencies.acknowledgeFolder(id, folder, opened)
+    return { ok: true }
+  })
+  ipcMain.handle("window:nextConnection", async (event) => dependencies.nextConnection(local(event).id))
+  ipcMain.handle("window:ackConnection", async (event, target: unknown, failure: unknown, handOff: unknown) => {
+    const { id } = local(event)
+    if (typeof target !== "string" || (failure !== null && typeof failure !== "string") || typeof handOff !== "boolean") throw new Error("Invalid connection acknowledgement")
+    dependencies.acknowledgeConnection(id, target, failure, handOff)
     return { ok: true }
   })
   ipcMain.handle("menu:popup", async (event, menu: unknown, x: unknown, y: unknown) => {
@@ -142,19 +150,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { ok: true }
   })
 
-  ipcMain.handle("dialog:open", async (event, request: DialogOpenRequest): Promise<DialogOpenResult> => {
-    const window = settings(event)
-    if (!request || (request.mode !== "directory" && request.mode !== "file")) throw new Error("Invalid dialog request")
-    const properties: OpenDialogOptions["properties"] = request.mode === "directory" ? ["openDirectory", "createDirectory"] : ["openFile"]
-    if (request.mode === "file" && request.multiple) properties.push("multiSelections")
-    const result = await dialog.showOpenDialog(window, {
-      title: request.title,
-      defaultPath: request.defaultPath,
-      properties,
-      filters: request.filters?.map((filter) => ({ name: filter.name ?? "Files", extensions: filter.extensions })),
-    })
-    return { canceled: result.canceled, paths: result.filePaths }
-  })
+  setupDialogIPC(ipcMain, { resolveWindow: settings, showOpenDialog: (window, options) => dialog.showOpenDialog(window, options) })
 
   ipcMain.handle("filesystem:getDirectoryPaths", async (event, paths: unknown): Promise<string[]> => {
     local(event)
@@ -206,17 +202,23 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     anyTrusted(event)
     return { granted: await requestMicrophoneAccess() }
   })
-  ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }) => {
+  ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }) => {
     settings(event)
     if (!payload || typeof payload.id !== "string" || !payload.id.trim() || typeof payload.name !== "string" || typeof payload.baseUrl !== "string"
       || (payload.entryUrl !== undefined && typeof payload.entryUrl !== "string")
       || (payload.proxySessionId !== undefined && typeof payload.proxySessionId !== "string")
-      || typeof payload.skipTlsVerify !== "boolean") {
+      || typeof payload.skipTlsVerify !== "boolean" || (payload.requireLoad !== undefined && typeof payload.requireLoad !== "boolean")) {
       throw new Error("Invalid remote window request")
     }
     requireHttpUrl(payload.baseUrl, "baseUrl")
     if (payload.entryUrl !== undefined) requireHttpUrl(payload.entryUrl, "entryUrl")
     await dependencies.openRemoteWindow(payload)
+    return { ok: true }
+  })
+  ipcMain.handle("remote:retry", async (event, token: unknown) => { await remoteRecovery(event, token)(); return { ok: true } })
+  ipcMain.handle("remote:openLocalWindow", async (event, token: unknown) => {
+    remoteRecovery(event, token)
+    await dependencies.openLocalWindow()
     return { ok: true }
   })
   ipcMain.handle("notifications:show", async (event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {

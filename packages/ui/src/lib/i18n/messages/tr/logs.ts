@@ -1,4 +1,10 @@
 export const logMessages = {
+  "settings.opencode.logs.title": "OpenCode logları",
+  "settings.opencode.logs.open": "OpenCode loglarını görüntüle",
+  "settings.opencode.logs.info": "Seçilen OpenCode sunucusundaki genel loglar. Özel veriler içerebilir.",
+  "settings.opencode.logs.failed": "Çalıştırılabilir dosyayı ve dosya erişimini kontrol edip yenileyin.",
+  "settings.opencode.logs.empty": "Log boş.",
+  "settings.opencode.logs.truncated": "Logun sonu gösteriliyor (en fazla 128 KiB).",
   "logsView.title": "Sunucu Log'ları",
   "logsView.actions.show": "Sunucu log'larını göster",
   "logsView.actions.hide": "Sunucu log'larını gizle",

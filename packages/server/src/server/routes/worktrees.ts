@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyReply } from "fastify"
 import { stat } from "node:fs/promises"
 import path from "node:path"
 import { z } from "zod"
-import { GitRequiredError } from "../../workspaces/git-requirement"
+import { GitProbeUnavailableError, GitRequiredError } from "../../workspaces/git-requirement"
+import { NestedFolderUnavailableError } from "../../workspaces/native-worktrees"
 import { WorkspaceManager } from "../../workspaces/manager"
 import {
   resolveRepoRoot,
@@ -127,6 +128,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       const projectLocation = deps.workspaceManager.getServiceLocation(workspace.id)
       const targetDirectory = await deps.workspaceManager.getServiceDirectoryForPath(workspace.id, target.directory)
       if (!projectLocation || !targetDirectory) throw new ProjectSessionError("Unable to resolve OpenCode worktree paths", 409)
+      await deps.workspaceManager.desktopPluginsReady?.()
       const moved = await moveProjectSessionFamily({
         client: await deps.workspaceManager.getSharedServiceClient(),
         projectLocation,
@@ -205,6 +207,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       }
       try {
         const client = await deps.workspaceManager.getSharedServiceClient()
+        await deps.workspaceManager.desktopPluginsReady?.()
         const projectLocation = deps.workspaceManager.getServiceLocation(workspace.id)
         const rootHostDirectory = worktrees.find((worktree) => worktree.kind === "root")!.directory
         const [targetDirectory, rootDirectory] = await Promise.all([
@@ -350,7 +353,9 @@ async function assertNoWorktreeBlockers(
 }
 
 function handleError(error: unknown, reply: FastifyReply) {
-  if (error instanceof GitRequiredError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
+  if (error instanceof GitRequiredError || error instanceof GitProbeUnavailableError || error instanceof NestedFolderUnavailableError) {
+    return reply.code(error.statusCode).send({ error: error.message, code: error.code })
+  }
   reply.code(error instanceof ProjectSessionError ? error.statusCode : 400)
   return { error: error instanceof Error ? error.message : "Unable to fulfill request" }
 }

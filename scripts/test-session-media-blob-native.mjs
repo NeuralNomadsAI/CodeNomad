@@ -9,7 +9,8 @@ export const mediaProbeTool = `{ name:'media_probe', description:'Fixture', inpu
 
 // Readers of stored rows must agree with native reads whichever representation
 // the runtime chose; the stored form is qualified from the database itself.
-export async function testSessionMediaBlobNative({ client, location, locationOptions, db, generate, revision }) {
+export async function testSessionMediaBlobNative({ client, location, locationOptions, db, generate, revision, ready }) {
+  await ready({ client, location, locationOptions })
   const session = await client.session.create({ location }, locationOptions)
   await generate(session.id)
   const rpc = async (method, input) => (await client.rpc.call({ rpcID: "codenomad.session-pruning", method, location,
@@ -21,7 +22,10 @@ export async function testSessionMediaBlobNative({ client, location, locationOpt
   const bytes = Buffer.from(MEDIA_PROBE_HTML), hash = createHash("sha256").update(bytes).digest("hex")
   const uri = `data:text/html;base64,${bytes.toString("base64")}`
   assert.equal(target.content[index].state.content[0].uri, uri, "native reads return the inline file")
-  const stored = JSON.parse(db.prepare("SELECT data FROM session_message WHERE id=?").get(target.id).data).content[index].state.content[0].uri
+  const inline = JSON.parse(db.prepare("SELECT data FROM session_message WHERE id=?").get(target.id).data).content
+  const split = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='session_part'").get()
+    ? db.prepare("SELECT data FROM session_part WHERE message_id=? ORDER BY ordinal").all(target.id).map(row => JSON.parse(row.data)) : []
+  const stored = [...split, ...inline][index].state.content[0].uri
   const blobs = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='blob'").get())
   const refs = () => db.prepare("SELECT count(*) AS n FROM blob_ref WHERE session_id=? AND hash=?").get(session.id, hash).n
   const blob = () => db.prepare("SELECT count(*) AS n FROM blob WHERE hash=?").get(hash).n

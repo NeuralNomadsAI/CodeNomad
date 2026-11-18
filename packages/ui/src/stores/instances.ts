@@ -37,6 +37,7 @@ import { refreshSessionRuntimeStatus } from "./session-api"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { claimPendingRecoveryNotice, pendingRecoveryNoticeKey, releasePendingRecoveryNotices } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
@@ -52,7 +53,16 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, projectOpenCodeMessages, syncOpenCodeSessionInbox, type OpenCodeDataEventAdmission } from "./opencode-data"
+import {
+  applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, projectOpenCodeMessages, syncOpenCodeSessionInbox, type OpenCodeDataEventAdmission,
+} from "./opencode-data"
+import {
+  cancelTranscriptProjections,
+  scheduleTranscriptProjection,
+  setTranscriptProjectionGates,
+  takeTranscriptProjection,
+} from "./opencode-projection-frame"
+import { isSessionTranscriptVisible } from "./session-transcript-visibility"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
@@ -96,6 +106,8 @@ import { invalidateFilesystemCaches, queueFilesystemInvalidation } from "../lib/
 import { detachInstanceTabMembership, openInstanceTabIds, requestInstanceTabClose } from "./app-tab-membership"
 import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
+import { restoreClosedWorkspaceDrafts, retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
+import { clearInstanceSeenInterruptions } from "./session-interruption-seen"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
@@ -290,8 +302,14 @@ function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause):
       .map((session) => session.title || session.id)
   }
   const { title, message } = describePendingRecovery(cause, instance ? getInstanceLabel(instance) : instanceId, sessionTitlesIn, tGlobal)
+  if (!claimPendingRecoveryNotice(pendingRecoveryNoticeKey(pendingRecoveryProject(instanceId), cause, message))) return
   // A project diagnostic, not a request itself: it keeps its bubble and History entry.
   showToastNotification({ category: "projects", title, message, variant: "warning" })
+}
+
+function pendingRecoveryProject(instanceId: string): string {
+  const folder = instances().get(instanceId)?.folder
+  return folder ? normalizeWorkspacePath(folder) : instanceId
 }
 
 // A cause marks an attempt that counts toward the warning; without one, the state only changes.
@@ -461,33 +479,43 @@ const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreW
 let restoreCreationRequestSequence = 0
 const restoreCreationCommitGates = new RestoreWorkspaceCommitGates<RestoreWorkspaceDescriptor>()
 
+/** Bounded backoff for a failed reconnect reconciliation; a reconnect pulse
+ * (upstream recovery) keeps the browser stream open, so nothing else retries it. */
+const CONNECTION_RESYNC_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000]
 const connectionResyncs = new TrailingResyncCoordinator(
   async (instanceId) => {
     await waitForSettledPrerequisite(initialHydrations.get(instanceId))
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
-    let sessionError: unknown
-    try {
-      await fetchSessions(instanceId, { reset: true })
-    } catch (error) {
-      sessionError = error
+    // Every read runs even when another fails: the transcript repair below is
+    // the only path for events this connection may have missed, and the first
+    // failure fails the pass so the coordinator retries it.
+    const failures: unknown[] = []
+    const settle = async (read: () => Promise<unknown>) => {
+      try {
+        await read()
+      } catch (error) {
+        failures.push(error)
+      }
     }
+    await settle(() => fetchSessions(instanceId, { reset: true }))
     await Promise.all([
-      reloadWorktrees(instanceId),
-      syncPendingRequests(instanceId),
-      refreshVolatileInstanceState(instanceId),
-      syncLoadedSessionInboxes(instanceId),
+      settle(() => reloadWorktrees(instanceId)),
+      settle(() => syncPendingRequests(instanceId)),
+      settle(() => refreshVolatileInstanceState(instanceId)),
+      settle(() => syncLoadedSessionInboxes(instanceId)),
     ])
-    if (sessionError) throw sessionError
     const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
     for (const sessionId of loadedMessages) invalidateSessionMessageLoad(instanceId, sessionId)
     const activeId = activeSessionId().get(instanceId)
-    if (activeId && loadedMessages.has(activeId)) await loadMessages(instanceId, activeId, { force: true })
+    if (activeId && loadedMessages.has(activeId)) await settle(() => loadMessages(instanceId, activeId, { force: true }))
     reconcilePendingSessionIndicators(instanceId)
+    if (failures.length) throw failures[0]
   },
   (instanceId, error) => {
     log.warn("Failed to resync sessions after instance connection", { instanceId, error })
   },
+  CONNECTION_RESYNC_RETRY_DELAYS_MS,
 )
 const connectionResyncGate = new ConnectionResyncGate()
 
@@ -653,6 +681,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   if (instance.client) {
     sdkManager.destroyClientsForInstance(descriptor.id)
     destroyOpenCodeData(descriptor.id)
+    cancelTranscriptProjections(descriptor.id)
   }
 
   const client = sdkManager.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
@@ -731,6 +760,7 @@ function releaseInstanceResources(instanceId: string) {
     sdkManager.destroyClientsForInstance(instanceId)
   }
   destroyOpenCodeData(instanceId)
+  cancelTranscriptProjections(instanceId)
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
@@ -739,7 +769,7 @@ function getPendingRequestLocations(instanceId: string, rootDirectory?: string, 
   return buildV2RequestLocations(rootDirectory, [
     getActiveCatalogLocation(instanceId),
     ...getPendingWorktreeLocations(instanceId),
-    ...(includeInventory ? getWorktrees(instanceId) : []),
+    ...(includeInventory ? getWorktrees(instanceId).filter(worktree => !worktree.nestedFolderMissing) : []),
     ...Array.from(instanceSessions?.values() ?? [])
       .filter((session) => includeHistorical || session.status !== "idle" || session.pendingPermission || session.pendingForm)
       .map((session) => session.location),
@@ -1045,6 +1075,7 @@ async function runPendingRequestSync(
       for (const result of results) if (result.status === "rejected") throw result.reason
       if (!targetLocations && isCurrent()) {
         successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
+        releasePendingRecoveryNotices(pendingRecoveryProject(instanceId))
         markPendingRecovery(instanceId, false)
       }
       return
@@ -1286,7 +1317,24 @@ function waitForWorkspaceLoadChange(
   })
 }
 
+/**
+ * Temporary folders as of the latest `workspace.temporaryChanged` on this
+ * event connection; null before one arrives or after a reconnect may have
+ * missed some. A discard deletes the record before unregistering its folder,
+ * while Keep unregisters first: a deleted record whose folder is still
+ * registered was discarded, in whichever window. Without that list nothing is
+ * a discard: the instance's `temporary` mark can be stale (a list response
+ * older than Keep, a Keep missed while disconnected), and keeping a deleted
+ * folder's drafts is harmless while dropping a kept project's is not.
+ */
+let temporaryRegistry: Set<string> | null = null
+
+function isRegisteredTemporary(instance: Instance): boolean {
+  return temporaryRegistry?.has(normalizeWorkspacePath(instance.folder)) === true
+}
+
 serverEvents.onOpen(() => {
+  temporaryRegistry = null
   publishLatestWorkspaceLoad(refreshWorkspaceList().then(
     () => ({}),
     (error) => {
@@ -1362,14 +1410,18 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       // dying subtree and broke the whole window. Skip a re-created workspace.
       const stop = Symbol(event.workspaceId)
       pendingWorkspaceStops.set(event.workspaceId, stop)
+      const discarded = event.reason === "deleted" && instance !== undefined && isRegisteredTemporary(instance)
       queueMicrotask(() => {
         if (pendingWorkspaceStops.get(event.workspaceId) !== stop) return
         pendingWorkspaceStops.delete(event.workspaceId)
         releaseInstanceResources(event.workspaceId)
-        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
+        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted", drafts: discarded ? "discard" : "keep" })
       })
       break
     }
+    case "workspace.temporaryChanged":
+      temporaryRegistry = new Set(event.folders.map(normalizeWorkspacePath))
+      break
     case "workspace.log":
       handleWorkspaceLog(event.entry)
       break
@@ -1466,6 +1518,7 @@ function addInstance(instance: Instance) {
     folder: instance.folder,
     occurrence,
   })
+  restoreClosedWorkspaceDrafts(instance.id, instance.folder, () => waitForInstanceInitialSessionHydration(instance.id))
   syncHasInstancesFlag()
 }
 
@@ -1478,6 +1531,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
     clearCommands(id)
     clearInstanceMetadata(id)
     destroyOpenCodeData(id)
+    cancelTranscriptProjections(id)
     volatileInstanceRefreshes.delete(id)
     for (const sessionId of sessions().get(id)?.keys() ?? []) invalidateSessionMessageLoad(id, sessionId)
   }
@@ -1492,7 +1546,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
   syncHasInstancesFlag()
 }
 
-function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
+function removeInstance(id: string, options: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard" } = {}) {
   locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
   pendingCompactions.delete(id)
@@ -1513,6 +1567,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   }
   detachInstanceTabMembership(id)
   connectionResyncGate.clear(id)
+  connectionResyncs.cancel(id)
   let nextActiveId: string | null = null
 
   setInstances((prev) => {
@@ -1546,6 +1601,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
   destroyOpenCodeData(id)
+  cancelTranscriptProjections(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
@@ -1567,7 +1623,9 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   // Clean up session indexes and drafts for removed instance
   clearCacheForInstance(id)
   messageStoreBus.unregisterInstance(id)
+  if (removedInstance) retainClosedWorkspaceDrafts(id, removedInstance.folder, options.drafts)
   clearInstanceDraftPrompts(id)
+  clearInstanceSeenInterruptions(id)
   clearSessionListRequestState(id)
   forgetSessionListRestoration(id)
   clearSessionCatalogState(id)
@@ -1590,7 +1648,8 @@ function removeRestoreCreatedInstanceFromUi(instanceId: string): void {
   workspaceListReconciliationFence.markMutation(instanceId)
   if (instances().has(instanceId)) {
     releaseInstanceResources(instanceId)
-    removeInstance(instanceId, { authoritative: false })
+    // Restoration owns the drafts it seeded into an instance it discards.
+    removeInstance(instanceId, { authoritative: false, drafts: "skip" })
   }
 }
 
@@ -2235,20 +2294,58 @@ const USAGE_EVENT_TYPES = new Set<string>([
   "session.step.failed",
 ])
 
+// These events publish their page in the same task. Destructive events pair
+// with direct store surgery a delayed projection would only repeat, and an
+// execution settlement is the stable point interactive reads (part deletion,
+// copy) synchronize on: its final status must never lag a frame behind. A
+// replayed chunk carrying one publishes the same way, before the drained
+// reducer retires and the page it holds is lost to a later frame.
+const SYNCHRONOUS_PROJECTION_EVENTS = new Set<string>([
+  "session.deleted",
+  "session.inbox.cancelled",
+  "session.revert.committed",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+])
+
+const isSettlementEvent = (type: string) => SYNCHRONOUS_PROJECTION_EVENTS.has(type)
+
+/** Publishes a page in this task, subsuming the pending frame: the dropped
+ * entry's obligations (usage updates) transfer to this publication. */
+const publishSynchronousPage = (
+  instanceId: string,
+  sessionId: string,
+  data: ReturnType<typeof applyOpenCodeDataEvent>,
+  options: { preserveOmitted?: boolean; confirmPending: boolean; updateUsage: boolean },
+) => {
+  const dropped = takeTranscriptProjection(instanceId, sessionId)
+  projectOpenCodeMessages(instanceId, sessionId, data, options.preserveOmitted ?? true, options.confirmPending)
+  if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
+}
+
 // One stable, explicitly chunk-safe publication identity for ordinary replay.
 // Destructive event-specific effects below retain per-event callback barriers.
 const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publication"]> = ({ instanceId, sessionId, data, events }) => {
   const sessionEvents = events.filter((event) => event.type.startsWith("session."))
   if (!sessionEvents.length) return
-  if (activeSessionId().get(instanceId) !== sessionId) {
+  // A visible child transcript (its task renderer is mounted) watches this
+  // page exactly like the active session; only unseen sessions fall back to
+  // invalidate-on-stream so their next activation reads authoritatively.
+  if (activeSessionId().get(instanceId) !== sessionId && !isSessionTranscriptVisible(instanceId, sessionId)) {
     if (messagesLoaded().get(instanceId)?.has(sessionId)) invalidateSessionMessageLoad(instanceId, sessionId)
     return
   }
   if (!isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))) return
-  projectOpenCodeMessages(instanceId, sessionId, data, true, sessionEvents.at(-1)?.type !== "session.inbox.enqueued")
-  if (sessionEvents.some((event) => USAGE_EVENT_TYPES.has(event.type) || event.type === "session.compaction.delta")) {
-    updateSessionInfo(instanceId, sessionId)
+  const options = {
+    confirmPending: sessionEvents.at(-1)?.type !== "session.inbox.enqueued",
+    updateUsage: sessionEvents.some((event) => USAGE_EVENT_TYPES.has(event.type) || event.type === "session.compaction.delta"),
   }
+  if (sessionEvents.some((event) => isSettlementEvent(event.type))) {
+    publishSynchronousPage(instanceId, sessionId, data, options)
+    return
+  }
+  scheduleTranscriptProjection(instanceId, sessionId, data, options)
 }
 
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
@@ -2264,6 +2361,7 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
   const invalidateInactiveMessages = () => {
     if (sessionId && event.type.startsWith("session.")
       && activeSessionId().get(instanceId) !== sessionId
+      && !isSessionTranscriptVisible(instanceId, sessionId)
       && messagesLoaded().get(instanceId)?.has(sessionId)) {
       invalidateSessionMessageLoad(instanceId, sessionId)
     }
@@ -2274,17 +2372,21 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       return
     }
     if (sessionId && (force || event.type.startsWith("session.")) && (
-      activeSessionId().get(instanceId) === sessionId
+      (activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId))
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
     )) {
-      projectOpenCodeMessages(
-        instanceId,
-        sessionId,
-        data,
-        preserveOmitted,
-        force || event.type !== "session.inbox.enqueued",
-      )
-      if (force || USAGE_EVENT_TYPES.has(event.type)) updateSessionInfo(instanceId, sessionId)
+      if (force || isSettlementEvent(event.type)) {
+        publishSynchronousPage(instanceId, sessionId, data, {
+          preserveOmitted,
+          confirmPending: force || event.type !== "session.inbox.enqueued",
+          updateUsage: force || USAGE_EVENT_TYPES.has(event.type),
+        })
+        return
+      }
+      scheduleTranscriptProjection(instanceId, sessionId, data, {
+        confirmPending: event.type !== "session.inbox.enqueued",
+        updateUsage: USAGE_EVENT_TYPES.has(event.type),
+      })
     }
   }
   const project = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true) => {
@@ -2348,6 +2450,25 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
 }
 
 sseManager.onInvalidation = handleInstanceInvalidation
+
+// The frame coalescer re-checks the gates a projection was admitted under when
+// its frame runs; a selection change flushes pending pages first (session-state).
+setTranscriptProjectionGates({
+  // Watched transcripts: the active session's own view plus any child session
+  // whose task renderer is mounted (visible) — both admit frame projections.
+  isActiveSession: (instanceId, sessionId) =>
+    activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId),
+  isLatestMessageWindow: (instanceId, sessionId) =>
+    isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId)),
+  invalidateInactiveLoadedSession: (instanceId, sessionId) => {
+    if (messagesLoaded().get(instanceId)?.has(sessionId)) invalidateSessionMessageLoad(instanceId, sessionId)
+  },
+  onProjectedUsage: updateSessionInfo,
+  // Frame publications always keep omitted history; only their confirmation
+  // flag varies (projectOpenCodeMessages takes preserveOmitted first).
+  projectPage: (instanceId, sessionId, data, confirmPending) =>
+    projectOpenCodeMessages(instanceId, sessionId, data, true, confirmPending),
+})
 
 sseManager.onConnectionLost = (instanceId, reason) => {
   const instance = instances().get(instanceId)

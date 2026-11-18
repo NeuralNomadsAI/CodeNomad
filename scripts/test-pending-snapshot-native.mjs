@@ -35,6 +35,8 @@ const bundle = path.join(output, "plugin.mjs")
 await build({
   entryPoints: [path.join(repository, "packages/server/src/opencode/session-pruning/desktop-plugin.ts")],
   outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22",
+  // The entry embeds the Design content files as text, like the shared native plugin build.
+  loader: { ".md": "text" },
   banner: { js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
     // Use verified isolated native packages; no install or shared service discovery.
   plugins: [{ name: "exact-existing-native-packages", setup(build) {

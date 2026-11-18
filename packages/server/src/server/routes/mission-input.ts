@@ -10,6 +10,8 @@ import { locationRequestOptions, sameLocation } from "../../opencode/compatibili
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { syncSessionGitContext } from "../../workspaces/session-git-context"
+import { syncSessionMemoryContext } from "../../workspaces/session-memory-context"
+import type { MemoryService } from "../../memory/service"
 import { cleanupMissionSession } from "./mission-cleanup"
 import { applyMissionLifecycle } from "./mission-lifecycle"
 import { missionIsRunning } from "../../missions/lifecycle-model"
@@ -41,9 +43,9 @@ type Manager = Pick<WorkspaceManager, "list" | "getSharedServiceConnection" | "o
 // Called only behind the loopback token-authenticated desktop bridge. No environment
 // values leave this backend; both native writes share ownership, connection and fence.
 export async function admitMissionInput(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown, signal: AbortSignal,
-  authority?: MissionAuthorityCheckpoint) {
+  authority?: MissionAuthorityCheckpoint, memory?: MemoryService) {
   if (command && typeof command === "object" && "kind" in command && command.kind === "lifecycle") {
-    return applyMissionLifecycle(manager, fence, coordinatorID, command, signal, authority)
+    return applyMissionLifecycle(manager, fence, coordinatorID, command, signal, authority, memory)
   }
   if (command && typeof command === "object" && "kind" in command && command.kind === "cleanup") {
     if (authority) throw new Error("Durable managed cleanup is not qualified")
@@ -138,6 +140,10 @@ export async function admitMissionInput(manager: Manager, fence: WorktreeDeletio
     signal.throwIfAborted()
     connection.assertCurrent()
     if (recovery) await assertNativeMissionRecoveryReady(client, await assertSessionsCurrent(), signal)
+    await prepareMissionAuthority(authority)
+    await assertSessionsCurrent()
+    await syncSessionMemoryContext(connection, memory, target.id, signal, missionInstructionClient(client, authority),
+      () => assertMissionAuthorityCurrent(authority))
     // Readiness/environment/Git awaits are not location authority. Re-read both
     // identities after them; the existing fence covers only the recorded roots.
     await prepareMissionAuthority(authority)

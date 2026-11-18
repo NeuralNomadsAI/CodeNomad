@@ -1,6 +1,10 @@
 import { DARK_IDENTITY_COLORS, LIGHT_IDENTITY_COLORS, SOFT_COLOR_SCHEME_IDS, SOFT_COLOR_SCHEMES, SOFT_SYSTEM_DARK, SOFT_SYSTEM_LIGHT } from "./soft-color-schemes.ts"
 import { classicLightSurfaces } from "./classic-light-surfaces"
 import { classicDarkSurfaces } from "./classic-dark-surfaces"
+import { channel, contrastRatio, isCanonicalHexColor, luminance, mix } from "./color-contrast"
+import { highContrastColors } from "./high-contrast"
+
+export { contrastRatio, isCanonicalHexColor } from "./color-contrast"
 
 export const COLOR_SCHEME_IDS = ["system", "light", ...SOFT_COLOR_SCHEME_IDS, "classic", "basalt", "fjord", "lichen", "velvet", "ember", "custom"] as const
 
@@ -27,7 +31,6 @@ export interface ColorSchemeColors {
 export interface ColorSchemeDefinition {
   id: ColorSchemeId
   labelKey: string
-  descriptionKey: string
   appearance: ColorSchemeAppearance
   editable: boolean
   colors?: Readonly<ColorSchemeColors>
@@ -111,14 +114,12 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "system",
     labelKey: "settings.appearance.colorScheme.option.system",
-    descriptionKey: "settings.appearance.colorScheme.description.system",
     appearance: "system",
     editable: false,
   },
   {
     id: "light",
     labelKey: "settings.appearance.colorScheme.option.codeNomadClassic",
-    descriptionKey: "settings.appearance.colorScheme.description.light",
     appearance: "light",
     editable: false,
     colors: LIGHT_COLOR_SCHEME_COLORS,
@@ -126,7 +127,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "classic",
     labelKey: "settings.appearance.colorScheme.option.codeNomadClassic",
-    descriptionKey: "settings.appearance.colorScheme.description.codeNomadClassic",
     appearance: "dark",
     editable: false,
     colors: {
@@ -150,7 +150,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "basalt",
     labelKey: "settings.appearance.colorScheme.option.basalt",
-    descriptionKey: "settings.appearance.colorScheme.description.basalt",
     appearance: "dark",
     editable: false,
     colors: {
@@ -162,7 +161,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "fjord",
     labelKey: "settings.appearance.colorScheme.option.fjord",
-    descriptionKey: "settings.appearance.colorScheme.description.fjord",
     appearance: "dark",
     editable: false,
     colors: {
@@ -183,7 +181,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "lichen",
     labelKey: "settings.appearance.colorScheme.option.lichen",
-    descriptionKey: "settings.appearance.colorScheme.description.lichen",
     appearance: "dark",
     editable: false,
     colors: {
@@ -204,7 +201,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "velvet",
     labelKey: "settings.appearance.colorScheme.option.velvet",
-    descriptionKey: "settings.appearance.colorScheme.description.velvet",
     appearance: "dark",
     editable: false,
     colors: {
@@ -225,7 +221,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "ember",
     labelKey: "settings.appearance.colorScheme.option.ember",
-    descriptionKey: "settings.appearance.colorScheme.description.ember",
     appearance: "dark",
     editable: false,
     colors: {
@@ -246,7 +241,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "custom",
     labelKey: "settings.appearance.colorScheme.option.custom",
-    descriptionKey: "settings.appearance.colorScheme.description.custom",
     appearance: "dark",
     editable: true,
     colors: DEFAULT_CUSTOM_COLORS,
@@ -260,9 +254,6 @@ const SCHEMES_BY_ID = Object.fromEntries(BUILT_IN_COLOR_SCHEMES.map((scheme) => 
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
-
-export const isCanonicalHexColor = (value: unknown): value is string =>
-  typeof value === "string" && /^#[0-9A-F]{6}$/.test(value)
 
 export function isColorSchemeColors(value: unknown): value is ColorSchemeColors {
   return isRecord(value) && COLOR_KEYS.every((key) => isCanonicalHexColor(value[key]))
@@ -326,22 +317,6 @@ export function toColorSchemeMergePatch(preference: NormalizedColorScheme): Omit
   }
 }
 
-const channel = (color: string, offset: number) => Number.parseInt(color.slice(offset, offset + 2), 16)
-
-const luminance = (color: string) => {
-  const linear = (value: number) => {
-    const normalized = value / 255
-    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
-  }
-  return 0.2126 * linear(channel(color, 1)) + 0.7152 * linear(channel(color, 3)) + 0.0722 * linear(channel(color, 5))
-}
-
-export function contrastRatio(first: string, second: string): number {
-  if (!isCanonicalHexColor(first) || !isCanonicalHexColor(second)) return 0
-  const [bright, dark] = [luminance(first), luminance(second)].sort((a, b) => b - a)
-  return (bright + 0.05) / (dark + 0.05)
-}
-
 export function validateColorSchemeColors(value: unknown): value is ColorSchemeColors {
   if (!isColorSchemeColors(value)) return false
   const textPairs: Array<[string, string]> = [
@@ -367,13 +342,6 @@ export function validateColorSchemeColors(value: unknown): value is ColorSchemeC
     textPairs.every(([foreground, background]) => contrastRatio(foreground, background) >= 4.5) &&
     emphasis.every((foreground) => emphasisSurfaces.every((background) => contrastRatio(foreground, background) >= 3))
   )
-}
-
-const mix = (first: string, second: string, firstWeight: number) => {
-  const mixed = [1, 3, 5].map((offset) =>
-    Math.round(channel(first, offset) * firstWeight + channel(second, offset) * (1 - firstWeight)),
-  )
-  return `#${mixed.map((value) => value.toString(16).padStart(2, "0")).join("").toUpperCase()}`
 }
 
 const alpha = (color: string, opacity: number) =>
@@ -453,8 +421,13 @@ const APPLIED_PROPERTIES = [
   "--new-tab-text",
 ] as const
 
-function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(typeof APPLIED_PROPERTIES)[number], string> {
-  const textOnAccent = textOnColor(colors.accentPrimary)
+function derivedProperties(
+  colors: ColorSchemeColors,
+  dark: boolean,
+  // Ink on filled actions follows the palette's own accent, so contrast never flips it.
+  inkSource: ColorSchemeColors = colors,
+): Record<(typeof APPLIED_PROPERTIES)[number], string> {
+  const textOnAccent = textOnColor(inkSource.accentPrimary)
   // Selection is a neutral surface state, not a participant's identity color.
   const selection = colors.textMuted
   return {
@@ -532,7 +505,7 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
 
 export function applyColorScheme(
   scheme: NormalizedColorScheme,
-  options: { target?: ColorSchemeTarget; systemDark?: boolean } = {},
+  options: { target?: ColorSchemeTarget; systemDark?: boolean; highContrast?: boolean } = {},
 ): boolean {
   const dark = scheme.appearance === "dark" || (scheme.appearance === "system" && Boolean(options.systemDark))
   const target = options.target ?? (typeof document === "undefined" ? undefined : document.documentElement)
@@ -540,15 +513,18 @@ export function applyColorScheme(
 
   for (const property of APPLIED_PROPERTIES) target.style.removeProperty(property)
   target.dataset.colorScheme = scheme.id
+  if (options.highContrast) target.dataset.contrast = "more"
+  else delete target.dataset.contrast
 
   if (scheme.appearance === "system") target.removeAttribute("data-theme")
   else target.setAttribute("data-theme", dark ? "dark" : "light")
 
-  const colors = scheme.id === "system"
+  const sourceColors = scheme.id === "system"
     ? scheme.colors ?? (dark ? SYSTEM_DARK_COLOR_SCHEME_COLORS : SYSTEM_LIGHT_COLOR_SCHEME_COLORS)
     : scheme.colors
-  if (colors) {
-    for (const [property, value] of Object.entries(derivedProperties(colors, dark))) {
+  if (sourceColors) {
+    const colors = options.highContrast ? highContrastColors(sourceColors, dark) : sourceColors
+    for (const [property, value] of Object.entries(derivedProperties(colors, dark, sourceColors))) {
       target.style.setProperty(property, value)
     }
     if (scheme.id === "light") {

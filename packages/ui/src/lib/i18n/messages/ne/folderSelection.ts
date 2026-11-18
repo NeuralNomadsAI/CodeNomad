@@ -9,7 +9,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "CodeNomad Discord",
 
   "folderSelection.empty.title": "कुनै भर्खरका फोल्डरहरू छैनन्",
-  "folderSelection.empty.description": "सुरु गर्न फोल्डरको लागि ब्राउज गर्नुहोस्",
 
   "folderSelection.recent.title": "भर्खरका फोल्डरहरू",
   "folderSelection.recent.subtitle.one": "{count} फोल्डर उपलब्ध छ",
@@ -39,9 +38,8 @@ export const folderSelectionMessages = {
   "folderSelection.temporary.button": "नयाँ अस्थायी उदाहरण",
   "folderSelection.temporary.description": "CodeNomad ले व्यवस्थापन गर्ने खाली फोल्डरमा सुरु गर्नुहोस्; ट्याब बन्द गर्दा राख्न वा हटाउन सक्नुहुन्छ",
   "folderSelection.clone.destination.title": "क्लोन गन्तव्य चयन गर्नुहोस्",
-  "folderSelection.clone.destination.description": "रिपोजिटरी क्लोन गरिनुपर्ने फोल्डर चयन गर्नुहोस्।",
+  "folderSelection.clone.destination.description": "क्लोन राख्ने फोल्डर छान्नुहोस्; रिपोजिटरीको फोल्डर त्यसभित्र बनाइन्छ।",
   "folderSelection.clone.dialog.title": "Git रिपोजिटरी क्लोन गर्नुहोस्",
-  "folderSelection.clone.dialog.description": "Git रिपोजिटरीलाई स्थानीय फोल्डरमा क्लोन गर्नुहोस्, त्यसपछि यसलाई आफ्नो कार्यस्थानको रूपमा खोल्नुहोस्।",
   "folderSelection.clone.dialog.repositoryUrl": "रिपोजिटरी URL",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "गन्तव्य फोल्डर",
@@ -63,10 +61,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "ब्राउज",
 
   "folderSelection.loading.title": "उदाहरण सुरु गर्दै...",
-  "folderSelection.loading.subtitle": "हामीले तपाईंको कार्यस्थान तयार गर्दा कृपया धैर्य गर्नुहोस्।",
 
   "folderSelection.drop.title": "खोल्नको लागि फोल्डर यहाँ छोड्नुहोस्",
-  "folderSelection.drop.subtitle": "छोडिएको फोल्डरमा नयाँ उदाहरण सुरु गर्नुहोस्।",
   "folderSelection.drop.invalidTitle": "छोडिएको वस्तु खोल्न सकिएन",
   "folderSelection.drop.invalidMessage": "नयाँ उदाहरण सुरु गर्न फोल्डर छोड्नुहोस्।",
 
@@ -79,7 +75,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "नयाँ विन्डोमा सुरक्षित गरिएको रिमोट CodeNomad सर्भर खोल्नुहोस्",
   "folderSelection.servers.count": "{count} सर्भरहरू",
   "folderSelection.servers.empty.title": "कुनै बचत गरिएका सर्भरहरू छैनन्",
-  "folderSelection.servers.empty.description": "यो उपकरणबाट छिटो पुन: जडान गर्न रिमोट सर्भर थप्नुहोस्",
   "folderSelection.servers.connectTitle": "सर्भरमा जडान गर्नुहोस्",
   "folderSelection.servers.connectSubtitle": "रिमोट CodeNomad सर्भर बचत गर्नुहोस् र यसलाई नयाँ विन्डोमा खोल्नुहोस्",
   "folderSelection.servers.connectButton": "सर्भरमा जडान गर्नुहोस्",
@@ -87,7 +82,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "स्व-हस्ताक्षरित TLS",
   "folderSelection.servers.errorTitle": "रिमोट जडान असफल भयो",
   "folderSelection.servers.dialog.title": "सर्भरमा जडान गर्नुहोस्",
-  "folderSelection.servers.dialog.description": "रिमोट CodeNomad सर्भर थप्नुहोस् र वैकल्पिक रूपमा यसलाई तुरुन्तै खोल्नुहोस्।",
   "folderSelection.servers.dialog.name": "सर्भरको नाम",
   "folderSelection.servers.dialog.namePlaceholder": "उत्पादन सर्भर",
   "folderSelection.servers.dialog.url": "सर्भर URL",
@@ -105,6 +99,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "जारी राख्नुहोस्",
   "folderSelection.servers.certificateInstall.cancelLabel": "रद्द गर्नुहोस्",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad लाई स्व-हस्ताक्षरित HTTPS रिमोट विन्डोहरू खोल्न सक्नु अघि स्थानीय प्रमाणपत्र विश्वास गरिनु पर्छ।",
+  "folderSelection.servers.launch.error.missing": "--connect-server लाई सुरक्षित सर्भरको नाम वा http(s) URL चाहिन्छ।",
+  "folderSelection.servers.launch.error.invalid": "\"{value}\" मान्य http:// वा https:// सर्भर ठेगाना होइन।",
+  "folderSelection.servers.launch.error.credentials": "\"{value}\" मा प्रमाणपत्र विवरण वा पेयरिङ कोड छ। सुरु गर्ने ठेगानामा यी राख्न मिल्दैन: बरु सर्भरमा जडान गर्नुहोस् बाट सर्भर पेयर गर्नुहोस्।",
+  "folderSelection.servers.launch.error.unknown": "\"{value}\" नामको कुनै सुरक्षित सर्भर छैन। सुरक्षित सर्भरको नाम वा http(s) URL प्रयोग गर्नुहोस्।",
+  "folderSelection.servers.launch.error.ambiguous": "\"{value}\" नामका धेरै सुरक्षित सर्भरहरू छन्। एउटाको नाम बदल्नुहोस् वा यसको URL प्रयोग गर्नुहोस्।",
   "folderSelection.sidecars.button": "SideCar खोल्नुहोस्",
 
   "projectRenameDialog.title": "कार्यस्थान पुन: नामकरण गर्नुहोस्",

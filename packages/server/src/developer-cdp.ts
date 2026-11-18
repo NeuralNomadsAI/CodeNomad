@@ -1,5 +1,6 @@
 import { WebSocket } from "undici"
 import { bindRefs, performAction, snapshotPage, type PageActionResult, type PageSession } from "./automation/page/actions"
+import { cdpSession } from "./automation/page/cdp-driver"
 import type { RefAction } from "./automation/page/parse"
 import { RefTable } from "./automation/page/refs"
 import { SnapshotScopeError } from "./automation/page/snapshot"
@@ -176,11 +177,8 @@ export class DeveloperCdp {
   }
 
   private session(state: RunState, epoch: number, message: string): PageSession {
-    return {
-      channel: { send: (method, params) => this.command(state, method, params) },
-      checkpoint: () => this.assertContextCurrent(state, epoch, message),
-      markAutomation: true,
-    }
+    return cdpSession({ send: (method, params) => this.command(state, method, params) },
+      () => this.assertContextCurrent(state, epoch, message), true)
   }
 
   async screenshot(identity: DeveloperCdpIdentity): Promise<DeveloperCdpScreenshot> {

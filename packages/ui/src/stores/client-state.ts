@@ -5,6 +5,8 @@ import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
 import { canCommitClientSnapshotV2, decodeClientSnapshotV2, encodeClientSnapshotV2, isClientSnapshotV2 } from "./client-state-partitions"
 import type { ClientSnapshotV2 } from "./client-state-partitions"
+import { LEGACY_SESSION_PREVIEWS_KEY, SESSION_BROWSER_STATE_KEY, mergeSessionBrowsers, tabPreviewModes } from "./tab-view-state-codec"
+import { migrateLegacyTabPreviews } from "./tab-view-state-migration"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 export type { ClientSnapshotV2 }
 const SAVE_DEBOUNCE_MS = 250
@@ -12,7 +14,7 @@ const FLUSH_MAX_ATTEMPTS = 3
 const MAX_V1_SNAPSHOT_BYTES = 1024 * 1024
 const MAX_LAYOUT_ENTRIES = 64
 const MAX_LAYOUT_KEY_LENGTH = 256
-const MAX_LAYOUT_VALUE_LENGTH = 4096
+export const MAX_LAYOUT_VALUE_LENGTH = 4096
 const LEGACY_LAYOUT_KEY_PREFIX = "opencode-session-"
 const UNSAFE_LAYOUT_KEYS = new Set(["__proto__", "constructor", "prototype"])
 const [clientStateIsPrimary, setClientStateIsPrimary] = createSignal(true)
@@ -30,6 +32,10 @@ let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
 let partitionProtocolVersion: 1 | undefined
+const layoutMigrations = new Map<string, { source: string; remaining: string | null }>()
+// Browser tabs restore their session from sessionStorage while layout values keep
+// their shared localStorage entries, written and read immediately.
+let snapshotOwnsLayout = true
 const transactionLayoutWrites = new Set<string>()
 function useLocalStorage<T>(fallback: T, operation: (storage: Storage) => T): T {
   try {
@@ -48,7 +54,7 @@ const readLegacyLayoutValue = (key: string) =>
     return value !== null && value.length <= MAX_LAYOUT_VALUE_LENGTH ? value : null
   })
 const writeLegacyLayoutValue = (key: string, value: string) =>
-  useLocalStorage(undefined, (storage) => storage.setItem(key, value))
+  useLocalStorage(false, (storage) => { storage.setItem(key, value); return true })
 const removeLegacyLayoutValue = (key: string) =>
   useLocalStorage(undefined, (storage) => storage.removeItem(key))
 function legacyLayoutKeys(storage: Storage): string[] {
@@ -120,6 +126,18 @@ function enqueuePendingSave(): Promise<void> {
         throw new Error("Native client state save was rejected")
       }
       lastSaveError = undefined
+      // Retire the legacy entries only after a snapshot carrying descriptor views
+      // is durably accepted. Changed concurrent legacy writes retain their authority.
+      if (layoutMigrations.size && normalizedSnapshot.session?.tabs.some(tab => tab.kind === "workspace" && tab.viewState)) {
+        const migrations = [...layoutMigrations]
+        layoutMigrations.clear()
+        for (const [key, migration] of migrations) if ((snapshotOwnsLayout ? layout[key] : readLegacyLayoutValue(key)) === migration.source) {
+          const concurrent = readLegacyLayoutValue(key)
+          const remaining = concurrent !== null && concurrent !== migration.source ? concurrent : migration.remaining
+          if (remaining === null) removeClientLayoutValue(key)
+          else writeClientLayoutValue(key, remaining)
+        }
+      }
     } catch (error) {
       dirty = true
       lastSaveError = error
@@ -166,7 +184,7 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
       if (loseOwnershipOnRejection) setClientStateIsPrimary(false)
       throw new Error(rejectedMessage)
     }
-    useLocalStorage(undefined, (storage) => {
+    if (snapshotOwnsLayout) useLocalStorage(undefined, (storage) => {
       for (const key of legacyLayoutKeys(storage)) storage.removeItem(key)
     })
     resetLoadedState()
@@ -205,7 +223,7 @@ export function updateRestorableSession(state: RestorableSessionState | null): v
 
 export function readClientLayoutValue(key: string): string | null {
   if (!isValidLayoutKey(key)) return null
-  if (!clientStateIsPrimary()) return readLegacyLayoutValue(key)
+  if (!clientStateIsPrimary() || !snapshotOwnsLayout) return readLegacyLayoutValue(key)
   if (!restorePreviousStateEnabled() || writeBlock) return null
   if (hasLayoutKey(key)) return layout[key] ?? null
   const legacyValue = readLegacyLayoutValue(key)
@@ -215,27 +233,28 @@ export function readClientLayoutValue(key: string): string | null {
   return legacyValue
 }
 
-export function writeClientLayoutValue(key: string, value: string): void {
-  if (!isValidLayoutKey(key) || value.length > MAX_LAYOUT_VALUE_LENGTH) return
-  if (!clientStateIsPrimary()) return writeLegacyLayoutValue(key, value)
+export function writeClientLayoutValue(key: string, value: string): boolean {
+  if (!isValidLayoutKey(key) || value.length > MAX_LAYOUT_VALUE_LENGTH) return false
+  if (!clientStateIsPrimary() || !snapshotOwnsLayout) return writeLegacyLayoutValue(key, value)
   if (writeBlock === "transaction") {
-    if (!hasLayoutKey(key) && layoutIsFull()) return
+    if (!hasLayoutKey(key) && layoutIsFull()) return false
     dirty ||= layout[key] !== value
     layout[key] = value
     transactionLayoutWrites.add(key)
-    return
+    return true
   }
-  if (!restorePreviousStateEnabled() || writeBlock) return
-  if (!hasLayoutKey(key) && layoutIsFull()) return
+  if (!restorePreviousStateEnabled() || writeBlock) return false
+  if (!hasLayoutKey(key) && layoutIsFull()) return false
   writeLegacyLayoutValue(key, value)
-  if (layout[key] === value) return
+  if (layout[key] === value) return true
   layout[key] = value
   scheduleSave()
+  return true
 }
 
 export function removeClientLayoutValue(key: string): void {
   if (!isValidLayoutKey(key)) return
-  if (!clientStateIsPrimary()) return removeLegacyLayoutValue(key)
+  if (!clientStateIsPrimary() || !snapshotOwnsLayout) return removeLegacyLayoutValue(key)
   if (writeBlock === "transaction") {
     dirty ||= hasLayoutKey(key)
     delete layout[key]
@@ -312,6 +331,7 @@ export function initializeClientState(): Promise<void> {
     try {
       const loaded = await loadNativeClientState()
       partitionProtocolVersion = loaded.partitionProtocolVersion
+      snapshotOwnsLayout = loaded.webSession !== true
       setClientStateIsPrimary(loaded.isPrimary)
       setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
       resetLoadedState(null, true)
@@ -319,6 +339,7 @@ export function initializeClientState(): Promise<void> {
       lastSaveError = undefined
       writeBlock = false
       transactionLayoutWrites.clear()
+      layoutMigrations.clear()
       initialized = true
       if (!loaded.isPrimary || !loaded.restoreEnabled) return
       let snapshot: ClientSnapshotV1 | null
@@ -339,8 +360,32 @@ export function initializeClientState(): Promise<void> {
         snapshot = decodeClientSnapshot(loaded.snapshot)
         writeBlock = loaded.snapshot !== null && snapshot === null ? "snapshot" : false
       }
-      resetLoadedState(snapshot, true)
-      if (!writeBlock && migrateLegacyLayoutValues()) scheduleSave()
+      resetLoadedState(snapshot && !snapshotOwnsLayout ? { ...snapshot, layout: {} } : snapshot, true)
+      if (!writeBlock) {
+        const migratedLayout = snapshotOwnsLayout && migrateLegacyLayoutValues()
+        const source = readClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY)
+        const migration = migrateLegacyTabPreviews(loadedRestorableSession(), source ?? null, readClientLayoutValue)
+        if (migration) {
+          if (source !== null) layoutMigrations.set(LEGACY_SESSION_PREVIEWS_KEY, { source, remaining: migration.remaining })
+          for (const { key, source } of migration.missions) layoutMigrations.set(key, { source, remaining: null })
+          setLoadedRestorableSession(migration.state)
+        }
+        const session = loadedRestorableSession()
+        if (session) {
+          const tabs = session.tabs
+          const ordered = [tabs[session.activeTabIndex], ...tabs.filter((_, index) => index !== session.activeTabIndex)]
+          const views = ordered.flatMap(tab => tab?.kind === "workspace" ? [tab.viewState] : [])
+          if (views.some(view => Object.values(view?.previews ?? {}).some(p => p.targetUrl))) {
+            const value = mergeSessionBrowsers(views, readClientLayoutValue(SESSION_BROWSER_STATE_KEY))
+            if (writeClientLayoutValue(SESSION_BROWSER_STATE_KEY, value)) {
+              setLoadedRestorableSession({ ...session, tabs: tabs.map(tab => tab.kind === "workspace" && tab.viewState
+                ? { ...tab, viewState: tabPreviewModes(tab.viewState) } : tab) })
+              scheduleSave()
+            }
+          }
+        }
+        if (migratedLayout || migration) scheduleSave()
+      }
     } catch (error) {
       initialized = true
       setClientStateIsPrimary(false)

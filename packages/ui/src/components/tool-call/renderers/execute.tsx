@@ -1,7 +1,7 @@
 import { Index, Show, createMemo } from "solid-js"
 import type { ToolRenderer } from "../types"
 import { defaultRenderer } from "./default"
-import { executeData, executeSummary } from "./execute-data"
+import { executeData, executeOutputForRender, executeSummary } from "./execute-data"
 import { formatUnknownForCopy, formatUnknownForRender, hasVisibleText, limitToolTitleForRender } from "../utils"
 import { getDefaultToolSearchText } from "../search-text"
 
@@ -20,6 +20,11 @@ export const executeRenderer: ToolRenderer = {
   getOutputChrome: defaultRenderer.getOutputChrome,
   renderBody(context) {
     const data = createMemo(() => executeData(context.toolState()))
+    // Completed results only: a running call's partial output keeps the shared rendering.
+    const formattedOutput = createMemo(() => {
+      const state = context.toolState()
+      return state?.status === "completed" ? executeOutputForRender((state as { output?: unknown }).output) : null
+    })
     const markdown = (text: string, language: string, key: string) => hasVisibleText(text) ? context.renderMarkdown({
       content: text, codeLanguage: language,
       cacheKey: `execute-${key}`, disableHighlight: context.toolState()?.status === "running",
@@ -42,7 +47,10 @@ export const executeRenderer: ToolRenderer = {
         </section>
       </Show>
       <Show when={data().failed}><p class="execute-call-status" data-status="error">{context.t("toolCall.status.error")}</p></Show>
-      {defaultRenderer.renderBody(context)}
+      <Show when={formattedOutput()} fallback={defaultRenderer.renderBody(context)}>
+        {output => context.renderMarkdown({ content: output().text, codeLanguage: output().language ?? "",
+          cacheKey: "execute-output", wrap: context.outputWrapEnabled?.() ?? true })}
+      </Show>
       <Show when={data().truncated}><p>{context.t("toolCall.execute.truncated")} <span>{data().outputPath}</span></p></Show>
     </div>
   },

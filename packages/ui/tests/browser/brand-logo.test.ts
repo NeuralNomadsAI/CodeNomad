@@ -29,12 +29,17 @@ function merge(target: any, patch: any): any {
   return result
 }
 
-/** Which hexagon each logo shows, by the image file it displays, with its rendered height. */
+/** Read the displayed SVG's hexagon, including inlined data URLs. */
 async function shownLogos(page: Page) {
-  return page.locator(".brand-logo").evaluateAll((logos) => logos.map((logo) => {
+  return page.locator(".brand-logo").evaluateAll((logos) => Promise.all(logos.map(async (logo) => {
     const shown = [...logo.querySelectorAll("img")].filter((image) => image.getBoundingClientRect().height > 0)
-    return { shown: shown.map((image) => /OnLight/.test(image.src) ? "black" : "white"), height: logo.getBoundingClientRect().height }
-  }))
+    const colors = await Promise.all(shown.map(async image => {
+      const svg = new DOMParser().parseFromString(await (await fetch(image.currentSrc || image.src)).text(), "image/svg+xml")
+      const fill = svg.querySelector('path[fill-rule="evenodd"]')?.getAttribute("fill")
+      return fill === "#000" ? "black" : fill === "#fff" ? "white" : fill
+    }))
+    return { shown: colors, height: logo.getBoundingClientRect().height }
+  })))
 }
 
 test("the logo turns black on light palettes and white on dark ones", async () => {
@@ -77,5 +82,31 @@ test("the logo turns black on light palettes and white on dark ones", async () =
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark")
     assert.deepEqual((await shownLogos(page)).map(({ shown }) => shown), [["white"], ["white"]])
     assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("empty states omit absent descriptions and retain supplied descriptions and children", async () => {
+  const page = await browser.newPage()
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(`${url}?view=session`)
+    await page.waitForFunction(() => Boolean((window as any).brandFixture))
+    const state = page.locator(".empty-state")
+    assert.equal(await state.locator("h3").textContent(), "Empty session")
+    assert.equal(await state.locator("p").count(), 0)
+    assert.equal(await state.getByRole("button", { name: "Start session" }).count(), 1)
+
+    await page.evaluate(() => (window as any).brandFixture.setDescription("Start a conversation below."))
+    assert.equal(await state.locator("p").textContent(), "Start a conversation below.")
+    for (const description of ["", undefined]) {
+      await page.evaluate(value => (window as any).brandFixture.setDescription(value), description)
+      assert.equal(await state.locator("p").count(), 0)
+    }
+
+    await page.goto(`${url}?view=welcome`)
+    await page.waitForFunction(() => Boolean((window as any).brandFixture))
+    assert.equal(await state.locator("h3").textContent(), "Launching workspace")
+    assert.equal(await state.locator("p").count(), 0)
+    assert.equal(await state.locator("li").textContent(), "/workspace")
   } finally { await page.close() }
 })

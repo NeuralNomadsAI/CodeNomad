@@ -8,6 +8,8 @@ import { RECURRENCE_STORAGE_PREFIX, type RecurrenceConfig } from "../../missions
 import { RecurrenceCreateCapacityError } from "../../missions/recurrence-store"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { MISSION_RECURRENCE_CHANGED_EVENT, readRecurrenceScheduleChanged, type RecurrenceScheduleChanged } from "../../missions/recurrence-events"
+import { nativeRecurrenceHandlers } from "./native-recurrence-create"
+import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
 
 const config: RecurrenceConfig = {
   title: "Review", template: "custom", consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
@@ -78,6 +80,19 @@ test("native recurrence metadata is bounded and exact revision CAS across Locati
     const a = await acquire(), b = await acquire(sibling), current = () => true as const
     let doc = await a.create("schedule_0", config, 100, current)
     assert.deepEqual(events, [{ scheduleID: doc.id, revision: 0 }])
+    const at = <A>(effect: Effect.Effect<A, unknown>, origin = sibling) =>
+      Effect.runPromise(Effect.provide(effect, Context.add(graph, locationTag, origin.location)))
+    const discovery = nativeRecurrenceHandlers(sibling)
+    assert.deepEqual(await at(discovery.recurrenceList({ limit: 1 })), { projectID: "project", projectCanonical: "/project",
+      schedules: [{ id: doc.id, directory: "/project" }] })
+    assert.equal((await at(discovery.recurrenceRead({ id: doc.id }))).schedule?.directory, "/project")
+    assert.equal((await at(readNativeRecurrenceSnapshot(sibling, { scheduleID: doc.id }))).schedules.length, 0,
+      "project discovery never relaxes the native Location snapshot filter")
+    assert.equal((await at(readNativeRecurrenceSnapshot(ctx, { scheduleID: doc.id }), ctx)).schedules.length, 1)
+    const foreign = { ...sibling, location: { ...sibling.location, project: { ...sibling.location.project, id: "foreign", canonical: "/foreign" } } } as unknown as typeof ctx
+    assert.equal((await at(nativeRecurrenceHandlers(foreign).recurrenceRead({ id: doc.id }), foreign)).schedule, null)
+    assert.deepEqual((await at(nativeRecurrenceHandlers(foreign).recurrenceList({}), foreign)).schedules, [])
+    assert.equal((await a.read(doc.id))?.revision, 0, "discovery and targeted snapshots write nothing")
     assert.deepEqual(await b.read(doc.id), doc)
     const old = doc.revision
     doc = await b.setState(doc.id, old, "running", current)
@@ -123,6 +138,14 @@ test("native recurrence metadata is bounded and exact revision CAS across Locati
     assert.equal(freshPublishes, 1, "post-commit invalidation resolves the committing fresh graph's app Bus, not an origin registration")
     for (let i = 1; i < 64; i++) await (i % 2 ? a : b).create(`schedule_${i}`, config, 100, current)
     assert.equal((await b.list()).length, 64)
+    const first = await at(discovery.recurrenceList({ limit: 8 }))
+    assert.equal(first.schedules.length, 8)
+    assert.equal(first.next, first.schedules.at(-1)!.id)
+    const second = await at(discovery.recurrenceList({ after: first.next, limit: 8 }))
+    assert.equal(second.schedules.length, 8)
+    assert.ok(second.schedules.every(row => row.id > first.next!))
+    assert.equal((await at(discovery.recurrenceList({ after: "schedule_9", limit: 8 }))).next, undefined)
+    await assert.rejects(at(discovery.recurrenceList({ limit: 9 })))
     await assert.rejects(a.create("schedule_64", config, 100, current), RecurrenceCreateCapacityError)
     assert.equal(await a.read("schedule_64"), undefined)
     assert.equal((db.prepare("SELECT count(*) AS count FROM kv").get() as { count: number }).count, 64)

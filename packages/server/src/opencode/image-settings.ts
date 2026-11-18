@@ -1,10 +1,10 @@
-import path from "node:path"
 import { Service } from "@opencode/client/service"
 import type { ImageGenerationSelection, ImageModelOption, ImageSettingsSnapshot, PluginControlLocation } from "../api-types"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
 import { editNativeSetting, readNativeSetting } from "./native-setting-document"
 import { readRuntimeContract } from "./compatibility/negotiate"
+import { maskedBy, samePath, type Entry } from "./experimental-layers"
 
 const GENERATION = ["experimental", "image_generate"]
 const MEDIA_STORAGE = ["experimental", "media_blob"]
@@ -12,6 +12,7 @@ const MEDIA_STORAGE = ["experimental", "media_blob"]
 export const IMAGE_MODEL_REF = /^[^/#]+\/[^#]+(?:#[^#]+)?$/
 
 type ExperimentalProperties = Record<string, unknown> | undefined
+const bounded = (ms: number, signal?: AbortSignal) => signal ? AbortSignal.any([AbortSignal.timeout(ms), signal]) : AbortSignal.timeout(ms)
 
 export function imageSettingsCapability(document: Record<string, any>) {
   const properties: ExperimentalProperties = document.components?.schemas?.["Config.InfoEncoded"]?.properties?.experimental?.properties
@@ -19,10 +20,10 @@ export function imageSettingsCapability(document: Record<string, any>) {
   return { generation: has("image_generate"), mediaStorage: has("media_blob") }
 }
 
-/** Reads `experimental.image_generate` as OpenCode does: `true` or an object enables it, an object may name a model. */
+/** Reads `experimental.image_generate` as OpenCode does: only `false` disables it, unset means on, an object may name a model. */
 export function imageGenerationSelection(value: unknown): ImageGenerationSelection {
-  if (value === true) return true
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  if (value === false) return false
+  if (!value || typeof value !== "object" || Array.isArray(value)) return true
   const model = (value as { model?: unknown }).model
   if (typeof model === "string") return IMAGE_MODEL_REF.test(model) ? model : true
   if (model && typeof model === "object") {
@@ -33,17 +34,9 @@ export function imageGenerationSelection(value: unknown): ImageGenerationSelecti
   return true
 }
 
-type Entry = { type: string; path?: string; info?: { experimental?: Record<string, unknown> } }
 /** Configuration documents, highest priority first. */
 const documents = (entries: readonly unknown[]) =>
   entries.filter((entry): entry is Entry & { type: "document" } => Boolean(entry) && (entry as Entry).type === "document").reverse()
-
-const pathsFor = (value: string) => /^(?:[A-Za-z]:[\\/]|\\\\)/.test(value) ? path.win32 : path.posix
-function samePath(left: string, right: string) {
-  const paths = pathsFor(left)
-  const normalize = (value: string) => paths.normalize(value).replace(/[\\/]$/, "")
-  return paths === path.win32 ? normalize(left).toLowerCase() === normalize(right).toLowerCase() : normalize(left) === normalize(right)
-}
 
 const located = (entry: Entry | undefined) => !entry ? undefined : entry.path === undefined ? {} : { path: entry.path }
 
@@ -52,39 +45,31 @@ function override(winner: Entry | undefined, target: string): { path?: string } 
   return winner?.path !== undefined && samePath(winner.path, target) ? undefined : located(winner)
 }
 
-/** A lower-priority document whose whole `experimental` object a new one in `target` would hide
- * (`entries` lowest priority first; a missing target sits just before its directory, as natively).
- * Higher, Location-specific objects are ignored: the Global document also serves Locations without
- * them, and the target's own native entry may be staler than its fresh `targetHasExperimental`. */
-function maskedBy(entries: readonly unknown[], target: string, targetHasExperimental: boolean): Entry | undefined {
-  if (targetHasExperimental) return undefined
-  const list = entries as Array<Entry | undefined>
-  const own = list.findIndex(entry => entry?.type === "document" && entry.path !== undefined && samePath(entry.path, target))
-  const directory = list.findIndex(entry => entry?.type === "directory" && entry.path !== undefined
-    && samePath(entry.path, pathsFor(target).dirname(target)))
-  const order = own >= 0 ? own : directory >= 0 ? directory - 0.5 : list.length
-  let masked: Entry | undefined
-  list.forEach((entry, index) => {
-    if (index < order && entry?.type === "document" && entry.info?.experimental !== undefined) masked = entry
-  })
-  return masked
+type ConfigDocuments = Awaited<ReturnType<PluginControls["readConfigDocuments"]>>["documents"]
+
+/** The selected Location's own project document when its `experimental` object decides `media_blob`. */
+function decidingProject(winner: Entry | undefined, documents: ConfigDocuments) {
+  const project = documents.find(item => item.scope === "project")
+  return project && winner?.path !== undefined && samePath(winner.path, project.path) ? project : undefined
 }
 
-/** Global scope only: OpenCode reads `media_blob` from the whole `experimental` object of the
- * highest-priority document that has one, so a project block would hide inherited experimental settings. */
+/** Edits the Global document. OpenCode reads `media_blob` from the whole `experimental` object of the
+ * highest-priority document that has one, so a project block would hide inherited experimental settings;
+ * when the selected Location's own project block decides it, `media_blob` is also written there. */
 export class ImageSettings {
   constructor(private readonly configuration: Pick<PluginControls, "readConfigDocuments" | "editConfigDocument">,
     private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection">) {}
 
-  private async context(workspaceId: string, location: PluginControlLocation) {
+  private async context(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal) {
     const connection = await this.manager.getSharedServiceConnection(workspaceId)
     if (!connection) throw new PluginControlsError("OpenCode is unavailable", "unavailable")
     // Document acquisition proves directory ownership before any native request.
-    const snapshot = await this.configuration.readConfigDocuments(workspaceId, location)
+    const snapshot = await this.configuration.readConfigDocuments(workspaceId, location, signal)
+    signal?.throwIfAborted()
     connection.assertCurrent()
-    const contract = await readRuntimeContract(connection.endpoint, connection.fetch, AbortSignal.timeout(5_000))
+    const contract = await readRuntimeContract(connection.endpoint, connection.fetch, bounded(5_000, signal))
     connection.assertCurrent()
-    return { ...snapshot, connection, capability: imageSettingsCapability(contract) }
+    return { ...snapshot, connection, signal, capability: imageSettingsCapability(contract) }
   }
 
   /** `null` when the native catalog cannot be read; the configured choice stays readable without it. */
@@ -95,11 +80,12 @@ export class ImageSettings {
     let data: unknown
     try {
       const response = await context.connection.fetch(url, {
-        headers: Service.headers(context.connection.endpoint), redirect: "error", signal: AbortSignal.timeout(5_000),
+        headers: Service.headers(context.connection.endpoint), redirect: "error", signal: bounded(5_000, context.signal),
       })
       if (response.ok) data = (await response.json() as { data?: unknown }).data
       else await response.body?.cancel()
     } catch { data = undefined }
+    context.signal?.throwIfAborted()
     // Every catalog outcome, failures included, still belongs to the connection that produced the rest of the snapshot.
     context.connection.assertCurrent()
     if (!Array.isArray(data)) return null
@@ -107,8 +93,9 @@ export class ImageSettings {
       ? [{ ref: `${model.providerID}/${model.id}`, name: typeof model.name === "string" && model.name ? model.name : model.id }] : [])
   }
 
-  async read(workspaceId: string, location: PluginControlLocation): Promise<ImageSettingsSnapshot> {
-    const context = await this.context(workspaceId, location)
+  /** `signal` cancels the native reads (each also bounded to 5 s). */
+  async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<ImageSettingsSnapshot> {
+    const context = await this.context(workspaceId, location, signal)
     const global = context.documents.find(item => item.scope === "global")
     const settings = documents(context.entries)
 
@@ -129,11 +116,12 @@ export class ImageSettings {
     if (context.capability.mediaStorage && global) {
       // OpenCode reads the whole `experimental` object of the highest-priority document that has one.
       const winner = settings.find(entry => entry.info?.experimental !== undefined)
-      const overridden = override(winner, global.path)
+      const project = decidingProject(winner, context.documents)
+      const overridden = project ? undefined : override(winner, global.path)
       mediaStorage = {
         global: readNativeSetting(global.document, MEDIA_STORAGE) === true,
         effective: winner?.info?.experimental?.media_blob === true,
-        ...(overridden ? { override: overridden } : {}),
+        ...(project ? { project: { path: project.path } } : overridden ? { override: overridden } : {}),
       }
     }
     const blocked = global && (generation || mediaStorage)
@@ -164,6 +152,17 @@ export class ImageSettings {
       if (maskedBy(context.entries, acquired.path, readNativeSetting(document, ["experimental"]) !== undefined))
         throw new PluginControlsError("Saving would hide inherited experimental OpenCode settings", "conflict")
       return editNativeSetting(document, keys, value)
+    })
+    context.connection.assertCurrent()
+    if (generation) return
+    const project = decidingProject(documents(context.entries).find(entry => entry.info?.experimental !== undefined), context.documents)
+    if (!project) return
+    await this.configuration.editConfigDocument(workspaceId, location, "project", document => {
+      context.connection.assertCurrent()
+      // Only the analysed project block decides the value; creating one would hide inherited settings.
+      if (document.requestedPath !== project.document.requestedPath || readNativeSetting(document, ["experimental"]) === undefined)
+        throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
+      return editNativeSetting(document, MEDIA_STORAGE, value)
     })
     context.connection.assertCurrent()
   }

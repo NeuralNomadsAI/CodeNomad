@@ -68,6 +68,7 @@ export default function DismissibleWindow(props: {
   })
   const content = () => (
     <Dialog.Content
+      role="dialog"
       ref={element => {
         panel = element
         if (!props.draggable) return

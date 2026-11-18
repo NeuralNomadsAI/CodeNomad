@@ -1,6 +1,9 @@
 .mission-flow { position: relative; }
-/* Rows leave room for the dependency rail only when the plan declares one. */
-.mission-flow-linked .mission-tree-node { padding-inline-start: 30px; }
+/* The rail's lanes (30px, `MISSION_GRAPH_WIDTH`) fit in the rows' nesting indent and
+   expander column, before the task marks. */
 .mission-graph { position: absolute; inset-block-start: 0; inset-inline-start: 0; pointer-events: none; overflow: visible; }
 [dir="rtl"] .mission-graph { transform: scaleX(-1); }
-.mission-graph path { fill: none; stroke: var(--text-muted); stroke-width: 1; opacity: .6; }
+/* Light rails: the icons carry the state, the lines only the structure. */
+.mission-graph path { fill: none; stroke: var(--text-muted); stroke-width: 1; opacity: .35; }
+/* An edge whose other task is not shown (`MissionGraphOmitted`). */
+.mission-graph path.mission-graph-omitted { stroke-dasharray: 2 2; }

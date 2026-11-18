@@ -4,6 +4,7 @@ import { ChevronDown, ExternalLink } from "lucide-solid"
 import { createMemo, For, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { isFormFieldVisible, isHttpFormUrl } from "../../lib/form-schema"
+import { toggleSweepGroup } from "../../lib/toggle-sweep"
 
 type Option = { label: string; value: string; description?: string }
 
@@ -129,7 +130,7 @@ export const ProviderAuthForm: Component<{
               <div class="providers-multiselect">
                 <For each={field.type === "multiselect" ? field.options : []}>{(option) => (
                   <label class="settings-checkbox-toggle">
-                    <input type="checkbox" checked={selectedStrings(field).includes(option.value)} disabled={props.disabled} onChange={(event) => field.type === "multiselect" && updateMultiselect(field, option.value, event.currentTarget.checked)} />
+                    <input type="checkbox" checked={selectedStrings(field).includes(option.value)} disabled={props.disabled} data-toggle-sweep={toggleSweepGroup(`provider-auth-${field.key}`)} onChange={(event) => field.type === "multiselect" && updateMultiselect(field, option.value, event.currentTarget.checked)} />
                     <span>{option.label}</span>
                   </label>
                 )}</For>

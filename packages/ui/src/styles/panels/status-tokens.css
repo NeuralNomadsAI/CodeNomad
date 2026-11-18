@@ -14,19 +14,32 @@
   font-weight: normal;
 }
 
-.status-token-summary .status-token-metric + .status-token-metric::before {
-  content: " · ";
+.status-token-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+  font-size: 10px;
+  color: var(--text-muted);
 }
 
-.status-token-summary .status-token-label {
-  margin-inline-end: var(--space-xs);
-}
+.status-token-summary:not([data-expanded]) .usage-metric-chip + .usage-metric-chip { margin-inline-start: var(--space-xs); }
+.status-token-summary[data-expanded] { display: contents; }
 
-.status-token-groups {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
+/* Both states start beside Tokens; expansion wraps chips in the same row, like a message. */
+[data-status-section="tokens"] .right-panel-accordion-header-row,
+[data-status-section="tokens"] .right-panel-accordion-trigger { align-items: flex-start; }
+[data-status-section="tokens"] .right-panel-accordion-trigger:has(.status-token-summary[data-expanded]) {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: var(--space-xs);
 }
+[data-status-section="tokens"] .section-left { min-height: 22px; }
+[data-status-section="tokens"] .right-panel-accordion-header-row > :not(.right-panel-accordion-trigger) { margin-block-start: var(--space-sm); }
+[data-status-section="tokens"] .right-panel-accordion-content:empty { display: none; }
 
 .status-token-group {
   display: flex;

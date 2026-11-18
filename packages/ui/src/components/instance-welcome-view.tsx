@@ -16,7 +16,6 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
     <BrandedEmptyState
       class="bg-surface-secondary"
       title={t("instanceWelcome.loading.title")}
-      description={t("instanceWelcome.loading.description")}
     >
       <ul>
         <li class="flex items-center justify-center gap-2">

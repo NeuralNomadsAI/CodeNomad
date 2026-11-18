@@ -1,0 +1,25 @@
+/* A status row directly above the composer (DesignAgentNotice). */
+.composer-notice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.375rem 0.625rem;
+  border: 1px solid var(--border-base);
+  border-inline-start: 3px solid var(--status-warning);
+  background: var(--surface-inset);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+}
+
+.composer-notice-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.composer-notice-action {
+  flex: 0 0 auto;
+  min-height: var(--touch-target-size-compact);
+}

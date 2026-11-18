@@ -11,6 +11,7 @@ import { setSessions, setActiveSession, sessions, messagesLoaded } from "../../.
 import { sseManager } from "../../../src/lib/sse-manager"
 import { serverEvents } from "../../../src/lib/server-events"
 import { loadMessages } from "../../../src/stores/session-api"
+import { invalidateSessionMessageLoad } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import "../../../src/index.css"
 
@@ -45,7 +46,7 @@ const client: any = { session: {
 }, message: { list: async ({ sessionID, limit = 200, cursor }: any) => {
   requests.push(sessionID)
   if (sessionID === childId && holdChildReads) await new Promise<void>(resolve => heldReads.push(resolve))
-  if (sessionID === childId && failChildRead) { failChildRead = false; throw new Error("Deterministic read failure") }
+  if (sessionID === childId && failChildRead) throw new Error("Deterministic read failure")
   const messages = history[sessionID] ?? []
   const end = cursor ? Number(cursor) : messages.length, start = Math.max(0, end - limit)
   return { data: messages.slice(start, end).reverse(), cursor: start ? { next: String(start) } : {} }
@@ -109,6 +110,11 @@ observer?.observe(document.querySelector("main")!, { childList: true, subtree: t
   hold: () => { holdChildReads = true },
   release: () => { holdChildReads = false; heldReads.splice(0).forEach(resolve => resolve()) },
   reproject: () => loadMessages(instanceId, childId, { force: true }),
+  invalidate: () => {
+    // Watched children project streamed deltas without a reload; an invalidated
+    // page is the product path that actually queues a fresh authoritative read.
+    invalidateSessionMessageLoad(instanceId, childId)
+  },
   replaceChildTools: (indexes: number[], textIndexes: number[] = []) => {
     // Same native message identity, but a new authoritative part membership.
     history[childId][0].content = indexes.map(index => textIndexes.includes(index)
@@ -116,7 +122,17 @@ observer?.observe(document.querySelector("main")!, { childList: true, subtree: t
       : tool(index))
     return loadMessages(instanceId, childId, { force: true })
   },
-  failRead: () => { failChildRead = true; delta() },
+  failRead: () => {
+    // Child reads fail until recoverRead(): the delta's own repair read must not
+    // consume the failure the invalidated page's activation reload surfaces.
+    failChildRead = true
+    delta()
+    // Streamed deltas project into a watched child without a reload; a failing
+    // read surfaces through the invalidated page's activation reload, exactly
+    // like a refresh that fails after the page's loaded flag was dropped.
+    invalidateSessionMessageLoad(instanceId, childId)
+  },
+  recoverRead: () => { failChildRead = false },
   clearChild: () => { history[childId] = []; return loadMessages(instanceId, childId, { force: true }) },
   deleteChild: () => {
     history[childId] = []

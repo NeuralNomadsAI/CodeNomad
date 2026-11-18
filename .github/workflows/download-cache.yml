@@ -1,0 +1,105 @@
+name: Download Caches
+
+# Seeds the dev-scoped caches that PR Build Validation and the binary builds
+# restore (pull request runs can restore dev's caches but never write them).
+# Only these trusted triggers write; the schedule restores each entry well
+# within GitHub's 7-day eviction of unused caches.
+on:
+  push:
+    branches: [dev]
+    paths:
+      - package-lock.json
+      - packages/tauri-app/Cargo.lock
+      - .github/actions/download-cache/**
+      - .github/scripts/download-cache.cjs
+      - .github/workflows/download-cache.yml
+  schedule:
+    - cron: "41 4 * * 1,4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: download-cache
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    # Never seed from a manually selected branch.
+    if: github.ref == 'refs/heads/dev'
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every OS and architecture the PR and binary builds run on.
+        os: [ubuntu-24.04, windows-2025, macos-15-intel, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # setup-node restores its npm cache, or saves it after `npm ci` on a miss.
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # A failed download skips only its own cache; the next run retries.
+      - id: electron
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
+          exact: "true"
+      - id: electron-seed
+        if: ${{ steps.electron.outputs.key != '' && steps.electron.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        run: node .github/scripts/download-cache.cjs seed electron
+      - if: ${{ steps.electron-seed.outcome == 'success' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          key: ${{ steps.electron.outputs.key }}
+          path: ${{ steps.electron.outputs.path }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - id: cargo
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+          exact: "true"
+      - id: cargo-seed
+        if: ${{ steps.cargo.outputs.key != '' && steps.cargo.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        working-directory: packages/tauri-app
+        run: cargo fetch --locked
+      - if: ${{ steps.cargo-seed.outcome == 'success' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          key: ${{ steps.cargo.outputs.key }}
+          path: ${{ steps.cargo.outputs.path }}
+
+      - id: runtime
+        uses: ./.github/actions/download-cache
+        with:
+          kind: appimage-runtime
+          exact: "true"
+      - id: runtime-seed
+        if: ${{ steps.runtime.outputs.key != '' && steps.runtime.outputs.cache-hit != 'true' }}
+        env:
+          CACHE_KEY: ${{ steps.runtime.outputs.key }}
+          CACHE_PATH: ${{ steps.runtime.outputs.path }}
+        run: node .github/scripts/download-cache.cjs seed appimage-runtime
+      - if: ${{ steps.runtime-seed.outputs.ready == 'true' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          key: ${{ steps.runtime.outputs.key }}
+          path: ${{ steps.runtime.outputs.path }}
+
+      # Only a trusted dev binary build can write the Tauri bundler's tools
+      # (build-and-upload.yml); restoring them here keeps them from eviction.
+      - uses: ./.github/actions/download-cache
+        with:
+          kind: tauri

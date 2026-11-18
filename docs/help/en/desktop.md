@@ -8,7 +8,31 @@
 
 Project tabs, selected conversations and layout belong to a window. OpenCode sessions/messages belong to the shared native OpenCode service: another window can see the same conversation. Closing a project tab closes that project in CodeNomad, not its OpenCode sessions; reopen it to find them again. Another window displaying the same project connection also closes its tab and shows a notification; separately opened tabs of the same folder are unaffected. Closing a whole window, quitting or reloading preserves project connections for restoration; see [Projects](projects.md). Do not use closing windows as proof that an agent or scheduled Mission has stopped.
 
-Native application menus use CodeNomad's interface language once a window has loaded; they show English until then. **Help → About CodeNomad** (also in the macOS application menu) opens **Settings → Info** with the version, updates and diagnostics.
+Native application menus use CodeNomad's interface language once a window has loaded; they show English until then. **Help → About CodeNomad** (also in the macOS application menu) opens **Settings → Info** with the version, updates and diagnostics. **Help → Support CodeNomad** opens the [Support CodeNomad](sponsor.md) page in your browser.
+
+## Desktop launch arguments {#desktop-cli}
+
+Pass these arguments after the **desktop executable** (Tauri or Electron), in a terminal or the **Target** field of a Windows shortcut. Replace the example executable paths with yours.
+
+| Argument | Effect |
+| --- | --- |
+| `--connect-server <server>` | Open a remote CodeNomad server using its HTTP(S) URL, saved name or saved ID. See [connection and sign-in behavior](remote-access.md#saved-servers). |
+| `--folder <path>` | Open an existing project directory. Repeat the argument to open several directories; relative paths use the launch working directory. |
+| `<path> ...` | Open project directories without spelling out `--folder`. **Windows Tauri, when already running:** use `--folder` for every directory. Mixing positional paths with `--folder` also drops the entire folder request. |
+| `--new-window` | Request a new application window, including when another launch would normally focus the existing window. |
+
+`--connect-server=<server>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`; local window restoration is then deferred unless connecting fails.
+
+In **PowerShell**:
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+In a Windows shortcut’s **Target**, put `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` (the `&` belongs to PowerShell). On Linux, use the AppImage executable, for example `./CodeNomad.AppImage --connect-server "https://server.example:9898"`.
+
+For desktop profiles and configuration, set `CODENOMAD_PROFILE` and `CLI_CONFIG` before launch; see [Data profiles](#data-profiles). Backend listening, TLS and authentication options are in the [server CLI reference](server.md#cli-reference). On Windows Tauri, launch arguments containing `|` are rejected; use a URL or rename the saved server.
 
 ## Preferences and startup restore {#preferences-startup}
 
@@ -18,9 +42,11 @@ Native application menus use CodeNomad's interface language once a window has lo
 
 Restore can reopen workspace/SideCar tabs and active sessions, unsent text, scroll positions, panels, window placement and zoom. It is per-window client state, not a copy of the native conversation database. Clearing it removes saved tabs, drafts and layout; it does not delete CodeNomad configuration or OpenCode conversations. Save any important unsent draft elsewhere first.
 
+Each project tab restores its own right-panel selection, Files mode and Mission reader/selection, including duplicate tabs for the same conversation. Saved browser URLs/history reopen on demand; see [Browser previews and SideCars](browser-sidecars.md#session-browser).
+
 The Preferences window does not own a separate restore state: these controls target the window that opened it. When that window has closed, or is unknown because Preferences reopened at launch, they follow the most recently used window instead; a change prepared for another window is never applied, and the controls first show the new window's value. To configure a specific window, open Preferences from it. Project-scoped settings likewise use the opener's Location; they stay unavailable without one. When Preferences reopens at launch, they reconnect once that project has finished opening; while the folder is still starting, or open in several tabs, they stay unavailable until you open Preferences from the intended window.
 
-Browser and remote settings are embedded rather than a second native Preferences owner. A native Preferences opening error is reported; it is not a reason to assume a hidden embedded settings screen was opened instead.
+Browser and remote clients use embedded settings.
 
 ## Desktop data profiles {#data-profiles}
 
@@ -54,7 +80,7 @@ On macOS Tauri, scoped profiles share system WebKit storage, sign-ins and cache;
 
 Deletion removes that profile's saved tabs, drafts, layout and owned web storage/cache/sign-ins, including a listed profile from another configuration. It preserves the open profile, OpenCode conversations and project files. A profile that is open or in an unknown state cannot be deleted; close the relevant CodeNomad windows, refresh the list and retry. Unrecognized content is retained and reported rather than broadly deleted.
 
-macOS Tauri's shared WebKit store is kept because deleting it would affect other profiles. This is not an undoable cleanup: a surviving native conversation does not restore a deleted unsent draft. **Clear saved startup state** is the smaller action when you only want to reset the current window.
+macOS Tauri's shared web storage, sign-ins and cache are kept. This is not an undoable cleanup: a surviving native conversation does not restore a deleted unsent draft. **Clear saved startup state** is the smaller action when you only want to reset the current window.
 
 ## Zoom and panel geometry {#zoom-panels}
 

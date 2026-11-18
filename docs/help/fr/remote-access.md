@@ -29,12 +29,10 @@ Cela change le mode d’écoute directe de l’hôte, pas un projet ni le Contr�
 
 | Lancement/mode | HTTP écoute sur | HTTPS écoute sur |
 | --- | --- | --- |
-| Autonome, HTTPS seul (défaut) | Écoute privée en boucle locale uniquement (voir ci-dessous) | `--host` |
+| Autonome, HTTPS seul (défaut) | Écoute privée en boucle locale uniquement | `--host` |
 | Autonome, HTTP seul | **`--host`**, y compris une adresse LAN/générique | Non activé |
 | Autonome, les deux écoutes | `127.0.0.1` quel que soit `--host` | `--host` |
 | Backend de bureau natif | Son écoute HTTP reste sur `127.0.0.1`, y compris son écoute interne à l’hôte | `--host` quand HTTPS est activé |
-
-Chaque backend conserve aussi une écoute HTTP sur `127.0.0.1` pour les plugins OpenCode fournis avec CodeNomad, comme Missions. Lorsque HTTP n’a pas été demandé, ou que l’écoute HTTP demandée est liée à une autre adresse que `127.0.0.1` ou `0.0.0.0`, le backend ajoute une écoute HTTP privée sur un port aléatoire de `127.0.0.1`. Elle n’est jamais affichée ni proposée comme adresse de connexion, n’est pas accessible depuis d’autres machines et sert la même application authentifiée.
 
 Une adresse LAN précise n’accepte pas nécessairement les connexions de boucle locale. `0.0.0.0` désigne toutes les interfaces IPv4 ; `::` est l’écoute générique double pile. Utilisez une adresse réellement accessible dans un navigateur, pas une adresse générique. Les identifiants de zone IPv6 ne sont pas pris en charge dans `--host`.
 
@@ -51,6 +49,18 @@ codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
 Ne supposez pas le port 9898 ou 9899 : les ports omis peuvent changer s’ils sont occupés. Un `--https-port` explicite non nul, ou un `--http-port` avec HTTP activé, fixe le port et échoue si l’écoute est impossible ; `0` demande au système d’en attribuer un. Les **Local Connection URL** et **Remote Connection URL** affichées, et les **Adresses accessibles** actualisées, font autorité pour cette exécution. Voir la [référence CLI serveur](server.md) complète.
+
+## Politique de l’administrateur {#administrator-policy}
+
+Un administrateur peut fixer l’adresse d’écoute : définissez `CODENOMAD_LOCKED_HOST` pour tout le système avec l’adresse que le serveur doit utiliser, puis redémarrez CodeNomad. Elle l’emporte sur `--host`, `CLI_HOST` et **Autoriser les connexions depuis d'autres IP**, qui affiche le résultat sans pouvoir le changer. Utilisez une adresse intranet pour que vos collègues joignent le serveur par le réseau de l’entreprise, ou `127.0.0.1` pour le garder sur cet ordinateur. Pour que tout accès reste dans le réseau de l’entreprise, définissez aussi `CODENOMAD_REMOTE_CONTROL=disabled` ([contrôle à distance](remote-control.md#administrator-policy)).
+
+## Mise à niveau {#upgrading}
+
+Reconnectez-vous après la mise à niveau. Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification.
+
+Utilisez une connexion en boucle locale pour les opérations réservées à l’hôte : contenu SideCar (`/sidecars/`) et WebSockets, gestion du Contrôle à distance (`/api/remote-control/`), pont des plugins (`/api/opencode-plugin/`), proxys distants (`/api/remote-proxy/`), gestion des serveurs enregistrés (`/api/remote-servers/`), changement de mot de passe et initialisation par jeton. Ces opérations exigent la boucle locale, même avec une connexion authentifiée directe depuis le LAN. Seuls les SideCars font exception : le réglage **Ouvrir les SideCars en HTTPS** de l’hôte ouvre leur contenu et leurs WebSockets aux navigateurs connectés via une origine HTTPS de confiance ([SideCars](browser-sidecars.md#register-sidecar)). Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide.
+
+Les API d’enregistrement `/api/sidecars` restent accessibles aux clients LAN directs authentifiés et aux appareils appairés. Les aperçus web du Contrôle à distance restent accessibles avec leur jeton de capacité lorsqu’ils sont activés sur l’hôte.
 
 ## Configurer un TLS de confiance {#tls}
 
@@ -77,7 +87,7 @@ Avec HTTPS activé et sans paire clé/certificat fournie, CodeNomad crée une AC
 2. Redémarrez le backend pour générer/revérifier le certificat.
 3. Vérifiez l’hôte/l’AC par un canal de confiance, puis importez **uniquement le certificat d’AC** dans chaque magasin de confiance client/navigateur voulu. Sinon, utilisez un certificat reconnu publiquement ou un proxy inverse TLS.
 
-Le certificat serveur généré dure 30 jours. Le démarrage le renouvelle à moins de trois jours de l’expiration, si des SAN requis manquent, s’il échoue aux contrôles ou si son fichier de clé privée manque. L’AC générée dure 365 jours et est remplacée lorsqu’elle expire, échoue aux contrôles ou que son fichier de clé privée manque ; cela réémet aussi le certificat serveur. Les clés privées existantes corrompues, illisibles ou incompatibles ne sont pas réparées automatiquement. Les clients doivent faire confiance à l’AC de remplacement. Aucun renouvellement continu n’a lieu dans le processus : prévoyez un redémarrage délibéré avant expiration pour les déploiements de longue durée.
+Le certificat serveur généré dure 30 jours. Le démarrage le renouvelle à moins de trois jours de l’expiration, si des SAN requis manquent, s’il échoue aux contrôles ou si son fichier de clé privée manque. L’AC générée dure 365 jours et est remplacée lorsqu’elle expire, échoue aux contrôles ou que son fichier de clé privée manque ; cela réémet aussi le certificat serveur. Les clients doivent faire confiance à l’AC de remplacement. Aucun renouvellement continu n’a lieu dans le processus : prévoyez un redémarrage délibéré avant expiration pour les déploiements de longue durée.
 
 Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez le nom d’hôte, les SAN, le magasin de confiance et l’expiration. Ne désactivez pas la vérification et ne faites pas du contournement des avertissements votre procédure de déploiement. Un HTTPS de confiance est aussi requis pour des fonctions de navigateur distant telles que [l’installation PWA et l’accès au microphone](mobile.md).
 
@@ -88,5 +98,9 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.
 
 Sélectionnez un serveur enregistré dans l’onglet **Serveurs** de l’accueil pour l’ouvrir de nouveau. Les favoris appartiennent à cette configuration CodeNomad, pas aux projets du serveur distant. Enregistrer une URL ne démarre pas le serveur et n’accorde pas l’accès. **Supprimer le serveur enregistré** retire le favori, pas les conversations distantes, le backend ou ses identifiants.
+
+Pour ouvrir un serveur enregistré directement depuis la ligne de commande, lancez l’application de bureau avec `--connect-server <nom>` (ou `--connect-server=<nom>`), en indiquant le nom enregistré du serveur ou son URL `https://`. CodeNomad n’ouvre que la fenêtre distante, avec les mêmes vérifications et la même connexion que **Se connecter** ; si CodeNomad est déjà lancé, sa fenêtre actuelle l’ouvre au lieu d’une nouvelle fenêtre. Une URL qui ne correspond à aucun serveur enregistré est enregistrée sous son nom d’hôte. Les valeurs de lancement ne portent jamais d’identifiants : une URL avec un nom d’utilisateur, un mot de passe ou un code d’appairage est refusée. Sous Windows, la version Tauri refuse de démarrer quand un argument de lancement contient `|` ; utilisez plutôt l’URL du serveur, ou renommez le serveur.
+
+Fermer la dernière fenêtre locale alors que des fenêtres distantes restent ouvertes conserve ses onglets : **Fenêtre → Nouvelle fenêtre** dans une fenêtre distante, ou un nouveau lancement de CodeNomad, la rouvre.
 
 Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans **URL du serveur**. Le favori ne conserve que l’origine du tunnel, jamais le code d’appairage à usage unique ; voir [Contrôle à distance](remote-control.md) pour le réappairage après perte du cookie de l’appareil.

@@ -6,6 +6,11 @@ let cachedMeta: ServerMeta | null = null
 let pendingMeta: Promise<ServerMeta> | null = null
 const [previewsUnavailable, setPreviewsUnavailable] = createSignal(false)
 const [previewsAvailabilityResolved, setPreviewsAvailabilityResolved] = createSignal(false)
+const [localRequest, setLocalRequest] = createSignal(false)
+const [sidecarsAllowed, setSidecarsAllowed] = createSignal(false)
+export { localRequest }
+/** Whether this client may open SideCars: a host-local client, or one the host allows over direct HTTPS. */
+export { sidecarsAllowed }
 
 /** Whether this client reaches the server through Remote Control while its host keeps web previews off. */
 export { previewsUnavailable }
@@ -21,6 +26,8 @@ export async function getServerMeta(forceRefresh = false): Promise<ServerMeta> {
   }
   const request = serverApi.fetchServerMeta().then((meta) => {
     cachedMeta = meta
+    setLocalRequest(meta.localRequest === true)
+    setSidecarsAllowed(meta.localRequest === true || meta.sidecarsAllowed === true)
     setPreviewsUnavailable(meta.previewsUnavailable === true)
     setPreviewsAvailabilityResolved(true)
     return meta

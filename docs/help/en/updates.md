@@ -6,7 +6,7 @@
 2. Set **Update feed** to **Stable releases** or **Previews and stable releases**.
 3. Refresh/check for updates and review the offered release before accepting an installation.
 
-The feed is saved in CodeNomad server configuration and only changes which releases are offered. It does not change desktop data profiles, drafts, windows, OpenCode sessions or service configuration. Without an explicit selection, preview-labelled builds default to previews, other builds to stable.
+The feed changes offered releases only. Desktop data profiles, drafts, windows, OpenCode sessions and service configuration stay unchanged. Without an explicit selection, preview-labelled builds default to previews, other builds to stable.
 
 Stable selects the latest final release. Preview follows publication order because development builds can share a base version number; do not compare only their numeric versions. A preview release is offered only once all of its builds are published. Preview packages are for users willing to test prerelease behavior; inspect release notes and protect important drafts before restarting.
 
@@ -26,15 +26,15 @@ Stable selects the latest final release. Preview follows publication order becau
 
 In Tauri application and native **Preferences** windows, the Updates card shows **Install update** when a release is offered. It checks the selected feed and offers **Install and restart** when an in-app update is available; otherwise it opens the release page shown on the card. Electron, web and remote windows instead show the **Download update** link, without a native updater check.
 
-The Tauri **Help → Get Updates...** menu runs the update flow in the focused application window. From Preferences or a remote window, it brings the most recently used application window forward to run the check; it does not install through the remote window. If no application window can receive the action, including a targeted loading, login or pairing screen, the menu opens the release page instead.
+The Tauri **Help → Get Updates...** menu runs the update flow in the focused application window. From Preferences or a remote window, it brings the most recently used application window forward to run the check; it does not install through the remote window.
 
-Tauri installs only releases with a published update manifest for the chosen feed/target. If an announced release cannot be installed yet, the notification opens its release page instead. Native signature verification is required before installation. Updater signatures are distinct from OS notarization/code-signing assurances.
+Native signature verification is required before installation. Updater signatures are distinct from OS notarization/code-signing assurances.
 
 Installation flushes all application windows and stops the owned CodeNomad backend before replacing/restarting the app. The independently owned OpenCode daemon is not part of this shutdown. Closing CodeNomad still removes backend-dependent features until it returns; do not infer uninterrupted UI services from a continuing OpenCode session.
 
-If a check is busy, wait for the other window's operation. For download, validation or shutdown failures, read the error and perform a fresh check; an old notification is not a license to reinstall stale bytes. A failed installation can restore the backend and reload windows, and does not automatically replay installation. If native installation is unavailable, use the release page for the appropriate package; see [Install](install.md).
-
 ## Update a standalone server {#standalone-update}
+
+The 1.1 interface requires CodeNomad server **1.1.0 or later** for its Missions APIs. Servers on 1.0.x retain their cached or bundled interface instead of downloading the incompatible interface.
 
 1. Identify how you launched CodeNomad and save any work that depends on that backend.
 2. Stop that CodeNomad server process using its normal process/service control.
@@ -54,6 +54,6 @@ An already-running process does not acquire new code just because npm installed 
 
 Updating CodeNomad is not updating the selected OpenCode CLI. Updating that CLI is not restarting the running shared daemon. Reloading native configuration is another explicit operation with its own effects on loaded Locations and requests.
 
-Desktop Node/npm resources are shipped with the application; an application release delivers their updates. This does not replace your system Node/npm, Electron's internal runtime, the platform webview or the independently managed OpenCode service.
+Desktop runtimes update with the application: Electron uses its integrated Node, Tauri bundles Node, and both include npm. System Node/npm, the platform webview and the OpenCode service are managed independently.
 
 Use **Settings → OpenCode** for runtime selection, installation/update and explicit service controls. Check [OpenCode setup](opencode.md) before restarting or reloading, especially when other windows/users or Missions share the daemon. Never repeat an uncertain prompt or mutation simply because an update/reconnect finished.

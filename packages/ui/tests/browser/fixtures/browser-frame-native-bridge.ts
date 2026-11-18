@@ -56,6 +56,10 @@ async function invoke(command: string, args: any = {}) {
 
 window.__CODENOMAD_RUNTIME_HOST__ = host
 window.__CODENOMAD_WINDOW_CONTEXT__ = "local"
+window.__CODENOMAD_BROWSER_CAPABILITIES__ = { embedding: true, history: true,
+  emulation: !new URLSearchParams(location.search).has("dimensionsOnly"),
+  automation: true,
+  ...(["macos","linux"].includes(new URLSearchParams(location.search).get("platform")??"") ? {reason:"webkit" as const}: {}) }
 Object.assign(window, {
   nativeFixture,
   __TAURI_INTERNALS__: {

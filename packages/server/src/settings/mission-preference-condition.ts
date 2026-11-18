@@ -2,7 +2,7 @@ import { z } from "zod"
 import { isPlainObject } from "./merge-patch"
 import type { SettingsService } from "./service"
 
-const keys = ["missionModels", "missionProfileDefaults"] as const
+const keys = ["missionModels", "missionProfileDefaults", "missionDeleteSessions"] as const
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
 
 // Validate JSON, not the preference domain: conditions must also permit repairing
@@ -10,7 +10,7 @@ const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.c
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() => z.union([
   z.null(), z.boolean(), z.number().finite(), z.string(),
-  z.array(JsonValueSchema), z.record(JsonValueSchema),
+  z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema),
 ]))
 
 const ExpectedSchema = z.object({
@@ -28,9 +28,10 @@ const ConditionalSchema = z.object({
     settings: z.object({
       missionModels: JsonValueSchema.optional(),
       missionProfileDefaults: JsonValueSchema.optional(),
+      missionDeleteSessions: JsonValueSchema.optional(),
     }).strict(),
   }).strict(),
-  expected: z.array(ExpectedSchema).min(1).max(2),
+  expected: z.array(ExpectedSchema).min(1).max(3),
 }).strict().superRefine((body, ctx) => {
   const changedKeys = Object.keys(body.patch.settings)
   const expectedKeys = new Set(body.expected.map((expected) => expected.key))
@@ -75,5 +76,15 @@ export function applyConditionalMissionPreferences(
     }
   }
   // Do not introduce an await between the authoritative read above and this write.
-  return settings.mergePatchOwner("config", "ui", parsed.patch)
+  return settings.mergePatchOwner("config", "ui", parsed.patch, (before) => {
+    if (before.ui !== undefined && !isPlainObject(before.ui)
+      || isPlainObject(before.ui) && before.ui.settings !== undefined && !isPlainObject(before.ui.settings))
+      throw new MissionPreferenceConflictError()
+    const ui = isPlainObject(before.ui) ? before.ui : {}
+    const latest = isPlainObject(ui.settings) ? ui.settings : {}
+    for (const expected of parsed.expected) {
+      if (hasOwn(latest, expected.key) !== expected.present
+        || expected.present && !equalJson(latest[expected.key], expected.value!)) throw new MissionPreferenceConflictError()
+    }
+  })
 }

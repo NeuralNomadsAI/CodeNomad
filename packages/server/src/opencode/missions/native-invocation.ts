@@ -4,6 +4,15 @@ import { Effect } from "effect"
 // Match the native decision evidence read bound (native-human-evidence.ts).
 export const NATIVE_HUMAN_ANSWER_TIMEOUT_MS = 10_000
 type Runner = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>
+/** Interrupt and join the native operation before its invocation can retire. */
+export function abortableNativeEffect<A, E, R>(effect: Effect.Effect<A, E, R>, signal: AbortSignal) {
+  return Effect.raceFirst(Effect.suspend(() => { signal.throwIfAborted(); return effect }), Effect.callback<never, Error>(resume => {
+    const abort = () => resume(Effect.fail(new Error("Native Mission invocation cancelled")))
+    signal.addEventListener("abort", abort, { once: true })
+    if (signal.aborted) abort()
+    return Effect.sync(() => signal.removeEventListener("abort", abort))
+  }))
+}
 const track = <A>(pending: Set<Promise<unknown>>, promise: Promise<A>) => {
   pending.add(promise)
   void promise.then(() => pending.delete(promise), () => pending.delete(promise))
@@ -14,7 +23,8 @@ const track = <A>(pending: Set<Promise<unknown>>, promise: Promise<A>) => {
  * Each check's answer runtimes share cancellation/deadline and join before graph
  * release. A noninterruptible native finalizer must still finish: abandoning it
  * at a wall-clock deadline would be an unsafe use-after-release. */
-export function nativeInvocation() {
+export function nativeInvocation(timeoutMs = NATIVE_HUMAN_ANSWER_TIMEOUT_MS) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error("Native invocation deadline invalid")
   type Invocation = { active: boolean; pending: Set<Promise<unknown>>;
     signal: AbortSignal; run: <A, E>(effect: Effect.Effect<A, E>, signal: AbortSignal) => Promise<A> }
   const local = new AsyncLocalStorage<Invocation>()
@@ -45,7 +55,7 @@ export function nativeInvocation() {
       if (signal.aborted) return Promise.reject(signal.reason)
       return track(invocation.pending, track(pending, invocation.run(effect, signal)))
     }
-    const timer = setTimeout(() => cancel.abort(new Error("Native human answer read timed out")), NATIVE_HUMAN_ANSWER_TIMEOUT_MS)
+    const timer = setTimeout(() => cancel.abort(new Error("Native Mission invocation timed out")), timeoutMs)
     const done = (async () => {
       try { return await run(Effect.tryPromise({ try: () => use(run), catch: error => error })) }
       finally { clearTimeout(timer); cancel.abort(); await Promise.allSettled(pending) }

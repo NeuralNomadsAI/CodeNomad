@@ -262,13 +262,12 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                       <For each={group.commands}>
                         {(command, localIndex) => {
                           const commandIndex = group.startIndex + localIndex()
-                          const disabled = isCommandDisabled(command)
                           return (
                             <button
                               type="button"
                               data-command-index={commandIndex}
                               onClick={() => handleCommandClick(command)}
-                              disabled={disabled}
+                              disabled={isCommandDisabled(command)}
                               title={command.shortcutId ? withHotkey(resolveResolvable(command.label), command.shortcutId) : resolveResolvable(command.label)}
                               class={`modal-item ${selectedCommandId() === command.id ? "modal-item-highlight" : ""}`}
                               onPointerMove={(event) => {
@@ -285,9 +284,9 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                                 <div class="modal-item-label">
                                   {resolveResolvable(command.label)}
                                 </div>
-                                <div class="modal-item-description">
-                                  {resolveResolvable(command.description)}
-                                </div>
+                                <Show when={resolveResolvable(command.description)}>
+                                  {(description) => <div class="modal-item-description">{description()}</div>}
+                                </Show>
                               </div>
                             </button>
                           )

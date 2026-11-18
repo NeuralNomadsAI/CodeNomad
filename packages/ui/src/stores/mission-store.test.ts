@@ -17,21 +17,42 @@ const available = (objective: string): MissionListResponse => ({
     id: `mission-${objective}`,
     projectID: "project-1",
     projectCanonical: "/repo",
-    objective,
+    excerpt: objective,
     template: "custom",
     status: "active",
     coordinatorSessionId: "session-1",
     actors: [],
     tasks: [],
     reports: [],
-    frontier: [],
-    claims: [],
     createdAt: 1,
     updatedAt: 1,
     revision: 1,
     history: [],
     historyTruncated: false,
   }],
+})
+
+test("a refresh publishes new objects only for the missions it changed", async () => {
+  const two = (): MissionListResponse => {
+    const base = available("a") as Extract<MissionListResponse, { available: true }>
+    const other = structuredClone(available("b") as Extract<MissionListResponse, { available: true }>)
+    return { ...base, missions: [...base.missions, ...other.missions], activity: { ...base.activity, missions: [...base.activity.missions, ...other.activity.missions] } }
+  }
+  const responses = [two(), two(), (() => { const changed = two() as Extract<MissionListResponse, { available: true }>; changed.missions[1] = { ...changed.missions[1]!, revision: 2 }; return changed })()]
+  const store = createMissionStore(async () => responses.shift()!)
+  await store.refresh("instance-1")
+  const first = store.state("instance-1")
+  await store.refresh("instance-1")
+  const same = store.state("instance-1")
+  assert.equal(same.missions, first.missions, "an identical read keeps the published maps")
+  assert.equal(same.activity, first.activity)
+  await store.refresh("instance-1")
+  const changed = store.state("instance-1")
+  assert.notEqual(changed.missions, first.missions)
+  assert.equal(changed.missions[0], first.missions[0], "the unchanged mission keeps its object")
+  assert.notEqual(changed.missions[1], first.missions[1])
+  assert.equal(changed.missions[1]!.revision, 2)
+  assert.equal(changed.activity, first.activity, "unchanged activity stays shared")
 })
 
 test("loads durable mission snapshots and represents optional unavailability", async () => {
@@ -42,7 +63,7 @@ test("loads durable mission snapshots and represents optional unavailability", a
   const store = createMissionStore(async () => responses.shift()!)
   await store.ensure("instance-1")
   assert.equal(store.state("instance-1").status, "ready")
-  assert.equal(store.state("instance-1").missions[0]?.objective, "first")
+  assert.equal(store.state("instance-1").missions[0]?.excerpt, "first")
   assert.equal(store.state("instance-1").activity?.generatedAt, 11)
   await store.refresh("instance-1")
   assert.deepEqual(store.state("instance-1"), {
@@ -53,11 +74,12 @@ test("loads durable mission snapshots and represents optional unavailability", a
   })
 })
 
-test("retains authoritative pending cleanup identities across passive failures and replaces them only on a successful read", async () => {
+for (const documentPending of [false, true]) test(`retains authoritative pending cleanup identities across passive failures (document pending: ${documentPending})`, async () => {
   const initial = available("first")
   if (!initial.available) throw new Error("fixture")
   const cleanup = { missionID: "msn_deleted", deletionID: "evt_deleted", requestID: "original-request", expectedRevision: 7,
-    deleteManagedSessions: true, objective: "Deleted mission", removed: 1, retained: 0, pending: 1, reasons: [], createdAt: 1 }
+    deleteManagedSessions: true, objective: "Deleted mission", removed: 1, retained: 0, pending: documentPending ? 0 : 1,
+    documentPending, reasons: [], createdAt: 1 }
   initial.cleanups = [cleanup]
   let fail = false
   const store = createMissionStore(async () => { if (fail) throw new Error("offline"); return initial })
@@ -65,14 +87,17 @@ test("retains authoritative pending cleanup identities across passive failures a
   assert.deepEqual(store.state("instance-1").cleanups, [cleanup])
   fail = true; await store.refresh("instance-1")
   assert.equal(store.state("instance-1").cleanups![0].requestID, "original-request")
-  assert.equal(store.state("instance-1").cleanups![0].pending, 1)
+  assert.equal(store.state("instance-1").cleanups![0].pending, cleanup.pending)
+  assert.equal(store.state("instance-1").cleanups![0].documentPending, documentPending)
   fail = false; initial.cleanups = []; initial.cleanupUnavailable = true
   await store.refresh("instance-1")
-  assert.equal(store.state("instance-1").cleanups![0].pending, 1)
+  assert.equal(store.state("instance-1").cleanups![0].pending, cleanup.pending)
+  assert.equal(store.state("instance-1").cleanups![0].documentPending, documentPending)
   assert.equal(store.state("instance-1").cleanupUnavailable, true)
-  delete initial.cleanupUnavailable; initial.cleanups = [{ ...cleanup, pending: 0, removed: 2 }]
+  delete initial.cleanupUnavailable; initial.cleanups = [{ ...cleanup, pending: 0, removed: 2, documentPending: false }]
   await store.refresh("instance-1")
   assert.equal(store.state("instance-1").cleanups![0].pending, 0)
+  assert.equal(store.state("instance-1").cleanups![0].documentPending, false)
 })
 
 const row = (id: string, status: "active" | "completed" = "completed") => ({ id, objective: id, status, coordinatorSessionId: "session-1",
@@ -81,7 +106,7 @@ const row = (id: string, status: "active" | "completed" = "completed") => ({ id,
 test("a summaries backend gets the wanted maps and the held version; rows survive an omitted list", async () => {
   const open = available("open")
   if (!open.available) throw new Error("fixture")
-  const closed = { ...open.missions[0], id: "mission-closed", objective: "closed", status: "completed" as const }
+  const closed = { ...open.missions[0], id: "mission-closed", excerpt: "closed", status: "completed" as const }
   const requests: unknown[] = []
   const responses: MissionListResponse[] = [
     { ...open, summaries: [row("mission-open", "active"), row("mission-closed")], summariesVersion: "v1" },
@@ -240,7 +265,7 @@ test("coalesces an in-flight invalidation into one trailing refresh", async () =
   assert.equal(resolvers.length, 2)
   resolvers[1](available("current"))
   await Promise.all([first, trailing])
-  assert.equal(store.state("instance-1").missions[0]?.objective, "current")
+  assert.equal(store.state("instance-1").missions[0]?.excerpt, "current")
 })
 
 test("tracks visible demand independently from cached snapshots", async () => {
@@ -265,7 +290,7 @@ test("hiding the panel cancels a queued trailing read but preserves the current 
   resolve(available("cached"))
   await Promise.all([first, trailing])
   assert.equal(requests, 1)
-  assert.equal(store.state("instance-1").missions[0]?.objective, "cached")
+  assert.equal(store.state("instance-1").missions[0]?.excerpt, "cached")
   assert.deepEqual(store.demandedInstanceIds(), [])
 })
 
@@ -290,7 +315,7 @@ test("preserves the last map through transient errors and clears stopped workspa
   fail = true
   await store.refresh("instance-1")
   assert.equal(store.state("instance-1").status, "error")
-  assert.equal(store.state("instance-1").missions[0]?.objective, "durable")
+  assert.equal(store.state("instance-1").missions[0]?.excerpt, "durable")
   store.clear("instance-1")
   assert.equal(store.state("instance-1").status, "idle")
 })

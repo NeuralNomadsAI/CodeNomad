@@ -3,6 +3,7 @@ import { toDataURL } from "qrcode"
 import { ChevronRight, ExternalLink, Link2, Loader2, RefreshCw, Shield, Wifi } from "lucide-solid"
 import type { NetworkAddress, ServerMeta } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
+import { getServerMeta, localRequest } from "../../lib/server-meta"
 import { restartCli } from "../../lib/native/cli"
 import { serverSettings, setListeningMode } from "../../stores/preferences"
 import { showConfirmDialog } from "../../stores/alerts"
@@ -10,6 +11,7 @@ import { getLogger } from "../../lib/logger"
 import { useI18n } from "../../lib/i18n"
 import { splitRemoteAddresses, type RemoteAddressGroups } from "../../lib/remote-access-addresses"
 import { SettingsSwitch } from "./settings-switch"
+import { SettingsInfoTip } from "./settings-info-tip"
 
 const log = getLogger("actions")
 
@@ -36,6 +38,8 @@ export const RemoteAccessSettingsSection: Component = () => {
   const addresses = createMemo<NetworkAddress[]>(() => meta()?.addresses ?? [])
   const currentMode = createMemo(() => meta()?.listeningMode ?? serverSettings().listeningMode)
   const allowExternalConnections = createMemo(() => currentMode() === "all")
+  // The administrator fixed the listening address; the switch shows it but cannot change it.
+  const listeningLocked = createMemo(() => meta()?.listeningLocked === true)
   const displayAddresses = createMemo<RemoteAddressGroups>(() => {
     const list = addresses()
     if (!allowExternalConnections()) return { recommended: null, hidden: [] }
@@ -47,7 +51,7 @@ export const RemoteAccessSettingsSection: Component = () => {
     setError(null)
     setPasswordError(null)
     try {
-      const [metaResult, authResult] = await Promise.all([serverApi.fetchServerMeta(), serverApi.fetchAuthStatus()])
+      const [metaResult, authResult] = await Promise.all([getServerMeta(true), serverApi.fetchAuthStatus()])
       setMeta(metaResult)
       setAuthStatus(authResult)
       setShowAllAddresses(false)
@@ -80,7 +84,7 @@ export const RemoteAccessSettingsSection: Component = () => {
 
   const handleAllowConnectionsChange = async (checked: boolean) => {
     const targetMode: "local" | "all" = checked ? "all" : "local"
-    if (targetMode === currentMode() || applyingListeningMode()) return
+    if (targetMode === currentMode() || applyingListeningMode() || listeningLocked()) return
 
     const confirmed = await showConfirmDialog(t("remoteAccess.listeningMode.restartConfirm.message"), {
       title: checked
@@ -166,7 +170,6 @@ export const RemoteAccessSettingsSection: Component = () => {
               <Shield class="settings-card-heading-icon" />
               <div>
                 <h3 class="settings-card-title">{t("remoteAccess.sections.listeningMode.label")}</h3>
-                <p class="settings-card-subtitle">{t("remoteAccess.sections.listeningMode.help")}</p>
               </div>
             </div>
             <div class="settings-toolbar-inline">
@@ -184,22 +187,22 @@ export const RemoteAccessSettingsSection: Component = () => {
 
           <div class="settings-toggle-row">
             <div>
-              <div class="settings-toggle-title">{t("remoteAccess.toggle.title")}</div>
-              <div class="settings-toggle-caption">
-                {allowExternalConnections()
-                  ? t("remoteAccess.toggle.caption.all")
-                  : t("remoteAccess.toggle.caption.local")}
+              <div class="settings-toggle-title">
+                {t("remoteAccess.toggle.title")}
+                <Show when={listeningLocked()}><SettingsInfoTip text={t("remoteAccess.toggle.locked")} help={{ page: "remote-access", anchor: "administrator-policy" }} /></Show>
               </div>
+              <Show when={listeningLocked() && meta()?.host}>
+                <div class="settings-toggle-caption">{t("remoteAccess.toggle.caption.locked", { host: meta()!.host })}</div>
+              </Show>
             </div>
             <SettingsSwitch
               checked={allowExternalConnections()}
               label={t("remoteAccess.toggle.title")}
-              disabled={loading() || applyingListeningMode()}
+              disabled={loading() || applyingListeningMode() || listeningLocked()}
               onChange={(nextChecked) => void handleAllowConnectionsChange(nextChecked)}
             />
           </div>
 
-          <p class="settings-inline-note">{t("remoteAccess.toggle.note")}</p>
         </div>
 
         <div class="settings-card">
@@ -228,7 +231,7 @@ export const RemoteAccessSettingsSection: Component = () => {
                    </p>
                     </div>
 
-                    <div class="settings-password-actions">
+                    <Show when={localRequest()}><div class="settings-password-actions">
                       <button
                         class="selector-button selector-button-secondary w-auto"
                         type="button"
@@ -243,10 +246,10 @@ export const RemoteAccessSettingsSection: Component = () => {
                             ? t("remoteAccess.password.actions.change")
                             : t("remoteAccess.password.actions.set")}
                       </button>
-                    </div>
+                    </div></Show>
                   </div>
 
-                   <Show when={passwordFormOpen()}>
+                   <Show when={localRequest() && passwordFormOpen()}>
                     <div class="settings-form-group">
                       <label class="settings-form-label">{t("remoteAccess.password.form.newPassword")}</label>
                       <input
@@ -287,7 +290,6 @@ export const RemoteAccessSettingsSection: Component = () => {
               <Wifi class="settings-card-heading-icon" />
               <div>
                 <h3 class="settings-card-title">{t("remoteAccess.sections.addresses.label")}</h3>
-                <p class="settings-card-subtitle">{t("remoteAccess.sections.addresses.help")}</p>
               </div>
             </div>
           </div>

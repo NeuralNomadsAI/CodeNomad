@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
+import { waitForDepthInfo } from "./mission-actions"
 import { chromium, type Browser, type Page } from "playwright"
 import type { NativePreferencesRequest } from "../../src/lib/native/preferences-window"
 
@@ -206,7 +207,7 @@ for (const host of ["electron", "tauri"] as const) {
 
       // The shared project context also serves Missions, without opening a second project.
       await page.getByRole("button", { name: "Missions", exact: true }).click()
-      await page.getByText("OpenCode effective depth: 2", { exact: true }).waitFor()
+      await waitForDepthInfo(page, "OpenCode effective depth: 2")
       assert.deepEqual(fixture.writes, [], "resolution is read-only")
       assert.deepEqual(fixture.errors, [])
     } finally { await page.close() }

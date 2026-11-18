@@ -98,6 +98,30 @@ describe("useActiveSessionMessageLoad", () => {
     } finally { dispose() }
   })
 
+  it("passes force to loadMessages only when forceLoad is set", async () => {
+    const forces: Array<boolean | undefined> = []
+    const run = (forceLoad: boolean | undefined) => {
+      let dispose = () => {}
+      createRoot(done => {
+        dispose = done
+        useActiveSessionMessageLoad({ isActive: () => true, instanceId: () => 'inst', session: () => ({ id: 'a' }),
+          ...(forceLoad === undefined ? {} : { forceLoad }),
+          waitForHydration: () => Promise.resolve(),
+          loadMessages: (_instance, _session, options) => { forces.push((options as { force?: boolean } | undefined)?.force) } })
+      })
+      return dispose
+    }
+    const disposeDefault = run(undefined)
+    const disposeForced = run(true)
+    try {
+      await tick()
+      assert.deepEqual(forces, [undefined, true], "a forced binding reads past a previously failed load")
+    } finally {
+      disposeDefault()
+      disposeForced()
+    }
+  })
+
   it("loads once on activation, ignores same-id session replacement, and reloads on id change or reactivation", async () => {
     const loads: Array<{ instanceId: string; sessionId: string }> = []
     const [session, setSession] = createSignal<{ id: string } | undefined>({ id: "a" })

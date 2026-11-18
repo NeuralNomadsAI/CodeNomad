@@ -6,13 +6,15 @@ import { extraProviders } from "./providers/extra"
 import { miniMaxProviders } from "./providers/minimax"
 import { oauthProviders } from "./providers/oauth"
 import { specialProviders } from "./providers/special"
+import { openCodeConsole } from "./providers/opencode-console"
 import { xaiProviders } from "./providers/xai"
-import type { AuthFile, ProviderResult, UsageProvider } from "./types"
+import { googleUsage, selectGoogleModelWindows, unknownGoogleUsage } from "./providers/google"
+import type { AuthEntry, AuthFile, ProviderReadContext, ProviderResult, UsageProvider } from "./types"
 
 const CACHE_TTL_MS = 60_000
 const FAILURE_CACHE_TTL_MS = 5_000
 const providers = [
-  ...oauthProviders, ...apiKeyProviders, ...miniMaxProviders, ...specialProviders, ...xaiProviders, ...extraProviders, ...creditProviders,
+  ...oauthProviders, ...apiKeyProviders, ...miniMaxProviders, ...specialProviders, ...xaiProviders, ...extraProviders, ...creditProviders, googleUsage, openCodeConsole,
 ]
 const registry = new Map<string, UsageProvider>()
 
@@ -53,26 +55,65 @@ export function selectModelWindows(result: ProviderResult, modelId?: string): Re
   return { ...usage.windows, ...Object.fromEntries(scoped) }
 }
 
-async function fetchProvider(provider: UsageProvider, auth: AuthFile): Promise<ProviderResult> {
-  const identity = createHash("sha256").update(JSON.stringify(provider.aliases.map(alias => auth[alias] ?? null))).digest("hex")
+async function fetchProvider(provider: UsageProvider, auth: AuthFile, context?: ProviderReadContext): Promise<ProviderResult> {
+  const signal = context?.signal
+  if (signal?.aborted && provider.id === "google") return unknownGoogleUsage(auth)
+  signal?.throwIfAborted()
+  const identity = createHash("sha256").update(JSON.stringify([
+    provider.aliases.map(alias => auth[alias] ?? null),
+    context?.integrationID ?? null,
+    context?.settingsStatus ?? null, context?.settings?.baseURL ?? null, context?.settings?.apiKey ?? null,
+  ])).digest("hex")
   const cached = cache.get(provider.id)
   if (cached?.identity === identity && cached.expiresAt > Date.now()) return cached.result
   const key = `${provider.id}\0${identity}`
   const inFlight = pending.get(key)
-  if (inFlight) return inFlight
-  const request = provider.fetchQuota(auth).then((result) => {
-    cache.set(provider.id, { identity, result, expiresAt: Date.now() + (result.ok ? CACHE_TTL_MS : FAILURE_CACHE_TTL_MS) })
+  if (inFlight) {
+    if (provider.id !== "google" || !signal) return inFlight
+    // A slower native prelude can join a newer request with a later deadline.
+    if (signal.aborted) return unknownGoogleUsage(auth)
+    let abort!: () => void
+    try {
+      return await Promise.race([inFlight, new Promise<ProviderResult>(resolve => {
+        abort = () => resolve(unknownGoogleUsage(auth))
+        signal.addEventListener("abort", abort, { once: true })
+      })])
+    } finally { signal.removeEventListener("abort", abort) }
+  }
+  // Console's shared read owns its timeout; cancellation only ends a caller's wait.
+  const readSignal = provider.id === openCodeConsole.id ? AbortSignal.timeout(15_000) : signal
+  const read = provider.fetchQuota(auth, provider.id === openCodeConsole.id ? { ...context, signal: readSignal } : context)
+  const request = (provider.id === openCodeConsole.id ? waitForRead(read, readSignal) : read).then((result) => {
+    if (readSignal?.aborted && provider.id === "google") return unknownGoogleUsage(auth)
+    readSignal?.throwIfAborted()
+    const credential = provider.id === openCodeConsole.id ? auth.opencode as AuthEntry | undefined : undefined
+    const expiry = credential?.type === "oauth" && typeof credential.expires === "number" ? credential.expires : Infinity
+    cache.set(provider.id, { identity, result,
+      expiresAt: Math.min(expiry, Date.now() + (result.ok ? CACHE_TTL_MS : FAILURE_CACHE_TTL_MS)) })
     return result
   }).finally(() => pending.delete(key))
   pending.set(key, request)
   return request
 }
 
+async function waitForRead<T>(read: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return read
+  signal.throwIfAborted()
+  let abort!: () => void
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(new DOMException("Usage read aborted", "AbortError"))
+    signal.addEventListener("abort", abort, { once: true })
+  })
+  try { return await Promise.race([read, aborted]) }
+  finally { signal.removeEventListener("abort", abort) }
+}
+
 export async function getProviderUsage(
   requestedProviderId: string,
-  options: { modelId?: string; auth?: AuthFile } = {},
+  options: { modelId?: string; auth?: AuthFile; context?: ProviderReadContext } = {},
 ): Promise<ProviderUsageResponse> {
   const provider = resolveUsageProvider(requestedProviderId)
+  if (provider?.id !== "google") options.context?.signal?.throwIfAborted()
   if (!provider) {
     return {
       requestedProviderId,
@@ -86,17 +127,37 @@ export async function getProviderUsage(
       fetchedAt: Date.now(),
     }
   }
-  const result = await fetchProvider(provider, options.auth ?? {})
+  const context = provider.id === "kimi-for-coding"
+    ? { ...options.context, integrationID: options.context?.integrationID ?? requestedProviderId.trim().toLowerCase() } : options.context
+  const read = fetchProvider(provider, options.auth ?? {}, context)
+  const result = await (provider.id === openCodeConsole.id ? waitForRead(read, context?.signal) : read)
+  if (provider.id !== "google") options.context?.signal?.throwIfAborted()
+  const reason = !result.ok && (result.unavailableReason === "openai-token-sharing-unsupported" || result.unavailableReason === "provider-error" || result.unavailableReason === "minimax-limits-not-shared" || result.unavailableReason === "invalid-base-url"
+    || result.unavailableReason === "cursor-token-expired" || result.unavailableReason === "cursor-team-unavailable"
+    || result.unavailableReason === "cursor-access-denied" || result.unavailableReason === "cursor-usage-unavailable"
+    || result.unavailableReason === "opencode-go-key-expired"
+    || result.unavailableReason === "opencode-console-missing-credential" || result.unavailableReason === "opencode-console-invalid-credential"
+    || result.unavailableReason === "opencode-console-access-denied" || result.unavailableReason === "opencode-console-invalid-response"
+    || result.unavailableReason === "opencode-console-network-error")
+    ? result.unavailableReason : undefined
   return {
     requestedProviderId,
     providerId: provider.id,
     providerName: result.providerName,
+    ...(result.ok && result.usage?.copilotPlan ? { copilotPlan: result.usage.copilotPlan } : {}),
     modelId: options.modelId,
     supported: true,
     configured: result.configured,
     ok: result.ok,
-    windows: selectModelWindows(result, options.modelId),
+    windows: !result.ok ? {} : provider.id === "google" ? selectGoogleModelWindows(result, options.modelId) : selectModelWindows(result, options.modelId),
     fetchedAt: result.fetchedAt,
+    ...(reason ? { unavailableReason: reason } : {}),
+    ...(reason === "provider-error" && typeof result.providerErrorCode === "string" && /^\d{1,8}$/.test(result.providerErrorCode) && result.providerErrorCode.trim() === result.providerErrorCode
+      ? { providerErrorCode: result.providerErrorCode } : {}),
+    ...((reason === "openai-token-sharing-unsupported" && result.unavailableAction === "chatgpt-usage"
+      || reason === "opencode-go-key-expired" && result.unavailableAction === "opencode-go-new-key")
+      ? { unavailableAction: result.unavailableAction } : {}),
+    ...(result.ok && result.usage?.console ? { console: result.usage.console } : {}),
   }
 }
 

@@ -14,7 +14,15 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
+import { serverApi } from "../../../src/lib/api-client"
+import { observeMissionReads } from "../mission-read-observation-fixture"
 
+observeMissionReads(serverApi)
+window.fixtureScheduleNetworkProbe = async () => {
+  const controller = new AbortController()
+  try { await serverApi.fetchMissionSchedule("fixture", "A", { directory: "/fixture" }, controller.signal); return { aborted: false, error: "none" } }
+  catch (error) { return { aborted: controller.signal.aborted, error: error instanceof Error ? error.name : String(error) } }
+}
 await initializeClientState()
 markSessionListsRestored("fixture", "replacement")
 for (const id of ["fixture", "replacement"]) {
@@ -49,10 +57,10 @@ function Fixture() {
         title: id, version: "1", metadata: {} }, durable: { aggregateID: id, seq: 1, version: 1 },
     }),
     snapshot: () => ({ instanceId: instanceId(), scope: scope(), selectedSession: activeSessionId().get(instanceId()) ?? null,
-      view: missionProjectView(scope()), reveals: reveals() }),
+      view: missionProjectView(instanceId()), reveals: reveals() }),
   }
   return <div style={{ display: "grid", "grid-template-columns": "minmax(0,1fr) 390px", height: "100vh" }}>
-    <main class="mission-transcript-surface" style={{ "min-width": 0, overflow: "hidden" }}><p>Private chat surface</p><Show when={missionProjectView(scope()).reader}><MissionReader instanceId={instanceId()} scope={scope()} /></Show>
+    <main class="mission-transcript-surface" style={{ "min-width": 0, overflow: "hidden" }}><p>Private chat surface</p><Show when={missionProjectView(instanceId()).reader}><MissionReader instanceId={instanceId()} scope={scope()} /></Show>
       <output data-testid="navigation-state">{JSON.stringify(window.missionNavigation.snapshot())}</output></main>
     <aside style={{ overflow: "auto" }}><Show when={mounted()}><MissionControl instanceId={instanceId()} isActive={active}
       activeSessionId={() => activeSessionId().get(instanceId()) ?? null} t={t} onRevealConversation={() => reveal(value => value + 1)} /></Show></aside>
@@ -60,6 +68,7 @@ function Fixture() {
 }
 declare global {
   interface Window {
+    fixtureScheduleNetworkProbe(): Promise<{ aborted: boolean; error: string }>
     missionNavigation: {
       mount(value: boolean): void; activate(value: boolean): void; instance(value: string): void
       directory(value: string): void; project(value: string): void; clearActive(): void

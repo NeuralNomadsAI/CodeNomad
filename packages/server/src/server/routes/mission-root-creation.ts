@@ -30,7 +30,7 @@ export async function createManagedMissionRoot(manager: Manager, fence: Worktree
     if (!connection) throw new Error("Workspace unavailable")
     const coordinator = await connection.client.session.get({ sessionID: coordinatorID }, { signal })
     if (coordinator.id !== coordinatorID || coordinator.parentID
-      || !await manager.ownsLocation(workspace.id, coordinator.location, connection.client, signal)) throw new Error("Foreign coordinator")
+      || !await manager.ownsLocation(workspace.id, coordinator.location, connection.client, { signal })) throw new Error("Foreign coordinator")
     return { workspace, connection, coordinator }
   })).catch(() => undefined)
   if (!owner) throw new Error("Missing mission creation owner")

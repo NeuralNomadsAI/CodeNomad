@@ -10,6 +10,7 @@ import { withProductRuntime } from "./native-product-fixture.mjs"
 const bundle = process.argv[3] ?? fileURLToPath(new URL("../packages/server/dist/plugins/session-pruning/plugin.mjs", import.meta.url))
 assert(path.isAbsolute(bundle), "Pass an absolute private bundle path")
 const { installPruningPresence } = await tsImport("../packages/server/src/opencode/pruning-installation.ts", import.meta.url)
+const { readManagedDesktopPlugins, managedDesktopPluginForSource } = await tsImport("../packages/server/src/opencode/desktop-plugin-managed.ts", import.meta.url)
 let closePresence
 try {
   await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
@@ -27,6 +28,15 @@ try {
       await delay(50)
     } while (Date.now() < deadline)
     assert.equal(plugin?.state.status, "active", "Shipped plugin must load")
+    const globalDirectory = (await client.config.get({ location })).find(entry => entry.type === "directory")?.path
+    assert(globalDirectory, "Daemon reports its discovery directory")
+    const installations = await readManagedDesktopPlugins({ globalDirectory, paths: process.platform === "win32" ? path.win32 : path.posix,
+      hostPath: async file => file, assertCurrent: connection.assertCurrent })
+    assert.equal(plugin.source.type, "local")
+    const managed = managedDesktopPluginForSource(installations, plugin.source.path, process.platform === "win32" ? path.win32 : path.posix)
+    assert(managed, "Real native source matches the verified published installation")
+    assert(managed.ids.includes(plugin.id), "Published descriptor agrees with the exported native plugin ID")
+    console.log(`PASS: native managed source is ${plugin.source.path === managed.entry ? "generated .ts shim" : "content-addressed .mjs bundle"}`)
     const session = await client.session.create({ location })
     const form = await client.session.form.create({ sessionID: session.id, title: "Runtime contract fixture", fields: [{ key: "answer", type: "string" }] })
     const cold = path.join(root, "cold")

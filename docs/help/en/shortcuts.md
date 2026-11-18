@@ -4,9 +4,9 @@
 
 1. Open **Command Palette** using `Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS, or use its visible button/menu item.
 2. Type an action name. The palette includes application actions and the current Location's custom commands; availability depends on the active view.
-3. Run **Open help** to open this guide in the current UI language in an external browser context. Native **Help → CodeNomad Help** opens the same guide.
+3. Run **Open help** to open this guide in the current UI language in an external browser context. Native **Help → CodeNomad Help** opens the same guide. **Support CodeNomad** (native **Help → Support CodeNomad**) opens the [Support CodeNomad](sponsor.md) page the same way.
 
-Help leaves the application view and draft untouched. If opening fails, visit [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) directly. A command being discoverable does not mean it has a customizable shortcut: the shortcut manager covers a fixed catalog of 74 renderer actions, not every palette or native-menu action. It includes palette commands such as **Compact Session**, **Undo Last Message** or **Open help** that start with **No shortcut**; project-folder, terminal and editor actions run only in local desktop windows.
+Help leaves the application view and draft untouched. A command being discoverable does not mean it has a customizable shortcut: the shortcut manager covers a fixed catalog of 75 renderer actions, not every palette or native-menu action. It includes palette commands such as **Compact Session**, **Undo Last Message** or **Open help** that start with **No shortcut**; project-folder, terminal and editor actions run only in local desktop windows.
 
 ## Record, disable and reset {#customize}
 
@@ -16,8 +16,6 @@ Help leaves the application view and draft untouched. If opening fails, visit [C
 4. Resolve warnings on every conflicting row; conflicts are reported, not silently disabled.
 
 Bindings are saved in CodeNomad UI configuration and affect clients sharing that configuration. They do not edit OpenCode's CLI/TUI bindings or native menu accelerators. Recording suppresses app renderer shortcuts, but cannot suppress the operating system or native menu. **Cancel**, focus loss, closing the section or leaving the window ends recording. Bare modifiers and IME composition are ignored; plain Tab/Shift+Tab moves focus.
-
-If saving fails, keep the old shortcut available and retry after checking the displayed binding. Reset is the safe recovery for an accidental assignment.
 
 ## Renderer defaults {#renderer-defaults}
 
@@ -35,9 +33,9 @@ If saving fails, keep the old shortcut available and retry after checking the di
 | Close session | `Mod+Shift+W` |
 | Previous / next session | `Mod+Shift+[` / `Mod+Shift+]` |
 | Session tab 1–9 | `Mod+Shift+1` through `Mod+Shift+9` |
-| Instance info | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | Search session history | `Mod+F` |
-| Previous / next user message | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) or `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
+| **Previous User Message** / **Next User Message**, also in the composer's **More actions** menu | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) or `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Next / previous search result (search focused) | `Enter` / `Shift+Enter` |
 | Focus prompt / Clear prompt | `Mod+P` / `Mod+K` |
 | Open model / agent selector | `Mod+Shift+M` / `Mod+Shift+A` |
@@ -74,4 +72,4 @@ Plain browser windows also retain their browser shortcuts. If a binding never re
 
 Digit-row and square-bracket shortcuts use physical key positions for recording, execution and conflict checks, including AZERTY/QWERTZ layouts. Other keys use their logical values. Record on the keyboard you intend to use, then check the displayed result.
 
-During IME composition, text entry takes precedence. Prompt history and Escape actions also depend on focus, picker/shell state and the current operation; do not assume every ArrowUp or Escape is an unconditional global action. On desktop, sending moves focus to the conversation so arrows, paging keys and Space scroll it; typing a character returns to the composer with that character, and **Focus prompt** returns there before using prompt history. Tooltips name the current shortcut of controls such as the command palette, search, New session, Info and the composer selectors; with the shortcut manager they show the assignments without adding a permanent keyboard-help strip.
+During IME composition, text entry takes precedence. Prompt history and Escape actions also depend on focus, picker/shell state and the current operation; do not assume every ArrowUp or Escape is an unconditional global action. On desktop, sending moves focus to the conversation so arrows, paging keys and Space scroll it; typing a character returns to the composer with that character, and **Focus prompt** returns there before using prompt history.

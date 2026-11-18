@@ -11,14 +11,20 @@ import { addInstance, instances } from "../../../src/stores/instances"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { clearSessionCatalogState, refreshSessionCatalog } from "../../../src/stores/session-api"
 import { openSessionPreview, showSessionChatFor, getSessionPreview } from "../../../src/stores/session-previews"
+import { getTabViewState } from "../../../src/stores/tab-view-state"
+import { SessionPreviewHost } from "../../../src/components/session-preview-view"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
+import { serverEvents } from "../../../src/lib/server-events"
+import { panelExtensionsApi } from "../../../src/lib/panel-extensions-api"
+import { observePanelReads } from "../panel-read-fixture"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
 
+observePanelReads(panelExtensionsApi)
 await initializeClientState()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
 const id = "cross-navigation", scope = "/fixture", client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
@@ -35,14 +41,14 @@ seedRestoredSessionSelection(id, "ses_initial", "ses_initial")
 markSessionListsRestored(id)
 setMessagesLoaded(previous => new Map(previous).set(id, new Set(initial.map(session => session.id))))
 await ensureWorktreesLoaded(id)
-await openSessionPreview("ses_initial", "https://example.invalid/", scope)
-showSessionChatFor("ses_initial", scope)
+await openSessionPreview("ses_initial", "https://example.invalid/", id)
+showSessionChatFor("ses_initial", id)
 
 // Previews are per conversation; follow the one opened for the initial conversation.
-const initialPreview = () => getSessionPreview("ses_initial", scope)
-const snapshot = () => ({ session: activeSessionId().get(id) ?? null, mode: initialPreview()?.mode ?? null,
+const initialPreview = () => getSessionPreview("ses_initial")
+const snapshot = () => ({ session: activeSessionId().get(id) ?? null, mode: getTabViewState(id).previews?.ses_initial?.mode ?? null,
   previewSession: initialPreview()?.sessionId, previewUrl: initialPreview()?.targetUrl,
-  reader: missionProjectView(scope).reader ?? null })
+  reader: missionProjectView(id).reader ?? null })
 const history: ReturnType<typeof snapshot>[] = []
 function Fixture() {
   createComputed(() => {
@@ -51,6 +57,7 @@ function Fixture() {
   })
   window.missionCrossNavigation = {
     snapshot, history: () => [...history],
+    transport: status => (serverEvents as unknown as { emitTransportStatus(status: string): void }).emitTransportStatus(status),
     coldCatalogue: async () => {
       // Drain this fixture's read before clearing its display marker. This never
       // cancels a shared read and does not change any product cache policy.
@@ -69,6 +76,7 @@ function Fixture() {
       onExecuteCommand={() => {}} onCloseSession={() => {}} onNewSession={() => {}}
       handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0}
       mobileFullscreenMode={false} onEnterMobileFullscreen={() => {}} onExitMobileFullscreen={() => {}} />
+    <SessionPreviewHost />
   </div>
 }
 declare global {
@@ -76,6 +84,7 @@ declare global {
     missionCrossNavigation: {
       snapshot(): ReturnType<typeof snapshot>; history(): ReturnType<typeof snapshot>[]
       coldCatalogue(): Promise<void>; clearActive(): void; created(): void
+      transport(status: "connected" | "disconnected"): void
     }
   }
 }

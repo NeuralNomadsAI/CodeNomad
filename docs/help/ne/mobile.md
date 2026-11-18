@@ -22,11 +22,11 @@ Remote Control लाई device pairing चाहिन्छ; direct connection
 
 remote PWA स्थापना र microphone पहुँचलाई browser ले चिन्ने secure context चाहिन्छ। ठ्याक्कै hostname/IP मिल्ने trusted HTTPS certificate प्रयोग गर्नुहोस्। generated local certificate लाई client device/browser ले स्पष्ट trust गर्नुपर्छ; warning page वा bypass भरपर्दो installation setup होइन। browser localhost अपवाद त्यही device मा लागू हुन्छ, अर्को host को HTTP LAN address मा होइन।
 
-install विकल्प नभए पहिले HTTPS trust र browser support जाँचेर embedded QR/in-app browser होइन पूर्ण browser मा पृष्ठ फेरि खोल्नुहोस्। microphone असफल भए browser/OS site permission र [आवाज](voice.md) हेर्नुहोस्। install ठीक गर्न authentication वा TLS verification बन्द नगर्नुहोस्।
+install ठीक गर्न authentication वा TLS verification बन्द नगर्नुहोस्।
 
 ## touch layout मा काम {#touch-layout}
 
-navigation र tool खोल्न **बायाँ प्यानल** र **दायाँ प्यानल** प्रयोग गर्नुहोस्। साँघुरो layout मा desktop-चौडाइ canvas थोपर्नुको सट्टा प्यानल कुराकानीमाथि overlay हुन्छन्; एउटा floating panel खोल्दा अर्को बन्द हुन्छ। floating सत्र प्यानलमा सत्र वा **उदाहरण जानकारी** रोज्दा, पहिले नै देखिएको सत्र भए पनि, तपाईंको छनोट देखाउन प्यानल बन्द हुन्छ; **पछाडि** र **अगाडि** ले यसलाई खुला राख्छन्। ठाउँ सीमित हुँदा conversation-header कार्य overflow menu मा जान्छन्।
+navigation र tool खोल्न **बायाँ प्यानल** र **दायाँ प्यानल** प्रयोग गर्नुहोस्। साँघुरो layout मा desktop-चौडाइ canvas थोपर्नुको सट्टा प्यानल कुराकानीमाथि overlay हुन्छन्; एउटा floating panel खोल्दा अर्को बन्द हुन्छ। floating सत्र प्यानलमा सत्र रोज्दा, पहिले नै देखिएको सत्र भए पनि, तपाईंको छनोट देखाउन प्यानल बन्द हुन्छ; **पछाडि** र **अगाडि** ले यसलाई खुला राख्छन्। ठाउँ सीमित हुँदा conversation-header कार्य overflow menu मा जान्छन्।
 
 कम्पोजरको footer मै Agent, Model र Thinking रहन्छन्। field on-screen keyboard समेत देखिने कुराकानीअनुसार resize हुन्छ; लामो मस्यौदा scroll योग्य रहन्छन्। touch-मात्र device मा पठाउँदा on-screen keyboard फेरि खुल्दैन, त्यसैले तपाईं जवाफ पढ्न सक्नुहुन्छ; जारी राख्न कम्पोजरमा tap गर्नुहोस्। सत्र चलिरहँदा कम्पोजरको **थप कार्यहरू** मेनुले hardware-keyboard shortcut बिनै **सन्देश लाममा राख्नुहोस्** वा **अहिले पठाउनुहोस्** दिन्छ, जुन तपाईंको सामान्य पठाइले गर्दैन। interruption खोल्दा सुरक्षित उचाइ वा मस्यौदा नबदली कम्पोजर अस्थायी सानो हुन्छ। माथिको dock मा permission/question उत्तर दिँदा action footer पुग्न मिल्ने राख्नुहोस्। [कुराकानी](conversations.md) र [अनुमति](permissions.md) हेर्नुहोस्।
 
@@ -41,4 +41,6 @@ navigation र tool खोल्न **बायाँ प्यानल** र *
 | microphone, clipboard, notification र install prompt | browser/OS support, secure context र user permission मा निर्भर। |
 | offline काम | offline backend वा cached API history छैन। static UI asset cache हुन सक्छन्, तर document र API response offline workspace होइनन्। |
 
-backend पहुँचयोग्य राख्नुहोस्। mobile OS suspension वा network switch ले event stream छुटाउन सक्छ; फर्कँदा reconnect र current state refetch हुन्छ, सुनिश्चित event replay हुँदैन। retry अघि कार्य सकियो कि जाँच्नुहोस्। PWA बन्द गर्दा standalone backend रोकिँदैन; host desktop app र backend quit हुँदा अर्को launch सम्म Remote Control अनुपलब्ध हुन्छ।
+backend पहुँचयोग्य राख्नुहोस्। retry अघि कार्य सकियो कि जाँच्नुहोस्। PWA बन्द गर्दा standalone backend रोकिँदैन; host desktop app र backend quit हुँदा अर्को launch सम्म Remote Control अनुपलब्ध हुन्छ।
+
+स्थापना गरिएको PWA सहित प्रत्येक ब्राउजर ट्याबले त्यही ट्याबका लागि खुला परियोजनाहरू, चयन गरिएका कुराकानीहरू, नपठाइएका ड्राफ्टहरू र स्क्रोल स्थिति राख्छ: पृष्ठ पुनः लोड हुँदा, वा एप बदलेपछि वा स्क्रिन लक भएपछि मोबाइल OS ले पुनः लोड गर्दा ती फर्किन्छन्। नयाँ ट्याब, वा OS ले पूर्ण रूपमा बन्द गरेको PWA, गृह पृष्ठमा खुल्छ। यो ट्याबका लागि बन्द गर्न **सेटिङ → सामान्य → अघिल्लो अवस्था पुनर्स्थापना गर्नुहोस्** प्रयोग गर्नुहोस्।

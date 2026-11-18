@@ -158,7 +158,9 @@ export class NativeMissionRecurrenceStore {
         !== canonicalAuthority(input.targets.map(target => target.sessionID)))
         || prior.targets.some(target => target.outcome === "acknowledged"
           && input.targets.find(item => item.sessionID === target.sessionID)?.outcome !== "acknowledged")) throw new Error("Recurrence control targets changed")
-      doc.controls[index] = input
+      // Every target of a completed control was acknowledged: it keeps none, so only the one
+      // unfinished Pause or Stop a schedule admits lists its passage's actors.
+      doc.controls[index] = input.controlsComplete ? { ...input, targets: [] } : input
       if (input.controlsComplete && input.action !== "run-now") supersedeStartIntents(doc, index)
       if (options.clockError && doc.state === "running") doc.interruptionReason = "error"
       doc.revision++

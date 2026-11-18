@@ -1,0 +1,13 @@
+.status-process-card {
+  @apply flex items-center gap-2 border px-2 py-1;
+  background-color: var(--surface-inset);
+}
+
+.status-process-card:hover {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+  box-shadow: none;
+}
+
+.status-process-actions {
+  @apply flex shrink-0 items-center gap-1;
+}

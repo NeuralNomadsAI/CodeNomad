@@ -1,6 +1,6 @@
 import { For, Show, createMemo, type Component } from "solid-js"
 
-import type { MissionTask } from "../../../server/src/api-types"
+import type { MissionPanelTask } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { sessions } from "../stores/sessions"
 import { describeMissionExecution } from "./mission-execution-model"
@@ -16,7 +16,7 @@ const MISSION_EXECUTION_FIELDS = [
  * currently reports. Partial requests render as the native default, missing
  * session data as unknown, and nothing here re-routes or reconfigures an actor.
  */
-export const MissionExecution: Component<{ instanceId: string; task: MissionTask }> = (props) => {
+export const MissionExecution: Component<{ instanceId: string; task: MissionPanelTask }> = (props) => {
   const { t } = useI18n()
   const view = createMemo(() => {
     const sessionId = props.task.actorSessionId

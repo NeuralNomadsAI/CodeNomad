@@ -6,20 +6,20 @@ import { isSessionTranscriptProtected, SessionTranscriptLru } from "../lib/sessi
 import { messageStoreBus } from "./message-v2/bus"
 import { loading, sessions } from "./session-state"
 import { destroyOpenCodeData } from "./opencode-data"
+import { cancelTranscriptProjections } from "./opencode-projection-frame"
+import { isSessionTranscriptVisible, releaseSessionTranscriptVisible, retainSessionTranscriptVisible, clearInstanceTranscriptVisible } from "./session-transcript-visibility"
 
 // Inactive transcript budget. Protected active/live 200-message windows retain authoritative content and may exceed it.
 export const SESSION_TRANSCRIPT_BYTE_BUDGET = 64 * 1024 * 1024
 
 const log = getLogger("session")
-const visible = new Map<string, number>()
-const key = (instanceId: string, sessionId: string) => `${instanceId}\u0000${sessionId}`
 
 const coordinator = new SessionTranscriptLru({
   byteBudget: SESSION_TRANSCRIPT_BYTE_BUDGET,
   isProtected: (instanceId, sessionId) => {
     const session = sessions().get(instanceId)?.get(sessionId)
     return isSessionTranscriptProtected({
-      visible: visible.has(key(instanceId, sessionId)),
+      visible: isSessionTranscriptVisible(instanceId, sessionId),
       loading: loading().loadingMessages.get(instanceId)?.has(sessionId),
       status: session?.status,
       generationPending: session?.generationAdmissionToken !== undefined || session?.generationRecovery === "pending",
@@ -30,13 +30,18 @@ const coordinator = new SessionTranscriptLru({
   },
   evict: (instanceId, sessionId) => {
     log.info("Evicting inactive session transcript", { instanceId, sessionId })
+    cancelTranscriptProjections(instanceId, sessionId)
     destroyOpenCodeData(instanceId, sessionId)
     messageStoreBus.getInstance(instanceId)?.evictSessionTranscript(sessionId)
   },
 })
 
 const measurements = new SessionTranscriptMeasurementQueue({
-  delayMs: 100,
+  // Deferred-highlight cache commits land every ~150-350ms while a mounted
+  // burst drains; a shorter quiet window would keep aborting and restarting
+  // the retained-graph walk mid-drain. The trailing debounce plus this
+  // window collapses a switch's measurement storm into one final walk.
+  delayMs: 500,
   measure: async (instanceId, sessionId, signal) => {
     return messageStoreBus.getInstance(instanceId)?.estimateSessionRetainedBytes(sessionId, signal) ?? 0
   },
@@ -56,14 +61,11 @@ export function touchSessionTranscript(instanceId: string, sessionId: string): v
 }
 
 export function setSessionTranscriptVisible(instanceId: string, sessionId: string, value: boolean): void {
-  const entryKey = key(instanceId, sessionId)
   if (value) {
-    visible.set(entryKey, (visible.get(entryKey) ?? 0) + 1)
+    retainSessionTranscriptVisible(instanceId, sessionId)
     touchSessionTranscript(instanceId, sessionId)
   } else {
-    const count = (visible.get(entryKey) ?? 0) - 1
-    if (count > 0) visible.set(entryKey, count)
-    else visible.delete(entryKey)
+    releaseSessionTranscriptVisible(instanceId, sessionId)
     measurements.schedule(instanceId, sessionId)
   }
   coordinator.enforce()
@@ -87,8 +89,6 @@ messageStoreBus.onSessionCleared((instanceId, sessionId) => {
 })
 messageStoreBus.onInstanceDestroyed((instanceId) => {
   coordinator.forgetInstance(instanceId)
-  for (const entryKey of visible.keys()) {
-    if (entryKey.startsWith(`${instanceId}\u0000`)) visible.delete(entryKey)
-  }
+  clearInstanceTranscriptVisible(instanceId)
   measurements.cancelInstance(instanceId)
 })

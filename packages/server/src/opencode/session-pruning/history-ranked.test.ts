@@ -265,7 +265,7 @@ test("40 ms slice yields within a native rowid range", async t => {
       const statement = prepare(sql)
       if (sql.includes("AS mask")) {
         const iterate = statement.iterate.bind(statement)
-        statement.iterate = function* (...params) {
+        statement.iterate = function* (...params): Generator<any, undefined> {
           for (const row of Reflect.apply(iterate, statement, params)) { visited++; yield row }
         }
       }

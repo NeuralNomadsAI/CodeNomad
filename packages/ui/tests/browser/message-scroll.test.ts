@@ -10,6 +10,7 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { SCROLL_REASONS } from "../../src/components/virtual-scroll-trace"
 import { createFixtureCache } from "./fixture-cache"
+import { fixtureGesturePoint, withFixtureMiddleDrag } from "./fixture-native-gesture"
 
 // Scroll ownership regressions over the real SessionView/VirtualFollowList:
 // a manual reader is never repinned by proximity and is restored exactly, a
@@ -107,6 +108,10 @@ async function open(run: (page: Page) => Promise<void>, { name = "session", hist
 }
 
 const latestButton = (page: Page, scope = "") => page.locator(`${scope} .message-scroll-controls`).getByRole("button", { name: "Scroll to latest message", exact: true })
+
+// With the corner option on, SessionView keeps both controls under the rail and dims the end the reader reached.
+const cornerButton = (page: Page, label: string, scope = "") =>
+  page.locator(`${scope} .session-scroll-corner-button[aria-label="${label}"]:not(.session-scroll-corner-button--reached)`)
 
 async function bottom(page: Page, scope = "") {
   await page.locator(`${scope} .message-scroll-controls`).hover()
@@ -227,6 +232,45 @@ test("the scroll trace emits coherent labelled writes and detects unclaimed move
     await frames(page, 30)
     assert.equal(await live.getAttribute("data-scroll-write"), null, "Disabling clears diagnostic DOM state on the next action")
     assert.deepEqual(trace.entries.slice(disabledStart), [], "No writes, observations or modes are logged after disabling")
+  })
+})
+
+// The latest button serves two intents: returning to the newest window from
+// history (an authoritative reload) and returning to the bottom of the window
+// being read. While the session streams, an authoritative latest reload races
+// every live event (its bounded retries give up), so the second intent must
+// scroll locally instead of leaving the button with no effect.
+test("the latest button returns a streaming reader to the bottom without an authoritative reload", async () => {
+  await open(async page => {
+    // Slow every authoritative page read past the streaming cadence, as a real
+    // HTTP round trip is slower than consecutive live events.
+    await page.evaluate(async () => {
+      const { sdkManager } = await import("/src/lib/sdk-manager.ts" as any)
+      const client = (sdkManager as any).clients.get("browser-instance:/workspaces/browser-instance/instance")
+      const list = client.message.list.bind(client)
+      client.message.list = async (input: any) => {
+        await new Promise(resolve => setTimeout(resolve, 40))
+        return list(input)
+      }
+    })
+    await page.evaluate(() => (window as any).fixture.startStored())
+    await page.evaluate(() => { (window as any).streamTimer = setInterval(() => (window as any).fixture.deltaStored("Streaming paragraph.\n\n".repeat(3)), 16) })
+    await frames(page, 20)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    await page.mouse.wheel(0, -600)
+    await frames(page, 20)
+    const escaped = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(escaped > 400, `The reader must start away from the bottom (gap=${escaped})`)
+    try {
+      await page.locator(".message-scroll-controls").hover()
+      await latestButton(page).click()
+      await frames(page, 90)
+    } finally {
+      await page.evaluate(() => clearInterval((window as any).streamTimer))
+    }
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap <= 48, `The latest button must land at the bottom while streaming (gap=${Math.round(gap)})`)
   })
 })
 
@@ -982,9 +1026,7 @@ test("middle-button autoscroll keeps moving across a rolling window", async () =
   await open(async page => {
     await escapeNearTail(page, -1200)
     const box = (await page.locator(".message-stream").boundingBox())!
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-    await page.mouse.down({ button: "middle" })
-    try {
+    await withFixtureMiddleDrag(page, page.locator(".message-stream"), { x: box.x + box.width / 2, y: box.y + box.height / 2 }, async () => {
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120, { steps: 5 })
       await frames(page, 10)
       // The content position is the always-mounted last row's viewport offset:
@@ -1002,7 +1044,7 @@ test("middle-button autoscroll keeps moving across a rolling window", async () =
       // The step appends one 48 px row below: compare successive samples of that new last row.
       const pulledBack = tails.slice(2).filter((tail, i) => tail > tails[i + 1] + 2)
       assert.ok(pulledBack.length === 0 && tails[1] - tails.at(-1)! > 100, `The autoscroll froze across the roll: ${JSON.stringify(tails)}`)
-    } finally { await page.mouse.up({ button: "middle" }) }
+    })
   }, { name: "list" })
 })
 
@@ -1028,6 +1070,107 @@ test("a viewport resize during a rolling window stays bottom-anchored", async ()
     assert.ok(Math.abs(after - before) <= 2, `The resize was not bottom-anchored: ${JSON.stringify({ before, after })}`)
   }, { name: "list" })
 })
+
+// The composer growing pushes a reader down to keep the bottom lines in place,
+// except at the start: there the first message stays in view.
+test("a viewport resize keeps a reader at the start there", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    assert.equal(await stream.evaluate(el => el.scrollTop), 0)
+    await page.evaluate(() => { document.getElementById("root")!.style.height = "560px" })
+    await frames(page, 30)
+    assert.equal(await stream.evaluate(el => el.scrollTop), 0)
+  }, { name: "list" })
+})
+
+// The first/latest controls live in the composer corner under the rail, never
+// over the transcript; both stay and the end the reader reached is dimmed.
+test("first/latest controls stay in the composer corner and dim the reached end", async () => {
+  await open(async page => {
+    await applySettings(page, { scrollControlsInTimelineCorner: true })
+    const reached = () => page.locator(".session-scroll-corner-button").evaluateAll(buttons =>
+      buttons.map(button => button.classList.contains("session-scroll-corner-button--reached")))
+    assert.deepEqual(await reached(), [false, true])
+    // The floating controls stay mounted as the narrow-layout fallback, hidden here.
+    assert.equal(await page.locator(".message-scroll-controls").isVisible(), false)
+    const geometry = await page.evaluate(() => {
+      const view = document.querySelector(".session-view")!.getBoundingClientRect()
+      const corner = document.querySelector(".session-scroll-corner")!.getBoundingClientRect()
+      const footer = document.querySelector(".prompt-input-footer")!.getBoundingClientRect()
+      return { right: Math.round(view.right - corner.right), bottom: Math.round(view.bottom - corner.bottom),
+        width: Math.round(corner.width), top: Math.round(corner.top - footer.top), footerRight: Math.round(corner.left - footer.right) }
+    })
+    assert.deepEqual(geometry, { right: 0, bottom: 0, width: 40, top: 0, footerRight: 0 }, JSON.stringify(geometry))
+    await cornerButton(page, "Scroll to first message").click()
+    await page.waitForFunction(() => document.querySelector(".message-stream")!.scrollTop === 0)
+    await frames(page)
+    assert.deepEqual(await reached(), [true, false])
+  })
+})
+
+async function applySettings(page: Page, settings: Record<string, unknown>) {
+  await page.evaluate(`(async () => { const { applyUiSettings } = await import('/tests/browser/fixtures/ui-settings.ts'); await applyUiSettings(${JSON.stringify({ ...settings, locale: "en" })}) })()`)
+  await frames(page)
+}
+
+// The footer's right edge, measured from the view's: the rail plus any corner reservation.
+const footerInset = (page: Page) => page.evaluate(() =>
+  Math.round(document.querySelector(".session-view")!.getBoundingClientRect().right - document.querySelector(".prompt-input-footer")!.getBoundingClientRect().right))
+
+// The footer and the corner share one width: Send is never covered, and a touch
+// layout gives each control a compact touch target.
+for (const hasTouch of [false, true]) {
+  test(`the composer corner never covers Send (${hasTouch ? "touch" : "mouse"})`, async () => {
+    await open(async page => {
+      await applySettings(page, { scrollControlsInTimelineCorner: true })
+      const layout = await page.evaluate(() => {
+        const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
+        const corner = box(".session-scroll-corner"), footer = box(".prompt-input-footer"), send = box(".prompt-input-footer .send-button")
+        const hit = (x: number, y: number) => document.elementFromPoint(x, y)?.closest("button")
+        const middle = corner.top + corner.height / 2
+        return {
+          coarse: matchMedia("(pointer: coarse)").matches,
+          rail: Boolean(document.querySelector(".message-timeline-sidebar")),
+          gap: Math.round(corner.left - footer.right),
+          widths: [...document.querySelectorAll(".session-scroll-corner-button")].map(button => button.getBoundingClientRect().width),
+          send: Boolean(hit(send.right - 1, send.top + send.height / 2)?.classList.contains("send-button")),
+          first: hit(corner.left + corner.width / 4, middle)?.getAttribute("aria-label"),
+          latest: hit(corner.right - corner.width / 4, middle)?.getAttribute("aria-label"),
+        }
+      })
+      assert.deepEqual(layout, {
+        coarse: hasTouch, rail: true, gap: 0, widths: hasTouch ? [32, 32] : [19.5, 19.5], send: true,
+        first: "Scroll to first message", latest: "Scroll to latest message",
+      }, JSON.stringify(layout))
+      assert.equal(await footerInset(page), hasTouch ? 65 : 40)
+      // A Mission reader hides the rail and the corner: the footer reserves nothing.
+      await page.locator(".session-view").evaluate(view => view.classList.add("mission-reading"))
+      assert.equal(await footerInset(page), 0)
+      assert.equal(await page.locator(".session-scroll-corner").isVisible(), false)
+    }, { hasTouch })
+  })
+}
+
+// With the option off (the default), or without a shown rail, the controls
+// float over the transcript as before and the footer reserves no corner.
+for (const [name, settings, inset] of [
+  ["the corner option is off", {}, 40],
+  ["the timeline is hidden", { scrollControlsInTimelineCorner: true, showMessageTimeline: false }, 0],
+] as const) {
+  test(`the floating controls return when ${name}`, async () => {
+    await open(async page => {
+      await applySettings(page, settings)
+      assert.equal(await page.locator(".session-scroll-corner-button").count(), 0)
+      assert.equal(await page.locator(".session-scroll-corner").isVisible(), false)
+      const floating = page.locator(".message-scroll-controls:not(.message-scroll-controls--corner-fallback)")
+      assert.equal(await floating.getByRole("button", { name: "Scroll to first message", exact: true }).count(), 1)
+      assert.equal(await footerInset(page), inset)
+      await applySettings(page, { showMessageTimeline: true, scrollControlsInTimelineCorner: true })
+      assert.equal(await page.locator(".session-scroll-corner-button").count(), 2)
+      assert.equal(await page.locator(".message-scroll-controls").isVisible(), false)
+    })
+  })
+}
 
 // A following list hidden by display:none (still mounted), whose streaming
 // tail grows while hidden, paints its first frame shown again at the bottom.
@@ -1480,17 +1623,25 @@ for (const gesture of ["middle-button autoscroll", "selection drag"] as const) t
     })
     await frames(page, 10)
     assert.equal((await readerState(page)).followModeType, "following")
-    const box = (await page.locator("[data-press-target]").boundingBox())!
-    const [x, y] = [box.x + 40, box.y + box.height / 2]
+    const target = page.locator("[data-press-target]")
+    const box = (await target.boundingBox())!
+    const { x, y } = gesture === "middle-button autoscroll" ? await fixtureGesturePoint(target, { x: 40, y: box.height / 2 })
+      : { x: box.x + 40, y: box.y + box.height / 2 }
     assert.ok(await page.evaluate(([x, y]) => Boolean(document.elementFromPoint(x, y)?.closest("[data-press-target]")), [x, y]), "The press must hit the summary")
-    await page.mouse.move(x, y)
-    await page.mouse.down({ button: gesture === "selection drag" ? "left" : "middle" })
-    for (let i = 1; i <= 8; i++) {
-      await page.mouse.move(x, y - i * 10)
-      await page.evaluate(() => (window as any).fixture.delta("Streamed while the pointer drags.\n\n"))
-      await frames(page, 3)
+    const drag = async () => {
+      for (let i = 1; i <= 8; i++) {
+        await page.mouse.move(x, y - i * 10)
+        await page.evaluate(() => (window as any).fixture.delta("Streamed while the pointer drags.\n\n"))
+        await frames(page, 3)
+      }
     }
-    await page.mouse.up({ button: gesture === "selection drag" ? "left" : "middle" })
+    if (gesture === "selection drag") {
+      await page.mouse.move(x, y)
+      try { await page.mouse.down({ button: "left" }); await drag() }
+      finally { await page.mouse.up({ button: "left" }) }
+    } else {
+      await withFixtureMiddleDrag(page, target, { x, y }, drag)
+    }
     for (let i = 0; i < 6; i++) {
       await page.evaluate(() => (window as any).fixture.delta("Streamed after release.\n\n".repeat(2)))
       await frames(page, 3)
@@ -1774,6 +1925,147 @@ for (const gesture of ["none", "same", "tap", "click", "horizontal", "newer"] as
     assert.equal(after.state.followModeType, "escaped", "Entering older history must not retain follow")
     assert.equal(after.state.atBottom, true, "An older page is entered at its bottom")
   }, { history: 620, hasTouch: gesture === "tap" })
+})
+
+/** Replays an Android fast flick whose passive touchmove stream was throttled away during the scroll: the finger reaches the list only through its unthrottled touch pointer stream, and the touch ends where it lifted. */
+async function replayThrottledTouchFlick(page: Page, travel: number) {
+  await page.evaluate(travel => {
+    const el = document.querySelector(".message-stream") as HTMLElement
+    const bounds = el.getBoundingClientRect()
+    const x = bounds.left + el.clientWidth / 2, y0 = bounds.top + el.clientHeight / 2
+    const touch = (type: "touchstart" | "touchend", y: number | null) => {
+      const point = y === null ? [] : [new Touch({ identifier: 1, target: el, clientX: x, clientY: y })]
+      el.dispatchEvent(new TouchEvent(type, { touches: type === "touchstart" ? point : [], changedTouches: point, bubbles: true, cancelable: true }))
+    }
+    const pointer = (type: "pointerdown" | "pointermove" | "pointerup", y: number) =>
+      el.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: "touch", isPrimary: true, button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: x, clientY: y, bubbles: true, cancelable: true }))
+    touch("touchstart", y0)
+    pointer("pointerdown", y0)
+    for (let step = 1; step <= 6; step++) pointer("pointermove", y0 + travel * step / 6)
+    pointer("pointerup", y0 + travel)
+    touch("touchend", y0 + travel)
+  }, travel)
+}
+
+/** Momentum after the finger lifts: unowned upward movement every frame, outliving the 600ms user-intent window. */
+function fling(page: Page, frames = 45) {
+  return page.evaluate(frames => new Promise(resolve => {
+    const el = document.querySelector<HTMLElement>(".message-stream")!
+    const next = () => { el.scrollTop -= 24; if (--frames) requestAnimationFrame(next); else resolve(null) }
+    requestAnimationFrame(next)
+  }), frames)
+}
+
+test("a throttled touch flick escapes follow for its whole fling", async () => {
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    const stream = page.locator(".message-stream")
+    await bottom(page)
+    await trace.enable()
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following")
+    const tracedFrom = trace.entries.length
+    await replayThrottledTouchFlick(page, 24)
+    await fling(page)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped", "A flick's fling must escape follow")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap > 200, `The fling must keep its distance from the bottom: ${gap}`)
+    const repins = trace.entries.slice(tracedFrom).filter(entry => entry.kind === "write" && (entry.reason === "observe" || entry.reason === "content-grew"))
+    assert.deepEqual(repins, [], "A fling must not be repinned to the bottom")
+  }, { hasTouch: true })
+})
+
+test("a late fling scroll after the intent window must not be repinned", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    await bottom(page)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following")
+    await replayThrottledTouchFlick(page, 30)
+    // Momentum chained from a nested scroller reaches the transcript only after the flick's intent window expired.
+    await page.waitForTimeout(650)
+    await fling(page)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped", "A late fling still belongs to the user's flick")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap > 200, `The late fling must keep its distance from the bottom: ${gap}`)
+  }, { hasTouch: true })
+})
+
+test("a fling claim never reads a layout clamp as momentum", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    await page.evaluate(() => { (window as any).fixture.follow(); (window as any).fixture.resizeRow("row-199", 400) })
+    await frames(page, 10)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following")
+    await replayThrottledTouchFlick(page, 24)
+    await page.waitForTimeout(650)
+    // A tail row shrinking clamps the offset down with the extent: geometry, not
+    // a scroll. The row grows back within the same frame the clamp lands, before
+    // the observation gate runs, like a streaming relayout.
+    await page.evaluate(() => new Promise(resolve => {
+      const fixture = (window as any).fixture
+      fixture.resizeRow("row-199", 48)
+      const check = () => {
+        const el = document.querySelector<HTMLElement>(".message-stream")!
+        if (el.scrollTop >= 9000) return requestAnimationFrame(check)
+        fixture.resizeRow("row-199", 400)
+        resolve(null)
+      }
+      requestAnimationFrame(check)
+    }))
+    await frames(page, 15)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following", "A layout clamp must stay following")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap < 48, `Follow must re-pin to the regrown bottom: ${gap}`)
+  }, { name: "list", hasTouch: true })
+})
+
+test("a late downward fling stays escaped until it reaches the bottom", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    await page.evaluate(() => { (window as any).fixture.follow(); (window as any).fixture.middle() })
+    await frames(page, 5)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped")
+    await replayThrottledTouchFlick(page, -24)
+    await page.waitForTimeout(650)
+    await page.evaluate(() => new Promise(resolve => {
+      const el = document.querySelector<HTMLElement>(".message-stream")!
+      let framesLeft = 4
+      const next = () => { el.scrollTop += 120; if (--framesLeft) requestAnimationFrame(next); else resolve(null) }
+      requestAnimationFrame(next)
+    }))
+    await frames(page, 2)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped", "A downward fling off the bottom stays escaped")
+    await page.evaluate(() => new Promise(resolve => {
+      const el = document.querySelector<HTMLElement>(".message-stream")!
+      const max = () => el.scrollHeight - el.clientHeight
+      let framesLeft = 60
+      const next = () => {
+        el.scrollTop = Math.min(el.scrollTop + 120, max())
+        if (--framesLeft && el.scrollTop < max()) requestAnimationFrame(next); else resolve(null)
+      }
+      requestAnimationFrame(next)
+    }))
+    await frames(page, 5)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following", "A downward fling reaching the bottom resumes follow")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap < 48, `The landing must be the bottom: ${gap}`)
+  }, { name: "list", hasTouch: true })
+})
+
+test("an explicit Latest clears an armed fling claim", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    await page.evaluate(() => (window as any).fixture.follow())
+    await frames(page, 5)
+    await replayThrottledTouchFlick(page, 24)
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await frames(page, 5)
+    await page.waitForTimeout(650)
+    await stream.evaluate(el => { el.scrollTop -= 40 })
+    await frames(page, 10)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following", "Latest re-owns positioning; a stale claim must not escape")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap < 48, `Follow must re-pin after the unowned write: ${gap}`)
+  }, { name: "list", hasTouch: true })
 })
 
 type FrameSample = { frame: number; time: number; top: number; gap: number; mode?: string; anchorOffset: number | null }
@@ -2133,8 +2425,7 @@ test("a First jump during a pending send still lands on the first message", asyn
     await frames(page, 120)
     await page.locator(".message-scroll-controls").hover()
     await page.getByRole("button", { name: "Scroll to first message", exact: true }).click()
-    // The fixture serves this window from its newest records; what matters is that
-    // the loaded window replaces the latest one and is then entered at its top.
+    // The oldest window replaces the latest one and is then entered at its top.
     await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind !== "latest")
     await frames(page, 60)
     const state = await page.evaluate(() => {
@@ -2145,6 +2436,72 @@ test("a First jump during a pending send still lands on the first message", asyn
     assert.ok(state.scrollTop <= 2 && state.mode === "escaped" && state.firstTop !== null && Math.abs(state.firstTop) <= 2, JSON.stringify(state))
     await page.evaluate(() => (window as any).fixture.acceptPrompt())
   }, { history: 620 })
+})
+
+// Right after a window replacement Virtua can apply a size compensation computed
+// against its previous offset, after the jump's write (long real transcripts):
+// an immediate jump to the top holds its landing while the rows settle.
+test("an immediate jump to the top holds its landing against a late compensation", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await frames(page)
+    await page.evaluate(() => new Promise<void>(resolve => {
+      ;(window as any).fixture.top()
+      requestAnimationFrame(() => {
+        // The stale compensation lands one frame after the jump's write.
+        document.querySelector<HTMLElement>(".message-stream")!.scrollTop = 5000
+        resolve()
+      })
+    }))
+    await frames(page, 10)
+    assert.equal(await page.locator(".message-stream").evaluate(el => el.scrollTop), 0)
+  }, { name: "list" })
+})
+
+// The top landing reveals nothing: moving focus within the first message (Tab to
+// one of its controls) scrolls to that control and ends the hold.
+test("focus moving within the first row ends the top hold", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.resizeRow("row-0", 2400))
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await frames(page)
+    await page.evaluate(() => (window as any).fixture.top())
+    await frames(page, 2)
+    await page.evaluate(() => {
+      const content = document.querySelector<HTMLElement>('[data-virtual-follow-key="row-0"]')!.firstElementChild as HTMLElement
+      content.style.position = "relative"
+      const button = document.createElement("button")
+      button.textContent = "Inside the first row"
+      button.style.cssText = "position:absolute;top:2000px"
+      content.append(button)
+      button.focus()
+    })
+    await frames(page, 40)
+    const state = await page.evaluate(() => {
+      const button = document.activeElement as HTMLElement, el = document.querySelector<HTMLElement>(".message-stream")!
+      const rect = button.getBoundingClientRect(), bounds = el.getBoundingClientRect()
+      return { scrollTop: el.scrollTop, visible: rect.top >= bounds.top && rect.bottom <= bounds.bottom }
+    })
+    assert.ok(state.scrollTop > 1000 && state.visible, JSON.stringify(state))
+  }, { name: "list" })
+})
+
+// Below two pages the oldest and latest windows share messages: one First jump
+// from the bottom must still land on the first message, not on the bottom of
+// the oldest window where the shared rows sit.
+test("a First jump into an overlapping oldest window lands on the first message", async () => {
+  await open(async page => {
+    await page.locator(".message-scroll-controls").hover()
+    await page.getByRole("button", { name: "Scroll to first message", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind !== "latest")
+    await frames(page, 60)
+    const state = await page.evaluate(() => {
+      const el = document.querySelector<HTMLElement>(".message-stream")!, bounds = el.getBoundingClientRect(), key = (window as any).fixture.snapshot().ids[0]
+      const first = el.querySelector(`[data-virtual-follow-key="${key}"]`)
+      return { key, scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, firstTop: first ? Math.round(first.getBoundingClientRect().top - bounds.top) : null }
+    })
+    assert.ok(state.scrollTop <= 2 && state.firstTop !== null && Math.abs(state.firstTop) <= 2, JSON.stringify(state))
+  }, { history: 205 })
 })
 
 const AT_BOTTOM = { scrollTop: 0, atBottom: true, followModeType: "following" }

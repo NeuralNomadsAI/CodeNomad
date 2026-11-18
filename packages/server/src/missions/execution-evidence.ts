@@ -1,6 +1,7 @@
-import type { MissionNativeBinding, MissionTask } from "./model"
+// Shared with the UI: keep runtime dependencies browser-pure.
+import type { MissionNativeBinding, MissionPanelTask } from "./model"
 
-type TaskEvidence = Pick<MissionTask, "status" | "actorSessionId" | "admissionId" | "nativeBinding" | "nativeExecution"
+type TaskEvidence = Pick<MissionPanelTask, "status" | "actorSessionId" | "admissionId" | "nativeBinding" | "nativeExecution"
   | "report" | "lateReports" | "outstandingExecution" | "contractGeneration">
 
 const identity = (value: string) => typeof value === "string" && value.trim().length > 0

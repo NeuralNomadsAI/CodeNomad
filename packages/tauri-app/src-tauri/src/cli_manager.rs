@@ -1,4 +1,7 @@
 use crate::managed_node::resolve_bundled_node_binary;
+#[path = "cli_output.rs"]
+mod output;
+use output::{OutputDrain, ReaderReceipt};
 #[cfg(unix)]
 #[path = "shell_environment.rs"]
 mod shell_environment;
@@ -48,6 +51,9 @@ const MISSING_NODE_PREFIX: &str = "CODENOMAD_MISSING_NODE:";
 #[cfg(test)]
 #[path = "cli_service_lifetime_tests.rs"]
 mod service_lifetime_tests;
+#[cfg(test)]
+#[path = "cli_drain_tests.rs"]
+mod drain_tests;
 #[cfg(windows)]
 const CLI_SHUTDOWN_COMMAND: &[u8] = b"codenomad:shutdown\n";
 
@@ -800,6 +806,20 @@ pub(crate) struct LocalCliAccess {
     pub(crate) session_cookie: String,
 }
 
+impl LocalCliAccess {
+    /// The session cookie a local window needs before it loads `target` from this server. WebView2
+    /// keeps a session cookie only while a window of its store is open, so a window opened after the
+    /// last local window closed (beside a remote window, or after a launch connection) would otherwise
+    /// land on the sign-in page: every new local window is given the cookie itself.
+    pub(crate) fn session_cookie_for(&self, target: &str) -> Option<Cookie<'static>> {
+        let base = Url::parse(&self.base_url).ok()?;
+        if Url::parse(target).ok()?.origin() != base.origin() {
+            return None;
+        }
+        local_session_cookie(&self.base_url, &self.cookie_name, &self.session_cookie).ok()
+    }
+}
+
 impl Default for CliStatus {
     fn default() -> Self {
         Self {
@@ -830,6 +850,7 @@ pub struct CliProcessManager {
     original_config: Option<String>,
     status: Arc<Mutex<CliStatus>>,
     child: Arc<Mutex<Option<Child>>>,
+    output: Arc<Mutex<Option<OutputDrain>>>,
     stdin: Arc<Mutex<Option<std::process::ChildStdin>>>,
     #[cfg(windows)]
     job: Arc<Mutex<Option<WindowsJobObject>>>,
@@ -849,6 +870,7 @@ impl CliProcessManager {
             original_config: std::env::var("CLI_CONFIG").ok(),
             status: Arc::new(Mutex::new(CliStatus::default())),
             child: Arc::new(Mutex::new(None)),
+            output: Arc::new(Mutex::new(None)),
             stdin: Arc::new(Mutex::new(None)),
             #[cfg(windows)]
             job: Arc::new(Mutex::new(None)),
@@ -973,13 +995,22 @@ impl CliProcessManager {
         generation: u64,
         operation: impl FnOnce() -> T,
     ) -> Option<T> {
-        let _lifecycle = self.lifecycle.lock();
+        let _lifecycle = self.lock_current_generation(generation)?;
         let _authority = self.generation_authority.lock();
         self.is_current_generation(generation).then(operation)
     }
 
     fn lock_current_generation(&self, generation: u64) -> Option<parking_lot::MutexGuard<'_, ()>> {
-        let lifecycle = self.lifecycle.lock();
+        // A reader already handling a line must be able to abandon admission while stop
+        // holds lifecycle and waits for its EOF. Never wait on that lock after revocation.
+        let lifecycle = loop {
+            if !self.is_current_generation(generation) {
+                return None;
+            }
+            if let Some(lock) = self.lifecycle.try_lock_for(Duration::from_millis(5)) {
+                break lock;
+            }
+        };
         let current = {
             let _authority = self.generation_authority.lock();
             self.is_current_generation(generation)
@@ -988,6 +1019,13 @@ impl CliProcessManager {
     }
 
     fn stop_tracked_child(&self, deadline: Option<Instant>) -> anyhow::Result<()> {
+        #[cfg(windows)]
+        let grace = Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS);
+        #[cfg(not(windows))]
+        let grace = Duration::from_secs(CLI_STOP_GRACE_SECS);
+        let deadline = deadline.unwrap_or_else(|| {
+            Instant::now() + grace + Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS)
+        });
         let Some(mut child) = self.child.lock().take() else {
             self.stdin.lock().take();
             #[cfg(windows)]
@@ -996,7 +1034,7 @@ impl CliProcessManager {
                     wait_for_termination(
                         termination_timeout(
                             Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
-                            deadline,
+                            Some(deadline),
                         ),
                         Duration::from_millis(25),
                         || Ok(job.active_processes()? == 0),
@@ -1015,14 +1053,30 @@ impl CliProcessManager {
         #[cfg(windows)]
         let job = self.job.lock().take();
         log_line(&format!("stopping CLI pid={}", child.id()));
-        let result = stop_child(
-            &mut child,
-            #[cfg(windows)]
-            job.as_ref(),
-            deadline,
-        );
+        let mut output = self.output.lock().take();
+        let result = (|| {
+            if !output.as_ref().is_some_and(|output| output.contained) {
+                stop_child(
+                    &mut child,
+                    #[cfg(windows)]
+                    job.as_ref(),
+                    Some(deadline),
+                )?;
+                if let Some(status) = child.try_wait()? {
+                    log_line(&format!("CLI pid={} exited: {status}", child.id()));
+                }
+                if let Some(output) = output.as_mut() {
+                    output.contained = true;
+                }
+            }
+            if let Some(output) = output.as_mut() {
+                output.wait_until(deadline).map_err(anyhow::Error::msg)?;
+            }
+            Ok(())
+        })();
         if let Err(err) = result {
             *self.child.lock() = Some(child);
+            *self.output.lock() = output;
             #[cfg(windows)]
             {
                 *self.job.lock() = job;
@@ -1086,7 +1140,7 @@ impl CliProcessManager {
             let snapshot = status.clone();
             drop(status);
             crate::local_windows::emit_all(app, "cli:error", json!({"message": message}));
-            crate::local_windows::emit_all(app, "cli:status", snapshot);
+            Self::emit_status(app, &snapshot);
         });
     }
 
@@ -1111,6 +1165,15 @@ impl CliProcessManager {
 
     pub fn status(&self) -> CliStatus {
         self.status.lock().clone()
+    }
+
+    /// `local_cli_access` without the lifecycle lock, for windows built on the main thread: the bootstrap
+    /// holds that lock while it installs the session cookie, which can wait for the main thread.
+    pub(crate) fn ready_local_access(&self) -> Option<LocalCliAccess> {
+        if self.status.lock().state != CliState::Ready {
+            return None;
+        }
+        self.local_access.lock().clone()
     }
 
     pub(crate) fn local_cli_access(&self) -> Option<LocalCliAccess> {
@@ -1211,7 +1274,7 @@ impl CliProcessManager {
             #[cfg(not(windows))]
             let mut c = Command::new(&cmd.program);
             #[cfg(not(windows))]
-            c.args(&cmd.args);
+            c.args(&cmd.args).stdin(Stdio::piped());
             #[cfg(target_os = "linux")]
             if shell_env.is_none() {
                 crate::appimage_environment::use_host_environment(&mut c);
@@ -1229,8 +1292,16 @@ impl CliProcessManager {
             // comes after Unix shell_env's env_clear, and the Windows launcher
             // inherits it before it starts Node.
             configure_backend_profile(&mut c, &manager.channel, &manager.config_identity, manager.original_config.as_deref());
-            #[cfg(windows)]
+            c.env(
+                "CODENOMAD_TAURI_WEBKIT",
+                if cfg!(any(target_os = "macos", target_os = "linux")) {
+                    "1"
+                } else {
+                    "0"
+                },
+            );
             c.env("CODENOMAD_NATIVE_PARENT", "1");
+            c.env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", if cfg!(any(windows, target_os = "macos", target_os = "linux")) { "1" } else { "0" });
             configure_spawn(&mut c);
             if let Some(ref cwd) = cwd {
                 c.current_dir(cwd);
@@ -1295,15 +1366,15 @@ impl CliProcessManager {
             return Ok(());
         };
         Self::emit_status(&app, &manager.status.lock());
-        drop(lifecycle);
 
         let ready = Arc::new(AtomicBool::new(false));
+        let mut readers = Vec::new();
         if let Some(reader) = stdout {
             let app = app.clone();
             let manager = manager.clone();
             let ready = ready.clone();
             let auth_cookie_name = auth_cookie_name.clone();
-            thread::spawn(move || {
+            readers.push(("stdout", ReaderReceipt::spawn(move || {
                 Self::process_stream(
                     reader,
                     "stdout",
@@ -1312,15 +1383,15 @@ impl CliProcessManager {
                     &app,
                     &ready,
                     auth_cookie_name.as_str(),
-                );
-            });
+                )
+            })));
         }
         if let Some(reader) = stderr {
             let app = app.clone();
             let manager = manager.clone();
             let ready = ready.clone();
             let auth_cookie_name = auth_cookie_name.clone();
-            thread::spawn(move || {
+            readers.push(("stderr", ReaderReceipt::spawn(move || {
                 Self::process_stream(
                     reader,
                     "stderr",
@@ -1329,9 +1400,11 @@ impl CliProcessManager {
                     &app,
                     &ready,
                     auth_cookie_name.as_str(),
-                );
-            });
+                )
+            })));
         }
+        *manager.output.lock() = Some(OutputDrain::new(readers));
+        drop(lifecycle);
 
         {
             let manager = manager.clone();
@@ -1390,10 +1463,10 @@ impl CliProcessManager {
                         let group_is_gone: anyhow::Result<bool> = Ok(true);
                         match group_is_gone {
                             Ok(gone) if containment_is_complete(true, gone) => {
-                                *child = None;
-                                #[cfg(windows)]
-                                {
-                                    manager.job.lock().take();
+                                // Keep the child, containment and readers together for the
+                                // next stop/restart, including a descendant-held pipe.
+                                if let Some(output) = manager.output.lock().as_mut() {
+                                    output.contained = true;
                                 }
                                 Poll::Exited(status)
                             }
@@ -1438,149 +1511,93 @@ impl CliProcessManager {
     }
 
     fn process_stream<R: BufRead>(
-        mut reader: R,
+        reader: R,
         stream: &str,
         manager: &CliProcessManager,
         generation: u64,
         app: &AppHandle,
         ready: &Arc<AtomicBool>,
         auth_cookie_name: &str,
-    ) {
-        let mut buffer = String::new();
+    ) -> std::io::Result<()> {
         let local_url_regex =
             Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)\s*$").ok();
-        let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
-        loop {
-            match Self::read_bounded_line(&mut reader, &mut buffer) {
-                Ok(0) => break,
-                Ok(size) if size > crate::native_request::MAX_LINE_BYTES => {
-                    log_line(&format!("[cli][{stream}] discarded oversized output line"));
-                    continue;
-                }
-                Ok(_) => {
-                    if !manager.is_current_generation(generation) {
-                        break;
-                    }
-                    let line = buffer.trim_end();
-                    if !line.is_empty() {
-                        if stream == "stdout"
-                            && line.starts_with(crate::native_request::REQUEST_PREFIX)
-                        {
-                            if let Some(request) = crate::native_request::parse(line) {
-                                let now = SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)
-                                    .map(|duration| duration.as_millis() as u64)
-                                    .unwrap_or(u64::MAX);
-                                let result = if now >= request.deadline {
-                                    Err("Native request expired before execution".to_string())
-                                } else {
-                                    crate::handle_native_request(
-                                        app,
-                                        &request.method,
-                                        request.params,
-                                        request.deadline,
-                                    )
-                                };
-                                manager.write_native_response(
-                                    generation,
-                                    &crate::native_request::response(&request.id, result),
-                                );
-                            }
-                            continue;
-                        }
-                        if line.starts_with(token_prefix) {
-                            let token = line.trim_start_matches(token_prefix).trim();
-                            if !token.is_empty() {
-                                manager.with_current_generation(generation, || {
-                                    let mut guard = manager.bootstrap_token.lock();
-                                    if guard.is_none() {
-                                        *guard = Some(token.to_string());
-                                    }
-                                });
-                            }
-                            continue;
-                        }
-
-                        log_line(&format!("[cli][{}] {}", stream, line));
-
-                        if ready.load(Ordering::SeqCst) {
-                            continue;
-                        }
-
-                        if let Some(node_binary) = line.strip_prefix(MISSING_NODE_PREFIX) {
-                            manager.with_current_generation(generation, || {
-                                let mut locked = manager.status.lock();
-                                if locked.error.is_none() {
-                                    locked.error = Some(format!(
-                                        "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
-                                        node_binary.trim()
-                                    ));
-                                }
-                            });
-                            continue;
-                        }
-
-                        if let Some(url) = local_url_regex
-                            .as_ref()
-                            .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
-                            .map(|m| m.as_str().to_string())
-                        {
-                            Self::mark_ready(
-                                manager,
-                                generation,
-                                app,
-                                ready,
-                                auth_cookie_name,
-                                url,
-                            );
-                            continue;
-                        }
-                    }
-                }
-                Err(_) => break,
+        output::pump(reader, crate::native_request::MAX_LINE_BYTES, |line| {
+            let Some(line) = line else {
+                log_line(&format!("[cli][{stream}][generation={generation}] discarded oversized output line"));
+                return;
+            };
+            if line.is_empty() {
+                return;
             }
-        }
+            let line = match output::classify(line, crate::native_request::REQUEST_PREFIX) {
+                output::OutputLine::Request(line) => {
+                    if stream != "stdout" || !manager.is_current_generation(generation) {
+                        return;
+                    }
+                    if let Some(request) = crate::native_request::parse(line) {
+                        let current = manager.clone();
+                        let fence = crate::native_request::RequestFence::new(request.deadline, move || current.is_current_generation(generation));
+                        if let Some(response) = crate::native_request::dispatch(request, fence, |request, fence| {
+                            crate::handle_native_request(
+                                app,
+                                &request.method,
+                                request.params.clone(),
+                                request.deadline,
+                                fence,
+                            )
+                        }) {
+                            manager.write_native_response(generation, &response);
+                        }
+                    }
+                    return;
+                }
+                output::OutputLine::Token(token) => {
+                    if !token.is_empty() {
+                        manager.with_current_generation(generation, || {
+                            let mut guard = manager.bootstrap_token.lock();
+                            if guard.is_none() {
+                                *guard = Some(token.to_string());
+                            }
+                        });
+                    }
+                    return;
+                }
+                output::OutputLine::Diagnostic(line) => line,
+            };
+
+            log_line(&format!("[cli][{stream}][generation={generation}] {line}"));
+            if !manager.is_current_generation(generation) || ready.load(Ordering::SeqCst) {
+                return;
+            }
+            if let Some(node_binary) = line.strip_prefix(MISSING_NODE_PREFIX) {
+                manager.with_current_generation(generation, || {
+                    let mut locked = manager.status.lock();
+                    if locked.error.is_none() {
+                        locked.error = Some(format!(
+                            "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                            node_binary.trim()
+                        ));
+                    }
+                });
+                return;
+            }
+            if let Some(url) = local_url_regex
+                .as_ref()
+                .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
+                .map(|m| m.as_str().to_string())
+            {
+                Self::mark_ready(manager, generation, app, ready, auth_cookie_name, url);
+            }
+        })
     }
 
+    #[cfg(test)]
     fn read_bounded_line<R: BufRead>(
         reader: &mut R,
         buffer: &mut String,
     ) -> std::io::Result<usize> {
-        buffer.clear();
-        let mut total = 0usize;
-        let mut oversized = false;
-        let mut bytes = Vec::new();
-        loop {
-            let available = reader.fill_buf()?;
-            if available.is_empty() {
-                return Ok(total);
-            }
-            let length = available
-                .iter()
-                .position(|byte| *byte == b'\n')
-                .map(|index| index + 1)
-                .unwrap_or(available.len());
-            let ended = available.get(length - 1) == Some(&b'\n');
-            total = total.saturating_add(length);
-            if !oversized && bytes.len() + length <= crate::native_request::MAX_LINE_BYTES {
-                bytes.extend_from_slice(&available[..length]);
-            } else {
-                oversized = true;
-                bytes.clear();
-            }
-            reader.consume(length);
-            if ended {
-                if !oversized {
-                    *buffer = String::from_utf8_lossy(&bytes).into_owned();
-                }
-                return Ok(if oversized {
-                    crate::native_request::MAX_LINE_BYTES + 1
-                } else {
-                    total
-                });
-            }
-        }
+        output::read_bounded_line(reader, buffer, crate::native_request::MAX_LINE_BYTES)
     }
 
     fn mark_ready(
@@ -1978,6 +1995,30 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn publish_error_shows_loading_pages_like_the_exit_path() {
+        // The initial document is about:blank with only the static boot splash:
+        // a bare cli:status emit cannot display an error there. Only emit_status
+        // navigates windows (and Preferences) back to loading.html, where the
+        // status is fetched and rendered.
+        let source = include_str!("cli_manager.rs");
+        let body = source
+            .split("fn publish_error")
+            .nth(1)
+            .unwrap()
+            .split("fn write_native_response")
+            .next()
+            .unwrap();
+        assert!(
+            body.contains("Self::emit_status(app, &snapshot)"),
+            "publish_error must broadcast its status through emit_status"
+        );
+        assert!(
+            !body.contains("\"cli:status\""),
+            "a direct cli:status emit skips the loading-page navigation"
+        );
+    }
+
+    #[test]
     fn packaged_dev_v2_channel_is_forwarded_to_initial_and_replacement_backend() {
         let cwd = std::env::current_dir().unwrap();
         for extension in ["json", "yaml"] {
@@ -2213,6 +2254,34 @@ pub(crate) mod tests {
 
         manager.stop().unwrap();
         assert_eq!(manager.local_cli_access(), None);
+    }
+
+    #[test]
+    fn every_new_local_window_receives_the_local_session_cookie_for_its_server() {
+        let manager = CliProcessManager::new();
+        let access = LocalCliAccess {
+            base_url: "http://127.0.0.1:3000".into(),
+            cookie_name: "codenomad_session_test".into(),
+            session_cookie: "secret".into(),
+        };
+        *manager.local_access.lock() = Some(access.clone());
+        assert_eq!(manager.ready_local_access(), None);
+        manager.status.lock().state = CliState::Ready;
+        assert_eq!(manager.ready_local_access(), Some(access.clone()));
+
+        // A window opened after the last local window closed lands on the server, signed in.
+        let cookie = access.session_cookie_for("http://127.0.0.1:3000/").unwrap();
+        assert_eq!(
+            (cookie.name(), cookie.value()),
+            ("codenomad_session_test", "secret")
+        );
+        assert_eq!(cookie.domain(), Some("127.0.0.1"));
+        assert_eq!(cookie.http_only(), Some(true));
+        assert!(access.session_cookie_for("http://127.0.0.1:3000/login").is_some());
+        // Never for another server or a stale port.
+        assert!(access.session_cookie_for("http://127.0.0.1:3001/").is_none());
+        assert!(access.session_cookie_for("https://remote.example/").is_none());
+        assert!(access.session_cookie_for("not a url").is_none());
     }
 
     #[test]

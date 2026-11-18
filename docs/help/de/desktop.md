@@ -8,7 +8,31 @@
 
 Projekt-Tabs, ausgewählte Unterhaltungen und Layout gehören zum Fenster. OpenCode-Sitzungen/-Nachrichten gehören zum gemeinsamen nativen OpenCode-Dienst: Andere Fenster können dieselbe Unterhaltung sehen. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad, nicht seine OpenCode-Sitzungen; öffnen Sie es erneut, um sie wiederzufinden. Ein anderes Fenster, das dieselbe Projektverbindung anzeigt, schließt seinen Tab ebenfalls und zeigt eine Benachrichtigung; separat geöffnete Tabs desselben Ordners sind nicht betroffen. Das Schließen eines ganzen Fensters, Beenden oder Neuladen bewahrt Projektverbindungen für die Wiederherstellung; siehe [Projekte](projects.md). Verwenden Sie geschlossene Fenster nicht als Beweis, dass Agent oder geplante Mission gestoppt wurde.
 
-Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald ein Fenster geladen ist; bis dahin erscheinen sie auf Englisch. **Hilfe → Über CodeNomad** (auch im macOS-Anwendungsmenü) öffnet **Einstellungen → Info** mit Version, Updates und Diagnose.
+Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald ein Fenster geladen ist; bis dahin erscheinen sie auf Englisch. **Hilfe → Über CodeNomad** (auch im macOS-Anwendungsmenü) öffnet **Einstellungen → Info** mit Version, Updates und Diagnose. **Hilfe → CodeNomad unterstützen** öffnet die Seite [CodeNomad unterstützen](sponsor.md) im Browser.
+
+## Desktop-Startargumente {#desktop-cli}
+
+Geben Sie diese Argumente nach der **Desktop-Programmdatei** (Tauri oder Electron) an, im Terminal oder im Feld **Ziel** einer Windows-Verknüpfung. Ersetzen Sie die Beispielpfade durch Ihren Programmpfad.
+
+| Argument | Wirkung |
+| --- | --- |
+| `--connect-server <server>` | Öffnet einen entfernten CodeNomad-Server über seine HTTP(S)-URL, seinen gespeicherten Namen oder seine gespeicherte ID. Siehe [Verbindung und Anmeldung](remote-access.md#saved-servers). |
+| `--folder <path>` | Öffnet ein vorhandenes Projektverzeichnis. Für mehrere Verzeichnisse wiederholen; relative Pfade beziehen sich auf das Startverzeichnis. |
+| `<path> ...` | Öffnet Projektverzeichnisse ohne ausdrückliches `--folder`. **Bereits laufendes Windows Tauri:** Verwenden Sie für jedes Verzeichnis `--folder`. Werden Positionspfade mit `--folder` gemischt, entfällt ebenfalls die gesamte Ordneranforderung. |
+| `--new-window` | Fordert ein neues Anwendungsfenster an, auch wenn ein weiterer Start sonst das vorhandene Fenster fokussieren würde. |
+
+Auch `--connect-server=<server>` und `--folder=<path>` funktionieren. Pfade und Namen mit Leerzeichen müssen in Anführungszeichen stehen. Für ausschließlich das entfernte Fenster verwenden Sie nur `--connect-server`, ohne Ordner oder `--new-window`; lokale Fenster werden erst bei einem Verbindungsfehler wiederhergestellt.
+
+In **PowerShell**:
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+Im **Ziel** der Windows-Verknüpfung steht `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` (`&` gehört zu PowerShell). Unter Linux verwenden Sie die AppImage-Datei, etwa `./CodeNomad.AppImage --connect-server "https://server.example:9898"`.
+
+Desktop-Profil und Konfiguration wählen Sie vor dem Start mit `CODENOMAD_PROFILE` und `CLI_CONFIG`; siehe [Datenprofile](#data-profiles). Backend-Listener, TLS und Anmeldung sind in der [Server-CLI-Referenz](server.md#cli-reference) beschrieben. Windows Tauri verweigert Startargumente mit `|`; verwenden Sie eine URL oder benennen Sie den gespeicherten Server um.
 
 ## Einstellungen und Startwiederherstellung {#preferences-startup}
 
@@ -18,9 +42,11 @@ Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald 
 
 Wiederherstellung kann Arbeitsbereichs-/SideCar-Tabs und aktive Sitzungen, ungesendeten Text, Scrollpositionen, Panels, Fensterposition und Zoom erneut öffnen. Es handelt sich um fensterbezogenen Client-Zustand, keine Kopie der nativen Unterhaltungsdatenbank. Löschen entfernt gespeicherte Tabs, Entwürfe und Layout; es löscht weder CodeNomad-Konfiguration noch OpenCode-Unterhaltungen. Sichern Sie wichtige ungesendete Entwürfe vorher anderswo.
 
+Jeder Projekt-Tab stellt seine eigene Auswahl im rechten Panel, seinen Dateien-Modus und seine Missionsleseansicht und -auswahl wieder her, auch bei mehreren Tabs derselben Unterhaltung. Gespeicherte Browser-URLs und der Verlauf öffnen sich auf Anforderung erneut; siehe [Browser-Vorschauen und SideCars](browser-sidecars.md#session-browser).
+
 Das Einstellungsfenster hat keinen separaten Wiederherstellungszustand: Diese Bedienelemente zielen auf das Fenster, das es öffnete. Ist dieses geschlossen oder unbekannt, weil die Einstellungen beim Start wieder geöffnet wurden, folgen sie stattdessen dem zuletzt verwendeten Fenster; eine für ein anderes Fenster vorbereitete Änderung wird nie angewendet, die Bedienelemente zeigen zuerst den Wert des neuen Fensters. Um ein bestimmtes Fenster zu konfigurieren, öffnen Sie die Einstellungen aus diesem Fenster. Projektbezogene Einstellungen verwenden ebenfalls die Location des öffnenden Fensters und bleiben ohne sie nicht verfügbar. Werden die Einstellungen beim Start wieder geöffnet, verbinden sie sich erneut, sobald dieses Projekt fertig geöffnet ist; solange der Ordner noch startet oder in mehreren Tabs geöffnet ist, bleiben sie nicht verfügbar, bis Sie die Einstellungen aus dem gewünschten Fenster öffnen.
 
-Browser- und Remote-Einstellungen sind eingebettet, kein zweiter nativer Einstellungsbesitzer. Ein Fehler beim Öffnen nativer Einstellungen wird gemeldet; er bedeutet nicht, dass stattdessen eine versteckte eingebettete Einstellungsseite geöffnet wurde.
+Browser- und Remote-Clients verwenden eingebettete Einstellungen.
 
 ## Desktop-Datenprofile {#data-profiles}
 
@@ -54,7 +80,7 @@ Unter macOS-Tauri teilen Profile System-WebKit-Speicher, Anmeldungen und Cache; 
 
 Die Löschung entfernt gespeicherte Tabs, Entwürfe, Layout und zugehörigen Webspeicher/Cache/Anmeldungen dieses Profils, auch bei einem aufgelisteten Profil einer anderen Konfiguration. Sie bewahrt geöffnetes Profil, OpenCode-Unterhaltungen und Projektdateien. Ein geöffnetes Profil oder eines mit unbekanntem Zustand kann nicht gelöscht werden; schließen Sie die relevanten CodeNomad-Fenster, aktualisieren Sie die Liste und versuchen Sie es erneut. Unbekannte Inhalte werden behalten und gemeldet statt pauschal gelöscht.
 
-Der gemeinsame WebKit-Speicher von macOS-Tauri bleibt erhalten, da dessen Löschung andere Profile betreffen würde. Diese Bereinigung ist nicht rückgängig zu machen: Eine erhaltene native Unterhaltung stellt keinen gelöschten ungesendeten Entwurf wieder her. **Gespeicherten Startzustand löschen** ist die kleinere Aktion, wenn Sie nur das aktuelle Fenster zurücksetzen möchten.
+Der gemeinsame Webspeicher, Anmeldungen und Cache von Tauri unter macOS bleiben erhalten. Diese Bereinigung ist nicht rückgängig zu machen: Eine erhaltene native Unterhaltung stellt keinen gelöschten ungesendeten Entwurf wieder her. **Gespeicherten Startzustand löschen** ist die kleinere Aktion, wenn Sie nur das aktuelle Fenster zurücksetzen möchten.
 
 ## Zoom und Panel-Geometrie {#zoom-panels}
 

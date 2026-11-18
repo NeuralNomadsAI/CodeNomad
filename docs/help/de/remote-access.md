@@ -29,12 +29,10 @@ Dies ändert den direkten Abhörmodus des Hosts, nicht ein Projekt und nicht die
 
 | Start/Modus | HTTP bindet an | HTTPS bindet an |
 | --- | --- | --- |
-| Eigenständig, nur HTTPS (Standard) | Nur privater Loopback-Listener (siehe unten) | `--host` |
+| Eigenständig, nur HTTPS (Standard) | Nur privater Loopback-Listener | `--host` |
 | Eigenständig, nur HTTP | **`--host`**, einschließlich LAN-/Wildcard-Adresse | Nicht aktiviert |
 | Eigenständig, beide Listener | `127.0.0.1` unabhängig von `--host` | `--host` |
 | Natives Desktop-Backend | Sein HTTP-Listener bleibt auf `127.0.0.1`, einschließlich des hostinternen Listeners | `--host`, wenn HTTPS aktiviert ist |
-
-Jedes Backend behält außerdem einen HTTP-Listener auf `127.0.0.1` für CodeNomads eigene mitgelieferte OpenCode-Plugins wie Missionen. Wurde HTTP nicht angefordert oder ist der angeforderte HTTP-Listener an eine andere Adresse als `127.0.0.1` oder `0.0.0.0` gebunden, ergänzt das Backend einen privaten HTTP-Listener auf einem zufälligen `127.0.0.1`-Port. Er wird nie ausgegeben oder als Verbindungsadresse angeboten, ist von anderen Rechnern nicht erreichbar und stellt dieselbe authentifizierte Anwendung bereit.
 
 Eine konkrete LAN-Adresse muss keine Loopback-Verbindungen annehmen. `0.0.0.0` bedeutet alle IPv4-Schnittstellen; `::` ist der Dual-Stack-Wildcard-Listener. Verwenden Sie im Browser eine tatsächlich erreichbare Adresse, keine Wildcard. IPv6-Zonenkennungen werden in `--host` nicht unterstützt.
 
@@ -51,6 +49,18 @@ codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
 Setzen Sie Port 9898 oder 9899 nicht voraus: Nicht angegebene Ports können bei Belegung ausweichen. Ein expliziter von null verschiedener `--https-port` oder ein `--http-port` bei aktiviertem HTTP legt den Port fest und schlägt bei fehlgeschlagener Bindung fehl; `0` fordert eine OS-Zuweisung an. Die ausgegebenen **Local Connection URL** und **Remote Connection URL** sowie aktualisierte **Erreichbare Adressen** sind für diesen Lauf maßgeblich. Siehe die vollständige [Server-CLI-Referenz](server.md).
+
+## Administratorrichtlinie {#administrator-policy}
+
+Ein Administrator kann die Abhöradresse festlegen: Setzen Sie `CODENOMAD_LOCKED_HOST` systemweit auf die Adresse, die der Server verwenden muss, und starten Sie CodeNomad neu. Sie hat Vorrang vor `--host`, `CLI_HOST` und **Verbindungen von anderen IPs zulassen**, das das Ergebnis anzeigt, es aber nicht ändern kann. Verwenden Sie eine Intranetadresse, damit Kollegen den Server über das Firmennetz erreichen, oder `127.0.0.1`, um ihn auf diesem Computer zu halten. Damit jeder Zugriff im Firmennetz bleibt, setzen Sie zusätzlich `CODENOMAD_REMOTE_CONTROL=disabled` ([Fernsteuerung](remote-control.md#administrator-policy)).
+
+## Aktualisieren {#upgrading}
+
+Melden Sie sich nach der Aktualisierung erneut an. Setzen Sie für einen Hostnamen-Alias, Reverse-Proxy oder eine separat gehostete Oberfläche `CODENOMAD_ALLOWED_ORIGINS` im Backend auf die vertrauenswürdigen Origins der Oberfläche (Schema, Hostname und Port). Native LAN-Clients müssen bei schreibenden Anfragen einen erlaubten `Origin`-Header mitsenden.
+
+Verwenden Sie eine Loopback-Verbindung für dem Host vorbehaltene Vorgänge: SideCar-Inhalte (`/sidecars/`) und WebSockets, Fernsteuerungsverwaltung (`/api/remote-control/`), Plugin-Brücke (`/api/opencode-plugin/`), Remote-Proxys (`/api/remote-proxy/`), Verwaltung gespeicherter Server (`/api/remote-servers/`), Passwortänderungen und Token-Ersteinrichtung. Diese Vorgänge erfordern auch bei angemeldetem direktem LAN-Zugriff Loopback. Nur SideCars haben eine Ausnahme: Die Host-Einstellung **SideCars über HTTPS öffnen** gibt ihre Inhalte und WebSockets für Browser frei, die über einen vertrauenswürdigen HTTPS-Origin angemeldet sind ([SideCars](browser-sidecars.md#register-sidecar)). Inhalte aktiver Vorschauen (`/previews/`) sind mit einem gültigen Berechtigungstoken über direkten LAN-Zugriff verfügbar.
+
+Die Registrierungs-APIs `/api/sidecars` bleiben für authentifizierte direkte LAN-Clients und gekoppelte Geräte verfügbar. Web-Vorschauen der Fernsteuerung bleiben mit ihrem Berechtigungstoken verfügbar, solange sie auf dem Host aktiviert sind.
 
 ## Vertrauenswürdiges TLS konfigurieren {#tls}
 
@@ -77,7 +87,7 @@ Bei aktiviertem HTTPS ohne bereitgestelltes Schlüssel-/Zertifikatspaar erstellt
 2. Starten Sie das Backend neu, um das Zertifikat zu erzeugen/erneut zu prüfen.
 3. Prüfen Sie Host/CA über einen vertrauenswürdigen Kanal und importieren Sie dann **nur das CA-Zertifikat** in den Vertrauensspeicher jedes vorgesehenen Clients/Browsers. Alternativ verwenden Sie ein öffentlich vertrauenswürdiges Zertifikat oder einen TLS-Reverse-Proxy.
 
-Das erzeugte Serverzertifikat gilt 30 Tage. Beim Start wird es innerhalb von drei Tagen vor Ablauf, bei fehlenden erforderlichen SANs, fehlgeschlagenen Zertifikatsprüfungen oder fehlender privater Schlüsseldatei erneuert. Die erzeugte CA gilt 365 Tage und wird bei Ablauf, fehlgeschlagenen Zertifikatsprüfungen oder fehlender privater Schlüsseldatei ersetzt; dabei wird auch das Serverzertifikat neu ausgestellt. Vorhandene beschädigte, unlesbare oder unpassende private Schlüssel werden nicht automatisch repariert. Clients müssen der Ersatz-CA vertrauen. Es gibt keine kontinuierliche Erneuerung im laufenden Prozess: Planen Sie für Langzeitbereitstellungen einen bewussten Neustart vor Ablauf.
+Das erzeugte Serverzertifikat gilt 30 Tage. Beim Start wird es innerhalb von drei Tagen vor Ablauf, bei fehlenden erforderlichen SANs, fehlgeschlagenen Zertifikatsprüfungen oder fehlender privater Schlüsseldatei erneuert. Die erzeugte CA gilt 365 Tage und wird bei Ablauf, fehlgeschlagenen Zertifikatsprüfungen oder fehlender privater Schlüsseldatei ersetzt; dabei wird auch das Serverzertifikat neu ausgestellt. Clients müssen der Ersatz-CA vertrauen. Es gibt keine kontinuierliche Erneuerung im laufenden Prozess: Planen Sie für Langzeitbereitstellungen einen bewussten Neustart vor Ablauf.
 
 Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostname, SANs, Vertrauensspeicher und Ablauf. Deaktivieren Sie keine Prüfung und machen Sie das Wegklicken von Warnungen nicht zum Bereitstellungsverfahren. Vertrauenswürdiges HTTPS ist auch für entfernte Browserfunktionen wie [PWA-Installation und Mikrofonzugriff](mobile.md) erforderlich.
 
@@ -88,5 +98,9 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 3. Wählen Sie **Speichern** für ein Lesezeichen oder **Verbinden** zum Speichern und Öffnen. Melden Sie sich auf diesem Server an.
 
 Wählen Sie einen gespeicherten Server auf dem Tab **Server** der Startseite, um ihn erneut zu öffnen. Lesezeichen gehören zu dieser CodeNomad-Konfiguration, nicht den Projekten des Remote-Servers. Eine URL zu speichern startet keinen Server und gewährt keinen Zugriff. **Gespeicherten Server entfernen** entfernt das Lesezeichen, nicht entfernte Unterhaltungen, Backend oder Zugangsdaten.
+
+Um einen gespeicherten Server direkt von der Befehlszeile zu öffnen, starten Sie die Desktop-App mit `--connect-server <name>` (oder `--connect-server=<name>`) und dem gespeicherten Namen des Servers oder seiner `https://`-URL. CodeNomad öffnet nur das Remote-Fenster, mit denselben Prüfungen und derselben Anmeldung wie **Verbinden**; läuft CodeNomad bereits, öffnet sein aktuelles Fenster den Server statt eines neuen Fensters. Eine URL, die zu keinem gespeicherten Server passt, wird unter ihrem Hostnamen gespeichert. Startwerte enthalten nie Zugangsdaten: Eine URL mit Benutzername, Passwort oder Kopplungscode wird abgelehnt. Unter Windows startet der Tauri-Build nicht, wenn ein Startargument `|` enthält; verwenden Sie stattdessen die URL des Servers oder benennen Sie den Server um.
+
+Wenn Sie das letzte lokale Fenster schließen, während Remote-Fenster geöffnet bleiben, behält es seine Tabs: **Fenster → Neues Fenster** in einem Remote-Fenster oder ein erneuter Start von CodeNomad öffnet es wieder.
 
 Fügen Sie für Fernsteuerung stattdessen einen frischen Kopplungslink in **Server-URL** ein. Das Lesezeichen behält nur die Tunnel-Origin, nie den Einmal-Kopplungscode; siehe [Fernsteuerung](remote-control.md) zur erneuten Kopplung nach Verlust des Geräte-Cookies.

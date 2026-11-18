@@ -1,9 +1,10 @@
 import { Show } from "solid-js"
-import type { MissionActorActivity, MissionReport, MissionTask } from "../../../server/src/api-types"
+import type { MissionActorActivity, MissionPanelReport, MissionPanelTask } from "../../../server/src/api-types"
+import { missionModeExcerpt } from "../../../server/src/missions/mission-panel-map"
 import { useI18n } from "../lib/i18n"
 import { missionActivityKey, missionNativeCallKey, missionReportNotificationKey } from "./mission-native-execution-model"
 
-export function MissionReportNotification(props: { report: MissionReport }) {
+export function MissionReportNotification(props: { report: MissionPanelReport }) {
   const { t } = useI18n()
   const notificationKey = () => missionReportNotificationKey(props.report)
   return <div class="mission-native-execution">
@@ -21,7 +22,7 @@ export function MissionReportNotification(props: { report: MissionReport }) {
 }
 
 /** Bounded scalar facts only, never a second execution queue or descendant transcript. */
-export function MissionNativeExecution(props: { task: MissionTask; activity?: MissionActorActivity["state"] }) {
+export function MissionNativeExecution(props: { task: MissionPanelTask; activity?: MissionActorActivity["state"] }) {
   const { t } = useI18n()
   const native = () => props.task.executionMode?.kind === "native" || Boolean(props.task.nativeBinding)
   const independent = () => props.task.executionMode?.kind === "independent" ? props.task.executionMode : undefined
@@ -30,7 +31,7 @@ export function MissionNativeExecution(props: { task: MissionTask; activity?: Mi
   return <Show when={native() || independent()}>
     <div class="mission-native-execution">
       <Show when={independent()}>{mode => <p class="mission-native-note">
-        {t(`missions.control.native.independent.${mode().reason}`)} <span class="mission-text-excerpt" title={mode().explanation}>{mode().explanation}</span>
+        {t(`missions.control.native.independent.${mode().reason}`)} <span class="mission-text-excerpt" title={missionModeExcerpt(mode())}>{missionModeExcerpt(mode())}</span>
       </p>}</Show>
       <Show when={native()}>
         <dl class="mission-native-facts">

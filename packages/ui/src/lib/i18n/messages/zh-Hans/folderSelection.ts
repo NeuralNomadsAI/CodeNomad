@@ -9,7 +9,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "CodeNomad 的 Discord",
 
   "folderSelection.empty.title": "没有最近的文件夹",
-  "folderSelection.empty.description": "浏览并选择文件夹以开始使用",
 
   "folderSelection.recent.title": "最近的文件夹",
   "folderSelection.recent.subtitle.one": "{count} 个文件夹可用",
@@ -39,9 +38,8 @@ export const folderSelectionMessages = {
   "folderSelection.temporary.button": "新建临时实例",
   "folderSelection.temporary.description": "在 CodeNomad 管理的空文件夹中开始；关闭标签页时可选择保留或丢弃",
   "folderSelection.clone.destination.title": "选择克隆目标位置",
-  "folderSelection.clone.destination.description": "选择要将仓库克隆到的文件夹。",
+  "folderSelection.clone.destination.description": "选择存放克隆的文件夹;仓库文件夹会在其中创建。",
   "folderSelection.clone.dialog.title": "克隆 Git 仓库",
-  "folderSelection.clone.dialog.description": "将 Git 仓库克隆到本地文件夹，然后作为工作区打开。",
   "folderSelection.clone.dialog.repositoryUrl": "仓库 URL",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "目标文件夹",
@@ -63,10 +61,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "浏览",
 
   "folderSelection.loading.title": "正在启动实例...",
-  "folderSelection.loading.subtitle": "正在准备你的工作区，请稍候。",
 
   "folderSelection.drop.title": "拖放文件夹以打开",
-  "folderSelection.drop.subtitle": "在拖放的文件夹中启动一个新实例。",
   "folderSelection.drop.invalidTitle": "无法打开拖放的项目",
   "folderSelection.drop.invalidMessage": "请拖放一个文件夹来启动新实例。",
 
@@ -79,7 +75,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "在新窗口中打开已保存的远程 CodeNomad 服务器",
   "folderSelection.servers.count": "{count} 个服务器",
   "folderSelection.servers.empty.title": "没有已保存的服务器",
-  "folderSelection.servers.empty.description": "添加远程服务器，以便在此设备上快速重新连接",
   "folderSelection.servers.connectTitle": "连接到服务器",
   "folderSelection.servers.connectSubtitle": "保存远程 CodeNomad 服务器并在新窗口中打开它",
   "folderSelection.servers.connectButton": "连接到服务器",
@@ -87,7 +82,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "自签名 TLS",
   "folderSelection.servers.errorTitle": "远程连接失败",
   "folderSelection.servers.dialog.title": "连接到服务器",
-  "folderSelection.servers.dialog.description": "添加远程 CodeNomad 服务器，并可选择立即打开。",
   "folderSelection.servers.dialog.name": "服务器名称",
   "folderSelection.servers.dialog.namePlaceholder": "生产服务器",
   "folderSelection.servers.dialog.url": "服务器 URL",
@@ -105,6 +99,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "继续",
   "folderSelection.servers.certificateInstall.cancelLabel": "取消",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad 需要先信任本地证书，才能打开使用自签名 HTTPS 的远程窗口。",
+  "folderSelection.servers.launch.error.missing": "--connect-server 需要已保存服务器的名称或 http(s) URL。",
+  "folderSelection.servers.launch.error.invalid": "“{value}”不是有效的 http:// 或 https:// 服务器地址。",
+  "folderSelection.servers.launch.error.credentials": "“{value}”包含凭据或配对码。启动地址不能包含它们：请改为通过“连接到服务器”配对该服务器。",
+  "folderSelection.servers.launch.error.unknown": "没有名为“{value}”的已保存服务器。请使用已保存服务器的名称或 http(s) URL。",
+  "folderSelection.servers.launch.error.ambiguous": "有多个已保存服务器名为“{value}”。请重命名其中一个，或使用其 URL。",
   "folderSelection.sidecars.button": "打开 SideCar",
 
   "projectRenameDialog.title": "重命名工作区",

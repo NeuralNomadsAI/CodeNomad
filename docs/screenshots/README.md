@@ -35,6 +35,14 @@ and session/project names in the adjacent `readme-workspace-data.ts`. Update thi
 data when refreshing documentation; keep product layout and styling in the real
 components.
 
+# Integration Plugins captures
+
+`integration-plugins-{light,dark}.png` show the real Plugins rows of two integrations and a plain plugin with
+synthetic data: one integration's state line offers to install its application part, the other to attach a
+document. The same test writes `integration-state-<state>-{light,dark}.png`, one Blender row per state line.
+`packages/ui/tests/browser/integration-plugin-row.test.ts` generates them when `CODENOMAD_INTEGRATION_SCREENSHOTS`
+names an output directory.
+
 # Help home tour
 
 The help home page's `{{tour-video}}` block uses two files from the CodeNomad 1.0

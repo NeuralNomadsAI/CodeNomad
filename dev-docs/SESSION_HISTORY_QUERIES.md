@@ -28,6 +28,16 @@ Agents use the same bundle's `codenomad.session_search` Code Mode tool to find
 past discussions. Native tool permissions govern execution. Backend presence
 owns both the tool and RPC registrations.
 
+## Stored-part coverage
+
+With `experimental.part_rows`, native assistant parts can reside in `session_part`
+beside an inline tail. CodeNomad's SQL history, search, outline/navigation, gallery
+and pruning readers use the shared `session-pruning/message-storage.ts` relation:
+ordinal split rows precede the inline tail, and all resulting part indexes use that
+combined order. Stored-byte bounds cover both forms before reconstruction. Existing
+split rows retain this read behavior after `part_rows` is disabled. Missions uses
+the same ordered-content SQL expression with its own read budgets and source fences.
+
 ## Scope and resource limits
 
 Session queries validate the session's current full native location and project.
@@ -312,18 +322,23 @@ The Chromium fixture exercises the real search window with HTTP responses and
 asserts that searches/counts and selected previews never page the transcript.
 
 `scripts/test-session-history-native.mjs` runs only inside the isolated pruning
-fixture: 241 imported synthetic messages, counts, search, cleanup and exact batch
-replays against a real daemon; a second session verifies all 242 text-only
-workspace matches and ranked search with three diverse hits and exact two-session
-provenance. Pure ranking tests cover Unicode terms, frequency weights, phrase
+fixture, checking counts, search, cleanup, exact batch replays and multi-session
+ranked provenance against a real daemon. Pure ranking tests cover Unicode terms, frequency weights, phrase
 bonuses, diversity, dates and cap formatting. Synthetic SQLite/filesystem tests cover
 physical clone/worktree ownership, unknown identities and adversarial large-row
-first-yield responsiveness, tool-heavy rarity ranking, exact control/Unicode
+yield progress, tool-heavy rarity ranking, exact control/Unicode
 escape decoding and IDF isolation from unknown projections. The native fixture also checks dotted-capital-I and
 mixed-accent/Kelvin/long-s scalar matching, plus large-row bypass reporting.
 Synthetic SQLite tests cover scope,
 prefilter supersets and selectivity, multiline rarity ranking, bounded materialization, cancellation, yielding and time/candidate
 caps; registration tests exercise the tool, RPC, storage challenge and caller fences.
+
+The ignored-tool-metadata regression uses real SQLite rows, event-loop turns and a
+controlled slice clock. It checks yielding at the 40 ms slice, within-chunk streaming
+and prose-only JavaScript decoding below 64 KiB on 12.7 MB stored rows.
+Single-row SQLite projection and technical JSON decoding finish before yielding;
+measure their machine/load-dependent cost separately.
+
 The parent fixture also checks active-generation refusal and
 pre-compaction discovery. Never point it at a user's DB or shared daemon; report
 native Windows, browser rendering and other platforms as separate validation claims.

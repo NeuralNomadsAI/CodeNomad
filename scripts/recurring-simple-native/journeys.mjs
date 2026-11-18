@@ -229,31 +229,39 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
     const QUESTION = { question: "Choose the seam?", header: "Seam", options: [{ label: "Module", description: "Own the boundary" }] }
     let q = {}
     c.scenarios.push(async turn => {
+      // The decision worker returns a brief; only the passage coordinator asks the human.
       if (turn.first.includes("# CodeNomad Mission Assignment") && turn.first.includes("[JOURNEY-Q]"))
-        return turn.calls.includes("question") ? { text: "Decision: Module (human answer received)" }
-          : { calls: [{ name: "question", args: { questions: [QUESTION] } }] }
+        return { text: "DECISION_BRIEF: Module owns the boundary and is cheap to undo. Recommendation: Module." }
       if (!turn.first.includes("[JOURNEY-Q]")) return undefined
       if (!turn.calls.includes("mission_delegate")) return { calls: [{ name: "mission_delegate", id: q.delegateCall = id("call_qdel"),
-        args: { taskKey: "decision", title: "Choose the seam", role: "decision", brief: "Ask the human which seam to use through a native question Form." } }] }
+        args: { taskKey: "decision", title: "Choose the seam", role: "decision", brief: "Return a decision brief for the seam." } }] }
       if (!turn.calls.includes("subagent")) {
         const raw = toolResult(turn, q.delegateCall), start = raw.indexOf("{")
         q.delegated = JSON.parse(raw.slice(start, raw.lastIndexOf("}") + 1))
         return { calls: [{ name: "subagent", id: q.subagentCall = id("call_qsub"), args: { agent: "fixture-worker", description: "Decision worker", prompt: q.delegated.assignmentPrompt } }] }
       }
+      // The question names the decision task it answers (its questionTag).
+      q.question ??= { ...QUESTION, question: `${QUESTION.question} ${q.delegated.questionTag}` }
+      if (!turn.calls.includes("question")) return { calls: [{ name: "question", id: q.questionCall = id("call_qask"), args: { questions: [q.question] } }] }
       const decision = callOf(turn, call => call.function.name === "mission_report" && JSON.parse(call.function.arguments).taskKey === "decision")
       if (!decision) {
-        const parent = (await messages(turn.sessionID)).find(m => m.type === "assistant" && m.content?.some(p => p.type === "tool" && p.id === q.subagentCall))
-        const delegation = parent.content.find(p => p.id === q.subagentCall), child = delegation.state.metadata?.sessionID
-        const asked = (await messages(child)).find(m => m.type === "assistant" && m.content?.some(p => p.type === "tool" && p.name === "question"))
-        const question = asked.content.find(p => p.type === "tool" && p.name === "question")
-        const contract = q.delegated.contract
-        q.provenance = { kind: "native-form-answer", contract: { missionID: contract.missionID, taskKey: contract.taskKey, generation: contract.generation },
-          nativeCall: { generation: contract.generation, parentSessionID: turn.sessionID, parentMessageID: parent.id, toolCallID: q.subagentCall },
-          sessionID: child, formID: q.formID, messageID: asked.id, toolCallID: question.id, fieldKey: "q0" }
-        // The UI run omits the artifact: the server discovers the exact answered question itself.
+        // The UI run cites the answer artifact inspect lists; the ordinary run cites the same exact question without a mark.
+        if (q.mode === "ui" && !turn.calls.includes("mission_inspect"))
+          return { calls: [{ name: "mission_inspect", id: q.inspectCall = id("call_qins"), args: { taskKey: "decision" } }] }
+        let artifact
+        if (q.mode === "ui") {
+          const raw = toolResult(turn, q.inspectCall)
+          artifact = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)).humanAnswers?.candidates?.find(item => item.askedBy === "coordinator")?.artifact
+        } else {
+          const asked = (await messages(turn.sessionID)).find(m => m.type === "assistant" && m.content?.some(p => p.type === "tool" && p.id === q.questionCall))
+          const contract = q.delegated.contract
+          artifact = { kind: "decision", decidedBy: "human", question: q.question.question, answer: "Module", provenance: { kind: "coordinator-form-answer",
+            contract: { missionID: contract.missionID, taskKey: contract.taskKey, generation: contract.generation },
+            sessionID: turn.sessionID, formID: q.formID, messageID: asked.id, toolCallID: q.questionCall, fieldKey: "q0" } }
+        }
+        q.provenance = artifact?.provenance
         return { calls: [{ name: "mission_report", id: q.decisionCall = id("call_qrep"), args: { taskKey: "decision", outcome: "completed",
-          summary: "The human chose Module", evidence: [], next: [],
-          ...(q.mode === "ui" ? {} : { artifact: { kind: "decision", question: QUESTION.question, answer: "Module", provenance: q.provenance } }) } }] }
+          summary: "The human chose Module", evidence: [], next: [], artifact } }] }
       }
       q.decisionResult ??= toolResult(turn, decision.id)
       if (!/"disposition"\s*:\s*"reported"/.test(q.decisionResult)) return { text: "Gate refused; no human decision recorded" }
@@ -268,6 +276,7 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
       let forms = []
       await c.until(async () => (forms = (await c.client.form.list({ location })).data).length === 1, 120_000)
       const form = R.form = { id: forms[0].id, sessionID: forms[0].sessionID, kind: forms[0].metadata?.kind }
+      assert.equal(form.sessionID, R.passage.sessionID, "the passage coordinator asks from its own conversation, never the decision worker")
       q.formID = form.id
       await delay(OBSERVE)
       R.whileForm = await c.snapshot(scheduleID)

@@ -256,7 +256,8 @@ function pruneKnownServerDependencies(root, log, target) {
   const declarationAndMaps = [/\.d\.[cm]?ts$/, /\.map$/]
   const packageDocs = [/\.md$/i, /\.markdown$/i]
 
-  // Desktop Linux bundles ship the official glibc Node runtime. msgpackr's
+  // Both desktop Linux runtimes (Tauri's official Node, Electron's integrated
+  // Node) are glibc-based. msgpackr's
   // platform package also includes musl ELFs which cannot load in this runtime
   // and make linuxdeploy abort while resolving their incompatible dependencies.
   if (target.os === "linux") {

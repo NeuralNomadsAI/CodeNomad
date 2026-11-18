@@ -12,6 +12,7 @@ import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
 import { normalizeHotkeyOverrides, type HotkeyBinding, type HotkeyOverrides } from "../lib/hotkey-bindings"
 import { normalizeAppearancePreferences, selectAppearancePalette, type Appearance } from "../lib/appearance-preferences"
+import { normalizeHighContrastPreference, type HighContrastPreference } from "../lib/high-contrast"
 import { defaultNotificationRouting, normalizeNotificationRouting, type NotificationRouting } from "../lib/notification-routing"
 import { encodeMissionDefaults, normalizeMissionDefaults, validMissionDefaults, type MissionProfileDefault } from "../lib/mission-defaults"
 import { normalizeMissionModels, validMissionModels, parseMissionModel, saveMissionModelRecord, removeMissionModelRecord, type UserMissionModel } from "../lib/mission-model-library"
@@ -110,9 +111,12 @@ export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "provider" | "ha
 }
 
 export interface UiSettings {
+  highContrast: HighContrastPreference
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showMessageTimeline: boolean
+  /** First/latest controls in the corner under a shown timeline instead of floating over the transcript. */
+  scrollControlsInTimelineCorner: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
   hotkeyOverrides: HotkeyOverrides
@@ -132,6 +136,10 @@ export interface UiSettings {
   showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
+  autoExpandActiveSubsessions: boolean
+  keepComputerAwake: boolean
+  /** Deleting a Mission also deletes the task conversations created for it. */
+  missionDeleteSessions: boolean
   focusExistingWindowOnSecondLaunch: boolean
   modelVisibility: ModelVisibilityPreferences
   missionProfileDefaults: MissionProfileDefault[]
@@ -180,6 +188,8 @@ interface ServerConfigBucket {
   secureEnvVars?: string[]
   opencodeBinary?: string
   speech?: Partial<SpeechSettings>
+  /** Host-only: signed-in browsers on a verified direct HTTPS origin may open SideCars. */
+  sidecarsOverDirectHttps?: boolean
 }
 
 interface UiStateBucket {
@@ -191,6 +201,8 @@ interface UiStateBucket {
   colorSchemePresets?: unknown
   activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
+  /** The folder the last clone was created in, where the next clone is suggested. */
+  lastCloneParent?: string
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
   models?: {
@@ -203,6 +215,7 @@ interface UiStateBucket {
 
 interface NormalizedUiState {
   recentFolders: RecentFolder[]
+  lastCloneParent?: string
   opencodeBinaries: OpenCodeBinary[]
   remoteServers: RemoteServerProfile[]
   models: {
@@ -224,9 +237,11 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 }
 
 const defaultUiSettings: UiSettings = {
+  highContrast: "auto",
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
+  scrollControlsInTimelineCorner: false,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
   hotkeyOverrides: {},
@@ -244,6 +259,9 @@ const defaultUiSettings: UiSettings = {
   showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: true,
+  autoExpandActiveSubsessions: true,
+  keepComputerAwake: false,
+  missionDeleteSessions: false,
   focusExistingWindowOnSecondLaunch: false,
   modelVisibility: {},
   missionProfileDefaults: [],
@@ -335,9 +353,11 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       ? "collapsed"
       : "expanded"
   return {
+    highContrast: normalizeHighContrastPreference(sanitized.highContrast),
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
+    scrollControlsInTimelineCorner: sanitized.scrollControlsInTimelineCorner ?? defaultUiSettings.scrollControlsInTimelineCorner,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
     hotkeyOverrides: normalizeHotkeyOverrides(sanitized.hotkeyOverrides),
@@ -370,7 +390,11 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
+    autoExpandActiveSubsessions: typeof sanitized.autoExpandActiveSubsessions === "boolean"
+      ? sanitized.autoExpandActiveSubsessions : defaultUiSettings.autoExpandActiveSubsessions,
     focusExistingWindowOnSecondLaunch: sanitized.focusExistingWindowOnSecondLaunch === true,
+    keepComputerAwake: sanitized.keepComputerAwake === true,
+    missionDeleteSessions: sanitized.missionDeleteSessions === true,
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     missionProfileDefaults: normalizeMissionDefaults(sanitized.missionProfileDefaults),
     missionModels: normalizeMissionModels(sanitized.missionModels),
@@ -469,6 +493,8 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
         ...(typeof projectName === "string" && projectName.trim() ? { projectName: projectName.trim() } : {}),
       }
     }),
+    ...(typeof source.lastCloneParent === "string" && source.lastCloneParent.trim()
+      ? { lastCloneParent: source.lastCloneParent.trim() } : {}),
     opencodeBinaries: cloneArray<OpenCodeBinary>(source.opencodeBinaries, (b) => {
       if (!b || typeof b !== "object") return null
       const p = (b as any).path
@@ -524,7 +550,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
 
 export function normalizeServerConfig(
   input?: ServerConfigBucket | null,
-): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
+): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars" | "sidecarsOverDirectHttps">> & { speech: SpeechSettings } {
   const source = input ?? {}
   const listeningMode = source.listeningMode === "all" ? "all" : "local"
   const logLevel =
@@ -537,7 +563,8 @@ export function normalizeServerConfig(
   const environmentVariables = normalizeRecord(source.environmentVariables)
   const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
-  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech }
+  const sidecarsOverDirectHttps = source.sidecarsOverDirectHttps === true
+  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech, sidecarsOverDirectHttps }
 }
 
 function normalizeSecureEnvVars(input?: unknown): string[] {
@@ -627,6 +654,10 @@ const missionModelsValid = () => isUiConfigLoaded() && validMissionModels(missio
 const missionPreferenceSnapshot = (key: MissionPreferenceKey) => missionPreferenceExpectation(uiConfigBucket(), key)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
+const [pendingHighContrast, setPendingHighContrast] = createSignal<HighContrastPreference>()
+const [highContrastSaveFailed, setHighContrastSaveFailed] = createSignal(false)
+const [highContrastSavePending, setHighContrastSavePending] = createSignal(false)
+const highContrastPreference = createMemo(() => pendingHighContrast() ?? uiSettings().highContrast)
 const legacyThemePreference = createMemo<ThemePreference>(() => uiStateBucket().theme ?? uiConfigBucket().theme ?? "system")
 const colorSchemeOverrides = createMemo(() => normalizeColorSchemeOverrides(uiStateBucket().colorSchemeOverrides))
 const colorSchemePreference = createMemo(() => {
@@ -742,6 +773,43 @@ function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
       return false
     },
   )
+}
+
+let highContrastWriteQueue: Promise<unknown> = Promise.resolve()
+let highContrastIntent = 0
+
+function setHighContrastPreference(preference: HighContrastPreference): Promise<boolean> {
+  const normalized = normalizeHighContrastPreference(preference)
+  const intent = ++highContrastIntent
+  setPendingHighContrast(normalized)
+  setHighContrastSaveFailed(false)
+  setHighContrastSavePending(true)
+  const write = highContrastWriteQueue.then(async () => {
+    const saved = await updateUiSettings({ highContrast: normalized })
+    let reconciled = saved
+    if (!saved) {
+      try {
+        const owner = await storage.revalidateUiConfigOwner()
+        setUiConfigBucket(owner as UiConfigBucket)
+        setIsUiConfigLoaded(true)
+        setUiConfigLoadFailed(false)
+        reconciled = true
+      } catch (error) {
+        log.error("Failed to reconcile high contrast preference", error)
+        setIsUiConfigLoaded(false)
+        setUiConfigLoadFailed(true)
+      }
+    }
+    // Earlier acknowledgements and rollback reads cannot retire a newer choice.
+    if (intent === highContrastIntent) {
+      if (reconciled) setPendingHighContrast(undefined)
+      setHighContrastSaveFailed(!saved)
+      setHighContrastSavePending(false)
+    }
+    return saved
+  })
+  highContrastWriteQueue = storage.trackWrite(write)
+  return write
 }
 
 function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
@@ -997,6 +1065,11 @@ async function setUpdateFeed(feed: UpdateFeed): Promise<void> {
   await patchConfigOwner("server", { updateFeed: feed })
 }
 
+/** Host-only: the server refuses this change from other clients. */
+async function setSidecarsOverDirectHttps(enabled: boolean): Promise<void> {
+  await patchConfigOwner("server", { sidecarsOverDirectHttps: enabled })
+}
+
 function updateEnvironmentVariables(envVars: Record<string, string>): void {
   void patchConfigOwner("server", { environmentVariables: envVars }).catch((error) =>
     log.error("Failed to update environment variables", error),
@@ -1094,6 +1167,25 @@ function removeOpenCodeBinary(path: string): void {
 function addRecentFolder(folderPath: string): void {
   const next = buildRecentFolderList(folderPath, recentFolders())
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to add recent folder", error))
+}
+
+// This window's latest clone parent wins over the saved one, whatever the
+// outcome of saves; the saved one carries it to other windows and restarts.
+// Every clone saves its parent, one save after another, so the last clone's is kept.
+const [latestCloneParent, setLatestCloneParent] = createSignal<string>()
+let cloneParentSaves = Promise.resolve()
+
+function lastCloneParent(): string | undefined {
+  return latestCloneParent() ?? uiState().lastCloneParent
+}
+
+function rememberCloneParent(folderPath: string): void {
+  if (!folderPath) return
+  setLatestCloneParent(folderPath)
+  // Tracked from the start, so native shutdown also waits for saves still queued.
+  cloneParentSaves = storage.trackWrite(cloneParentSaves
+    .then(() => patchStateOwner("ui", { lastCloneParent: folderPath }))
+    .catch((error) => log.error("Failed to remember clone folder", error)))
 }
 
 function removeRecentFolder(folderPath: string): void {
@@ -1330,6 +1422,7 @@ void ensureLoaded().catch((error: unknown) => {
 
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
+  ensureLoaded: typeof ensureLoaded
   isUiConfigLoaded: typeof isUiConfigLoaded
   uiConfigLoadFailed: typeof uiConfigLoadFailed
   missionDefaultsValid: typeof missionDefaultsValid
@@ -1347,6 +1440,10 @@ interface ConfigContextValue {
   providerModelVisibilitySaveFailed: typeof providerModelVisibilitySaveFailed
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
+  highContrastPreference: typeof highContrastPreference
+  setHighContrastPreference: typeof setHighContrastPreference
+  highContrastSaveFailed: typeof highContrastSaveFailed
+  highContrastSavePending: typeof highContrastSavePending
   getAppearancePalette: typeof getAppearancePalette
   getAppearancePresetId: typeof getAppearancePresetId
   colorSchemePreference: typeof colorSchemePreference
@@ -1416,6 +1513,7 @@ const ConfigContext = createContext<ConfigContextValue>()
 
 const configContextValue: ConfigContextValue = {
   isLoaded,
+  ensureLoaded,
   isUiConfigLoaded,
   uiConfigLoadFailed,
   missionDefaultsValid,
@@ -1433,6 +1531,10 @@ const configContextValue: ConfigContextValue = {
   providerModelVisibilitySaveFailed,
   themePreference,
   setThemePreference,
+  highContrastPreference,
+  setHighContrastPreference,
+  highContrastSaveFailed,
+  highContrastSavePending,
   colorSchemePreference,
   getAppearancePalette,
   getAppearancePresetId,
@@ -1527,13 +1629,20 @@ export function useConfig(): ConfigContextValue {
 }
 
 export {
+  ensureLoaded,
   preferences,
   uiState,
+  lastCloneParent,
+  rememberCloneParent,
   serverSettings,
   recentFolders,
   opencodeBinaries,
   themePreference,
   setThemePreference,
+  highContrastPreference,
+  setHighContrastPreference,
+  highContrastSaveFailed,
+  highContrastSavePending,
   colorSchemePreference,
   getAppearancePalette,
   getAppearancePresetId,
@@ -1553,6 +1662,7 @@ export {
   providerModelVisibilitySaveFailed,
   setListeningMode,
   setUpdateFeed,
+  setSidecarsOverDirectHttps,
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,

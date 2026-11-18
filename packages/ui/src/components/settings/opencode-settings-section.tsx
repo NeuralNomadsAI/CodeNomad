@@ -5,6 +5,8 @@ import { useConfig, type ServerLogLevel } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { OpenCodeUpdateCard } from "./opencode-update-card"
 import { OpenCodeExecutableCard } from "./opencode-executable-card"
+import { OpenCodeLoginStartCard } from "./opencode-login-start-card"
+import { OpenCodeLogsAction } from "./opencode-logs-action"
 
 type LogLevelOption = { value: ServerLogLevel; label: string }
 
@@ -25,20 +27,12 @@ export const OpenCodeSettingsSection: Component = () => {
     <div class="settings-section-stack">
       <OpenCodeUpdateCard />
       <OpenCodeExecutableCard />
+      <OpenCodeLoginStartCard />
 
       <div class="settings-card">
-        <div class="settings-card-header">
-          <div>
-            <h3 class="settings-card-title">{t("settings.opencode.logLevel.title")}</h3>
-            <p class="settings-card-subtitle">{t("settings.opencode.logLevel.subtitle")}</p>
-          </div>
-        </div>
         <div class="settings-card-body">
           <div class="settings-toggle-row settings-toggle-row-compact">
-            <div>
-              <div class="settings-toggle-title">{t("settings.opencode.logLevel.selector.title")}</div>
-              <div class="settings-toggle-caption">{t("settings.opencode.logLevel.selector.subtitle")}</div>
-            </div>
+            <h3 class="settings-card-title">{t("settings.opencode.logLevel.title")}</h3>
             <Select<LogLevelOption>
               value={selectedLogLevel()}
               onChange={(option) => option && updateLogLevel(option.value)}
@@ -64,6 +58,7 @@ export const OpenCodeSettingsSection: Component = () => {
               </Select.Portal>
             </Select>
           </div>
+          <OpenCodeLogsAction />
         </div>
       </div>
     </div>

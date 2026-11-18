@@ -36,6 +36,7 @@ export const commandHotkeyDefinitions: HotkeyDefinition[] = [
   definition("token-usage-visibility", "app", "app", "settings.behavior.usageMetrics.title"),
   definition("auto-cleanup-blank-sessions", "app", "app", "settings.behavior.autoCleanup.title"),
   definition("open-help", "app", "app", "commands.openHelp.label"),
+  definition("open-sponsor", "app", "app", "commands.openSponsor.label"),
   definition("open-about", "app", "app", "commands.openAbout.label"),
 ]
 
@@ -45,7 +46,8 @@ export const hotkeyDefinitions: HotkeyDefinition[] = [
   definition("new-instance", "app", "main"),
   ...["close-instance", "instance-prev", "instance-next"].map(id => definition(id, "app", "app")),
   definition("browse-folder", "app", "home"),
-  ...["session-new", "session-prev", "session-next", "switch-to-info"].map(id => definition(id, "session", "instance")),
+  ...["session-new", "session-prev", "session-next"].map(id => definition(id, "session", "instance")),
+  definition("switch-to-info", "app", "main", "settings.nav.opencode"),
   ...["close-session", "session-abort", "session-search", "user-message-prev", "user-message-next"].map(id => definition(id, "session", "session")),
   ...["clear-input", "focus-input", "focus-model", "open-agent-selector", "focus-variant"].map(id => definition(id, "composer", "session")),
   ...["session-background", "prompt-send", "prompt-alternate-send", "prompt-newline", "prompt-history-prev", "prompt-history-next", "prompt-exit-shell", "prompt-blur"].map(id => definition(id, "composer", "composer")),

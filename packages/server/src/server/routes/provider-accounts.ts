@@ -33,7 +33,7 @@ export function registerProviderAccountsRoutes(app: FastifyInstance, deps: Deps)
         const connection = await manager.getSharedServiceConnection(id)
         if (!connection) return reply.code(503).send({ error: "Provider accounts unavailable" })
         const directory = await manager.getServiceDirectoryForPath(id, input.data.directory)
-        if (!directory || !await manager.ownsLocation(id, { directory }, connection.client, signal)) {
+        if (!directory || !await manager.ownsLocation(id, { directory }, connection.client, { signal })) {
           return reply.code(403).send({ error: "Location does not belong to workspace" })
         }
         if (method === "PUT") {
@@ -43,7 +43,7 @@ export function registerProviderAccountsRoutes(app: FastifyInstance, deps: Deps)
           if (!release) return reply.code(409).send({ error: "Worktree deletion in progress" })
         }
         const snapshot = await deps.accounts.snapshot(connection, directory, integrationID, signal)
-        if (manager.get(id) !== workspace || !await manager.ownsLocation(id, { directory }, connection.client, signal)) {
+        if (manager.get(id) !== workspace || !await manager.ownsLocation(id, { directory }, connection.client, { signal })) {
           return reply.code(403).send({ error: "Location does not belong to workspace" })
         }
         signal.throwIfAborted(); connection.assertCurrent()

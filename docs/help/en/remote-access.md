@@ -29,12 +29,10 @@ This changes the host's direct listening mode, not one project and not Remote Co
 
 | Launch/mode | HTTP binds to | HTTPS binds to |
 | --- | --- | --- |
-| Standalone, HTTPS only (default) | Private loopback listener only (see below) | `--host` |
+| Standalone, HTTPS only (default) | Private loopback listener only | `--host` |
 | Standalone, HTTP only | **`--host`**, including a LAN/wildcard address | Not enabled |
 | Standalone, both listeners | `127.0.0.1` regardless of `--host` | `--host` |
 | Native desktop backend | Its HTTP listener stays on `127.0.0.1`, including its host-internal listener | `--host` when HTTPS is enabled |
-
-Every backend also keeps an HTTP listener on `127.0.0.1` for CodeNomad's own bundled OpenCode plugins, such as Missions. When HTTP was not requested, or the requested HTTP listener is bound to an address other than `127.0.0.1` or `0.0.0.0`, the backend adds a private HTTP listener on a random `127.0.0.1` port. It is never printed or offered as a connection address, is not reachable from other machines, and serves the same authenticated application.
 
 A concrete LAN address need not accept loopback connections. `0.0.0.0` means all IPv4 interfaces; `::` is the dual-stack wildcard listener. Use an actual reachable address in a browser, not a wildcard. IPv6 zone identifiers are not supported in `--host`.
 
@@ -51,6 +49,18 @@ codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
 Do not assume port 9898 or 9899: omitted ports can fall back when busy. An explicit nonzero `--https-port`, or `--http-port` with HTTP enabled, pins the port and fails if it cannot bind; `0` asks the OS to assign one. The printed **Local Connection URL** and **Remote Connection URL**, and refreshed **Reachable addresses**, are authoritative for that run. See the complete [server CLI reference](server.md).
+
+## Administrator policy {#administrator-policy}
+
+An administrator can fix the listening address: set `CODENOMAD_LOCKED_HOST` machine-wide to the address the server must use, then restart CodeNomad. It wins over `--host`, `CLI_HOST` and **Allow connections from other IPs**, which shows the result but cannot change it. Use an intranet address so colleagues reach the server over the company network, or `127.0.0.1` to keep it on this computer. To keep all access inside the company network, also set `CODENOMAD_REMOTE_CONTROL=disabled` ([Remote Control](remote-control.md#administrator-policy)).
+
+## Upgrading {#upgrading}
+
+Sign in again after upgrading. For a hostname alias, reverse proxy or separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` on the backend to the trusted UI origins (scheme, hostname and port). Native LAN clients must supply an allowed `Origin` header for mutations.
+
+Use a loopback connection for host-only operations: SideCar content (`/sidecars/`) and WebSockets, Remote Control management (`/api/remote-control/`), the plugin bridge (`/api/opencode-plugin/`), remote proxies (`/api/remote-proxy/`), saved-server management (`/api/remote-servers/`), password changes and token bootstrap. These require loopback even when signed in through direct LAN access. Only SideCars have an exception: the host's **Open SideCars over HTTPS** setting opens their content and WebSockets to browsers signed in through a trusted HTTPS origin ([SideCars](browser-sidecars.md#register-sidecar)). Live preview content (`/previews/`) is available over direct LAN access with a valid capability token.
+
+The `/api/sidecars` registration APIs remain available to authenticated direct LAN clients and paired devices. Remote Control web previews remain available with their capability token while enabled on the host.
 
 ## Configure trusted TLS {#tls}
 
@@ -77,7 +87,7 @@ With HTTPS enabled and no supplied key/certificate pair, CodeNomad creates a loc
 2. Restart the backend to generate/recheck the certificate.
 3. Verify the host/CA through a trusted channel, then import **only the CA certificate** into each intended client/browser trust store. Alternatively use a publicly trusted certificate or TLS reverse proxy.
 
-The generated server certificate lasts 30 days. Startup renews it within three days of expiry, when required SANs are missing, when the certificate fails its checks, or when its private-key file is missing. The generated CA lasts 365 days and is replaced when expired, when its certificate fails its checks, or when its private-key file is missing; replacing it also reissues the server certificate. Existing corrupt, unreadable or mismatched private keys are not automatically repaired. Clients must trust the replacement CA. There is no continuous in-process renewal: arrange a deliberate restart before expiry in long-running deployments.
+The generated server certificate lasts 30 days. Startup renews it within three days of expiry, when required SANs are missing, when the certificate fails its checks, or when its private-key file is missing. The generated CA lasts 365 days and is replaced when expired, when its certificate fails its checks, or when its private-key file is missing; replacing it also reissues the server certificate. Clients must trust the replacement CA. There is no continuous in-process renewal: arrange a deliberate restart before expiry in long-running deployments.
 
 If a client reports a certificate warning, stop and check the hostname, SANs, trust store and expiry. Do not disable verification or make clicking through warnings your deployment procedure. Trusted HTTPS is also required for remote browser features such as [PWA installation and microphone access](mobile.md).
 
@@ -88,5 +98,9 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 3. Choose **Save** to bookmark, or **Connect** to save and open it. Sign in on that server.
 
 Select a saved server on the home page's **Servers** tab to open it again. Bookmarks belong to this CodeNomad configuration, not the remote server's projects. Saving a URL does not start the server or grant access. **Remove saved server** removes the bookmark, not remote conversations, the backend or its credentials.
+
+To open a saved server straight from the command line, start the desktop app with `--connect-server <name>` (or `--connect-server=<name>`), using the server's saved name, or with its `https://` URL. CodeNomad opens only the remote window, with the same checks and sign-in as **Connect**; when CodeNomad is already running, its current window opens it instead of a new one. A URL that matches no saved server is saved under its host name. Launch values never carry credentials: a URL with a user name, password or pairing code is refused. On Windows, the Tauri build refuses to start when a launch argument contains `|`; use the server's URL instead, or rename the server.
+
+Closing the last local window while remote windows stay open keeps its tabs: **Window → New Window** in a remote window, or starting CodeNomad again, reopens it.
 
 For Remote Control, paste a fresh pairing link into **Server URL** instead. The bookmark retains only the tunnel origin, never the one-use pairing code; see [Remote Control](remote-control.md) for re-pairing after device-cookie loss.

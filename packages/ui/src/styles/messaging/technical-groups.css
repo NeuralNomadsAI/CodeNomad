@@ -65,6 +65,14 @@
   color: var(--text-muted);
 }
 
+.message-technical-group-meta-agent {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message-technical-group-parts {
   display: flex;
   flex-direction: column;

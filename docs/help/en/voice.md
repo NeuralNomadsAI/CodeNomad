@@ -2,7 +2,7 @@
 
 ## Configure speech {#configure}
 
-1. Open **Settings → Speech**. The **Speech** card uses an OpenAI-compatible server-side adapter, independently of your conversation's model provider.
+1. Open **Settings → Speech** to configure an OpenAI-compatible speech provider separately from your conversation's model provider.
 2. Enter **API key**, optionally **Base URL**, **Transcription model**, **Speech model** and **Default voice**.
 3. If input and output need different services, enable **Separate providers for input and output**, then fill the input/output key, base URL and model fields.
 4. Choose **Playback mode** and **Output format**, then **Save** (available while changes are unsaved). Check the status beside the test buttons, **Configured**, **Partially configured** or **Missing API key**, before testing; a failed save shows **Save failed**.
@@ -21,7 +21,7 @@ The backend can also use `OPENAI_API_KEY` and `OPENAI_BASE_URL` for shared defau
 | Buffered | Waits for the complete audio response before playing. |
 | Output format | `mp3`, `wav`, `opus` or `aac`; default `mp3`. Compatibility varies by browser/provider. |
 
-These are requests to the configured service, not a guarantee that every compatible endpoint implements every model, voice or format. Failed saving leaves an error; inspect the configuration before making another change.
+These are requests to the configured service, not a guarantee that every compatible endpoint implements every model, voice or format.
 
 ## Test input and output {#test}
 
@@ -30,8 +30,6 @@ These are requests to the configured service, not a guarantee that every compati
 3. Choose **Test playback** to hear the sample; **Stop sample** ends it.
 
 The playback test uses the selected playback mode/format immediately, but endpoint, key, model and voice come from saved settings. Test input does not send a conversation prompt. Tests still send audio/text to the configured speech provider and can incur its charges.
-
-If streaming fails, select **Buffered**, try `mp3`, save and retest. “Configured” confirms settings, not successful provider authentication or codec playback. Check endpoint availability from the server host, provider model/voice names and quota before retrying.
 
 ## Dictate a prompt {#dictate}
 
@@ -42,7 +40,7 @@ If streaming fails, select **Buffered**, try `mp3`, save and retest. “Configur
 
 Transcription inserts text at the current selection; it does not automatically submit it to OpenCode. The menu entry appears only when STT is configured and the client supports recording. Recording uses the client device's microphone, even when CodeNomad runs on a remote server.
 
-For a missing entry, check the toggle and STT configuration. For permission errors, allow the microphone in both browser/OS privacy settings. Remote browser recording needs a secure context, normally trusted HTTPS; see [Mobile access](mobile.md) and [Direct remote access](remote-access.md). Switching away or closing the composer ends its recording lifecycle; do not rely on unsent audio being recoverable. Your typed draft remains the place to review the result.
+Remote browser recording needs a secure context, normally trusted HTTPS; see [Mobile access](mobile.md) and [Direct remote access](remote-access.md). Switching away or closing the composer ends its recording lifecycle; do not rely on unsent audio being recoverable.
 
 ## Read messages aloud {#playback}
 
@@ -50,7 +48,7 @@ For a missing entry, check the toggle and STT configuration. For permission erro
 2. Use **Stop playback** on the same control to end it; starting another reading stops the current one.
 3. Change the saved voice, model, mode or format in **Speech** for subsequent requests.
 
-Playback uses CodeNomad's text projection, not a narrated screenshot: binary/image bytes and permission receipts are not speech content. It does not run a prompt or change the selected OpenCode model. Browser audio support and provider responses can still prevent playback even when a format is selectable.
+Playback uses CodeNomad's text projection, not a narrated screenshot: binary/image bytes and permission receipts are not speech content. It does not run a prompt or change the selected OpenCode model.
 
 For automatic conversation speech, use **Enable conversation mode** in the composer's **More actions** menu; it applies to that project tab and is not kept after a reload. While it is on, CodeNomad asks the agent, with each prompt you send, to begin its reply with a short fenced `spoken` summary. Only that completed block is read, in the active main session; it is not an automatic reading of every reply or subagent. **Disable conversation mode** stops its queue and no longer asks for the summary. Starting microphone input also stops active conversation speech. The toggle appears with voice input, or while conversation mode is already enabled, and requires working TTS to enable.
 

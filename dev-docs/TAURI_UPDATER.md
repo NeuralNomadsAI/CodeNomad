@@ -61,14 +61,15 @@ renderers generally.
 
 The plugin verifies the complete download before shutdown admission. A prepared
 installer and restart intent enter the shutdown coordinator under one lock.
-Every renderer must flush and the owned CodeNomad backend must stop before
-installation. A timeout or cleanup failure discards the pending installer; a
+Every renderer must flush and the owned CodeNomad backend must stop, with
+containment confirmed and both output readers successfully drained to EOF within
+the shared shutdown deadline, before installation. A timeout or cleanup failure discards the pending installer; a
 late acknowledgement or later ordinary quit cannot replay it. Windows logout
 discards a waiting update. Installation never stops the shared OpenCode daemon.
 
 On macOS/Linux, successful installation follows the normal native restart. On
 Windows, the NSIS installer performs relaunch and the plugin exits. The vendored
-2.12.0 plugin runs its exit callback only after a successful `ShellExecuteW`, so
+plugin runs its exit callback only after a successful `ShellExecuteW`, so
 a refused launch keeps client-state persistence ownership. On an installation
 error, the application restores its owned backend without replaying installation.
 That recovery reloads every window, so failures are recorded natively with the
@@ -87,7 +88,7 @@ The loading, sign-in (`/login`, `/auth/*`) and pairing documents have no menu
 listener: Get Updates opens the release page while the focused local window
 shows one of them. Every other server path serves the application, whose
 listener registers when it mounts.
-See `packages/tauri-app/vendor/README.md` for provenance.
+Vendored plugin contract: `packages/tauri-app/vendor/README.md`.
 
 ## Build and publication
 
@@ -106,10 +107,21 @@ platform jobs:
 
 - `TAURI_UPDATER_PUBKEY` (job environment; public)
 - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (only the
-  `tauri build` step, never dependency installation or upload steps). Prebuild
-  runs earlier without them; `src-tauri/tauri.prebuilt.conf.json` replaces the
-  `beforeBuildCommand` hook so JavaScript builds do not rerun with the key.
-  Cargo build scripts inside `tauri build` still run in that environment.
+  step that writes updater signatures, never dependency installation or upload
+  steps). Prebuild runs earlier without them; `src-tauri/tauri.prebuilt.conf.json`
+  replaces the `beforeBuildCommand` hook so JavaScript builds do not rerun with
+  the key. On macOS and Linux that step is `tauri build`, whose Cargo build
+  scripts still run in that environment.
+
+Windows builds in two stages so the installer can package an
+Authenticode-signed executable (`CODE_SIGNING.md`): `tauri build --no-bundle`
+compiles without the key, `scripts/patch-bundle-type.mjs` writes the NSIS
+bundle type the bundler would otherwise patch in (the application offers updates
+only to NSIS installations), the executable is optionally signed, and
+`tauri bundle --bundles nsis --no-binary-patching` packages it and writes the
+updater signature with the key. When the installer is then Authenticode-signed,
+`tauri signer sign --app-version` recomputes the updater signature over the
+signed bytes, with the key, before staging verifies it.
 
 PR builds receive none of these secrets. Never embed a test public key in a
 production release.
@@ -220,11 +232,11 @@ from elsewhere, such as the shared OpenCode service, keep running.
 Commands (from the checkout, unless noted):
 
 ```text
-node --test packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs
+node --test packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs
 npm run typecheck --workspace @codenomad/ui
 cargo test --manifest-path packages/tauri-app/src-tauri/Cargo.toml --locked
-# From packages/tauri-app on Windows:
-cargo test --locked -p tauri-plugin-updater windows_launch_tests
+# On Windows:
+node scripts/test-tauri-updater-handoff.mjs
 # From packages/ui:
 node --import tsx --test tests/browser/desktop-updates.test.ts
 ```
@@ -235,4 +247,4 @@ hardware are required for their respective real-device evidence.
 
 ## Agent conventions
 
-- The update feed (`server.updateFeed`: `stable`/`preview`, chosen in Settings → Info → Updates) only selects offered releases. It is read on every refresh in `releases/dev-release-monitor.ts`, never from `CODENOMAD_UPDATE_CHANNEL`, and must not touch desktop data scopes, singletons, backends or OpenCode state. Preview offers use publication order (dev builds carry the previous release number) and, like the native updater, consider only releases whose complete `latest.json` exists: release creation precedes the builds, and the manifest is uploaded after every platform build, so a notification is never shown before the release is installable. When the installed release is older than the fetched page, the server looks it up by tag before falling back to version order, and Settings → Info never substitutes a SemVer-ranked stable release on the preview feed. The native Tauri updater follows the same feed (`update_releases.rs`); Electron, remote, unsigned and unsupported installations open the release page.
+- The update feed (`server.updateFeed`: `stable`/`preview`, chosen in Settings → Info → Updates) only selects offered releases. Read it on every refresh in `releases/dev-release-monitor.ts`, never from `CODENOMAD_UPDATE_CHANNEL`; preserve desktop data scopes, singletons, backends and OpenCode state. Server notifications follow the native feed and complete-`latest.json` rules above. When the installed release is older than the fetched page, look it up by tag before falling back to version order; never substitute a SemVer-ranked stable release on the preview feed in Settings → Info. Native Tauri uses the same feed (`update_releases.rs`); Electron, remote, unsigned and unsupported installations open the release page.

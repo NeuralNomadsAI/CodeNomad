@@ -6,6 +6,7 @@ on:
       - main
 
 permissions:
+  actions: read
   id-token: write
   contents: write
 
@@ -15,4 +16,7 @@ jobs:
     with:
       dist_tag: latest
       npm_package_name: "@neuralnomads/codenomad"
+      # Set the repository variable once the SignPath release certificate is
+      # issued; a release then fails rather than publishing unsigned Windows files.
+      windows_signing_policy: ${{ vars.SIGNPATH_RELEASE_SIGNING == 'true' && 'release-signing' || '' }}
     secrets: inherit

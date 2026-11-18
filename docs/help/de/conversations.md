@@ -1,21 +1,31 @@
 # Unterhaltungen
 
-CodeNomad stellt native OpenCode-Sitzungen als Unterhaltungen dar, mit einer Hierarchie für delegierte Arbeit und separaten Bedienelementen für Ihre nächste Eingabe.
+Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeugergebnissen dar. **Nachrichteninhalt** ändert die Sichtbarkeit, ohne gespeicherte Teile zu löschen; [Verlauf](history.md#operation-reference) unterscheidet Anzeigeeinstellungen und Bereinigung.
 
-Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeugergebnissen dar. Textkopie, Vollverlaufssuche und Sprachausgabe verwenden Textprojektionen, keine eingebetteten Bildbytes. **Nachrichteninhalt** ändert die Sichtbarkeit, ohne gespeicherte Teile zu löschen; [Verlauf](history.md#operation-reference) unterscheidet Anzeigeeinstellungen und Bereinigung.
+Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt gedauert hat, und zählen live mit, solange er läuft; Dauern unter einer Sekunde werden nicht angezeigt. Wenn **Tokens** in **Nachrichteninhalt** angezeigt wird (die Voreinstellung **Alles** zeigt sie), endet jede Agentennachricht nach ihrem letzten Text mit einer Token- und Kostenzeile. Diese Zeile summiert die Nachricht und die Nachrichten mit den Werkzeugen und Denkprozessen, die ihre Aktion **Tools und Denkprozesse aus dieser Antwort entfernen** abdeckt, innerhalb des geladenen Verlaufs; klappen Sie sie für Denk- und Cache-Zähler auf.
 
-Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt gedauert hat, und zählen live mit, solange er läuft; Dauern unter einer Sekunde werden nicht angezeigt. Wenn **Tokens** in **Nachrichteninhalt** angezeigt wird (die Voreinstellung **Alles** zeigt sie), endet jede Agentennachricht nach ihrem letzten Text mit einer Token- und Kostenzeile. Diese Zeile summiert die Nachricht und die Nachrichten mit den Werkzeugen und Denkprozessen, die ihre Aktion **Tools und Denkprozesse aus dieser Antwort entfernen** abdeckt, innerhalb des geladenen Verlaufs; klappen Sie sie für Denk- und Cache-Zähler auf. Schritte, die nur Werkzeuge ausgeführt haben, haben keine eigene Zeile.
+## Mermaid-Diagramme {#mermaid}
+
+Codeblöcke mit `mermaid` oder `mmd` werden nach Ende der Übertragung mit Mermaid Tiny dargestellt. **Quelltext anzeigen** / **Diagramm anzeigen** im Codekopf wechselt die Ansicht; Kopieren übernimmt den Quelltext. Tiny enthält keine Mindmaps, Architekturdiagramme oder KaTeX. Die lokale Darstellung ohne Netzwerk ist auf 50.000 Zeichen und 500 Kanten begrenzt.
 
 ## Unterhaltungen finden und navigieren {#navigate-conversations}
 
 1. Wählen Sie eine Zeile unter **Sitzungen** oder verwenden Sie **Neue Sitzung**, um eine übergeordnete Unterhaltung zu beginnen.
-2. Klappen Sie den Pfeil einer übergeordneten Sitzung auf, um deren Untersitzungen zu sehen. Ein eingeklappter Pfeil zeigt den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet oder kürzlich beendet (untätig); sein Tooltip zählt sie.
-3. Grenzen Sie die Liste mit **Sitzungen suchen...**, **Hauptsitzungen** / **Untersitzungen**, dem Worktree-Filter und der Sortierung nach **Aktivität**, **Name** oder **Worktree** ein.
+2. Klicken Sie auf den Pfeil einer übergeordneten Sitzung, um deren Untersitzungen auf- oder einzuklappen und ihre Abzeichen beizubehalten. Ob auf- oder eingeklappt, zeigt der Pfeil den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet, wird komprimiert oder ist inaktiv; seine zugängliche Beschriftung zählt sie. Klicken Sie ihn mit der rechten Maustaste an und wählen Sie **Als gelesen markieren**, um die Abzeichen **Bereit** und **Unterbrochen** der Unterhaltung und aller Untersitzungen auf einmal zu entfernen.
+3. Grenzen Sie die Liste mit **Sitzungen suchen...**, **Hauptsitzungen** / **Untersitzungen**, dem Worktree-Filter und der Sortierung nach **Aktivität**, **Name** oder **Worktree** ein. Ziehen Sie in Suchergebnissen über die Kontrollkästchen der Zeilen, um mehrere Unterhaltungen auf einmal aus- oder abzuwählen.
 4. Verwenden Sie **Zurück** und **Vorwärts** in der Seitenleiste, um zuvor angezeigte Unterhaltungen erneut aufzurufen.
 
-Normales Durchsuchen ist hierarchisch; Such-/Filterergebnisse sind flache Einträge mit eigener Identität und eigenem Worktree jeder Unterhaltung. Eine neu arbeitende Untersitzung wird nur unter der Familie der aktiven Unterhaltung automatisch eingeblendet. Das Einklappen dieses Zweigs beendet diese automatische Einblendung für die derzeit laufenden Nachfahren.
+Klicken Sie auf **Bereit** oder **Unterbrochen** (**Ausblenden**), um das Abzeichen zu bestätigen, ohne die Unterhaltung zu öffnen; mit Tastaturfokus genügt Eingabe/Leertaste. Halten Sie mit Maus oder Stift ein Abzeichen gedrückt und ziehen Sie über weitere, um mehrere auszublenden; Touch-Ziehen scrollt weiterhin. Arbeit und ausstehende Eingabe-/Berechtigungsanfragen bleiben sichtbar. Beim Anzeigen wird **Bereit** ausgeblendet; **Unterbrochen** erfordert eine ausdrückliche Ausblendgeste. Bestätigungen werden mit dem Sitzungszustand dieses Fensters gespeichert; eine neue Unterbrechung zeigt das Abzeichen erneut.
 
-Zurück/Vorwärts ist ein Besuchsverlauf pro Projekt-Tab und Fenster, nicht die Reihenfolge der Liste. Er bleibt im Arbeitsspeicher, überspringt nicht verfügbare/gelöschte Unterhaltungen und wird nach einem Neustart nicht wiederhergestellt. Die Auswahl einer neuen Unterhaltung nach dem Zurückgehen ersetzt den Vorwärtspfad. **Vorherige Sitzung** / **Nächste Sitzung** in der Palette durchlaufen stattdessen die sichtbare Liste.
+Normales Durchsuchen ist hierarchisch; Such-/Filterergebnisse sind flache Einträge mit eigener Identität und eigenem Worktree jeder Unterhaltung. Unter **Einstellungen → Allgemein** ist **Untersitzungen automatisch aufklappen** standardmäßig aktiviert. Sichtbare Zweige der ausgewählten Unterhaltung öffnen sich, wenn Untersitzungen zu arbeiten, zu komprimieren oder auf Eingabe zu warten beginnen. Deaktivieren Sie die Option, damit Aktivität keine Zweige öffnet; manuelles Aufklappen und ausdrückliche Navigation bleiben verfügbar. Geöffnete Zweige, auch automatisch geöffnete, werden zur Wiederherstellung gespeichert.
+
+Zurück/Vorwärts ist ein Besuchsverlauf pro Projekt-Tab und Fenster, nicht die Reihenfolge der Liste. **Vorherige Sitzung** / **Nächste Sitzung** in der Palette durchlaufen stattdessen die sichtbare Liste.
+
+## Archivieren und wiederherstellen {#archive}
+
+Wählen Sie **Sitzung archivieren** in den Zeilenaktionen, um den Verlauf zu behalten und den inaktiven Zweig aus der normalen Ansicht auszublenden. Die ausgewählte Unterhaltung sowie laufende Arbeit und offene Fragen bleiben erreichbar. Archivieren beendet keine Arbeit, löscht keine Nachrichten und ändert nicht die eigenen Archivkennzeichen der Untersitzungen.
+
+Öffnen Sie die Sitzungssuche und wählen Sie **Archivierte Sitzungen** oder **Alle Sitzungen**. Die Zeilen zeigen **Archiviert** und bieten **Sitzung wiederherstellen**. Aktivieren Sie Untersitzungen, um Kinder auch unter archivierten Eltern unabhängig zu finden. **Nicht archivierte Sitzungen** filtert nach dem eigenen Kennzeichen jeder Unterhaltung. Stellen Sie einen archivierten Vorfahren wieder her, um seinen inaktiven Zweig wieder normal anzuzeigen.
 
 ## Agent, Modell und Denkaufwand wählen {#agent-model-thinking}
 
@@ -42,11 +52,17 @@ Dies sind Ausführungsentscheidungen für spätere Eingaben, keine Änderungen a
 
 Gerätedateien müssen lesbar sein und ins Anhangsbudget passen: höchstens je 5 MiB, 10 Dateien und insgesamt 20 MiB. Eine abgelehnte Datei wird nicht angehängt; prüfen Sie den Hinweis, statt den Erfolg der gesamten Auswahl anzunehmen.
 
-Die Auswahl eines Skills entfernt das `@query`-Token und fügt einen Chip hinzu. Senden leert diese Auswahl im Eingabefeld, nicht die von OpenCode bereits mit der gesendeten Nachricht gespeicherten Anweisungen. Historische Nachrichten behalten Skill-Bezeichnungen. Ein beim Bearbeiten eines wartenden Prompts entfernter Skill bleibt auch beim ersetzenden Senden entfernt.
+Die Auswahl eines Skills entfernt das `@query`-Token und fügt einen Chip hinzu. Senden leert diese Auswahl im Eingabefeld, nicht die von OpenCode bereits mit der gesendeten Nachricht gespeicherten Anweisungen. Historische Nachrichten behalten Skill-Bezeichnungen.
 
 Auf dem Desktop verschiebt Senden den Tastaturfokus in die Unterhaltung, sodass Pfeiltasten, Bildlauftasten und Leertaste sie scrollen; das Tippen eines Zeichens kehrt mit diesem Zeichen zum Eingabefeld zurück. **Prompt-Text löschen** in **Weitere Aktionen** (Standard **Ctrl/Cmd+K**) leert den Entwurf des Eingabefelds.
 
 Entwürfe sind clientseitiger Arbeitszustand, keine gemeinsamen nativen Nachrichten. Die Startwiederherstellung kann unterstützten Eingabezustand behalten; behandeln Sie einen ungesendeten Entwurf oder Anhang aber nicht als Sicherung und nehmen Sie nicht an, dass er auf einem anderen Gerät erscheint. Sichern Sie wichtigen Text vor dem Löschen von Startdaten oder dem Schließen eines Clients mit deaktivierter Wiederherstellung; siehe [Desktop](desktop.md).
+
+## Dateien aus Antworten öffnen {#open-files-from-replies}
+
+1. Agent-Antworten verlinken Projektdateien mit relativen und absoluten Pfaden.
+2. Ein einfacher Klick öffnet die verlinkte Datei in der Dateivorschau, gelesen aus dem Worktree der Unterhaltung.
+3. Klicks mit Zusatztasten (Strg/⌘-Klick, Umschalt-Klick, Mittelklick) und Links außerhalb des Session-Worktrees behalten das normale Linkverhalten.
 
 ## Befehle und Shell-Modus {#commands-shell}
 
@@ -54,7 +70,7 @@ Entwürfe sind clientseitiger Arbeitszustand, keine gemeinsamen nativen Nachrich
 2. Für einen direkten Shell-Befehl geben Sie am Anfang eines leeren Eingabefelds `!` ein, um den **Shell-Modus** zu aktivieren.
 3. Senden Sie den Befehl. Verlassen Sie den Shell-Modus ohne Ausführung mit Escape oder mit Backspace im leeren Feld.
 
-Nur bekannte Slash-Befehlsnamen nehmen den Weg für benutzerdefinierte Befehle; unbekanntes `/text` ist ein normaler Prompt. Benutzerdefinierte Befehle verwenden ihre native Definition. Datei-/Bildanhänge werden auf diesem Weg nicht gesendet und bleiben für einen späteren Prompt erhalten; eingefügter Text in Argumenten wird in diese aufgelöst.
+Nur bekannte Slash-Befehlsnamen nehmen den Weg für benutzerdefinierte Befehle; unbekanntes `/text` ist ein normaler Prompt. Datei-/Bildanhänge werden auf diesem Weg nicht gesendet und bleiben für einen späteren Prompt erhalten; eingefügter Text in Argumenten wird in diese aufgelöst.
 
 Der Shell-Modus führt eine native Sitzungs-Shell-Anfrage aus, statt das Modell um einen Befehlsvorschlag zu bitten. Er kann Dateien ändern und Prozesse auf dem Ausführungshost starten. Profil-Umgebungseinstellungen gelten vor dem nächsten Prompt, benutzerdefinierten Befehl oder Shell-Aufruf; sie starten keinen vorhandenen Dienst neu. Siehe [Integrationen](integrations.md) und [OpenCode-Einrichtung](opencode.md).
 
@@ -71,24 +87,30 @@ Der Shell-Modus führt eine native Sitzungs-Shell-Anfrage aus, statt das Modell 
 
 Im Ruhezustand verwendet normales Senden unabhängig von diesem Schalter den unmittelbaren Standardweg, und die Alternative in **Weitere Aktionen** ist nicht verfügbar. Bearbeiten stellt einen wartenden Prompt samt entfernbaren Anhängen im Eingabefeld wieder her; **Bearbeitung abbrechen** verlässt die Bearbeitung. Ein bereits von OpenCode verarbeiteter Prompt ist kein bearbeitbarer wartender Eintrag mehr. Das Entfernen eines Eintrags macht bereits ausgeführte Arbeit nicht rückgängig.
 
-Schlägt eine Warteschlangenänderung fehl, prüfen Sie vor dem Wiederholen die aktuelle Warteschlange. Die Annahme beweist nicht, dass das Modell einen Folgeprompt bereits verarbeitet hat, und eine Wiederverbindung berechtigt nicht zum erneuten Senden.
-
 ## Nebenfrage mit /btw stellen {#side-question}
 
 1. Senden Sie `/btw your question` in einer vorhandenen Unterhaltung oder `/btw`, um das Nebenfragefenster zu öffnen.
 2. Lesen Sie die Antwort, verwenden Sie **Antwort kopieren** oder wählen Sie während der Wartezeit **Frage abbrechen**.
 3. Schließen Sie das Fenster anschließend.
 
-Dies ist eine separate Modellanfrage mit dem Sitzungskontext. Sie führt keine Werkzeugschleife und keine Aktionen aus und hängt Frage/Antwort nicht an die Unterhaltung an. Datei-/Bildanhänge bleiben im Eingabefeld; eingefügter Text in der Frage wird als Text einbezogen. Dies ist weder eine neue dauerhafte Unterhaltung noch ein alternativer Weg zur Arbeitsvergabe.
+Dies ist eine separate Modellanfrage mit dem Sitzungskontext. Sie führt keine Werkzeugschleife und keine Aktionen aus und hängt Frage/Antwort nicht an die Unterhaltung an. Datei-/Bildanhänge bleiben im Eingabefeld; eingefügter Text in der Frage wird als Text einbezogen.
 
-Schließen bricht die wartende Nebenanfrage ab, ohne die Hauptsitzung zu unterbrechen. Das Verlassen der aktiven Unterhaltung leert dieses flüchtige Fenster; kopieren Sie benötigte Inhalte vorher. Leere Antworten/Fehler erscheinen hier, nicht als Verlaufsnachrichten.
+Schließen bricht die wartende Nebenanfrage ab, ohne die Hauptsitzung zu unterbrechen. Das Verlassen der aktiven Unterhaltung leert dieses flüchtige Fenster; kopieren Sie benötigte Inhalte vorher.
+
+## Mit /goal auf ein Ziel hinarbeiten {#goal}
+
+1. Senden Sie `/goal` gefolgt von einem Ziel, zum Beispiel `/goal Make every test pass`. Die Sitzung arbeitet Runde um Runde weiter, bis der Zielprüfer von OpenCode das Ziel als erreicht beurteilt.
+2. Solange die Unterhaltung ein Ziel hat, zeigt **Status** es in einer Zeile über **Tokens**: seinen Zustand (**Aktiv**, **Pausiert** oder **Erreicht**), das Ziel und die verbrauchten Runden vom erlaubten Maximum. Zeigen Sie auf das Ziel oder fokussieren Sie es, um es vollständig zu lesen, mit dem Grund der letzten Änderung, etwa warum das Ziel pausiert oder erreicht wurde.
+3. Verwenden Sie **Ziel pausieren** oder **Ziel fortsetzen** in dieser Zeile oder senden Sie `/goal pause` oder `/goal resume`. Mit **Ziel entfernen** oder `/goal clear` entfernen Sie das Ziel.
+
+Ein Ziel gehört zu seiner Unterhaltung: Untersitzungen und Abzweigungen beginnen ohne Ziel. OpenCode pausiert ein Ziel auch selbst, wenn Sie die Sitzung stoppen, ein Lauf fehlschlägt, kein Fortschritt mehr entsteht, das Rundenlimit erreicht ist oder der Dienst neu startet; setzen Sie es fort, um weiterzumachen. Pausieren oder Entfernen macht bereits erledigte Arbeit nicht rückgängig. Ohne Ziel oder mit einem OpenCode-Dienst ohne Zielunterstützung erscheint die Zeile nicht.
 
 ## Abzweigen, rückgängig machen und Fehler beheben {#fork-errors}
 
 1. Wählen Sie an einer Nachricht **Nach dieser Nachricht abzweigen (Fork)**, um nach diesem Punkt eine Unterhaltung anzulegen, ohne das Original zu ersetzen.
-2. Prüfen Sie zum Rückgängigmachen **Änderungen bis hierhin rückgängig machen (löscht Nachrichten)** sorgfältig. Die Palette bietet **Letzte Nachricht rückgängig machen** und **Letzte Nachricht wiederherstellen** für die vorgemerkte Rücknahme.
+2. Prüfen Sie zum Rückgängigmachen **Änderungen bis hierhin rückgängig machen (löscht Nachrichten)** sorgfältig. Die Palette bietet **Letzte Nachricht rückgängig machen** und **Letzte Nachricht wiederherstellen** für die vorgemerkte Rücknahme. Rückgängigmachen ist ohne rücknehmbare Benutzernachricht deaktiviert; Wiederherstellen ist ohne vorgemerkte Rücknahme deaktiviert.
 3. Prüfen Sie bei fehlgeschlagener Ausführung vor erneutem Senden **Sitzungsfehler**, den Antwortfehler und gegebenenfalls Details unter **Senden fehlgeschlagen**.
 
 Abzweigen kopiert den Unterhaltungskontext bis zum ausgewählten Punkt; es erzeugt keinen Git-Worktree und isoliert keine Dateien. Zurücksetzen ist nicht bloß Navigation. Prüfen Sie vor dem Fortfahren Dateiauswirkungen und Rücknahmegrenze; nutzen Sie einen Fork für eine alternative Diskussion ohne Umschreiben des ursprünglichen Verlaufs.
 
-Ein Status **Wiederholung** mit Countdown bedeutet, dass OpenCode einen Anbieterfehler selbstständig erneut versucht; warten Sie darauf oder stoppen Sie die Sitzung, statt erneut zu senden. Ein fehlgeschlagenes Senden stellt den versuchten Entwurf und die Anhänge wieder her, sofern dadurch keine neueren Eingaben überschrieben werden. Ein fehlgeschlagener Lauf kann bereits Werkzeuge ausgeführt haben: Prüfen Sie vor dem Wiederholen [Dateien](files.md), offene [Anfragen](permissions.md) und native Aktivität. **Nachrichten neu laden** oder **Sitzung neu laden** liest den Zustand; beides ist keine Anweisung, eine Änderung zu wiederholen. **Sitzung stoppen** unterbricht die Ausführung, macht aber keine Datei- oder externen Dienständerungen rückgängig.
+Ein Status **Wiederholung** mit Countdown bedeutet, dass OpenCode einen Anbieterfehler selbstständig erneut versucht; warten Sie darauf oder stoppen Sie die Sitzung, statt erneut zu senden. Ein fehlgeschlagener Lauf kann bereits Werkzeuge ausgeführt haben: Prüfen Sie vor dem Wiederholen [Dateien](files.md), offene [Anfragen](permissions.md) und native Aktivität. **Sitzung stoppen** unterbricht die Ausführung, macht aber keine Datei- oder externen Dienständerungen rückgängig.

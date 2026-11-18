@@ -224,13 +224,6 @@ export const SpeechSettingsCard: Component = () => {
     )
   })
 
-  const saveStatusLabel = () => {
-    if (isSaving()) return t("settings.speech.save.saving")
-    if (saveStatus() === "saved") return t("settings.speech.save.saved")
-    if (saveStatus() === "error") return t("settings.speech.save.error")
-    return t("settings.speech.save.unsaved")
-  }
-
   async function handleSave() {
     if (!isDirty() || isSaving()) return
     const current = drafts()
@@ -296,11 +289,11 @@ export const SpeechSettingsCard: Component = () => {
       <div class="settings-stack">
         <div class="settings-toggle-row settings-toggle-row-compact">
           <div>
-            <div class="settings-toggle-title">{t("settings.speech.provider.title")}<SettingsInfoTip text={t("settings.speech.provider.subtitle")} /></div>
+            <div class="settings-toggle-title">{t("settings.speech.provider.title")}</div>
           </div>
           <div class="settings-toolbar-inline">
             <span class="settings-inline-note">{capabilityLabel()}</span>
-            <Show when={saveStatus() === "error"}><span class="settings-inline-note" role="alert">{saveStatusLabel()}</span></Show>
+            <Show when={saveStatus() === "error"}><span class="settings-inline-note" role="alert">{t("settings.speech.save.error")}</span></Show>
             <button
               type="button"
               class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
@@ -359,7 +352,7 @@ export const SpeechSettingsCard: Component = () => {
                     : t("settings.speech.testPlayback.action")}
               </span>
             </button>
-            <SettingsInfoTip text={t("settings.speech.testPlayback.note")} />
+            <SettingsInfoTip text={t("settings.speech.testPlayback.note")} help={{ page: "voice", anchor: "test" }} />
             <button
               type="button"
               class="selector-button selector-button-primary w-auto whitespace-nowrap"
@@ -374,7 +367,7 @@ export const SpeechSettingsCard: Component = () => {
         <Show when={serverSupportsSeparateProviders()}>
           <div class="settings-toggle-row settings-toggle-row-compact">
             <div>
-              <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}<SettingsInfoTip text={t("settings.speech.separateProviders.subtitle")} /></div>
+              <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}</div>
             </div>
             <SettingsSwitch
               checked={drafts().separateProviders}
@@ -391,6 +384,7 @@ export const SpeechSettingsCard: Component = () => {
         <Show when={!drafts().separateProviders}>
           <Field
             label={t("settings.speech.apiKey.title")}
+            info={serverSettings().speech.hasApiKey && !clearStoredApiKey() ? t("settings.speech.apiKey.storedNote") : undefined}
             value={drafts().apiKey}
             onInput={(value) => updateDraft("apiKey", value)}
             type="password"
@@ -398,7 +392,7 @@ export const SpeechSettingsCard: Component = () => {
           />
           <Show when={serverSettings().speech.hasApiKey && !apiKeyTouched() && drafts().apiKey.length === 0}>
             <div class="settings-inline-note">
-              {clearStoredApiKey() ? t("settings.speech.apiKey.clearPending") : t("settings.speech.apiKey.storedNote")}{" "}
+              <Show when={clearStoredApiKey()}>{t("settings.speech.apiKey.clearPending")}</Show>
               <Show when={!clearStoredApiKey()}>
                 <button
                   type="button"
@@ -441,6 +435,7 @@ export const SpeechSettingsCard: Component = () => {
           </div>
           <Field
             label={t("settings.speech.stt.apiKey.title")}
+            info={serverSettings().speech.stt.hasApiKey && !clearSttApiKey() ? t("settings.speech.stt.apiKey.storedNote") : undefined}
             value={drafts().stt.apiKey}
             onInput={(value) => updateDirectionalDraft("stt", "apiKey", value)}
             type="password"
@@ -452,7 +447,7 @@ export const SpeechSettingsCard: Component = () => {
                 when={serverSettings().speech.stt.hasApiKey}
                 fallback={t("settings.speech.stt.apiKey.usingShared")}
               >
-                {clearSttApiKey() ? t("settings.speech.stt.apiKey.clearPending") : t("settings.speech.stt.apiKey.storedNote")}{" "}
+                <Show when={clearSttApiKey()}>{t("settings.speech.stt.apiKey.clearPending")}</Show>
                 <Show when={!clearSttApiKey()}>
                   <button
                     type="button"
@@ -483,6 +478,7 @@ export const SpeechSettingsCard: Component = () => {
           </div>
           <Field
             label={t("settings.speech.tts.apiKey.title")}
+            info={serverSettings().speech.tts.hasApiKey && !clearTtsApiKey() ? t("settings.speech.tts.apiKey.storedNote") : undefined}
             value={drafts().tts.apiKey}
             onInput={(value) => updateDirectionalDraft("tts", "apiKey", value)}
             type="password"
@@ -494,7 +490,7 @@ export const SpeechSettingsCard: Component = () => {
                 when={serverSettings().speech.tts.hasApiKey}
                 fallback={t("settings.speech.tts.apiKey.usingShared")}
               >
-                {clearTtsApiKey() ? t("settings.speech.tts.apiKey.clearPending") : t("settings.speech.tts.apiKey.storedNote")}{" "}
+                <Show when={clearTtsApiKey()}>{t("settings.speech.tts.apiKey.clearPending")}</Show>
                 <Show when={!clearTtsApiKey()}>
                   <button
                     type="button"
@@ -538,7 +534,6 @@ export const SpeechSettingsCard: Component = () => {
         />
         <SelectField
           label={t("settings.speech.ttsFormat.title")}
-          info={t("settings.speech.ttsFormat.subtitle")}
           value={drafts().ttsFormat}
           onInput={(value) => updateDraft("ttsFormat", value as DraftFields["ttsFormat"])}
           options={[
@@ -567,7 +562,7 @@ const Field: Component<{
   return (
     <div class="settings-toggle-row settings-toggle-row-compact">
       <div>
-        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} />}</Show></div>
+        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} help={{ page: "voice", anchor: "configure" }} />}</Show></div>
       </div>
       <div class="flex items-center gap-2 w-full min-w-0 sm:min-w-[18rem] sm:max-w-[24rem]">
         {props.icon}
@@ -593,7 +588,7 @@ const SelectField: Component<{
   return (
     <div class="settings-toggle-row settings-toggle-row-compact">
       <div>
-        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} />}</Show></div>
+        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} help={{ page: "voice", anchor: "configure" }} />}</Show></div>
       </div>
       <div class="w-full min-w-0 sm:min-w-[18rem] sm:max-w-[24rem]">
         <select value={props.value} onInput={(event) => props.onInput(event.currentTarget.value)} class="selector-input w-full">

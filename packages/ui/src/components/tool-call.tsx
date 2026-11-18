@@ -1,4 +1,4 @@
-import { For, createSignal, Show, createEffect, createMemo, on, onCleanup, type Accessor, type JSXElement } from "solid-js"
+import { For, createSignal, Show, createEffect, createMemo, on, onCleanup, untrack, type Accessor, type JSXElement } from "solid-js"
 import { createStore, reconcile, unwrap } from "solid-js/store"
 import { ArrowRightSquare, Check, ChevronRight, Copy, Hourglass, Loader2, Volume2, WrapText, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
@@ -9,6 +9,7 @@ import { useConfig } from "../stores/preferences"
 import { activeInterruption } from "../stores/instances"
 import { getFormQueue } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
+import { getSessionMessageRenderCache } from "../lib/message-render-cache"
 import type { PermissionRequest } from "../types/permission"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
@@ -39,6 +40,7 @@ import {
 } from "./tool-call/utils"
 import { BoundedText } from "./hidden-text"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
+import { scheduleFrameBatchedMount } from "../lib/frame-batch-schedule"
 import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
@@ -254,8 +256,8 @@ function ToolCallDetails(props: {
     toolCall: props.toolCallMemo,
     toolState: props.toolState,
     toolName: props.toolName,
-    instanceId: props.instanceId,
-    sessionId: props.sessionId,
+    get instanceId() { return props.instanceId },
+    get sessionId() { return props.sessionId },
     isActive: () => props.isActive?.() ?? true,
     t: props.t,
     messageVersion: messageVersionAccessor,
@@ -321,15 +323,16 @@ function ToolCallDetails(props: {
   const renderError = () => {
     const state = props.toolState()
     if (state?.status === "error" && state.error) {
-      const truncated = state.error.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
+      const error = renderer().getErrorText?.(rendererContext) ?? state.error
+      const truncated = error.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
       return (
         <div class="tool-call-error-content">
-          <BoundedText source={state.error} revealTarget={textRevealTarget("error")}>
+          <BoundedText source={error} revealTarget={textRevealTarget("error")}>
             {(text) => (
               <div>
                 <strong>{props.t("toolCall.error.label")}</strong> {text()}
                 <Show when={truncated}>
-                  <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, state.error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
+                  <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
                     <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
@@ -616,6 +619,44 @@ export default function ToolCall(props: ToolCallProps) {
     return true
   }
 
+  const renderer = createMemo(() => resolveToolRenderer(toolName()))
+  const renderMarkdownStub: ToolRendererContext["renderMarkdown"] = () => null
+  const renderDiffStub: ToolRendererContext["renderDiff"] = () => null
+  const renderToolCallStub: NonNullable<ToolRendererContext["renderToolCall"]> = () => null
+  // Session-scoped fields read lazily: a card row can be reused across a session
+  // switch (same message and part ids), and a captured plain string would keep
+  // reading the previous session's transcript for the rest of its life.
+  const headerRendererContext: ToolRendererContext = {
+    toolCall: toolCallMemo,
+    toolState,
+    toolName,
+    get instanceId() { return props.instanceId },
+    get sessionId() { return props.sessionId },
+    t,
+    messageVersion: () => props.messageVersion,
+    partVersion: () => props.partVersion,
+    textRevealTarget: (section) => makeTextRevealTarget(props.instanceId, props.messageId, toolCallIdentifier(), section),
+    renderMarkdown: renderMarkdownStub,
+    renderDiff: renderDiffStub,
+    renderToolCall: renderToolCallStub,
+    outputWrapEnabled,
+    scrollHelpers: undefined,
+  }
+
+  // A renderer can own the header's display status when the part's own status is not the
+  // user-facing truth: a background subagent launch acknowledges at once, and the child
+  // session's reports carry the real state shared by every card that continued it.
+  const headerStatus = createMemo(() => renderer().getHeaderStatus?.(headerRendererContext) ?? null)
+  const displayStatus = (): ToolState["status"] | "" => headerStatus()?.status ?? toolState()?.status ?? ""
+  const displayEndedAt = () => {
+    // An override owns the end fully: its part already completed at the launch
+    // acknowledgement, and that instant must never freeze the live duration.
+    const override = headerStatus()
+    if (override) return override.endedAt
+    const partStatus = toolState()?.status
+    return partStatus === "completed" || partStatus === "error" ? getPartEndedAt(toolCallMemo() as any) : undefined
+  }
+
   const isPermissionActive = createMemo(() => {
     const pending = pendingPermission()
     if (!pending?.permission) return false
@@ -637,6 +678,47 @@ export default function ToolCall(props: ToolCallProps) {
     if (override !== null) return override
     return defaultExpandedForTool()
   }
+
+  // A session switch mounts dozens of expanded tool bodies at once; rendering
+  // every body inside the mounting task blocks the main thread for seconds.
+  // The header mounts immediately and a default-expanded settled body joins
+  // over the next frames. User interaction, live and failed tools render at
+  // once, and any user expansion state releases the wait for this instance.
+  // A remount (message-list growth on send, row recycling, switching back to
+  // a viewed session) must not re-defer a body that already released once:
+  // its render caches are warm, so mounting is cheap and re-deferring would
+  // only blank the body for a few frames. The release state lives in the
+  // session render cache, whose lifecycle bounds it to the session.
+  // The birth check reads only the part's own status: an overridden header
+  // status must first evaluate inside a tracked render, never in this
+  // untracked setup, or its memo would freeze on a transient store state.
+  const toolBodyReleaseKey = () => `${props.messageId ?? "unknown-message"}\u0000${props.toolCall.id ?? props.toolCallId ?? ""}`
+  const releaseBodyMount = () => {
+    setBodyMountReleased(true)
+    if (props.instanceId && props.sessionId) {
+      getSessionMessageRenderCache(props.instanceId, props.sessionId).releasedToolBodies.add(toolBodyReleaseKey())
+    }
+  }
+  const [bodyMountReleased, setBodyMountReleased] = createSignal(
+    untrack(() => userExpanded() !== null || !defaultExpandedForTool()
+      || toolState()?.status === "running" || toolState()?.status === "error"
+      || (Boolean(props.instanceId && props.sessionId && props.messageId)
+        && getSessionMessageRenderCache(props.instanceId!, props.sessionId!).releasedToolBodies.has(toolBodyReleaseKey()))),
+  )
+  if (!bodyMountReleased()) {
+    let bodyMountDisposed = false
+    onCleanup(() => { bodyMountDisposed = true })
+    scheduleFrameBatchedMount(() => {
+      if (!bodyMountDisposed) releaseBodyMount()
+    })
+  }
+  createEffect(on(userExpanded, () => { releaseBodyMount() }, { defer: true }))
+  // A live or failed tool mounts its body at once even when the deferred
+  // state began while it was still pending.
+  createEffect(() => {
+    const status = displayStatus()
+    if (status === "running" || status === "error") releaseBodyMount()
+  })
 
   const toolInput = createMemo(() => {
     const state = toolState()
@@ -678,7 +760,7 @@ export default function ToolCall(props: ToolCallProps) {
   const toggleOutputWrap = () => setOutputWrapEnabled((enabled) => !enabled)
 
   const statusClass = () => {
-    const status = toolState()?.status || "pending"
+    const status = displayStatus() || "pending"
     return `tool-call-status-${status}`
   }
 
@@ -701,28 +783,6 @@ export default function ToolCall(props: ToolCallProps) {
     setInputSectionOverride(null)
     setOutputSectionOverride(null)
   })
-
-  const renderer = createMemo(() => resolveToolRenderer(toolName()))
-
-  const renderMarkdownStub: ToolRendererContext["renderMarkdown"] = () => null
-  const renderDiffStub: ToolRendererContext["renderDiff"] = () => null
-  const renderToolCallStub: NonNullable<ToolRendererContext["renderToolCall"]> = () => null
-  const headerRendererContext: ToolRendererContext = {
-    toolCall: toolCallMemo,
-    toolState,
-    toolName,
-    instanceId: props.instanceId,
-    sessionId: props.sessionId,
-    t,
-    messageVersion: () => props.messageVersion,
-    partVersion: () => props.partVersion,
-    textRevealTarget: (section) => makeTextRevealTarget(props.instanceId, props.messageId, toolCallIdentifier(), section),
-    renderMarkdown: renderMarkdownStub,
-    renderDiff: renderDiffStub,
-    renderToolCall: renderToolCallStub,
-    outputWrapEnabled,
-    scrollHelpers: undefined,
-  }
 
   const getRendererAction = () => renderer().getAction?.(headerRendererContext) ?? getDefaultToolAction(toolName())
   const headerOutputChrome = createMemo(() => renderer().getOutputChrome?.(headerRendererContext) ?? {})
@@ -823,7 +883,7 @@ export default function ToolCall(props: ToolCallProps) {
   const secondaryActionItems = createMemo(() => buildActionMenuItems(false))
   const overflowEligibleItems = createMemo(() => buildActionMenuItems(true))
 
-  const status = () => toolState()?.status || ""
+  const status = () => displayStatus()
 
   return (
     <Show when={isToolVisible()}>
@@ -857,7 +917,7 @@ export default function ToolCall(props: ToolCallProps) {
             <ToolStatusIndicator status={status} t={t} />
             <PartDuration
               startedAt={getPartStartedAt(toolCallMemo() as any)}
-              endedAt={status() === "completed" || status() === "error" ? getPartEndedAt(toolCallMemo() as any) : undefined}
+              endedAt={displayEndedAt()}
               running={status() === "running"}
             />
           </span>
@@ -918,7 +978,7 @@ export default function ToolCall(props: ToolCallProps) {
         </div>
       </Show>
 
-      <Show when={!hasPendingForm() && expanded()}>
+      <Show when={!hasPendingForm() && expanded() && bodyMountReleased()}>
         <ToolCallDetails
           toolCallMemo={toolCallMemo}
           toolState={toolState}

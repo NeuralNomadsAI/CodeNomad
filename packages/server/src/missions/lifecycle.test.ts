@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionControl, MissionControlError } from "./control"
 import type { MissionInputTransport, NativeMissionSession } from "./control-types"
-import type { MissionJsonValue, MissionMap } from "./model"
+import { MISSION_MAX_EVENTS, missionLifecycleReserve, type MissionJsonValue, type MissionMap } from "./model"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, type MissionStorage } from "./journal"
 import { controlResumeAdmissionID, recurrenceMessageID } from "./receipt-identity"
 
@@ -129,6 +129,49 @@ test("a normal Pause of an active mission remains resumable", async () => {
   const resumed = (await f.control().lifecycle(f.action(paused, "start"))).mission
   assert.equal(resumed.runState, "running")
   assert.deepEqual(resumed.control?.pending, [])
+})
+
+test("a graceful Pause interrupts nothing, can be interrupted at once later, and tells Play that work may have stopped early", async () => {
+  const f = fixture(), prepared = await f.create()
+  const running = (await f.control().lifecycle(f.action(prepared, "start"))).mission
+  await assert.rejects(f.control().lifecycle({ ...f.action(running, "stop"), graceful: true }), code("control-conflict"))
+  const calls = f.calls.length
+  const paused = (await f.control().lifecycle({ ...f.action(running, "pause"), graceful: true })).mission
+  assert.equal(paused.runState, "paused")
+  assert.equal(paused.control?.graceful, true)
+  assert.deepEqual([paused.control?.targets, paused.control?.pending], [[], []], "nothing native to apply or retry")
+  assert.ok(paused.control?.completedRevision, "settled at once")
+  assert.equal(f.calls.length, calls, "no native interrupt")
+  // The same request replays to the same mission; a mismatched replay is refused.
+  assert.equal((await f.control().lifecycle({ ...f.action(running, "pause"), graceful: true })).mission.revision, paused.revision)
+  await assert.rejects(f.control().lifecycle(f.action(running, "pause")), code("request-conflict"))
+  const context = await f.control().contextFor(paused.coordinatorSessionId)
+  assert.equal(context?.paused, true)
+  assert.match(context?.instruction ?? "", /Finish only the step already in progress/)
+  // A second graceful Pause is not a valid transition; Interrupt now is.
+  await assert.rejects(f.control().lifecycle({ ...f.action(paused, "pause"), graceful: true }), code("control-conflict"))
+  const interrupted = (await f.control().lifecycle(f.action(paused, "pause"))).mission
+  assert.equal(interrupted.runState, "paused")
+  assert.equal(interrupted.control?.graceful, undefined)
+  assert.deepEqual(f.calls.slice(calls).map(call => [call.action, call.sessionID]), [["pause", paused.coordinatorSessionId]])
+  await assert.rejects(f.control().lifecycle(f.action(interrupted, "pause")), code("control-conflict"), "an interrupted Pause is final")
+  const resumed = (await f.control().lifecycle(f.action(interrupted, "start"))).mission
+  assert.equal(resumed.control?.pausedDescendants?.graceful, undefined, "the latest Pause interrupted")
+
+  const again = (await f.control().lifecycle({ ...f.action(resumed, "pause"), graceful: true })).mission
+  const play = (await f.control().lifecycle(f.action(again, "start"))).mission
+  assert.deepEqual(play.control?.pausedDescendants, { sessions: [], partial: false, graceful: true })
+})
+
+test("the journal keeps only graceful Pauses without targets", () => {
+  const base = { version: 1, id: "evt_control", projectID: "project", missionID: "msn_fixture", type: "mission.control-requested",
+    requestID: "request", expectedRevision: 1, createdAt: 1 }
+  const target = { sessionID: "ses_actor", location: { directory: "/repo" } }
+  assert.equal((parseMissionEvent({ ...base, action: "pause", graceful: true, targets: [] }) as { graceful?: true } | undefined)?.graceful, true)
+  for (const invalid of [{ action: "pause", graceful: true, targets: [target] }, { action: "start", graceful: true, targets: [] },
+    { action: "pause", graceful: false, targets: [target] }, { action: "pause", targets: [] }]) {
+    assert.equal(parseMissionEvent({ ...base, ...invalid }), undefined, JSON.stringify(invalid))
+  }
 })
 
 test("stop records native target receipts after final report without rewriting its completed result", async () => {
@@ -406,11 +449,13 @@ test("Stop can supersede an incomplete start while CAS prevents stale new action
   assert.equal(mission.status, "stopped")
 })
 
-test("Stop supersedes pending Pause reservations at the physical journal limit without replay", async () => {
+test("Stop supersedes pending Pause reservations at the mission's capacity without replay", async () => {
   const f = fixture()
   let mission = (await f.control().lifecycle(f.action(await f.create(), "start"))).mission
   const prefix = `${MISSION_JOURNAL_STORAGE_PREFIX}/${new MissionJournal(f.storage, "project", "/repo").projectToken}`
-  for (let index = 0; f.values.size < 1997; index++) {
+  // The Pause and its pending receipt then fill the ordinary capacity.
+  const filled = MISSION_MAX_EVENTS - missionLifecycleReserve(mission.actors.length) - 2
+  for (let index = 0; f.values.size < filled; index++) {
     const event = { version: 1 as const, missionID: mission.id, projectID: mission.projectID, id: `evt_update_${index}`,
       type: "mission.updated" as const, requestID: `update-${index}`, expectedRevision: 3 + index,
       objective: "Fixture", notesSpecified: false, createdAt: 2000 + index }
@@ -422,12 +467,14 @@ test("Stop supersedes pending Pause reservations at the physical journal limit w
   const pause = f.action(mission, "pause")
   await assert.rejects(f.control().lifecycle(pause), code("control-pending"))
   mission = (await f.control().snapshot()).missions[0]
-  assert.equal(f.values.size, 1998)
+  assert.equal(f.values.size, filled + 1)
   assert.equal(mission.control?.pending.length, 1)
+  await assert.rejects(f.control().update({ missionID: mission.id, requestID: "full", expectedRevision: mission.revision, objective: "Full" }),
+    /2000-event safety limit/)
   f.failing.clear()
   const stop = f.action(mission, "stop")
   mission = (await f.control().lifecycle(stop)).mission
-  assert.equal(f.values.size, 2000)
+  assert.equal(f.values.size, filled + 3)
   assert.equal(mission.status, "stopped")
   assert.deepEqual(mission.control?.pending, [])
   assert.deepEqual(f.calls.map(call => call.action), ["start", "pause", "stop"])

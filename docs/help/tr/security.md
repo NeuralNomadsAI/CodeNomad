@@ -31,7 +31,11 @@ Komut bağımsız değişkenlerine veya kabuk geçmişine parola eklemek yerine 
 
 Doğrudan giriş, arka uç belleğinde opak bir oturum ve `codenomad_session` çerezi (veya yapılandırılan adla çerez) oluşturur. Çerezler `HttpOnly`, `SameSite=Lax` özelliklerine sahiptir, `/` kapsamındadır ve HTTPS üzerinden verildiğinde `Secure` olarak işaretlenir. Bunlar tarayıcı oturumu çerezleridir; arka ucun yeniden başlatılması bellekteki oturumları geçersiz kılar. Başarısız değişiklik işlemlerini yeniden göndermek yerine istendiğinde aynı sayfada yeniden kimlik doğrulayın.
 
-Parolayı değiştirmek sonraki kimlik bilgisi kontrollerini değiştirir; önceden verilmiş doğrudan oturumları veya Uzaktan Kontrol cihazlarını **geçersiz kılmaz**. Yetkisiz erişimden şüpheleniyorsanız:
+Çıkış, mevcut doğrudan oturumu iptal eder. Ana bilgisayarda başarılı parola değişikliği, mevcut oturum dahil kullanıcının tüm doğrudan oturumlarını iptal eder; yeniden giriş yapın. Oturumlar, kimliği doğrulanmış istek olmadan 24 saat veya oluşturulduktan yedi gün sonra sona erer. Sınırları değiştirmek için arka uç başlamadan `CODENOMAD_SESSION_IDLE_SECONDS` ve `CODENOMAD_SESSION_ABSOLUTE_SECONDS` değişkenlerini pozitif tam sayı saniye olarak ayarlayın. Uzaktan Kontrol cihazları ayrı iptal edilir.
+
+LAN istemcileri giriş, çıkış ve proje işlemlerini kullanabilir. Parola değişikliği, Uzaktan Kontrol yönetimi, uzak sunucu/proxy araçları ve SideCars, ana bilgisayarın loopback bağlantısından yönetilir. Ana bilgisayardaki **SideCars'ı HTTPS üzerinden aç** ayarı, SideCars'ı güvenilir bir HTTPS origin üzerinden oturum açmış tarayıcılara açar; yalnızca bu adreslerin tüm kullanıcıları SideCar hizmetlerinizi kullanabilecekse açın. Tarayıcı değişiklikleri izin verilen Origin veya yoksa Referer gerektirir. Sunucunun duyurulan kaynaklarına izin verilir; DNS takma adları, ters proxy veya ayrı barındırılan arayüz için `CODENOMAD_ALLOWED_ORIGINS` değişkenine `https://code.example.test,https://ui.example.test:8443` gibi tam HTTP(S) kaynaklarını virgülle ayırarak yazıp yeniden başlatın. Yol veya joker karakter kullanmayın. Bu, tarayıcı erişimi verir; ana bilgisayar yetkisi vermez. Yerel LAN istemcileri de değişikliklerde izin verilen Origin göndermelidir. Loopback üzerinden bağlanan güvenilir proxy, ana bilgisayar yetkisine sahiptir ve kendi erişim denetimlerine ihtiyaç duyar. Sunucu loopback veya tüm arayüzlerde dinlediğinde, ana bilgisayarda aynı şema ve bağlantı noktasıyla `localhost` olarak açılan arayüz de çalışır.
+
+Yetkisiz erişimden şüpheleniyorsanız:
 
 1. Ağ erişimini kısıtlayın ve ana bilgisayarda yeni bir parola belirleyin veya çalışma zamanı sırrınızı değiştirin ve yeniden başlatın.
 2. Mevcut doğrudan oturumlarını geçersiz kılmak için arka ucu yeniden başlatın.
@@ -60,7 +64,7 @@ Gerçek yalıtım gerekiyorsa işletim sistemi hesapları, kapsayıcılar/VM'ler
 
 ## Kimlik bilgilerini ve teşhis bilgilerini gizli tutun {#privacy}
 
-Sağlayıcı bağlantıları ve genel konuşma deposu OpenCode'a aittir. CodeNomad desteklenen kullanım entegrasyonları için bağlantı meta verilerini ve seçili kimlik bilgilerini sunucuda okur; tarayıcı API'leri sağlayıcının gizli değerlerini döndürmez. Haricen yönetilen OAuth girişinin yenilenmesi sahibine aittir; CodeNomad bu yenileme belirteçlerini takas etmez. Bkz. [Sağlayıcılar](providers.md).
+Sağlayıcı bağlantıları ve genel konuşma deposu OpenCode'a aittir. CodeNomad desteklenen kullanım entegrasyonları için bağlantı meta verilerini ve seçili kimlik bilgilerini sunucuda okur; tarayıcı API'leri sağlayıcının gizli değerlerini döndürmez. Bkz. [Sağlayıcılar](providers.md).
 
 | Veri | Nasıl ele alınmalı |
 | --- | --- |
@@ -70,4 +74,4 @@ Sağlayıcı bağlantıları ve genel konuşma deposu OpenCode'a aittir. CodeNom
 | Sağlayıcı anahtarları ve ses hizmeti kimlik bilgileri | Yalnızca amaçlanan ayarlara/kimlik bilgisi sahibine girin; hangi sağlayıcının verileri aldığını kontrol edin. Bkz. [Ses](voice.md). |
 | Hata ayıklama/izleme günlükleri ve ağ yakalamaları | Yalnızca gerekeni toplayın, yerel olarak inceleyin ve bildirmeden önce hassas bilgileri gizleyin. Diğer araçların çıktısının sır içermediğini varsaymayın. |
 
-**Ayarlar → Bilgi → Hata bildir**, dinleyicileri, adresleri, yolları, kimlik bilgilerini veya konuşma içeriğini önceden doldurmadan sınırlı tanılamalar hazırlar. Göndermeden önce kendiniz eklediğiniz her şeyi inceleyin. Bkz. [Destek](support.md).
+**Ayarlar → Bilgi → Hata bildir**, dinleyicileri, adresleri, yolları, kimlik bilgilerini veya konuşma içeriğini önceden doldurmadan sınırlı tanılamalar hazırlar. Göndermeden önce kendiniz eklediğiniz her şeyi inceleyin. Bkz. [Hata raporları ve kaynaktan derleme](support.md#report-a-bug).

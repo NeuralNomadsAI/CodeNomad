@@ -1,4 +1,4 @@
-# Support und Quellcode-Builds
+# Fehlerberichte und Quellcode-Builds
 
 Verwenden Sie das Repository für Fehlerberichte, aktuelle Releases und Beiträge. Die [Fehlerbehebung](troubleshooting.md) beschreibt sichere Wiederherstellung vor einer Meldung.
 
@@ -11,8 +11,6 @@ Verwenden Sie das Repository für Fehlerberichte, aktuelle Releases und Beiträg
 Die Aktion füllt die Versionen von CodeNomad und OpenCode (einschließlich des laufenden OpenCode-Dienstes, wenn er von der installierten Version abweicht), Ihr Betriebssystem, den Clienttyp (in einem Webbrowser mit dessen User-Agent) und das Betriebssystem des Servers vorab aus. Listeneradressen, Arbeitsbereichspfade, Zugangsdaten und Unterhaltungstext werden nicht vorausgefüllt. Formularöffnen ist noch keine Meldung.
 
 Benötigen Sie mehr Diagnosen, erzeugen **In Zwischenablage kopieren** oder **.txt herunterladen** einen separaten Bericht. Dieser ausführlichere Bericht kann lokale Pfade und Netzwerkadressen enthalten: Prüfen und schwärzen Sie ihn vor dem Anhängen. Screenshots oder Log-Auszüge können weiterhin Geheimnisse enthalten, selbst wenn der automatische Diagnosebericht Authentifizierungsgeheimnisse ausschließt.
-
-Hat das GitHub-Formular inkompatible Felder, öffnet CodeNomad ein einfaches Issue mit denselben Berichtsinformationen. Ein vorübergehender Lesefehler des Formulars verhindert das Öffnen nicht. Sie können jederzeit manuell die [Issue-Liste](https://github.com/NeuralNomadsAI/CodeNomad/issues) verwenden.
 
 ## Community und Releases {#community}
 
@@ -31,7 +29,7 @@ Bei Problemen mit nativer OpenCode-Konfiguration statt CodeNomad-Steuerung beach
 
 ## Aus Quellcode bauen {#build-from-source}
 
-Verwenden Sie Node.js **24.20.0** gemäß `.node-version`, npm, Git und eine kompatible OpenCode-CLI. Führen Sie die Befehle aus einem Entwicklungs-Checkout aus:
+Verwenden Sie die in `.node-version` festgelegte Node.js-Version, npm, Git und eine kompatible OpenCode-CLI. Führen Sie die Befehle aus einem Entwicklungs-Checkout aus:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Entwicklungsänderungen betreffen den Entwicklungshost, nicht die installierte Version eines unabhängig laufenden OpenCode-Daemons. Native Paketierung benötigt passende Zielwerkzeuge; bevorzugen Sie Builds auf dem Ziel-OS.
+Native Paketierung benötigt passende Zielwerkzeuge; bevorzugen Sie Builds auf dem Ziel-OS.
 
 ### Bauen und validieren {#build-and-validate}
 

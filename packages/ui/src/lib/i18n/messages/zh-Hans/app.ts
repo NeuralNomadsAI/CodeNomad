@@ -1,4 +1,14 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "确定",
+  "window.menu.native.browserPromptCancel": "取消",
+  "window.menu.native.browserPermission": "允许 {origin} 使用 {permission}？",
+  "window.menu.native.browserPermissionUnknown": "已阻止未知权限：{permission}。",
+  "window.menu.native.browserAllow": "允许",
+  "window.menu.native.browserDeny": "拒绝",
+  "window.menu.native.browserCopyLink": "复制链接",
+  "window.menu.native.browserSaveImage": "保存图片",
+  "window.menu.native.browserOpenLink": "在新窗口中打开链接",
+  "window.menu.native.browserInspect": "检查",
   "window.title.main": "CodeNomad",
   "window.controls.minimize": "最小化窗口",
   "window.controls.maximize": "最大化或还原窗口",
@@ -54,15 +64,6 @@ export const appMessages = {
 
   "app.closeInstance.toast.error": "无法关闭项目。",
   "app.closeInstance.toast.otherWindow": "{project} 已从另一个窗口关闭。",
-
-  "emptyState.logoAlt": "CodeNomad 徽标",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "选择文件夹，开始与 AI 一起编码",
-  "emptyState.actions.selectFolder": "选择文件夹",
-  "emptyState.actions.selecting": "正在选择...",
-  "emptyState.keyboardShortcut": "键盘快捷键：{shortcut}",
-  "emptyState.examples": "示例：{example}",
-  "emptyState.multipleInstances": "同一个文件夹可以同时打开多个实例",
 
   "releases.upgradeRequired.title": "需要升级",
   "releases.desktop.checking": "正在检查 CodeNomad 更新…",

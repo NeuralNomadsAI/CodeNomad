@@ -15,9 +15,11 @@ Der rechte Panel-Tab **Dateien** vereint das Durchsuchen von Checkouts, lokale �
 | Änderungen | Änderungen im Index und Arbeitsbaum | Git-Änderungen erfolgen nur über ausdrückliche Aktionen |
 | Commits | Seitenweiser Commit-Verlauf und Revisionsinhalte | Schreibgeschützter Verlauf; kein Checkout |
 
-Aufgeklappte Ordner bleiben bei Moduswechseln erhalten. Listen/Status/Verlauf verwenden zwischengespeicherte Schnappschüsse und prüfen sie nach relevanten Dateisystemänderungen, Aktivierung oder expliziter Aktualisierung erneut; das Fokussieren des Panels garantiert kein erneutes Lesen. Sichtbare Arbeitsbereichsordner übernehmen auf dem Backend-Host erstellte, bearbeitete, umbenannte oder gelöschte Dateien von selbst, bei andauernder Aktivität höchstens alle fünf Sekunden; eingeklappte Ordner und andere Worktrees werden erst erneut gelesen, wenn Sie sie anzeigen.
+Aufgeklappte Ordner bleiben bei Moduswechseln erhalten. Sichtbare Arbeitsbereichsordner übernehmen auf dem Backend-Host erstellte, bearbeitete, umbenannte oder gelöschte Dateien von selbst, bei andauernder Aktivität höchstens alle fünf Sekunden; eingeklappte Ordner und andere Worktrees werden erst erneut gelesen, wenn Sie sie anzeigen.
 
 Zeilenaktionen umfassen **Pfad kopieren** und, soweit der Client Backend-Pfade öffnen kann, Dateimanager-/Editor-/Terminal-Aktionen wie **Mit Standardanwendung öffnen**, **Im Ordner anzeigen**, **Im Dateimanager öffnen** und **Terminal hier öffnen**. Bei wenig Platz können Aktionen unter **Weitere Aktionen für {name}** erscheinen; der Datei- oder Ordnername ersetzt `{name}`. Ein Remote-Browser darf einen Serverpfad nicht als lokalen Gerätepfad voraussetzen; siehe [Fernsteuerung](remote-control.md).
+
+Workspace-Dateien mit `.mmd` öffnen sich als Diagramm. Mit **Quelltext anzeigen** bearbeiten Sie den Text, mit **Diagramm anzeigen** sehen Sie den aktuellen Entwurf; Speichern bleibt ausdrücklich erforderlich. Es gelten dieselben [Mermaid-Formate und Grenzen](conversations.md#mermaid).
 
 ## Quelltext bearbeiten und sicher speichern {#edit-save}
 
@@ -26,11 +28,13 @@ Zeilenaktionen umfassen **Pfad kopieren** und, soweit der Client Backend-Pfade �
 3. Bearbeiten Sie und wählen Sie **Speichern** oder drücken Sie **Ctrl/Cmd+S**, während der Editor fokussiert ist.
 4. Wurde die Datei extern geändert, prüfen Sie die Überschreibbestätigung; wählen Sie **Abbrechen**, um den Entwurf ohne Überschreiben dieser Änderung zu behalten.
 
-Speichern schreibt die tatsächliche Datei im durchsuchten Checkout einschließlich eines verknüpften Worktrees; es sendet keinen Prompt und staged/committet die Änderung nicht. Vor dem Speichern wird die maßgebliche Datei erneut gelesen. Der Konfliktdialog lautet **Die Datei wurde vom Agenten geändert. Die Änderungen des Agenten überschreiben?**; behandeln Sie Änderungen jedes externen Schreibers mit derselben Sorgfalt.
+Speichern schreibt die tatsächliche Datei im durchsuchten Checkout einschließlich eines verknüpften Worktrees; es sendet keinen Prompt und staged/committet die Änderung nicht. Der Konfliktdialog lautet **Die Datei wurde vom Agenten geändert. Die Änderungen des Agenten überschreiben?**; behandeln Sie Änderungen jedes externen Schreibers mit derselben Sorgfalt.
 
-Ungespeicherte Quelltextentwürfe bleiben beim Schließen oder Wechseln von Leseansichten im Renderer-Speicher nach Projektinstanz, Verzeichnis und Pfad erhalten. Dateisystemaktualisierungen ersetzen sie nicht stillschweigend. Dies ist kein dauerhafter Dateispeicher: Speichern oder kopieren Sie wichtige Änderungen vor einem Client-Neustart/Neuladen. Lese-/Schreibfehler behalten den Entwurf. Explizites **Aktualisieren** warnt vor dem Verwerfen ungespeicherter Änderungen.
+Ungespeicherte Quelltextentwürfe bleiben beim Schließen oder Wechseln von Leseansichten im Renderer-Speicher nach Projektinstanz, Verzeichnis und Pfad erhalten. Dateisystemaktualisierungen ersetzen sie nicht stillschweigend. Dies ist kein dauerhafter Dateispeicher: Speichern oder kopieren Sie wichtige Änderungen vor einem Client-Neustart/Neuladen. Explizites **Aktualisieren** warnt vor dem Verwerfen ungespeicherter Änderungen.
 
-Das Schließen der Leseansicht über die abschließende Schließen-Schaltfläche führt zur Unterhaltung zurück; das Eingabefeld bleibt darunter verfügbar. Ein Sitzungs-/Worktree-Wechsel leert die ausgewählte Leseansicht und garantiert kein Speichern ihres Entwurfs. Eine Browser-Vorschau ersetzt die Leseansicht; eine Datei zu öffnen setzt diese Ansicht auf Chat-Modus zurück.
+Das Schließen der Leseansicht über die abschließende Schließen-Schaltfläche führt zur Unterhaltung zurück; das Eingabefeld bleibt darunter verfügbar. Wird die Seitenleiste mit **Rechte Seitenleiste** ausgeblendet oder ist das Fenster zu schmal für sie, bleibt die Leseansicht mit der frei gewordenen Breite geöffnet; erneutes Einblenden lässt sie unverändert. Ein Sitzungs-/Worktree-Wechsel leert die ausgewählte Leseansicht und garantiert kein Speichern ihres Entwurfs. Eine Browser-Vorschau ersetzt die Leseansicht; eine Datei zu öffnen setzt diese Ansicht auf Chat-Modus zurück.
+
+Das Ersetzen und Schließen der Leseansicht betrifft nur den aktuellen Projekt-Tab. Mehrere Tabs desselben Projekts können unterschiedliche Dateien lesen oder eine Datei neben Chat-, Web- oder Missionsinhalten bereithalten. Die Auswahl zwischen Quelltext und Darstellung, die Editorauswahl und die Scrollposition bleiben bei Tab-Wechseln erhalten, solange Ziel und Modell im Speicher bleiben; speichern Sie wichtige Entwürfe vor dem Neuladen. Der Dateien-Modus wird pro Tab wiederhergestellt; Diff- und Zeilenumbruch-Einstellungen bleiben gemeinsam.
 
 ## Schreibgeschützte und begrenzte Vorschauen {#preview-limits}
 
@@ -46,7 +50,7 @@ Das Schließen der Leseansicht über die abschließende Schließen-Schaltfläche
 | Text-Diff aus Änderungen/Commits | Schreibgeschützter Vergleich, kein Editor für eine der Seiten |
 | Git-Bild-Diff | Vorher-/Nachher-Bilder aus exakt den verglichenen Revisionen |
 
-Vorschaulesevorgänge sind begrenzt; große/nicht unterstützte Inhalte sind gegebenenfalls nicht verfügbar, statt unbegrenzt geladen zu werden. Für historische Bildvorschauen wird niemals ersatzweise die aktuelle Worktree-Datei verwendet. Ein Vorschaufehler bedeutet nicht, dass die zugrunde liegende Datei fehlt. Öffnen Sie die Datei gegebenenfalls mit einer geeigneten externen Anwendung, ohne nur für eine Vorschau ihre Revision zu ändern.
+Vorschaulesevorgänge sind begrenzt; große/nicht unterstützte Inhalte sind gegebenenfalls nicht verfügbar, statt unbegrenzt geladen zu werden. Für historische Bildvorschauen wird niemals ersatzweise die aktuelle Worktree-Datei verwendet. Öffnen Sie die Datei gegebenenfalls mit einer geeigneten externen Anwendung, ohne nur für eine Vorschau ihre Revision zu ändern.
 
 ## Stagen, Unstagen und Committen {#stage-commit}
 
@@ -56,7 +60,7 @@ Vorschaulesevorgänge sind begrenzt; große/nicht unterstützte Inhalte sind geg
 
 Eingeklappte Abschnittsköpfe bleiben Ablageziele. Einklappen oder Moduswechsel bewahren deren Zustand und den Commit-Nachrichtenentwurf. Ein langer Abschnitt zeigt seine ersten 200 Dateien, dann eine Zeile wie **480 Dateien nicht angezeigt** mit **200 weitere anzeigen**, um die nächsten an Ort und Stelle einzublenden; die Abschnittszähler bleiben vollständige Summen, und die aktuelle, in der Vorschau geöffnete und ausgewählte Dateien bleiben angezeigt. Umschalt-Klick-Bereiche umfassen nur angezeigte Zeilen, sodass eine Sammelaktion nie eine Datei einschließt, die Sie nicht sehen. Stagen/Unstagen ändert den Index im durchsuchten Worktree; Committen erfasst ausschließlich gestagte Inhalte. Unstagen verwirft die Änderung im Worktree nicht.
 
-Prüfen Sie gestagte Dateien vor dem Commit, besonders wenn Agenten oder andere Clients dort ebenfalls schreiben. Ein fehlgeschlagener Commit wird nicht automatisch wiederholt. Aktualisieren Sie Status/Verlauf und prüfen Sie vor dem Wiederholen den Fehler, denn eine verlorene Antwort beweist nicht, dass kein Commit erstellt wurde.
+Prüfen Sie gestagte Dateien vor dem Commit, besonders wenn Agenten oder andere Clients dort ebenfalls schreiben.
 
 ## Commit-Verlauf lesen {#commit-history}
 
@@ -72,7 +76,7 @@ Der Textverlauf vergleicht den Commit mit seinem ersten Eltern-Commit (oder eine
 2. Deaktivieren Sie dies, wenn Sie nicht gestagte reine Leerraumänderungen prüfen müssen, die in Änderungen fehlen.
 3. Prüfen Sie vor dem Commit den tatsächlichen Diff und die gestagten Inhalte.
 
-Die Einstellung ist standardmäßig aktiviert. Sie blendet hauptsächlich passende nicht gestagte Änderungen verfolgter Textdateien aus der Änderungsliste, Zählung, Auswahl, Sammel-Staging und Ziehaktionen aus. Ausgeblendete Dateien bleiben ungestagt. Gestagte Dateien bleiben sichtbar, ebenso nicht verfolgte, hinzugefügte/gelöschte/umbenannte und binäre Dateien. Fehlgeschlagene/nicht unterstützte Erkennung lässt Dateien sichtbar, statt zu raten.
+Die Einstellung ist standardmäßig aktiviert. Sie blendet hauptsächlich passende nicht gestagte Änderungen verfolgter Textdateien aus der Änderungsliste, Zählung, Auswahl, Sammel-Staging und Ziehaktionen aus. Ausgeblendete Dateien bleiben ungestagt. Gestagte Dateien bleiben sichtbar, ebenso nicht verfolgte, hinzugefügte/gelöschte/umbenannte und binäre Dateien.
 
 Gits Listenerkennung kann inneren Leerraum, reine CRLF-Änderungen und hinzugefügte/entfernte abschließende Zeilenumbrüche ignorieren. Der Leerraumvergleich in der Diff-Leseansicht ist enger: Einrückung und abschließende Leerzeichen/Tabulatoren, nicht sämtlicher innerer Leerraum. Stagen und Committen arbeiten unabhängig von der Anzeigeeinstellung immer mit dem exakten Inhalt.
 
@@ -84,4 +88,4 @@ Unterschiede bei Zeilenenden und Byte-Order-Mark können statt hervorgehobener Z
 2. Wählen Sie **Git initialisieren**; dies erfolgt sofort ohne Bestätigung.
 3. Warten Sie auf die Projekt-/Sitzungsaktualisierung und stagen/committen Sie anschließend ausdrücklich, wenn Sie bereit sind.
 
-Die Initialisierung erstellt `.git` im ausdrücklich geöffneten Ordner; sie initialisiert kein übergeordnetes Verzeichnis und erstellt keinen ersten Commit. Fehlt Git im Backend, bleiben verzeichnisgebundene Unterhaltungen und das Durchsuchen des Arbeitsbereichs möglich, aber Initialisierung und Git-Vorgänge sind nicht verfügbar. Aktualisieren Sie bei ungewissem Fehler vor dem Wiederholen; keine Initialisierungsanfrage wird automatisch wiederholt. Siehe [Projekte](projects.md).
+Die Initialisierung erstellt `.git` im ausdrücklich geöffneten Ordner; sie initialisiert kein übergeordnetes Verzeichnis und erstellt keinen ersten Commit. Fehlt Git im Backend, bleiben verzeichnisgebundene Unterhaltungen und das Durchsuchen des Arbeitsbereichs möglich, aber Initialisierung und Git-Vorgänge sind nicht verfügbar. Siehe [Projekte](projects.md).

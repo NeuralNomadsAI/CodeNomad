@@ -1,26 +1,33 @@
 import { isSessionNotFoundError, type LocationRef, type OpenCodeClient, type ShellInfo } from "@opencode/client"
 
 import { locationRequestOptions, sameLocation } from "../opencode/compatibility/location"
-import { MISSION_MAX_ACTORS, MISSION_MAX_TASKS, type MissionActivityProjection, type MissionSnapshot } from "./model"
+import type { MissionActivityProjection, MissionPanelMap, MissionSnapshot } from "./model"
 import { MAX_MISSION_DESCENDANTS, observeActiveDescendant, readNativeMissionFamilyTree, type NativeMissionFamilyTree } from "./native-session-family"
-import { projectMissionFamily } from "./mission-family-projection"
+import { projectMissionFamily, type MissionFamilyContext } from "./mission-family-projection"
 import { runningMissionShellRelation } from "./native-shell-correlation"
 import { missionTaskExecutionEvidence } from "./execution-evidence"
 import { missionIsRunning } from "./lifecycle-model"
 import { isCoordinatorNotificationReport } from "./native-report-provenance"
+import { MISSION_ACTIVITY_ACTORS } from "./mission-panel-map"
+import type { MissionActivityCache } from "./activity-cache"
 
-// Native reads per refresh stay bounded however many missions a project keeps: running,
-// then other active missions' actors are observed first, then the most recently updated;
-// the rest read as unknown.
-const MAX_PROJECTED_ACTORS = 160
+// Native reads per refresh stay bounded however many missions a project keeps and
+// actors a mission has: running, then other active missions' actors are observed
+// first, then the most recently updated. Beyond the budget, actors waiting on an
+// answer, then those with open work, come first; the rest read as unknown.
+const MAX_PROJECTED_ACTORS = MISSION_ACTIVITY_ACTORS
 const MAX_FAMILY_READS = 2 * (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
 const MAX_FAMILY_SESSIONS = (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
 const READ_CONCURRENCY = 4
 const ACTIVE_DESCENDANT_PROBE_MS = 5_000
+/** Session reads of one ancestry walk phase: attributing open requests to the actors
+ * they descend from, or probing oversized families for active descendants. */
+const ANCESTRY_READS = 128
 
 type OwnsLocation = (workspaceID: string, location: LocationRef, client: OpenCodeClient) => Promise<boolean>
 
 interface ActorRead {
+  owned?: true
   session?: Awaited<ReturnType<OpenCodeClient["session"]["get"]>>
   inbox?: Awaited<ReturnType<OpenCodeClient["session"]["inbox"]["list"]>>
   family?: Set<string>
@@ -35,10 +42,21 @@ interface ActorRead {
 
 interface LocationRead {
   shells: ShellInfo[]
-  forms: Array<{ sessionID: string }>
-  permissions: Array<{ sessionID: string }>
+  forms: Awaited<ReturnType<OpenCodeClient["form"]["list"]>>["data"]
+  permissions: Awaited<ReturnType<OpenCodeClient["permission"]["request"]["list"]>>["data"]
+  formsObserved: boolean
+  permissionsObserved: boolean
   failed: boolean
 }
+
+/** The maps a display read returns (compact, or a snapshot's) and their project. */
+export type MissionActivityMission = MissionFamilyContext & Pick<MissionPanelMap,
+  "id" | "status" | "runState" | "controlUnavailable" | "coordinatorSessionId" | "reports" | "actorEvidence"> & {
+    control?: Pick<NonNullable<MissionPanelMap["control"]>, "action" | "graceful">
+  }
+export type MissionActivityInput = Pick<MissionSnapshot, "projectID"> & Partial<Omit<MissionSnapshot, "projectID" | "missions">>
+  & { missions: readonly MissionActivityMission[] }
+export interface MissionObservedRequests extends LocationRead { location: LocationRef; ownedActors: string[] }
 
 /**
  * Builds a bounded, display-only reconciliation of a Mission snapshot with current
@@ -46,13 +64,17 @@ interface LocationRead {
  */
 export async function projectMissionActivity(input: {
   client: OpenCodeClient
-  snapshot: MissionSnapshot
+  snapshot: MissionActivityInput
   workspaceID: string
   ownsLocation: OwnsLocation
   /** Required for observed family membership; capture real connection/deletion
    * identity in the route. Omission preserves legacy actor display only. */
   isCurrent?: () => boolean
   now?: () => number
+  /** Opt-in attention evidence, emitted only after the observation fence, for owned roots. */
+  onRequests?: (value: MissionObservedRequests) => void
+  /** Display reads only: family trees kept between reads and sessions known deleted. */
+  cache?: MissionActivityCache
 }): Promise<MissionActivityProjection> {
   const unknownProjection = (): MissionActivityProjection => ({
     generatedAt: (input.now ?? Date.now)(),
@@ -66,22 +88,29 @@ export async function projectMissionActivity(input: {
     catch (error) { stale = true; throw error }
   }
   try { assertCurrent() } catch { return unknownProjection() }
-  if (input.snapshot.missions.some(mission =>
-    mission.actors.length > MISSION_MAX_ACTORS || mission.tasks.length > MISSION_MAX_TASKS)) return unknownProjection()
   const observe = async <T>(read: () => Promise<T>): Promise<T> => {
     assertCurrent()
     try { return await read() } finally { assertCurrent() }
   }
   // The snapshot is ordered by most recent update; a stable sort puts running missions
-  // first, then the other active ones (prepared, paused).
-  const rank = (mission: MissionSnapshot["missions"][number]) => missionIsRunning(mission) ? 2 : mission.status === "active" ? 1 : 0
+  // first, with gracefully paused ones whose steps may still be finishing (the panel
+  // offers Interrupt now only while it observes them), then the other active ones.
+  const pausing = (mission: MissionActivityMission) => mission.status === "active" && !mission.controlUnavailable
+    && mission.runState === "paused" && mission.control?.action === "pause" && Boolean(mission.control.graceful)
+  const rank = (mission: MissionActivityMission) => missionIsRunning(mission) || pausing(mission) ? 2 : mission.status === "active" ? 1 : 0
   const missions = [...input.snapshot.missions].sort((left, right) => rank(right) - rank(left))
   const occurrences = missions.flatMap(mission => mission.actors.map(actor => ({ mission, actor })))
-  const sessionIDs = [...new Set(occurrences.map(({ actor }) => actor.sessionId))].slice(0, MAX_PROJECTED_ACTORS)
+  const actorIDs = [...new Set(occurrences.map(({ actor }) => actor.sessionId))]
   const missingReports = new Set<string>()
   const unsettledCalls = new Set<string>()
   for (const { mission, actor } of occurrences) {
     const key = `${mission.id}\0${actor.sessionId}`
+    // A compact map holds a page of its tasks: its evidence speaks for all of them.
+    if (mission.actorEvidence) {
+      if (mission.actorEvidence.reportOwed.includes(actor.sessionId)) missingReports.add(key)
+      if (mission.actorEvidence.callOpen.includes(actor.sessionId)) unsettledCalls.add(key)
+      continue
+    }
     // A running mission's coordinator still owes its final report, unless a saved
     // report's coordinator notification is still being delivered to wake it.
     if (actor.sessionId === mission.coordinatorSessionId && missionIsRunning(mission) && !mission.reports.some(report =>
@@ -94,11 +123,71 @@ export async function projectMissionActivity(input: {
   }
 
   const signal = AbortSignal.timeout(15_000)
+  const locationReads = new Map<string, LocationRead>()
+  const readLocation = async (key: string, location: LocationRef) => {
+    const options = { ...locationRequestOptions(location), signal }
+    const requestLocation = { location: { directory: location.directory } }
+    const shells = await settle(() => observe(() => input.client.shell.list(requestLocation, options)))
+    const forms = await settle(() => observe(() => input.client.form.list(requestLocation, options)))
+    const permissions = await settle(() => observe(() => input.client.permission.request.list(requestLocation, options)))
+    const responseLocations = [shells, forms, permissions].flatMap(result => result.ok ? [result.value.location] : [])
+    const failed = !shells.ok || !forms.ok || !permissions.ok
+      || responseLocations.some(response => response.directory !== location.directory)
+    locationReads.set(key, {
+      shells: shells.ok ? shells.value.data : [],
+      forms: forms.ok ? forms.value.data : [],
+      permissions: permissions.ok ? permissions.value.data : [],
+      formsObserved: forms.ok && forms.value.location.directory === location.directory,
+      permissionsObserved: permissions.ok && permissions.value.location.directory === location.directory,
+      failed,
+    })
+  }
+  // More actors than one refresh reads: those whose own conversation or a descendant
+  // asks for an answer come first, then those with open work, each in mission order.
+  const prioritized = async (): Promise<string[]> => {
+    const locations = new Map(occurrences.map(({ actor }) => [locationKey(actor.location), actor.location]))
+    await readBounded([...locations].slice(0, MAX_PROJECTED_ACTORS), async ([key, location]) => {
+      const owned = await settle(() => observe(() => input.ownsLocation(input.workspaceID, location, input.client)))
+      if (owned.ok && owned.value) await readLocation(key, location)
+    })
+    const declared = new Set(actorIDs), asking = new Set<string>()
+    const parents = new Map<string, string | undefined>(), budget = { reads: ANCESTRY_READS }
+    for (const read of locationReads.values()) {
+      if (read.failed) continue
+      for (const { sessionID } of [...read.forms, ...read.permissions]) {
+        const seen = new Set<string>()
+        let cursor: string | undefined = sessionID === "global" ? undefined : sessionID
+        while (cursor && !declared.has(cursor) && !seen.has(cursor)) {
+          seen.add(cursor)
+          if (!parents.has(cursor)) {
+            if (budget.reads-- <= 0) break
+            const id = cursor, session = await settle(() => observe(() => input.client.session.get({ sessionID: id }, { signal })))
+            parents.set(id, session.ok ? session.value.parentID : undefined)
+          }
+          cursor = parents.get(cursor)
+        }
+        if (cursor && declared.has(cursor)) asking.add(cursor)
+      }
+    }
+    const working = new Set([...missingReports, ...unsettledCalls].map(key => key.slice(key.indexOf("\0") + 1)))
+    const tier = (id: string) => asking.has(id) ? 0 : working.has(id) ? 1 : 2
+    return actorIDs.map((id, index) => ({ id, index, tier: tier(id) }))
+      .sort((left, right) => left.tier - right.tier || left.index - right.index)
+      .slice(0, MAX_PROJECTED_ACTORS).map(item => item.id)
+  }
+  const sessionIDs = actorIDs.length > MAX_PROJECTED_ACTORS ? await prioritized() : actorIDs
+  const selected = new Set(sessionIDs)
+  const unread = new Set(actorIDs.filter(id => !selected.has(id)))
   const actorReads = new Map<string, ActorRead>()
+  const cache = input.cache
+  const treeEpoch = cache?.currentEpoch()
   await readBounded(sessionIDs, async sessionID => {
+    if (cache?.isMissing(input.client, sessionID)) { actorReads.set(sessionID, { missing: true }); return }
     const sessionResult = await settle(() => observe(() => input.client.session.get({ sessionID }, { signal })))
     if (!sessionResult.ok) {
-      actorReads.set(sessionID, isMissing(sessionResult.error) ? { missing: true } : { failed: true })
+      const missing = isMissing(sessionResult.error)
+      if (missing) cache?.markMissing(input.client, sessionID)
+      actorReads.set(sessionID, missing ? { missing: true } : { failed: true })
       return
     }
     actorReads.set(sessionID, { session: sessionResult.value })
@@ -116,51 +205,54 @@ export async function projectMissionActivity(input: {
       return
     }
     authorizedLocations.set(locationKey(read.session.location), read.session.location)
-    const family = await settle(() => readNativeMissionFamilyTree(input.client, read.session!, signal, { assertCurrent,
+    read.owned = true
+    const kept = cache?.tree(input.client, read.session)
+    if (kept) assertCurrent()
+    const family = kept ? { ok: true as const, value: kept } : await settle(() => readNativeMissionFamilyTree(input.client, read.session!, signal, { assertCurrent,
       consumeRead: () => { if (++familyReads > MAX_FAMILY_READS) throw new Error("Mission family read budget exceeded") } }))
     if (!family.ok) { read.failed = true; read.familyFailed = true; return }
+    if (!kept && treeEpoch !== undefined) cache?.keepTree(input.client, read.session, family.value, treeEpoch)
     read.tree = family.value
     read.family = new Set(family.value.keys())
   })
   // Deduplicate overlapping actor families, with no nested parallel fan-out.
   const familyIDs = [...new Set([...actorReads.values()].flatMap(read => [...(read.family ?? [])]))]
   if (familyIDs.length > MAX_FAMILY_SESSIONS) return unknownProjection()
-  const inboxes = new Map<string, Awaited<ReturnType<typeof input.client.session.inbox.list>>>()
-  await readBounded(familyIDs, async sessionID => {
-    const result = await settle(() => observe(() => input.client.session.inbox.list({ sessionID }, { signal })))
-    if (result.ok) inboxes.set(sessionID, result.value)
-  })
-  for (const read of actorReads.values()) {
-    if (!read.family) continue
-    if ([...read.family].some(id => !inboxes.has(id))) read.failed = true
-    else read.inbox = [...read.family].flatMap(id => inboxes.get(id)!)
-  }
 
   const activeResult = await settle(() => observe(() => input.client.session.active({ signal })))
 
-  const locationReads = new Map<string, LocationRead>()
-  await readBounded([...authorizedLocations.entries()], async ([key, location]) => {
-    const options = { ...locationRequestOptions(location), signal }
-    const requestLocation = { location: { directory: location.directory } }
-    const shells = await settle(() => observe(() => input.client.shell.list(requestLocation, options)))
-    const forms = await settle(() => observe(() => input.client.form.list(requestLocation, options)))
-    const permissions = await settle(() => observe(() => input.client.permission.request.list(requestLocation, options)))
-    const responseLocations = [shells, forms, permissions].flatMap(result => result.ok ? [result.value.location] : [])
-    const failed = !shells.ok || !forms.ok || !permissions.ok
-      || responseLocations.some(response => response.directory !== location.directory)
-    locationReads.set(key, {
-      shells: shells.ok ? shells.value.data : [],
-      forms: forms.ok ? forms.value.data : [],
-      permissions: permissions.ok ? permissions.value.data : [],
-      failed,
-    })
+  await readBounded([...authorizedLocations.entries()].filter(([key]) => !locationReads.has(key)), ([key, location]) => readLocation(key, location))
+
+  // Queued input decides a state only for an actor that owes a report or has an open call
+  // and that no request, run or background work already describes: read only those inboxes.
+  const working = new Set([...missingReports, ...unsettledCalls].map(key => key.slice(key.indexOf("\0") + 1)))
+  const needsInbox = (sessionID: string, read: ActorRead) => {
+    if (!working.has(sessionID) || !read.family || !read.session || !activeResult.ok) return false
+    const resources = locationReads.get(locationKey(read.session.location))
+    if (!resources || resources.failed) return false
+    const related = (id: string) => id === "global" || read.family!.has(id)
+    if (resources.permissions.some(item => related(item.sessionID)) || resources.forms.some(item => related(item.sessionID))) return false
+    if ([...read.family].some(id => activeResult.value[id])) return false
+    return !resources.shells.some(shell => runningMissionShellRelation(shell, read.family!) === "related")
+  }
+  const inboxIDs = [...new Set([...actorReads].flatMap(([id, read]) => needsInbox(id, read) ? [...read.family!] : []))]
+  const inboxes = new Map<string, Awaited<ReturnType<typeof input.client.session.inbox.list>>>()
+  await readBounded(inboxIDs, async sessionID => {
+    const result = await settle(() => observe(() => input.client.session.inbox.list({ sessionID }, { signal })))
+    if (result.ok) inboxes.set(sessionID, result.value)
   })
+  for (const [id, read] of actorReads) {
+    if (!read.family) continue
+    if (!needsInbox(id, read)) read.inbox = []
+    else if ([...read.family].some(member => !inboxes.has(member))) read.failed = true
+    else read.inbox = [...read.family].flatMap(member => inboxes.get(member)!)
+  }
 
   // Oversized families: probe ancestry after the location reads, with one shared
   // parent cache, read budget and bound, so it cannot starve the other reads.
   if (activeResult.ok) {
     const probeSignal = AbortSignal.any([signal, AbortSignal.timeout(ACTIVE_DESCENDANT_PROBE_MS)])
-    const parents = new Map<string, string | undefined>(), budget = { reads: 128 }
+    const parents = new Map<string, string | undefined>(), budget = { reads: ANCESTRY_READS }
     for (const [sessionID, read] of actorReads) {
       if (!read.familyFailed || activeResult.value[sessionID]) continue
       const probe = await settle(() => observe(() => observeActiveDescendant(input.client, sessionID, activeResult.value, probeSignal, { parents, budget })))
@@ -209,7 +301,7 @@ export async function projectMissionActivity(input: {
     generatedAt: (input.now ?? Date.now)(),
     missions: input.snapshot.missions.map(mission => ({
       missionId: mission.id,
-      family: projectMissionFamily({ mission, trees, observed: Boolean(input.isCurrent) && activeResult.ok }),
+      family: projectMissionFamily({ mission, trees, observed: Boolean(input.isCurrent) && activeResult.ok, unread }),
       actors: mission.actors.map(actor => {
         if (!actorReads.has(actor.sessionId)) return { sessionId: actor.sessionId, state: "unknown" as const }
         const read = actorReads.get(actor.sessionId)!
@@ -248,6 +340,11 @@ export async function projectMissionActivity(input: {
     })),
   }
   try { assertCurrent() } catch { return unknownProjection() }
+  for (const [key, location] of authorizedLocations) {
+    const resources = locationReads.get(key)
+    if (resources) input.onRequests?.({ ...resources, location, ownedActors: [...actorReads].filter(([, read]) => read.owned
+      && read.session && locationKey(read.session.location) === key).map(([id]) => id) })
+  }
   return projection
 }
 

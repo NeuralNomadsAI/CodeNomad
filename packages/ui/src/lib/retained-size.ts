@@ -73,6 +73,10 @@ export async function estimateRetainedBytesIncrementally(
     rootIterable?: boolean
     maxBytes?: number
     maxNodes?: number
+    /** Maps a value to its canonical identity before the seen-check, so the
+     * same data reached through different references (a raw object and a
+     * reactive proxy of it) is counted once. */
+    canonicalize?: (value: object) => object
   } = {},
 ): Promise<number> {
   const seen = new WeakSet<object>()
@@ -80,6 +84,10 @@ export async function estimateRetainedBytesIncrementally(
   const children: Iterator<RetainedChild>[] = []
   const roots = options.rootIterable ? (value as Iterable<unknown>)[Symbol.iterator]() : undefined
   if (!roots) pending.push(value)
+  const canonicalize = options.canonicalize
+  const ingest = (item: unknown) => {
+    pending.push(item && typeof item === "object" && canonicalize ? canonicalize(item as object) : item)
+  }
   const yieldEvery = Math.max(1, options.yieldEvery ?? 500)
   const maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY
   const maxNodes = options.maxNodes ?? Number.POSITIVE_INFINITY
@@ -93,14 +101,14 @@ export async function estimateRetainedBytesIncrementally(
       if (child && !child.done) {
         total += child.value.keyBytes
         if (total > maxBytes) return Number.POSITIVE_INFINITY
-        pending.push(child.value.value)
+        ingest(child.value.value)
       } else if (child) {
         children.pop()
         continue
       } else {
         const next = roots!.next()
         if (next.done) break
-        pending.push(next.value)
+        ingest(next.value)
       }
     }
     if (++processed > maxNodes) return Number.POSITIVE_INFINITY

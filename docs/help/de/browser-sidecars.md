@@ -1,35 +1,46 @@
 # Browser-Vorschauen und SideCars
 
+Iframe-Vorschauen und SideCars verweigern Verbindungen zu den eigenen Listener-Adressen und Ports von CodeNomad, auch über DNS-Aliase. Verwenden Sie den separaten Server-Port Ihrer Anwendung.
+
 ## Sitzungsbrowser öffnen {#session-browser}
 
 1. Wählen Sie in der Symbolleiste einer Unterhaltung **Web-Vorschau öffnen**.
 2. Geben Sie eine `http://`- oder `https://`-**Vorschau-URL** ohne Zugangsdaten ein und wählen Sie dann **Vorschau öffnen**. Verwenden Sie die Symbolleiste für Navigation, Aktualisieren sowie Zurück/Vorwärts.
-3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie in dieser Unterhaltung zum Fortsetzen erneut.
+3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie zum Fortsetzen im selben Tab und in derselben Unterhaltung erneut.
 
-Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn in der Web-Vorschau dieser Sitzung, auf jedem Client mit verfügbarer Vorschau. Über Remote Control, wenn der Host Web-Vorschauen deaktiviert hält, oder auf einem Client ohne verfügbare Vorschau behalten solche Links ihr normales Browser-Verhalten. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet den Link stattdessen im Browser. Innerhalb des Sandbox-Vorschau-Frames, wo kein echtes Storage verfügbar ist, erhält die Seite ein In-Memory-`localStorage`, `sessionStorage` und `document.cookie` für das aktuelle Laden der Seite; ein eigenständig geöffneter Per-Token-Vorschau-Host behält sein echtes Storage.
+Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn in der Web-Vorschau dieser Sitzung, auf jedem Client mit verfügbarer Vorschau. Über Remote Control, wenn der Host Web-Vorschauen deaktiviert hält, oder auf einem Client ohne verfügbare Vorschau behalten solche Links ihr normales Browser-Verhalten. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet den Link stattdessen im Browser.
 
-Jede Vorschau gehört zu ihrem Projektordner und ihrer Sitzung. Wechsel von Unterhaltung, Projekt, Info oder Chat verbirgt einen ausdrücklich geöffneten nativen Gast, ohne dessen aktives Dokument/Verlauf zu verwerfen. Verborgene Gäste sind keine Automatisierungsziele. Projekt-/Fensterschließen oder Renderer-Neustart beendet das aktive Dokument.
+Jede Sitzung hat eine Vorschau im Fenster. Doppelte Registerkarten wählen unabhängig zwischen Chat und derselben aktiven Vorschau mit gemeinsamer Seite, URL, Verlauf und Viewport-Vorlage. Die Schließen-Schaltfläche bringt nur ihre Registerkarte zum Chat zurück. Wechsel zwischen Registerkarten, Unterhaltungen, Projekten oder Info erhält das Dokument; beim Schließen eines Duplikats bleibt es erhalten, solange eine weitere Instanz der Sitzung geöffnet ist. Schließen der letzten Instanz oder des Fensters sowie Renderer-Neustart beendet das aktive Dokument.
 
-Gespeicherter Verlauf wird nur wiederhergestellt, wenn Sie den Sitzungsbrowser ausdrücklich erneut öffnen, nicht beim Start/bei Sitzungsauswahl. Er speichert URLs und einen Zeiger, keine ungesendeten Formulare, DOM, POST-Inhalte oder JavaScript-Speicher. Verlauf ist auf 32 URLs pro Sitzung und ein gemeinsames Layoutbudget begrenzt; ältere Einträge können gekürzt werden. URL-Wiederherstellung kann eine frische Seite laden; sie ist keine Transaktionswiederholung.
+Jede Registerkarte speichert ihre Chat-/Vorschauwahl; die Sitzung speichert gemeinsame URL, Viewport-Vorlage und Verlauf. Gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen des Sitzungsbrowsers. Gespeichert werden URLs und ein Zeiger; aktive Formulare, DOM, POST-Inhalte und JavaScript-Speicher enden mit dem Dokument. Der Verlauf ist auf 32 URLs je Sitzung und ein gemeinsames Fensterbudget begrenzt; ältere Einträge können gekürzt werden. Eine wiederhergestellte URL kann neu geladen werden.
 
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
 
-Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen bleiben sitzungsbezogen. Iframe-Vorschauen sind kein vollständiges gemeinsames natives Browserprofil.
+Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen gehören jeweils zur Sitzung.
+
+Ein Agent öffnet den gemeinsamen Sitzungsbrowser in einer zugehörigen Registerkarte, möglichst der aktiven. Die gewählte Registerkarte bleibt während des Öffnens fest; ihr Schließen bricht das Öffnen ab. Seitenaktionen zielen auf die sichtbare native Vorschau der Sitzung; ausgeblendete Vorschauen bleiben ausgeschlossen.
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |
 | --- | --- | --- | --- |
-| Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
-| Windows-Tauri | Natives WebView2-Unterfenster | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
-| macOS-/Linux-Tauri | Iframe in Sandbox | Keine native Browser-Automatisierung | Nur Abmessungen |
+| Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
+| Windows-Tauri | Natives WebView2-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
+| macOS-Tauri (14+) | Natives WKWebView-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Mobile WebKit-Identität und CSS-Viewport; native Eingabegrenzen |
+| Linux-Tauri | Natives WebKitGTK-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Mobile WebKit-Identität und CSS-Viewport; native Dichte-/Eingabegrenzen |
 | Normaler Browser/Remote-Ansicht | Iframe-Ersatz | Kein lokales natives Vorschauziel | Nur Abmessungen |
 
-Native Automatisierung wird beim Desktop-Start vorbereitet und nutzt das sitzungsgebundene Werkzeug `codenomad.browser` zum Öffnen, Navigieren, Schnappschuss, Screenshot und für Seitenaktionen: Klicken, Tippen, Auswählen, Überfahren, Ziehen, Scrollen, Tastendrücke und Warten auf Text. Werkzeugverfügbarkeit autorisiert nicht jedes Fenster: Ausführung prüft zuständiges Backend, native Fähigkeiten, Sitzung und sichtbares Ziel. Eine Aktion, deren Seite inzwischen verborgen, ersetzt oder weiternavigiert wurde, wird abgelehnt statt an eine andere Seite gesendet, und eine Aktion wird nie automatisch wiederholt. Seiteninhalte bleiben nicht vertrauenswürdig. Ein iframe kann scheitern, weil das Ziel Einbettung verbietet; nutzen Sie einen externen Browser, statt Schutzmaßnahmen zu schwächen.
+Elementkommentare sind im nativen Modus nicht verfügbar. GTK-Zwischenablagezugriff erfolgt ausdrücklich mit Strg+V; Schreiben und natives Kopieren/Einfügen funktionieren. Bei blockierter Iframe-Einbettung verwenden Sie einen externen Browser.
+
+Native Pop-ups teilen Vorschau-Anmeldungen, behalten `opener`/`postMessage` und schließen mit ihrer Ursprungsseite. Eingegebene/wiederhergestellte Adressen erlauben HTTP(S) ohne Zugangsdaten; Websites können auch leere und gleichursprüngliche Blob-Dokumente öffnen. Datei- und App-Schemata bleiben gesperrt. Downloads landen mit bereinigten, eindeutigen Namen im Downloads-Ordner, ohne Überschreiben oder automatisches Öffnen. Kamera, Mikrofon, Standort und Benachrichtigungen werden verweigert; klassifizierte Berechtigungen benötigen Zustimmung, unbekannte Anfragen zeigen einen Fehler. Tauri und Electron unterstützen `alert`/`confirm`/`prompt`; Electrons Prompt-Dialog gilt für Hauptseiten der Vorschau, Pop-ups und Unterframes.
+
+Websites können beim Schließen eines nativen Pop-ups eine Bestätigung verlangen. Von [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) betroffene WebKitGTK-Versionen, einschließlich 2.52.6, benötigen für Uploads die Dateiauswahl der Seite, da der Zugriff auf abgelegte Dateien aus Sicherheitsgründen gesperrt ist. Speichern Sie die Arbeit auf der Seite, bevor Sie das zugehörige CodeNomad-Fenster schließen oder neu laden.
+
+Fokussieren Sie unter Tauri macOS/Linux die Vorschau, um sie mit ⌘/Strg +, − oder 0 oder über das Zoommenü der App zu zoomen. Bei anderem Fokus zoomen diese Menüaktionen die App.
 
 ## Eine von sechs Ansichtsgrößenvorlagen wählen {#templates}
 
 1. Öffnen Sie das Ansichtsgrößenmenü der Vorschau.
 2. Wählen Sie eine Vorlage unten. Verwenden Sie Hoch-/Querformat direkt; es gibt keine separate Drehsteuerung.
-3. Rechnen Sie mit nativem Neuladen beim Aktivieren/Ändern mobiler Emulation oder Rückkehr zu einer reinen Abmessungsvorlage.
+3. Rechnen Sie in Electron und Windows-Tauri mit nativem Neuladen beim Aktivieren/Ändern mobiler Emulation oder Rückkehr zu einer reinen Abmessungsvorlage.
 
 | Vorlage | CSS-Ansichtsgröße |
 | --- | --- |
@@ -40,7 +51,7 @@ Native Automatisierung wird beim Desktop-Start vorbereitet und nutzt das sitzung
 | Mobile Ansichtsgröße | 390 × 844 |
 | Mobiles Querformat | 844 × 390 |
 
-Native Mobilvorlagen setzen Android-/Chromium-Identität, Ausrichtung, Touch und DPR 2.75 nur auf dem zugehörigen Gast. Rückkehr zu responsiv/Desktop/Tablet entfernt diese Überschreibungen und lädt neu. Iframe-Ersatz ändert nur die Größe. Dies sind reproduzierbare Layoutreferenzen, keine Safari-/Firefox-Emulation oder Simulation von Telefontastaturen, Browser-/Systemleisten oder mobilen OS-Texteinstellungen. Sichern Sie Seitenarbeit vor Vorlagenwechsel, da Neuladen ungesendeten Seitenzustand verwerfen kann.
+Unter Electron und Windows-Tauri setzen Mobilvorlagen Android-/Chromium-Identität, Ausrichtung, Touch und DPR 2.75 nur auf dem zugehörigen Gast. Rückkehr zu responsiv/Desktop/Tablet entfernt diese Überschreibungen und lädt neu. Tauri macOS/Linux verwenden eine generische mobile WebKit-Kennung für HTTP und JavaScript und passen CSS-Viewports unabhängig von App-Zoom/DPI ein; Vorlagenwechsel und Zurücksetzen laden neu. macOS nutzt DPR 2,75, soweit nativ verfügbar; GTK-Dichte folgt Einpassungszoom und Monitor. Der Iframe-Ersatz ändert nur die Größe. Die Profile dienen als Layoutreferenz; Telefontastaturen, Systemleisten und mobile Texteinstellungen liegen außerhalb ihres Umfangs. Sichern Sie Seitenarbeit vor Vorlagenwechsel, da Neuladen ungesendeten Seitenzustand verwerfen kann.
 
 ## SideCar registrieren {#register-sidecar}
 
@@ -56,11 +67,13 @@ Native Mobilvorlagen setzen Android-/Chromium-Identität, Ausrichtung, Touch und
 | Präfix entfernen (Standard) | `/sidecars/<id>/path` wird als `/path` an den Upstream weitergegeben. |
 | Präfix beibehalten | `/sidecars/<id>/path` wird unverändert weitergegeben. Konfigurieren Sie den eigenen Basispfad des Dienstes entsprechend. |
 
-Registrierung ist von Clients geteilte Serverkonfiguration; sie installiert oder startet den Dienst nicht. Der Port liegt auf dem Backend-Host, nicht auf Ihrem anzeigenden Notebook/Telefon. **Läuft** bezeichnet Erreichbarkeit, nicht funktionierende Anwendung/Authentifizierung des Werkzeugs. Entfernen der Registrierung stoppt den separat gestarteten Prozess nicht. Auch Tab-Schließen stoppt ihn nicht.
+Registrierung ist von Clients geteilte Serverkonfiguration; sie installiert oder startet den Dienst nicht. Der Port liegt auf dem Backend-Host, nicht auf Ihrem anzeigenden Notebook/Telefon. Entfernen der Registrierung stoppt den separat gestarteten Prozess nicht. Auch Tab-Schließen stoppt ihn nicht.
 
 Prüfen Sie bei Nichterreichbarkeit Prozess und Port auf dem Backend. Lädt HTML, aber scheitern Dateien/WebSockets, prüfen Sie Basispfad und Präfix-Modus des Werkzeugs. Erstellen Sie eine falsche Registrierung mit den vorgesehenen Einstellungen neu; geben Sie den Upstream nicht nur zum Umgehen eines Proxyfehlers öffentlich frei. SideCar-Anwendungen können Terminal oder Dateien mit der Autorität des Serverkontos freigeben; vertrauen Sie ihren Benutzern und ihrer Konfiguration.
 
-Ein SideCar ist eine vertrauenswürdige Erweiterung von CodeNomad, keine Vorschau in einer Sandbox: Seine Seite läuft unter dem eigenen Origin von CodeNomad, sodass seine Skripte CodeNomad mit Ihrem angemeldeten Zugang nutzen können. Registrieren Sie nur Dienste, deren Code Sie vertrauen. CodeNomad leitet seine eigenen Anmelde-Cookies nicht an den Dienst weiter, während die eigenen Cookies des Dienstes erhalten bleiben. Fernsteuerung stellt keinen SideCar-Anwendungsproxyverkehr bereit; verwenden Sie den passenden Direktzugriffsweg unter [Fernzugriff](remote-access.md) und [Fernsteuerung](remote-control.md).
+Ein SideCar ist eine vertrauenswürdige Erweiterung von CodeNomad, keine Vorschau in einer Sandbox: Seine Seite läuft unter dem eigenen Origin von CodeNomad, sodass seine Skripte CodeNomad mit Ihrem angemeldeten Zugang nutzen können. Registrieren Sie nur Dienste, deren Code Sie vertrauen. CodeNomad leitet seine eigenen Anmelde-Cookies nicht an den Dienst weiter, während die eigenen Cookies des Dienstes erhalten bleiben.
+
+SideCar-Inhalte (`/sidecars/`) und SideCar-WebSockets erfordern eine Loopback-Verbindung auf dem Host. Um sie auch von anderen Geräten zu öffnen, aktivieren Sie auf dem Host **SideCars über HTTPS öffnen** unter **Einstellungen → SideCars**: Browser, die über die HTTPS-Adressen dieses Servers oder einen HTTPS-Origin aus `CODENOMAD_ALLOWED_ORIGINS` angemeldet sind, etwa hinter einem TLS-Reverse-Proxy, können dann SideCars öffnen. Einfaches HTTP, `localhost`-Adressen und die Fernsteuerung bleiben dem Host vorbehalten. Die Registrierung über `/api/sidecars` ist für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. Inhalte aktiver Vorschauen (`/previews/`) sind mit einem gültigen Berechtigungstoken über direkten LAN-Zugriff verfügbar; Web-Vorschauen der [Fernsteuerung](remote-control.md#remote-surface) bleiben mit ihrem Berechtigungstoken verfügbar, solange sie aktiviert sind. Anforderungen für den Direktzugriff stehen unter [Aktualisieren](remote-access.md#upgrading).
 
 ## OpenVSCode-Server-Rezept {#openvscode}
 

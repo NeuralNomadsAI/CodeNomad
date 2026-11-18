@@ -89,7 +89,7 @@ export const recurrenceControlStatusWire = { type: "object", properties: { versi
   reason: { type: "string", enum: ["revision-conflict", "control-conflict"] },
   action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] },
   controlsComplete: { type: "boolean" }, schedulerCancellation: { type: "string", enum: ["acknowledged", "unknown"] },
-  targets: { type: "array", maxItems: 32, items: recurrenceNativeControlWire } },
+  targets: { type: "array", items: recurrenceNativeControlWire } },
   required: ["version", "scheduleID", "requestID", "expectedRevision", "outcome"], additionalProperties: false } as const
 export const recurrenceSnapshotOutput = { type: "object", properties: { version: { type: "integer", const: 1 },
   projectID: { type: "string" }, projectCanonical: { type: "string" }, location: { type: "object", properties: {

@@ -25,7 +25,7 @@ export const headerBootScript = `(() => {
   addEventListener('unhandledrejection', e => mark('rejection', String(e.reason)));
 })()`
 
-export function observeHeaderFixture(page: Page) {
+export function observeHeaderFixture(page: Page, fixtureKey = "fixture") {
   const events: Array<Record<string, string | number>> = []
   let dropped = 0, detached = false
   const push = (event: Record<string, string | number>) => {
@@ -57,13 +57,13 @@ export function observeHeaderFixture(page: Page) {
       let snapshot: unknown, observationError: string | undefined
       try {
         snapshot = await Promise.race([
-          page.evaluate(() => {
+          page.evaluate(fixtureKey => {
             const boot = (window as any).__headerFixtureBoot
-            return { readyState: document.readyState, fixture: typeof (window as any).fixture,
+            return { readyState: document.readyState, fixture: typeof (window as any)[fixtureKey],
               boot: boot?.entries?.slice(-16).map((entry: any) => ({ phase: String(entry.phase).slice(0, 64), detail: String(entry.detail).slice(0, 256), at: typeof entry.at === "number" ? entry.at : undefined })),
               dom: { rootChildren: document.getElementById("root")?.childElementCount ?? 0,
                 textarea: Boolean(document.querySelector("textarea.prompt-input")), footer: Boolean(document.querySelector(".prompt-input-footer")) } }
-          }),
+          }, fixtureKey),
           new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("header snapshot deadline (2000ms)")), snapshotDeadline) }),
         ])
       } catch (error) { observationError = errorText(error) }

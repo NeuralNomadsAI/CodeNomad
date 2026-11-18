@@ -1,0 +1,103 @@
+{
+  "option-click": {
+    "scope": "element",
+    "args": [],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const label = option => (option.label || option.textContent || \"\").replace(/\\s+/g, \" \").trim();\n  const apply = (select, picked) => {\n    if (select.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n    for (const option of picked) if (option.matches(\":disabled\")) throw new Error(\"codenomad:option-disabled:\" + label(option));\n    if (!select.multiple && picked.length !== 1) throw new Error(\"codenomad:single\");\n    select.focus();\n    const options = Array.from(select.options);\n    if (options.some(option => option.selected !== picked.includes(option))) {\n      for (const option of options) option.selected = picked.includes(option);\n      select.dispatchEvent(new Event(\"input\", { bubbles: true, composed: true }));\n      select.dispatchEvent(new Event(\"change\", { bubbles: true }));\n    }\n    return Array.from(select.selectedOptions).map(label);\n  };\n  const choose = (select, wanted) => {\n    if (select.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n    const options = Array.from(select.options), picked = [];\n    for (const raw of wanted) {\n      const target = String(raw).replace(/\\s+/g, \" \").trim();\n      const option = options.find(item => label(item) === target) || options.find(item => item.value === String(raw));\n      if (!option) throw new Error(\"codenomad:no-option:\" + target);\n      if (!picked.includes(option)) picked.push(option);\n    }\n    return apply(select, picked);\n  };\n  const option = element.closest(\"option\"), select = option && option.closest(\"select\");\n  if (option && select) return apply(select, [option]);\n  if (element instanceof HTMLSelectElement) throw new Error(\"codenomad:is-select\");\n  return null; }"
+  },
+  "programmatic-click": {
+    "scope": "element",
+    "args": [],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); if (element instanceof HTMLElement) element.click();\n  else element.dispatchEvent(new MouseEvent(\"click\", { bubbles: true, cancelable: true, composed: true }));\n  return null; }"
+  },
+  "select": {
+    "scope": "element",
+    "args": [
+      "strings"
+    ],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const label = option => (option.label || option.textContent || \"\").replace(/\\s+/g, \" \").trim();\n  const apply = (select, picked) => {\n    if (select.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n    for (const option of picked) if (option.matches(\":disabled\")) throw new Error(\"codenomad:option-disabled:\" + label(option));\n    if (!select.multiple && picked.length !== 1) throw new Error(\"codenomad:single\");\n    select.focus();\n    const options = Array.from(select.options);\n    if (options.some(option => option.selected !== picked.includes(option))) {\n      for (const option of options) option.selected = picked.includes(option);\n      select.dispatchEvent(new Event(\"input\", { bubbles: true, composed: true }));\n      select.dispatchEvent(new Event(\"change\", { bubbles: true }));\n    }\n    return Array.from(select.selectedOptions).map(label);\n  };\n  const choose = (select, wanted) => {\n    if (select.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n    const options = Array.from(select.options), picked = [];\n    for (const raw of wanted) {\n      const target = String(raw).replace(/\\s+/g, \" \").trim();\n      const option = options.find(item => label(item) === target) || options.find(item => item.value === String(raw));\n      if (!option) throw new Error(\"codenomad:no-option:\" + target);\n      if (!picked.includes(option)) picked.push(option);\n    }\n    return apply(select, picked);\n  };\n  const control = element instanceof HTMLLabelElement ? element.control : element;\n  const select = control instanceof HTMLSelectElement ? control : control && control.closest(\"select\");\n  if (!select) throw new Error(\"codenomad:not-select\");\n  return choose(select, args[0]); }"
+  },
+  "focus": {
+    "scope": "element",
+    "args": [],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); if (element.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n  if (element instanceof HTMLElement || element instanceof SVGElement) element.focus();\n  if (element.getRootNode().activeElement !== element) throw new Error(\"codenomad:unfocusable\");\n  return null; }"
+  },
+  "describe": {
+    "scope": "element",
+    "args": [],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const role = element.getAttribute(\"role\") || element.tagName.toLowerCase();\n  const name = (element.getAttribute(\"aria-label\") || element.getAttribute(\"title\") || element.getAttribute(\"placeholder\")\n    || (element.labels && element.labels[0] && element.labels[0].textContent) || element.textContent || \"\").replace(/\\s+/g, \" \").trim().slice(0, 80);\n  return role + (name ? \" \" + JSON.stringify(name) : \"\"); }"
+  },
+  "field": {
+    "scope": "element",
+    "args": [],
+    "handle": true,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const textField = item => item instanceof HTMLInputElement || item instanceof HTMLTextAreaElement\n  || (item instanceof HTMLElement && item.isContentEditable);\n  const control = element instanceof HTMLLabelElement ? element.control : element;\n  const field = control && textField(control) ? control\n    : element.querySelector('input:not([type=\"hidden\"]), textarea, [contenteditable]:not([contenteditable=\"false\"])');\n  if (!field || !textField(field)) throw new Error(\"codenomad:not-editable\");\n  return field; }"
+  },
+  "prepare": {
+    "scope": "element",
+    "args": [
+      "boolean"
+    ],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const field = element, clear = args[0];\n  if (field.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n  if (field.readOnly) throw new Error(\"codenomad:readonly\");\n  if (field instanceof HTMLInputElement && [\"checkbox\",\"radio\",\"button\",\"submit\",\"reset\",\"file\",\"image\",\"hidden\"].includes(field.type)) throw new Error(\"codenomad:not-text\");\n  field.focus();\n  const active = field.getRootNode().activeElement;\n  const editable = !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);\n  if (active !== field && !(editable && active instanceof HTMLElement && active.isContentEditable && active.contains(field))) {\n    throw new Error(\"codenomad:unfocusable\");\n  }\n  if (field instanceof HTMLInputElement && [\"date\",\"time\",\"datetime-local\",\"month\",\"week\",\"range\",\"color\"].includes(field.type)) return \"value\";\n  if (editable) {\n    const selection = getSelection();\n    selection.setBaseAndExtent(field, clear ? 0 : field.childNodes.length, field, field.childNodes.length);\n  } else if (clear) field.select();\n  // Email and number inputs have no caret API: their text is appended as a value.\n  else { try { field.setSelectionRange(field.value.length, field.value.length); } catch { return \"append\"; } }\n  return \"insert\"; }"
+  },
+  "set-value": {
+    "scope": "element",
+    "args": [
+      "string",
+      "boolean"
+    ],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); if (element.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n  if (element.readOnly) throw new Error(\"codenomad:readonly\");\n  const [text, append] = args, next = append ? element.value + text : text;\n  // Ranges and colors have no empty value: the browser would substitute its default.\n  const valid = element.type === \"color\" ? /^#[0-9a-f]{6}$/i.test(next)\n    : element.type === \"range\" ? /^-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[eE][+-]?\\d+)?$/.test(next)\n    : next !== \"\" && [\"date\",\"time\",\"datetime-local\",\"month\",\"week\",\"number\"].includes(element.type) ? (() => { const probe = document.createElement(\"input\"); probe.type = element.type; probe.value = next; return probe.value !== \"\"; })()\n    : true;\n  if (!valid) throw new Error(\"codenomad:invalid-value:\" + next);\n  if (next === element.value) return null;\n  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, \"value\").set.call(element, next);\n  element.dispatchEvent(new Event(\"input\", { bubbles: true, composed: true }));\n  element.dispatchEvent(new Event(\"change\", { bubbles: true }));\n  return null; }"
+  },
+  "delete-selection": {
+    "scope": "element",
+    "args": [],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); document.execCommand(\"delete\"); return null; }"
+  },
+  "read-value": {
+    "scope": "element",
+    "args": [],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element.innerText || element.textContent || \"\";\n  if (element instanceof HTMLInputElement && element.type === \"password\") return \"•\".repeat(Math.min(value.length, 16));\n  return value.length > 200 ? value.slice(0, 199) + \"…\" : value; }"
+  },
+  "receives": {
+    "scope": "element",
+    "args": [
+      "handle"
+    ],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);\n   if (!hit) return null;\n   const parent = node => {\n     if (node.nodeType === 9) { try { return node.defaultView && node.defaultView.frameElement; } catch { return null; } }\n     return node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null);\n   };\n   for (let node = hit; node; node = parent(node)) {\n     if (node === element) return null;\n     if (node.nodeType === 1 && node.localName === \"label\" && (node.control === element || node.contains(element))) return null;\n   }\n  const name = (hit.getAttribute(\"aria-label\") || hit.getAttribute(\"title\") || hit.innerText || \"\").replace(/\\s+/g, \" \").trim().slice(0, 60);\n  return hit.tagName.toLowerCase() + (name ? \" \" + JSON.stringify(name) : \"\"); }"
+  },
+  "contains": {
+    "scope": "element",
+    "args": [
+      "string"
+    ],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const needle = String(args[0]).replace(/\\s+/g, \" \").trim().toLowerCase();\n  const root = element;\n  const text = value => String(value || \"\").replace(/\\s+/g, \" \").toLowerCase();\n  if (text(root.innerText || root.textContent).includes(needle)) return true;\n  for (const item of root.querySelectorAll(\"[aria-label], [title], [placeholder], input, textarea\")) {\n    if ([item.getAttribute(\"aria-label\"), item.getAttribute(\"title\"), item.getAttribute(\"placeholder\"), item.value].some(value => text(value).includes(needle))) return true;\n  }\n  return false; }"
+  },
+  "active-element": {
+    "scope": "global",
+    "args": [],
+    "handle": true,
+    "source": "document.activeElement"
+  },
+  "document-root": {
+    "scope": "global",
+    "args": [],
+    "handle": true,
+    "source": "document.documentElement"
+  },
+  "input-acceptance": {
+    "scope": "global",
+    "args": [],
+    "handle": false,
+    "source": "({ inputDelayMs: (() => {\n  if (!/^https?:$/.test(location.protocol) || performance.getEntriesByType(\"paint\").length > 0) return 0;\n  const navigation = performance.getEntriesByType(\"navigation\")[0];\n  if (!navigation || !(navigation.domInteractive > 0)) return 50;\n  return Math.max(0, Math.ceil(navigation.domInteractive + 500 - performance.now()));\n})() })"
+  }
+}

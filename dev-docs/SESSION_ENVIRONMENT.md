@@ -9,6 +9,18 @@ server awaits `session.environment({ sessionID, variables })` before forwarding.
 
 - Both writes use the connection acquired after ownership and worktree-fence
   admission; a stale connection or disconnected request prevents forwarding.
+- Ordinary session mutations first use `server/mission-schedule-input-guard.ts`
+  to point-read `codenomad.missions.scheduleCarrierRead` at the session's admitted
+  Location. Durable current/retiring carrier membership and reserved carrier
+  metadata block ordinary sends, compaction, forks, imports and session edits.
+  The `ses_cn_schedule_` session-ID namespace is reserved for owned technical
+  controls, including when mutable native markers have been removed.
+  Imports validate metadata throughout nested sources; supplied create/import
+  IDs retain their existing native Location. The proxy revalidates that Location
+  after the read, before environment or other native writes. A structured
+  `rpc.method_not_found` preserves journal-only plugin compatibility; unknown
+  ownership stays blocked. Family moves, worktree evacuation and temporary discard
+  check their resolved session targets before their first destructive effect.
 - `WorkspaceManager.getSessionEnvironment` reads current settings for each send.
 - Bundled Missions also applies this snapshot before its assignment prompts and
   report synthetics, through the authenticated desktop bridge's narrow mission
@@ -74,9 +86,6 @@ message, without paths, values or error causes. Failed reads return no snapshot,
 so callers cannot apply `session.environment` or send prompt/synthetic input.
 Native authority, connection and ownership fences apply around the awaits.
 
-The snapshot built from it always excludes internal authentication and native storage variables; its base is
-the authority process environment, which can change when the authority restarts.
-
 Its regressions use isolated temporary files:
 
 ```text
@@ -92,11 +101,11 @@ Run the real native regression against an explicitly selected CLI:
 node scripts/test-session-environment-native.mjs <absolute-opencode-executable>
 ```
 
-It creates isolated service configuration, state and database with its own port;
-uses the real WorkspaceManager, proxy and native shells; checks two conversations,
-settings changes/removal, read-only behavior and an unchanged daemon PID; and
-stops only that isolated service. Windows also exercises Git Bash at its standard
-installation path. It never calls a provider or touches an existing conversation.
+The fixture uses isolated service configuration, state, database and port with the real
+WorkspaceManager, proxy and native shells. It checks two conversations, settings
+changes/removal, read-only behavior and an unchanged daemon PID. Windows also exercises
+Git Bash at its standard installation path. Never call a provider, touch an existing
+conversation or stop a shared service in this fixture.
 
 ## Agent conventions
 

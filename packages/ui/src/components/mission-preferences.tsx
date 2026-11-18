@@ -4,7 +4,7 @@ import type { MissionProfiles } from "../../../server/src/missions/playbook-prof
 import { sameExecution, type MissionExecution } from "../../../server/src/missions/execution"
 import { changeMissionProfile, setMissionProfileRole } from "./mission-profile-controls-data"
 import { useI18n } from "../lib/i18n"
-import { globalMissionTaskMode, normalizeMissionDefaults, missionDefaultsFor, missionTaskModeFor, type MissionDefaultScope, type MissionProfileDefault, type MissionTaskMode } from "../lib/mission-defaults"
+import { encodeMissionDefaults, globalMissionTaskMode, normalizeMissionDefaults, missionDefaultsFor, missionTaskModeFor, type MissionDefaultScope, type MissionProfileDefault, type MissionTaskMode } from "../lib/mission-defaults"
 import { useConfig } from "../stores/preferences"
 import { MissionProfileControls } from "./mission-profile-controls"
 import { MissionProfileSummary } from "./mission-profile-summary"
@@ -14,6 +14,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { MissionModelLibrary } from "./mission-model-library"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { canonicalJson } from "../stores/client-state-partition-json"
 
 /** The next document, or undefined when the stored value this edit was made from has changed. */
 type DefaultsEdit = (defaults: MissionProfileDefault[]) => MissionProfileDefault[] | undefined
@@ -61,14 +62,19 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
   const commit = (edit: DefaultsEdit, repair = false) => {
     setFailed(false); setQueued(edits => [...edits, edit])
     writes = writes.then(async () => {
+      let next: MissionProfileDefault[] | undefined
       try {
-        const next = edit(normalizeMissionDefaults(config.preferences().missionProfileDefaults))
+        next = edit(normalizeMissionDefaults(config.preferences().missionProfileDefaults))
         if (!next) throw new Error("Mission defaults changed since this edit")
         await config.saveMissionDefaults(next, config.missionPreferenceSnapshot("missionProfileDefaults"), repair)
       } catch (error) {
         // Show what is actually stored (read-only). Later edits recheck what they were made from.
         if (!(error instanceof ConfigOwnerReconciliationPendingError)) setFailed(true)
-        await config.reloadMissionPreferences().catch(() => {})
+        try {
+          await config.reloadMissionPreferences()
+          setFailed(!next || !config.missionDefaultsValid()
+            || canonicalJson(config.preferences().missionProfileDefaults) !== canonicalJson(encodeMissionDefaults(next)))
+        } catch {}
       } finally { setQueued(edits => edits.slice(1)) }
     })
   }
@@ -95,7 +101,8 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     commit(() => [], true); refocus(() => scopeSelect)
   }
   return <div class="mission-preferences">
-    <header><h4 title={t("missions.defaults.hint")}>{t("missions.defaults.title")}</h4></header>
+    <header><div class="flex items-center gap-2"><h4>{t("missions.defaults.title")}</h4>
+      <SettingsInfoTip text={t("missions.defaults.hint")} help={{ page: "missions", anchor: "agents-models" }} /></div></header>
     <Show when={!config.isUiConfigLoaded() && !writing()}>
       <p role={config.uiConfigLoadFailed() ? "alert" : "status"}>{t(config.uiConfigLoadFailed() ? "missions.defaults.unavailable" : "missions.defaults.loading")}</p>
       <Show when={config.uiConfigLoadFailed()}><div class="mission-preferences-actions">
@@ -109,7 +116,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
         <button type="button" class="window-action" aria-label={t("missions.defaults.reload")} disabled={!props.active() || reloading()} onClick={() => void reload()}>{t("missions.preferences.reload")}</button>
       </div>
     </Show>
-    <label class="mission-preferences-scope"><span>{t("missions.defaults.scope")}<SettingsInfoTip text={t("missions.defaults.priority")} /></span>
+    <label class="mission-preferences-scope"><span>{t("missions.defaults.scope")}</span>
       <select ref={scopeSelect} aria-label={t("missions.defaults.scope")} value={template()} disabled={disabled()}
       onChange={event => setTemplate(event.currentTarget.value as MissionDefaultScope)}>
       <option value="all">{t("missions.defaults.allPlaybooks")}</option>
@@ -122,7 +129,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     {/* Every agent/model choice in one fold; its summary keeps the current choice visible. */}
     <details ref={profilesFold} class="settings-disclosure mission-profiles-disclosure" open={profilesOpen()} onToggle={event => setProfilesOpen(event.currentTarget.open)}>
       <summary>{t("missions.create.agents")}
-        <MissionProfileSummary inline template={exception() ?? "custom"} profiles={exception() ? missionDefaultsFor(shown(), exception()!) : entry()?.profiles} /></summary>
+        <MissionProfileSummary inline instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"} profiles={exception() ? missionDefaultsFor(shown(), exception()!) : entry()?.profiles} /></summary>
       {/* A mission type shows the global choices its roles inherit until one is customized. */}
       <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"}
         inherited={exception() ? missionDefaultsFor(shown(), exception()!, false) ?? {} : undefined}
@@ -135,7 +142,10 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
       </div>
     </details>
     <Show when={failed()}><p role="alert">{t("missions.defaults.error")}</p></Show>
-    {/* Location depth writes OpenCode configuration; it is a separate group, not part of these defaults. */}
+    <label class="mission-preferences-check"><input type="checkbox" checked={config.preferences().missionDeleteSessions}
+      disabled={!config.isUiConfigLoaded()} onChange={event => void config.updatePreferences({ missionDeleteSessions: event.currentTarget.checked })} />
+      {t("missions.preferences.deleteSessions")}</label>
+    {/* Location depth writes OpenCode configuration; it is a separate row, not part of these defaults. */}
     <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory} active={props.active} />
     <MissionModelLibrary active={props.active} />
   </div>

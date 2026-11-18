@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "Explora carpetas bajo la raíz del workspace configurado.",
   "directoryBrowser.close": "Cerrar",
   "directoryBrowser.currentFolder": "Seleccionar carpeta o introducir ruta",
   "directoryBrowser.currentFolder.inputAriaLabel": "Ruta de la carpeta",

@@ -1,4 +1,10 @@
 export const logMessages = {
+  "settings.opencode.logs.title": "Логи OpenCode",
+  "settings.opencode.logs.open": "Показать логи OpenCode",
+  "settings.opencode.logs.info": "Глобальные логи выбранного хоста OpenCode. Они могут содержать личные данные.",
+  "settings.opencode.logs.failed": "Проверьте исполняемый файл и доступ к журналу, затем обновите.",
+  "settings.opencode.logs.empty": "Журнал пуст.",
+  "settings.opencode.logs.truncated": "Показан конец журнала (не более 128 КиБ).",
   "logsView.title": "Логи сервера",
   "logsView.actions.show": "Показать логи сервера",
   "logsView.actions.hide": "Скрыть логи сервера",

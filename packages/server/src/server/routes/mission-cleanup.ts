@@ -23,7 +23,7 @@ export async function cleanupMissionSession(manager: Manager, fence: WorktreeDel
     if (!connection) throw new Error("Workspace unavailable")
     const coordinator = await connection.client.session.get({ sessionID: coordinatorID }, { signal })
     if (coordinator.id !== coordinatorID || coordinator.parentID
-      || !await manager.ownsLocation(workspace.id, coordinator.location, connection.client, signal)) throw new Error("Foreign coordinator")
+      || !await manager.ownsLocation(workspace.id, coordinator.location, connection.client, { signal })) throw new Error("Foreign coordinator")
     signal.throwIfAborted(); connection.assertCurrent()
     return { workspace, connection, coordinator }
   })).catch(() => undefined)
@@ -36,7 +36,7 @@ export async function cleanupMissionSession(manager: Manager, fence: WorktreeDel
   if (!target) return { outcome: "retained" as const }
   if (target.sessionID !== input.sessionID || target.missionID !== input.missionID || target.coordinatorSessionID !== coordinatorID
     || target.sessionID === coordinatorID || target.projectID !== coordinator.projectID
-    || !await manager.ownsLocation(workspace.id, target.location, client, signal)) throw new Error("Foreign cleanup target")
+    || !await manager.ownsLocation(workspace.id, target.location, client, { signal })) throw new Error("Foreign cleanup target")
   const identities = await Promise.all([coordinator.location, target.location].map(location => manager.getWorktreeIdentityForPath(workspace.id, location.directory)))
   if (identities.some(identity => !identity)) throw new Error("Missing mission worktree")
   const release = fence.enter(identities as string[])
@@ -49,7 +49,7 @@ export async function cleanupMissionSession(manager: Manager, fence: WorktreeDel
       if (currentCoordinator.id !== coordinatorID || currentCoordinator.parentID || currentCoordinator.projectID !== coordinator.projectID
         || !sameLocation(currentCoordinator.location, coordinator.location)) throw new Error("Coordinator moved")
       const owned = await Promise.all([coordinator.location, target.location].map(location =>
-        manager.ownsLocation(workspace.id, location, client, signal)))
+        manager.ownsLocation(workspace.id, location, client, { signal })))
       // A shared daemon can remain current after this workspace loses ownership.
       // Validate both ORIGINAL admitted locations, never adopt a replacement.
       assertCurrent()

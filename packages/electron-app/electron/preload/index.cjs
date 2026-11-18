@@ -42,6 +42,13 @@ const localElectronAPI = {
     ipcRenderer.on("window:folders-pending", handler)
     return () => ipcRenderer.removeListener("window:folders-pending", handler)
   },
+  nextPendingConnection: () => ipcRenderer.invoke("window:nextConnection"),
+  acknowledgePendingConnection: (target, failure, handOff) => ipcRenderer.invoke("window:ackConnection", target, typeof failure === "string" ? failure : null, handOff === true),
+  onPendingConnections: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on("window:connections-pending", handler)
+    return () => ipcRenderer.removeListener("window:connections-pending", handler)
+  },
   onMenuAction: (callback) => {
     const handler = (_event, action) => callback(action)
     ipcRenderer.on("menu:action", handler)
@@ -96,6 +103,9 @@ const remoteElectronAPI = {
   setWakeLock: localElectronAPI.setWakeLock,
   showNotification: localElectronAPI.showNotification,
   setNotificationBadge: localElectronAPI.setNotificationBadge,
+  // Honoured only from the unavailable-server document the host loaded, with the token it issued for it.
+  retryRemoteWindow: (token) => ipcRenderer.invoke("remote:retry", token),
+  openLocalWindow: (token) => ipcRenderer.invoke("remote:openLocalWindow", token),
 }
 
 const preferencesElectronAPI = {
@@ -113,6 +123,7 @@ const preferencesElectronAPI = {
   acceptPreferencesRequest: (request) => ipcRenderer.invoke("preferences:acceptRequest", request),
   resolvePreferencesTransition: (id, approved) => ipcRenderer.invoke("preferences:resolveTransition", id, approved),
   openerStartupState: (command, epoch) => ipcRenderer.invoke("preferences:openerStartupState", command, epoch),
+  memoryCleanup: (request) => ipcRenderer.invoke("preferences:memoryCleanup", request),
   listOtherDataProfiles: localElectronAPI.listOtherDataProfiles,
   deleteOtherDataProfiles: localElectronAPI.deleteOtherDataProfiles,
   setNextLaunchDataProfile: localElectronAPI.setNextLaunchDataProfile,

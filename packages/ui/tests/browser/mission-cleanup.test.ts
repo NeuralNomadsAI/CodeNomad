@@ -1,14 +1,15 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { chromium, type Browser, type Page } from "playwright"
 import { cleanupBackend } from "./fixtures/mission-cleanup-backend"
-import { clickListItemAction, clickMissionAction, inlineMissionEntry, toggleMissionOverview } from "./mission-actions"
+import { clickListItemAction, clickMissionAction, inlineMissionEntry, routeUiSettings, toggleMissionOverview, waitForMissionDeleteSessions } from "./mission-actions"
 
 let browser: Browser, url: string
-let cache: Awaited<ReturnType<typeof createFixtureCache>>
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "mission-cleanup",
@@ -17,18 +18,23 @@ before(async () => {
       ],
     })
   try {
-    url = fixture.url
+    url = fixture.url; events = await fixtureEventStream(url)
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
     armFixtureNavigationBudget(browser)
   } catch (error) { throw error }
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
-async function setup(f: ReturnType<typeof cleanupBackend>, target: string, loseAcknowledgement = false, afterLostCommit?: () => Promise<unknown>) {
+async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement = false, afterLostCommit?: () => Promise<unknown>,
+  /** Runs once, after the panel sent its first deletion and before the backend receives it. */
+  beforeDelete?: () => Promise<unknown>) {
   const page = await browser.newPage({ locale: "en-US" })
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: 'electron', __CODENOMAD_WINDOW_CONTEXT__: 'local', electronAPI: {
     claimClientStateAccess: async () => true, loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: null }), saveClientState: async () => true } })`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  // Settings › Missions: deleting a Mission also deletes its task conversations.
+  await routeUiSettings(page, { missionDeleteSessions: true })
+  await events.route(page)
   const requests: Array<{ input: any; status: number }> = []
   await page.route("**/api/workspaces/fixture/missions**", async route => {
     const request = route.request()
@@ -36,18 +42,56 @@ async function setup(f: ReturnType<typeof cleanupBackend>, target: string, loseA
     if (request.method() === "GET" && new URL(request.url()).pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, ...await f.control.snapshot() } })
     if (request.method() === "GET") return route.fulfill({ json: (await f.app.inject({ method: "GET", url: new URL(request.url()).pathname })).json() })
     const input = request.postDataJSON()
+    const before = beforeDelete; beforeDelete = undefined
+    await before?.()
     const response = await f.app.inject({ method: "DELETE", url: new URL(request.url()).pathname, payload: input })
     requests.push({ input, status: response.statusCode })
     if (loseAcknowledgement) { loseAcknowledgement = false; await afterLostCommit?.(); return route.abort("connectionreset") }
     return route.fulfill({ status: response.statusCode, json: response.json() })
   })
   await page.goto(url)
-  await clickMissionAction(page, "Delete selected mission…", target)
-  await page.getByRole("checkbox", { name: "Also delete specialist conversations created for this mission" }).check()
+  await waitForMissionDeleteSessions(page, true)
   return { page, requests }
 }
-const submit = (page: Page) => page.locator("form.mission-editor").getByRole("button", { name: "Delete mission", exact: true }).click()
+/** The toolbar trash deletes at once, with the Preferences' choice for task conversations. */
+const remove = (page: Page, target: string) => clickMissionAction(page, "Delete selected mission…", target)
+/** The deletion form, shown only once a deletion failed or is unconfirmed: its retry. */
+const submit = (page: Page) => page.locator("form.mission-editor").getByRole("button", { name: /^(Delete mission|Try again)$/ }).click()
 const fixture = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
+
+test("a passive list refresh during exact cleanup preflight keeps the original explicit retry alive", async () => {
+  const f = cleanupBackend(true), mission = await f.create("refresh-during-cleanup", 0)
+  const original = { requestId: "delete_original", expectedRevision: mission.revision, deleteManagedSessions: false }
+  f.state.failCompaction = true
+  assert.equal((await f.app.inject({ method: "DELETE", url: `/api/workspaces/fixture/missions/${mission.id}`, payload: original })).statusCode, 503)
+  const { page, requests } = await setup(f)
+  let release!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve })
+  try {
+    const cleanup = page.locator(".mission-control .mission-cleanup")
+    await cleanup.getByText("Deletion unconfirmed. Retry to finish mission cleanup.", { exact: true }).waitFor()
+    f.state.failCompaction = false
+    await page.route(`**/api/workspaces/fixture/missions/${mission.id}`, async route => {
+      if (route.request().method() === "GET") await hold
+      return route.fallback()
+    })
+    const reading = page.waitForRequest(request => request.method() === "GET"
+      && new URL(request.url()).pathname.endsWith(`/${mission.id}`), { timeout: 15000 })
+    await clickListItemAction(cleanup.locator(".mission-list-item"), "Try again")
+    await reading
+    await cleanup.getByRole("button", { name: "Retrying cleanup…", exact: true }).waitFor()
+    await page.evaluate(async () => (await import("/src/stores/missions.ts" as string)).missionStore.refresh("fixture"))
+    release()
+    await cleanup.waitFor({ state: "detached", timeout: 15000 })
+    assert.equal(requests.length, 1)
+    assert.deepEqual(requests[0], { input: original, status: 200 })
+    assert.equal((await f.control.snapshot()).cleanups![0].documentPending, false)
+  } catch (error) {
+    console.error("cleanup refresh diagnostic", JSON.stringify({ requests, state: await page.evaluate(() => (window as any).missionFixture.snapshot()),
+      cleanups: (await f.control.snapshot()).cleanups }))
+    throw error
+  } finally { release(); await page.close(); await f.app.close() }
+})
 // Settled cleanup history is folded at the bottom of a remaining Mission's
 // central overview reader; only pending retries stay in the panel.
 async function openCleanupHistory(page: Page) {
@@ -59,15 +103,57 @@ async function openCleanupHistory(page: Page) {
   assert.equal(await page.locator(".mission-cleanup .mission-disclosure-trigger").count(), 1, "no nested cleanup disclosure")
 }
 
+test("journal deletion without document compaction keeps the editor and exact retry, including after remount", async () => {
+  const f = cleanupBackend(true), mission = await f.create("compaction", 0)
+  f.state.failCompaction = true
+  const { page, requests } = await setup(f)
+  try {
+    const form = page.locator("form.mission-editor")
+    await remove(page, "Private cleanup compaction")
+    await form.getByRole("alert").getByText("Deletion unconfirmed. Retry to finish mission cleanup.", { exact: true }).waitFor()
+    assert.equal(await form.getByRole("button", { name: "Try again", exact: true }).isEnabled(), true)
+    assert.equal(await form.getByRole("checkbox").count(), 0, "the form asks nothing: the Preferences decide")
+    assert.equal(requests.length, 1, "passive reads never resend deletion")
+    assert.equal(requests[0].status, 503)
+    assert.equal(requests[0].input.deleteManagedSessions, true, "the Preferences' task-conversation choice")
+    const snapshot = await f.control.snapshot()
+    assert.equal(snapshot.missions.length, 0, "the journal deletion committed")
+    assert.equal(snapshot.cleanups![0].pending, 0, "no native conversations remain to clean")
+    assert.equal(snapshot.cleanups![0].documentPending, true, "document compaction is separately pending")
+    assert.ok(!("deletedAt" in (await f.documents.read(mission.id))!))
+    assert.ok(f.native.has(mission.coordinatorSessionId), "conversation preserved by default policy")
+
+    await form.getByRole("button", { name: "Try again", exact: true }).click()
+    await form.getByRole("alert").waitFor()
+    assert.equal(requests.length, 2, "an explicit editor retry sends the original request")
+    assert.deepEqual(requests[1].input, requests[0].input)
+    await form.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.reload()
+    const cleanup = page.locator(".mission-control .mission-cleanup")
+    await cleanup.getByText("Deletion unconfirmed. Retry to finish mission cleanup.", { exact: true }).waitFor()
+    assert.equal(await cleanup.locator('.mission-list-item[data-status="needs-input"]').count(), 1)
+    assert.equal(requests.length, 2)
+    f.state.failCompaction = false
+    await clickListItemAction(cleanup.locator(".mission-list-item"), "Try again")
+    await cleanup.waitFor({ state: "detached" })
+    assert.equal(requests.length, 3)
+    assert.deepEqual(requests.map(item => item.status), [503, 503, 200])
+    assert.deepEqual(requests[2].input, requests[0].input)
+    assert.ok("deletedAt" in (await f.documents.read(mission.id))!)
+    assert.equal(Boolean((await f.control.snapshot()).cleanups![0].documentPending), false)
+    assert.ok(f.native.has(mission.coordinatorSessionId))
+  } finally { await page.close(); await f.app.close() }
+})
+
 test("committed partial cleanup survives cancel, remount and reconnect with the exact original request", async () => {
   const f = cleanupBackend(), mission = await f.create("remount", 2), actors = mission.actors.filter(actor => actor.kind === "specialist")
   f.failing.add(actors[0].sessionId)
   await f.create("keeper")
-  const { page, requests } = await setup(f, "Private cleanup remount")
+  const { page, requests } = await setup(f)
   try {
     await fixture(page, "seedCoordinators", [mission.coordinatorSessionId, ...actors.map(actor => actor.sessionId)])
-    await submit(page)
-    await page.getByRole("alert").getByText("Deletion could not be completed. Retry to finish the remaining cleanup.").waitFor()
+    await remove(page, "Private cleanup remount")
+    await page.getByRole("alert").getByText("Retry to finish the remaining cleanup.").waitFor()
     assert.deepEqual(f.removed, [actors[1].sessionId])
     await fixture(page, "event", { type: "session.deleted", data: { sessionID: actors[1].sessionId } })
     const resident = await page.evaluate(async () => [...(await import("/src/stores/session-state.ts" as string)).sessions().get("fixture").keys()])
@@ -96,9 +182,9 @@ test("committed partial cleanup survives cancel, remount and reconnect with the 
 
 test("a lost successful HTTP acknowledgement settles by reading receipts without a second deletion", async () => {
   const f = cleanupBackend(), mission = await f.create("lost-ack")
-  const { page, requests } = await setup(f, "Private cleanup lost-ack", true)
+  const { page, requests } = await setup(f, true)
   try {
-    await submit(page); await page.locator("form.mission-editor").waitFor({ state: "detached" })
+    await remove(page, "Private cleanup lost-ack"); await page.locator("form.mission-editor").waitFor({ state: "detached" })
     await page.getByText("No missions yet", { exact: true }).waitFor()
     assert.equal(requests.length, 1); assert.equal(f.removed.length, 1)
     await page.reload()
@@ -110,10 +196,10 @@ test("a lost successful HTTP acknowledgement settles by reading receipts without
 test("a lost acknowledgement whose cleanup history was purged settles by an explicit exact replay", async () => {
   const f = cleanupBackend(), mission = await f.create("purged-ack")
   // Capacity pressure purges the settled deletion before the editor reconciles.
-  const { page, requests } = await setup(f, "Private cleanup purged-ack", true, () => f.journal.purgeDeleted({ all: true }))
+  const { page, requests } = await setup(f, true, () => f.journal.purgeDeleted({ all: true }))
   try {
     const form = page.locator("form.mission-editor")
-    await submit(page); await form.getByRole("alert").waitFor()
+    await remove(page, "Private cleanup purged-ack"); await form.getByRole("alert").waitFor()
     assert.equal(requests.length, 1, "the passive reconciliation read never replays the deletion")
     assert.deepEqual((await f.control.snapshot()).cleanups, []); assert.deepEqual((await f.control.snapshot()).missions, [])
     await submit(page); await form.waitFor({ state: "detached" })
@@ -130,9 +216,9 @@ test("child-bearing specialists remain intact and expose the durable retention r
   const f = cleanupBackend(), mission = await f.create("children"), actor = mission.actors.find(actor => actor.kind === "specialist")!
   f.children.add(actor.sessionId)
   await f.create("keeper")
-  const { page, requests } = await setup(f, "Private cleanup children")
+  const { page, requests } = await setup(f)
   try {
-    await submit(page); await page.locator("form.mission-editor").waitFor({ state: "detached" })
+    await remove(page, "Private cleanup children"); await page.locator("form.mission-editor").waitFor({ state: "detached" })
     await (await inlineMissionEntry(page, "Private cleanup children")).waitFor({ state: "detached" })
     assert.equal(await page.locator(".mission-control .mission-cleanup").count(), 0, "settled cleanup history stays out of the panel")
     await openCleanupHistory(page)
@@ -147,15 +233,115 @@ test("child-bearing specialists remain intact and expose the durable retention r
 test("pre-tombstone 403 and 409 errors do not claim deleted or remaining cleanup", async () => {
   for (const status of [403, 409]) {
     const f = cleanupBackend(), mission = await f.create(`denied-${status}`)
-    const { page, requests } = await setup(f, `Private cleanup denied-${status}`)
-    try {
+    // The ownership loss or external change lands between the panel's read and its deletion.
+    const { page, requests } = await setup(f, false, undefined, async () => {
       if (status === 403) f.state.owned = false
       else await f.control.update({ missionID: mission.id, expectedRevision: mission.revision, requestID: "external-update", objective: "Changed externally" })
-      await submit(page); await page.getByRole("alert").waitFor()
+    })
+    try {
+      await remove(page, `Private cleanup denied-${status}`); await page.getByRole("alert").waitFor()
       assert.equal(requests[0].status, status)
       assert.ok(!(await page.getByRole("alert").innerText()).includes("remaining cleanup"))
       assert.deepEqual((await f.control.snapshot()).cleanups, []); assert.deepEqual(f.removed, [])
-      assert.equal(await page.getByRole("checkbox").isDisabled(), false)
+      // A certified refusal releases retry preflight, while the consumed trash click stays explicit.
+      const form = page.locator("form.mission-editor")
+      assert.equal(await form.getByRole("button", { name: "Try again", exact: true }).isEnabled(), true)
+      assert.equal(await form.getByRole("button", { name: "Delete mission", exact: true }).count(), 0)
     } finally { await page.close(); await f.app.close() }
   }
+})
+
+test("a stale deletion rereads its original intent and never adopts a fresh revision, including after remount", async () => {
+  const f = cleanupBackend(), mission = await f.create("stale-delete")
+  const { page, requests } = await setup(f, false, undefined, async () => {
+    await f.control.update({ missionID: mission.id, expectedRevision: mission.revision, requestID: "external", objective: "Changed externally" })
+  })
+  try {
+    await remove(page, "Private cleanup stale-delete")
+    const form = page.locator("form.mission-editor")
+    const message = "Mission changed. Cancel and select it again before deleting."
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(requests.length, 1)
+    await submit(page)
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(requests.length, 1, "a retry only reads: the original revision is stale")
+    await fixture(page, "mount", false); await fixture(page, "mount", true)
+    await submit(page)
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(requests.length, 1, "a restored original intent cannot adopt the live revision")
+    assert.deepEqual(f.removed, [])
+  } finally { await page.close(); await f.app.close() }
+})
+
+test("request-conflict rereads the original deletion before any explicit retry", async () => {
+  const code = "request-conflict", message = "Deletion request differs. Check the original request before retrying."
+  const f = cleanupBackend(), mission = await f.create(code)
+  const { page } = await setup(f)
+  const writes: unknown[] = []
+  let reads = 0
+  await page.route(`**/api/workspaces/fixture/missions/${mission.id}`, async route => {
+    if (route.request().method() === "GET") { reads++; return route.fallback() }
+    writes.push(route.request().postDataJSON())
+    return route.fulfill({ status: 409, json: { code } })
+  })
+  try {
+    await remove(page, `Private cleanup ${code}`)
+    const form = page.locator("form.mission-editor")
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(writes.length, 1); assert.ok(reads >= 1, "the refusal reconciles the original intent")
+    const before = reads
+    await submit(page)
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(writes.length, 2); assert.deepEqual(writes[1], writes[0])
+    assert.ok(reads >= before + 2, "explicit retry preflights and reconciles without changing its request")
+    assert.deepEqual(f.removed, [])
+  } finally { await page.close(); await f.app.close() }
+})
+
+test("a real pending control returns 503 and rereads the original deletion without replay", async () => {
+  const f = cleanupBackend(), mission = await f.create("pending-control")
+  const { page, requests } = await setup(f, false, undefined, async () => {
+    // No native lifecycle acknowledgement: the real controller retains its pending Pause.
+    await assert.rejects(f.control.lifecycle({ missionID: mission.id, requestID: "pause-original",
+      expectedRevision: mission.revision, action: "pause" }), { code: "control-pending" })
+  })
+  let reads = 0
+  await page.route(`**/api/workspaces/fixture/missions/${mission.id}`, route => {
+    if (route.request().method() === "GET") reads++
+    return route.fallback()
+  })
+  try {
+    await remove(page, "Private cleanup pending-control")
+    const form = page.locator("form.mission-editor")
+    await form.getByRole("alert").getByText("A control is pending. Check it before retrying deletion.", { exact: true }).waitFor()
+    assert.equal(requests.length, 1); assert.equal(requests[0].status, 503)
+    assert.ok(reads >= 1, "the real refusal rereads the original deletion")
+    await submit(page)
+    await form.getByRole("alert").getByText("Mission changed. Cancel and select it again before deleting.", { exact: true }).waitFor()
+    assert.equal(requests.length, 1, "the original deletion never adopts the pending control's revision")
+    assert.deepEqual(f.removed, [])
+  } finally { await page.close(); await f.app.close() }
+})
+
+test("cleanup 409 rereads the exact receipt without replaying or hiding the conflict", async () => {
+  const f = cleanupBackend(), mission = await f.create("cleanup-conflict")
+  const actor = mission.actors.find(actor => actor.kind === "specialist")!
+  f.failing.add(actor.sessionId)
+  const original = { requestId: "cleanup-original", expectedRevision: mission.revision, deleteManagedSessions: true }
+  assert.equal((await f.app.inject({ method: "DELETE", url: `/api/workspaces/fixture/missions/${mission.id}`, payload: original })).statusCode, 503)
+  const { page } = await setup(f)
+  let reads = 0, writes = 0
+  await page.route(`**/api/workspaces/fixture/missions/${mission.id}`, async route => {
+    if (route.request().method() === "GET") { reads++; return route.fallback() }
+    writes++; assert.deepEqual(route.request().postDataJSON(), original)
+    return route.fulfill({ status: 409, json: { code: "request-conflict" } })
+  })
+  try {
+    const cleanup = page.locator(".mission-control .mission-cleanup")
+    await cleanup.getByText("0 removed · 0 kept · 1 pending", { exact: true }).waitFor()
+    await clickListItemAction(cleanup.locator(".mission-list-item"), "Try again")
+    await cleanup.getByRole("alert").getByText("Deletion request differs. Check the original request before retrying.", { exact: true }).waitFor()
+    assert.equal(writes, 1); assert.equal(reads, 2, "preflight followed by conflict reconciliation")
+    assert.deepEqual(f.removed, [])
+  } finally { await page.close(); await f.app.close() }
 })

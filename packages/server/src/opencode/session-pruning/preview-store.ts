@@ -4,6 +4,7 @@ import type { messageTargetSchema } from "./contract"
 import { storageDirectory } from "./storage-path"
 import type { LocationRef } from "@opencode/client"
 import { projectStoredMedia, type MediaProjection } from "./media-blob"
+import { messageStorage } from "./message-storage"
 
 export async function readPruningPreview(
   filename: unknown, target: z.infer<typeof messageTargetSchema>, location: LocationRef, projectID: string,
@@ -14,11 +15,12 @@ export async function readPruningPreview(
   const db = new DatabaseSync(filename, { readOnly: true, timeout: 1000 })
   try {
     db.exec("PRAGMA query_only=ON")
-    const row = db.prepare(`SELECT m.data, length(CAST(m.data AS BLOB)) AS bytes FROM session_message m
+    const storage = messageStorage(db)
+    const row = db.prepare(`SELECT m.data, ${storage.bytes("m")} AS bytes FROM ${storage.table} m
       JOIN session_v2 s ON s.id = m.session_id
       WHERE m.id = ? AND m.session_id = ? AND m.type = 'assistant' AND s.directory = ?
        AND s.project_id = ? AND s.workspace_id IS ?
-       AND length(CAST(m.data AS BLOB)) <= 16777216`).get(target.messageID, target.sessionID,
+       AND ${storage.bytes("m")} <= 16777216`).get(target.messageID, target.sessionID,
          storageDirectory(location.directory), projectID, location.workspaceID ?? null)
     // The native form, as the pruning transaction compares it.
     return typeof row?.data === "string" ? projectStoredMedia(db, JSON.parse(row.data), Number(row.bytes), 16777216) : undefined

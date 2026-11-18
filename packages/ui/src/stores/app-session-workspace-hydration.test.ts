@@ -5,9 +5,15 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { hydrateRestoredWorkspaceState } from "./app-session-workspace-hydration.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { getTabViewState, updateTabViewState, clearTabViewState } from "./tab-view-state.ts"
+import { activeSessionId as selectedSessionId } from "./session-selection-state.ts"
+import { beginGesture } from "./session-surface.ts"
 import {
   clearInstanceDraftPrompts,
   clearInstanceSessionSelection,
+  activeParentSessionId,
+  activeSessionId,
+  hasAuthoritativeSessionSelection,
   getSessionDraftPrompt,
   setSessions,
 } from "./session-state.ts"
@@ -51,23 +57,68 @@ it("restores the selected draft before inactive session hydration settles", asyn
       unseenIdleSince: { stale: 1 },
       generationRecovery: { stale: "interrupted" },
       expandedSessionIds: ["stale"],
+      viewState: { version: 1, previews: { active: { mode: "preview", targetUrl: "https://example.com/" } },
+        rightPanelTab: "files", filesMode: "workspace" },
     }, controller.signal, () => true).then((value) => { settled = true; return value })
 
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(settled, false)
     assert.equal(getSessionDraftPrompt(instanceId, "active"), "active draft")
     assert.equal(getSessionDraftPrompt(instanceId, "inactive"), "")
+    assert.equal(getTabViewState(instanceId).previews?.active.targetUrl, "https://example.com/")
+    updateTabViewState(instanceId, { previews: { active: { mode: "chat", targetUrl: "https://example.com/" } } })
 
     inactive.resolve(apiSession("inactive"))
     assert.deepEqual(await hydration, new Set(["stale"]))
     assert.equal(getSessionDraftPrompt(instanceId, "inactive"), "inactive draft")
     assert.equal(signals.length, 2)
     assert.equal(signals.every((signal) => signal === controller.signal), true)
+    assert.equal(getTabViewState(instanceId).previews?.active.mode, "chat")
   } finally {
     if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
     clearInstanceDraftPrompts(instanceId)
     clearInstanceSessionSelection(instanceId)
     setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+    removeInstance(instanceId, { authoritative: false })
+    sdkManager.destroyClientsForInstance(instanceId)
+    clearTabViewState(instanceId)
+  }
+})
+
+it("waits for a saved Info selection's parent without claiming user-selection authority", async () => {
+  const instanceId = "saved-info-parent"
+  const parent = deferred<any>()
+  const client = { session: { get: ({ sessionID }: { sessionID: string }) => {
+    assert.equal(sessionID, "parent")
+    return parent.promise
+  } } } as any
+  ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+  addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  try {
+    const hydration = hydrateRestoredWorkspaceState(instanceId, {
+      kind: "workspace", folder: "/work", activeParentSessionId: "parent", activeSessionId: "info",
+      drafts: { parent: "saved draft" }, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+    }, new AbortController().signal, () => true)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(activeParentSessionId().get(instanceId), "parent")
+    assert.equal(activeSessionId().get(instanceId), "info")
+    assert.equal(selectedSessionId, activeSessionId, "view stores and session actions share one selection signal")
+    assert.equal(selectedSessionId().get(instanceId), "info")
+    assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
+    const intent = beginGesture({ instanceId, sessionId: "info" })
+    assert.equal(intent.current(), true)
+    parent.resolve(apiSession("parent"))
+    await hydration
+    assert.equal(activeSessionId().get(instanceId), "parent")
+    assert.equal(selectedSessionId().get(instanceId), "parent")
+    assert.equal(intent.current(), true, "passive restoration applies immediately and preserves the gesture generation")
+    assert.equal(getSessionDraftPrompt(instanceId, "parent"), "saved draft")
+    assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
+  } finally {
+    if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    clearInstanceDraftPrompts(instanceId)
+    clearInstanceSessionSelection(instanceId)
+    setSessions(previous => { const next = new Map(previous); next.delete(instanceId); return next })
     removeInstance(instanceId, { authoritative: false })
     sdkManager.destroyClientsForInstance(instanceId)
   }

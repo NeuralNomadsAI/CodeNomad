@@ -503,6 +503,152 @@ describe("plugin controls cache", () => {
     assert.equal(cache.state("instance", canonical).stale, false)
   })
 
+  it("retains managed installation identity when newer runtime disappears during a mutation", async () => {
+    const write = deferred<ReturnType<typeof mutationResponse>>()
+    const location = { directory: "/repo" }
+    const before = withRuntime(snapshot("codenomad.design"), "codenomad.design")
+    before.controls[0].managedBy = "codenomad"
+    before.runtime[0].managedBy = "codenomad"
+    before.configured.sources.push({ target: "codenomad.design-package", scope: "global", entryIndex: 0, hasOptions: false, managedBy: "codenomad" })
+    const fresh = structuredClone(before)
+    fresh.runtime = []
+    delete fresh.controls[0].runtime
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => ++reads === 1 ? before : fresh,
+      setPluginActivation: () => write.promise,
+    })
+    await cache.load("instance", location)
+    const mutation = cache.mutate("instance", location, "codenomad.design", "project", true)
+    await tick()
+    cache.invalidateInstance("instance")
+    await cache.load("instance", location)
+    const durable = structuredClone(before)
+    durable.controls[0].effective = "enabled"
+    durable.controls[0].project = "enabled"
+    write.resolve(mutationResponse(durable))
+    await mutation
+    const published = cache.state("instance", location).snapshot!
+    assert.deepEqual(published.runtime, [])
+    assert.equal(published.controls[0].managedBy, "codenomad")
+    assert.equal(published.controls[0].runtime, undefined)
+    assert.equal(published.controls[0].effective, "enabled")
+    assert.equal(published.configured.sources[0].managedBy, "codenomad")
+  })
+
+  it("retains newer managed failure details rather than treating reloadPending as active", async () => {
+    const write = deferred<ReturnType<typeof mutationResponse>>()
+    const location = { directory: "/repo" }
+    const before = snapshot("codenomad.design", "disabled")
+    before.controls[0].managedBy = "codenomad"
+    const fresh = withRuntime(structuredClone(before), "codenomad.design")
+    fresh.runtime[0].managedBy = "codenomad"
+    delete fresh.runtime[0].id
+    fresh.runtime[0].state = { status: "failed", error: "native load error", ref: "native_ref" }
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => ++reads === 1 ? before : fresh,
+      setPluginActivation: () => write.promise,
+    })
+    await cache.load("instance", location)
+    const mutation = cache.mutate("instance", location, "codenomad.design", "project", true)
+    await tick()
+    await cache.load("instance", location, { force: true })
+    const durable = structuredClone(before)
+    durable.controls[0].effective = "enabled"
+    durable.controls[0].project = "enabled"
+    write.resolve(mutationResponse(durable))
+    await mutation
+    const published = cache.state("instance", location).snapshot!
+    assert.equal(published.controls[0].managedBy, "codenomad")
+    assert.equal(published.controls[0].runtime?.managedBy, "codenomad")
+    assert.deepEqual(published.controls[0].runtime?.state, { status: "failed", error: "native load error", ref: "native_ref" })
+    assert.equal(published.controls[0].effective, "enabled")
+  })
+
+  it("requires a later successful active read to confirm pre-write managed runtime", async () => {
+    const location = { directory: "/repo" }
+    const before = withRuntime(snapshot("codenomad.design", "disabled"), "codenomad.design")
+    before.controls[0].managedBy = "codenomad"
+    before.runtime[0].managedBy = "codenomad"
+    const durable = structuredClone(before)
+    durable.controls[0].effective = "enabled"
+    durable.controls[0].project = "enabled"
+    let fail = false
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => {
+        if (fail) throw new Error("offline")
+        return durable
+      },
+      setPluginActivation: async () => mutationResponse(durable),
+    })
+    await cache.load("instance", location)
+    await cache.mutate("instance", location, "codenomad.design", "project", true)
+    assert.equal(cache.state("instance", location).snapshot?.controls[0].runtime?.state.status, "active")
+    assert.equal(cache.state("instance", location).runtimeUnconfirmed?.has("codenomad.design"), true)
+    fail = true
+    await cache.load("instance", location, { force: true })
+    assert.equal(cache.state("instance", location).runtimeUnconfirmed?.has("codenomad.design"), true)
+    fail = false
+    await cache.load("instance", location, { force: true })
+    assert.equal(cache.state("instance", location).runtimeUnconfirmed?.has("codenomad.design"), false)
+  })
+
+  it("uses newer provenance when an installation becomes unproven during a mutation", async () => {
+    const location = { directory: "/repo" }
+    const before = withRuntime(snapshot("custom.plugin", "disabled"), "custom.plugin")
+    before.controls[0].managedBy = "codenomad"
+    before.runtime[0].managedBy = "codenomad"
+    before.configured.sources.push({ target: "custom-plugin", scope: "global", entryIndex: 0, hasOptions: false, managedBy: "codenomad" })
+    const fresh = structuredClone(before)
+    delete fresh.controls[0].managedBy
+    delete fresh.runtime[0].managedBy
+    delete fresh.configured.sources[0].managedBy
+    const write = deferred<ReturnType<typeof mutationResponse>>()
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => ++reads === 1 ? before : fresh,
+      setPluginActivation: () => write.promise,
+    })
+    await cache.load("instance", location)
+    const mutation = cache.mutate("instance", location, "custom.plugin", "project", true)
+    await tick()
+    await cache.load("instance", location, { force: true })
+    const durable = structuredClone(before)
+    durable.controls[0].effective = "enabled"
+    write.resolve(mutationResponse(durable))
+    await mutation
+    const published = cache.state("instance", location).snapshot!
+    assert.equal(published.controls[0].effective, "enabled")
+    assert.equal(published.controls[0].managedBy, undefined)
+    assert.equal(published.runtime[0].managedBy, undefined)
+    assert.equal(published.configured.sources[0].managedBy, undefined)
+  })
+
+  it("confirms managed runtime when an alias read recovers the retained canonical snapshot", async () => {
+    const canonical = { directory: "/repo" }, host = { directory: "\\\\wsl.localhost\\Ubuntu\\repo" }
+    const active = withRuntime(snapshot("managed.plugin", "enabled"), "managed.plugin")
+    active.controls[0].managedBy = "codenomad"
+    active.runtime[0].managedBy = "codenomad"
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => {
+        if (++reads === 2) throw new Error("offline")
+        return structuredClone(active)
+      },
+      setPluginActivation: async () => mutationResponse({ ...structuredClone(active), location: host }),
+    })
+    await cache.load("instance", canonical)
+    await cache.load("instance", canonical, { force: true })
+    assert.ok(cache.state("instance", canonical).error)
+    await cache.mutate("instance", host, "managed.plugin", "project", true)
+    assert.equal(cache.state("instance", host).runtimeUnconfirmed?.has("managed.plugin"), true)
+    await cache.load("instance", host, { force: true })
+    assert.equal(cache.state("instance", canonical).runtimeUnconfirmed?.has("managed.plugin"), false)
+    assert.equal(cache.state("instance", host).runtimeUnconfirmed?.has("managed.plugin"), false)
+    assert.equal(cache.state("instance", canonical).error, undefined)
+  })
+
   it("carries a newer canonical snapshot through mutation alias adoption and queued writes", async () => {
     const first = deferred<ReturnType<typeof mutationResponse>>()
     const second = deferred<ReturnType<typeof mutationResponse>>()

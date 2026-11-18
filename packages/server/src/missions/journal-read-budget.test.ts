@@ -4,7 +4,7 @@ import Fastify from "fastify"
 
 import { fixture, type HistoryFixture } from "./journal-history-fixture"
 import { MISSION_INDEX_STALE_AFTER_MS, MissionJournalIndex } from "./journal-index"
-import { MISSION_MAX_STORED_EVENTS, type MissionJsonValue } from "./model"
+import { MISSION_MAX_EVENTS, type MissionJsonValue } from "./model"
 import { setupMissionsPlugin } from "../opencode/missions-plugin"
 import { hintsShowWork, retainMissionWork } from "../opencode/missions/lifetime"
 import { registerMissionRoutes } from "../server/routes/missions"
@@ -68,7 +68,7 @@ test("read-mostly paths read one mission's range, never the finished history", a
     assert.deepEqual(inspected.value.mission, (await f.journal.snapshot()).missions.find(candidate => candidate.id === mission.id))
   }
   const listed = await cost(f, () => control.listMissions(coordinator))
-  assert.deepEqual([listed.value.map(entry => entry.missionID), listed.fullScans, listed.entries <= own], [[mission.id], 0, true])
+  assert.deepEqual([listed.value.length, listed.value[0]?.missionID, listed.fullScans, listed.entries], [HISTORY_MISSIONS + 1, mission.id, 0, 0])
 
   const outbox = await cost(f, () => control.retryPendingNotifications())
   assert.deepEqual([outbox.value, outbox.fullScans, outbox.entries <= own], [{ attempted: 0, failed: 0 }, 0, true])
@@ -142,7 +142,7 @@ test("GET /missions over the plugin observes and loads only open and selected mi
 
 test("a project far beyond one mission's bound reads, creates, appends, deletes and purges", async () => {
   const { f, mission } = await liveMission(8)
-  assert.ok(HISTORY > 4 * MISSION_MAX_STORED_EVENTS)
+  assert.ok(HISTORY > 4 * MISSION_MAX_EVENTS)
   await f.control().declare(mission.coordinatorSessionId, { missionID: mission.id, taskKey: "more", title: "More", brief: "Bounded", role: "research", blockedBy: [] })
   const snapshot = await f.journal.snapshot()
   assert.deepEqual([snapshot.discardedEvents, snapshot.missions.length], [0, HISTORY_MISSIONS + 1])

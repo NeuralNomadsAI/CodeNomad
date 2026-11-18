@@ -57,6 +57,9 @@ declare global {
     nextPendingFolder?: () => Promise<string | null>
     acknowledgePendingFolder?: (folder: string, opened: boolean) => Promise<{ ok: true }>
     onPendingFolders?: (callback: () => void) => () => void
+    nextPendingConnection?: () => Promise<import("../lib/desktop-connection-queue").PendingConnection | null>
+    acknowledgePendingConnection?: (target: string, failure: string | null, handOff: boolean) => Promise<{ ok: true }>
+    onPendingConnections?: (callback: () => void) => () => void
     onMenuAction?: (callback: (action: string) => void) => () => void
     showTitlebarMenu?: (menu: "file" | "edit" | "view" | "window" | "help", x: number, y: number) => Promise<unknown>
     getZoomFactor?: () => number
@@ -91,6 +94,7 @@ declare global {
       entryUrl?: string
       proxySessionId?: string
       skipTlsVerify: boolean
+      requireLoad?: boolean
     }) => Promise<{ ok: boolean }>
     openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; workspacePath?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
     getPreferencesRequest?: () => Promise<unknown>
@@ -99,6 +103,7 @@ declare global {
     acceptPreferencesRequest?: (request: unknown) => Promise<unknown>
     resolvePreferencesTransition?: (id: number, approved: boolean) => Promise<unknown>
     openerStartupState?: (command: string, epoch?: number) => Promise<unknown>
+    memoryCleanup?: (request: import("../lib/native/memory-cleanup-command").MemoryCleanupRequest) => Promise<unknown>
     onPreferencesSection?: (callback: (request: unknown) => void) => () => void
     onPreferencesCloseRequested?: (callback: () => void) => () => void
     onPreferencesTransitionRequested?: (callback: (value: unknown) => void) => () => void
@@ -133,10 +138,12 @@ declare global {
       __CODENOMAD_API_BASE__?: string
       __CODENOMAD_EVENTS_URL__?: string
        __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
+       __CODENOMAD_BROWSER_CAPABILITIES__?: import("../lib/native/browser").BrowserHostCapabilities
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null
        __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
        __CODENOMAD_STARTUP_STATE_COMMAND__?: (command: unknown) => Promise<unknown>
+       __CODENOMAD_MEMORY_CLEANUP__?: (request: unknown) => Promise<void>
        electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge
       codenomadLogger?: LoggerControls

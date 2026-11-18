@@ -6,10 +6,11 @@ const CLAUSE_END = /[,;:，；：—–]/gu
 /** List/picker rows show the whole first sentence; CSS ellipsis truncates at the row edge. */
 export const MISSION_ROW_TITLE_MAX = 500
 
-/** An explicit title wins; otherwise the first sentence/clause of the objective. */
-export function missionDisplayTitle(mission: { objective: string; title?: string }, max = 60): string {
+/** An explicit title wins; otherwise the first sentence/clause of the objective: a row's
+ * objective label, a compact map's `excerpt` (the same label) or a passage's own objective. */
+export function missionDisplayTitle(mission: { objective?: string; excerpt?: string; title?: string }, max = 60): string {
   const explicit = mission.title?.replace(/\s+/g, " ").trim()
-  return explicit || missionShortTitle(mission.objective, max)
+  return explicit || missionShortTitle(mission.objective ?? mission.excerpt ?? "", max)
 }
 
 export function missionShortTitle(text: string, max = 60): string {

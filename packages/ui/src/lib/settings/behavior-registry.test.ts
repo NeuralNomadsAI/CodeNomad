@@ -3,6 +3,24 @@ import { test } from "node:test"
 import type { Preferences } from "../../stores/preferences"
 import { getBehaviorSettings, getBehaviorCommands, type BehaviorRegistryActions, type BehaviorToggleSetting } from "./behavior-registry"
 
+test("keep-awake defaults off, uses an info tip and rejects unsuccessful saves", async () => {
+  const updates: Array<Partial<Preferences>> = []
+  let saved = true
+  const actions = {
+    preferences: () => ({}) as Preferences,
+    updatePreferences: async (update: Partial<Preferences>) => { updates.push(update); return saved },
+  } as BehaviorRegistryActions
+  const setting = getBehaviorSettings(actions).find(entry => entry.id === "behavior.keepComputerAwake") as BehaviorToggleSetting
+  assert.equal(setting.get({} as Preferences), false)
+  assert.equal(setting.get({ keepComputerAwake: true } as Preferences), true)
+  assert.equal(setting.subtitleKey, undefined)
+  assert.equal(setting.infoKey, "settings.behavior.keepComputerAwake.info")
+  await setting.set(true)
+  saved = false
+  await assert.rejects(async () => setting.set(false), /Failed to persist keep-awake behavior/)
+  assert.deepEqual(updates, [{ keepComputerAwake: true }, { keepComputerAwake: false }])
+})
+
 test("hiding whitespace-only diff changes defaults on and persists through preferences", () => {
   const updates: Array<Partial<Preferences>> = []
   const actions = { preferences: () => ({}) as Preferences, updatePreferences: (update: Partial<Preferences>) => { updates.push(update) } }

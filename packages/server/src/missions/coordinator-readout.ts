@@ -5,11 +5,11 @@ import { validateMissionReportArtifact } from "./contracts"
 import { stableToken } from "./journal"
 import { missionIsRunning } from "./lifecycle-model"
 import type { MissionMap, MissionReport, MissionSnapshot, MissionTask } from "./model"
-import type { HumanDecisionMark } from "./human-answer"
+import { coordinatorAskedAnswer, coordinatorDecision, type MissionDecisionProof } from "./decision-gate"
 
 /** Coordinator-authored business evidence, not a receipt from native execution. */
 export function coordinatorReadout(snapshot: MissionSnapshot, mission: MissionMap, task: MissionTask,
-  input: MissionReportInput, createdAt: number, humanReceipt?: HumanDecisionMark): { report: MissionReport; existing: boolean } {
+  input: MissionReportInput, createdAt: number, decision?: MissionDecisionProof): { report: MissionReport; existing: boolean } {
   if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable) {
     throw new MissionControlError("Damaged Mission journal cannot authorize coordinator readout", "invalid-journal")
   }
@@ -20,10 +20,14 @@ export function coordinatorReadout(snapshot: MissionSnapshot, mission: MissionMa
   if (task.blockedBy.some(key => mission.tasks.find(dependency => dependency.key === key)?.status !== "completed")) {
     throw new MissionControlError("Readout requires completed prerequisite tasks", "invalid-blocker")
   }
-  // Preserve the stronger human-consent gate; a coordinator summary is not Form proof.
+  // A coordinator decision is labelled as its own; a human answer keeps the stronger Form-proof gate.
   if (mission.template === "wayfinder" && task.role === "decision" && input.outcome === "completed") {
-    // Without a published binding the native gate proved the session from the exact assignment call.
-    if (!humanReceipt || humanReceipt.via !== "ui" || humanReceipt.sessionID !== (task.actorSessionId ?? humanReceipt.sessionID))
+    const own = decision?.decidedBy === "coordinator" && coordinatorDecision(input.artifact) !== undefined
+    const receipt = decision?.decidedBy === "human" ? decision.receipt : undefined
+    // The coordinator's question lives in its own conversation; a decision conversation's in the task actor's,
+    // or, without a published binding, the one the native gate proved from the exact assignment call.
+    const asker = coordinatorAskedAnswer(input.artifact) ? mission.coordinatorSessionId : task.actorSessionId ?? receipt?.sessionID
+    if (!own && (!receipt || receipt.via !== "ui" || receipt.sessionID !== asker))
       throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
   }
   let artifact

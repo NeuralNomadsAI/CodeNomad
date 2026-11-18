@@ -1,4 +1,14 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "ОК",
+  "window.menu.native.browserPromptCancel": "Отмена",
+  "window.menu.native.browserPermission": "Разрешить {permission} для {origin}?",
+  "window.menu.native.browserPermissionUnknown": "Неизвестное разрешение заблокировано: {permission}.",
+  "window.menu.native.browserAllow": "Разрешить",
+  "window.menu.native.browserDeny": "Запретить",
+  "window.menu.native.browserCopyLink": "Копировать ссылку",
+  "window.menu.native.browserSaveImage": "Сохранить изображение",
+  "window.menu.native.browserOpenLink": "Открыть ссылку в новом окне",
+  "window.menu.native.browserInspect": "Исследовать",
   "window.title.main": "CodeNomad",
   "window.controls.minimize": "Свернуть окно",
   "window.controls.maximize": "Развернуть или восстановить окно",
@@ -54,15 +64,6 @@ export const appMessages = {
 
   "app.closeInstance.toast.error": "Не удалось закрыть проект.",
   "app.closeInstance.toast.otherWindow": "Проект {project} закрыт из другого окна.",
-
-  "emptyState.logoAlt": "Логотип CodeNomad",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "Выберите папку, чтобы начать писать код с AI",
-  "emptyState.actions.selectFolder": "Выбрать папку",
-  "emptyState.actions.selecting": "Выбор…",
-  "emptyState.keyboardShortcut": "Горячая клавиша: {shortcut}",
-  "emptyState.examples": "Примеры: {example}",
-  "emptyState.multipleInstances": "Можно иметь несколько экземпляров одной и той же папки",
 
   "releases.upgradeRequired.title": "Требуется обновление",
   "releases.desktop.checking": "Проверка обновлений CodeNomad…",

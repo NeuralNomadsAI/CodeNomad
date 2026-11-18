@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preferences-memory-cleanup"
+description = "Enables the preferences_memory_cleanup command without any pre-configured scope."
+commands.allow = ["preferences_memory_cleanup"]
+
+[[permission]]
+identifier = "deny-preferences-memory-cleanup"
+description = "Denies the preferences_memory_cleanup command without any pre-configured scope."
+commands.deny = ["preferences_memory_cleanup"]

@@ -44,16 +44,16 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 /** A running native `subagent` call records its child only when it completes; until
  * then the child's own first (user) message carries the exact canonical assignment. */
-export function parseMissionChildTaskKey(missionId: string, firstMessage: unknown, taskKeys: ReadonlySet<string>): string | undefined {
+export function parseMissionChildTaskKey(missionId: string, firstMessage: unknown, taskKeys?: ReadonlySet<string>): string | undefined {
   const value = record(firstMessage)
   if (value?.type !== "user" || typeof value.text !== "string") return undefined
   const key = canonicalTaskKey(value.text, missionId)
-  return key && taskKeys.has(key) ? key : undefined
+  return key && (!taskKeys || taskKeys.has(key)) ? key : undefined
 }
 
 /** Returns child session IDs per declared task key, oldest first (the latest call is last). */
 export function parseMissionTaskSessions(missionId: string, coordinatorSessionId: string, messages: readonly unknown[],
-  taskKeys: ReadonlySet<string>): Map<string, string[]> {
+  taskKeys?: ReadonlySet<string>): Map<string, string[]> {
   const result = new Map<string, string[]>()
   for (const message of messages) {
     const value = record(message)
@@ -64,7 +64,7 @@ export function parseMissionTaskSessions(missionId: string, coordinatorSessionId
       const prompt = record(state.input)?.prompt, child = record(state.metadata)?.sessionID
       if (typeof prompt !== "string" || typeof child !== "string" || !child || child === coordinatorSessionId) continue
       const key = canonicalTaskKey(prompt, missionId) ?? shortTaskKey(prompt, missionId)
-      if (!key || !taskKeys.has(key)) continue
+      if (!key || taskKeys && !taskKeys.has(key)) continue
       const sessions = result.get(key) ?? []
       result.set(key, [...sessions.filter(id => id !== child), child])
     }

@@ -21,7 +21,7 @@ Um einen weiteren CodeNomad-Desktop zu koppeln, wählen Sie auf dessen Startseit
 
 Widerruf beendet aktuelle HTTP-/SSE-Verbindungen des Geräts sowie zukünftigen Zugriff. Koppeln Sie zum Wiederherstellen mit einem neuen Link. Ein Gerät verfällt nach **30 Tagen ohne Nutzung**. Bei der **Grenze von 32 Geräten** ersetzt eine neue Kopplung das am längsten nicht gesehene Gerät und schließt dessen Verbindungen.
 
-Das Backend speichert Zugangsdaten-Hashes, keine Rohzugangsdaten, in `remote-control-devices.json` unter seiner Konfigurationsbasis. Der Client hält ein hostbezogenes Geräte-Cookie mit `Secure`, `HttpOnly`, `SameSite=Lax`. Dessen Browserlebensdauer kann die serverseitige 30-Tage-Inaktivitätsgrenze übersteigen; maßgeblich bleibt das Register. Websitedaten löschen, Browserprofile wechseln oder privates Surfen kann erneute Kopplung erfordern.
+Websitedaten löschen, Browserprofile wechseln oder privates Surfen kann erneute Kopplung erfordern.
 
 Eine Änderung des Direktzugriffspassworts widerruft Geräte **nicht**. **Fernsteuerung beenden** trennt den Tunnel, behält aber die Geräteliste; verwenden Sie **Widerrufen**, um die Berechtigung zu entfernen.
 
@@ -42,7 +42,6 @@ Die Wiederherstellung bewahrt die geöffnete Seite und Entwürfe; sie wiederholt
 | Fernsteuerung beenden | Trennt den Zugriff und löscht automatisches Fortsetzen beim Start; behält Gerätedatensätze. |
 | Backend-Ende / letztes Desktop-Fenster schließt und App endet | Fernsteuerung geht offline. OpenCodes gemeinsamer Dienst kann weiterlaufen, kann diese Oberfläche aber nicht durch ein gestopptes Backend bereitstellen. |
 | Start nach aktiviert gelassener Fernsteuerung | Verbindet im Hintergrund ohne neuen Kopplungslink. Niemals gestartete Installationen aktivieren sich nicht selbst. |
-| Fehlgeschlagenes Fortsetzen oder schwerer Tunnelfehler | Gemerkte Auswahl bleibt und der Host zeigt den Fehler; das Aktualisieren-Symbol der Fernsteuerungskarte liest ihren Zustand erneut. **Fernsteuerung starten** versucht es sofort erneut; **Fernsteuerung beenden** löscht die Auswahl. Andernfalls versucht es ein späterer Start erneut. |
 
 Automatisches Fortsetzen beim Start ist auf ein Backend pro Konfigurationsverzeichnis begrenzt. Starten Sie keine konkurrierenden Hosts mit gleicher Konfiguration für zusätzliche Tunnelkapazität. Soll ein Host nach Desktop-Ende erreichbar bleiben, betreiben Sie einen separat verwalteten [eigenständigen Server](server.md); Fernsteuerung ist kein unabhängiger Daemon.
 
@@ -56,17 +55,21 @@ Gekoppelte Geräte können normale Projekt-/Unterhaltungs-APIs verwenden, Prompt
 | Passwortanmeldung/-abmeldung, Passwortänderungen, lokale Token-Ersteinrichtung | Nicht verfügbar; Gerätezugangsdaten sind auch bei deaktivierter direkter Authentifizierung nötig. |
 | Fernsteuerungsstatus | Für gekoppelte Geräte lesbar; Verwaltung nicht verfügbar. Start/Stop, Kopplungserstellung, Geräteliste und Widerruf bleiben auf dem Host-Zugriffsweg. |
 | Desktop-Remote-Fenster-/Serververwaltung und Proxy-Routen | Nicht verfügbar (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| SideCar-**Inhaltsproxy** | Nicht verfügbar (`/sidecars/`). Dies bedeutet **nicht**, dass alle SideCar-APIs blockiert sind: Gekoppelte Clients können weiterhin die Registrierungs-APIs `/api/sidecars` nutzen. |
+| SideCar-**Inhaltsproxy** | Erfordert Loopback (`/sidecars/`), ebenso wie SideCar-WebSockets. Die Registrierungs-APIs `/api/sidecars` sind für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. |
 | Inhalt der Web-Vorschau | Verfügbar, solange **Web-Vorschauen** (Standard) unter **Einstellungen → Remote-Zugriff → Fernsteuerung** auf dem Host eingeschaltet ist. Jede Vorschauadresse öffnet ihre Seite ohne Kopplung; halten Sie sie privat. Das Ausschalten beendet ausgelieferte Vorschauen und ihre WebSockets; gekoppelte Geräte blenden **Web-Vorschau öffnen** nach dem Neuladen aus. |
 | Automatisierungsbrücke | Nicht verfügbar (`/api/opencode-plugin/`). Native Desktop-Fähigkeiten werden nicht zu Browserfähigkeiten. |
 | WebSocket-Upgrades | Nur für Web-Vorschauen verfügbar. |
 
-Verwenden Sie eine entsprechend geschützte [Direktverbindung](remote-access.md), wenn ein Ablauf eine blockierte Proxy-/WebSocket-Oberfläche benötigt. Fernsteuerung wechselt nicht automatisch dorthin.
+Verwenden Sie eine Loopback-Verbindung auf dem Host für hostgebundene Proxy-/WebSocket-Funktionen und die Fernsteuerungsverwaltung (`/api/remote-control/`). Auch direkter LAN-Zugriff erfordert dafür Loopback; siehe [Aktualisieren](remote-access.md#upgrading). Web-Vorschauen der Fernsteuerung verwenden ein Berechtigungstoken in ihrer Adresse und bleiben verfügbar, solange sie auf dem Host aktiviert sind; halten Sie diese Adresse privat.
 
 ## Relay und Datenschutz {#relay-privacy}
 
-CodeNomad verwendet [OpenTunnel](https://github.com/anomalyco/opentunnel) und beansprucht eine zufällige Route auf der gemeinsamen Standard-Tunnelidentität des Rechners. Stoppen gibt CodeNomads Brücke frei, nicht die von anderen Anwendungen verwendete gemeinsame Identität.
+CodeNomad verwendet [OpenTunnel](https://github.com/anomalyco/opentunnel) und beansprucht eine zufällige Route auf der gemeinsamen Standard-Tunnelidentität des Rechners.
 
 TLS endet im CodeNomad-Backend. Das Relay leitet Chiffretext weiter und kann Anwendungsinhalte nicht lesen, aber Hostnamen, Verbindungszeiten und Datenmengen beobachten. Tunnelzertifikat und privater Schlüssel bleiben auf dem Host. Schützen Sie Tunnelspeicher und CodeNomad-Konfiguration des Hosts wie Zugangsdaten; eine nicht erratbare Adresse ist keine Autorisierung.
 
 `CODENOMAD_REMOTE_CONTROL_API` wählt eine selbst gehostete OpenTunnel-API; ohne Wert gilt der gehostete Dienst. Dies ändert die Tunnelbereitstellung, nicht Kopplungsanforderungen oder blockierte Oberflächen. Zum Umgang mit Zugangsdaten und Diagnosen siehe [Sicherheit](security.md).
+
+## Administratorrichtlinie {#administrator-policy}
+
+Ein Administrator kann die Fernsteuerung für alle Benutzer eines Computers ausschalten: Setzen Sie die Umgebungsvariable `CODENOMAD_REMOTE_CONTROL=disabled` systemweit und starten Sie CodeNomad neu. Das Backend verbindet dann nie einen Tunnel, lehnt **Fernsteuerung starten** und Kopplungslinks ab und verbindet sich beim Start nicht erneut; die Einstellungen zeigen **Vom Administrator deaktiviert**. Zuvor gekoppelte Geräte können sich nicht verbinden und bleiben zum Widerrufen aufgelistet. Nicht gesetzt oder leer bedeutet keine Richtlinie; jeder andere Wert, auch nur Leerzeichen, verhindert den Start des Backends.

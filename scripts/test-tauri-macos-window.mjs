@@ -31,17 +31,22 @@ function check(targetDirectory = target, baseline = false) {
     console.log(result.stdout.trim())
   }
 }
+// The last published Tao before the read-only zoom getter (tao#1182).
+const UNFIXED_TAO = "0.34.6"
 const metadata = JSON.parse(cargo(["metadata", "--locked", "--format-version", "1"]))
 const tao = metadata.packages.filter(item => item.name === "tao")
 assert.equal(tao.length, 1)
-assert.equal(path.resolve(tao[0].manifest_path), path.join(workspace, "vendor/tao-0.34.6/Cargo.toml"))
+assert.equal(path.resolve(tao[0].manifest_path), path.join(workspace, `vendor/tao-${tao[0].version}/Cargo.toml`))
 // Warm the patched artifact before the negative control to expose output collisions.
 cargo(["build", "--locked", "-p", "codenomad-macos-window-fixture"])
 check()
 if (process.argv.includes("--baseline")) {
   const baseline = await mkdtemp(path.join(os.tmpdir(), "codenomad-macos-zoom-baseline-"))
   await cp(path.join(fixture, "src"), path.join(baseline, "src"), { recursive: true })
-  await writeFile(path.join(baseline, "Cargo.toml"), (await readFile(path.join(fixture, "Cargo.toml"), "utf8")) + "\n[workspace]\n")
+  const manifest = await readFile(path.join(fixture, "Cargo.toml"), "utf8")
+  const requirement = `tao = "=${tao[0].version}"`
+  assert.equal(manifest.split(requirement).length, 2, `The fixture must pin ${requirement}`)
+  await writeFile(path.join(baseline, "Cargo.toml"), manifest.replace(requirement, `tao = "=${UNFIXED_TAO}"`) + "\n[workspace]\n")
   const baselineTarget = path.join(baseline, "target")
   cargo(["build", "--manifest-path", path.join(baseline, "Cargo.toml")], baseline, baselineTarget)
   // The baseline may exit via the watchdog or the bounded event assertion.

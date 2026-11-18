@@ -62,6 +62,7 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
           title={t(setting.titleKey)}
           caption={setting.subtitleKey ? t(setting.subtitleKey) : undefined}
           info={setting.infoKey ? t(setting.infoKey) : undefined}
+          help={setting.help}
           disabled={disabled()}
           onChange={async (next) => {
             try {
@@ -79,7 +80,7 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
       return (
         <div class={`settings-toggle-row ${disabled() ? "opacity-60" : ""}`}>
           <div>
-            <div class="settings-toggle-title">{t(setting.titleKey)}<Show when={setting.infoKey}>{(key) => <SettingsInfoTip text={t(key())} />}</Show></div>
+            <div class="settings-toggle-title">{t(setting.titleKey)}<Show when={setting.infoKey}>{(key) => <SettingsInfoTip text={t(key())} help={setting.help} />}</Show></div>
             <Show when={setting.subtitleKey}>{(key) => <div class="settings-toggle-caption">{t(key())}</div>}</Show>
           </div>
           <SettingsSwitch
@@ -107,7 +108,7 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
     return (
       <div class={`settings-toggle-row ${disabled() ? "opacity-60" : ""}`}>
         <div>
-          <div class="settings-toggle-title">{t(setting.titleKey)}<Show when={setting.infoKey}>{(key) => <SettingsInfoTip text={t(key())} />}</Show></div>
+          <div class="settings-toggle-title">{t(setting.titleKey)}<Show when={setting.infoKey}>{(key) => <SettingsInfoTip text={t(key())} help={setting.help} />}</Show></div>
           <Show when={setting.subtitleKey}>{(key) => <div class="settings-toggle-caption">{t(key())}</div>}</Show>
         </div>
         <Select<SelectOption>

@@ -1,5 +1,6 @@
 export const commandMessages = {
   "commands.openHelp.failed": "Die Hilfe konnte nicht im Browser geöffnet werden. Öffnen Sie https://neuralnomadsai.github.io/CodeNomad/ manuell.",
+  "commands.openSponsor.failed": "Die Seite „CodeNomad unterstützen“ konnte nicht im Browser geöffnet werden. Öffnen Sie {url} manuell.",
   "commandPalette.title": "Befehlspalette",
   "commandPalette.description": "Befehle suchen und ausführen",
   "commandPalette.searchPlaceholder": "Befehl eingeben oder suchen...",
@@ -33,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "Öffnen Sie zuerst ein Projekt.",
 
   "commands.closeInstance.label": "Tab schließen",
-  "commands.closeInstance.description": "Den aktuellen obersten Tab schließen",
   "commands.closeInstance.keywords": "stoppen, beenden, schließen, tab",
 
   "commands.nextInstance.label": "Nächster Tab",
-  "commands.nextInstance.description": "Zum nächsten obersten Tab wechseln",
   "commands.nextInstance.keywords": "wechseln, navigieren, tab",
 
   "commands.previousInstance.label": "Vorheriger Tab",
-  "commands.previousInstance.description": "Zum vorherigen obersten Tab wechseln",
   "commands.previousInstance.keywords": "wechseln, navigieren, tab",
 
   "commands.newSession.label": "Neue Sitzung",
@@ -61,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "info, protokolle, konsole, ausgabe",
 
   "commands.nextSession.label": "Nächste Sitzung",
-  "commands.nextSession.description": "Zum nächsten Sitzungs-Tab wechseln",
   "commands.nextSession.keywords": "wechseln, navigieren",
 
   "commands.previousSession.label": "Vorherige Sitzung",
-  "commands.previousSession.description": "Zum vorherigen Sitzungs-Tab wechseln",
   "commands.previousSession.keywords": "wechseln, navigieren",
 
   "commands.previousUserMessage.label": "Vorherige Benutzernachricht",
-  "commands.previousUserMessage.description": "Zur vorherigen Nachricht springen, die du in dieser Unterhaltung gesendet hast",
   "commands.previousUserMessage.keywords": "springen, Prompt, navigieren, Benutzernachricht",
   "commands.nextUserMessage.label": "Nächste Benutzernachricht",
-  "commands.nextUserMessage.description": "Zur nächsten Nachricht springen, die du in dieser Unterhaltung gesendet hast",
   "commands.nextUserMessage.keywords": "springen, Prompt, navigieren, Benutzernachricht",
 
   "commands.compactSession.label": "Sitzung komprimieren",
@@ -90,13 +84,12 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "Tool-Ausgaben: {toolCount}; Denkblöcke: {reasoningCount}. Der finale Text bleibt erhalten.",
   "commands.removeSessionTechnicalParts.confirm.label": "Entfernen",
   "commands.removeSessionTechnicalParts.failed.title": "Entfernen fehlgeschlagen",
-  "commands.removeSessionTechnicalParts.failed.message": "{count} Antworten konnten nicht bereinigt werden.",
+  "commands.removeSessionTechnicalParts.failed.message.one": "{count} Antwort konnte nicht bereinigt werden.",
+  "commands.removeSessionTechnicalParts.failed.message.other": "{count} Antworten konnten nicht bereinigt werden.",
 
   "commands.undoLastMessage.label": "Letzte Nachricht rückgängig machen",
   "commands.undoLastMessage.description": "Die letzte Nachricht rückgängig machen",
   "commands.undoLastMessage.keywords": "rückgängig, wiederherstellen",
-  "commands.undoLastMessage.none.title": "Keine Aktionen zum Rückgängigmachen",
-  "commands.undoLastMessage.none.message": "Nichts zum Rückgängigmachen",
   "commands.undoLastMessage.failed.title": "Rückgängigmachen fehlgeschlagen",
   "commands.undoLastMessage.failed.message": "Nachricht konnte nicht rückgängig gemacht werden",
   "commands.redoLastMessage.label": "Letzte Nachricht wiederherstellen",
@@ -106,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "Vorgemerkte Rücknahme konnte nicht aufgehoben werden",
 
   "commands.openModelSelector.label": "Modellauswahl öffnen",
-  "commands.openModelSelector.description": "Ein anderes Modell wählen",
   "commands.openModelSelector.keywords": "modell, llm, ai",
 
   "commands.selectModelVariant.label": "Modellvariante auswählen",
@@ -114,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "variante, denken, schlussfolgern, aufwand",
 
   "commands.openAgentSelector.label": "Agentenauswahl öffnen",
-  "commands.openAgentSelector.description": "Einen anderen Agenten wählen",
   "commands.openAgentSelector.keywords": "agent, modus",
 
   "commands.clearInput.label": "Eingabe löschen",
-  "commands.clearInput.description": "Den Textbereich des Prompts löschen",
   "commands.clearInput.keywords": "löschen, zurücksetzen",
 
   "commands.thinkingBlocks.label.show": "Denken anzeigen",
@@ -174,6 +164,9 @@ export const commandMessages = {
   "commands.openHelp.label": "Hilfe öffnen",
   "commands.openHelp.description": "Das CodeNomad-Benutzerhandbuch im Browser öffnen",
   "commands.openHelp.keywords": "hilfe, handbuch, dokumentation",
+  "commands.openSponsor.label": "CodeNomad unterstützen",
+  "commands.openSponsor.description": "Die Seite über das Sponsern von CodeNomad und weitere Möglichkeiten zu helfen öffnen",
+  "commands.openSponsor.keywords": "unterstützen, sponsern, sponsoring, spenden, spende, finanzieren, mitwirken",
   "commands.openAbout.label": "Über CodeNomad",
   "commands.openAbout.description": "Version, Updates und Diagnose in den Einstellungen anzeigen",
   "commands.openAbout.keywords": "über, version, updates, diagnose",

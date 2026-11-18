@@ -39,7 +39,7 @@ export const interruptRecurrenceActors = Effect.fn("missions.interruptRecurrence
     if (record.targets.length) return record
     return { ...record, targetsKnown: true }
   }
-  if (!mission || mission.controlUnavailable || snapshot.controlUnavailable || mission.actors.length > 32) throw new Error("Recurrence actors unavailable")
+  if (!mission || mission.controlUnavailable || snapshot.controlUnavailable) throw new Error("Recurrence actors unavailable")
   if (!record.targetsKnown) {
     record = { ...record, targetsKnown: true, targets: mission.actors.map(actor => ({ sessionID: actor.sessionId, outcome: "unknown" as const })) }
     yield* Effect.promise(() => store.recordControl(input.scheduleID, record, () => true))

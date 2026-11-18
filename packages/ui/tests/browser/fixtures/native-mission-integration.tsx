@@ -50,7 +50,7 @@ function Fixture() {
   const snapshot = () => ({ label: label(), transport: capture.transport, transportMode: transportMode(), replayedEvents: replayed(),
     selectedID: activeSessionId().get(instanceId) ?? null, selectedRootID: activeParentSessionId().get(instanceId) ?? null,
     sessions: [...(sessions().get(instanceId)?.values() ?? [])].map(session => ({ id: session.id, parentID: session.parentId })),
-    missions: missionStore.state(instanceId).missions, reader: missionProjectView(scope).reader ?? null })
+    missions: missionStore.state(instanceId).missions, reader: missionProjectView(instanceId).reader ?? null })
   window.nativeMissionIntegration = {
     snapshot,
     async replay(nextLabel) {
@@ -74,7 +74,7 @@ function Fixture() {
   }
   const navigate = (id: string) => {
     setActiveSessionFromList(instanceId, id)
-    updateMissionProjectView(scope, { reader: undefined })
+    updateMissionProjectView(instanceId, { reader: undefined })
   }
   return <div style={{ display: "grid", "grid-template-columns": "minmax(0, 1fr) 420px", height: "100vh" }}>
     <main class="mission-transcript-surface" style={{ display: "flex", "flex-direction": "column", "min-height": "0", "min-width": "0" }}>
@@ -86,7 +86,7 @@ function Fixture() {
             onClick={() => navigate(session.id)}>{session.title} <code>{session.id}</code></button>
         }</For>
       </nav>
-      <Show when={missionProjectView(scope).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
+      <Show when={missionProjectView(instanceId).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
       <output data-testid="selected-session">{activeSessionId().get(instanceId)}</output>
     </main>
     <aside class="right-panel" style={{ overflow: "auto", width: "420px", "min-height": "0" }}>

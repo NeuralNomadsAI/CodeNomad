@@ -75,7 +75,7 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
     let eventId = 0
     const native = (type: string, data: object = {}) => {
       sseManager.onInvalidation!(instanceId, {
-        id: `e${++eventId}`, type, created: eventId, data: { sessionID: sessionId, ...data },
+        id: `evt_${++eventId}`, type, created: eventId, data: { sessionID: sessionId, ...data },
       } as any)
     }
     const store = messageStoreBus.getOrCreate(instanceId)
@@ -143,7 +143,7 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
       } as any)
       const reconciled = probe()
       native("session.execution.succeeded")
-      const idleRecord = `e${eventId}`
+      const idleRecord = `msg_${eventId}`
       assert.deepEqual(store.getSessionMessageIds(sessionId), [...latestIds, idleRecord].slice(-200))
       assert.ok(latestIds.every(id => !hasReasoning(id)))
       assert.notEqual(probe(), reconciled, "settlement retires the reconciled reducer")

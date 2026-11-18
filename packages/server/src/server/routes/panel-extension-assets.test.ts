@@ -8,13 +8,15 @@ import { PanelExtensionStore } from "../../panel-extensions/store"
 import { readPanelExtensionArchive } from "../../panel-extensions/archive"
 import { fixtureArchive } from "../../panel-extensions/archive-fixture"
 import { registerPanelExtensionAssetRoutes } from "./panel-extension-assets"
+import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { brokerIdentities } from "./rpc-broker-test-fixture"
 
 test("asset routes require explicit API2 consent, exact digest and owned session, and fence revocation/moves across RPC", async () => {
   const directory=await mkdtemp(path.join(os.tmpdir(),"opencode-assets-route-")), app=Fastify(), store=new PanelExtensionStore(directory)
   const pkg=await readPanelExtensionArchive(fixtureArchive("<p>Assets</p>",{apiVersion:2,permissions:["session.context","session.assets.read"]}))
   let calls=0, owned=true, revoke=false, move=false, directoryNow="/repo", output:unknown={status:"page",entries:[],cursor:null}
   const client={session:{get:async()=>({location:{directory:directoryNow}})},rpc:{call:async()=>{calls++;if(revoke)await store.activate(pkg.manifest.id,pkg.digest,false);if(move)directoryNow="/moved";return{output}}}}
-  registerPanelExtensionAssetRoutes(app,{store,workspaceManager:{getSharedServiceConnection:async()=>({client,assertCurrent(){}}) as any,ownsLocation:async()=>owned,desktopPluginsReady:async()=>{}}})
+  registerPanelExtensionAssetRoutes(app,{store,worktreeDeletionFence:new WorktreeDeletionFence(),workspaceManager:{...brokerIdentities(),getSharedServiceConnection:async()=>({client,assertCurrent(){}}) as any,ownsLocation:async()=>owned,desktopPluginsReady:async()=>{}}})
   const body={instanceId:"i",digest:pkg.digest,sessionID:"s"}
   const send=(extra={})=>app.inject({method:"POST",url:`/api/panel-extensions/${pkg.manifest.id}/assets`,payload:{...body,...extra}})
   try {
@@ -27,7 +29,7 @@ test("asset routes require explicit API2 consent, exact digest and owned session
     const success=await send();assert.equal(success.statusCode,200);assert.equal(success.headers["cache-control"],"no-store")
     revoke=true;assert.equal((await send()).statusCode,403);revoke=false
     await store.activate(pkg.manifest.id,pkg.digest,true)
-    move=true;assert.equal((await send()).statusCode,409);move=false
+    move=true;const moved=await send();assert.equal(moved.statusCode,409);assert.deepEqual(moved.json(),{error:"Session moved"});move=false
     output={status:"page",entries:[{private:"secret"}],cursor:null};assert.equal((await send()).statusCode,503)
     const legacy=await readPanelExtensionArchive(fixtureArchive("<p>Context only</p>"))
     await store.install(legacy,pkg.digest);await store.activate(legacy.manifest.id,legacy.digest,true)
@@ -46,7 +48,7 @@ test("final session/ownership reads cannot return asset bytes after disable, rep
       if (++sessions === 2 && boundary === "session") { started(); await held }
       return { location: { directory: "/repo" } }
     } }, rpc: { call: async () => ({ output: { status: "asset", mime: "text/plain", uri: "data:text/plain;base64,c2VjcmV0" } }) } }
-    registerPanelExtensionAssetRoutes(app, { store, workspaceManager: { desktopPluginsReady: async () => {}, getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) as any, ownsLocation: async () => {
+    registerPanelExtensionAssetRoutes(app, { store, worktreeDeletionFence: new WorktreeDeletionFence(), workspaceManager: { ...brokerIdentities(), desktopPluginsReady: async () => {}, getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) as any, ownsLocation: async () => {
       if (++ownership === 2 && boundary === "ownership") { started(); await held }
       return true
     } } })
@@ -78,7 +80,8 @@ test("asset bytes from a superseded OpenCode connection never reach the response
       if (boundary === "rpc") { started(); await held }
       return { output: { status: "asset", mime: "text/plain", uri: "data:text/plain;base64,c2VjcmV0" } }
     } } }
-    registerPanelExtensionAssetRoutes(app, { store, workspaceManager: {
+    registerPanelExtensionAssetRoutes(app, { store, worktreeDeletionFence: new WorktreeDeletionFence(), workspaceManager: {
+      ...brokerIdentities(),
       desktopPluginsReady: async () => {},
       getSharedServiceConnection: async () => ({ client, assertCurrent() { if (!current) throw new Error("OpenCode connection changed") } }) as any,
       ownsLocation: async () => { if (++ownership === 2 && boundary === "final ownership") { started(); await held } return true },

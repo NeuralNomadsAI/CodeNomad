@@ -258,6 +258,30 @@ describe("message-v2 todo state", () => {
 })
 
 describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
+  for (const { incoming, expected } of [
+    { incoming: ["user", "first"], expected: ["older", "user", "first", "middle", "later"] },
+    { incoming: ["first", "later", "new"], expected: ["older", "user", "first", "middle", "later", "new"] },
+    { incoming: ["user", "first", "new"], expected: ["older", "user", "first", "middle", "later", "new"] },
+    { incoming: ["new"], expected: ["older", "user", "first", "middle", "later", "new"] },
+    // Shared rows retain the incoming order, including native inbox delivery.
+    { incoming: ["first", "user", "later"], expected: ["older", "first", "middle", "user", "later"] },
+  ]) {
+    it(`preserves omitted residents in place for [${incoming}]`, () => {
+      const store = createInstanceMessageStore("partial-order")
+      const row = (id: string) => ({ id, sessionId: "session", role: "assistant" as const, status: "complete" as const })
+      store.hydrateMessages("session", ["older", "user", "first", "middle", "later"].map(row))
+      store.upsertMessage({ ...row("pending"), role: "user", status: "sending", isEphemeral: true })
+      store.markSendPending("pending")
+      store.hydrateMessages("session", incoming.map(row), undefined, { preserveOmitted: true })
+      assert.deepEqual(store.getSessionMessageIds("session"), [...expected, "pending"])
+      store.hydrateMessages("session", incoming.map(row), undefined, { preserveOmitted: true })
+      assert.deepEqual(store.getSessionMessageIds("session"), [...expected, "pending"], "repeated projections keep order")
+      store.hydrateMessages("session", incoming.map(row))
+      assert.deepEqual(store.getSessionMessageIds("session"), [...incoming, "pending"], "authoritative pages still replace membership")
+      store.clearInstance()
+    })
+  }
+
   it("trims to 200 messages and purges removed render-cache entries", () => {
     const instanceId = "window-trim", sessionId = "session"
     const cache = getSessionMessageRenderCache(instanceId, sessionId)

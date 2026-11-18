@@ -1,14 +1,14 @@
 # स्वतन्त्र सर्भर
 
-project र tool भएको ठाउँमा CodeNomad चलाएर स्थानीय वा remote browser UI प्रयोग गर्नुहोस्। backend ले filesystem पहुँच, Git कार्य, authentication र event delivery दिन्छ। साझा OpenCode सेवाले कुराकानी र execution स्वामित्व राख्छ; browser disconnect हुँदा रोक्ने child server होइन।
+project र tool भएको ठाउँमा CodeNomad चलाएर स्थानीय वा remote browser UI प्रयोग गर्नुहोस्।
 
-उही UI ले [धेरै project tab र worktree](projects.md), [conversation परिवार र background activity](conversations.md), [bounded history loading, search र timeline navigation](history.md), [command palette र shortcut](shortcuts.md), र [मिसन](missions.md) समर्थन गर्छ। browser र tablet पहुँचले execution host बाहिर सार्दैन।
+browser र tablet पहुँचले execution host बाहिर सार्दैन।
 
 ## host तयार गर्नुहोस् {#prerequisites}
 
-1. Node.js 24 LTS र npm स्थापना गर्नुहोस्; repository को pinned build runtime 24.20.0 हो। desktop package मा Node/npm हुन्छ।
+1. Node.js 24 LTS र npm स्थापना गर्नुहोस्।
 2. Git लाई **backend प्रक्रियाको PATH** मा राख्नुहोस्। WSL भित्रको Git मात्र Windows backend का लागि पुग्दैन।
-3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.1.2**, सिफारिस qualification लक्ष्य **2.2.1**। नयाँ/custom build मा compatibility जाँच हुन्छ, tested-version allowlist होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
+3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.3.0**। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
 4. server सुरु गर्ने फोल्डर रोज्नुहोस्, वा `--workspace-root` स्पष्ट दिनुहोस्।
 
 Git बिना स्पष्ट खोलिएको physical folder मा मात्र कुराकानी उपलब्ध हुन्छन्; Git र worktree कार्य असफल हुन्छन्। Git स्थापना र PATH परिवर्तनपछि backend restart गर्नुहोस्। workspace root ले opening/browsing सीमित गर्छ, agent execution होइन: [सुरक्षा](security.md) हेर्नुहोस्।
@@ -45,7 +45,7 @@ npx codenomad --generate-token --launch
 
 आदेश foreground मा चल्छन्। terminal बन्द वा Ctrl+C गर्दा backend र Remote Control जडान रोकिन्छ। `--launch` ले browser मात्र खोल्छ; server daemonize गर्दैन। unattended उपलब्धतामा स्पष्ट configuration, working directory, environment र restart policy सहित OS process/service manager अन्तर्गत उही आदेश चलाउनुहोस्। service log वा सार्वजनिक unit file मा secret नराख्नुहोस्।
 
-browser बन्द गर्दा छुट्टै चलिरहेको standalone backend रोकिँदैन। project tab बन्द गर्दा त्यो परियोजनाको CodeNomad जडान हट्छ, तर सत्र OpenCode मा चलिरहन्छन्; परियोजना फेरि खोल्दा ती भेटिन्छन्। CodeNomad ले आफ्नो नेटिभ Location कहिल्यै unload गर्दैन। पूरै विन्डो बन्द गर्दा, एप बन्द गर्दा वा reload गर्दा परियोजना जडान पुनर्स्थापनाका लागि राखिन्छन्। backend shutdown ले पनि OpenCode सेवा चलिरहन्छ। CodeNomad नफर्केसम्म backend-dependent सुविधा अनुपलब्ध हुन्छन्; छुट्टै native scheduling आयुका लागि [मिसन](missions.md) हेर्नुहोस्।
+browser बन्द गर्दा छुट्टै चलिरहेको standalone backend रोकिँदैन। project tab बन्द गर्दा त्यो परियोजनाको CodeNomad जडान हट्छ, तर सत्र OpenCode मा चलिरहन्छन्; परियोजना फेरि खोल्दा ती भेटिन्छन्। पूरै विन्डो बन्द गर्दा, एप बन्द गर्दा वा reload गर्दा परियोजना जडान पुनर्स्थापनाका लागि राखिन्छन्। backend shutdown ले पनि OpenCode सेवा चलिरहन्छ। CodeNomad नफर्केसम्म backend-dependent सुविधा अनुपलब्ध हुन्छन्; छुट्टै native scheduling आयुका लागि [मिसन](missions.md) हेर्नुहोस्।
 
 ## ठेगाना र port {#addresses}
 
@@ -53,11 +53,11 @@ startup ले **Local Connection URL**, उपलब्ध भए **Remote Conn
 
 HTTPS ले **9898** र HTTP ले **9899** प्राथमिकता दिन्छ। port override नहुँदा व्यस्त preferred port OS-assigned port मा फर्कन्छ। स्पष्ट nonzero port fallback हुँदैन; `0` ले OS-assigned माग्छ। port 0 देखि 65535 सम्म integer हुन्छन्।
 
-backend ले Missions जस्ता आफ्नै OpenCode plugin का लागि अनियमित `127.0.0.1` port मा अघोषित, प्रमाणीकृत HTTP listener पनि खोल्न सक्छ। यो छापिँदैन र client ठेगाना होइन।
-
 listener exposure, certificate, VPN/SSH र reverse proxy का लागि [प्रत्यक्ष रिमोट पहुँच](remote-access.md) हेर्नुहोस्। inbound port बिनाको पहुँचका लागि [Remote Control](remote-control.md) प्रयोग गर्नुहोस्।
 
 ## सार्वजनिक CLI सन्दर्भ {#cli-reference}
+
+Tauri वा Electron सुरु गर्न [डेस्कटप सुरुवाती आर्गुमेन्टहरू](desktop.md#desktop-cli) हेर्नुहोस्: `--connect-server`, `--folder`, `--new-window` र executable/सर्टकट उदाहरणहरू। तलको तालिका standalone सर्भर executable का लागि हो।
 
 flag ले environment counterpart override गर्छन्। value-taking flag ले देखाइएको argument लिन्छन्; switch ले लिँदैनन्। HTTPS/HTTP मानले case-insensitive `1`, `true`, `yes`, `y` र `on` लाई enabled मान्छन्; स्पष्टताका लागि `true`/`false` प्रयोग गर्नुहोस्। UI auto-update ले `1`, `true` र `yes` चिन्छ।
 
@@ -94,17 +94,15 @@ flag ले environment counterpart override गर्छन्। value-taking 
 | `--launch` | `CLI_LAUNCH` | `false`; startup पछि browser मा local UI खोल्छ। |
 | `--upgrade [version]` | — | default मा upgrade हुँदैन। माग्दा global `@neuralnomads/codenomad@latest` वा दिइएको version स्थापना गरी बाहिरिन्छ। |
 
-सार्वजनिक सन्दर्भमा user-facing विकल्प छन्; desktop host ले निजी launch coordination आफैं व्यवस्थापन गर्छन्।
-
 ### थप deployment environment {#deployment-environment}
 
 | Variable | Default र दायरा |
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; release offer का लागि query गरिने repository। |
 | `CODENOMAD_REMOTE_CONTROL_API` | unset: hosted OpenTunnel API। self-hosted relay deployment का लागि API origin सेट गर्नुहोस्। |
+| `CODENOMAD_REMOTE_CONTROL` | सेट नगरिएको: प्रयोगकर्ताले रिमोट कन्ट्रोल सुरु गर्न सक्छन्। `disabled`: प्रशासकद्वारा बन्द ([नीति](remote-control.md#administrator-policy)); सेट नगरिएको वा खाली: कुनै नीति छैन, अरू कुनै मान (खाली ठाउँसमेत) ले सुरु हुन दिँदैन। |
+| `CODENOMAD_LOCKED_HOST` | सेट नगरिएको वा खाली: `--host` लागू हुन्छ; खाली ठाउँ मात्र भए सुरु हुँदैन। ठेगाना: `--host`, `CLI_HOST` वा सुन्ने स्विच जे भए पनि सर्भर त्यहीँ सुन्छ ([नीति](remote-access.md#administrator-policy))। |
 | `NODE_EXTRA_CA_CERTS` | Node को ऐच्छिक additional CA file; missing OpenCode daemon सुरु गर्दा allowed startup environment सँग पठाइन्छ। चलिरहेको daemon बदल्दैन। |
-
-provider-specific usage credential [प्रदायक](providers.md) मा छन्। desktop data-profile चयन [डेस्कटप](desktop.md) मा छ, release feed ले नियन्त्रण गर्दैन।
 
 ## configuration र storage स्वामित्व {#storage}
 
@@ -124,13 +122,11 @@ provider-specific usage credential [प्रदायक](providers.md) मा 
 | OpenCode कुराकानी, message, service registration र provider connection | execution host को OpenCode global storage, CodeNomad instance directory होइन। |
 | desktop restore state | default `~/.codenomad/client-state/v2/`; profile/window दायराका लागि [डेस्कटप](desktop.md) हेर्नुहोस्। |
 
-CodeNomad विद्यमान साझा daemon मा जोडिन्छ वा नभए सुरु गर्छ। startup environment ले नयाँ सुरु daemon मात्र प्रभावित गर्छ। छुट्टै, configured complete session environment प्रत्येक prompt, custom command वा session shell अनुरोधअघि लागू हुन्छ, preference हेर्दा/सम्पादन गर्दा होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
+startup environment ले नयाँ सुरु daemon मात्र प्रभावित गर्छ। छुट्टै, configured complete session environment प्रत्येक prompt, custom command वा session shell अनुरोधअघि लागू हुन्छ, preference हेर्दा/सम्पादन गर्दा होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
 
 ## event र reconnect {#events}
 
-backend ले साझा native OpenCode event stream ग्रहण गरी Server-Sent Events बाट workspace र CodeNomad event browser client लाई multiplex गर्छ। delivery live र अस्थायी हो: **event replay सुनिश्चित छैन**।
-
-reconnect पछि UI ले authoritative session र pending-request state फेरि ल्याउँछ; file/configuration invalidation ले पनि नयाँ read चलाउँछ। reconnect जवाफ हराएको send, delete, answer वा अन्य mutation दोहोर्‍याउने अनुमति होइन। पहिले परिणाम अवस्था जाँच्नुहोस्। recovery अपूर्ण हुँदा ज्ञात pending request र draft राखिन्छन्; [अनुमति](permissions.md) र [समस्या समाधान](troubleshooting.md) हेर्नुहोस्।
+reconnect जवाफ हराएको send, delete, answer वा अन्य mutation दोहोर्‍याउने अनुमति होइन। पहिले परिणाम अवस्था जाँच्नुहोस्। recovery अपूर्ण हुँदा ज्ञात pending request र draft राखिन्छन्; [अनुमति](permissions.md) र [समस्या समाधान](troubleshooting.md) हेर्नुहोस्।
 
 ## preview package र maintenance {#maintenance}
 
@@ -144,4 +140,4 @@ npx @neuralnomads/codenomad-dev --generate-token --launch
 
 `codenomad --upgrade` ले पत्ता लागेको npm/pnpm/bun manager (नभेटिए npm) बाट global stable CLI package update गर्छ। चलिरहेको server restart वा OpenCode update गर्दैन। project-local वा preview installation मा ठ्याक्कै त्यो npm package explicit update गर्नुहोस्। update पछि managed CodeNomad process सचेत restart गरी छापिएका address फेरि जाँच्नुहोस्।
 
-desktop maintenance का लागि [अपडेट](updates.md), source-build command का लागि [सहयोग](support.md), provider plan usage का लागि [प्रदायक](providers.md) हेर्नुहोस्।
+desktop maintenance का लागि [अपडेट](updates.md), build command का लागि [source बाट build](support.md#build-from-source), provider plan usage का लागि [प्रदायक](providers.md) हेर्नुहोस्।

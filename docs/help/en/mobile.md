@@ -22,11 +22,11 @@ Installation is per device/browser and origin. It does not install Node, Git or 
 
 Remote PWA installation and microphone access need a browser-recognized secure context. Use a trusted HTTPS certificate matching the exact hostname/IP. A generated local certificate must be explicitly trusted by the client device/browser; a warning page or bypass is not a reliable installation setup. Browser localhost exceptions apply to that device, not to an HTTP LAN address for another host.
 
-If installation is missing, first confirm HTTPS trust and browser support, then reopen the page in the full browser rather than an embedded QR/in-app browser. For microphone failures, review browser/OS site permission and [Voice](voice.md). Do not turn off authentication or TLS verification to fix installation.
+Do not turn off authentication or TLS verification to fix installation.
 
 ## Work with touch layouts {#touch-layout}
 
-Use **Left panel** and **Right panel** controls to open navigation and tools. On narrow layouts, panels overlay the conversation rather than forcing a desktop-width canvas; opening one floating panel closes the other. Choosing a session or **Instance Info** in the floating session panel closes it to show your choice, even the session already shown; **Back** and **Forward** keep it open. Conversation-header actions move into their overflow menu when space is limited.
+Use **Left panel** and **Right panel** controls to open navigation and tools. On narrow layouts, panels overlay the conversation rather than forcing a desktop-width canvas; opening one floating panel closes the other. Choosing a session in the floating session panel closes it to show your choice, even the session already shown; **Back** and **Forward** keep it open. Conversation-header actions move into their overflow menu when space is limited.
 
 The composer keeps Agent, Model and Thinking in its footer. The field resizes with the visible conversation, including the on-screen keyboard; long drafts remain scrollable. On touch-only devices, sending does not reopen the on-screen keyboard, so you can read the reply; tap the composer to continue. While a session runs, the composer's **More actions** menu offers **Queue message** or **Steer now**, whichever your normal send does not do, without needing a hardware-keyboard shortcut. Opening an interruption temporarily compacts the composer without changing its saved height or draft. Answer permissions/questions in the dock above it, keeping the dock's action footer reachable. See [Conversations](conversations.md) and [Permissions](permissions.md).
 
@@ -41,4 +41,6 @@ The composer keeps Agent, Model and Thinking in its footer. The field resizes wi
 | Microphone, clipboard, notifications and install prompt | Depend on browser/OS support, secure context and user permissions. |
 | Offline work | No offline backend or cached API history. Static UI assets may be cached, but documents and API responses are not an offline workspace. |
 
-Keep the backend reachable. Mobile OS suspension or a network switch can disconnect the event stream; returning reconnects and refetches current state, with no guaranteed event replay. Check whether an action completed before retrying it. Closing the PWA does not stop a standalone backend; quitting the host desktop app and its backend makes Remote Control unavailable until the next launch.
+Keep the backend reachable. Check whether an action completed before retrying it. Closing the PWA does not stop a standalone backend; quitting the host desktop app and its backend makes Remote Control unavailable until the next launch.
+
+Each browser tab, including the installed PWA, keeps its open projects, selected conversations, unsent drafts and scroll positions for that tab: when the page reloads, or the mobile OS reloads it after an app switch or screen lock, they come back. A new tab, or a PWA the OS fully closed, opens on the home page. Turn this off for the tab with **Settings → General → Restore previous state**.

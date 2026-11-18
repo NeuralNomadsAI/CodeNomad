@@ -20,7 +20,6 @@ import type { Command } from "../../lib/commands"
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette, getCommandPaletteFocusRequest } from "../../stores/command-palette"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
 import InstanceWelcomeView from "../instance-welcome-view"
-import InfoView from "../info-view"
 import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import { InterruptionDock } from "../interruption-dock"
@@ -46,6 +45,7 @@ import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { registerViewMenuPanels } from "../../lib/native/view-menu"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
+import { useFilePreviewLifetime } from "./shell/file-preview-lifetime"
 import ShellPanelToggle from "./shell/ShellPanelToggle"
 import { useSessionNavigationHistory } from "./shell/useSessionNavigationHistory"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
@@ -57,13 +57,14 @@ import { showAlertDialog } from "../../stores/alerts"
 import {
   DEFAULT_PREVIEW_URL,
   getSessionPreview,
-  getPreviewSessionIds,
   openSessionPreview,
   restoreSessionPreview,
-  showSessionChat,
+  showSessionChatFor,
   showSessionPreview,
+  setPreviewSessionOwners,
 } from "../../stores/session-previews"
-import { clearActiveParentSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { beginGesture, getSessionSurface } from "../../stores/session-surface"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
@@ -79,6 +80,7 @@ import {
 } from "./shell/storage"
 import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { HostedDrawer } from "./shell/HostedDrawer"
+import { isNestedDrawerSurface } from "./shell/drawer-events"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { clampEmbeddedDrawerWidth } from "./shell/drawer-layout"
 import { useSessionCache } from "./shell/useSessionCache"
@@ -162,12 +164,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     sessionThreads,
     activeSessions,
     activeSessionIdForInstance,
+    parentSessionIdForInstance,
     activeSessionForInstance,
     tokenStats,
     handleSessionSelect,
   } = useInstanceSessionContext({
     instanceId: () => props.instance.id,
   })
+  useFilePreviewLifetime(props.instance.id, activeSessionIdForInstance)
 
   // Shell ownership keeps partially answered requests alive as session panes change.
   const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)
@@ -266,7 +270,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       if (leftToggleButtonEl()?.contains(target) || rightToggleButtonEl()?.contains(target)) return
       // Menus, selectors and dialogs portal outside the drawer's DOM. Let their
       // own dismissal/selection finish instead of unmounting them on pointerdown.
-      if (target instanceof Element && target.closest('[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"]')) return
+      if (isNestedDrawerSurface(target)) return
 
       const leftContent = leftDrawerContentEl()
       const rightContent = rightDrawerContentEl()
@@ -440,8 +444,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? getSessionPreview(sessionId, props.instance.folder) : null
+    return sessionId ? getSessionPreview(sessionId) : null
   })
+  const showingPreview = () => getSessionSurface({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() }).kind === "web"
 
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
     setSessionPromptApis((current) => ({
@@ -458,11 +463,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleOpenPreview() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
+    const intent = beginGesture({ instanceId: props.instance.id, sessionId })
     try {
-      const restored = await restoreSessionPreview(sessionId, props.instance.folder)
-      if (restored) showSessionPreview(restored.storageKey)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.folder)
+      const restored = await restoreSessionPreview(sessionId, props.instance.id)
+      if (!intent.current()) return
+      if (restored) showSessionPreview(sessionId, props.instance.id, intent)
+      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.id, undefined, intent)
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return
+      if (props.isActiveInstance === false || activeSessionIdForInstance() !== sessionId) return
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
         detail: error instanceof Error ? error.message : String(error),
@@ -476,21 +485,20 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (!sessionId || sessionId === "info") return
 
     const preview = activeSessionPreview()
-    if (preview?.mode === "preview") {
-      showSessionChat(preview.storageKey)
+    if (showingPreview() && preview) {
+      showSessionChatFor(sessionId, props.instance.id)
       return
     }
 
     if (preview) {
-      showSessionPreview(preview.storageKey)
+      showSessionPreview(sessionId, props.instance.id)
       return
     }
     void handleOpenPreview()
   }
 
   const previewToggleLabel = createMemo(() => {
-    const preview = activeSessionPreview()
-    return preview?.mode === "preview" ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
+    return showingPreview() && activeSessionPreview() ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
   })
 
   const yoloModeEnabled = createMemo(() => {
@@ -604,7 +612,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         color="inherit"
         onClick={handlePreviewButtonClick}
         aria-label={previewToggleLabel()}
-        aria-pressed={activeSessionPreview()?.mode === "preview"}
+        aria-pressed={showingPreview() && Boolean(activeSessionPreview())}
         title={previewToggleLabel()}
         size="small"
       >
@@ -666,7 +674,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (!previewsUnavailable()) items.push({
       key: "preview",
       label: previewToggleLabel(),
-      checked: activeSessionPreview()?.mode === "preview",
+      checked: showingPreview() && Boolean(activeSessionPreview()),
       icon: <Globe class="w-4 h-4" aria-hidden="true" />,
       onSelect: handlePreviewButtonClick,
     })
@@ -712,17 +720,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     isAvailable: (sessionId) => allInstanceSessions().has(sessionId),
     select: handleSessionSelect,
   })
-
-  // Keep only explicitly opened browser shells; inactive transcripts/composers
-  // still unmount and remain subject to the existing transcript memory budget.
-  const mountedSessionIds = createMemo<string[]>((previous) => {
-    const wanted = new Set([
-      ...getPreviewSessionIds(props.instance.folder).filter((id) => allInstanceSessions().has(id)),
-      ...cachedSessionIds(),
-    ])
-    // Reordering an Electron webview in the DOM can recreate its guest.
-    return [...previous.filter((id) => wanted.delete(id)), ...wanted]
-  }, [])
+  createEffect(() => setPreviewSessionOwners(props.instance.id, allInstanceSessions()))
 
   const showEmbeddedSidebarToggle = createMemo(() => !leftPinned() && !leftOpen())
 
@@ -743,7 +741,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
     : clampRightWidth(width)
 
-  const { handleDrawerResizeMouseDown, handleDrawerResizeTouchStart } = useDrawerResize({
+  const { activeResizeSide, handleDrawerResizePointerDown, handleDrawerResizePointerMove, handleDrawerResizePointerEnd, stopDrawerResize } = useDrawerResize({
     sessionSidebarWidth: leftPanelWidth,
     rightDrawerWidth: rightPanelWidth,
     setSessionSidebarWidth,
@@ -770,9 +768,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           }}
         >
           <div
-            class="session-resize-handle session-resize-handle--left"
-            onMouseDown={handleDrawerResizeMouseDown("left")}
-            onTouchStart={handleDrawerResizeTouchStart("left")}
+            ref={() => onCleanup(() => { if (activeResizeSide() === "left") stopDrawerResize() })}
+            class={`session-resize-handle session-resize-handle--left ${activeResizeSide() === "left" ? "is-resizing" : ""}`}
+            onPointerDown={handleDrawerResizePointerDown("left")}
+            onPointerMove={handleDrawerResizePointerMove}
+            onPointerUp={handleDrawerResizePointerEnd}
+            onPointerCancel={handleDrawerResizePointerEnd}
+            onLostPointerCapture={handleDrawerResizePointerEnd}
             role="presentation"
             aria-hidden="true"
           />
@@ -836,9 +838,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           }}
         >
           <div
-            class="session-resize-handle session-resize-handle--right"
-            onMouseDown={handleDrawerResizeMouseDown("right")}
-            onTouchStart={handleDrawerResizeTouchStart("right")}
+            ref={() => onCleanup(() => { if (activeResizeSide() === "right") stopDrawerResize() })}
+            class={`session-resize-handle session-resize-handle--right ${activeResizeSide() === "right" ? "is-resizing" : ""}`}
+            onPointerDown={handleDrawerResizePointerDown("right")}
+            onPointerMove={handleDrawerResizePointerMove}
+            onPointerUp={handleDrawerResizePointerEnd}
+            onPointerCancel={handleDrawerResizePointerEnd}
+            onLostPointerCapture={handleDrawerResizePointerEnd}
             role="presentation"
             aria-hidden="true"
           />
@@ -895,8 +901,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // Keep action items stable so unrelated updates do not rebuild their icon DOM.
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
-  const readingRecurrence = () => Boolean(props.isActiveInstance)
-    && missionProjectView(props.instance.folder).reader?.kind === "recurrence"
+  // Readers that need no conversation: schedules and playbook details.
+  const readingWithoutConversation = () => Boolean(props.isActiveInstance)
+    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()
@@ -974,6 +981,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   function createAndActivateDraftSession() {
     if (draftSessionCreation) return draftSessionCreation
+    const intent = beginGesture({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() ?? null })
     const creation = (async () => {
       const agent = draftAgent()
       const model = draftModel()
@@ -984,10 +992,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       if (model.providerId && model.modelId) {
         await updateSessionModel(props.instance.id, session.id, model)
       }
-      if (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches) {
+      if (intent.current() && (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches)) {
         setFocusConversationSessionId(session.id)
       }
-      setActiveParentSession(props.instance.id, session.id)
+      setActiveParentSession(props.instance.id, session.id, intent)
       return session
     })()
     draftSessionCreation = creation
@@ -1035,11 +1043,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   /** Return to the last conversation */
   const handleBackToConversation = () => {
-    const sessionIds = cachedSessionIds()
+    const parent = parentSessionIdForInstance()
+    const sessionIds = parent && allInstanceSessions().has(parent) ? [parent] : cachedSessionIds()
     if (sessionIds.length > 0) {
       handleSessionSelect(sessionIds[0])
     } else {
-      clearActiveParentSession(props.instance.id)
+      clearSelectedSession(props.instance.id)
     }
   }
 
@@ -1175,10 +1184,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
           class="content-area"
         >
-          <Show
-            when={showingInfoView()}
-            fallback={
-              <Show when={cachedSessionIds().length === 0 || !activeSessionIdForInstance()}>
+              <Show when={props.isActiveInstance !== false && (cachedSessionIds().length === 0 || !activeSessionIdForInstance())}>
                   <Show when={!activeSessionIdForInstance()} fallback={
                     <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
                       <MessageSection
@@ -1204,7 +1210,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
-                    <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
                     </div>
 
                     <Show when={draftAttachments().length > 0}>
@@ -1248,18 +1254,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </div>
                   </Show>
               </Show>
-            }
-          >
-            <div class="info-view-pane mission-transcript-surface flex flex-col flex-1 min-h-0 overflow-y-auto">
-              <InfoView
-                instanceId={props.instance.id}
-                active={Boolean(props.isActiveInstance) && showingInfoView()}
-                onBackToConversation={handleBackToConversation}
-              />
-              <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
-            </div>
-          </Show>
-          <For each={mountedSessionIds()}>
+          <For each={cachedSessionIds()}>
             {(sessionId) => {
               const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId
               return (

@@ -3,6 +3,8 @@ import { Globe, Loader2, Plus, Trash2 } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
 import { ensureSidecarsLoaded, sidecars, sidecarsLoading } from "../../stores/sidecars"
+import { SideCarsDirectHttpsCard } from "./sidecars-direct-https-card"
+import { SettingsInfoTip } from "./settings-info-tip"
 
 function deriveSidecarId(value: string): string {
   return value
@@ -80,7 +82,6 @@ export const SideCarsSettingsSection: Component = () => {
             <Globe class="settings-card-heading-icon" />
             <div>
               <h3 class="settings-card-title">{t("settings.section.sidecars.title")}</h3>
-              <p class="settings-card-subtitle">{t("settings.section.sidecars.subtitle")}</p>
             </div>
           </div>
           <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
@@ -119,10 +120,7 @@ export const SideCarsSettingsSection: Component = () => {
           </div>
 
           <div class="settings-toggle-row settings-toggle-row-compact">
-            <div>
-              <div class="settings-toggle-title">{t("sidecars.form.protocol")}</div>
-              <div class="settings-toggle-caption">{t("sidecars.form.protocol.help")}</div>
-            </div>
+            <div class="settings-toggle-title">{t("sidecars.form.protocol")}</div>
             <select class="selector-input w-full max-w-xs" value={insecure() ? "http" : "https"} onChange={(event) => setInsecure(event.currentTarget.value === "http") }>
               <option value="https">{t("sidecars.form.protocol.https")}</option>
               <option value="http">{t("sidecars.form.protocol.http")}</option>
@@ -130,9 +128,9 @@ export const SideCarsSettingsSection: Component = () => {
           </div>
 
           <div class="settings-toggle-row settings-toggle-row-compact">
-            <div>
-              <div class="settings-toggle-title">{t("sidecars.form.prefixMode")}</div>
-              <div class="settings-toggle-caption">{t("sidecars.form.prefixMode.help")}</div>
+            <div class="settings-toggle-title flex items-center gap-1">
+              {t("sidecars.form.prefixMode")}
+              <SettingsInfoTip text={t("sidecars.form.prefixMode.help")} />
             </div>
             <select class="selector-input w-full max-w-xs" value={prefixMode()} onChange={(event) => setPrefixMode(event.currentTarget.value as "strip" | "preserve") }>
               <option value="strip">{t("sidecars.form.prefixMode.strip")}</option>
@@ -159,7 +157,6 @@ export const SideCarsSettingsSection: Component = () => {
         <div class="settings-card-header">
           <div>
             <h3 class="settings-card-title">{t("sidecars.settings.listTitle")}</h3>
-            <p class="settings-card-subtitle">{t("sidecars.settings.listSubtitle")}</p>
           </div>
         </div>
 
@@ -176,7 +173,7 @@ export const SideCarsSettingsSection: Component = () => {
                     <div>
                       <div class="settings-toggle-title">{sidecar.name}</div>
                       <div class="settings-toggle-caption">
-                        {t("sidecars.kind.port")} · {sidecar.insecure ? "http" : "https"}://127.0.0.1:{sidecar.port}
+                        {sidecar.insecure ? "http" : "https"}://127.0.0.1:{sidecar.port}
                       </div>
                       <div class="settings-toggle-caption">
                         {t("sidecars.basePath")}: <code>/sidecars/{sidecar.id}</code> · {t(`sidecars.form.prefixMode.${sidecar.prefixMode}`)}
@@ -196,6 +193,8 @@ export const SideCarsSettingsSection: Component = () => {
           </Show>
         </div>
       </div>
+
+      <SideCarsDirectHttpsCard />
     </div>
   )
 }

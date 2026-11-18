@@ -50,7 +50,7 @@ export class AutoAcceptManager {
   private static readonly MAX_REPLY_ATTEMPTS = 3
   private readonly store = new AutoAcceptStore()
   /** Native permission ids currently being replied, including duplicate logical workspace emissions. */
-  private readonly inFlight = new Set<string>()
+  private readonly inFlight = new Map<string, Promise<void>>()
   /** instanceId -> (permissionId -> pending permission) awaiting a reply */
   private readonly pending = new Map<string, Map<string, PendingPermission>>()
   /** Native permission id -> failure count, to stop retrying stuck permissions. */
@@ -61,10 +61,12 @@ export class AutoAcceptManager {
   private readonly instanceGeneration = new Map<string, number>()
   private readonly mutations = new Map<string, Promise<boolean>>()
   private unsubscribe?: () => void
+  private stopped = false
 
   constructor(private readonly deps: AutoAcceptManagerDeps) {}
 
   start(): void {
+    this.stopped = false
     if (this.unsubscribe) return
     const handler = (payload: { instanceId?: string; event?: InstanceStreamPayload }) => {
       if (!payload || !payload.instanceId || !payload.event) return
@@ -104,9 +106,11 @@ export class AutoAcceptManager {
     }
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    this.stopped = true
     this.unsubscribe?.()
     this.unsubscribe = undefined
+    await Promise.allSettled([...this.inFlight.values(), ...this.mutations.values()])
   }
 
   isEnabled(instanceId: string, sessionId: string): boolean {
@@ -289,7 +293,7 @@ export class AutoAcceptManager {
   }
 
   private persistRootMigration(instanceId: string, before: readonly string[], after: readonly string[]): void {
-    if (!this.deps.persistence) return
+    if (this.stopped || !this.deps.persistence) return
     const removed = before.filter((id) => !after.includes(id))
     const added = after.filter((id) => !before.includes(id))
     if (removed.length === 0 && added.length === 0) return
@@ -370,15 +374,14 @@ export class AutoAcceptManager {
     sessionId: string,
   ): void {
     const key = permissionId
-    if (this.inFlight.has(key)) return
+    if (this.stopped || this.inFlight.has(key)) return
     const attempts = this.replyAttempts.get(key) ?? 0
     if (attempts >= AutoAcceptManager.MAX_REPLY_ATTEMPTS) return
-    this.inFlight.add(key)
     this.replyAttempts.set(key, attempts + 1)
 
     const reply: AutoAcceptReply = { instanceId, permissionId, sessionId }
 
-    void this.deps.replier(reply)
+    const pending = this.deps.replier(reply)
       .then(() => {
         this.replyAttempts.delete(key)
         this.removePendingFromAllInstances(permissionId)
@@ -398,6 +401,7 @@ export class AutoAcceptManager {
       .finally(() => {
         this.inFlight.delete(key)
       })
+    this.inFlight.set(key, pending)
   }
 
   /** Auto-accept all pending permissions belonging to the same family root. */

@@ -1,5 +1,6 @@
 export const commandMessages = {
   "commands.openHelp.failed": "Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.",
+  "commands.openSponsor.failed": "Could not open the Support CodeNomad page in your browser. Visit {url} manually.",
   "commandPalette.title": "Command Palette",
   "commandPalette.description": "Search and execute commands",
   "commandPalette.searchPlaceholder": "Type a command or search...",
@@ -33,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "Open a project first.",
 
   "commands.closeInstance.label": "Close Tab",
-  "commands.closeInstance.description": "Close the current top-level tab",
   "commands.closeInstance.keywords": "stop, quit, close, tab",
 
   "commands.nextInstance.label": "Next Tab",
-  "commands.nextInstance.description": "Cycle to the next top-level tab",
   "commands.nextInstance.keywords": "switch, navigate, tab",
 
   "commands.previousInstance.label": "Previous Tab",
-  "commands.previousInstance.description": "Cycle to the previous top-level tab",
   "commands.previousInstance.keywords": "switch, navigate, tab",
 
   "commands.newSession.label": "New Session",
@@ -61,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "info, logs, console, output",
 
   "commands.nextSession.label": "Next Session",
-  "commands.nextSession.description": "Cycle to next session tab",
   "commands.nextSession.keywords": "switch, navigate",
 
   "commands.previousSession.label": "Previous Session",
-  "commands.previousSession.description": "Cycle to previous session tab",
   "commands.previousSession.keywords": "switch, navigate",
 
   "commands.previousUserMessage.label": "Previous User Message",
-  "commands.previousUserMessage.description": "Jump to the previous message you sent in this conversation",
   "commands.previousUserMessage.keywords": "jump, prompt, navigate, user message",
   "commands.nextUserMessage.label": "Next User Message",
-  "commands.nextUserMessage.description": "Jump to the next message you sent in this conversation",
   "commands.nextUserMessage.keywords": "jump, prompt, navigate, user message",
 
   "commands.compactSession.label": "Compact Session",
@@ -90,13 +84,12 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "Tool outputs: {toolCount}; reasoning blocks: {reasoningCount}. Final response text will be preserved.",
   "commands.removeSessionTechnicalParts.confirm.label": "Remove",
   "commands.removeSessionTechnicalParts.failed.title": "Removal failed",
-  "commands.removeSessionTechnicalParts.failed.message": "Failed to clean {count} responses.",
+  "commands.removeSessionTechnicalParts.failed.message.one": "Failed to clean {count} response.",
+  "commands.removeSessionTechnicalParts.failed.message.other": "Failed to clean {count} responses.",
 
   "commands.undoLastMessage.label": "Undo Last Message",
   "commands.undoLastMessage.description": "Revert the last message",
   "commands.undoLastMessage.keywords": "revert, undo",
-  "commands.undoLastMessage.none.title": "No actions to undo",
-  "commands.undoLastMessage.none.message": "Nothing to undo",
   "commands.undoLastMessage.failed.title": "Undo failed",
   "commands.undoLastMessage.failed.message": "Failed to revert message",
   "commands.redoLastMessage.label": "Redo Last Message",
@@ -106,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "Failed to clear the staged undo",
 
   "commands.openModelSelector.label": "Open Model Selector",
-  "commands.openModelSelector.description": "Choose a different model",
   "commands.openModelSelector.keywords": "model, llm, ai",
 
   "commands.selectModelVariant.label": "Select Model Variant",
@@ -114,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "variant, thinking, reasoning, effort",
 
   "commands.openAgentSelector.label": "Open Agent Selector",
-  "commands.openAgentSelector.description": "Choose a different agent",
   "commands.openAgentSelector.keywords": "agent, mode",
 
   "commands.clearInput.label": "Clear Input",
-  "commands.clearInput.description": "Clear the prompt textarea",
   "commands.clearInput.keywords": "clear, reset",
 
   "commands.thinkingBlocks.label.show": "Show Thinking",
@@ -174,6 +164,9 @@ export const commandMessages = {
   "commands.openHelp.label": "Open help",
   "commands.openHelp.description": "Open the CodeNomad user guide in your browser",
   "commands.openHelp.keywords": "help, guide, documentation",
+  "commands.openSponsor.label": "Support CodeNomad",
+  "commands.openSponsor.description": "Open the page about sponsoring CodeNomad and other ways to help",
+  "commands.openSponsor.keywords": "support, sponsor, sponsorship, donate, donation, fund, contribute",
   "commands.openAbout.label": "About CodeNomad",
   "commands.openAbout.description": "Show the version, updates and diagnostics in Settings",
   "commands.openAbout.keywords": "about, version, updates, diagnostics",

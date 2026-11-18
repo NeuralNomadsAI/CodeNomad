@@ -1,6 +1,7 @@
 import { Globe, Loader2, Plus, Trash2 } from "lucide-solid"
-import { createSignal, For, Show, type Component } from "solid-js"
+import { createSignal, For, Show, onMount, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
+import { getServerMeta, localRequest } from "../../lib/server-meta"
 import { useRemoteServerProfiles } from "../../lib/hooks/use-remote-server-profiles"
 import { RemoteServerDialog } from "../remote-server-dialog"
 
@@ -8,16 +9,16 @@ export const SavedRemoteServersCard: Component = () => {
   const { t } = useI18n()
   const { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile } = useRemoteServerProfiles()
   const [dialogOpen, setDialogOpen] = createSignal(false)
+  onMount(() => { void getServerMeta().catch(() => {}) })
 
   return (
-    <>
+    <Show when={localRequest()}>
       <div class="settings-card">
         <div class="settings-card-header">
           <div class="settings-card-heading-with-icon">
             <Globe class="settings-card-heading-icon" />
             <div>
               <h3 class="settings-card-title">{t("folderSelection.tabs.servers")}</h3>
-              <p class="settings-card-subtitle">{t("folderSelection.servers.empty.description")}</p>
             </div>
           </div>
           <button type="button" class="selector-button selector-button-secondary w-auto" onClick={() => setDialogOpen(true)}>
@@ -62,6 +63,6 @@ export const SavedRemoteServersCard: Component = () => {
         </div>
       </div>
       <RemoteServerDialog open={dialogOpen()} onOpenChange={setDialogOpen} onSubmit={saveServer} />
-    </>
+    </Show>
   )
 }

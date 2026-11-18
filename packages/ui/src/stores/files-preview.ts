@@ -1,4 +1,5 @@
-import { createSignal } from "solid-js"
+import { applySurface, getSessionSurface, reconcileFileSurface, type SurfaceGesture } from "./session-surface"
+export { reconcileFileSurface as reconcileFilePreview } from "./session-surface"
 
 export interface FilePreviewTarget {
   kind?: "workspace" | "diff"
@@ -13,23 +14,22 @@ export interface FilePreviewTarget {
   subject?: string
 }
 
-// Only the current selection per project; file bytes belong to the mounted reader.
-const [targets, setTargets] = createSignal(new Map<string, FilePreviewTarget>())
-export const getFilePreview = (instanceId: string) => targets().get(instanceId) ?? null
-export function openFilePreview(instanceId: string, target: FilePreviewTarget) {
-  setTargets(previous => {
-    const next = new Map(previous)
-    next.delete(instanceId)
-    next.set(instanceId, target)
-    if (next.size > 32) next.delete(next.keys().next().value!)
-    return next
-  })
+export const getFilePreview = (instanceId: string) => {
+  const surface = getSessionSurface({ instanceId, sessionId: null })
+  return surface.kind === "file" ? surface.target : null
 }
-export function closeFilePreview(instanceId: string) {
-  setTargets(previous => {
-    if (!previous.has(instanceId)) return previous
-    const next = new Map(previous)
-    next.delete(instanceId)
-    return next
-  })
+export function openFilePreview(instanceId: string, target: FilePreviewTarget, gesture?: SurfaceGesture) {
+  const ctx = { instanceId, sessionId: target.sessionId }
+  applySurface(ctx, { kind: "file", target }, gesture)
+}
+export function closeFilePreview(instanceId: string, gesture?: SurfaceGesture) {
+  const target = getFilePreview(instanceId)
+  if (target) {
+    const ctx = { instanceId, sessionId: target.sessionId }
+    applySurface(ctx, { kind: "conversation" }, gesture)
+  }
+}
+export function reconcileFilePreviewLifetime(instanceId: string) {
+  const target = getFilePreview(instanceId)
+  if (target) reconcileFileSurface(instanceId, target)
 }

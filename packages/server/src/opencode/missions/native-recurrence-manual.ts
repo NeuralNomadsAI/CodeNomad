@@ -40,7 +40,7 @@ export const runNativeRecurrenceNow = Effect.fn("missions.runNativeRecurrenceNow
   const request = recurrenceManualRequestSchema.parse({ scheduleID: input.scheduleID, requestID: input.requestID, expectedRevision: input.expectedRevision })
   if (input.action !== "run-now" || input.retry || input.location.directory !== ctx.location.directory
     || input.location.workspaceID !== ctx.location.workspaceID) throw new Error("Recurrence manual scope changed")
-  yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(input))
+  yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(input, { allowAgent: true }))
   // The same native graph, Location and owned physical root qualification as the other
   // controls; a missing contract or retargeted root refuses before any CAS or effect.
   const { location, store, before, rootCurrent } = yield* qualifyNativeRecurrenceOrigin(ctx, input)

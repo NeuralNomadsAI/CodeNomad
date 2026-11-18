@@ -9,6 +9,10 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+# The electron package downloads its binary on first use; fetch it first so
+# the path below is the only output.
+npx --no install-electron >&2
+
 # Resolve the Electron binary via Node to avoid Bun resolution hiccups
 ELECTRON_EXEC_PATH="$(node -p "require('electron')")"
 

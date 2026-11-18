@@ -1,6 +1,7 @@
 name = "codenomad-ui-host"
 main = "src/index.ts"
 compatibility_date = "2026-01-22"
+upload_source_maps = false
 
 # Custom domain for the manifest host.
 # Note: Custom domains apply to all paths on the hostname.

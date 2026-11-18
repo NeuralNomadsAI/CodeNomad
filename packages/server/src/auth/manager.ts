@@ -18,17 +18,20 @@ export interface AuthManagerInit {
   generateToken: boolean
   dangerouslySkipAuth?: boolean
   cookieName?: string
+  sessionIdleMs?: number
+  sessionAbsoluteMs?: number
 }
 
 export class AuthManager {
   private readonly authStore: AuthStore | null
   private readonly tokenManager: TokenManager | null
-  private readonly sessionManager = new SessionManager()
+  private readonly sessionManager: SessionManager
   private readonly cookieName: string
   private readonly authEnabled: boolean
 
   constructor(private readonly init: AuthManagerInit, private readonly logger: Logger) {
     this.cookieName = sanitizeCookieName(init.cookieName)
+    this.sessionManager = new SessionManager({ idleMs: init.sessionIdleMs, absoluteMs: init.sessionAbsoluteMs })
     this.authEnabled = !Boolean(init.dangerouslySkipAuth)
 
     if (!this.authEnabled) {
@@ -93,11 +96,18 @@ export class AuthManager {
     return this.requireAuthStore().getStatus()
   }
 
-  setPassword(password: string) {
+  async setPassword(password: string) {
     if (!this.authEnabled) {
       throw new Error("Internal authentication is disabled")
     }
-    return this.requireAuthStore().setPassword({ password, markUserProvided: true })
+    const status = await this.requireAuthStore().setPassword({ password, markUserProvided: true })
+    this.sessionManager.revokeUser(status.username)
+    return status
+  }
+
+  revokeSession(request: FastifyRequest): void {
+    const session = this.getSessionFromRequest(request)
+    if (session) this.sessionManager.revoke(session.sessionId)
   }
 
   /** From this machine's own listeners; tunnelled Remote Control traffic never qualifies. */

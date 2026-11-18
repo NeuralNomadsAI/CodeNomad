@@ -6,18 +6,22 @@ import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { qualifyNativeRecurrenceControl } from "./native-recurrence-capability"
 import { readRecurrenceWakeError } from "./native-recurrence-wake-status"
 import type { MissionRecurrenceSnapshot } from "../../api-types"
+import { recurrenceIDSchema } from "../../missions/recurrence-contract"
 
 const locationTag = Context.Service<never, Location.Info>("@opencode/Location")
 
 /** Read-only: a restart never re-arms a schedule from its desired state. */
 export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurrenceSnapshot")(function* (
   ctx: Pick<Plugin.Context, "location" | "storage">,
+  input: { scheduleID?: string } = {},
 ) {
   const location = yield* locationTag
   if (location.directory !== ctx.location.directory || location.workspaceID !== ctx.location.workspaceID
     || location.project.id !== ctx.location.project.id || location.project.canonical !== ctx.location.project.canonical) throw new Error("Recurrence Location changed")
   const store = yield* acquireNativeRecurrenceStore(ctx)
-  const schedules = (yield* Effect.promise(() => store.list())).filter(doc => doc.config.roots.some(root => root.directory === location.directory))
+  const doc = input.scheduleID === undefined ? undefined : yield* Effect.promise(() => store.read(recurrenceIDSchema.parse(input.scheduleID)))
+  const schedules = (input.scheduleID === undefined ? yield* Effect.promise(() => store.list()) : doc ? [doc] : [])
+    .filter(doc => doc.config.roots.some(root => root.directory === location.directory))
   const qualified = yield* qualifyNativeRecurrenceControl().pipe(Effect.catchCause(() => Effect.succeed(false)))
   const results: MissionRecurrenceSnapshot["schedules"] = []
   for (const doc of schedules) {
@@ -55,13 +59,15 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
     // Starting while a live Job/observer is admitting the original start message.
     // Uncertain only without an observer, or while that admission keeps failing.
     const blocked = lastError?.code === "admission-failed"
-    const pendingStatus = doc.pending?.admission ? "running" as const : observed && !blocked ? "starting" as const : "uncertain" as const
+    const settlementUnknown = lastError?.code === "settlement-failed"
+    const pendingStatus = doc.pending?.admission && observed && !settlementUnknown ? "running" as const
+      : !doc.pending?.admission && observed && !blocked ? "starting" as const : "uncertain" as const
     results.push({ id: doc.id, title: doc.config.title, revision: doc.revision, state, clock: doc.config.clock,
       nextDueAt: state === "running" ? recurrenceNextDueAt(doc, Date.now()) : null,
       ...(state === "interrupted" ? { interruptionReason: jobStatus === "error" ? "error" as const : doc.interruptionReason ?? "service-restart" } : {}),
       ...(lastError ? { lastError } : {}),
       pending: doc.pending ? { passageID: doc.pending.passage.id, status: pendingStatus, trigger: doc.pending.passage.due.kind,
-        ...(pendingStatus === "uncertain" ? { reason: observed ? "admission-failing" as const : "not-observed" as const } : {}),
+        ...(pendingStatus === "uncertain" ? { reason: !doc.pending.admission && observed ? "admission-failing" as const : "not-observed" as const } : {}),
         ...(doc.pending.admission ? { missionID: doc.pending.admission.missionID, conversationID: doc.pending.admission.conversationID } : {}) } : null,
       latestResult: history.at(-1) ?? null, history, actions,
       controls: doc.controls.map(({ targetsKnown: _known, ...record }) => ({ ...record, version: 1,

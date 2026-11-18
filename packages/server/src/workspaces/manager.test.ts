@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import os from "node:os"
 import path from "node:path"
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { describe, it } from "node:test"
 import { execFileSync } from "node:child_process"
 import type { LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode/client"
@@ -192,9 +192,11 @@ describe("workspace manager shared service lifecycle", () => {
       }
       assert.equal(await manager.ownsDirectory(workspace.id, clone), false)
       assert.equal(await manager.ownsLocation(workspace.id, { directory: clone }), false)
+      assert.equal(await manager.ownsLocation(workspace.id, { directory: clone }, undefined, { strict: true }), false)
       assert.equal(scans, 0)
       assert.equal(await manager.ownsDirectory(workspace.id, linked), true)
       assert.equal(scans, 1)
+      assert.equal(await manager.ownsLocation(workspace.id, { directory: linked }, undefined, { strict: true }), true)
       let registered = [repo, linked]
       let refreshes = 0
       const client = {
@@ -217,7 +219,7 @@ describe("workspace manager shared service lifecycle", () => {
       assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, linked, "event"), undefined)
       assert.equal(refreshes, 0, "event identity must remain registered-only after invalidation")
       assert.equal(scans, 1)
-    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
+    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
   })
 
   it("owns a checkout of another repository nested inside the opened folder, under the root's identity", async () => {
@@ -247,11 +249,55 @@ describe("workspace manager shared service lifecycle", () => {
       service.client = async () => client
       // Pending recovery follows this ownership; it must match prompts and live events.
       for (const purpose of ["request", "event"] as const) {
-        assert.equal(await manager.ownsLocation(workspace.id, { directory: nested }, undefined, undefined, purpose), true)
-        assert.equal(await manager.getServiceDirectoryForPath(workspace.id, nested, purpose), await realpath(nested))
+        assert.equal(await manager.ownsLocation(workspace.id, { directory: nested }, undefined, { purpose }), true)
+        assert.equal(await manager.getServiceDirectoryForPath(workspace.id, nested, { purpose }), await realpath(nested))
         assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, nested, purpose), canonicalWorktreeIdentity(await realpath(repo)))
       }
-    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
+    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+  })
+
+  it("distinguishes proven unrelated ownership from physical and Git identity read failures", async () => {
+    const temp = await mkdtemp(path.join(os.tmpdir(), "codenomad-strict-owner-"))
+    const root = path.join(temp, "repo")
+    const unrelated = path.join(temp, "unrelated")
+    const { manager } = createHarness()
+    try {
+      execFileSync("git", ["init", root], { stdio: "pipe", windowsHide: true })
+      await mkdir(unrelated)
+      const { workspace } = await manager.create(root)
+      manager.getWorktrees = async () => { throw new Error("unexpected ownership expansion") }
+      const owns = (directory: string, strict = true) => manager.ownsLocation(workspace.id, { directory }, undefined, { strict })
+      assert.equal(await owns(root), true)
+      assert.equal(await owns(unrelated), false, "absence of a checkout is a proven negative")
+      await assert.rejects(owns(path.join(temp, "missing")), { code: "ENOENT" })
+      await writeFile(path.join(root, ".git", "commondir"), "missing-common-directory\n")
+      assert.equal(await owns(unrelated, false), false, "ordinary boolean consumers retain their fallback")
+      await assert.rejects(owns(unrelated), { code: "ENOENT" })
+    } finally { await manager.shutdown(); await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+  })
+
+  it("rejects failed WSL host and service translations in strict ownership reads", async () => {
+    let translateHost = true
+    let translateService = true
+    const { manager } = createHarness(new ControlledSharedService(), {
+      platform: "win32",
+      binaryResolver: { resolveDefault: () => ({ path: String.raw`\\wsl.localhost\Ubuntu\home\dev\opencode`, label: "OpenCode V2" }) },
+      wslServiceDirectoryResolver: () => translateService ? "/mnt/d/workspace" : null,
+      wslHostDirectoryResolver: () => translateHost ? process.cwd() : null,
+      wslServiceLifecycleFactory: () => ({ discover: async () => undefined, ensure: async () => ({ url: "http://127.0.0.1:4321" }) }),
+    })
+    try {
+      const { workspace } = await manager.create(process.cwd())
+      const owns = (strict: boolean) => manager.ownsLocation(workspace.id, { directory: "/mnt/d/workspace" }, undefined, { strict })
+      assert.equal(await owns(true), true)
+      translateHost = false
+      assert.equal(await owns(false), false)
+      await assert.rejects(owns(true), /WSL host directory translation unavailable/)
+      translateHost = true
+      translateService = false
+      assert.equal(await owns(false), false)
+      await assert.rejects(owns(true), /WSL service directory translation unavailable/)
+    } finally { await manager.shutdown() }
   })
 
   it("validates native directory ownership and rejects removed workspace selectors", async () => {
@@ -685,7 +731,7 @@ describe("workspace manager shared service lifecycle", () => {
       await assert.rejects(() => harness.manager.reserveWorktreeDeletion(worktree), /open as another workspace/)
       await harness.manager.delete(workspace.id)
     } finally {
-      await rm(temp, { recursive: true, force: true })
+      await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 

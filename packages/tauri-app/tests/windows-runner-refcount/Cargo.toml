@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [target.'cfg(windows)'.dependencies]
-tauri-runtime = "=2.10.1"
-tauri-runtime-wry = "=2.10.1"
+# Compatible requirements: the fixture resolves the runtime the application locks.
+tauri-runtime = "2.12.2"
+tauri-runtime-wry = "2.12.3"
 windows-sys = { version = "0.59", features = ["Win32_System_Diagnostics_Debug"] }

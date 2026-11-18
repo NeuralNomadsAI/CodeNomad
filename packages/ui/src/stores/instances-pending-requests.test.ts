@@ -92,6 +92,34 @@ test("eight-directory snapshots avoid ordinary pending lists with 100 cold histo
   } finally { serverApi.fetchWorktrees = originalWorktrees; h.cleanup() }
 })
 
+test("a checkout lacking the opened folder is no recovery location unless a session still needs it", async () => {
+  const h = harness()
+  const originalWorktrees = serverApi.fetchWorktrees
+  try {
+    serverApi.fetchWorktrees = async () => ({ worktrees: [
+      { slug: "root", directory: h.directory, kind: "root" as const },
+      { slug: "present", directory: "/present", kind: "worktree" as const },
+      { slug: "absent", directory: "/absent", kind: "worktree" as const, nestedFolderMissing: true },
+    ] })
+    await reloadWorktrees(h.id)
+    const requested: string[] = []
+    serverApi.getPendingRequests = async (_id, directories) => {
+      requested.push(...directories)
+      return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok", locations: [emptyLocation(directory)] })) }
+    }
+    await syncPendingRequests(h.id)
+    assert.ok(requested.includes("/present"))
+    assert.ok(!requested.includes("/absent"), "an absent nested mirror is not an inventory-derived requirement")
+
+    requested.length = 0
+    const working = createClientSession({ id: "working", title: "Working", location: { directory: "/absent" }, time: { created: 1, updated: 1 } } as any, h.id)
+    setSessions(new Map([[h.id, new Map([[working.id, { ...working, status: "working" }]])]]))
+    invalidatePendingRequestSync(h.id)
+    await syncPendingRequests(h.id)
+    assert.ok(requested.includes("/absent"), "an active session placed there keeps its location required")
+  } finally { serverApi.fetchWorktrees = originalWorktrees; h.cleanup() }
+})
+
 test("partial and cold coverage only prune matching known locations; unknown queues survive", async () => {
   const h = harness()
   try {
@@ -568,15 +596,31 @@ test("a refused batch shows each folder's real reason and leaves excluded histor
   } finally { h.cleanup() }
 })
 
-test("an unavailable recovery plugin is named rather than reported as a generic failure", async () => {
+test("an unavailable recovery plugin is one notice across reconnects and projects until recovery succeeds", async () => {
+  const unsupportedNotices = () => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryUnsupported.title"))
+  const before = unsupportedNotices().length
+  const failTwice = async (id: string) => {
+    serverApi.getPendingRequests = async () => ({ supported: false })
+    await assert.rejects(syncPendingRequests(id))
+    await assert.rejects(syncPendingRequests(id))
+  }
+  // The reported storm: each reconnect re-adds the project and recovery fails again.
+  for (let reconnect = 0; reconnect < 8; reconnect += 1) {
+    const h = harness()
+    try { await failTwice(h.id) } finally { h.cleanup() }
+  }
+  const other = "other-project"
+  addInstance({ id: other, folder: "/other-project", port: 0, pid: 0, proxyPath: "", status: "ready", client: {} as OpenCodeClient })
+  try { await failTwice(other) } finally { removeInstance(other, { authoritative: false }) }
+  assert.equal(unsupportedNotices().length, before + 1)
+  assert.equal(unsupportedNotices()[0]?.message, tGlobal("interruption.recoveryCause.unsupported"))
+
   const h = harness()
   try {
-    serverApi.getPendingRequests = async () => ({ supported: false })
-    const before = recoveryWarnings().length
-    await assert.rejects(syncPendingRequests(h.id))
-    await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings().length, before + 1)
-    assert.equal(recoveryWarnings()[0]?.message, tGlobal("interruption.recoveryCause.unsupported", { detail: "" }))
+    serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })) })
+    await syncPendingRequests(h.id)
+    await failTwice(h.id)
+    assert.equal(unsupportedNotices().length, before + 2, "a working plugin re-arms the notice")
   } finally { h.cleanup() }
 })
 

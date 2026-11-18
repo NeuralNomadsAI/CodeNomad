@@ -8,6 +8,7 @@ import type { OpenCodeServiceLifecycle } from "./opencode-service"
 import type { SpawnSpec } from "./spawn"
 import { rememberRuntime, runtimeIdentity } from "../opencode/compatibility/runtime"
 import { readNativeServiceRegistration } from "./native-service-registration"
+import { isConnectionRefused } from "../opencode/connection-errors"
 
 export const MAX_SERVICE_OUTPUT_BYTES = 64 * 1024
 const MAX_ERROR_CHARS = 1_024
@@ -278,14 +279,6 @@ class RefusedServiceConnection extends Error {
   constructor(message?: string) { super(message ?? "Cannot reach OpenCode service: connection refused") }
 }
 
-function isConnectionRefused(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false
-  const value = error as { code?: unknown; cause?: unknown; errors?: unknown }
-  if (value.code === "ECONNREFUSED") return true
-  if (Array.isArray(value.errors) && value.errors.length) return value.errors.every(isConnectionRefused)
-  return value.cause !== undefined && value.cause !== error && isConnectionRefused(value.cause)
-}
-
 function isServiceStatusResponse(value: unknown): boolean {
   if (!value || typeof value !== "object") return false
   const status = value as { version?: unknown; pid?: unknown; urls?: unknown }
@@ -309,6 +302,7 @@ function isServiceHealthResponse(value: unknown): boolean {
 
 function executeFile(file: string, args: string[], options: ServiceExecOptions): Promise<ServiceExecResult> {
   return new Promise((resolve, reject) => {
+    // console-window: ServiceExecOptions requires windowsHide: true.
     nodeExecFile(file, args, options, (error, stdout, stderr) => {
       if (error) {
         Object.assign(error, { stdout, stderr })

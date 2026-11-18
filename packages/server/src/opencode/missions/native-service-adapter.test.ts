@@ -6,7 +6,7 @@ import { Location } from "@opencode/schema/location"
 import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { SessionMessage } from "@opencode/schema/session-message"
-import { acquireMissionNativeService } from "./native-service-adapter"
+import { acquireMissionNativeService, nativePassageMessageDigest } from "./native-service-adapter"
 import type { AutonomousMissionCommand } from "./autonomous-contract"
 import { recurrenceInputBudget } from "../../missions/recurrence-read-budget"
 
@@ -22,6 +22,26 @@ const info = Schema.decodeUnknownSync(Session.Info)({ id: "ses_owned", projectID
 const receipt = (value: AutonomousMissionCommand, type = value.kind === "prompt" ? "user" : "synthetic") =>
   Schema.decodeUnknownSync(SessionInbox.Info)({ id: value.input.id, sessionID: value.input.sessionID, type,
     payload: { text: value.input.text, metadata: value.input.metadata }, delivery: value.input.delivery, time: { created: 1 } })
+
+test("persisted source digest is checked at native anchor read, before a rewritten cursor can become an empty page", async () => {
+  const original = Schema.decodeUnknownSync(SessionMessage.Info)({ id: "msg_anchor", type: "user", text: "original", time: { created: 1 } })
+  const digest = nativePassageMessageDigest(original)
+  let anchor = original, queries = 0
+  const service = { get: () => Effect.succeed(info), create: () => Effect.die("Unexpected create"), inbox: () => Effect.succeed([]),
+    environment: () => Effect.succeed({}), prompt: () => Effect.die("Unexpected prompt"), synthetic: () => Effect.die("Unexpected synthetic"),
+    message: () => Effect.sync(() => anchor), messages: () => Effect.sync(() => { queries++; return [] }) }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const native = yield* acquireMissionNativeService()
+    yield* Effect.promise(async () => {
+      const request = { sessionID: info.id, directory, afterMessageID: "msg_anchor", afterNativeDigest: digest, limit: 32, contextLimit: 8000 }
+      assert.deepEqual(await native.sourceMessages(request, {}, () => true, () => true), [])
+      assert.equal(queries, 1)
+      anchor = Schema.decodeUnknownSync(SessionMessage.Info)({ id: "msg_anchor", type: "user", text: "rewritten", time: { created: 1 } })
+      await assert.rejects(native.sourceMessages(request, {}, () => true, () => true), /observation-unavailable/)
+      assert.equal(queries, 1)
+    })
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+})
 
 test("real-shaped native service invokes entry fences, replaces environment, and retires with its Effect scope", async () => {
   const effects: string[] = []

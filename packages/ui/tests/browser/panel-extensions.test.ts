@@ -9,6 +9,8 @@ import { chromium, type Browser, type Page } from "playwright"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { observeHeaderFixture } from "./header-fixture-diagnostics"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import Fastify from "fastify"
@@ -18,6 +20,7 @@ import { fixtureArchive, fixtureManifest } from "../../../server/src/panel-exten
 import { registerPanelExtensionRoutes } from "../../../server/src/server/routes/panel-extensions"
 import { createPanelExtensionCatalog, PANEL_EXTENSION_CATALOG_URL } from "../../../server/src/panel-extensions/catalog"
 import { registerPanelExtensionAssetRoutes } from "../../../server/src/server/routes/panel-extension-assets"
+import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
 import { registerPanelExtensionWorkItemRoutes } from "../../../server/src/server/routes/panel-extension-work-items"
 import type { ForgeWorkItems } from "../../../server/src/forge/work-items"
 
@@ -44,7 +47,11 @@ before(async () => {
     return new Response(new Uint8Array(onlineArchive).buffer)
   }) as typeof fetch)
   registerPanelExtensionRoutes(app, { store, catalog, workspaceManager: { get: id => ["first", "second"].includes(id) ? { id, path: `/${id}` } as any : undefined } })
-  registerPanelExtensionAssetRoutes(app, { store, workspaceManager: {
+  const assetWorkspace = { id: "first", path: "/first" }, assetLocation = { directory: "/first" }
+  registerPanelExtensionAssetRoutes(app, { store, worktreeDeletionFence: new WorktreeDeletionFence(), workspaceManager: {
+    get: id => id === "first" ? assetWorkspace as any : undefined,
+    getServiceLocation: () => assetLocation,
+    getWorktreeIdentityForPath: async () => "/first",
     desktopPluginsReady: async () => {},
     ownsLocation: async (id, location) => id === "first" && location.directory === "/first",
     // Asset reads are fenced to one current connection; this fixture's never changes.
@@ -86,8 +93,11 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close(); await app.close(); await rm(root, { recursive: true, force: true }) })
 
-async function page(locale = "en-US", drawer = false) {
+async function page(locale = "en-US", drawer = false, withoutRandomUUID = false) {
   const page = await browser.newPage({ locale })
+  const observer = observeHeaderFixture(page, "extensionFixture")
+  await observer.install()
+  if (withoutRandomUUID) await page.addInitScript(() => Object.defineProperty(crypto, "randomUUID", { value: undefined }))
   page.on("pageerror", error => console.error("Extension fixture:", error.message))
   let uiState: Record<string, unknown> = {}
   await page.addInitScript(() => {
@@ -103,8 +113,16 @@ async function page(locale = "en-US", drawer = false) {
     if (pathname.includes("/settings/")) return route.fulfill({ json: { locale: "en" } })
     return route.fulfill({ json: { entries: [], files: [], records: [], messages: [], data: [], outline: [] } })
   })
-  await page.goto(`${url}${drawer ? "?drawer=1" : ""}`)
-  await page.waitForFunction(() => Boolean((window as any).extensionFixture))
+  try {
+    await runWithDiagnosticCleanup({
+      run: async () => {
+        await page.goto(`${url}${drawer ? "?drawer=1" : ""}`, { waitUntil: "domcontentloaded" })
+        await page.waitForFunction(() => Boolean((window as any).extensionFixture))
+      },
+      diagnose: () => observer.diagnose(message => console.error(message)),
+      cleanup: () => observer.detach(),
+    })
+  } catch (error) { await page.close().catch(() => undefined); throw error }
   return page
 }
 async function changed(page: Page) { await page.evaluate(() => (window as any).extensionFixture.changed()) }
@@ -158,6 +176,19 @@ test("online catalogue lists without downloading code; explicit consent installs
     assert.equal(archiveRequests, before + 2, "Install re-reads the approved package")
     await store.remove(fixtureManifest.id, onlineDigest)
   } finally { await view.close() }
+})
+
+test("extension handshakes and session remounts work without randomUUID", async () => {
+  const pkg = await installDirect(example)
+  const view = await page("en-US", false, true), errors: string[] = []
+  view.on("pageerror", error => errors.push(error.message))
+  try {
+    await view.getByRole("tab", { name: "Session example", exact: true }).click()
+    await view.frameLocator('iframe[title="Session example"]').locator("#context").filter({ hasText: "session-a" }).waitFor()
+    await view.evaluate(() => (window as any).extensionFixture.session("session-b"))
+    await view.frameLocator('iframe[title="Session example"]').locator("#context").filter({ hasText: "session-b" }).waitFor()
+    assert.deepEqual(errors, [])
+  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("withdrawn online selection cannot install after its trust preview was approved", async () => {
@@ -241,8 +272,9 @@ test("manual ZIP consent, general activation across projects, context switch, re
 
 test("the customization checkbox owns activation, ignores legacy hide flags and fails without optimistic consent or replay", async () => {
   const pkg = await installDirect(example)
-  const view = await page()
+  let opened: Page | undefined
   try {
+    const view = opened = await page()
     await view.evaluate(() => localStorage.setItem("opencode-session-right-panel-customization-v1", JSON.stringify({ hiddenTabIds: ["extension:example.session"] })))
     await view.reload()
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
@@ -276,7 +308,7 @@ test("the customization checkbox owns activation, ignores legacy hide flags and 
     assert.equal(await checkbox.isChecked(), false, "General deactivation survives reload")
     await view.evaluate(() => (window as any).extensionFixture.transport("disconnected"))
     assert.equal(await checkbox.isDisabled(), true, "Unverified state cannot activate code")
-  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("removal consent cannot follow a package replaced by another window", async () => {
@@ -300,10 +332,11 @@ test("removal consent cannot follow a package replaced by another window", async
 
 test("Extensions is separated, collapsed by default and combines installed/online rows without modes or a floating window", async () => {
   const pkg = await installDirect(example)
-  const view = await page()
+  let opened: Page | undefined
   let catalogReads = 0
-  await view.route("**/api/panel-extensions/catalog*", route => { catalogReads++; return route.continue() })
   try {
+    const view = opened = await page()
+    await view.route("**/api/panel-extensions/catalog*", route => { catalogReads++; return route.continue() })
     await view.getByRole("button", { name: "Customize right panel" }).click()
     const popup = view.getByRole("group", { name: "Customize right panel", exact: true })
     const summary = popup.locator(".panel-extension-disclosure > summary")
@@ -363,7 +396,7 @@ test("Extensions is separated, collapsed by default and combines installed/onlin
     await openManager(view)
     await view.evaluate(() => (window as any).extensionFixture.active(false))
     await popup.waitFor({ state: "detached" })
-  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("API2 grants only current-session asset pages and bounded thumbnails; session switches and revocation fence late reads", async () => {
@@ -379,9 +412,10 @@ test("API2 grants only current-session asset pages and bounded thumbnails; sessi
   </script>`
   const pkg = await readPanelExtensionArchive(fixtureArchive(html, { apiVersion: 2, permissions: ["session.context", "session.assets.read"] }))
   await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
-  const view = await page()
+  let opened: Page | undefined
   let release: (() => void) | undefined
   try {
+    const view = opened = await page()
     await view.getByRole("tab", { name: "Status", exact: true }).click()
     await view.locator(".right-panel-accordion-item").first().waitFor()
     const nativeBackground = await view.locator(".right-panel-accordion-item").first().evaluate(element => getComputedStyle(element).backgroundColor)
@@ -427,7 +461,7 @@ test("API2 grants only current-session asset pages and bounded thumbnails; sessi
     assert.equal(await frame.locator("#image").getAttribute("src"), null, "Previous session pixels are not retained")
     await store.activate(pkg.manifest.id, pkg.digest, false); await changed(view)
     await view.locator("iframe[title='Session example']").waitFor({ state: "detached" })
-  } finally { holdAssets = undefined; release?.(); await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { holdAssets = undefined; release?.(); await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("API3 lists the project's forge work items and opens their host-built pages, rate-limited; other APIs hold no work items", async () => {
@@ -445,8 +479,9 @@ test("API3 lists the project's forge work items and opens their host-built pages
   </script>`
   const pkg = await readPanelExtensionArchive(fixtureArchive(html, { apiVersion: 3, permissions: ["session.context", "repository.workItems.read"] }))
   await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
-  const view = await page()
+  let opened: Page | undefined
   try {
+    const view = opened = await page()
     await view.evaluate(() => { (window as any).opened = []; window.open = ((url: string) => { (window as any).opened.push(url); return null }) as typeof window.open })
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
     const frame = view.frameLocator("iframe[title='Session example']")
@@ -458,14 +493,15 @@ test("API3 lists the project's forge work items and opens their host-built pages
     assert.deepEqual(await view.evaluate(() => (window as any).opened), ["https://gitlab.com/team/app/-/merge_requests/42"])
     await store.activate(pkg.manifest.id, pkg.digest, false); await changed(view)
     await view.locator("iframe[title='Session example']").waitFor({ state: "detached" })
-  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 
   const context = await installDirect(`<p id="api"></p><script>document.querySelector('#api').textContent = typeof codenomad.workItems;</script>`)
-  const plain = await page()
+  let plain: Page | undefined
   try {
+    plain = await page()
     await plain.getByRole("tab", { name: "Session example", exact: true }).click()
     await plain.frameLocator("iframe[title='Session example']").locator("#api").filter({ hasText: "undefined" }).waitFor()
-  } finally { await plain.close(); await store.remove(context.manifest.id, context.digest) }
+  } finally { await plain?.close(); await store.remove(context.manifest.id, context.digest) }
 })
 
 test("API2 observes failed/pruned assets and fences native disconnects and connection generations", async () => {
@@ -474,8 +510,9 @@ test("API2 observes failed/pruned assets and fences native disconnects and conne
     window.probe=()=>{document.querySelector('#state').textContent='pending';void codenomad.assets.list().then(()=>document.querySelector('#state').textContent='success').catch(()=>document.querySelector('#state').textContent='error');};
   </script>`, { apiVersion: 2, permissions: ["session.context", "session.assets.read"] }))
   await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
-  const view = await page()
+  let opened: Page | undefined
   try {
+    const view = opened = await page()
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
     const frame = view.frameLocator("iframe[title='Session example']")
     await frame.locator("#changes").waitFor()
@@ -526,7 +563,7 @@ test("API2 observes failed/pruned assets and fences native disconnects and conne
       await frame.locator("#state").filter({ hasText: /^success$/ }).waitFor()
       assert.equal(await view.evaluate(() => (window as any).assetResults.filter((value: any) => value.result).length), before + 1, "Only the new native connection publishes a successful result")
     }
-  } finally { await view.evaluate(() => (window as any).releaseAsset?.()).catch(() => {}); await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { await opened?.evaluate(() => (window as any).releaseAsset?.()).catch(() => {}); await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("inline management and keyboard tooltips work inside the real temporary drawer", async () => {

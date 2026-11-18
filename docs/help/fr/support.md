@@ -1,4 +1,4 @@
-# Assistance et compilation depuis les sources
+# Signalement de bugs et compilation depuis les sources
 
 Utilisez le dépôt pour les signalements de bugs, versions actuelles et contributions. Le [guide de dépannage](troubleshooting.md) couvre la récupération sûre avant de signaler un problème.
 
@@ -11,8 +11,6 @@ Utilisez le dépôt pour les signalements de bugs, versions actuelles et contrib
 L’action préremplit les versions de CodeNomad et d’OpenCode (y compris celle du service OpenCode en cours lorsqu’elle diffère de la version installée), votre système d’exploitation, le type de client (avec l’agent utilisateur du navigateur dans un navigateur web) et le système d’exploitation du serveur. Elle ne préremplit pas les adresses d’écoute, chemins de travail, identifiants ou textes de conversation. Ouvrir le formulaire ne soumet pas de ticket.
 
 Pour davantage de diagnostics, **Copier dans le presse-papiers** ou **Télécharger .txt** produit un rapport distinct. Ce rapport plus complet peut contenir des chemins locaux et adresses réseau : relisez-le et masquez-les avant de le joindre. Une capture ou un extrait de journal peut encore contenir des secrets même si le diagnostic automatique exclut les secrets d’authentification.
-
-Si le formulaire GitHub contient des champs incompatibles, CodeNomad ouvre un ticket simple avec les mêmes informations. Un échec temporaire de lecture du formulaire n’empêche pas son ouverture. Vous pouvez toujours utiliser manuellement la [liste des tickets](https://github.com/NeuralNomadsAI/CodeNomad/issues).
 
 ## Communauté et versions {#community}
 
@@ -31,7 +29,7 @@ Pour les problèmes de configuration native OpenCode plutôt que de commandes Co
 
 ## Compiler depuis les sources {#build-from-source}
 
-Utilisez Node.js **24.20.0**, épinglé dans `.node-version`, npm, Git et une CLI OpenCode compatible. Exécutez les commandes depuis une copie de développement :
+Utilisez la version de Node.js épinglée dans `.node-version`, npm, Git et une CLI OpenCode compatible. Exécutez les commandes depuis une copie de développement :
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Les changements de développement affectent l’hôte de développement, pas la version installée d’un démon OpenCode indépendant actif. La création de paquets natifs nécessite les outils de cible appropriés ; privilégiez une compilation sur le système cible.
+La création de paquets natifs nécessite les outils de cible appropriés ; privilégiez une compilation sur le système cible.
 
 ### Compiler et valider {#build-and-validate}
 

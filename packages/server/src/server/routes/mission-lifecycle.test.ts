@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { applyMissionLifecycle } from "./mission-lifecycle"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { stableToken } from "../../missions/receipt-identity"
 
 function fixture(action: "start" | "pause" | "stop") {
   const mission: any = {
@@ -54,10 +55,67 @@ function fixture(action: "start" | "pause" | "stop") {
     ownsLocation: async () => state.owned, getWorktreeIdentityForPath: async () => "/repo", getSessionEnvironment: async () => ({ ...state.variables }),
   }
   const fence = new WorktreeDeletionFence()
-  const command = { kind: "lifecycle", input: { missionID: mission.id, operationID: mission.control.id, sessionID: "ses_actor" } }
+  const command: any = { kind: "lifecycle", input: { missionID: mission.id, operationID: mission.control.id, sessionID: "ses_actor" } }
   const send = (signal = new AbortController().signal) => applyMissionLifecycle(manager as never, fence, "ses_coordinator", command, signal)
-  return { mission, native, state, effects, client, calls, send, fence }
+  return { mission, native, state, effects, client, calls, send, fence, command, manager }
 }
+
+test("Missions start refreshes memory for the exact synthetic target; optional failure clears stale memory and admits resume", async () => {
+  const f = fixture("start"), original = f.manager.getSharedServiceConnection
+  const entries = "/api/experimental/session/{sessionID}/instructions/entries"
+  f.manager.getSharedServiceConnection = async () => ({ ...await original(), endpoint: { url: "http://127.0.0.1", auth: { type: "none" } },
+    fetch: async () => Response.json({ openapi: "3.1.0", paths: { [entries]: { get: {} }, [`${entries}/{key}`]: { put: {}, delete: {} } } }) }) as never
+  const memory = { getSettings: () => ({ enabled: true }), sessionTitles: async (sessionID: string) => { assert.equal(sessionID, "ses_actor"); return { project: [] } } }
+  f.client.session.instructions.entry.put = async (input?: any) => { f.calls.push({ kind: "instructions", input }) }
+  f.client.session.instructions.entry.remove = async (input?: any) => { if (input.key === "codenomad.memory") { f.calls.push({ kind: "remove-memory", input }); throw new Error("503") } }
+  const send = () => applyMissionLifecycle(f.manager as never, f.fence, "ses_coordinator", f.command, new AbortController().signal, undefined, memory as never)
+  await send()
+  assert.deepEqual(f.calls.map(call => call.kind), ["environment", "instructions", "synthetic"])
+  assert.equal(f.calls[1].input.key, "codenomad.memory")
+  memory.sessionTitles = async () => { throw new Error("preparation failed") }
+  const count = f.calls.length
+  await send()
+  assert.deepEqual(f.calls.slice(count).map(call => call.kind), ["environment", "remove-memory", "synthetic"])
+})
+
+test("Missions resume admits its synthetic after hanging memory removal reaches its own budget", async t => {
+  const f = fixture("start")
+  let reached!: () => void
+  const started = new Promise<void>(resolve => { reached = resolve })
+  f.client.session.instructions.entry.remove = async (input?: any) => {
+    if (input.key === "codenomad.memory") { reached(); await new Promise(() => {}) }
+  }
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  try {
+    const pending = applyMissionLifecycle(f.manager as never, f.fence, "ses_coordinator", f.command, new AbortController().signal,
+      undefined, { getSettings: () => ({ enabled: false }) } as never)
+    await started
+    t.mock.timers.tick(2_000)
+    await pending
+    assert.deepEqual(f.calls.map(call => call.kind), ["environment", "synthetic"])
+  } finally { t.mock.timers.reset() }
+})
+
+for (const mode of ["exact", "missing", "changed", "replaced-during-environment"] as const) test(`frozen immediate source envelope: ${mode}`, async () => {
+  const f = fixture("start"), text = "Objective\n\nFrozen untrusted conversation context"
+  f.mission.actors = [{ sessionId: "ses_coordinator", location: { directory: "/repo" } }]
+  f.mission.tasks = []
+  f.mission.control.targets = [{ sessionID: "ses_coordinator", location: { directory: "/repo" } }]
+  f.mission.control.pending = ["ses_coordinator"]
+  f.mission.document = { firstPlay: { operationID: f.mission.control.id, inputDigest: stableToken(text, 64) } }
+  f.command.input.sessionID = "ses_coordinator"
+  if (mode !== "missing") f.command.input.startText = mode === "changed" ? text + "changed" : text
+  if (mode === "replaced-during-environment") f.state.afterEnvironment = () => { f.mission.document.firstPlay.inputDigest = "0".repeat(64) }
+  if (mode === "exact") {
+    await f.send(); await f.send()
+    const sent = f.calls.filter(call => call.kind === "synthetic")
+    assert.equal(sent.length, 2); assert.equal(sent[0].input.text, text); assert.equal(sent[1].input.text, text)
+    assert.equal(sent[0].input.id, sent[1].input.id)
+  } else {
+    await assert.rejects(f.send(), /Frozen Mission launch context differs|superseded/)
+    assert.equal(f.calls.some(call => call.kind === "synthetic"), false)
+  }
+})
 
 test("Pause interrupts directly without admitting a message or changing the native inbox", async () => {
   const f = fixture("pause")

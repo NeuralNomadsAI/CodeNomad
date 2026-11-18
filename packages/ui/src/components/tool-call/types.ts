@@ -104,10 +104,21 @@ export interface ToolRenderer {
   getAction?(context: ToolRendererContext): string | undefined
   getOutputChrome?(context: ToolRendererContext): ToolOutputChrome | undefined
   /**
+   * Header display status for calls whose part status is not the user-facing truth: a
+   * background subagent launch acknowledges at once while the child session owns the real
+   * state. `endedAt` overrides the header duration's end. Return undefined to fall back to
+   * the part's own status. Expansion defaults keep following the part; the deferred body
+   * mount releases at once while the overridden status is live or failed. The hook must
+   * stay reactive (no untracked first read), or a remount freezes it mid-transition.
+   */
+  getHeaderStatus?(context: ToolRendererContext): { status: ToolState["status"]; endedAt?: number } | undefined
+  /**
    * Text that is visible or directly revealable through this renderer. Keep this
    * in sync with custom renderBody output when adding specialized tool UIs.
    */
   getSearchText?(context: ToolSearchTextContext): string[]
+  /** Part of a failed call's error shown under the error label when the body already shows the rest; defaults to the whole error. */
+  getErrorText?(context: ToolRendererContext): string | undefined
   renderBody(context: ToolRendererContext): JSXElement | null
 }
 

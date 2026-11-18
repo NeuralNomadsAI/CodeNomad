@@ -227,10 +227,6 @@
   min-width: 0;
 }
 
-.settings-screen-content-eyebrow {
-  display: none;
-}
-
 .settings-screen-content-title {
   min-width: 0;
 }
@@ -497,12 +493,6 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-}
-
-.settings-expansion-preset-copy {
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-snug);
-  color: var(--text-muted);
 }
 
 .settings-expansion-table {

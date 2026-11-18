@@ -136,6 +136,16 @@ describe("app session snapshot merge", () => {
     assert.deepEqual([tab.activeParentSessionId, tab.activeSessionId], [undefined, undefined])
   })
 
+  it("keeps seen interruptions of unloaded sessions and drops owned or deleted ones", () => {
+    const saved = session([workspace("/work", 0, { seenInterruptions: { unloaded: 5, settled: 6, deleted: 7 } })])
+    const current = session([workspace("/work", 0, { seenInterruptions: { loaded: 8 } })])
+    const merged = mergeRestorableSessionState(current, createRestorableSessionPreservation(saved), {
+      currentTabIds: ["instance:work"],
+      currentTabAuthorities: [{ generationRecovery: new Set(["loaded", "settled"]), deletedSessions: new Set(["deleted"]) }],
+    })
+    assert.deepEqual(workspaceAt(merged).seenInterruptions, { unloaded: 5, loaded: 8 })
+  })
+
   it("rejects a late restore commit after close and reopen", () => {
     const preservation = createRestorableSessionPreservation(session([workspace("/work")]))
     const canCommit = createRestoredTabCommitGuard(preservation, 0)

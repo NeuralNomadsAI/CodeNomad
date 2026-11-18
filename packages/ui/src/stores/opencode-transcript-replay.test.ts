@@ -168,6 +168,53 @@ test("real dispatcher skips queued ingress hydration and publishes bounded chunk
   } finally { f.cleanup() }
 })
 
+test("a stranded tool behind a full window reconciles through the queued replay", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("replay-stranded-tool", true)
+  const completedRow = {
+    id: "msg_tool", type: "assistant", agent: "build", model,
+    time: { created: 1, completed: 5 }, content: [{
+      type: "tool", id: "tool", name: "read", time: { created: 2, ran: 3, completed: 4 },
+      state: { status: "completed", input: { path: "a" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+    }],
+  }
+  let reads = 0
+  ;(f.client as any).message.list = async () => { reads += 1; return { data: [completedRow], cursor: {} } }
+  const base = { assistantMessageID: "msg_tool", ordinal: 0 }
+  try {
+    f.dispatch("session.step.started", { ...base, agent: "build", model, started: 1 })
+    f.dispatch("session.tool.input.started", { ...base, id: "tool", name: "read" })
+    f.dispatch("session.tool.called", { ...base, id: "tool", input: { path: "a" }, executed: false })
+    // The next round's start behind the full window is the stranded tool's
+    // reconciliation trigger inside the queued replay.
+    f.dispatch("session.step.started", { assistantMessageID: "msg_next", agent: "build", model, started: 6 })
+    await finish(ctx, () => (f.data().session.message.get(sessionId, "msg_tool") as any)
+      ?.content.find((part: any) => part.type === "tool")?.state.status === "completed")
+    assert.ok(reads >= 1, "the replay's step-boundary reconciliation read ran")
+  } finally { f.cleanup() }
+})
+
+test("an active round's running tool does not reconcile at the replay boundary", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("replay-active-round", true)
+  let reads = 0
+  ;(f.client as any).message.list = async () => { reads += 1; return { data: [], cursor: {} } }
+  const base = { assistantMessageID: "msg_live", ordinal: 0 }
+  try {
+    f.dispatch("session.step.started", { ...base, agent: "build", model, started: 1 })
+    f.dispatch("session.tool.input.started", { ...base, id: "tool", name: "read" })
+    f.dispatch("session.tool.called", { ...base, id: "tool", input: { path: "a" }, executed: false })
+    // The burst drains inside one replay; at its task boundary the active
+    // round legitimately holds the running tool.
+    await finish(ctx, () => Boolean((f.data().session.message.get(sessionId, "msg_live") as any)
+      ?.content.some((part: any) => part.type === "tool" && part.state.status === "running")))
+    ctx.mock.timers.tick(0); await microtasks(); ctx.mock.timers.tick(0); await microtasks()
+    const tool = (f.data().session.message.get(sessionId, "msg_live") as any).content.find((part: any) => part.type === "tool")
+    assert.equal(tool.state.status, "running", "no reconciliation may fire for the active round")
+    assert.equal(reads, 0, "no reconciliation read may run for the active round")
+  } finally { f.cleanup() }
+})
+
 test("time budget wins before the count backstop; legacy callbacks remain ordered and distinct", async ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("replay-callbacks")

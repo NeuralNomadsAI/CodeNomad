@@ -3,17 +3,18 @@ import { test } from "node:test"
 import Fastify from "fastify"
 import { registerSessionHistoryRoutes } from "./session-history"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { brokerIdentities, brokerConnection } from "./rpc-broker-test-fixture"
 
 const page = { status: "page", scanned: 1, tools: 1, reasoning: 0, skipped: 0, hits: [], candidates: [], cursor: null,
   sessions: [{ sessionID: "s", directory: "/repo", scanned: 1, tools: 1, reasoning: 0, skipped: 0 }] }
-function fixture(options: { owned?: boolean; cursor?: string | null; output?: unknown } = {}) {
+function fixture(options: { owned?: boolean; cursor?: string | null; output?: unknown; carrier?: boolean } = {}) {
   const app = Fastify()
   const calls: any[] = []
   const ownershipChecks: string[] = []
   const fence = new WorktreeDeletionFence()
   registerSessionHistoryRoutes(app, { worktreeDeletionFence: fence, workspaceManager: {
     desktopPluginsReady: async () => {},
-    getServiceLocation: () => ({ directory: "/repo" }),
+    ...brokerIdentities(),
     getWorktrees: async () => ({ isGitRepo: true, worktrees: [
       { slug: "nested", directory: "/repo/.codenomad/worktrees/a", serviceDirectory: "/repo/.codenomad/worktrees/a", kind: "worktree" },
       { slug: "outside", directory: "/linked", serviceDirectory: "/linked", kind: "worktree" },
@@ -23,11 +24,13 @@ function fixture(options: { owned?: boolean; cursor?: string | null; output?: un
       return options.owned !== false && ["/repo", "/linked"].includes(location.directory)
     },
     getWorktreeIdentityForPath: async () => "/repo",
-    getSharedServiceClient: async () => ({
+    ...brokerConnection({
       session: { get: async () => ({ id: "s", location: { directory: "/repo" } }) },
       location: { get: async ({ location }: any) => location },
-      rpc: { call: async (input: unknown) => { calls.push(input); return { output: options.output ?? { ...page, cursor: options.cursor ?? null } } } },
-    }) as any,
+      rpc: Object.assign(() => ({ scheduleCarrierRead: async () => ({ owned: options.carrier === true }) }), {
+        call: async (input: unknown) => { calls.push(input); return { output: options.output ?? { ...page, cursor: options.cursor ?? null } } },
+      }),
+    } as any),
   } })
   return { app, calls, fence, ownershipChecks }
 }
@@ -68,7 +71,7 @@ test("a workspace page authorizes each distinct contributing location once, with
       const response = (await app.inject({ method: "POST", url: queryUrl, payload: {} })).json()
       assert.equal(response.scanned, 16)
     }
-    assert.deepEqual(ownershipChecks, ["/linked", "/repo", "/repo/independent-clone", "/linked", "/repo", "/repo/independent-clone"])
+    assert.deepEqual(ownershipChecks, Array(2).fill(["/linked", "/linked", "/linked", "/linked", "/repo", "/repo/independent-clone"]).flat())
   } finally { await app.close() }
 })
 test("history rejects foreign sessions, invented roots and changed-query cursor reuse", async () => {
@@ -102,5 +105,15 @@ test("batch pruning preserves deletion fences and validates per-message receipts
     assert.deepEqual(response.results, [{ messageID: "m", result: { status: "blocked", reason: "unavailable" } }])
     assert.equal(calls[0].method, "pruneBatch")
     assert.equal((await app.inject({ method: "POST", url, payload: { ...payload, candidates: Array(17).fill(payload.candidates[0]) } })).statusCode, 400)
+  } finally { await app.close() }
+})
+
+test("ordinary batch pruning refuses an unmarked carrier before the first native content write", async () => {
+  const { app, calls } = fixture({ carrier: true })
+  const payload = { sessionID: "s", candidates: [{ messageID: "m", revision: "a".repeat(64), toolCount: 1, reasoningCount: 0 }] }
+  try {
+    const response = (await app.inject({ method: "POST", url: "/api/workspaces/w/session-history/prune", payload })).json()
+    assert.deepEqual(response.results, [{ messageID: "m", result: { status: "blocked", reason: "unavailable" } }])
+    assert.equal(calls.length, 0)
   } finally { await app.close() }
 })

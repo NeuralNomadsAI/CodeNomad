@@ -3,10 +3,16 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import type { MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
 import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 import { captureMissionView } from "./mission-view-capture"
+import { listedMissions, panelMissions, routeMissionContent } from "./mission-content-fixture"
+import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
+import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
+import { readMissionContent } from "../../../server/src/missions/mission-content"
+import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
+import { contentDigest } from "../../../server/src/missions/content-digest"
 
 let browser: Browser, url: string
 before(async () => {
@@ -28,11 +34,14 @@ function snapshot() {
     artifact: { source: "x".repeat(19_000) + "RAW_TAIL" }, notificationStatus: "pending", delivery: "coordinator-notification" }
   const task: MissionTask = { id: "task", key: "work", title: "Retired review", brief: "Original brief", role: "specialist",
     status: "withdrawn", blockedBy: [], lateReports: [report], outstandingExecution: false, createdAt: 1, updatedAt: 2 }
+  // The mission's own reports hold every report, as the reducer keeps them.
   const mission: MissionMap = { version: 1, id: "mission", projectID: "project", projectCanonical: "/fixture", objective: "Original objective",
     summary: "Verified final outcome", template: "custom", coordinatorSessionId: "coordinator", status: "completed", actors: [],
-    tasks: [task], reports: [], frontier: [], claims: [], revision: 2, createdAt: 1, updatedAt: 2, history: [], historyTruncated: false }
+    tasks: [task], reports: [report], frontier: [], claims: [], revision: 2, createdAt: 1, updatedAt: 2, history: [], historyTruncated: false }
   return { available: true, projectID: "project", missions: [mission], generatedAt: 1 }
 }
+/** `value` as the list read returns it: its maps compact. */
+const listed = (value: ReturnType<typeof snapshot>) => ({ ...value, missions: panelMissions(value.missions) })
 
 test("direct result reading preserves retained late sources and hides technical artifacts by default", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } }), mutations: string[] = [], errors: string[] = []
@@ -40,9 +49,10 @@ test("direct result reading preserves retained late sources and hides technical 
   try {
     await page.route("**/api/**", route => {
       if (route.request().method() !== "GET") mutations.push(route.request().url())
-      return route.fulfill({ json: route.request().url().includes("/missions") ? snapshot()
+      return route.fulfill({ json: route.request().url().includes("/missions") ? listed(snapshot())
         : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     await page.evaluate(() => (window as any).resultReader.show("report", "late"))
@@ -78,8 +88,9 @@ test("direct result reading preserves retained late sources and hides technical 
 test("mission outcome precedes the original objective in the overview reader", async () => {
   const page = await browser.newPage()
   try {
-    await page.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/missions") ? snapshot()
+    await page.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/missions") ? listed(snapshot())
       : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} }))
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     await page.evaluate(() => (window as any).resultReader.show("overview"))
@@ -94,8 +105,9 @@ test("a historical non-late report is explicitly identified as a previous attemp
   const page = await browser.newPage(), value = snapshot()
   value.missions[0].tasks[0].lateReports![0].late = false
   try {
-    await page.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/missions") ? value
+    await page.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/missions") ? listed(value)
       : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} }))
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     await page.evaluate(() => (window as any).resultReader.show("report", "late"))
@@ -108,16 +120,26 @@ test("a historical non-late report is explicitly identified as a previous attemp
 
 test("a current one-line remote summary has no Page 1 of 11 illusion and aligns with reader prose", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } }), value = snapshot()
+  value.missions[0].reports[0].summary = "Exact current summary"
+  const source = { owner: "daily" as const, projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "mission", digest: "a".repeat(43) }
   try {
     await page.route("**/api/**", route => {
       const path = new URL(route.request().url()).pathname
-      if (path.endsWith("/schedule/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "schedule", passageID: "passage", mission: value.missions[0] } })
-      if (path.endsWith("/schedule/current/passage/content")) return route.fulfill({ json: {
-        version: 1, projectID: "project", missionID: "mission", scheduleID: "schedule", passageID: "passage", revision: 2, page: 0, pageCount: 1,
-        sourceText: new URL(route.request().url()).searchParams.get("section") === "summary" ? "Exact current summary" : "Exact section", markdownText: null,
-      } })
-      return route.fulfill({ json: path.endsWith("/missions") ? value : path.endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
+      if (path.endsWith("/schedule/current")) return route.fulfill({ json: { version: 1, ownerRevision: 1, projectID: "project", scheduleID: "schedule", passageID: "passage", source } })
+      if (path.endsWith("/schedule/current/passage/page")) {
+        const input = recurrenceCurrentPageInput.parse(route.request().postDataJSON()), selector = input.selector
+        assert.deepEqual(input.source, source)
+        if (selector.source === "summaries" || selector.source === "marks" || selector.source === "cleanups") throw Error("Unexpected project display read")
+        if (selector.source === "activity") return route.fulfill({ json: { available: false, reason: "observation-unavailable" } })
+        const damage = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
+        if (input.body) return route.fulfill({ json: missionPanelPage({ source: "mission", field: "body", projectID: "project", missionID: "mission", revision: 2,
+          ...damage, passage: source, window: { offset: 0, end: 1, total: 1, order: contentDigest(JSON.stringify(input.body)) } },
+        [{ available: true, ...readMissionContent("project", input.body, value.missions[0]) }], selector.cursor) })
+        return route.fulfill({ json: projectMissionPanel(value.missions[0], selector, damage, { passage: source }) })
+      }
+      return route.fulfill({ json: path.endsWith("/missions") ? listed(value) : path.endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     await page.evaluate(() => (window as any).resultReader.showCurrent())
@@ -134,6 +156,67 @@ test("a current one-line remote summary has no Page 1 of 11 illusion and aligns 
   } finally { await page.close() }
 })
 
+test("decision readers name who decided: the coordinator's own decision, never shown as the human's answer", async () => {
+  const page = await browser.newPage(), value = snapshot(), mutations: string[] = [], errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  const mission = value.missions[0], base = mission.tasks[0].lateReports![0]
+  mission.template = "wayfinder"
+  const decision = (key: string, artifact: MissionReport["artifact"]): MissionTask => ({ ...mission.tasks[0], id: key, key, title: `Decide ${key}`,
+    role: "decision", status: "completed", executionMode: { kind: "native", parentTaskKey: null }, lateReports: [],
+    report: { ...base, id: `report-${key}`, taskKey: key, late: false, delivery: "coordinator-readout", summary: `Settled ${key}`, artifact } })
+  mission.tasks = [
+    decision("seam", { kind: "decision", decidedBy: "coordinator", question: "Which seam?", decision: "Module seam",
+      rationale: "The repository already isolates modules.", reversal: "Swap the adapter in one file." }),
+    decision("store", { kind: "decision", decidedBy: "human", question: "Which store?", answer: "Journal", provenance: { kind: "coordinator-form-answer",
+      contract: { missionID: "mission", taskKey: "store", generation: 1 }, sessionID: "coordinator", formID: "frm_1", messageID: "msg_1", toolCallID: "call_1", fieldKey: "q0" } }),
+    // An unproven model-written claim gets no decision label at all.
+    decision("legacy", { kind: "decision", question: "Which format?", humanAnswer: true }),
+  ]
+  mission.reports = mission.tasks.map(task => task.report!)
+  try {
+    await page.route("**/api/**", route => {
+      if (route.request().method() !== "GET") mutations.push(route.request().url())
+      return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/missions") ? listed(value)
+        : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
+    })
+    await routeMissionContent(page, listedMissions)
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).resultReader))
+    const reader = page.locator(".mission-reader")
+    for (const [kind, id] of [["task", "seam"], ["report", "report-seam"]]) {
+      await page.evaluate(([kind, id]) => (window as any).resultReader.show(kind, id), [kind, id])
+      const label = reader.locator('[data-decided-by="coordinator"]')
+      await label.getByRole("heading", { name: en["missions.decision.coordinator"], exact: true }).waitFor()
+      await label.getByText(en["missions.decision.coordinator.detail"], { exact: true }).waitFor()
+      assert.equal(await reader.locator('[data-decided-by="human"]').count(), 0, "a coordinator decision is never presented as the human's")
+      assert.equal(await reader.getByRole("heading", { name: en["missions.decision.answer"], exact: true }).count(), 0)
+      for (const [heading, text] of [["question", "Which seam?"], ["decision", "Module seam"], ["rationale", "The repository already isolates modules."],
+        ["reversal", "Swap the adapter in one file."]]) {
+        const section = reader.locator("article").filter({ has: page.getByRole("heading", { name: en[`missions.decision.${heading}` as keyof typeof en], exact: true }) })
+        await section.getByText(text, { exact: true }).waitFor()
+      }
+      await captureMissionView(page, `decision-${kind}-desktop`)
+    }
+    await page.evaluate(() => (window as any).resultReader.show("task", "store"))
+    await reader.locator('[data-decided-by="human"]').getByRole("heading", { name: en["missions.decision.human"], exact: true }).waitFor()
+    await reader.getByText(en["missions.decision.human.detail"], { exact: true }).waitFor()
+    await reader.locator("article").filter({ has: page.getByRole("heading", { name: en["missions.decision.answer"], exact: true }) }).getByText("Journal", { exact: true }).waitFor()
+    assert.equal(await reader.locator('[data-decided-by="coordinator"]').count(), 0)
+    await page.evaluate(() => (window as any).resultReader.show("task", "legacy"))
+    await reader.getByText("Settled legacy", { exact: true }).waitFor()
+    assert.equal(await reader.locator("[data-decided-by]").count(), 0, "an unproven claim carries no decision label")
+    await page.evaluate(() => (window as any).resultReader.show("overview"))
+    await reader.getByText(en["missions.control.reports.title"], { exact: true }).click()
+    const rows = reader.locator(".mission-reader-links li")
+    await rows.filter({ hasText: "Decide seam" }).locator('[data-decided-by="coordinator"]').getByText(en["missions.decision.coordinator"], { exact: true }).waitFor()
+    await rows.filter({ hasText: "Decide store" }).locator('[data-decided-by="human"]').getByText(en["missions.decision.human"], { exact: true }).waitFor()
+    assert.equal(await rows.filter({ hasText: "Decide legacy" }).locator("[data-decided-by]").count(), 0)
+    await captureMissionView(page, "decision-reader-desktop")
+    assert.deepEqual(mutations, [], "reading a decision never mutates the mission")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("comparison task and direct readers show verdict, model names and bounded criterion scores", async () => {
   const page = await browser.newPage(), value = snapshot(), mutations: string[] = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -147,9 +230,10 @@ test("comparison task and direct readers show verdict, model names and bounded c
   try {
     await page.route("**/api/**", route => {
       if (route.request().method() !== "GET") mutations.push(route.request().url())
-      return route.fulfill({ json: route.request().url().endsWith("/missions") ? value
+      return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/missions") ? listed(value)
         : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     for (const [kind, id] of [["report", "late"], ["task", "task"]]) {

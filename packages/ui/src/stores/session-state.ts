@@ -1,4 +1,6 @@
 import { batch, createSignal } from "solid-js"
+import { beginGesture, type SurfaceGesture } from "./session-surface"
+import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
 import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
@@ -14,6 +16,7 @@ import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginat
 import { applySessionPendingState } from "./session-pending-state"
 import { cleanupBlankSession } from "./blank-session-cleanup"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
+import { flushTranscriptProjections } from "./opencode-projection-frame"
 import {
   resolveAuthoritativeGenerationRecovery,
   resolveHydratedGenerationRecovery,
@@ -22,6 +25,7 @@ import {
 import {
   buildSessionThreadsFromMap,
   collectVisibleSessionIds,
+  projectUnarchivedSessionThreads,
   getDescendantSessionsFromMap,
   getSessionAncestorIdsFromMap,
   getSessionRootFromMap,
@@ -31,6 +35,7 @@ import {
 export type { SessionThread } from "./session-tree"
 import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
 import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
+import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -60,9 +65,10 @@ export interface SessionInfo {
 }
 
 const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
-const [activeSessionId, setActiveSessionId] = createSignal<Map<string, string>>(new Map())
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
+// The Location authority key each instance's `agents` list was read for.
+const [agentCatalogLocations, setAgentCatalogLocations] = createSignal<Map<string, string>>(new Map())
 const [providers, setProviders] = createSignal<Map<string, Provider[]>>(new Map())
 const [sessionDraftPrompts, setSessionDraftPrompts] = createSignal<Map<string, string>>(new Map())
 const [authoritativeDraftKeys, setAuthoritativeDraftKeys] = createSignal<Set<string>>(new Set())
@@ -90,11 +96,6 @@ const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<str
 
 // Track expansion state for ANY session that has children (not just top-level parents)
 const [expandedSessions, setExpandedSessions] = createSignal<Map<string, Set<string>>>(new Map())
-// Rows opened only to reveal subsession activity: transient, never persisted,
-// and handed to the user as soon as they toggle the row themselves.
-const autoExpandedSessions = new Map<string, Set<string>>()
-// `${rowId}\0${descendantId}` pairs the user collapsed while that descendant ran.
-const dismissedActivityReveals = new Map<string, Set<string>>()
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
 
@@ -586,6 +587,8 @@ function reconcileSessionPendingState(
 }
 
 function markSessionIdleSeen(instanceId: string, sessionId: string): void {
+  const current = sessions().get(instanceId)?.get(sessionId)
+  if (!current || current.status !== "idle" || current.pendingPermission || current.pendingForm || current.retry) return
   withSession(instanceId, sessionId, (session) => {
     if (session.status !== "idle") return false
     if (typeof session.idleSince !== "number") return false
@@ -702,6 +705,9 @@ function writeSessionSelection(
   instanceId: string,
   sessionId: string | null,
 ): void {
+  // A coalesced transcript page admitted under the previous selection lands
+  // before the gates move; nothing pending may cross a selection change.
+  flushTranscriptProjections()
   setter((prev) => {
     const next = new Map(prev)
     if (sessionId) next.set(instanceId, sessionId)
@@ -724,21 +730,40 @@ function writeActiveParentSession(instanceId: string, parentSessionId: string | 
   writeSessionSelection(setActiveParentSessionId, instanceId, parentSessionId)
 }
 
-function setActiveSession(instanceId: string, sessionId: string): void {
+function setActiveSession(instanceId: string, sessionId: string, gesture?: SurfaceGesture): void {
+  if (gesture && !gesture.current()) return
   markSessionSelectionAuthoritative(instanceId)
   writeActiveSession(instanceId, sessionId)
 }
 
-function setActiveParentSession(instanceId: string, parentSessionId: string): void {
-  markSessionSelectionAuthoritative(instanceId)
-  writeActiveParentSession(instanceId, parentSessionId)
-  writeActiveSession(instanceId, parentSessionId)
+function setActiveParentSession(instanceId: string, parentSessionId: string, gesture?: SurfaceGesture): void {
+  if (gesture && !gesture.current()) return
+  batch(() => {
+    markSessionSelectionAuthoritative(instanceId)
+    writeActiveParentSession(instanceId, parentSessionId)
+    writeActiveSession(instanceId, parentSessionId)
+  })
 }
 
-function clearActiveParentSession(instanceId: string): void {
-  markSessionSelectionAuthoritative(instanceId)
-  writeActiveParentSession(instanceId, null)
-  writeActiveSession(instanceId, null)
+export function selectActiveSession(instanceId: string, sessionId: string, gesture = beginGesture({ instanceId, sessionId })): void {
+  setActiveSession(instanceId, sessionId, gesture)
+}
+
+export function selectActiveParentSession(instanceId: string, sessionId: string, gesture = beginGesture({ instanceId, sessionId })): void {
+  setActiveParentSession(instanceId, sessionId, gesture)
+}
+
+function clearActiveParentSession(instanceId: string, gesture?: SurfaceGesture): void {
+  if (gesture && !gesture.current()) return
+  batch(() => {
+    markSessionSelectionAuthoritative(instanceId)
+    writeActiveParentSession(instanceId, null)
+    writeActiveSession(instanceId, null)
+  })
+}
+
+export function clearSelectedSession(instanceId: string): void {
+  clearActiveParentSession(instanceId, beginGesture({ instanceId, sessionId: null }))
 }
 
 function clearActiveSession(instanceId: string): void {
@@ -750,11 +775,14 @@ function hydrateActiveSessionSelection(
   instanceId: string,
   parentSessionId: string | null,
   sessionId: string | null,
+  isCurrent: () => boolean = () => true,
 ): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
   batch(() => {
-    writeActiveParentSession(instanceId, parentSessionId)
-    writeActiveSession(instanceId, sessionId)
+    if (!isCurrent()) return
+    const selection = resolveRestoredSessionSelection(getSessions(instanceId), parentSessionId, sessionId)
+    writeActiveParentSession(instanceId, selection?.parentSessionId ?? null)
+    writeActiveSession(instanceId, sessionId === "info" && !parentSessionId ? "info" : selection?.activeSessionId ?? null)
   })
 }
 
@@ -763,8 +791,11 @@ function hydrateActiveSessionSelection(
 function seedRestoredSessionSelection(instanceId: string, parentSessionId: string | null, sessionId: string | null): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
   batch(() => {
-    writeActiveParentSession(instanceId, parentSessionId)
-    writeSessionSelection(setActiveSessionId, instanceId, sessionId)
+    const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
+    const parent = parentSessionId && !deleted.has(parentSessionId) ? parentSessionId : null
+    const active = parentSessionId && !parent || sessionId && deleted.has(sessionId) ? parent : sessionId
+    writeActiveParentSession(instanceId, parent)
+    writeSessionSelection(setActiveSessionId, instanceId, active)
   })
 }
 
@@ -785,8 +816,6 @@ function setSessionStatus(
   status: SessionStatus,
   options: { retry?: SessionRetryState | null; force?: boolean } = {},
 ): void {
-  let expandAncestors = false
-
   withSession(instanceId, sessionId, (session) => {
     const admissionPending = session.generationAdmissionToken !== undefined && status === "idle"
     const generationRecovery = admissionPending
@@ -815,13 +844,7 @@ function setSessionStatus(
     }
     session.idleSince = getIdleSinceForStatusTransition(previous, status, session.idleSince)
     session.retry = retry
-
-    if (session.parentId && status === "working" && previous !== "working") {
-      expandAncestors = true
-    }
   })
-
-  if (expandAncestors) revealWorkingSubsession(instanceId, sessionId)
 }
 
 function getActiveParentSession(instanceId: string): Session | null {
@@ -900,15 +923,6 @@ function isSessionExpanded(instanceId: string, sessionId: string): boolean {
 
 function setSessionExpanded(instanceId: string, sessionId: string, expanded: boolean): void {
   addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, sessionId))
-  autoExpandedSessions.get(instanceId)?.delete(sessionId)
-  if (!expanded) {
-    // Collapsing a busy branch dismisses it for the subsessions running now.
-    const dismissed = dismissedActivityReveals.get(instanceId) ?? new Set<string>()
-    for (const descendant of getDescendantSessions(instanceId, sessionId)) {
-      if (descendant.status === "working" || descendant.status === "compacting") dismissed.add(`${sessionId}\0${descendant.id}`)
-    }
-    if (dismissed.size) dismissedActivityReveals.set(instanceId, dismissed)
-  }
   setExpandedSessions((prev) => {
     const next = new Map(prev)
     const currentSet = next.get(instanceId) ?? new Set<string>()
@@ -931,8 +945,6 @@ function setSessionExpanded(instanceId: string, sessionId: string, expanded: boo
 function clearInstanceSessionExpansionState(instanceId: string): void {
   if (!instanceId) return
   const prefix = `${instanceId}:`
-  autoExpandedSessions.delete(instanceId)
-  dismissedActivityReveals.delete(instanceId)
   setExpandedSessions((prev) => {
     if (!prev.has(instanceId)) return prev
     const next = new Map(prev)
@@ -949,14 +961,10 @@ function hydrateSessionExpansion(instanceId: string, sessionIds: readonly string
   const authoritative = getAuthoritativeSessionExpansionIdsForInstance(instanceId)
   const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
   const restored = sessionIds.filter((id) => !authoritative.has(id) && !deleted.has(id))
-  // A reveal can race restore: restored rows are the user's own again, while
-  // reveals still pending stay open like other local changes.
-  const auto = autoExpandedSessions.get(instanceId)
-  for (const id of restored) auto?.delete(id)
   setExpandedSessions((prev) => {
     const current = prev.get(instanceId)
     const expanded = new Set(restored)
-    for (const id of current ?? []) if ((authoritative.has(id) || auto?.has(id)) && !deleted.has(id)) expanded.add(id)
+    for (const id of current ?? []) if (authoritative.has(id) && !deleted.has(id)) expanded.add(id)
     if (current?.size === expanded.size && [...expanded].every((id) => current.has(id))) return prev
     const next = new Map(prev)
     if (expanded.size) next.set(instanceId, expanded)
@@ -989,8 +997,6 @@ function ensureSessionAncestorsExpanded(instanceId: string, sessionId: string): 
   if (ancestorIds.length === 0) return
   for (const ancestorId of ancestorIds) {
     addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, ancestorId))
-    // An explicit reveal (selection, navigation) makes the path the user's own.
-    autoExpandedSessions.get(instanceId)?.delete(ancestorId)
   }
   setExpandedSessions((prev) => {
     const next = new Map(prev)
@@ -1004,26 +1010,20 @@ function ensureSessionAncestorsExpanded(instanceId: string, sessionId: string): 
 }
 
 /**
- * A subsession started working. Reveal it only inside the conversation this
- * instance is showing (the active session or its descendants); elsewhere the
- * collapsed ancestor shows a child-activity dot instead. Each project tab has
- * its own active session, so another tab of the same folder stays untouched.
+ * Reveal a descendant's path below the conversation this instance is showing.
+ * The list decides whether the visible row's activity transition warrants a reveal.
  */
-function revealWorkingSubsession(instanceId: string, sessionId: string): void {
+function revealSubsession(instanceId: string, sessionId: string): void {
   const active = activeSessionId().get(instanceId)
   if (!active) return
   const ancestors = getSessionAncestorIds(instanceId, sessionId)
   const start = ancestors.indexOf(active)
   if (start < 0) return
   const path = ancestors.slice(start)
-  const dismissed = dismissedActivityReveals.get(instanceId)
-  if (path.some((id) => dismissed?.has(`${id}\0${sessionId}`))) return
   const current = expandedSessions().get(instanceId)
   const missing = path.filter((id) => !current?.has(id))
   if (missing.length === 0) return
-  const auto = autoExpandedSessions.get(instanceId) ?? new Set<string>()
-  for (const id of missing) auto.add(id)
-  autoExpandedSessions.set(instanceId, auto)
+  for (const id of missing) addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, id))
   setExpandedSessions((prev) => {
     const next = new Map(prev)
     next.set(instanceId, new Set([...missing, ...(prev.get(instanceId) ?? [])]))
@@ -1031,30 +1031,34 @@ function revealWorkingSubsession(instanceId: string, sessionId: string): void {
   })
 }
 
-/** Expanded rows the user chose; automatic activity reveals are not restorable state. */
+/** All expanded rows are restorable, whether opened manually or by activity. */
 function getPersistentExpandedSessionIds(instanceId: string): string[] {
-  const auto = autoExpandedSessions.get(instanceId)
-  return [...(expandedSessions().get(instanceId) ?? [])].filter((id) => !auto?.has(id))
+  return [...(expandedSessions().get(instanceId) ?? [])]
 }
 
 function getVisibleSessionIds(instanceId: string): string[] {
-  const threads = getSessionThreads(instanceId)
+  const threads = projectUnarchivedSessionThreads(getSessionThreads(instanceId), activeSessionId().get(instanceId))
   if (threads.length === 0) return []
 
   const expanded = expandedSessions().get(instanceId)
   return collectVisibleSessionIds(threads, expanded)
 }
 
-function setActiveSessionFromList(instanceId: string, sessionId: string): void {
+function setActiveSessionFromList(instanceId: string, sessionId: string, gesture?: SurfaceGesture): void {
+  if (gesture && !gesture.current()) return
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) return
   const root = getSessionRoot(instanceId, sessionId) ?? session
   ensureSessionAncestorsExpanded(instanceId, sessionId)
-
   batch(() => {
-    setActiveParentSession(instanceId, root.id)
-    if (session.id !== root.id) setActiveSession(instanceId, session.id)
+    markSessionSelectionAuthoritative(instanceId)
+    writeActiveParentSession(instanceId, root.id)
+    writeActiveSession(instanceId, session.id)
   })
+}
+
+export function selectSessionFromList(instanceId: string, sessionId: string, gesture = beginGesture({ instanceId, sessionId })): void {
+  setActiveSessionFromList(instanceId, sessionId, gesture)
 }
 
 function isSessionMessagesLoading(instanceId: string, sessionId: string): boolean {
@@ -1265,6 +1269,8 @@ export {
   activeParentSessionId,
   agents,
   setAgents,
+  agentCatalogLocations,
+  setAgentCatalogLocations,
   providers,
   setProviders,
   loading,
@@ -1341,7 +1347,7 @@ export {
   ensureSessionExpanded,
   getSessionAncestorIds,
   ensureSessionAncestorsExpanded,
-  revealWorkingSubsession,
+  revealSubsession,
   getPersistentExpandedSessionIds,
   setActiveSessionFromList,
   isSessionMessagesLoading,

@@ -5,7 +5,7 @@ import type { ServiceConnection } from "../../workspaces/opencode-service"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { MissionControlError } from "../../missions/control-error"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
-import { holdMissionCreation, type MissionCreationOperation } from "./mission-creation-holds"
+import { holdMissionCreation, reconcileMissionCreationHold, type MissionCreationOperation } from "./mission-creation-holds"
 
 export type MissionCreationManager = Pick<WorkspaceManager, "get" | "ownsLocation" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath">
 
@@ -15,33 +15,36 @@ export type MissionCreationManager = Pick<WorkspaceManager, "get" | "ownsLocatio
 export async function admitMissionCreationLocations(manager: MissionCreationManager, fence: WorktreeDeletionFence,
   workspaceID: string, connection: ServiceConnection, locations: readonly LocationRef[], signal: AbortSignal,
   operation?: MissionCreationOperation) {
-  const resolve = async (location: LocationRef) => {
-    if (!manager.get(workspaceID) || !await manager.ownsLocation(workspaceID, location, connection.client, signal)) {
+  const resolve = async (location: LocationRef, activeSignal = signal) => {
+    if (!manager.get(workspaceID) || !await manager.ownsLocation(workspaceID, location, connection.client, { signal: activeSignal })) {
       throw new MissionControlError("Mission creation location is not owned", "foreign-session")
     }
     const directory = await manager.getServiceDirectoryForPath(workspaceID, location.directory)
     const identity = await manager.getWorktreeIdentityForPath(workspaceID, location.directory)
     if (!directory || !identity) throw new MissionControlError("Mission creation location is unavailable", "foreign-session")
-    signal.throwIfAborted(); connection.assertCurrent()
+    activeSignal.throwIfAborted(); connection.assertCurrent()
     return { location: { directory }, identity }
   }
-  const admitted = await Promise.all(locations.map(resolve))
+  const admitted = await Promise.all(locations.map(location => resolve(location)))
   const enter = () => fence.enter(admitted.map(item => item.identity))
-  const hold = operation ? holdMissionCreation(fence, { ...operation, connection,
-    locations: admitted.map(item => ({ directory: item.location.directory, identity: item.identity })) }, enter) : undefined
+  const binding = operation && { ...operation, connection,
+    locations: admitted.map(item => ({ directory: item.location.directory, identity: item.identity })) }
+  const hold = binding ? holdMissionCreation(fence, binding, enter) : undefined
   const release = operation ? hold && (() => hold.release()) : enter()
   if (!release) throw new MissionControlError("Worktree deletion is in progress", "worktree-deleting")
-  const assertCurrent = async () => {
-    const current = await Promise.all(locations.map(resolve))
+  const assertCurrent = async (activeSignal = signal) => {
+    const current = await Promise.all(locations.map(location => resolve(location, activeSignal)))
     if (current.some((item, index) => item.identity !== admitted[index].identity
       || !sameLocation(item.location, admitted[index].location))) {
       throw new MissionControlError("Mission creation location changed", "foreign-session")
     }
-    signal.throwIfAborted(); connection.assertCurrent()
+    activeSignal.throwIfAborted(); connection.assertCurrent()
   }
   try { await assertCurrent() }
   catch (error) { release(); throw error }
   return { release, assertCurrent, dispatched: () => hold?.dispatched(), settled: () => hold?.settled(),
+    assertReceiptCurrent: () => assertCurrent(AbortSignal.timeout(10_000)),
+    reconcile: () => { if (binding) reconcileMissionCreationHold(fence, binding)?.() },
     get uncertain() { return hold?.uncertain ?? false } }
 }
 
@@ -72,7 +75,7 @@ export async function prepareMissionRootCreationLocation(input: {
       ...locationRequestOptions(input.rootLocation), signal,
     })
     if (resolved.project.id !== input.projectID || !sameLocation(resolved, { directory })
-      || !await manager.ownsLocation(workspaceID, resolved, connection.client, signal)) {
+      || !await manager.ownsLocation(workspaceID, resolved, connection.client, { signal })) {
       throw new MissionControlError("Foreign effective mission root location", "foreign-session")
     }
     await assertCurrent()

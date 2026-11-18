@@ -173,3 +173,56 @@ test("installer invalidation after lease creation removes that lease before publ
   assert.deepEqual(await readdir(leases), [])
   await assert.rejects(readFile(entryFor(root, "automation")), { code: "ENOENT" })
 })
+
+test("Missions provider acquisition must finish on a current connection before publication", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provider-acquire-"))
+  const paused = gate(), resume = gate()
+  const lifecycle = new DesktopPluginLifecycle("missions", async () => bundle, async () => {
+    paused.release(); await resume.pending; return Buffer.from("provider")
+  })
+  t.after(async () => { resume.release(); await lifecycle.stop(); await rm(root, { recursive: true, force: true }) })
+  let current = true
+  const starting = lifecycle.prepare(pathsFor(root), () => { if (!current) throw new Error("stale provider") })
+  const refused = assert.rejects(starting, /no longer current|stale provider/)
+  await paused.pending
+  current = false
+  resume.release()
+  await refused
+  await assert.rejects(readFile(entryFor(root, "missions")), { code: "ENOENT" })
+  await assert.rejects(readdir(leasesFor(root, "missions")), { code: "ENOENT" })
+})
+
+test("a missing packaged provider fails Missions provisioning before installing its runtime", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provider-missing-"))
+  const lifecycle = new DesktopPluginLifecycle("missions", async () => bundle, async () => { throw new Error("provider missing") })
+  t.after(async () => { await lifecycle.stop(); await rm(root, { recursive: true, force: true }) })
+  await assert.rejects(lifecycle.start(pathsFor(root)), /provider missing/)
+  await assert.rejects(readFile(entryFor(root, "missions")), { code: "ENOENT" })
+  await assert.rejects(readdir(leasesFor(root, "missions")), { code: "ENOENT" })
+})
+
+test("standalone memory preparation shares transactional claims and releases leases on shutdown", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-memory-lifecycle-"))
+  const pruning = new DesktopPluginLifecycle("session-pruning", async () => bundle)
+  const memory = new DesktopPluginLifecycle("memory", async () => bundle)
+  const other = new DesktopPluginLifecycle("memory", async () => bundle)
+  t.after(async () => { await Promise.all([pruning.stop(), memory.stop(), other.stop()]); await rm(root, { recursive: true, force: true }) })
+  await prepareDesktopPluginPresence(pathsFor(root), () => {}, { pruning, memory })
+  await other.start(pathsFor(root))
+  assert.match(await readFile(entryFor(root, "memory"), "utf8"), /memory lifecycle v1/)
+  assert.equal((await readdir(leasesFor(root, "memory"))).length, 2)
+  await memory.stop()
+  assert.equal((await readdir(leasesFor(root, "memory"))).length, 1)
+  await other.stop()
+  assert.deepEqual(await readdir(leasesFor(root, "memory")), [])
+})
+
+test("failed memory acquisition relinquishes the new preceding feature claims", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-memory-claim-"))
+  const pruning = new DesktopPluginLifecycle("session-pruning", async () => bundle)
+  const memory = new DesktopPluginLifecycle("memory", async () => { throw new Error("memory bundle missing") })
+  t.after(async () => { await Promise.all([pruning.stop(), memory.stop()]); await rm(root, { recursive: true, force: true }) })
+  await assert.rejects(prepareDesktopPluginPresence(pathsFor(root), () => {}, { pruning, memory }), /memory bundle missing/)
+  assert.deepEqual(await readdir(leasesFor(root, "session-pruning")), [])
+  await assert.rejects(readFile(entryFor(root, "memory")), { code: "ENOENT" })
+})

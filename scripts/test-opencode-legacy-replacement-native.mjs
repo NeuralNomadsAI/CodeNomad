@@ -10,14 +10,14 @@ import os from "node:os"
 import path from "node:path"
 import { installSharedOpenCode, npmCommandDirectory, npmExecutable, resolveDefaultInstallation, sharedInstallationPlan } from "../packages/server/src/opencode-update/shared-installation.ts"
 import { legacyNativeImages, legacyNpmPackageRoot } from "../packages/server/src/opencode-update/legacy-installation.ts"
-import { bundledNpm } from "../packages/server/src/opencode-update/npm-runtime.ts"
+import { executeNpm } from "../packages/server/src/opencode-update/npm-runtime.ts"
+import { fixtureRuntime } from "./opencode-fixture-runtime.mjs"
 import { RECOMMENDED_OPENCODE_VERSION } from "../packages/server/src/opencode/runtime-support.ts"
 
 const LEGACY_VERSION = process.env.CODENOMAD_FIXTURE_LEGACY_VERSION || "1.18.10"
 const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-legacy-replacement-"))
-const node = process.env.CODENOMAD_FIXTURE_NODE || process.execPath
-const npm = bundledNpm(node)
-assert.ok(npm, "npm must be bundled beside the selected Node")
+const selected = await fixtureRuntime(root)
+const { node, npm } = selected
 const prefix = path.join(root, "npm prefix")
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   !/^(OPENCODE_|CODENOMAD_|CLI_|XDG_|npm_|PATH$|NODE_|ELECTRON_|WEBVIEW2_)/i.test(key)))
@@ -27,14 +27,18 @@ Object.assign(env, {
   XDG_CACHE_HOME: path.join(root, "cache"), npm_config_prefix: prefix, npm_config_cache: path.join(root, "npm-cache"),
   npm_config_userconfig: path.join(root, "npmrc"),
   // The user's PC: the npm prefix holding OpenCode 1.x is on PATH.
-  PATH: [npmCommandDirectory(prefix), path.dirname(node), ...(process.platform === "win32" ? [`${process.env.SystemRoot}/System32`] : ["/usr/bin", "/bin"])].join(path.delimiter),
+  ...selected.env, PATH: [npmCommandDirectory(prefix), selected.path].join(path.delimiter),
 })
 for (const key of ["APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) await mkdir(env[key], { recursive: true })
-const run = (args) => promisify(execFile)(node, [npm, ...args], { cwd: root, env, timeout: 300_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true })
+const run = (args) => executeNpm(node, [npm, ...args], env, process.platform, prefix, async (file, args, env, options) => {
+  await promisify(execFile)(file, args, { ...options, env, timeout: 300_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true })
+})
 const options = { home: root, env, node, npm, registerPath: async () => {} }
 const result = { root, legacyVersion: LEGACY_VERSION, target: RECOMMENDED_OPENCODE_VERSION }
 try {
-  await run(["install", "--global", "--prefix", prefix, "--no-audit", "--no-fund", "--registry", "https://registry.npmjs.org", `opencode-ai@${LEGACY_VERSION}`])
+  // A user's 1.x installation ran its postinstall: allow exactly it (npm 12+ blocks it).
+  await run(["install", "--global", "--prefix", prefix, "--no-audit", "--no-fund", "--registry", "https://registry.npmjs.org",
+    `--allow-scripts=opencode-ai@${LEGACY_VERSION}`, `opencode-ai@${LEGACY_VERSION}`])
   const plan = sharedInstallationPlan(options)
   assert.equal(plan.prefix, prefix)
   assert.equal(plan.legacy?.version, LEGACY_VERSION, "the published 1.x shim is recognized from its manifest and target")

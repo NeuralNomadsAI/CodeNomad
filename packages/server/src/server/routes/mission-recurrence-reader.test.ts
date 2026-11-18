@@ -176,7 +176,7 @@ test("sealed native archived reader preserves exact paged Markdown, report/evide
       assert.ok(page.sections.length <= 32)
       assert.equal(f.validateOutput(page), true)
       const output = JSON.stringify(page)
-      for (const secret of ["PRIVATE_STANDING_PROMPT", "private_model", "private_provider", "private_agent", "private_profile", "private_host", "ses_private_watch", "profiles", "publication", "consigne"]) assert.ok(!output.includes(secret), secret)
+      for (const secret of ["PRIVATE_STANDING_PROMPT", "private_model", "private_provider", "private_agent", "private_profile", "private_host", "ses_private_watch", '"profiles":', '"publication":', '"consigne":']) assert.ok(!output.includes(secret), secret)
     }
     if (section.text === f.finalSummary) {
       assert.equal(pages[0].sourceText.length, 8_999, "do not split an astral character at a page boundary")

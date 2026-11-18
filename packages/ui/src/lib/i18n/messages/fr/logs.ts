@@ -1,4 +1,10 @@
 export const logMessages = {
+  "settings.opencode.logs.title": "Journaux OpenCode",
+  "settings.opencode.logs.open": "Afficher les journaux OpenCode",
+  "settings.opencode.logs.info": "Journaux globaux sur l’hôte OpenCode sélectionné. Ils peuvent contenir des données privées.",
+  "settings.opencode.logs.failed": "Vérifiez l’exécutable et l’accès au fichier, puis actualisez.",
+  "settings.opencode.logs.empty": "Le journal est vide.",
+  "settings.opencode.logs.truncated": "Fin du journal affichée (128 Kio maximum).",
   "logsView.title": "Journaux du serveur",
   "logsView.actions.show": "Afficher les journaux du serveur",
   "logsView.actions.hide": "Masquer les journaux du serveur",

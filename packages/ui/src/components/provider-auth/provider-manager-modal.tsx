@@ -1,9 +1,10 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
-import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, X } from "lucide-solid"
+import { ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, X } from "lucide-solid"
 import type { ConnectionInfo, FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client"
 import { openExternalUrl } from "../../lib/external-url"
+import { copyToClipboard } from "../../lib/clipboard"
 import { useI18n } from "../../lib/i18n"
 import { serverEvents } from "../../lib/server-events"
 import { isLocalTauriHost } from "../../lib/runtime-env"
@@ -29,7 +30,7 @@ import {
   type ProviderVisibilityModel,
 } from "./provider-model-visibility-manager"
 
-type AuthStage = "idle" | "prompts" | "authorizing" | "code" | "waiting" | "success" | "error"
+type AuthStage = "idle" | "prompts" | "authorizing" | "code" | "waiting" | "error"
 
 type MethodOption = {
   value: string
@@ -197,7 +198,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   })
   const canSubmit = createMemo(() => {
     if (!activeProviderId()) return false
-    if (stage() === "authorizing" || stage() === "waiting" || stage() === "success") return false
+    if (stage() === "authorizing" || stage() === "waiting") return false
     const method = selectedMethod()
     if (method.type === "key" && apiKey().trim().length === 0) return false
     return (method.type === "command" ? [] : method.form ?? [])
@@ -260,14 +261,14 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   async function copyAuthorizationUrl(): Promise<void> {
     const url = authorization()?.url
-    if (!url || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    if (!url) {
       return
     }
 
     try {
-      await navigator.clipboard.writeText(url)
-      setAuthorizationLinkCopied(true)
-      setTimeout(() => setAuthorizationLinkCopied(false), 1500)
+      const copied = await copyToClipboard(url)
+      setAuthorizationLinkCopied(copied)
+      if (copied) setTimeout(() => setAuthorizationLinkCopied(false), 1500)
     } catch {
       setAuthorizationLinkCopied(false)
     }
@@ -815,7 +816,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                   <Show when={authorizationLaunchBlocked() && authorization()}>
                     <div class="settings-card-message" role="alert">{t("settings.providers.oauth.popupBlocked")}</div>
                   </Show>
-                  <Show when={stage() === "success"}><div class="providers-success-card" role="status"><Check class="providers-success-icon" /><span>{t("settings.providers.success")}</span></div></Show>
 
                   <div class="providers-actions-row">
                     <Show when={stage() === "code"} fallback={<button type="button" class="selector-button selector-button-primary" disabled={!canSubmit()} onClick={() => void submitAuth()}><Show when={stage() === "authorizing"} fallback={t("settings.providers.actions.continue")}><Loader2 class="providers-spin-icon" />{t("settings.providers.actions.working")}</Show></button>}>
@@ -850,7 +850,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                               }}
                             >{t("settings.providers.actions.manageModels")}</button>
                           </div>
-                          <Show when={client() && (provider().credentialIds.length > 0 || provider().source === "env")}>
+                          <Show when={client() && (provider().connections.length > 0 || provider().canConnect)}>
                             <ProviderAccounts instanceId={props.instanceId} integrationId={providerId} client={client()!}
                               initialConnections={provider().connections}
                               onAdd={provider().canConnect ? () => {

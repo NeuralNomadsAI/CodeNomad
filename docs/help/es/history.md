@@ -13,23 +13,19 @@ El historial almacenado, lo que muestra actualmente la transcripción y el conte
 
 Las páginas de conversación muestran **Esta página: … resultados · … mensajes examinados** al llegar los lotes. El proyecto muestra **Mejores resultados: …** y avisos compactos de búsqueda parcial o directorios excluidos. Si la búsqueda clasificada no está disponible en el entorno, usa **Toda la sesión**. Se indican los mensajes omitidos; inicia otra búsqueda para incluir mensajes nuevos.
 
-Abrir una búsqueda vacía no analiza el historial. Cambiar la consulta/el ámbito, cerrar la ventana o salir de la sesión cancela el trabajo de búsqueda obsoleto. Si falla una lectura, usa **Reintentar**; no envía un mensaje ni modifica el historial.
-
 La búsqueda empieza por hasta 16 384 mensajes guardados más recientes por ubicación. **Buscar más atrás** sustituye la lista por los mejores resultados de la siguiente ventana anterior. La nota indica el intervalo examinado, del más nuevo al más antiguo por ubicación del proyecto. La clasificación corresponde solo a esa ventana. Cambiar consulta, ámbito o contenido técnico, cerrar la búsqueda o salir de la sesión reinicia la ventana. Una búsqueda nueva incluye los mensajes nuevos.
 
-Si una ventana de búsqueda caduca o su historial cambia, **Iniciar búsqueda nueva** vuelve a los mensajes más recientes con la misma consulta y opciones. Un aviso explica la recuperación. Ante errores de lectura normales, **Reintentar** vuelve a leer la ventana actual.
+Si una ventana de búsqueda caduca o su historial cambia, **Iniciar búsqueda nueva** vuelve a los mensajes más recientes con la misma consulta y opciones.
 
 ## Abrir resultados y usar la línea de tiempo {#timeline-navigation}
 
 1. Elige un resultado de búsqueda de la sesión actual para saltar al pasaje que lo rodea.
 2. Elige un resultado de otra sesión para abrir una vista previa independiente de ese mensaje; usa **Abrir en la sesión** para ir a esa conversación en el resultado.
-3. En **Línea de tiempo de mensajes**, pasa el puntero o enfoca un marcador para ver un fragmento y selecciónalo para navegar: su bloque pasa arriba y el marcador sigue resaltado hasta que te desplaces; después, el resaltado sigue al bloque de la parte superior de la conversación. Usa los controles de primer/último mensaje para volver a los extremos del historial almacenado.
+3. En **Línea de tiempo de mensajes**, pasa el puntero o enfoca un marcador para ver un fragmento y selecciónalo para navegar: su bloque pasa arriba y el marcador sigue resaltado hasta que te desplaces; después, el resaltado sigue al bloque de la parte superior de la conversación. Usa las flechas de primer/último mensaje para volver a los extremos del historial almacenado. Flotan sobre la conversación; si activas **Colocar las flechas de primer/último mensaje bajo la cronología** en **General**, pasan a la esquina bajo la cronología, a la derecha de **Enviar mensaje**, y la flecha del extremo en el que estás aparece atenuada.
 
 La línea de tiempo representa la estructura completa de la sesión aunque la transcripción solo contenga un pasaje acotado. Los saltos cargan el destino en lugar de obtener todos los mensajes intermedios. Las vistas previas de resultados de otras sesiones no cargan toda su transcripción ni las seleccionan; solo **Abrir en la sesión** cambia de conversación.
 
 Los marcadores de herramientas siguen **Contenido de los mensajes**: un tipo de herramienta oculto allí no tiene marcador (ninguno con **Nada**), salvo una herramienta que espera un permiso. Un paso que solo ejecutó herramientas muestra únicamente sus marcadores de herramientas, sin un marcador de agente vacío.
-
-Mientras se carga un salto, el pasaje anterior permanece visible. Un salto más reciente o una interacción manual con la transcripción sustituye la navegación obsoleta; un salto fallido deja intacto el pasaje visible. Reintenta el destino en lugar de recargar todo el proyecto repetidamente. Leer el historial no cambia la selección de agente/modelo del editor de mensajes.
 
 La línea de tiempo se oculta cuando la conversación es demasiado estrecha (menos de 420 píxeles CSS); usa allí la búsqueda y los controles de la transcripción. Ese cambio adaptable no borra su preferencia de visibilidad guardada.
 
@@ -44,7 +40,7 @@ La línea de tiempo se oculta cuando la conversación es demasiado estrecha (men
 | Eliminar sesión | **Eliminar sesión** en la fila de la sesión, o eliminación de sesiones seleccionadas | Elimina recursivamente la conversación nativa y sus subsesiones/historial descendientes tras confirmar; no se puede deshacer |
 | Depurar sesiones | Paleta de comandos | Eliminación más amplia de sesiones, no un ajuste de visualización ni de tamaño del contexto |
 
-**Contenido de los mensajes** se aplica a todas las conversaciones. Elige un preajuste (**Nada**, **Mínimo**, **Equilibrado** o **Todo**) en su parte superior o en **Configuración → Chat** y después ajusta filas individuales; el menú de preajustes de **Contenido de los mensajes** muestra entonces **Personalizado**. Ocultar herramientas no las desactiva, no cambia permisos ni elimina la salida almacenada. Para mantener la fluidez de representación, los mensajes muy grandes muestran **Mostrar … más** en un hueco omitido, y los textos o salidas de herramientas muy largos se detienen en una línea **… caracteres más ocultos** con **Mostrar todo**, o **Mostrar … más** cuando queda mucho, lo que puede requerir varios pasos. Revelar cualquiera de ellos solo afecta a la visualización y no recupera contenido eliminado.
+**Contenido de los mensajes** se aplica a todas las conversaciones. Elige un preajuste (**Nada**, **Mínimo**, **Equilibrado** o **Todo**) en su parte superior o en **Configuración → Chat** y después ajusta filas individuales; el menú de preajustes de **Contenido de los mensajes** muestra entonces **Personalizado**. Ocultar herramientas no las desactiva, no cambia permisos ni elimina la salida almacenada. Para mantener la fluidez de representación, los mensajes muy grandes muestran **Mostrar … más** en un hueco omitido, y los textos o salidas de herramientas muy largos se detienen en una línea **… caracteres más ocultos** con **Mostrar todo**, o **Mostrar … más** cuando queda mucho, lo que puede requerir varios pasos. Revelar cualquiera de ellos solo afecta a la visualización y no recupera contenido eliminado. Arrastra sobre sus botones de ojo o de flecha para ajustar varias filas a la vez: el primer botón del que sales cambia, y cada botón que cruzas en la misma columna toma su nuevo estado. La conversación se actualiza al soltar el botón.
 
 ## Compactar una sesión {#compact-session}
 
@@ -63,8 +59,6 @@ La compactación cambia el contexto que OpenCode usa para continuar la sesión. 
 Solo se eliminan herramientas y razonamientos completados aptos. No se depura contenido activo/incompleto, ni un mensaje de más de 16 MB tal como lo lee OpenCode (archivos adjuntos incluidos), que cuenta como contenido omitido; el contenido cambiado se rechaza en lugar de ampliar silenciosamente lo que confirmaste. El texto final y los metadatos de mensajes/sesión permanecen, pero la salida técnica eliminada no se puede recuperar. Conserva lo que necesites antes de confirmar.
 
 La limpieza de una sesión no es atómica para toda ella. Las eliminaciones anteriores correctas permanecen si un mensaje posterior entra en conflicto o falla. **La cancelación detiene los lotes futuros; no revierte un lote ya enviado**, que aún puede confirmarse.
-
-Ante un error de almacenamiento ocupado, espera a que terminen la ejecución y el trabajo de almacenamiento actuales. Ante un error de mensaje cambiado, recarga y selecciona de nuevo. Si un plugin no está disponible, reconecta/vuelve a abrir CodeNomad e inspecciona el error antes de reintentar. Tras una respuesta incierta, actualiza y evalúa el contenido restante; no supongas que no ocurrió nada ni que se limpió toda la sesión.
 
 ## Eliminar y depurar sesiones {#delete-scrub}
 

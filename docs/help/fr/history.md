@@ -13,23 +13,19 @@ L’historique enregistré, ce que la transcription affiche actuellement et le c
 
 Les pages de conversation affichent **Cette page : … résultats · … messages parcourus** à mesure que les lots arrivent. Le projet affiche **Meilleurs résultats : …** et des avis compacts pour les analyses partielles ou les dossiers exclus. Si le classement est indisponible dans cet environnement, utilisez **Session entière**. Les messages ignorés sont signalés ; relancez la recherche pour inclure les nouveaux messages.
 
-Ouvrir une recherche vide ne parcourt pas l’historique. Changer la requête/la portée, fermer la fenêtre ou quitter la session annule le travail de recherche obsolète. Si une lecture échoue, utilisez **Réessayer** ; cela n’envoie pas de prompt et ne modifie pas l’historique.
-
 L’analyse commence par les 16 384 messages enregistrés les plus récents au maximum par emplacement. **Chercher plus loin dans le passé** remplace la liste par les meilleurs résultats de la fenêtre précédente. La note indique la plage examinée, du plus récent au plus ancien dans chaque emplacement du projet. Le classement porte uniquement sur cette fenêtre. Modifier la requête, la portée ou l’option de contenu technique, fermer la recherche ou quitter la session réinitialise la fenêtre. Une nouvelle recherche inclut les nouveaux messages.
 
-Si une fenêtre de recherche expire ou si son historique change, **Relancer la recherche** repart des messages les plus récents avec la même requête et les mêmes options. Une note explique cette reprise. Pour un échec de lecture ordinaire, **Réessayer** relance la fenêtre actuelle.
+Si une fenêtre de recherche expire ou si son historique change, **Relancer la recherche** repart des messages les plus récents avec la même requête et les mêmes options.
 
 ## Ouvrir les résultats et utiliser la chronologie {#timeline-navigation}
 
 1. Choisissez un résultat de la session actuelle pour atteindre le passage qui l’entoure.
 2. Choisissez un résultat d’une autre session pour ouvrir un aperçu distinct de ce message ; utilisez **Ouvrir dans la session** pour aller à cette conversation, à l’emplacement du résultat.
-3. Dans **Chronologie des messages**, survolez ou focalisez un marqueur pour un extrait, puis sélectionnez-le pour naviguer : son bloc passe en haut et le marqueur reste en surbrillance jusqu’à ce que vous fassiez défiler, après quoi la surbrillance suit le bloc en haut de la conversation. Utilisez les commandes premier/dernier message pour revenir aux extrémités de l’historique enregistré.
+3. Dans **Chronologie des messages**, survolez ou focalisez un marqueur pour un extrait, puis sélectionnez-le pour naviguer : son bloc passe en haut et le marqueur reste en surbrillance jusqu’à ce que vous fassiez défiler, après quoi la surbrillance suit le bloc en haut de la conversation. Utilisez les flèches premier/dernier message pour revenir aux extrémités de l’historique enregistré. Elles flottent sur la conversation ; si **Placer les flèches premier/dernier message sous la chronologie** est activé dans **Général**, elles se placent dans l’angle sous la chronologie, à droite de **Envoyer le message**, et la flèche de l’extrémité où vous vous trouvez est estompée.
 
 La chronologie représente toute la structure de session même si la transcription ne contient qu’un passage borné. Les sauts chargent la destination sans récupérer tous les messages intermédiaires. Les aperçus de résultats d’autres sessions ne chargent pas leur transcription entière et ne les sélectionnent pas ; seul **Ouvrir dans la session** change de conversation.
 
 Les marqueurs d’outils suivent **Contenu des messages** : un type d’outil masqué là n’a pas de marqueur (aucun avec **Rien**), sauf un outil en attente d’une autorisation. Une étape qui n’a exécuté que des outils n’affiche que ses marqueurs d’outils, sans marqueur d’agent vide.
-
-Pendant un saut, l’ancien passage reste visible. Un saut plus récent ou une interaction manuelle avec la transcription remplace la navigation obsolète ; un saut échoué laisse le passage visible intact. Réessayez la destination plutôt que de recharger sans cesse tout le projet. La lecture historique ne modifie pas la sélection agent/modèle de la zone de saisie.
 
 La chronologie est masquée si la conversation est trop étroite (moins de 420 pixels CSS) ; utilisez alors la recherche et les commandes de transcription. Sa préférence de visibilité enregistrée n’est pas effacée par cette adaptation.
 
@@ -44,7 +40,7 @@ La chronologie est masquée si la conversation est trop étroite (moins de 420 p
 | Supprimer une session | Ligne de session **Supprimer la session**, ou suppression des sessions sélectionnées | Supprime récursivement la conversation native, ses sous-sessions descendantes et leur historique après confirmation ; aucune annulation |
 | Nettoyer les sessions | Palette de commandes | Suppression plus large de sessions, pas un réglage d’affichage ou de taille du contexte |
 
-**Contenu des messages** s’applique à toutes les conversations. Choisissez un préréglage (**Rien**, **Minimal**, **Équilibré** ou **Tout**) en haut de cette fenêtre ou dans **Paramètres → Chat**, puis ajustez les lignes individuelles ; le menu de préréglage de **Contenu des messages** affiche alors **Personnalisé**. Masquer les outils ne désactive pas les outils, ne change pas les autorisations et ne retire pas les sorties enregistrées. Pour préserver la fluidité de l’affichage, les messages très volumineux affichent **Afficher … de plus** dans un intervalle omis, et les textes ou sorties d’outils très longs s’arrêtent à une ligne **… caractères de plus masqués** avec **Tout afficher**, ou **Afficher … de plus** lorsqu’il en reste beaucoup, ce qui peut demander plusieurs étapes. Révéler l’un ou l’autre ne concerne que l’affichage et ne récupère pas du contenu supprimé.
+**Contenu des messages** s’applique à toutes les conversations. Choisissez un préréglage (**Rien**, **Minimal**, **Équilibré** ou **Tout**) en haut de cette fenêtre ou dans **Paramètres → Chat**, puis ajustez les lignes individuelles ; le menu de préréglage de **Contenu des messages** affiche alors **Personnalisé**. Masquer les outils ne désactive pas les outils, ne change pas les autorisations et ne retire pas les sorties enregistrées. Pour préserver la fluidité de l’affichage, les messages très volumineux affichent **Afficher … de plus** dans un intervalle omis, et les textes ou sorties d’outils très longs s’arrêtent à une ligne **… caractères de plus masqués** avec **Tout afficher**, ou **Afficher … de plus** lorsqu’il en reste beaucoup, ce qui peut demander plusieurs étapes. Révéler l’un ou l’autre ne concerne que l’affichage et ne récupère pas du contenu supprimé. Faites glisser le pointeur sur ses boutons œil ou chevron pour régler plusieurs lignes d'un coup : le premier bouton que vous quittez bascule, et chaque bouton survolé dans la même colonne prend son nouvel état. La conversation se met à jour quand vous relâchez le bouton.
 
 ## Compacter une session {#compact-session}
 
@@ -63,8 +59,6 @@ Le compactage change le contexte utilisé par OpenCode pour poursuivre la sessio
 Seuls les outils et raisonnements terminés admissibles sont retirés. Le contenu actif/incomplet n’est pas élagué, pas plus qu’un message de plus de 16 Mo tel qu’OpenCode le lit (fichiers joints compris), qui compte comme contenu ignoré ; un contenu modifié est refusé plutôt que d’élargir silencieusement votre confirmation. Le texte final et les métadonnées de message/session restent, mais les sorties techniques supprimées ne sont pas récupérables. Préservez ce dont vous avez besoin avant de confirmer.
 
 Le nettoyage n’est pas atomique sur toute la session. Les suppressions antérieures réussies restent si un message ultérieur entre en conflit ou échoue. **L’annulation arrête les lots futurs ; elle n’annule pas un lot déjà envoyé**, qui peut encore être appliqué.
-
-Pour une erreur de stockage occupé, attendez la fin de l’exécution/du travail de stockage actuel. Pour un message modifié, rechargez et sélectionnez à nouveau. Pour un plugin indisponible, reconnectez/rouvrez CodeNomad et inspectez l’erreur avant de réessayer. Après une réponse incertaine, actualisez et évaluez le contenu restant ; ne supposez ni que rien ne s’est passé ni que toute la session a été nettoyée.
 
 ## Supprimer et nettoyer les sessions {#delete-scrub}
 

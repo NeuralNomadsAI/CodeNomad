@@ -1,0 +1,14 @@
+/* The on-demand "i" popover (components/info-popover-button.tsx). */
+.info-popover-content {
+  max-width: min(20rem, calc(100vw - 24px));
+}
+
+.info-popover-text {
+  display: grid;
+  gap: var(--space-xs);
+  overflow-wrap: anywhere;
+}
+
+.info-popover-text p {
+  margin: 0;
+}

@@ -6,7 +6,7 @@
 2. Setzen Sie **Update-Kanal** auf **Stabile Releases** oder **Vorschau- und stabile Releases**.
 3. Aktualisieren/prüfen Sie auf Updates und lesen Sie das angebotene Release vor Annahme einer Installation.
 
-Der Kanal wird in CodeNomads Serverkonfiguration gespeichert und ändert nur angebotene Releases. Er ändert weder Desktop-Datenprofile, Entwürfe, Fenster, OpenCode-Sitzungen noch Dienstkonfiguration. Ohne explizite Auswahl verwenden als Vorschau gekennzeichnete Builds standardmäßig Vorschauen, andere Builds stabile Releases.
+Der Kanal ändert nur die angebotenen Releases. Desktop-Datenprofile, Entwürfe, Fenster, OpenCode-Sitzungen und Dienstkonfiguration bleiben unverändert. Ohne explizite Auswahl verwenden als Vorschau gekennzeichnete Builds standardmäßig Vorschauen, andere Builds stabile Releases.
 
 Stabil wählt das neueste endgültige Release. Vorschau folgt der Veröffentlichungsreihenfolge, da Entwicklungs-Builds eine Basisversionsnummer teilen können; vergleichen Sie nicht nur numerische Versionen. Ein Vorschau-Release wird erst angeboten, wenn alle seine Builds veröffentlicht sind. Vorschaupakete sind für Nutzer gedacht, die Vorabverhalten testen möchten; lesen Sie Release-Hinweise und schützen Sie wichtige Entwürfe vor Neustarts.
 
@@ -26,15 +26,15 @@ Stabil wählt das neueste endgültige Release. Vorschau folgt der Veröffentlich
 
 In Tauri-Anwendungsfenstern und nativen **Einstellungen**-Fenstern zeigt die Updates-Karte **Update installieren**, wenn ein Release angeboten wird. Sie prüft den ausgewählten Kanal und bietet **Installieren und neu starten** an, wenn ein In-App-Update verfügbar ist; andernfalls öffnet sie die auf der Karte angezeigte Release-Seite. Electron-, Web- und Remote-Fenster zeigen stattdessen den Link **Update herunterladen**, ohne native Updater-Prüfung.
 
-Das Tauri-Menü **Hilfe → Nach Updates suchen…** führt den Update-Ablauf im fokussierten Anwendungsfenster aus. Aus den Einstellungen oder einem Remote-Fenster bringt es das zuletzt verwendete Anwendungsfenster in den Vordergrund, um die Prüfung auszuführen; es installiert nicht über das Remote-Fenster. Wenn kein Anwendungsfenster die Aktion empfangen kann, auch wenn das Zielfenster eine Lade-, Anmelde- oder Kopplungsseite zeigt, öffnet das Menü stattdessen die Release-Seite.
+Das Tauri-Menü **Hilfe → Nach Updates suchen…** führt den Update-Ablauf im fokussierten Anwendungsfenster aus. Aus den Einstellungen oder einem Remote-Fenster bringt es das zuletzt verwendete Anwendungsfenster in den Vordergrund, um die Prüfung auszuführen; es installiert nicht über das Remote-Fenster.
 
-Tauri installiert nur Releases mit veröffentlichtem Update-Manifest für gewählten Kanal/Ziel. Kann ein angekündigtes Release noch nicht installiert werden, öffnet die Benachrichtigung stattdessen dessen Release-Seite. Vor Installation ist native Signaturprüfung erforderlich. Updater-Signaturen unterscheiden sich von OS-Notarisierung/Code-Signaturzusicherungen.
+Vor Installation ist native Signaturprüfung erforderlich. Updater-Signaturen unterscheiden sich von OS-Notarisierung/Code-Signaturzusicherungen.
 
 Installation sichert den Zustand aller Anwendungsfenster und stoppt das zugehörige CodeNomad-Backend vor Ersetzen/Neustart der App. Der unabhängig verwaltete OpenCode-Daemon gehört nicht zu diesem Herunterfahren. CodeNomad zu schließen entfernt dennoch Backend-abhängige Funktionen bis zur Rückkehr; schließen Sie aus einer weiterlaufenden OpenCode-Sitzung nicht auf ununterbrochene UI-Dienste.
 
-Ist eine Prüfung beschäftigt, warten Sie den Vorgang des anderen Fensters ab. Lesen Sie bei Download-, Validierungs- oder Herunterfahrfehlern den Fehler und prüfen Sie neu; eine alte Benachrichtigung erlaubt keine Neuinstallation veralteter Bytes. Eine fehlgeschlagene Installation kann Backend und Fenster wiederherstellen und wiederholt die Installation nicht automatisch. Ist native Installation nicht verfügbar, nutzen Sie die Release-Seite für das passende Paket; siehe [Installation](install.md).
-
 ## Eigenständigen Server aktualisieren {#standalone-update}
+
+Die Oberfläche 1.1 benötigt für ihre Missions-APIs einen CodeNomad-Server ab **1.1.0**. Server der Reihe 1.0.x behalten ihre zwischengespeicherte oder mitgelieferte Oberfläche, statt die inkompatible Oberfläche herunterzuladen.
 
 1. Ermitteln Sie, wie CodeNomad gestartet wurde, und sichern Sie Backend-abhängige Arbeit.
 2. Stoppen Sie diesen CodeNomad-Serverprozess über dessen normale Prozess-/Dienststeuerung.
@@ -54,6 +54,6 @@ Ein bereits laufender Prozess übernimmt neuen Code nicht allein durch npm-Insta
 
 CodeNomad zu aktualisieren aktualisiert nicht die ausgewählte OpenCode-CLI. Diese CLI zu aktualisieren startet nicht den laufenden gemeinsamen Daemon neu. Native Konfiguration neu zu laden ist ein weiterer expliziter Vorgang mit eigenen Auswirkungen auf geladene Locations und Anfragen.
 
-Desktop-Node-/npm-Ressourcen werden mit der Anwendung ausgeliefert; ein Anwendungsrelease liefert ihre Updates. Dies ersetzt weder System-Node/npm, Electrons interne Laufzeit, Plattform-Webview noch den unabhängig verwalteten OpenCode-Dienst.
+Desktop-Laufzeiten werden mit der Anwendung aktualisiert: Electron nutzt sein integriertes Node, Tauri bündelt Node, und beide enthalten npm. System-Node/npm, Plattform-Webview und OpenCode-Dienst werden unabhängig verwaltet.
 
 Verwenden Sie **Einstellungen → OpenCode** für Laufzeitauswahl, Installation/Update und explizite Dienststeuerung. Prüfen Sie vor Neustart/Neuladen die [OpenCode-Einrichtung](opencode.md), besonders bei geteiltem Daemon mit anderen Fenstern/Nutzern oder Missionen. Wiederholen Sie niemals einen ungewissen Prompt/eine Änderung allein wegen abgeschlossenem Update/Wiederverbinden.

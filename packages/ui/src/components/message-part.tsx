@@ -4,7 +4,12 @@ import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { partHasRenderableText, TextPart, ClientPart } from "../types/message"
 import { useI18n } from "../lib/i18n"
-import { splitPromptDisplaySections, type PromptDisplayMetadata } from "../lib/prompt-display-metadata"
+import {
+  formatFencedCode,
+  splitPromptDisplaySections,
+  type PromptDisplayCodeFence,
+  type PromptDisplayMetadata,
+} from "../lib/prompt-display-metadata"
 import { copyToClipboard } from "../lib/clipboard"
 import { getPastedTextLineCount } from "../lib/pasted-text-display"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
@@ -118,10 +123,15 @@ export default function MessagePart(props: MessagePartProps) {
     }
   }
 
-  function PastedTextDisclosure(disclosureProps: { text: string; index: number }) {
+  function PastedTextDisclosure(disclosureProps: { text: string; codeFence?: PromptDisplayCodeFence; index: number }) {
     const [hasExpanded, setHasExpanded] = createSignal(false)
     const [copied, setCopied] = createSignal(false)
     const lineCount = () => getPastedTextLineCount(disclosureProps.text)
+    // Fenced code is bounded as code; only the displayed window gets its fence.
+    const formatText = () => {
+      const codeFence = disclosureProps.codeFence
+      return codeFence ? (window: string) => formatFencedCode(codeFence, window) : undefined
+    }
     const lineCountLabel = () =>
       lineCount() === 1
         ? t("messagePart.pastedText.lines.one", { count: String(lineCount()) })
@@ -177,6 +187,7 @@ export default function MessagePart(props: MessagePartProps) {
               size="base"
               escapeRawHtml
               literalRawHtml={props.messageType === "user"}
+              formatText={formatText()}
               revealTarget={revealTarget(`pasted:${disclosureProps.index}`)}
               onRendered={props.onRendered}
             />
@@ -224,7 +235,7 @@ export default function MessagePart(props: MessagePartProps) {
                   <For each={segments().filter((segment) => segment.text.length > 0)}>
                     {(segment, index) =>
                       segment.kind === "pasted" ? (
-                        <PastedTextDisclosure text={segment.text} index={index()} />
+                        <PastedTextDisclosure text={segment.text} codeFence={segment.codeFence} index={index()} />
                       ) : (
                         <Markdown
                           part={createSegmentTextPart(segment.text, index())}

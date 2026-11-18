@@ -120,6 +120,27 @@ it("awaits login results for valid credentials, rejects wrong usernames and auth
   }
 })
 
+it("logout revokes only that token; a committed password change revokes every user session", async () => {
+  const f = await fixture()
+  try {
+    const cookie = () => `${f.manager.getCookieName()}=${f.manager.createSession(username).id}`
+    const first = cookie(), second = cookie()
+    const status = (cookie: string) => f.app.inject({ url: "/api/auth/status", headers: { cookie } })
+    assert.equal((await status(first)).json().authenticated, true)
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/auth/logout", headers: { cookie: first } })).statusCode, 200)
+    assert.equal((await status(first)).json().authenticated, false)
+    assert.equal((await status(second)).json().authenticated, true)
+    const third = cookie()
+    const changed = await f.app.inject({ method: "POST", url: "/api/auth/password", headers: { cookie: second }, payload: { password: "replacement-password" } })
+    assert.equal(changed.statusCode, 200)
+    assert.match(String(changed.headers["set-cookie"]), /Max-Age=0/)
+    for (const value of [first, second, third]) assert.equal((await status(value)).json().authenticated, false)
+    const login = await f.app.inject({ method: "POST", url: "/api/auth/login", payload: { username, password: "replacement-password" } })
+    assert.equal(login.statusCode, 200)
+    assert.equal((await status(String(login.headers["set-cookie"]))).json().authenticated, true)
+  } finally { await f.close() }
+})
+
 it("rejects a pending login verified against a password replaced before verification returns", async (t) => {
   const f = await fixture()
   let release: (() => void) | undefined
@@ -187,6 +208,8 @@ it("preserves unauthenticated, runtime-override and disabled-auth password error
         assert.equal(response.statusCode, 409)
         assert.match(response.body, options.password ? /provided via CLI\/env/ : /authentication is disabled/)
         assert.match(String(response.headers["content-type"]), /^text\/plain/)
+        const status = await f.app.inject({ url: "/api/auth/status", headers: { cookie: `${f.manager.getCookieName()}=${session.id}` } })
+        assert.equal(status.json().authenticated, true, "a failed password change must preserve the current session")
       }
       if (options.password) assert.equal(await f.manager.validateLogin(username, password), true)
       if (options.dangerouslySkipAuth) assert.equal(await f.manager.validateLogin("any", "anything"), true)

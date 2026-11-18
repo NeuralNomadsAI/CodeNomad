@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { once } from "node:events"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -42,7 +42,7 @@ interface Child {
 function child(directory: string, start: string, mode = ""): Child {
   const process = spawn(globalThis.process.execPath, [
     "--import", "tsx", fileURLToPath(new URL("./client-state-cross-host-child.ts", import.meta.url)), directory, start, "", mode,
-  ]) as ChildProcessWithoutNullStreams
+  ], { windowsHide: true }) as ChildProcessWithoutNullStreams
   process.stdout.setEncoding("utf8"); process.stderr.setEncoding("utf8")
   const result = new Promise<boolean>((resolve, reject) => {
     let output = "", errors = ""
@@ -66,6 +66,59 @@ async function stop(...children: Child[]): Promise<void> {
 
 async function waitForExit(child: Child): Promise<void> {
   if (child.process.exitCode === null && child.process.signalCode === null) await once(child.process, "exit")
+}
+
+for (const scenario of ["result", "exception"] as const) {
+  test(`Windows child preserves the original identity probe ${scenario} without another lookup`, (t) => {
+    const directory = temp(t), start = join(directory, "start"), callsFile = join(directory, "calls.json")
+    writeFileSync(start, "")
+    const preload = `
+      import childProcess from "node:child_process";
+      import { syncBuiltinESMExports } from "node:module";
+      import { writeFileSync } from "node:fs";
+      Object.defineProperty(process, "platform", { value: "win32" });
+      let now = 0;
+      Object.defineProperty(performance, "now", { value: () => now });
+      const calls = [];
+      const original = childProcess.spawnSync;
+      childProcess.spawnSync = (command, args, options) => {
+        if (command !== "powershell.exe" || !args?.some(arg => arg.includes("Get-Process"))) return original(command, args, options);
+        calls.push(options.timeout);
+        now += 100;
+        options.env = { FIXTURE_TOKEN: "must-not-be-in-diagnostics" };
+        const failed = ${JSON.stringify(scenario)} === "result" ? calls.length <= 2 : calls.length === 1;
+        const error = Object.assign(new Error("unavailable".repeat(120)), { code: "EFIXTURE" });
+        if (failed && ${JSON.stringify(scenario)} === "exception") throw error;
+        return { pid: 1, status: failed ? null : 0, signal: failed ? "SIGTERM" : null,
+          error: failed ? error : undefined, stdout: failed ? "o".repeat(1200) : "later-success\\r\\n", stderr: failed ? "e".repeat(1200) : "" };
+      };
+      syncBuiltinESMExports();
+      process.once("exit", () => writeFileSync(${JSON.stringify(callsFile)}, JSON.stringify(calls)));
+    `
+    const result = spawnSync(process.execPath, [
+      "--import", "tsx", "--import", `data:text/javascript,${encodeURIComponent(preload)}`,
+      fileURLToPath(new URL("./client-state-cross-host-child.ts", import.meta.url)),
+      directory, start, "", scenario === "exception" ? "full" : "", join(directory, "user-data"),
+    ], { encoding: "utf8", windowsHide: true })
+    assert.ifError(result.error)
+    assert.equal(result.status, 0, result.stderr)
+    const response = JSON.parse(result.stdout)
+    assert.equal(response.acquired, false)
+    assert.deepEqual(JSON.parse(readFileSync(callsFile, "utf8")), scenario === "result" ? [10_000, 9_900] : [10_000], JSON.stringify(response))
+    assert.equal(response.diagnostics.length, scenario === "result" ? 2 : 1)
+    for (const attempt of response.diagnostics) {
+      assert.equal(attempt.status, null)
+      assert.equal(attempt.signal, scenario === "result" ? "SIGTERM" : null)
+      assert.equal(attempt.error.code, "EFIXTURE")
+      assert.equal(attempt.error.message, "unavailable".repeat(120).slice(0, 1000))
+      assert.equal(attempt.elapsedMs, 100)
+      assert.equal(attempt.stdout, scenario === "result" ? "o".repeat(1000) : "")
+      assert.equal(attempt.stderr, scenario === "result" ? "e".repeat(1000) : "")
+    }
+    assert.deepEqual(response.diagnostics.map((attempt: { timeout: number }) => attempt.timeout), scenario === "result" ? [10_000, 9_900] : [10_000])
+    assert.equal(JSON.stringify(response).includes("must-not-be-in-diagnostics"), false)
+    assert.equal(existsSync(ownerFile(directory)), false)
+  })
 }
 
 test("simultaneous acquisition across processes yields one owner", async (t) => {

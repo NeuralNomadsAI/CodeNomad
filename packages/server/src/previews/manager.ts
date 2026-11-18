@@ -39,9 +39,16 @@ export class PreviewManager {
 
     const publicBase = this.buildProxyBasePath(token)
     let targetPath = incomingPath.startsWith(publicBase) ? incomingPath.slice(publicBase.length) : incomingPath
-    targetPath = !targetPath || targetPath === "/" ? "/" : `/${targetPath.replace(/^\/+/, "")}`
+    targetPath = `/${targetPath.replace(/^[\\/]+/, "")}`
 
-    return new URL(`${targetPath}${search}`, record.target.origin)
+    // Keep preview targets on the preview origin.
+    let url: URL
+    try {
+      url = new URL(`${targetPath}${search}`, record.target.origin)
+    } catch {
+      return undefined
+    }
+    return url.origin === record.target.origin ? url : undefined
   }
 
   buildProxyBasePath(token: string): string {

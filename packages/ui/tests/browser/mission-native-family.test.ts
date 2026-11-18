@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { createHash } from "node:crypto"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Locator, type Page, type Request } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -15,8 +15,11 @@ import { outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, out
   navigationWindowInputSchema, navigationWindowResultSchema } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { missionPicker, missionPopupOption } from "./mission-actions"
+import { answerMissionRow, expandRow, inlineMissionEntry, missionRow, selectedMissionTitle } from "./mission-actions"
 import type {} from "./fixtures/mission-native-family"
+import { panelMissions } from "./mission-content-fixture"
+import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
+import { collectMissionReadFailures, MISSION_READ_HEADER } from "./mission-read-observation-fixture"
 
 let server: ViteDevServer, browser: Browser, url: string, output: string
 before(async () => {
@@ -30,7 +33,12 @@ before(async () => {
         s.middlewares.use("/api/events", (_req, res) => { res.setHeader("Content-Type", "text/event-stream"); res.write(": isolated fake transport; native frames use the real dispatcher\n\n") })
         s.middlewares.use("/mission-native-family", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/mission-native-family", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-native-family.tsx"></script></body></html>'))
+        res.end(await s.transformIndexHtml("/mission-native-family", `<html><body><div id="root"></div><script type="module">
+          import { serverApi } from "/src/lib/api-client.ts"
+          import { observeMissionReads } from "/tests/browser/mission-read-observation-fixture.ts"
+          observeMissionReads(serverApi)
+          await import("/tests/browser/fixtures/mission-native-family.tsx")
+        </script></body></html>`))
       }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
       server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
     shutdown.own(server); await server.listen()
@@ -40,12 +48,15 @@ before(async () => {
   } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 }, { timeout: 60000 })
 after(async () => { try { await browser?.close() } finally { await server?.close() }; console.info(`Family fixture logs: ${output}`) })
-function mission(id: string, independent = false): MissionMap {
+function mission(id: string, independent = false, task = false): MissionMap {
   const actor = (name: string, kind: "coordinator" | "specialist") => ({ sessionId: `ses_${name}`, kind, managed: false,
     title: `Declared ${name}`, roles: [kind], location: { directory: "/fixture" }, joinedAt: 1 })
+  // Optionally, Mission A's live task held by its declared specialist (whose descendants ask).
+  const tasks: MissionMap["tasks"] = task && id === "A" ? [{ id: "task-work", key: "work", title: "Delegated work", brief: "Work", role: "specialist",
+    status: "dispatching", blockedBy: [], actorSessionId: "ses_actor", outstandingExecution: false, createdAt: 1, updatedAt: 1 }] : []
   return { version: 1, id, projectID: "project", projectCanonical: "/fixture", objective: `Objective ${id}`, template: "custom", notes: "",
     coordinatorSessionId: `ses_${id}`, status: "active", actors: id === "A" ? [actor("A", "coordinator"), actor("actor", "specialist"), ...(independent ? [actor("independent", "specialist")] : [])] : [actor("B", "coordinator")],
-    tasks: [], reports: [], frontier: [], claims: [], revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
+    tasks, reports: [], frontier: [], claims: [], revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 const observedFamily: NonNullable<MissionActivityProjection["missions"][number]["family"]> = { state: "observed", members: [
   { sessionId: "ses_A", actorSessionId: "ses_A", kind: "declared" },
@@ -63,15 +74,18 @@ function nativeHistory(sessionId: string): SessionMessageUser[] {
   assert.match(sessionId, /^ses_[A-Za-z_]+$/)
   return [1, 2].map(n => ({ id: `msg_${sessionId}_${n}`, type: "user", time: { created: n }, text: `Bounded native history ${sessionId} ${n}` }))
 }
-async function setup(label: string, narrow = false, independent = false) {
+async function setup(label: string, narrow = false, independent = false, task = false) {
   const page = await browser.newPage({ locale: narrow ? "he-IL" : "en-US", viewport: narrow ? { width: 390, height: 600 } : { width: 1600, height: 950 },
     hasTouch: narrow, deviceScaleFactor: 1 })
   page.setDefaultTimeout(12000)
-  const errors: string[] = [], failures: string[] = [], consoleErrors: string[] = [], requests: Array<{ method: string; path: string; body?: unknown }> = []
+  const errors: string[] = [], failures: string[] = [], consoleErrors: string[] = [], requests: Array<{ method: string; path: string; body?: unknown; source?: string | null }> = []
   const voidResponses = new Set<Request>(), voidBodyCancellations: string[] = []
-  const rawRequestFailures: string[] = [], navigationReadCancellations: Array<{ failure: string; requestedSession: string; activeSession: string }> = []
+  const panelReads = collectPanelReadFailures(page, url)
+  const missionReads = collectMissionReadFailures(page, url)
+  const { rawRequestFailures, panelListCancellations } = panelReads
+  const navigationReadCancellations: Array<{ failure: string; requestedSession: string; activeSession: string }> = []
   const failureChecks: Promise<unknown>[] = [], outlineResponses: Array<{ session: string; at: number }> = []
-  const drainRequestFailures = async () => { await Promise.all(failureChecks) }
+  const drainRequestFailures = async () => { await panelReads.drain(); await missionReads.drain(); await Promise.all(failureChecks) }
   const receipts: Array<{ method: string; path: string; status: number }> = [], fallbackResponses: string[] = []
   let family = structuredClone(independent ? deepFamily : observedFamily), deferred = false, release!: () => void, reached!: () => void, completed!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), arrival = new Promise<void>(resolve => { reached = resolve })
@@ -84,7 +98,8 @@ async function setup(label: string, narrow = false, independent = false) {
   })
   page.on("requestfailed", request => {
     const message = `${request.url()} ${request.failure()?.errorText}`
-    rawRequestFailures.push(message)
+    if (request.headers()[MISSION_READ_HEADER]) { missionReads.record(request, failures); return }
+    if (panelReads.record(request, failures)) return
     // The actual Promise client cancels empty-response bodies. Retain these
     // confirmed 204 receipts separately, never excuse an unconfirmed failure.
     if (voidResponses.has(request) && request.failure()?.errorText === "net::ERR_ABORTED") voidBodyCancellations.push(message)
@@ -121,9 +136,13 @@ async function setup(label: string, narrow = false, independent = false) {
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname, location = { directory: "/fixture" }
-    requests.push({ method: request.method(), path: pathname, ...(request.postData() ? { body: request.postDataJSON() } : {}) })
+    requests.push({ method: request.method(), path: pathname, source: new URL(request.url()).searchParams.get("panelSource"), ...(request.postData() ? { body: request.postDataJSON() } : {}) })
     if (pathname === "/api/events") return route.continue()
+    if (pathname === "/api/panel-extensions") return route.fulfill({ json: [] })
+    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
+    if (pathname.endsWith("/schedule")) return route.fulfill({ json: { version: 1, projectID: "project" } })
     if (pathname === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: narrow ? "he" : "en", showMessageTimeline: true } } })
+    if (pathname === "/api/workspaces/native-family/integrations") return route.fulfill({ json: { location, catalog: { state: "fresh" }, integrations: [] } })
     // CodeNomad's canonical bounded pruning routes, not guessed native URLs.
     if (pathname === "/api/workspaces/native-family/session-history/outline") {
       const input = outlineInputSchema.parse(request.postDataJSON()), messages = nativeHistory(input.sessionID)
@@ -141,7 +160,7 @@ async function setup(label: string, narrow = false, independent = false) {
       return route.fulfill({ json: navigationWindowResultSchema.parse({ status: "window", messages: nativeHistory(input.sessionID),
         older: null, newer: null, resume: { kind: "latest" }, latest: true }) })
     }
-    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [mission("A", independent), mission("B")], generatedAt: 1, discardedEvents: 0,
+    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A", independent, task), mission("B")]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: "A", actors: independent ? [
         { sessionId: "ses_A", state: "running" }, { sessionId: "ses_actor", state: "running" },
       ] : [], family }, { missionId: "B", actors: [], family: { state: "unknown", members: [] } }] } } })
@@ -163,6 +182,7 @@ async function setup(label: string, narrow = false, independent = false) {
       : { data: nativeHistory(messageSession).slice(-1), cursor: { next: "fixture_older" } } })
     if (pathname.includes("/inbox")) return route.fulfill({ json: [] })
     if (pathname.includes("/form")) return route.fulfill({ json: { data: [] } })
+    if (pathname.endsWith("/permission-receipts")) return route.fulfill({ json: { receipts: [] } })
     const nativeID = pathname.match(/\/session\/(ses_[A-Za-z_]+)$/)?.[1]
     if (nativeID) {
       const waitForChild = deferred && nativeID === "ses_child"
@@ -181,7 +201,7 @@ async function setup(label: string, narrow = false, independent = false) {
   })
   const save = async () => {
     await drainRequestFailures()
-    await writeFile(path.join(output, `${label}.json`), JSON.stringify({ transport: "isolated-http-fakes", errors, failures, consoleErrors, rawRequestFailures, navigationReadCancellations, voidBodyCancellations, requests, receipts, fallbackResponses,
+    await writeFile(path.join(output, `${label}.json`), JSON.stringify({ transport: "isolated-http-fakes", errors, failures, consoleErrors, rawRequestFailures, missionReadFailures: missionReads.raw, missionReadCancellations: missionReads.cancelled, navigationReadCancellations, panelListCancellations, voidBodyCancellations, requests, receipts, fallbackResponses,
       apiCounts: Object.fromEntries([...new Set(requests.map(item => `${item.method} ${item.path}`))].map(key => [key, requests.filter(item => `${item.method} ${item.path}` === key).length])),
       snapshot: await page.evaluate(() => window.missionNativeFamily?.snapshot()).catch(() => null),
       openGates: ["live authenticated HTTP/SSE desktop host", "invocation profile provenance"] }, null, 2))
@@ -189,25 +209,23 @@ async function setup(label: string, narrow = false, independent = false) {
   }
   try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }); await page.waitForFunction(() => window.missionNativeFamily?.snapshot().session === "ses_B", undefined, { timeout: 30000 })
     // Only the picker selects a Mission: restoring a coordinator conversation leaves none selected.
-    if (!narrow) await pickerField(page).waitFor()
+    if (!narrow) await page.locator(".mission-rows button.mission-row-select").first().waitFor()
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, undefined) }
   catch (error) { await save(); release(); await page.close(); throw error }
-  return { page, errors, failures, requests, save, drainRequestFailures, arrival, completion, release, defer: () => { deferred = true },
+  return { page, errors, failures, requests, rawRequestFailures, panelListCancellations, save, drainRequestFailures, arrival, completion, release, defer: () => { deferred = true },
     setFamily: (next: typeof observedFamily) => { family = next },
     unknown: () => { family = { state: "unknown", members: observedFamily.members } } }
 }
 const composer = (page: Page) => page.locator("textarea.prompt-input:visible")
 const selectedMission = async (page: Page) => (await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission
-// Locale-neutral picker field: the RTL cases render the Hebrew accessible name.
-const pickerField = (page: Page) => missionPicker(page).locator("button.mission-picker-field")
-/** The user's explicit picker choice, the only route that changes the selected Mission. */
+/** The user's explicit row choice, the only route that changes the selected Mission (locale-neutral). */
 async function pickMission(page: Page, id: "A" | "B") {
   const session = (await page.evaluate(() => window.missionNativeFamily.snapshot())).session
-  if (await selectedMission(page) !== id) {
-    if (await pickerField(page).getAttribute("aria-expanded") !== "true") await pickerField(page).click()
-    await missionPopupOption(page, `Objective ${id}`).click()
-  }
+  const entry = await inlineMissionEntry(page, `Objective ${id}`)
+  if (await selectedMission(page) !== id) await entry.click()
   await page.waitForFunction(id => window.missionNativeFamily.snapshot().selectedMission === id, id)
+  // A click only selects the row; its chevron shows its tasks.
+  await expandRow(entry)
   assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, session, "picking a Mission does not navigate")
 }
 async function select(page: Page, id: string) {
@@ -219,18 +237,19 @@ async function expand(page: Page, id: string) {
   const button = page.locator(`.session-sidebar [data-session-id="ses_${id}"] .session-item-expander`)
   if (await button.getAttribute("aria-expanded") !== "true") await button.click()
 }
-/** Raise a native Form on the ordinary child conversation and answer it from "Needs you",
- * the panel's remaining route into an ordinary descendant conversation. */
 async function refreshMap(page: Page) {
-  const response = page.waitForResponse(response => response.url().endsWith("/missions"))
+  const response = waitForMissionPanelRefresh(page)
   await page.getByRole("button", { name: "Refresh mission map", exact: true }).click()
   await response
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 }
+/** Raise a native Form on the ordinary child conversation and answer it from the
+ * Mission's red row: no loaded task carries the child's question, so the flag does,
+ * and selecting the row opens that conversation with the question focused. */
 async function answerChild(page: Page) {
   await page.evaluate(() => window.missionNativeFamily.emit({ type: "form.created", id: "event-child-form", created: 1, location: { directory: "/fixture" },
     data: { form: { id: "child-form", sessionID: "ses_child", title: "Child form", fields: [{ type: "string", key: "answer", title: "Child answer" }] } } }))
-  await answer(page.locator(".mission-attention-list"), "Child form").click()
+  await answerMissionRow(page, "Objective A")
 }
 
 test("production SessionList/SessionView select recursive children, steer/queue only that child and preserve coordinator/sibling drafts", { timeout: 60000 }, async () => {
@@ -263,13 +282,15 @@ test("production SessionList/SessionView select recursive children, steer/queue 
     await select(page, "A"); assert.equal(await composer(page).inputValue(), "Coordinator A draft")
     await select(page, "B"); assert.equal(await composer(page).inputValue(), "Sibling B draft")
     assert.equal(await selectedMission(page), "A")
+    assert.equal(requests.filter(item => item.path === "/api/workspaces/native-family/integrations").length, 0,
+      "Mission navigation keeps Status hidden and never demands integration status")
     await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })
 
 test("only the explicit picker choice selects a Mission; coordinator, worker and descendant navigation keep it", { timeout: 60000 }, async () => {
   const ctx = await setup("manual-mission-selection"), { page } = ctx
-  const title = () => pickerField(page).locator(".mission-picker-title").innerText()
+  const title = () => selectedMissionTitle(page).innerText()
   try {
     await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
     // Arriving in Mission A's coordinator selects nothing by itself.
@@ -290,8 +311,6 @@ test("only the explicit picker choice selects a Mission; coordinator, worker and
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })
 
-/** The "Needs you" item's Answer action, whose description names the target conversation. */
-const answer = (attention: Locator, text: string) => attention.locator("li.mission-needs-item", { hasText: text }).locator("button.mission-needs-answer")
 // Observation, not a substitute composer implementation: read production DOM
 // after fonts and viewport measurements remain stable for eight animation frames.
 async function captureComposer(page: Page, name: string, sessionId: string) {
@@ -447,15 +466,10 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
   const ctx = await setup("attention-unknown"), { page, requests } = ctx
   try {
     await select(page, "A"); await pickMission(page, "A"); await page.evaluate(() => window.missionNativeFamily.ask())
-    const attention = page.locator(".mission-attention-list")
-    await attention.getByText("Child choice", { exact: true }).waitFor()
-    assert.equal(await attention.getByText("Global choice", { exact: true }).count(), 0)
-    const childAnswer = answer(attention, "Child choice")
-    // An ordinary descendant is not a declared actor: its Answer names the native conversation title (or a generic role),
-    // never a session identifier; the exact target is the routed session.
-    assert.match(await childAnswer.getAttribute("aria-description") ?? "", /^Open (?!ses_)\S/)
-    await childAnswer.click()
-    assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_grandchild")
+    // No loaded task carries the descendant's question: the Mission's red row opens it.
+    await answerMissionRow(page, "Objective A")
+    await page.waitForFunction(() => window.missionNativeFamily.snapshot().session === "ses_grandchild")
+    assert.equal(await page.locator(".interruption-dock").getByRole("form", { name: "Global choice", exact: true }).count(), 0)
     const form = page.locator(".interruption-dock").getByRole("form", { name: "Child choice", exact: true })
     await form.locator('input[type="text"]').fill("Answer through native dock")
     const receipt = page.waitForResponse(response => response.url().endsWith("/form/child-question/reply") && response.request().method() === "POST")
@@ -464,19 +478,15 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
     const replies = requests.filter(item => item.path.includes("/form/") && item.method !== "GET")
     assert.equal(replies.length, 1); assert(replies[0].path.includes("/session/ses_grandchild/"))
     await page.evaluate(() => window.missionNativeFamily.askPermission())
-    await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
-    assert.equal(await attention.locator("li.mission-needs-item", { hasText: "global-fixture.txt" }).count(), 0)
     // Upstream's dock retains its selected request instead of automatically
-    // selecting a newly enqueued permission. Target the exact attention action.
-    const permissionAnswer = answer(attention, "safe-fixture.txt")
-    assert.match(await permissionAnswer.getAttribute("aria-description") ?? "", /^Open (?!ses_)\S/)
-    await permissionAnswer.click()
+    // selecting a newly enqueued permission; the red row focuses the exact one.
+    await answerMissionRow(page, "Objective A")
     await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).waitFor()
     assert((await page.locator(".interruption-dock").innerText()).includes("safe-fixture.txt"))
     const permissionReceipt = page.waitForResponse(response => response.url().includes("child-permission") && response.request().method() !== "GET")
     await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).click()
     assert.equal((await permissionReceipt).status(), 204)
-    await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor({ state: "detached" })
+    await missionRow(page, "Objective A").locator('.mission-row-flag[data-mark="permission"]').waitFor({ state: "detached" })
     const permissionReplies = requests.filter(item => item.path.includes("child-permission") && item.method !== "GET")
     assert.equal(permissionReplies.length, 1); assert(permissionReplies[0].path.includes("/session/ses_grandchild/"))
     ctx.unknown(); await refreshMap(page)
@@ -488,7 +498,24 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })
 
-test("390px RTL Attention selects the exact same-active-child permission before closing its owned drawer", { timeout: 60000 }, async () => {
+test("a red task opens its asking descendant with the question focused; the Mission's flag stays its own", { timeout: 60000 }, async () => {
+  const ctx = await setup("red-task", false, false, true), { page } = ctx
+  try {
+    await select(page, "A"); await pickMission(page, "A"); await page.evaluate(() => window.missionNativeFamily.ask())
+    const task = page.locator('.mission-tree .mission-tree-node[data-task-key="work"][data-state="input"]')
+    await task.waitFor()
+    const row = missionRow(page, "Objective A")
+    assert.equal(await row.locator(".session-item-expander").getAttribute("data-child-activity"), "permission", "the chevron carries the task's question")
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0, "the task's question is not the Mission's")
+    await task.locator(".mission-tree-task").click()
+    await page.waitForFunction(() => window.missionNativeFamily.snapshot().session === "ses_grandchild")
+    await page.locator(".interruption-dock").getByRole("form", { name: "Child choice", exact: true }).waitFor()
+    assert.equal(await page.locator(".mission-reader").count(), 0, "a red task opens its question, not its reader")
+    await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
+  } finally { await ctx.save(); ctx.release(); await page.close() }
+})
+
+test("390px RTL red Mission row selects the exact same-active-child permission before closing its owned drawer", { timeout: 60000 }, async () => {
   const ctx = await setup("attention-same-child-rtl", true), { page, requests } = ctx
   try {
     await page.waitForFunction(() => document.documentElement.dir === "rtl")
@@ -504,12 +531,13 @@ test("390px RTL Attention selects the exact same-active-child permission before 
     await page.locator('.interruption-dock .interruption-navigation button').filter({ has: page.locator('svg.lucide-chevron-right') }).tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("global-fixture.txt"))
     await page.locator(".shell-panel-toggle--right button:visible").tap()
+    const selectedSchedule = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions/A/schedule"))
     await pickMission(page, "A")
-    const attention = page.locator(".mission-attention-list")
-    await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
-    const permissionAnswer = answer(attention, "safe-fixture.txt")
-    assert.equal(await page.locator(".mission-attention-list li.mission-needs-item").count(), 1, "the uncorrelated global permission stays out of Needs you")
-    await permissionAnswer.tap()
+    await (await selectedSchedule).json()
+    // The red row opens the exact correlated permission; the global one is never a Mission's.
+    const row = missionRow(page, "Objective A")
+    await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
+    await row.locator(".mission-row-select").tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("safe-fixture.txt"))
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_grandchild")
     await page.locator(".session-floating-drawer:visible").waitFor({ state: "detached" })
@@ -517,6 +545,48 @@ test("390px RTL Attention selects the exact same-active-child permission before 
     assert.equal(requests.filter(item => item.path.includes("permission") && item.method !== "GET").length, 0)
     await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
   } finally { await ctx.save(); ctx.release(); await page.close() }
+})
+
+test("native catalog supersession is recorded separately while real catalog and unrelated aborts remain failures", { timeout: 60000 }, async () => {
+  const ctx = await setup("catalog-cancellation"), { page } = ctx
+  let release!: () => void, arrived!: (request: Request) => void, first = true
+  const held = new Promise<void>(resolve => { release = resolve })
+  const arrival = new Promise<Request>(resolve => { arrived = resolve })
+  const catalog = new URL("/api/panel-extensions", url).href
+  try {
+    await page.route(catalog, async route => {
+      if (first) { first = false; arrived(route.request()); await held }
+      await route.fulfill({ json: [] })
+    })
+    await page.evaluate(() => window.missionNativeFamily.transport("connected"))
+    const pending = await arrival, readId = pending.headers()[PANEL_READ_HEADER]
+    assert.ok(readId, "the actual production list call has a unique fixture identity")
+    const cancelled = page.waitForEvent("requestfailed", request => request === pending)
+    const replacement = page.waitForResponse(response => response.url() === catalog && response.request() !== pending)
+    await page.evaluate(() => window.missionNativeFamily.transport("connected"))
+    await cancelled
+    assert.deepEqual(await (await replacement).json(), [], "the replacement read succeeds")
+    release(); await ctx.drainRequestFailures()
+    assert.deepEqual(ctx.failures, [])
+    assert.ok(ctx.panelListCancellations.some(read => read.readId === readId))
+    assert.ok(ctx.rawRequestFailures.includes(`${catalog} net::ERR_ABORTED`))
+
+    // Same URL and error code, but without an owning-signal AbortError receipt.
+    await page.route(catalog, route => route.abort("aborted"))
+    const broken = page.waitForEvent("requestfailed", request => request.url() === catalog)
+    await page.evaluate(() => window.missionNativeFamily.transport("connected"))
+    const request = await broken
+    await ctx.drainRequestFailures()
+    assert.equal(await page.evaluate(id => window.missionNativeFamily.panelReadCancelled(id), request.headers()[PANEL_READ_HEADER]), false)
+    assert.deepEqual(ctx.failures, [`${catalog} net::ERR_ABORTED`])
+    const unrelated = new URL("/api/unrelated-read-probe", url).href
+    await page.route(unrelated, route => route.abort("aborted"))
+    const failed = page.waitForEvent("requestfailed", request => request.url() === unrelated)
+    await page.evaluate(url => fetch(url).catch(() => undefined), unrelated); await failed
+    await ctx.drainRequestFailures()
+    assert.deepEqual(ctx.failures, [`${catalog} net::ERR_ABORTED`, `${unrelated} net::ERR_ABORTED`])
+    assert.deepEqual(ctx.errors, [])
+  } finally { release(); await ctx.save(); ctx.release(); await page.close() }
 })
 
 test("deferred ordinary-child navigation cannot overwrite a newer sibling selection", { timeout: 60000 }, async () => {
@@ -561,12 +631,12 @@ test("real dispatcher refreshes bounded family observations on birth, fork, move
   const location = { directory: "/fixture" }, sessionID = "ses_born"
   const base = { id: "boundary", created: 1, location, durable: { aggregateID: sessionID, seq: 1, version: 1 as const } }
   const emit = async (event: V2Event) => {
-    const response = page.waitForResponse(response => response.url().endsWith("/missions"))
+    const response = waitForMissionPanelRefresh(page)
     await page.evaluate(serialized => window.missionNativeFamily.emit(JSON.parse(serialized) as V2Event), JSON.stringify(event))
     assert.equal((await response).status(), 200)
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
   }
-  const count = () => requests.filter(item => item.path.endsWith("/missions")).length
+  const count = () => requests.filter(item => item.path.endsWith("/missions") && item.source === "summaries").length
   try {
     await select(page, "A")
     ctx.setFamily({ state: "observed", members: [...observedFamily.members,

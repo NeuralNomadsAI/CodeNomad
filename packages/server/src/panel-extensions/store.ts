@@ -8,9 +8,21 @@ import { PANEL_EXTENSION_LIMITS, type PanelExtensionPermission, type PanelExtens
 const RecordSchema = z.object({ manifest: ManifestSchema, html: z.string().max(PANEL_EXTENSION_LIMITS.htmlBytes),
   digest: z.string().regex(/^[a-f0-9]{64}$/), global: z.boolean(),
   // Read old folder grants without broadening consent; discard them on the next explicit write.
-  projects: z.array(z.string().min(1).max(4096)).max(128).optional() }).strict().transform(({ projects: _projects, ...record }) => record)
+  projects: z.array(z.string().min(1).max(4096)).max(128).optional(),
+  // API 4 `panel.preferences`: validated on read, so an invalid entry alone reads as `{}`.
+  preferences: z.unknown().optional() }).strict().transform(({ projects: _projects, ...record }) => record)
 const StoreSchema = z.object({ version: z.literal(1), records: z.array(RecordSchema).max(PANEL_EXTENSION_LIMITS.installed) }).strict()
 type Stored = z.infer<typeof RecordSchema>
+type Preferences = Record<string, unknown>
+
+/** A plain JSON object serialized within the preferences budget, else the reason it is refused. */
+function preferencesOf(value: unknown): Preferences | "invalid" | "too-large" {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) return "invalid"
+  let text: string
+  try { text = JSON.stringify(value) } catch { return "invalid" }
+  if (Buffer.byteLength(text) > PANEL_EXTENSION_LIMITS.preferencesBytes) return "too-large"
+  return JSON.parse(text) as Preferences
+}
 
 export class PanelExtensionStore {
   private tail: Promise<unknown> = Promise.resolve()
@@ -26,7 +38,7 @@ export class PanelExtensionStore {
       const previous = records.find(record => record.manifest.id === pkg.manifest.id)
       if (previous?.digest !== previousDigest) throw new PanelExtensionError("conflict")
       if (previous?.digest === pkg.digest) return records
-      // Replacing code revokes every grant, even if its declared permissions are unchanged.
+      // Replacing code revokes every grant, even if its declared permissions are unchanged, and resets its preferences.
       return [...records.filter(record => record !== previous), { ...pkg, global: false }]
     })
   }
@@ -58,13 +70,38 @@ export class PanelExtensionStore {
   }
 
   /** The exact enabled package, granted `permission` by its manifest's API version. */
-  async authorize(id: string, digest: string, permission: PanelExtensionPermission): Promise<void> {
+  async authorize(id: string, digest: string, permission: PanelExtensionPermission): Promise<PanelExtensionSummary> {
     const entry = (await this.list()).find(entry => entry.manifest.id === id)
     if (!entry) throw new PanelExtensionError("missing")
     if (entry.digest !== digest) throw new PanelExtensionError("conflict")
     if (!entry.enabled || !(entry.manifest.permissions as readonly string[]).includes(permission)) {
       throw new PanelExtensionError("disabled")
     }
+    return entry
+  }
+
+  /**
+   * The enabled package's own preferences (`{}` when none, or when only that entry
+   * is invalid). Any other authority failure, or a corrupt store, throws without rewriting.
+   */
+  async preferences(id: string, digest: string): Promise<Preferences> {
+    return this.serialize(async () => {
+      const value = granted(await this.read(), id, digest).preferences
+      const preferences = value === undefined ? {} : preferencesOf(value)
+      return typeof preferences === "string" ? {} : preferences
+    })
+  }
+
+  /** Replaces the whole object. Kept on deactivation; replacement and removal drop the record's preferences. */
+  async setPreferences(id: string, digest: string, value: unknown): Promise<"saved" | "invalid" | "too-large"> {
+    const preferences = preferencesOf(value)
+    if (typeof preferences === "string") return preferences
+    // Display state only: no catalogue change event, so mounted panels and leases stay as they are.
+    await this.mutate(records => {
+      granted(records, id, digest)
+      return records.map(record => record.manifest.id === id ? { ...record, preferences } : record)
+    }, undefined, false)
+    return "saved"
   }
 
   private async read(): Promise<Stored[]> {
@@ -81,7 +118,7 @@ export class PanelExtensionStore {
     }
   }
 
-  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string): Promise<void> {
+  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true): Promise<void> {
     return this.serialize(async () => {
       const records = await this.read()
       if (requiredId && !records.some(record => record.manifest.id === requiredId)) throw new PanelExtensionError("missing")
@@ -95,7 +132,7 @@ export class PanelExtensionStore {
         await fs.writeFile(temporary, text, { flag: "wx", mode: 0o600 })
         await fs.rename(temporary, path.join(this.directory, "installed.json"))
       } finally { await fs.rm(temporary, { force: true }) }
-      this.changed()
+      if (notify) this.changed()
     })
   }
 
@@ -106,4 +143,12 @@ export class PanelExtensionStore {
     this.tail = work.catch(() => {})
     return work
   }
+}
+
+/** The installed, enabled exact package declaring `panel.preferences`; anything else is `unavailable`. */
+function granted(records: Stored[], id: string, digest: string): Stored {
+  const record = records.find(record => record.manifest.id === id)
+  if (!record || record.digest !== digest || !record.global
+    || !(record.manifest.permissions as readonly string[]).includes("panel.preferences")) throw new PanelExtensionError("unavailable")
+  return record
 }

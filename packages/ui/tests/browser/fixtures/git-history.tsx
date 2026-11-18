@@ -8,6 +8,7 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverApi } from "../../../src/lib/api-client"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { createCoreRightPanelRuntime } from "../../../src/components/instance/shell/right-panel/core-runtime"
+import { useFilePreviewLifetime } from "../../../src/components/instance/shell/file-preview-lifetime"
 import { FilesPreviewView } from "../../../src/components/files-preview-view"
 import AlertDialog from "../../../src/components/alert-dialog"
 import { Toaster } from "solid-toast"
@@ -146,6 +147,8 @@ if (SessionView) {
 function Prototype() {
   const { t } = useI18n()
   const [active, setActive] = createSignal(true)
+  // The instance shell owns the central reader's lifetime.
+  useFilePreviewLifetime(id, selectedSession)
   const runtime = createCoreRightPanelRuntime({ t, instanceId: id, instance, isActive: active,
     activeSessionId: selectedSession, activeSession: () => sessions().get(id)?.get(selectedSession()) ?? null, isPhoneLayout: () => false,
     rightDrawerWidth: () => 360, rightDrawerWidthInitialized: () => true, promptInputApi: () => null,

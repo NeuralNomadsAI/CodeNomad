@@ -40,10 +40,11 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
+import { observeSessionInterruption, retireSessionInterruptionBoundary } from "./session-interruption-seen"
 import { tGlobal } from "../lib/i18n"
 
 import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
@@ -103,12 +104,21 @@ function speakCompletedAssistantText(instanceId: string, sessionId: string): voi
   }
 }
 
-function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void {
+function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void | Promise<void> {
   if (handlePruningEvent(instanceId, event)) return
   switch (event.type) {
     case "form.created":
     case "form.replied":
     case "form.cancelled":
+      return
+    case "session.archived":
+    case "session.unarchived":
+      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
+      withSession(instanceId, event.data.sessionID, session => {
+        const { archived: _archived, ...time } = session.time
+        session.time = { ...time, updated: Math.max(time.updated, event.created),
+          ...(event.type === "session.archived" ? { archived: event.created } : {}) }
+      })
       return
     case "session.renamed":
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
@@ -145,29 +155,26 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       ensureSessionStatus(instanceId, event.data.sessionID, "compacting", event.location?.directory)
       return
     case "session.compaction.failed":
-      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+      return reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
         failed: true,
         directory: event.location?.directory,
       })
-      return
     case "session.execution.interrupted":
-      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+      return reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
         failed: true,
-        interrupted: true,
+        interruptedAt: event.created,
         refreshMessages: true,
         // A person's stop needs no notice and a shutdown resumes the turn later;
         // OpenCode stopping an unattended run does.
         notify: event.data.reason === "inactivity",
         directory: event.location?.directory,
       })
-      return
     case "session.execution.succeeded":
-      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+      return reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
         failed: false,
         notify: true,
         directory: event.location?.directory,
       })
-      return
     case "session.retry.scheduled":
       handleRetryScheduled(instanceId, event)
       return
@@ -184,6 +191,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     event.type.startsWith("session.reasoning.") ||
     event.type.startsWith("session.tool.")
   ) {
+    if (event.type === "session.execution.started") retireSessionInterruptionBoundary(instanceId, sessionId)
     advanceNativeLifecycle(instanceId, sessionId)
     // Ordinary work replaces the backoff: the next attempt has started.
     dismissRetryToast(instanceId, sessionId)
@@ -199,9 +207,12 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
 async function reconcileTerminalNativeSessionStatus(
   instanceId: string,
   sessionId: string,
-  options: { failed: boolean; interrupted?: boolean; refreshMessages?: boolean; notify?: boolean; directory?: string },
+  options: { failed: boolean; interruptedAt?: number; refreshMessages?: boolean; notify?: boolean; directory?: string },
 ): Promise<void> {
   const generation = advanceNativeLifecycle(instanceId, sessionId)
+  // Claim this event before any refresh can expose its badge for acknowledgement.
+  const current = sessions().get(instanceId)?.get(sessionId)
+  if (current && options.interruptedAt !== undefined) observeSessionInterruption(instanceId, current, options.interruptedAt)
   let activeSessions: Record<string, unknown> | null = null
   try {
     activeSessions = await getRootClient(instanceId).session.active()
@@ -218,7 +229,7 @@ async function reconcileTerminalNativeSessionStatus(
     return
   }
 
-  if (options.interrupted) {
+  if (options.interruptedAt !== undefined) {
     withSession(instanceId, sessionId, (session) => { session.generationRecovery = "interrupted" })
   }
   setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
@@ -363,13 +374,13 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   const generation = getOpenCodeInstanceGeneration(instanceId)
 
   try {
+    const captured = sessions().get(instanceId)?.get(sessionId)
     const info = await client.session.get({ sessionID: sessionId })
     // A project closed or a client replaced during the read publishes nothing.
     if (!isInstanceGenerationCurrent(instanceId, generation)) return null
     const fetched = createClientSession(info, instanceId)
 
     let updatedInstanceSessions: Map<string, Session> | undefined
-    let shouldExpandAncestors = false
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -389,7 +400,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       }
       const merged = mergeFetchedSessionRuntimeState(
         candidate,
-        existing,
+        captured,
         existing,
         getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId),
       )
@@ -397,10 +408,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       instanceSessions.set(sessionId, merged)
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions
-
-      if (merged.parentId && merged.status === "working" && (existing?.status ?? "idle") !== "working") {
-        shouldExpandAncestors = true
-      }
       return next
     })
 
@@ -408,8 +415,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     const published = updatedInstanceSessions?.get(sessionId)
     if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
-
-    if (shouldExpandAncestors) revealWorkingSubsession(instanceId, sessionId)
 
     return fetched
   } catch (error) {

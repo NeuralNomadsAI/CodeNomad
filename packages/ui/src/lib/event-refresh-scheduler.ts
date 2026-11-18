@@ -6,10 +6,12 @@ export const EVENT_REFRESH_DEBOUNCE_MS = 50
  * revalidation waits this long after the previous read settled. */
 export const ACTIVITY_REFRESH_INTERVAL_MS = 5_000
 
-/** Earliest start for an invalidation, given when the previous read settled. */
-export function eventRefreshDue(urgency: RefreshUrgency, now: number, settledAt: number | undefined): number {
+/** Earliest start for an invalidation, given when the previous read settled. A
+ * non-zero `urgentIntervalMs` also spaces urgent reads that far from the previous one. */
+export function eventRefreshDue(urgency: RefreshUrgency, now: number, settledAt: number | undefined, urgentIntervalMs = 0): number {
   const due = now + EVENT_REFRESH_DEBOUNCE_MS
-  return urgency === "activity" && settledAt !== undefined ? Math.max(due, settledAt + ACTIVITY_REFRESH_INTERVAL_MS) : due
+  if (settledAt === undefined) return due
+  return Math.max(due, settledAt + (urgency === "activity" ? ACTIVITY_REFRESH_INTERVAL_MS : urgentIntervalMs))
 }
 
 interface KeyState { timer?: ReturnType<typeof setTimeout>; due?: number; running: boolean; dirty?: RefreshUrgency; settledAt?: number }
@@ -25,6 +27,8 @@ export function createEventRefreshScheduler(run: (key: string) => Promise<unknow
   now?: () => number
   setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
+  /** Least time between a read's settlement and an urgent follow-up (default: none). */
+  urgentIntervalMs?: number
 } = {}) {
   const now = clock.now ?? Date.now
   const setTimer = clock.setTimer ?? ((callback, ms) => setTimeout(callback, ms))
@@ -51,7 +55,7 @@ export function createEventRefreshScheduler(run: (key: string) => Promise<unknow
       if (state.dirty !== "urgent") state.dirty = urgency
       return
     }
-    const due = eventRefreshDue(urgency, now(), state.settledAt)
+    const due = eventRefreshDue(urgency, now(), state.settledAt, clock.urgentIntervalMs)
     if (state.timer && state.due! <= due) return
     if (state.timer) clearTimer(state.timer)
     const current = state

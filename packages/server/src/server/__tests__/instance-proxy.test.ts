@@ -31,6 +31,7 @@ async function harness(
   ptyDirectories: Record<string, string | Error> = {},
   shellDirectories: Record<string, string | Error> = {},
   directoryMappings: Record<string, string> = {},
+  shellSessions: Record<string, string> = {},
 ) {
   const upstream = Fastify({ bodyLimit: PROMPT_INLINE_FILE_LIMITS.maxRequestBodyBytes })
   apps.push(upstream)
@@ -82,6 +83,7 @@ async function harness(
   const servicePathCalls: string[] = []
   let invalidations = 0
   const client = {
+    rpc: () => ({ scheduleCarrierRead: async () => { throw { type: "rpc.method_not_found" } } }),
     project: {
       list: async () => [
         { id: "owned-project", canonical: serviceDirectory, time: { created: 1, updated: 1 }, sandboxes: [sessionDirectory, "/other"] },
@@ -121,7 +123,8 @@ async function harness(
       get: async ({ id }: { id: string }) => {
         const cwd = shellDirectories[id] ?? sessionDirectory
         if (cwd instanceof Error) throw cwd
-        return { data: { id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running", pid: 42, metadata: {}, time: { started: 1 } } }
+        return { data: { id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running", pid: 42,
+          metadata: shellSessions[id] ? { sessionID: shellSessions[id] } : {}, time: { started: 1 } } }
       },
     },
   } as unknown as OpenCodeClient
@@ -272,7 +275,7 @@ describe("instance proxy location enforcement", () => {
     const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/owned/generate",
       payload: { prompt: "Explain the current approach" } })
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(sessionGets, ["owned"])
+    assert.deepEqual(sessionGets, ["owned", "owned"])
     assert.deepEqual(response.json().body, { prompt: "Explain the current approach" })
     assert.equal(response.json().url, "/api/session/owned/generate")
     assert.equal(requestCount(), 1)
@@ -330,7 +333,7 @@ describe("instance proxy location enforcement", () => {
     const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/session/session/wait" })
     assert.equal(response.statusCode, 200)
     assert.equal(JSON.parse(response.body).url, "/api/experimental/session/session/wait")
-    assert.deepEqual(sessionGets, ["session"])
+    assert.deepEqual(sessionGets, ["session", "session"])
     assert.equal(requestCount(), 1)
   })
 
@@ -358,7 +361,7 @@ describe("instance proxy location enforcement", () => {
     const list = await app.inject({ method: "GET",
       url: "/workspaces/workspace/instance/api/experimental/session/session/instructions/entries" })
     assert.equal(list.statusCode, 200)
-    assert.deepEqual(sessionGets, ["session", "session", "session"])
+    assert.deepEqual(sessionGets, ["session", "session", "session", "session", "session"])
     assert.equal(requestCount(), 3)
   })
 
@@ -541,6 +544,46 @@ describe("instance proxy location enforcement", () => {
     assert.equal((await mutation).statusCode, 200)
     await deletion
     assert.equal(deleted, true)
+  })
+
+  it("streams reply-from upstream bodies and holds mutation admission until they end", async () => {
+    const { app, manager, worktreeDeletionFence, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
+    // Without a pinned connection or runtime fetch the proxy forwards through @fastify/reply-from.
+    manager.getSharedServiceConnection = undefined
+    const mutation = app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session",
+      headers: { "x-test-delay-upstream-body": "1" },
+      payload: { location: { directory: "/repo/worktree" } },
+    })
+    await delayedUpstreamStarted
+    let deleted = false
+    const deletion = worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], async () => { deleted = true })
+
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(deleted, false)
+    releaseDelayedUpstream()
+    const response = await mutation
+    assert.equal(response.statusCode, 200, response.body)
+    assert.match(String(response.headers["content-type"]), /^application\/json/)
+    assert.deepEqual(response.json(), { started: true })
+    await deletion
+    assert.equal(deleted, true)
+  })
+
+  it("forwards no body for a bodiless DELETE, even one declaring JSON", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, {}, "/repo", "/repo", {}, { terminal: "/repo/worktree" })
+    for (const [headers, body] of [
+      [{}, undefined],
+      [{ "content-type": "application/json" }, undefined],
+      // A framed empty JSON body still reads as an empty object.
+      [{ "content-type": "application/json", "content-length": "0" }, {}],
+    ] as const) {
+      const response = await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/api/pty/terminal", headers })
+      assert.equal(response.statusCode, 200, `${JSON.stringify(headers)} ${response.body}`)
+      assert.deepEqual(response.json().body, body, JSON.stringify(headers))
+    }
+    assert.equal(requestCount(), 3)
   })
 
   it("blocks lexical aliases after translation to the canonical worktree", async () => {
@@ -793,6 +836,18 @@ describe("instance proxy location enforcement", () => {
       })).statusCode, 403)
     }
     assert.equal(requestCount(), 0)
+  })
+
+  it("reads and removes an owned session's shell even when its cwd is outside the project", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, { foreign: "/other" }, "/repo", "/repo", {}, {},
+      { own: "/tmp/build", foreign: "/repo" }, {}, { own: "session-own", foreign: "foreign" })
+    for (const [method, path] of [["GET", "own/output"], ["DELETE", "own"]] as const) {
+      const response = await app.inject({ method, url: `/workspaces/workspace/instance/api/shell/${path}?location%5Bdirectory%5D=%2Frepo%2Fworktree` })
+      assert.equal(response.statusCode, 200, response.body)
+    }
+    assert.equal(requestCount(), 2)
+    assert.equal((await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/api/shell/foreign" })).statusCode, 403)
+    assert.equal(requestCount(), 2)
   })
 
   it("permits only native global Forms actions without session hydration", async () => {

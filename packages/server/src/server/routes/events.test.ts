@@ -121,7 +121,7 @@ describe("SSE backpressure", () => {
       const result = await response
       assert.match(result.body, /"workspaceId":"first"/)
       assert.match(result.body, /"workspaceId":"second"/)
-      assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 0 })
+      assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 2 })
     } finally {
       await test.app.close()
     }
@@ -158,7 +158,7 @@ describe("SSE backpressure", () => {
       const result = await response
       assert.ok(result.body.includes(marker))
       assert.match(result.body, /"workspaceId":"second"/)
-      assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 0 })
+      assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 2 })
     } finally {
       await test.app.close()
     }
@@ -180,7 +180,7 @@ describe("SSE backpressure", () => {
       test.close()
       const result = await response
       assert.ok(result.body.indexOf(marker) < result.body.indexOf('"workspaceId":"after"'))
-      assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 0 })
+      assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 2 })
     } finally {
       await test.app.close()
     }

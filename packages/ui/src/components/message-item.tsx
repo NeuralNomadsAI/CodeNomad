@@ -16,7 +16,7 @@ import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing
 import SpeechActionButton from "./speech-action-button"
 import { getUserMessageMenuState, isMessageTextStreaming, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
 import { deleteMessageTechnicalParts } from "../stores/session-actions"
-import { agents, providers } from "../stores/session-state"
+import { assistantAgentMeta } from "../lib/assistant-meta"
 import { showAlertDialog, showConfirmDialog } from "../stores/alerts"
 import type { TechnicalCleanupPart } from "../lib/message-part-grouping"
 
@@ -139,7 +139,10 @@ export default function MessageItem(props: MessageItemProps) {
 
   const isUser = () => props.record.role === "user"
   const userMenuState = () => getUserMessageMenuState(props.record.status, props.pendingPrompt?.delivery)
-  const canUseHistoryActions = () => !isUser() || userMenuState() === "history"
+  // Boolean memos: their dependencies churn on every streamed delta in the
+  // session, but their values do not, so downstream action-menu item arrays
+  // (keyed by reference in <For>) are not rebuilt while nothing changed.
+  const canUseHistoryActions = createMemo(() => !isUser() || userMenuState() === "history")
   const createdTimestamp = () => getMessageStartedAt(props.messageInfo, props.record.createdAt) ?? props.record.createdAt
   const totalDuration = () => getMessageDurationMs(props.messageInfo, props.record.status, props.record.createdAt)
 
@@ -309,9 +312,10 @@ export default function MessageItem(props: MessageItemProps) {
     text: getRawContent,
   })
 
-  // Error-only rows have no text of their own to copy.
-  const canCopyMessage = () => getRawContent().length > 0
-  const canSpeakMessage = () => getRawContent().trim().length > 0 && speech.canUseSpeech()
+  // Error-only rows have no text of their own to copy. Value-stable memos: the
+  // growing text re-evaluates them per delta without notifying subscribers.
+  const canCopyMessage = createMemo(() => getRawContent().length > 0)
+  const canSpeakMessage = createMemo(() => getRawContent().trim().length > 0 && speech.canUseSpeech())
 
   const handleCopy = async () => {
     const content = getRawContent()
@@ -330,6 +334,19 @@ export default function MessageItem(props: MessageItemProps) {
     }
     return { tools, reasoning }
   }
+
+  // Counts only notify when a count changes, not when the parts array does.
+  const technicalCounts = createMemo(technicalPartCounts, undefined,
+    { equals: (a, b) => a.tools === b.tools && a.reasoning === b.reasoning })
+
+  // Fork eligibility is value-stable across record replacements: streaming
+  // deltas replace the record object without changing these fields.
+  const recordForkReadiness = createMemo(() => ({
+    isEphemeral: props.record.isEphemeral === true,
+    allowed: isUser() || props.record.status === "complete"
+      || (props.record.status === "error" && Boolean(props.messageInfo?.time?.completed)),
+  }), undefined, { equals: (a, b) => a.isEphemeral === b.isEphemeral && a.allowed === b.allowed })
+  const recordSettled = createMemo(() => props.record.status === "complete" || props.record.status === "error")
 
   const handleDeleteTechnicalParts = async () => {
     if (deletingTechnicalParts() || (props.record.status !== "complete" && props.record.status !== "error")) return
@@ -373,41 +390,9 @@ export default function MessageItem(props: MessageItemProps) {
       ? "message-item-base bg-[var(--message-user-bg)] border-l border-[var(--message-user-border)]"
       : "message-item-base assistant-message border-l border-[var(--message-assistant-border)]"
 
-  const agentIdentifier = () => {
-    if (isUser()) return ""
-    const info = props.messageInfo
-    if (!info || info.role !== "assistant") return ""
-    // Same names as the composer footer, falling back to the identifier.
-    return agents().get(props.instanceId)?.find((agent) => agent.id === info.mode)?.name || info.mode || ""
-  }
-
-  const modelIdentifier = () => {
-    if (isUser()) return ""
-    const info = props.messageInfo
-    if (!info || info.role !== "assistant") return ""
-    const modelID = info.modelID || ""
-    const providerID = info.providerID || ""
-
-    const name = providers().get(props.instanceId)?.find((provider) => provider.id === providerID)?.models.find((model) => model.id === modelID)?.name
-    const base = name || (modelID && providerID ? `${providerID}/${modelID}` : modelID)
-    if (!base) return ""
-
-    const variant = info.variant
-    if (typeof variant === "string" && variant.trim().length > 0) {
-      return `${base} • ${variant.trim()}`
-    }
-
-    return base
-  }
-
   const agentMeta = () => {
     if (isUser() || !props.showAgentMeta) return ""
-    const segments: string[] = []
-    const agent = agentIdentifier()
-    const model = modelIdentifier()
-    if (agent) segments.push(agent)
-    if (model) segments.push(model)
-    return segments.join(" • ")
+    return assistantAgentMeta(props.instanceId, props.messageInfo)
   }
 
   const speakerLabel = () => {
@@ -488,10 +473,10 @@ export default function MessageItem(props: MessageItemProps) {
 
     }
 
+    const recordAllowsFork = recordForkReadiness()
     if (
-      canUseHistoryActions() && !props.record.isEphemeral &&
-      (isUser() || props.record.status === "complete" ||
-        (props.record.status === "error" && Boolean(props.messageInfo?.time?.completed))) && props.onFork
+      canUseHistoryActions() && !recordAllowsFork.isEphemeral &&
+      recordAllowsFork.allowed && props.onFork
     ) {
       items.push({
         key: "fork",
@@ -510,8 +495,8 @@ export default function MessageItem(props: MessageItemProps) {
       })
     }
 
-    const counts = technicalPartCounts()
-    if (!isUser() && props.showTechnicalCleanup && (props.record.status === "complete" || props.record.status === "error") && counts.tools + counts.reasoning > 0) {
+    const counts = technicalCounts()
+    if (!isUser() && props.showTechnicalCleanup && recordSettled() && counts.tools + counts.reasoning > 0) {
       items.push({
         key: "delete-technical-parts",
         label: deletingTechnicalParts()

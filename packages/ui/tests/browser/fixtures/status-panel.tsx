@@ -4,7 +4,8 @@ import RightPanel from "../../../src/components/instance/shell/right-panel/Right
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
-import { setSessions } from "../../../src/stores/session-state"
+import { setSessions, setSessionInfoByInstance, updateThreadTotalsForSession } from "../../../src/stores/session-state"
+import { MessageUsage } from "../../../src/components/message-usage"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
 import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import type { Instance } from "../../../src/types/instance"
@@ -19,16 +20,23 @@ const session: Session = {
   cost: 0.12, tokens: { input: 1200, output: 300, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
 }
 setSessions(previous => new Map(previous).set(instance.id, new Map([[session.id, session]])))
+setSessionInfoByInstance(previous => new Map(previous).set(instance.id, new Map([[session.id, {
+  cost: session.cost, inputTokens: 1200, outputTokens: 300, reasoningTokens: 80, isSubscriptionModel: false,
+  contextWindow: 10000, actualUsageTokens: 1500, modelOutputLimit: 1000, contextAvailableTokens: 8500,
+}]])))
 const [activeSession, setActiveSession] = createSignal(session)
+const [width, setWidth] = createSignal(360)
 
 function Fixture() {
   const { t } = useI18n()
-  return <div style={{ width: "360px", height: "800px" }}>
+  return <><div data-status-fixture style={{ width: `${width()}px`, height: "800px" }}>
     <RightPanel isActive={() => true} t={t} instanceId={instance.id} instance={instance}
       activeSessionId={() => activeSession().id} activeSession={activeSession} isPhoneLayout={() => false}
       rightDrawerWidth={() => 360} rightDrawerWidthInitialized={() => true}
       onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
-  </div>
+  </div><div data-message-usage-fixture style={{ width: "600px" }}><MessageUsage messageInfo={{
+    tokens: { input: 1200, output: 300, reasoning: 80 }, cost: 0.12,
+  } as any} usageVisibility="collapsed" /></div></>
 }
 
 await initializeClientState()
@@ -38,4 +46,11 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProv
   update: () => setActiveSession(current => ({ ...current, model: { ...current.model },
     tokens: { ...current.tokens, output: current.tokens.output + 1 } })),
   select: (id: string) => setActiveSession(current => ({ ...current, id })),
+  width: setWidth,
+  child: () => {
+    setSessions(previous => new Map(previous).set(instance.id, new Map([
+      [session.id, session], ["child", { ...session, id: "child", parentId: session.id, tokens: { ...session.tokens, input: 100 } }],
+    ])))
+    updateThreadTotalsForSession(instance.id, session.id)
+  },
 }
