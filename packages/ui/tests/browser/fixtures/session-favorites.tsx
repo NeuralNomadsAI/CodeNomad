@@ -7,8 +7,11 @@ import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
 import { serverEvents } from "../../../src/lib/server-events"
 import { sdkManager } from "../../../src/lib/sdk-manager"
-import { addInstance } from "../../../src/stores/instances"
+import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import { cleanupBlankSessions, getSessionThreads, sessions, setSessions, setSessionPage } from "../../../src/stores/session-state"
+import { activeSessionId, setActiveSessionId } from "../../../src/stores/session-selection-state"
+import { registerNavigationShortcuts } from "../../../src/lib/shortcuts/navigation"
+import { keyboardRegistry } from "../../../src/lib/keyboard-registry"
 import { createClientSession } from "../../../src/types/session"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
@@ -25,12 +28,13 @@ const seed = [
   make("equipe", "Équipe", 2),
   make("validation", "Validation budget", 3),
   make("conseil", "Préparer conseil", 4, main, "ses_equipe"),
+  make("search_only", "Projet secret", 0),
   ...Array.from({ length: 60 }, (_, index) => {
     const n = String(index + 1).padStart(2, "0")
     return make(`dossier_${n}`, `Dossier ${n}`, index + 5, index % 2 ? ventes : main)
   }),
 ]
-const initial = seed.filter(row => row.id !== "ses_dossier_01")
+const initial = seed.filter(row => row.id !== "ses_dossier_01" && row.id !== "ses_search_only")
 const native = new Map(seed.map(row => [row.id, row]))
 const gets: string[] = [], lists: unknown[] = [], removes: string[] = []
 const blank = new Set(["ses_briefing", "ses_conseil", "ses_dossier_01"])
@@ -53,6 +57,7 @@ const client = {
       lists.push(input)
       const rows = [...native.values()]
       const data = input.cursor ? rows.filter(row => row.id === "ses_dossier_01") : rows
+        .filter(row => input.search || row.id !== "ses_search_only")
         .filter(row => input.parentID === undefined || (row.parentID ?? null) === input.parentID)
         .filter(row => !input.directory || input.directory === row.location.directory)
         .filter(row => !input.search || row.title.toLowerCase().includes(input.search))
@@ -80,6 +85,8 @@ serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
   { slug: "ventes", label: "ventes", directory: ventes, kind: "worktree" },
 ] })
 addInstance({ id, folder: main, port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client } as any)
+setActiveInstanceId(id)
+registerNavigationShortcuts()
 setSessions(previous => new Map(previous).set(id, new Map(initial.map(row => [row.id, {
   ...createClientSession(row as any, id, "build", { providerId: "fixture", modelId: "fixture" }),
   status: row.id === "ses_dossier_60" ? "working" : "idle",
@@ -113,6 +120,12 @@ void serverEvents.connect()
 emit("permission.asked", { sessionID: "ses_validation", id: "fixture-permission", action: "read", resources: ["budget"] })
 Object.assign(window, { favoriteFixture: {
   gets, lists, removes, activeId,
+  has: (sessionID: string) => sessions().get(id)?.has(sessionID),
+  selected: () => activeSessionId().get(id),
+  navigate: (command: string, from: string) => {
+    setActiveSessionId(new Map([[id, from]]))
+    keyboardRegistry.get(command)?.handler()
+  },
   metadata: () => native.get("ses_briefing")?.metadata,
   automatic: () => cleanupBlankSessions(id),
   deep: () => { blank.add("ses_dossier_02"); return cleanupBlankSessions(id, undefined, true) },

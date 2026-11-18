@@ -186,7 +186,7 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "Esta limpieza puede ser lenta y puede eliminar sesiones que no pretendías eliminar. ¿Estás seguro?",
   "sessionState.cleanup.deepConfirm.title": "Limpieza profunda de sesiones",
-  "sessionState.cleanup.deepConfirm.detail": "La limpieza profunda de sesiones eliminará todas las sesiones sin mensajes, quitará cualquier sesión de subagente finalizada y limpiará cualquier fork no usado de una sesión.",
+  "sessionState.cleanup.deepConfirm.detail": "Ambas limpiezas solo eliminan sesiones verificadas como vacías, inactivas y sin subsesiones. Los favoritos y sus antecesores se conservan incluso si están marcados en otra carpeta.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "Continuar",
   "sessionState.cleanup.deepConfirm.cancelLabel": "Cancelar",
   "sessionState.cleanup.toast.one": "Se limpió {count} sesión vacía",

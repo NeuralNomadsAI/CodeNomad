@@ -6,6 +6,7 @@ import replyFrom from "@fastify/reply-from"
 import { OpenCode, isSessionNotFoundError, type OpenCodeClient, type SessionInfo } from "@opencode/client"
 import type { Logger } from "../../logger"
 import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
+import { SessionCleanupFence } from "../session-cleanup-fence"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
@@ -165,9 +166,10 @@ async function harness(
   }
   const app = Fastify()
   const worktreeDeletionFence = new WorktreeDeletionFence()
+  const sessionCleanup = new SessionCleanupFence()
   apps.push(app)
   await app.register(replyFrom)
-  registerInstanceProxyRoutes(app, { workspaceManager: manager, logger: logger(), worktreeDeletionFence })
+  registerInstanceProxyRoutes(app, { workspaceManager: manager, logger: logger(), worktreeDeletionFence, sessionCleanup })
   await app.ready()
   return {
     app,
@@ -175,6 +177,7 @@ async function harness(
     servicePathCalls,
     sessionGets,
     worktreeDeletionFence,
+    sessionCleanup,
     requestCount: () => requests,
     delayedUpstreamStarted,
     releaseDelayedUpstream: () => releaseDelayedUpstream?.(),
@@ -183,6 +186,23 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("holds the cleanup fence across a real forwarded prompt and refuses a new prompt while cleaning", async () => {
+    const { app, sessionCleanup, requestCount, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
+    const url = "/workspaces/workspace/instance/api/session/ses_thread/prompt"
+    const release = sessionCleanup.enterCleanup("ses_thread")!
+    assert.equal((await app.inject({ method: "POST", url, payload: {} })).statusCode, 409)
+    assert.equal(requestCount(), 0)
+    release()
+    const pending = app.inject({ method: "POST", url, payload: {}, headers: { "x-test-delay-upstream": "1" } }).then(response => response)
+    try {
+      await delayedUpstreamStarted
+      assert.equal(sessionCleanup.enterCleanup("ses_thread"), undefined)
+    } finally { releaseDelayedUpstream() }
+    assert.equal((await pending).statusCode, 200)
+    const after = sessionCleanup.enterCleanup("ses_thread")
+    assert.ok(after)
+    after()
+  })
   it("defers legacy pending lists before slow ownership, rechecks at forwarding, and admits only authorized settlement reconciliation", async () => {
     const { app, manager, requestCount } = await harness()
     const connection = (await manager.getSharedServiceConnection!("workspace"))!

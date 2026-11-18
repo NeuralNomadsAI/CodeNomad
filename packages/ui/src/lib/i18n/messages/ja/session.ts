@@ -186,7 +186,7 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "このクリーンアップは時間がかかる場合があり、意図しないセッションを削除する可能性があります。続行しますか？",
   "sessionState.cleanup.deepConfirm.title": "セッションを徹底クリーン",
-  "sessionState.cleanup.deepConfirm.detail": "徹底クリーンは、メッセージがないセッションをすべて削除し、完了したサブエージェントのセッションを取り除き、未使用のセッションフォークを整理します。",
+  "sessionState.cleanup.deepConfirm.detail": "どちらのクリーンアップでも、空で非アクティブかつサブセッションがないと確認できたセッションだけを削除します。別のフォルダーで登録したお気に入りとその親系統も保持されます。",
   "sessionState.cleanup.deepConfirm.confirmLabel": "続行",
   "sessionState.cleanup.deepConfirm.cancelLabel": "キャンセル",
   "sessionState.cleanup.toast.one": "{count} 件の空セッションを整理しました",

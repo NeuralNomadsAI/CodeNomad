@@ -50,10 +50,10 @@ import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
 import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
-import { getDescendantSessions, getSessionAncestorIds, isSessionInWorkspaceScope, revealSubsession } from "../stores/session-state"
+import { getDescendantSessions, getSessionAncestorIds, isSessionInWorkspaceScope, registerSessionListProjection, revealSubsession } from "../stores/session-state"
 import { instances } from "../stores/instances"
 import { hydrateRestoredSessionChain } from "../stores/session-api"
-import { hasProtectedFavorite, useSessionFavorites } from "../stores/session-favorites"
+import { useSessionFavorites } from "../stores/session-favorites"
 const log = getLogger("session")
 
 
@@ -90,6 +90,8 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [favoritesOnly, setFavoritesOnly] = createSignal(false)
   const favoriteStore = useSessionFavorites(() => props.instanceId)
   const favorites = createMemo(() => new Set(Object.keys(favoriteStore.records())))
+  const includesFavorite = (id: string) => favorites().has(id)
+    || getDescendantSessions(props.instanceId, id).some(session => favorites().has(session.id))
   let favoritesFilter: HTMLButtonElement | undefined
   let searchInput: HTMLInputElement | undefined
   const [archivingSessionIds, setArchivingSessionIds] = createSignal<Set<string>>(new Set())
@@ -330,6 +332,9 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
     return { ids, rowsById, indexById }
   })
+  createEffect(on(() => props.instanceId, id => {
+    onCleanup(registerSessionListProjection(id, () => visibleProjection().ids))
+  }))
   const keptMountedIndexes = createMemo(() => {
     const indexes = new Set<number>()
     for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId()]) {
@@ -412,7 +417,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) }),
       {
         title: t("sessionList.delete.title"),
-        detail: hasProtectedFavorite(favoriteStore.records(), sessionId) ? t("sessionList.favorite.deleteWarning") : undefined,
+        detail: includesFavorite(sessionId) ? t("sessionList.favorite.deleteWarning") : undefined,
         variant: "warning",
         confirmLabel: t("sessionList.delete.confirmLabel"),
         cancelLabel: t("sessionList.delete.cancelLabel"),
@@ -587,7 +592,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       t(selected.length === 1 ? "sessionList.bulkDelete.confirmMessage.one" : "sessionList.bulkDelete.confirmMessage.other", { count: selected.length }),
       {
         title: t("sessionList.bulkDelete.title"),
-        detail: selected.some(id => hasProtectedFavorite(favoriteStore.records(), id)) ? t("sessionList.favorite.deleteWarning") : undefined,
+        detail: selected.some(includesFavorite) ? t("sessionList.favorite.deleteWarning") : undefined,
         variant: "warning",
         confirmLabel: t("sessionList.bulkDelete.confirmLabel"),
         cancelLabel: t("sessionList.bulkDelete.cancelLabel"),

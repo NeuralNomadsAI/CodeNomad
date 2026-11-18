@@ -51,7 +51,7 @@ export const commandMessages = {
   "commands.closeSession.keywords": "סגור, עצור",
 
   "commands.scrubSessions.label": "נקה סשנים",
-  "commands.scrubSessions.description": "הסר סשנים ריקים, סשני תת-סוכן שסיימו את משימתם הראשית, וסשני פיצול מיותרים.",
+  "commands.scrubSessions.description": "הסרת סשנים שאומתו כריקים ולא פעילים.",
   "commands.scrubSessions.keywords": "ניקוי, ריק, סשנים, הסר, מחק",
 
   "commands.instanceInfo.label": "מידע על מופע",

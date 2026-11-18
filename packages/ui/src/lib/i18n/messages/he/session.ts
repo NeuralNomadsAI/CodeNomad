@@ -186,7 +186,7 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "ניקוי עמוק זה עשוי להיות איטי, ועלול למחוק סשנים שלא התכוונת למחוק. האם אתה בטוח?",
   "sessionState.cleanup.deepConfirm.title": "ניקוי עמוק של סשנים",
-  "sessionState.cleanup.deepConfirm.detail": "ניקוי עמוק של סשנים ימחק את כל הסשנים ללא הודעות, יסיר סשני תת-סוכן שסיימו, וינקה פיצולים לא בשימוש של סשן.",
+  "sessionState.cleanup.deepConfirm.detail": "שני מצבי הניקוי מוחקים רק סשנים שאומתו כריקים, לא פעילים וללא תת־סשנים. מועדפים והסשנים שמעליהם נשמרים גם כשהם מסומנים בתיקייה אחרת.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "המשך",
   "sessionState.cleanup.deepConfirm.cancelLabel": "ביטול",
   "sessionState.cleanup.toast.one": "נוקה {count} סשן ריק",

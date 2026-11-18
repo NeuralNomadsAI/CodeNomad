@@ -627,6 +627,11 @@ export interface WorkspaceFileResponse {
 export type WorkspaceFileSearchResponse = FileSystemEntry[]
 
 export type SessionFavorites = Record<string, string[]>
+export interface SessionFavoritesSnapshot {
+  source: string
+  revision: number
+  records: SessionFavorites
+}
 
 export interface InstanceData {
   messageHistory: string[]

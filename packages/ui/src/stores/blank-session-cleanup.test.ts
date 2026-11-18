@@ -22,9 +22,9 @@ const instanceId = "blank-cleanup"
 const sessionId = "existing"
 // Node's CJS interop for this browser-only toast package differs from Vite's.
 const originalToast = toast.custom
-const originalFavoriteRead = serverApi.fetchSessionFavorites
+const originalCleanup = serverApi.cleanupSession
 before(() => { toast.custom = () => "cleanup-toast" })
-after(() => { toast.custom = originalToast; serverApi.fetchSessionFavorites = originalFavoriteRead })
+after(() => { toast.custom = originalToast; serverApi.cleanupSession = originalCleanup })
 const emptyPage = () => ({ data: [], cursor: {} })
 const session = (id = sessionId, overrides: Partial<Session> = {}): Session => ({
   id, instanceId, parentId: null, title: id, agent: "", model: { providerId: "", modelId: "" },
@@ -34,7 +34,6 @@ const session = (id = sessionId, overrides: Partial<Session> = {}): Session => (
 })
 
 function setup(overrides: Partial<Session> = {}) {
-  serverApi.fetchSessionFavorites = async () => ({})
   const removed: string[] = []
   const reads: any[] = []
   const client = {
@@ -49,6 +48,10 @@ function setup(overrides: Partial<Session> = {}) {
     },
     message: { list: async (input: any) => { reads.push(input); return emptyPage() } },
   } as any
+  serverApi.cleanupSession = async (_instance, id) => {
+    await client.session.remove({ sessionID: id })
+    return { deleted: true }
+  }
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
   setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(sessionId, overrides)]])))
@@ -73,13 +76,11 @@ function residentMessage() {
 }
 
 describe("automatic blank-session cleanup", () => {
-  it("requires a fresh favorite snapshot and protects both a favorite and its parent", async () => {
+  it("does not fall back to explicit deletion when the cleanup broker refuses or fails", async () => {
     const { removed } = setup()
-    serverApi.fetchSessionFavorites = async () => ({ [sessionId]: [] })
+    serverApi.cleanupSession = async () => ({ deleted: false })
     assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
-    serverApi.fetchSessionFavorites = async () => ({ child: [sessionId] })
-    assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
-    serverApi.fetchSessionFavorites = async () => { throw new Error("favorites unavailable") }
+    serverApi.cleanupSession = async () => { throw new Error("cleanup unavailable") }
     assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
     assert.deepEqual(removed, [])
   })

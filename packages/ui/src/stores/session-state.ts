@@ -3,19 +3,17 @@ import { beginGesture, type SurfaceGesture } from "./session-surface"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
-import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
+import { loadMessages, refreshSessionCatalog } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
 import { instances, ensureYoloStateSynced } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
-import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 import { applySessionPendingState } from "./session-pending-state"
 import { cleanupBlankSession } from "./blank-session-cleanup"
-import { allowsFavoriteCleanup } from "./session-favorites"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { flushTranscriptProjections } from "./opencode-projection-frame"
 import {
@@ -1037,7 +1035,17 @@ function getPersistentExpandedSessionIds(instanceId: string): string[] {
   return [...(expandedSessions().get(instanceId) ?? [])]
 }
 
+const listProjections = new Map<string, () => string[]>()
+
+/** The mounted sidebar owns displayed order, independent of visit history. */
+export function registerSessionListProjection(instanceId: string, ids: () => string[]) {
+  listProjections.set(instanceId, ids)
+  return () => { if (listProjections.get(instanceId) === ids) listProjections.delete(instanceId) }
+}
+
 function getVisibleSessionIds(instanceId: string): string[] {
+  const displayed = listProjections.get(instanceId)
+  if (displayed) return displayed()
   const threads = projectUnarchivedSessionThreads(getSessionThreads(instanceId), activeSessionId().get(instanceId))
   if (threads.length === 0) return []
 
@@ -1140,51 +1148,6 @@ function updateThreadTotalsForSession(instanceId: string, sessionId: string): vo
   for (const familyId of familyIds) updateThreadTotalsForParent(instanceId, familyId)
 }
 
-async function isDeepCleanupCandidate(session: Session, instanceId: string): Promise<boolean> {
-  const instance = instances().get(instanceId)
-  if (!instance?.client) {
-    return false
-  }
-  let messages: any[] = []
-  try {
-    const client = getRootClient(instanceId)
-    messages = (await client.message.list({ sessionID: session.id })).data
-  } catch (error) {
-    log.error(`Failed to fetch messages for session ${session.id}`, error)
-    return false
-  }
-
-  // Specific logic by session type
-  if (session.parentId === null) {
-    // Parent: blank if no messages and no children (fresh !== blank sometimes!)
-    const hasChildren = getChildSessions(instanceId, session.id).length > 0
-    return messages.length === 0 && !hasChildren
-  } else if (session.title?.includes("subagent)")) {
-    // Subagent: "blank" (really: finished doing its job) if actually blank...
-    // ... OR no streaming, no pending perms, no tool parts
-    if (messages.length === 0) return true
-
-    const hasStreaming = messages.some((msg) => {
-      return msg.type === "assistant" && !msg.time?.completed
-    })
-
-    const lastMessage = messages[messages.length - 1]
-    const lastParts = lastMessage?.type === "assistant" ? lastMessage.content : []
-    const hasToolPart = lastParts.some((part: any) =>
-      part.type === "tool" || part.data?.type === "tool"
-    )
-
-    return !hasStreaming && !session.pendingPermission && !session.pendingForm && !hasToolPart
-  } else {
-    // Fork: blank if somehow has no messages or at revert point
-    if (messages.length === 0) return true
-
-    const lastMessage = messages[messages.length - 1]
-    return lastMessage?.id === session.revert?.messageID
-  }
-}
-
-
 const automaticCleanupRequests = new Map<string, {
   client: unknown
   generation: number
@@ -1238,18 +1201,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
     if (!current()) break
     if (sessionId === excludeSessionId) continue
     if (sessions().get(instanceId)?.get(sessionId) !== session) continue
-    if (!fetchIfNeeded) {
-      if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
-      continue
-    }
-    if (!await isDeepCleanupCandidate(session, instanceId) || !await allowsFavoriteCleanup(instanceId, sessionId)) continue
-    if (!current() || sessions().get(instanceId)?.get(sessionId) !== session) continue
-    try {
-      await deleteSession(instanceId, sessionId)
-      deletedCount++
-    } catch (error) {
-      log.error(`Failed to deep clean session ${sessionId}`, error)
-    }
+    if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
   }
 
   if (deletedCount > 0) {

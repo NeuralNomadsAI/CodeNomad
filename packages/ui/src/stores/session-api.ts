@@ -556,7 +556,6 @@ async function hydrateRestoredSessionChainAttempt(
             return next
           })
           session = sessions().get(instanceId)?.get(sessionId)
-          if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
         } catch (error) {
           if (signal?.aborted) throw error
           if (!isRequestCurrent()) return null
@@ -565,6 +564,8 @@ async function hydrateRestoredSessionChainAttempt(
           return null
         }
       }
+      if (session?.parentId === null && isRequestCurrent() && !signal?.aborted
+        && !getSessionListIds(instanceId).includes(sessionId)) prependSessionListId(instanceId, sessionId)
       // In directory-only mode ancestors outside the inventory are not session
       // authority. Keep native parent metadata; local display roots are derived.
       return getDirectoryOnlyWorktree(instanceId) ? null : session?.parentId ?? null
@@ -1285,6 +1286,14 @@ async function forkSession(
 }
 
 async function deleteSession(instanceId: string, sessionId: string): Promise<void> {
+  await removeSession(instanceId, sessionId, false)
+}
+
+export function deleteBlankSession(instanceId: string, sessionId: string): Promise<boolean> {
+  return removeSession(instanceId, sessionId, true)
+}
+
+async function removeSession(instanceId: string, sessionId: string, cleanup: boolean): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1305,10 +1314,15 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.remove for instance ${instanceId}`, { sessionId })
-    await client.session.remove({ sessionID: sessionId })
+    if (cleanup) {
+      if (!(await serverApi.cleanupSession(instanceId, sessionId)).deleted) return false
+    } else {
+      await client.session.remove({ sessionID: sessionId })
+    }
     if (!generationCurrent()) throw new Error("Session deletion was superseded by reconnect")
 
     removeSessionRuntimeState(instanceId, sessionId)
+    return true
 
   } catch (error) {
     log.error("Failed to delete session:", error)
@@ -2077,3 +2091,4 @@ export {
   clearSessionListRequestState,
   clearSessionCatalogState,
 }
+import { serverApi } from "../lib/api-client"

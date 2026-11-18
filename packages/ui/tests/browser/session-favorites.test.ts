@@ -10,6 +10,9 @@ import { SettingsService } from "../../../server/src/settings/service"
 import { resolveConfigLocation } from "../../../server/src/config/location"
 import { createLogger } from "../../../server/src/logger"
 import { registerSessionFavoritesRoutes } from "../../../server/src/server/routes/session-favorites"
+import { registerSessionCleanupRoute } from "../../../server/src/server/routes/session-cleanup"
+import { SessionCleanupFence } from "../../../server/src/server/session-cleanup-fence"
+import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
 import { registerSettingsRoutes } from "../../../server/src/server/routes/settings"
 import { borrowFixture } from "./fixture-borrow"
 import { fixtureEventStream } from "./fixture-event-stream"
@@ -34,26 +37,49 @@ test("favorites persist, keep requests first and synchronize over the real route
   const tmp = await mkdtemp(path.join(tmpdir(), "codenomad-test-session-favorites-"))
   const app = Fastify(), bus = new EventBus(), cfg = resolveConfigLocation(tmp)
   const off = bus.onEvent(events.send)
-  const serverSession = (sessionID: string) => ({ id: sessionID, parentID: sessionID === "ses_conseil" ? "ses_equipe" : undefined,
+  const removed: string[] = []
+  const serverSession = (sessionID: string) => ({ id: sessionID, projectID: "bureau", time: { created: 1, updated: 1 }, parentID: sessionID === "ses_conseil" ? "ses_equipe" : undefined,
     location: { directory: sessionID === "ses_foreign" ? "/unrelated" : "/bureau" },
     metadata: { thirdParty: { verified: "leave alone" } } })
   const settings = new SettingsService(cfg, bus, logger)
   registerSettingsRoutes(app, { settings, logger })
-  registerSessionFavoritesRoutes(app, { settings, eventBus: bus, workspaceManager: {
-    get: (id: string) => id === "favorites-workspace" || id === "other-window" ? main : id === "unrelated" ? unrelated : undefined,
-    getSharedServiceConnection: async () => ({ assertCurrent() {}, client: { session: {
+  const connection = { assertCurrent() {}, client: {
+    session: {
       get: async ({ sessionID }: { sessionID: string }) => serverSession(sessionID),
       update: async () => assert.fail("must not change third-party metadata"),
-    } } }),
+      list: async () => ({ data: [], cursor: {} }),
+      inbox: { list: async () => [] }, active: async () => ({}),
+      form: { list: async () => [] },
+      remove: async ({ sessionID }: { sessionID: string }) => { removed.push(sessionID) },
+    },
+    message: { list: async ({ sessionID }: { sessionID: string }) =>
+      ({ data: sessionID === "ses_dossier_02" ? [] : [{ type: "user" }], cursor: {} }) },
+    permission: { request: { list: async ({ location }: { location: { directory: string } }) => ({ location, data: [] }) } },
+    rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
+  } }
+  const workspaceManager = {
+    get: (id: string) => id === "favorites-workspace" || id === "other-window" ? main : id === "unrelated" ? unrelated : undefined,
+    getSharedServiceConnection: async () => connection,
+    getExistingSharedServiceConnection: () => connection,
+    getWorktreeIdentityForPath: async () => "/bureau",
     ownsLocation: async (id: string, location: { directory: string }) => id !== "unrelated" && location.directory === "/bureau",
-  } as any })
+  } as any
+  const cleanup = new SessionCleanupFence()
+  const isProtected = registerSessionFavoritesRoutes(app, { settings, eventBus: bus, workspaceManager, cleanup })
+  registerSessionCleanupRoute(app, { workspaceManager, isProtected, cleanup, worktreeDeletionFence: new WorktreeDeletionFence() })
+  let failRefresh = false
   const setup = async (page: Page, duplicate = false) => {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await events.route(page)
-    await page.route("**/api/workspaces/*/session-favorites**", async route => {
-      let pathname = new URL(route.request().url()).pathname
+    await page.route(/\/api\/workspaces\/[^/]+\/session-(?:favorites|cleanup)(?:\/|[?]|$)/, async route => {
+      const url = new URL(route.request().url())
+      let pathname = url.pathname + url.search
+      if (failRefresh && pathname.includes("session-favorites") && route.request().method() === "GET") {
+        await route.fulfill({ status: 503 })
+        return
+      }
       if (duplicate) pathname = pathname.replace("favorites-workspace", "other-window")
-      const response = await app.inject({ method: route.request().method() as "GET" | "PUT", url: pathname,
+      const response = await app.inject({ method: route.request().method() as "GET" | "PUT" | "POST", url: pathname,
         ...(route.request().method() === "PUT" ? { payload: route.request().postDataJSON() } : {}) })
       await route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
     })
@@ -87,20 +113,35 @@ test("favorites persist, keep requests first and synchronize over the real route
     armFixtureNavigationBudget(browser)
     const refused = await app.inject({ method: "PUT", url: `${owner}/ses_foreign`, payload: { favorite: true } })
     assert.equal(refused.statusCode, 403)
-    assert.deepEqual((await app.inject({ url: owner })).json(), {})
+    assert.deepEqual((await app.inject({ url: owner })).json().records, {})
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: "dark" })
     await setup(page)
     const before = await page.evaluate(() => (window as any).favoriteFixture.metadata())
     await page.getByText("Validation budget", { exact: true }).waitFor()
     await row(page, "validation").locator(".session-permission").waitFor()
     assert.equal(await first(page).getAttribute("data-session-id"), "ses_validation")
+    failRefresh = true
     await chooseFavoriteWithKeyboard(page, "dossier_56")
     await row(page, "dossier_56").locator(".session-item-favorite").waitFor()
     await page.waitForFunction(() => document.querySelectorAll(".session-item-base")[1]?.getAttribute("data-session-id") === "ses_dossier_56")
     await page.waitForFunction(() => document.activeElement?.closest("[data-session-id]")?.getAttribute("data-session-id") === "ses_dossier_56")
+    await page.evaluate(() => (window as any).favoriteFixture.navigate("session-next", "ses_validation"))
+    await page.waitForFunction(() => (window as any).favoriteFixture.selected() === "ses_dossier_56")
     await chooseFavoriteWithKeyboard(page, "dossier_56", false)
     await row(page, "dossier_56").locator(".session-item-favorite").waitFor({ state: "detached" })
     await page.waitForFunction(() => document.activeElement?.closest("[data-session-id]")?.getAttribute("data-session-id") === "ses_dossier_56")
+    failRefresh = false
+    await filters(page).click()
+    await search(page).fill("projet secret")
+    await row(page, "search_only").waitFor()
+    await filters(page).click()
+    assert.equal(await row(page, "search_only").count(), 0)
+    await filters(page).click()
+    await selectFavorite(page, "search_only")
+    await filters(page).click()
+    await row(page, "search_only").locator(".session-item-favorite").waitFor()
+    assert.equal(await page.evaluate(() => (window as any).favoriteFixture.gets.includes("ses_search_only")), false)
+    await selectFavorite(page, "search_only", false)
     await filters(page).click()
     await search(page).fill("briefing")
     await row(page, "briefing").getByRole("button", { name: "Briefing du matin" }).waitFor()
@@ -156,7 +197,7 @@ test("favorites persist, keep requests first and synchronize over the real route
     assert.equal((await app.inject({ url: "/api/storage/state/sessionFavorites" })).statusCode, 403)
     assert.equal((await app.inject({ method: "PATCH", url: "/api/storage/state", payload: { sessionFavorites: null } })).statusCode, 403)
     assert.equal(Object.hasOwn((await app.inject({ url: "/api/storage/state" })).json(), "sessionFavorites"), false)
-    assert.deepEqual((await app.inject({ url: owner.replace("favorites-workspace", "unrelated") })).json(), {})
+    assert.deepEqual((await app.inject({ url: owner.replace("favorites-workspace", "unrelated") })).json().records, {})
 
     const late = await app.inject({ method: "PUT", url: `${owner}/ses_dossier_01`, payload: { favorite: true } })
     assert.equal(late.statusCode, 200)
@@ -198,17 +239,20 @@ test("favorites persist, keep requests first and synchronize over the real route
     await search(page).fill("briefing")
     await selectFavorite(page, "briefing")
     await page.evaluate(() => (window as any).favoriteFixture.automatic())
-    assert.deepEqual(await page.evaluate(() => (window as any).favoriteFixture.removes), [])
+    assert.deepEqual(removed, [])
     await page.evaluate(() => { void (window as any).favoriteFixture.deep() })
     await page.getByRole("button", { name: "Continuer", exact: true }).click()
-    await page.waitForFunction(() => (window as any).favoriteFixture.removes.includes("ses_dossier_02"))
-    assert.deepEqual(await page.evaluate(() => (window as any).favoriteFixture.removes), ["ses_dossier_02"])
+    await row(page, "briefing").locator(".session-item-favorite").waitFor()
+    await search(page).fill("Dossier 02")
+    await page.waitForFunction(() => !(window as any).favoriteFixture.has("ses_dossier_02"))
+    assert.deepEqual(removed, ["ses_dossier_02"])
+    await search(page).fill("briefing")
     await actions(page, "briefing").click()
     await menu(page).getByRole("menuitem", { name: "Supprimer la session" }).click()
     await page.getByText("Les favoris concernés seront aussi retirés.").waitFor()
     await page.getByRole("button", { name: "Supprimer", exact: true }).click()
     await row(page, "briefing").waitFor({ state: "detached" })
-    assert.deepEqual((await app.inject({ url: owner })).json(), { ses_conseil: ["ses_equipe"], ses_dossier_01: [] })
+    assert.deepEqual((await app.inject({ url: owner })).json().records, { ses_conseil: [], ses_dossier_01: [] })
     await writeFile(cfg.stateYamlPath, "sessionFavorites: [")
     assert.equal((await app.inject({ url: owner })).statusCode, 503)
     assert.equal((await app.inject({ method: "PUT", url: `${owner}/ses_conseil`, payload: { favorite: false } })).statusCode, 503)

@@ -4,13 +4,10 @@ import { instances } from "./instances"
 import { messageStoreBus } from "./message-v2/bus"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
 import { getRootClient } from "./opencode-client"
-import { deleteSession } from "./session-api"
-import { allowsFavoriteCleanup } from "./session-favorites"
+import { deleteBlankSession } from "./session-api"
 import { getChildSessions, getSessionDraftPrompt, loading, sessions } from "./session-state"
 
-// A timestamp or an empty resident transcript is never proof of an empty native
-// session. Keep this destructive admission separate from the explicit deep-clean
-// command, which also offers to remove completed subagents and unused forks.
+// Client-local exclusions and native preflight; the backend owns final admission.
 export async function cleanupBlankSession(instanceId: string, sessionId: string): Promise<boolean> {
   const instanceClient = instances().get(instanceId)?.client
   const session = sessions().get(instanceId)?.get(sessionId)
@@ -30,6 +27,7 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
     && !session.pendingPermission && !session.pendingForm
     && !session.generationRecovery && session.generationAdmissionToken === undefined
     && !session.revert && !session.fork
+    && session.time.archived === undefined
     && !loading().deletingSession.get(instanceId)?.has(sessionId)
     && !getSessionDraftPrompt(instanceId, sessionId)
     && getAttachments(instanceId, sessionId).length === 0
@@ -65,9 +63,8 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
 
     // Recheck local activity, drafts and connection authority immediately before
     // dispatch. No asynchronous work between this check and deleteSession's call.
-    if (!current() || !await allowsFavoriteCleanup(instanceId, sessionId) || !current()) return false
-    await deleteSession(instanceId, sessionId)
-    return true
+    if (!current()) return false
+    return await deleteBlankSession(instanceId, sessionId)
   } catch (error) {
     // An unavailable/failed read is unknown, never empty. Failed deletions also
     // must not contribute to the cleanup toast's success count.

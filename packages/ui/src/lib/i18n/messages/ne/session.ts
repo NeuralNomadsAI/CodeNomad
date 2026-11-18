@@ -186,7 +186,7 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "यो सफाई ढिलो हुन सक्छ र तपाईंले नचाहेका सत्रहरू मेटाउन सक्छ। के तपाईं निश्चित हुनुहुन्छ?",
   "sessionState.cleanup.deepConfirm.title": "सत्रहरूको गहिरो सफाई (Deep Clean)",
-  "sessionState.cleanup.deepConfirm.detail": "गहिरो सफाईले कुनै सन्देश नभएका सबै सत्रहरू, समाप्त भएका उप-एजेन्ट सत्रहरू र प्रयोग नगरिएका फोर्कहरू मेटाउनेछ।",
+  "sessionState.cleanup.deepConfirm.detail": "दुवै सफाइले खाली, निष्क्रिय र उपसत्र नभएको पुष्टि भएका सत्रहरू मात्र मेटाउँछन्। अर्को फोल्डरमा राखिएका मनपर्ने सत्र र तिनका माथिल्ला सत्रहरू पनि जोगिन्छन्।",
   "sessionState.cleanup.deepConfirm.confirmLabel": "जारी राख्नुहोस्",
   "sessionState.cleanup.deepConfirm.cancelLabel": "रद्द गर्नुहोस्",
   "sessionState.cleanup.toast.one": "{count} खाली सत्र सफा गरियो",

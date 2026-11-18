@@ -31,6 +31,8 @@ import { registerSessionPruningRoutes } from "./routes/session-pruning"
 import { registerImagesConversationRoute } from "./routes/images-conversation"
 import { registerSessionGoalRoute } from "./routes/session-goal"
 import { registerSessionFavoritesRoutes } from "./routes/session-favorites"
+import { registerSessionCleanupRoute } from "./routes/session-cleanup"
+import { SessionCleanupFence } from "./session-cleanup-fence"
 import { registerBackgroundShellRoutes } from "./routes/background-shells"
 import { ownedShellDirectory } from "../opencode/background-shells"
 import { registerSessionMediaRoutes } from "./routes/session-media"
@@ -471,10 +473,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
-  registerSessionFavoritesRoutes(app, { workspaceManager: deps.workspaceManager, settings: deps.settings, eventBus: deps.eventBus })
+  const sessionCleanup = new SessionCleanupFence()
+  const isProtected = registerSessionFavoritesRoutes(app, { workspaceManager: deps.workspaceManager, settings: deps.settings, eventBus: deps.eventBus, cleanup: sessionCleanup })
+  registerSessionCleanupRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, cleanup: sessionCleanup, isProtected })
   registerBackgroundShellRoutes(app, deps.workspaceManager)
   registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts,
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts, sessionCleanup,
     humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
       remoteDevices: deps.remoteControlManager } })
 
@@ -557,6 +561,7 @@ export interface InstanceProxyWorkspaceManager {
 }
 
 interface InstanceProxyDeps {
+  sessionCleanup?: SessionCleanupFence
   workspaceManager: InstanceProxyWorkspaceManager
   logger: Logger
   worktreeDeletionFence: WorktreeDeletionFence
@@ -792,6 +797,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
+        sessionCleanup: deps.sessionCleanup,
         pathSuffix: "",
         logger: deps.logger,
       })
@@ -810,6 +816,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
+        sessionCleanup: deps.sessionCleanup,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
@@ -828,6 +835,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
+        sessionCleanup: deps.sessionCleanup,
         pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
         logger: deps.logger,
       })
@@ -844,6 +852,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
 }
 
 interface InstanceProxyRequestArgs {
+  sessionCleanup?: SessionCleanupFence
   request: FastifyRequest
   reply: FastifyReply
   workspaceManager: InstanceProxyWorkspaceManager
@@ -858,17 +867,25 @@ interface InstanceProxyRequestArgs {
 
 async function proxyWorkspaceRequest(args: InstanceProxyRequestArgs) {
   const admission = requestAdmission(args.request, args.reply)
+  let releaseSessionMutation: (() => void) | undefined
+  const releaseSession = () => { releaseSessionMutation?.(); releaseSessionMutation = undefined }
   try {
     admission.signal.throwIfAborted()
-    return await proxyWorkspaceAdmission(args, admission)
+    return await proxyWorkspaceAdmission(args, admission, id => {
+      if (!args.sessionCleanup) return true
+      releaseSessionMutation = args.sessionCleanup.enterMutation(id)
+      return Boolean(releaseSessionMutation)
+    }, releaseSession)
   } catch (error) {
     if (!admission.signal.aborted) throw error
   } finally {
+    releaseSession()
     admission.dispose()
   }
 }
 
-async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission: ReturnType<typeof requestAdmission>) {
+async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission: ReturnType<typeof requestAdmission>,
+  enterSessionMutation: (id: string) => boolean, releaseSession: () => void) {
   const { request, reply, workspaceManager, logger, worktreeDeletionFence } = args
   const { signal } = admission
   const wait = admission.wait
@@ -1196,6 +1213,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
+    if (ordinarySessionMutation && !enterSessionMutation(targetSessionId)) {
+      return reply.code(409).send({ error: "Session cleanup in progress" })
+    }
     authorizedSessionDirectory = session?.location.directory
     authorizedSession = session
     if (session && request.method !== "GET" && request.method !== "HEAD") {
@@ -1238,7 +1258,8 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   const releaseAccount = connection && request.method !== "GET" && request.method !== "HEAD"
     && /^\/api\/(?:credential|integration)(?:\/|$)/.test(pathname) ? args.accounts?.manual(connection) : undefined
   const releasePhysicalMutation = releaseFence || releaseAccount ? () => { releaseAccount?.(); releaseFence?.() } : undefined
-  const releaseMutation = releasePhysicalMutation
+  const releaseMutation = request.method === "GET" || request.method === "HEAD" ? releasePhysicalMutation
+    : () => { releasePhysicalMutation?.(); releaseSession() }
 
   try {
     connection?.assertCurrent()

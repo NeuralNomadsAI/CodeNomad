@@ -179,7 +179,7 @@ export const sessionMessages = {
   "sessionEvents.sessionError.message": "Hata: {message}",
   "sessionState.cleanup.deepConfirm.message": "Bu temizlik yavaş olabilir ve silmek istemediğiniz session'ları silebilir. Emin misiniz?",
   "sessionState.cleanup.deepConfirm.title": "Session'ları Derin Temizle",
-  "sessionState.cleanup.deepConfirm.detail": "Session'ları Derin Temizle; mesajı olmayan tüm session'ları siler, tamamlanmış sub-agent session'larını kaldırır ve bir session'ın kullanılmayan fork'larını temizler.",
+  "sessionState.cleanup.deepConfirm.detail": "Her iki temizlik de yalnızca boş, etkin olmayan ve alt oturumu bulunmadığı doğrulanan oturumları siler. Favoriler ve üst oturumları başka bir klasörde işaretlenmiş olsa da korunur.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "Devam et",
   "sessionState.cleanup.deepConfirm.cancelLabel": "İptal",
   "sessionState.cleanup.toast.one": "{count} boş session temizlendi",

@@ -186,7 +186,7 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "This cleanup may be slow, and may delete sessions you didn't intend to delete. Are you sure?",
   "sessionState.cleanup.deepConfirm.title": "Deep Clean Sessions",
-  "sessionState.cleanup.deepConfirm.detail": "Deep Clean Sessions will delete all sessions that have no messages, remove any finished sub-agent sessions, and clear out any unused forks of a session.",
+  "sessionState.cleanup.deepConfirm.detail": "Both cleanup modes remove only verified empty, inactive sessions without children. Favorites and their ancestors are kept across folders.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "Continue",
   "sessionState.cleanup.deepConfirm.cancelLabel": "Cancel",
   "sessionState.cleanup.toast.one": "Cleaned up {count} blank session",

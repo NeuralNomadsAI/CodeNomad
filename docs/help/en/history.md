@@ -66,8 +66,7 @@ Deleting a parent session also deletes its descendant subsessions and their hist
 
 1. Prefer a specific row's **Delete session** when you know exactly which conversation should go.
 2. For broader maintenance, run **Scrub Sessions** and read the **Deep Clean Sessions** confirmation.
-3. Confirm only if empty sessions, completed subagent sessions and unused forks may be removed.
 
-Scrub operates on the current project's known session candidates and can remove more than blank main sessions. It is not an archive operation and has no undo. Do not use it merely to hide a busy sidebar. The independent **Auto-cleanup blank sessions** preference is narrower: it checks that a session is genuinely empty rather than treating an unloaded transcript as empty.
+Both cleanup modes remove only verified empty, inactive sessions without children. Favorites and their ancestors are kept across folders.
 
 Deletion removes conversations, not Git commits or a rollback of filesystem/external effects. If cleanup only partly succeeds, already deleted sessions stay deleted. Review the remaining list and errors before retrying. See [Conversations](conversations.md) for forks/undo and [Projects](projects.md) for deleting temporary folders or worktrees.

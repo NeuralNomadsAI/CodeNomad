@@ -186,7 +186,7 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "Diese Bereinigung kann langsam sein und Sitzungen löschen, die Sie nicht löschen wollten. Sind Sie sicher?",
   "sessionState.cleanup.deepConfirm.title": "Tiefenbereinigung der Sitzungen",
-  "sessionState.cleanup.deepConfirm.detail": "Die Tiefenbereinigung löscht alle Sitzungen ohne Nachrichten, entfernt abgeschlossene Unteragenten-Sitzungen und löscht ungenutzte Abzweigungen (Forks).",
+  "sessionState.cleanup.deepConfirm.detail": "Beide Bereinigungen löschen nur nachweislich leere, inaktive Sitzungen ohne Untersitzungen. Favoriten und ihre übergeordneten Sitzungen bleiben ordnerübergreifend erhalten.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "Weiter",
   "sessionState.cleanup.deepConfirm.cancelLabel": "Abbrechen",
   "sessionState.cleanup.toast.one": "{count} leere Sitzung bereinigt",
