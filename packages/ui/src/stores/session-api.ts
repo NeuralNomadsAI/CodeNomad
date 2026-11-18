@@ -501,12 +501,16 @@ async function hydrateRestoredSessionChain(
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
-): Promise<void> {
+  verifyDrafts = false,
+): Promise<ReadonlySet<string>> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
-    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent())
+    const absent = new Set<string>()
+    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent(),
+      verifyDrafts ? absent : undefined)
     signal?.throwIfAborted()
-    if (!isCurrent() || generationCurrent()) return
+    if (!isCurrent()) return new Set()
+    if (generationCurrent()) return absent
   }
   throw new Error("Restored session hydration was superseded by reconnect")
 }
@@ -516,6 +520,7 @@ async function hydrateRestoredSessionChainAttempt(
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
+  absentDrafts?: Set<string>,
 ): Promise<void> {
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -534,6 +539,7 @@ async function hydrateRestoredSessionChainAttempt(
       if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return null
 
       let session = sessions().get(instanceId)?.get(sessionId)
+      const verify = absentDrafts !== undefined && requestedIds.includes(sessionId)
       if (!session || session.catalogSnapshot) {
         const captured = session
         try {
@@ -560,7 +566,9 @@ async function hydrateRestoredSessionChainAttempt(
         } catch (error) {
           if (signal?.aborted) throw error
           if (!isRequestCurrent()) return null
-          if (!isSessionNotFoundError(error)) throw error
+          if (verify && isSessionNotFoundError(error) && error.sessionID === sessionId
+            && sessions().get(instanceId)?.get(sessionId) === captured) absentDrafts.add(sessionId)
+          if (!isSessionNotFoundError(error) && !absentDrafts) throw error
           log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
           return null
         }

@@ -186,6 +186,8 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "此清理可能较慢，并且可能删除你并不想删除的会话。确定要继续吗？",
   "sessionState.cleanup.draftRecovered": "未发送的草稿及附件已移到新对话的输入框。",
+  "sessionState.cleanup.switchDraft": "切换草稿",
+  "sessionState.cleanup.savedDraft": "已保存的草稿 {number}",
   "sessionState.cleanup.deepConfirm.title": "深度清理会话",
   "sessionState.cleanup.deepConfirm.detail": "两种清理方式都只删除经确认没有消息、不活跃且没有子会话的会话。即使在其他文件夹中标记，收藏的会话及其上级会话也会保留。",
   "sessionState.cleanup.deepConfirm.confirmLabel": "继续",

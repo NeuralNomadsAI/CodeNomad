@@ -280,6 +280,37 @@ test("favorites persist, keep requests first and synchronize over the real route
     await page.getByRole("button", { name: "Supprimer", exact: true }).click()
     await row(page, "briefing").waitFor({ state: "detached" })
     assert.deepEqual((await app.inject({ url: owner })).json().records, { ses_conseil: [], ses_dossier_01: [] })
+    for (const direct of [true, false]) {
+      const draftPage = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+      try {
+        await setup(draftPage)
+        await draftPage.evaluate(async direct => {
+          const f = (window as any).favoriteFixture
+          f.prepareDrafts(direct)
+          await f.saveDrafts()
+        }, direct)
+        await draftPage.reload()
+        await draftPage.waitForFunction(() => Boolean((window as any).favoriteFixture))
+        const composer = draftPage.locator("[data-recovered-composer]")
+        const picker = composer.getByRole("combobox", { name: "Changer de brouillon", exact: true })
+        const textarea = composer.locator("textarea")
+        assert.equal(await textarea.inputValue(), "a".repeat(32000))
+        assert.equal(await picker.locator("option").count(), 2)
+        await composer.getByText("@main.txt", { exact: true }).waitFor()
+        assert.deepEqual(await draftPage.evaluate(() => (window as any).favoriteFixture.recoveredBytes()), [[1]])
+        const saved = await picker.locator("option").nth(1).getAttribute("value")
+        assert.ok(saved)
+        await picker.selectOption(saved)
+        assert.equal(await textarea.inputValue(), "b".repeat(2000))
+        await composer.getByText("@second.txt", { exact: true }).waitFor()
+        assert.deepEqual(await draftPage.evaluate(() => (window as any).favoriteFixture.recoveredBytes()), [[2, 3]])
+        await draftPage.evaluate(() => (window as any).favoriteFixture.readSaved())
+        assert.equal(await picker.locator("option").count(), 2)
+        assert.equal(await textarea.inputValue(), "b".repeat(2000))
+        await picker.selectOption(saved)
+        assert.equal(await textarea.inputValue(), "a".repeat(32000))
+      } finally { await draftPage.close() }
+    }
     await writeFile(cfg.stateYamlPath, "sessionFavorites: [")
     assert.equal((await app.inject({ url: owner })).statusCode, 503)
     assert.equal((await app.inject({ method: "PUT", url: `${owner}/ses_conseil`, payload: { favorite: false } })).statusCode, 503)

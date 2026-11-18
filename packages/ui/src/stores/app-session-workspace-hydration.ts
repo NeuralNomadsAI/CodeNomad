@@ -10,12 +10,14 @@ import { seedSessionOutlineIndexes } from "./session-outline"
 import { seedSessionCatalog } from "./session-catalog-hydration"
 import { hydrateSeenInterruptions } from "./session-interruption-seen"
 import { seedTabViewState } from "./tab-view-state"
+import { isLocalDraftId, NO_SESSION_DRAFT_SESSION_ID } from "./local-draft-ids"
+import { removeSessionRuntimeState } from "./session-api"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
   hydrateRestoredSessionChain, hydrateSessionExpansion, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
 } from "./sessions"
 
-export const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
+export { NO_SESSION_DRAFT_SESSION_ID } from "./local-draft-ids"
 
 export function seedRestoredWorkspaceState(
   instanceId: string,
@@ -64,12 +66,16 @@ export async function hydrateRestoredWorkspaceState(
     NO_SESSION_DRAFT_SESSION_ID,
   )
 
-  await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
+  const absent = await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
     Object.keys(snapshot.drafts),
     Object.keys(snapshot.attachments),
-  ]), signal, isCurrentBinding)
+  ]), signal, isCurrentBinding, true)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
+  if (absent.size) {
+    hydrateWorkspacePromptState(instanceId, snapshot, absent, NO_SESSION_DRAFT_SESSION_ID)
+    for (const id of absent) removeSessionRuntimeState(instanceId, id, true, true)
+  }
   sessions = getSessions(instanceId)
   const validIds = new Set(sessions.map(({ id }) => id))
   selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
@@ -79,7 +85,7 @@ export async function hydrateRestoredWorkspaceState(
     scrollSessionIds: Object.keys(snapshot.scrollSnapshots), idleMarkerSessionIds: Object.keys(snapshot.unseenIdleSince),
     generationRecoverySessionIds: [...Object.keys(snapshot.generationRecovery), ...Object.keys(snapshot.seenInterruptions ?? {})],
     expandedSessionIds: snapshot.expandedSessionIds ?? [],
-  }, [NO_SESSION_DRAFT_SESSION_ID])
+  }, [...absent, ...Object.keys(snapshot.drafts).filter(isLocalDraftId), ...Object.keys(snapshot.attachments).filter(isLocalDraftId)])
   hydrateWorkspacePromptState(instanceId, snapshot, validIds, NO_SESSION_DRAFT_SESSION_ID)
   hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)

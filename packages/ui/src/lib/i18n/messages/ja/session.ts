@@ -186,6 +186,8 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "このクリーンアップは時間がかかる場合があり、意図しないセッションを削除する可能性があります。続行しますか？",
   "sessionState.cleanup.draftRecovered": "未送信の下書きと添付は新しい会話の入力欄にあります。",
+  "sessionState.cleanup.switchDraft": "下書きを切り替える",
+  "sessionState.cleanup.savedDraft": "保存した下書き {number}",
   "sessionState.cleanup.deepConfirm.title": "セッションを徹底クリーン",
   "sessionState.cleanup.deepConfirm.detail": "どちらのクリーンアップでも、空で非アクティブかつサブセッションがないと確認できたセッションだけを削除します。別のフォルダーで登録したお気に入りとその親系統も保持されます。",
   "sessionState.cleanup.deepConfirm.confirmLabel": "続行",

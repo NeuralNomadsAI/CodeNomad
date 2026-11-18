@@ -187,6 +187,41 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("drains native settlement after the downstream disconnects mid-response", { timeout: 10_000 }, async () => {
+    const { app, sessionCleanup, releaseDelayedUpstream } = await harness()
+    const base = await app.listen({ host: "127.0.0.1", port: 0 })
+    let closed!: () => void, released!: () => void
+    const downstreamClosed = new Promise<void>(resolve => { closed = resolve })
+    const nativeSettled = new Promise<void>(resolve => { released = resolve })
+    app.server.on("request", (_request, response) => response.once("close", closed))
+    const enter = sessionCleanup.enterMutation.bind(sessionCleanup)
+    sessionCleanup.enterMutation = id => {
+      const release = enter(id)
+      return release && (() => { release(); released() })
+    }
+    const request = http.request(`${base}/workspaces/workspace/instance/api/session/ses_thread/prompt`, {
+      method: "POST", headers: { "x-test-delay-upstream-body": "1", "content-type": "application/json", "content-length": "2" },
+    })
+    const fragment = new Promise<string>((resolve, reject) => {
+      request.on("error", reject)
+      request.on("response", response => {
+        response.on("error", () => {})
+        response.once("data", chunk => resolve(String(chunk)))
+      })
+    })
+    request.end("{}")
+    try {
+      assert.equal(await fragment, '{"started":')
+      request.destroy()
+      await downstreamClosed
+      assert.equal(sessionCleanup.enterCleanup("ses_thread"), undefined)
+    } finally { releaseDelayedUpstream() }
+    await nativeSettled
+    assert.equal(sessionCleanup.hasUncertain("ses_thread"), false)
+    const release = sessionCleanup.enterCleanup("ses_thread")
+    assert.ok(release)
+    release()
+  })
   it("disconnecting after native prompt dispatch leaves the cleanup reservation until native settlement", { timeout: 10_000 }, async () => {
     const { app, sessionCleanup, delayedUpstreamStarted, releaseDelayedUpstream, requestCount } = await harness()
     let disconnected!: () => void

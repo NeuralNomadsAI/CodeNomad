@@ -69,6 +69,6 @@ Oturum temizliği bütün oturum için atomik değildir. Sonraki mesaj çakış�
 
 Her iki temizlik de yalnızca boş, etkin olmayan ve alt oturumu bulunmadığı doğrulanan oturumları siler. Favoriler ve üst oturumları başka bir klasörde işaretlenmiş olsa da korunur.
 
-Temizlik sırasında bir konuşma kaybolursa gönderilmemiş metni ve ekleri projenin yeni konuşma yazma alanında bulabilirsiniz.
+Temizlik sırasında bir konuşma kaybolursa gönderilmemiş metni ve ekleri projenin yeni konuşma yazma alanında bulabilirsiniz. Geçerli taslağın üzerine yazmadan kayıtlı bir taslağı açmak için **Taslağı değiştir** seçeneğini kullanın.
 
 Silme konuşmaları kaldırır; Git commitlerini kaldırmaz ve dosya sistemi/harici etkileri geri almaz. Temizlik kısmen başarılı olursa silinmiş oturumlar silinmiş kalır. Yeniden denemeden önce kalan listeyi ve hataları inceleyin. Çatallama/geri alma için [Konuşmalar](conversations.md), geçici klasör veya çalışma ağacı silme için [Projeler](projects.md) sayfalarına bakın.

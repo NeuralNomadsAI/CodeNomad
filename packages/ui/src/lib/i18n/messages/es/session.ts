@@ -186,6 +186,8 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "Esta limpieza puede ser lenta y puede eliminar sesiones que no pretendías eliminar. ¿Estás seguro?",
   "sessionState.cleanup.draftRecovered": "El borrador y sus adjuntos están en el cuadro de nueva conversación.",
+  "sessionState.cleanup.switchDraft": "Cambiar de borrador",
+  "sessionState.cleanup.savedDraft": "Borrador guardado {number}",
   "sessionState.cleanup.deepConfirm.title": "Limpieza profunda de sesiones",
   "sessionState.cleanup.deepConfirm.detail": "Ambas limpiezas solo eliminan sesiones verificadas como vacías, inactivas y sin subsesiones. Los favoritos y sus antecesores se conservan incluso si están marcados en otra carpeta.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "Continuar",

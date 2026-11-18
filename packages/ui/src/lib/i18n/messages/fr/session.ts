@@ -186,6 +186,8 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "Ce nettoyage peut être lent et peut supprimer des sessions que vous ne vouliez pas supprimer. Confirmez-vous ?",
   "sessionState.cleanup.draftRecovered": "Le brouillon et ses pièces jointes sont dans le composeur de nouvelle conversation.",
+  "sessionState.cleanup.switchDraft": "Changer de brouillon",
+  "sessionState.cleanup.savedDraft": "Brouillon enregistré {number}",
   "sessionState.cleanup.deepConfirm.title": "Nettoyage approfondi des sessions",
   "sessionState.cleanup.deepConfirm.detail": "Les deux nettoyages suppriment uniquement les sessions vérifiées comme vides, inactives et sans sous-session. Les favoris et leurs ancêtres sont préservés même s’ils sont marqués dans un autre dossier.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "Continuer",

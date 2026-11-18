@@ -3,6 +3,7 @@ import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import { hydrateRestorableAttachment } from "./client-state-attachments-codec"
 import { getAuthoritativeAttachmentSessionIdsForInstance, hydrateSessionAttachments } from "./attachments"
 import { getAuthoritativeDraftSessionIdsForInstance, hydrateSessionDraftPrompt } from "./sessions"
+import { isRecoveredDraftId } from "./local-draft-ids"
 
 export function hydrateWorkspacePromptState(
   instanceId: string,
@@ -11,7 +12,7 @@ export function hydrateWorkspacePromptState(
   noSessionDraftSessionId: string,
 ): void {
   const canHydrate = (sessionId: string) =>
-    validSessionIds.has(sessionId) || sessionId === noSessionDraftSessionId
+    validSessionIds.has(sessionId) || sessionId === noSessionDraftSessionId || isRecoveredDraftId(sessionId)
   const authoritativeDrafts = getAuthoritativeDraftSessionIdsForInstance(instanceId)
   const authoritativeAttachments = getAuthoritativeAttachmentSessionIdsForInstance(instanceId)
 

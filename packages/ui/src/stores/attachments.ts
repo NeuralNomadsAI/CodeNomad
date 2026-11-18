@@ -66,6 +66,10 @@ function clearAttachments(instanceId: string, sessionId: string) {
   setSession(instanceId, sessionId, { values: [], authoritative: true })
 }
 
+export function setDraftAttachments(instanceId: string, sessionId: string, values: Attachment[]) {
+  setSession(instanceId, sessionId, { values, authoritative: true })
+}
+
 function deleteSessionAttachments(instanceId: string, sessionId: string) {
   setSession(instanceId, sessionId)
 }

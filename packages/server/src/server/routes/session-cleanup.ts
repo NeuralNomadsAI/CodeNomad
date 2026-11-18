@@ -25,34 +25,24 @@ export function registerSessionCleanupRoute(app: FastifyInstance, deps: Deps) {
     const connection = manager.getExistingSharedServiceConnection(id)
     if (!connection) return reply.code(503).send()
     const skipped = { deleted: false }
-    const release = deps.cleanup.enterCleanup(sessionId)
-    if (!release) {
-      if (deps.cleanup.hasUncertain(sessionId)) {
-        // A surviving session cannot establish the outcome of a lost write.
-        const signal = AbortSignal.timeout(3_000)
-        try { await connection.client.session.get({ sessionID: sessionId }, { signal }) }
-        catch (error) {
-          if (isSessionNotFoundError(error) && error.sessionID === sessionId && !signal.aborted) {
-            try {
-              sessionTargetCurrent(manager, id, workspace, connection, signal)()
-              deps.cleanup.observeAbsent(sessionId)
-            } catch { /* Retain the hold. */ }
-          }
-        }
-      }
-      return skipped
-    }
     const admission = requestAdmission(request, reply)
     const signal = AbortSignal.any([admission.signal, AbortSignal.timeout(10_000)])
     const current = sessionTargetCurrent(manager, id, workspace, connection, signal)
     const options = { signal }
     const client = connection.client
+    let release: (() => void) | undefined
     let releaseWorktree: (() => void) | undefined
     let dispatched = false
     try {
-      if (deps.isProtected(sessionId)) return skipped
+      current()
+      const initial = await client.session.get({ sessionID: sessionId }, options)
+      if (initial.id !== sessionId || !initial.projectID || !await manager.ownsLocation(id, initial.location, client, { signal, strict: true })) return skipped
+      current()
+      release = deps.cleanup.enterCleanup(sessionId)
+      if (!release || deps.isProtected(sessionId)) return skipped
       const session = await client.session.get({ sessionID: sessionId }, options)
-      if (session.id !== sessionId || !session.projectID || !await manager.ownsLocation(id, session.location, client, { signal, strict: true })) return skipped
+      if (session.id !== sessionId || session.projectID !== initial.projectID || session.location.directory !== initial.location.directory
+        || !await manager.ownsLocation(id, session.location, client, { signal, strict: true })) return skipped
       const identity = await manager.getWorktreeIdentityForPath(id, session.location.directory)
       if (!identity || !(releaseWorktree = deps.worktreeDeletionFence.enter([identity]))) return skipped
       await assertOrdinaryMissionScheduleSession(client, session, { signal, current })
@@ -85,13 +75,16 @@ export function registerSessionCleanupRoute(app: FastifyInstance, deps: Deps) {
       dispatched = true
       await client.session.remove({ sessionID: sessionId }, { signal: AbortSignal.timeout(60_000) })
       if (!admission.signal.aborted) return { deleted: true }
-    } catch {
+    } catch (error) {
       if (dispatched) deps.cleanup.markUncertain(sessionId)
+      else if (isSessionNotFoundError(error) && error.sessionID === sessionId && deps.cleanup.hasUncertain(sessionId)) {
+        try { current(); deps.cleanup.observeAbsent(sessionId) } catch { /* Retain the hold. */ }
+      }
       if (!admission.signal.aborted) return dispatched ? reply.code(503).send() : skipped
     } finally {
       releaseWorktree?.()
       admission.dispose()
-      release()
+      release?.()
     }
   })
 }

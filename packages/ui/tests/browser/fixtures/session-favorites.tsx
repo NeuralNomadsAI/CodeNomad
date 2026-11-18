@@ -14,10 +14,15 @@ import { registerNavigationShortcuts } from "../../../src/lib/shortcuts/navigati
 import { keyboardRegistry } from "../../../src/lib/keyboard-registry"
 import PromptInput from "../../../src/components/prompt-input"
 import PromptAttachmentsBar from "../../../src/components/prompt-input/PromptAttachmentsBar"
-import { addAttachment, getAttachments } from "../../../src/stores/attachments"
+import RecoveredDrafts from "../../../src/components/prompt-input/recovered-drafts"
+import { addAttachment, clearAttachments, getAttachments, getSessionAttachmentsForInstance } from "../../../src/stores/attachments"
 import { setSessionDraftPrompt } from "../../../src/stores/session-state"
 import { NO_SESSION_DRAFT_SESSION_ID } from "../../../src/stores/app-session-workspace-hydration"
 import { createFileAttachment } from "../../../src/types/attachment"
+import { clearSessionDraftPrompt, getSessionDraftPromptsForInstance } from "../../../src/stores/session-state"
+import { hydrateRestoredWorkspaceState } from "../../../src/stores/app-session-workspace-hydration"
+import { serializeDraftAttachments } from "../../../src/stores/client-state-attachments-codec"
+import { decodeClientSnapshotV2, encodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { createClientSession } from "../../../src/types/session"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
@@ -57,6 +62,9 @@ const client = {
   session: {
     get: async ({ sessionID }: { sessionID: string }) => {
       gets.push(sessionID)
+      if (sessionID === "ses_fixture_transport") throw new Error("fixture transport unavailable")
+      if (sessionID === "ses_fixture_foreign") throw Object.assign(new Error("fixture foreign location"), { status: 403 })
+      if (!native.has(sessionID)) throw { _tag: "SessionNotFoundError", sessionID, message: "Gone" }
       return structuredClone(native.get(sessionID))
     },
     list: async (input: { parentID?: string | null; directory?: string; search?: string; cursor?: string }) => {
@@ -117,6 +125,7 @@ function Fixture() {
     <section class="p-3 flex-1 bg-surface-canvas">
       <button type="button" class="button-tertiary" onClick={() => setShown(value => !value)}>Bureau</button>
       <Show when={getAttachments(id, NO_SESSION_DRAFT_SESSION_ID).length > 0}><div data-recovered-composer>
+        <RecoveredDrafts instanceId={id} />
         <PromptAttachmentsBar attachments={getAttachments(id, NO_SESSION_DRAFT_SESSION_ID)} onRemoveAttachment={() => {}} />
         <PromptInput instanceId={id} instanceFolder={main} sessionId={NO_SESSION_DRAFT_SESSION_ID}
           onSend={() => {}} onCommand={() => {}} onRunShell={() => {}} />
@@ -127,6 +136,20 @@ function Fixture() {
 }
 render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "fr" })
+const readSaved = async () => {
+  const raw = sessionStorage.getItem("fixture-saved-drafts")
+  if (!raw) return
+  const { root, partitions } = JSON.parse(raw)
+  const snapshot = await decodeClientSnapshotV2(root, 1, async key => partitions[key] ?? null)
+  const tab = snapshot?.session?.tabs[0]
+  if (tab?.kind !== "workspace") throw new Error("Draft snapshot did not round-trip")
+  await hydrateRestoredWorkspaceState(id, tab, new AbortController().signal, () => true)
+}
+if (sessionStorage.getItem("fixture-clear-draft")) {
+  clearSessionDraftPrompt(id, "ses_fixture_cleared")
+  clearAttachments(id, "ses_fixture_cleared")
+}
+await readSaved()
 void serverEvents.connect()
 emit("permission.asked", { sessionID: "ses_validation", id: "fixture-permission", action: "read", resources: ["budget"] })
 Object.assign(window, { favoriteFixture: {
@@ -144,6 +167,29 @@ Object.assign(window, { favoriteFixture: {
   recoveredBytes: () => getAttachments(id, NO_SESSION_DRAFT_SESSION_ID).map(value =>
     value.source.type === "file" ? Array.from(value.source.data ?? []) : null),
   deleteEvent: (sessionID: string) => emit("session.deleted", { sessionID }),
+  prepareDrafts: (direct: boolean) => {
+    const source = "ses_fixture_absent"
+    setSessionDraftPrompt(id, NO_SESSION_DRAFT_SESSION_ID, "a".repeat(32000))
+    addAttachment(id, NO_SESSION_DRAFT_SESSION_ID, createFileAttachment("main.txt", "main.txt", "text/plain", new Uint8Array([1])))
+    setSessionDraftPrompt(id, source, "b".repeat(2000))
+    addAttachment(id, source, createFileAttachment("second.txt", "second.txt", "text/plain", new Uint8Array([2, 3])))
+    if (direct) emit("session.deleted", { sessionID: source })
+    else {
+      setSessionDraftPrompt(id, "ses_fixture_transport", "transport draft stays unresolved")
+      setSessionDraftPrompt(id, "ses_fixture_foreign", "foreign draft is not recovered here")
+      setSessionDraftPrompt(id, "ses_fixture_cleared", "cleared before restoration")
+      addAttachment(id, "ses_fixture_cleared", createFileAttachment("cleared.txt", "cleared.txt"))
+      sessionStorage.setItem("fixture-clear-draft", "1")
+    }
+  },
+  saveDrafts: async () => {
+    const encoded = await encodeClientSnapshotV2({ version: 1, revision: 1, savedAt: 10, layout: {}, session: {
+      activeTabIndex: 0, tabs: [{ kind: "workspace", folder: main, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+        ...serializeDraftAttachments(getSessionDraftPromptsForInstance(id), getSessionAttachmentsForInstance(id)) }],
+    } })
+    sessionStorage.setItem("fixture-saved-drafts", JSON.stringify(encoded))
+  },
+  readSaved,
   metadata: () => native.get("ses_briefing")?.metadata,
   automatic: () => cleanupBlankSessions(id),
   deep: () => { blank.add("ses_dossier_02"); return cleanupBlankSessions(id, undefined, true) },

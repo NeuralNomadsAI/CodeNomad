@@ -186,6 +186,8 @@ export const sessionMessages = {
 
   "sessionState.cleanup.deepConfirm.message": "Diese Bereinigung kann langsam sein und Sitzungen löschen, die Sie nicht löschen wollten. Sind Sie sicher?",
   "sessionState.cleanup.draftRecovered": "Der Entwurf und seine Anhänge liegen im Eingabefeld für eine neue Unterhaltung.",
+  "sessionState.cleanup.switchDraft": "Entwurf wechseln",
+  "sessionState.cleanup.savedDraft": "Gespeicherter Entwurf {number}",
   "sessionState.cleanup.deepConfirm.title": "Tiefenbereinigung der Sitzungen",
   "sessionState.cleanup.deepConfirm.detail": "Beide Bereinigungen löschen nur nachweislich leere, inaktive Sitzungen ohne Untersitzungen. Favoriten und ihre übergeordneten Sitzungen bleiben ordnerübergreifend erhalten.",
   "sessionState.cleanup.deepConfirm.confirmLabel": "Weiter",

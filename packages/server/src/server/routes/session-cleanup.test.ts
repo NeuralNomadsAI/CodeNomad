@@ -57,6 +57,7 @@ async function fixture(t: import("node:test").TestContext, reconciliationDeadlin
     permissions: async (): Promise<unknown[]> => [],
     children: async (_id: string): Promise<unknown> => page(),
     active: async (): Promise<unknown> => ({}),
+    beforeOwnership: async (_id: string) => {},
     remove: async (id: string, _signal?: AbortSignal) => { removed.push(id); native.delete(id) },
   }
   const connection = { assertCurrent() {}, client: {
@@ -76,8 +77,10 @@ async function fixture(t: import("node:test").TestContext, reconciliationDeadlin
     get: (id: keyof typeof paths) => paths[id],
     getExistingSharedServiceConnection: () => connection,
     getSharedServiceConnection: async () => connection,
-    ownsLocation: async (id: keyof typeof paths, location: { directory: string }) =>
-      location.directory === paths[id].path || location.directory.startsWith(`${paths[id].path}/`),
+    ownsLocation: async (id: keyof typeof paths, location: { directory: string }) => {
+      await controls.beforeOwnership(id)
+      return location.directory === paths[id].path || location.directory.startsWith(`${paths[id].path}/`)
+    },
     getWorktreeIdentityForPath: async () => "/scope",
   } as any
   const cleanup = new SessionCleanupFence()
@@ -100,6 +103,28 @@ test("a favorite in a narrower workspace protects the session and its private fo
   assert.deepEqual((await f.get()).json().records, {})
   f.controls.message = async () => assert.fail("protected IDs never reach message inspection")
   assert.equal(await f.clean(child), false)
+  assert.equal(await f.clean(root), false)
+  assert.deepEqual(f.removed, [])
+})
+
+test("a foreign cleanup cannot reserve a session during initial ownership, and changed placement is refused", async t => {
+  const f = await fixture(t)
+  const validation = barrier()
+  f.controls.beforeOwnership = async id => { if (id === "narrow") await validation.hold() }
+  const attempt = f.app.inject({ method: "POST", url: `${narrow}/session-cleanup/${root}` }).then(response => response.json())
+  try {
+    await validation.wait
+    const release = f.cleanup.enterMutation(root)
+    assert.ok(release, "the owner remains free to mutate during a foreign probe")
+    release()
+  } finally { validation.release() }
+  assert.deepEqual(await attempt, { deleted: false })
+  let reads = 0
+  const get = f.controls.get
+  f.controls.get = async id => {
+    const record = await get(id)
+    return ++reads > 1 ? { ...record, location: { directory: "/outside" } } : record
+  }
   assert.equal(await f.clean(root), false)
   assert.deepEqual(f.removed, [])
 })

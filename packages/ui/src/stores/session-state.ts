@@ -408,6 +408,11 @@ function hydrateSessionDraftPrompt(instanceId: string, sessionId: string, value:
   for (const listener of sessionDraftHydratedListeners) listener(instanceId, sessionId, value)
 }
 
+export function replaceSessionDraftPrompt(instanceId: string, sessionId: string, value: string): void {
+  markSessionDraftAuthoritative(instanceId, sessionId)
+  hydrateSessionDraftPrompt(instanceId, sessionId, value)
+}
+
 function onSessionDraftHydrated(listener: SessionDraftHydratedListener): () => void {
   sessionDraftHydratedListeners.add(listener)
   return () => sessionDraftHydratedListeners.delete(listener)

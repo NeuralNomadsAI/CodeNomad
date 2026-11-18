@@ -1,42 +1,44 @@
 import { batch } from "solid-js"
-import { createAttachmentPlaceholderRegex, getAttachmentPlaceholder } from "../lib/attachment-placeholders"
+import { generateUUID } from "../lib/client-identity"
 import { tGlobal } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
-import { NO_SESSION_DRAFT_SESSION_ID } from "./app-session-workspace-hydration"
-import { addAttachment, getAttachments } from "./attachments"
-import { getSessionDraftPrompt, setSessionDraftPrompt } from "./session-state"
+import { clearAttachments, getAttachments, getSessionAttachmentsForInstance, setDraftAttachments } from "./attachments"
+import { isRecoveredDraftId, NO_SESSION_DRAFT_SESSION_ID as composer, RECOVERED_DRAFT_PREFIX } from "./local-draft-ids"
+import { clearSessionDraftPrompt, getSessionDraftPrompt, getSessionDraftPromptsForInstance, replaceSessionDraftPrompt, setSessionDraftPrompt } from "./session-state"
 
-/** Move unsent material into the tab's existing, restorable new-conversation draft. */
 export function recoverRemovedSessionDraft(instanceId: string, sessionId: string) {
-  let text = getSessionDraftPrompt(instanceId, sessionId)
+  if (isRecoveredDraftId(sessionId) || sessionId === composer) return
+  const text = getSessionDraftPrompt(instanceId, sessionId)
   const attachments = getAttachments(instanceId, sessionId)
   if (!text && !attachments.length) return
-  const target = NO_SESSION_DRAFT_SESSION_ID
-  const draft = getSessionDraftPrompt(instanceId, target)
-  const reserved = new Set<string>()
-  for (const kind of ["image", "pasted"] as const) {
-    for (const match of `${draft}\n${text}`.matchAll(createAttachmentPlaceholderRegex(kind))) reserved.add(`${kind}:${match[1]}`)
-  }
-  const existing = getAttachments(instanceId, target)
-  for (const entry of [...existing, ...attachments]) {
-    const token = getAttachmentPlaceholder(entry.display)
-    if (token) reserved.add(`${token.kind}:${token.counter}`)
-  }
+  // Keep authored text and its references together under the existing per-draft budget.
+  const occupied = Boolean(getSessionDraftPrompt(instanceId, composer) || getAttachments(instanceId, composer).length)
+  const target = occupied ? RECOVERED_DRAFT_PREFIX + generateUUID() : composer
   batch(() => {
-    for (const entry of attachments) {
-      const token = getAttachmentPlaceholder(entry.display)
-      if (!token) {
-        if (!existing.some(value => value.id === entry.id)) addAttachment(instanceId, target, entry)
-        continue
-      }
-      let index = 1
-      while (reserved.has(`${token.kind}:${index}`)) index++
-      reserved.add(`${token.kind}:${index}`)
-      const display = `${token.kind === "image" ? "Image" : "pasted"} #${index}`
-      text = text.replace(createAttachmentPlaceholderRegex(token.kind, token.counter), `[${display}]`)
-      addAttachment(instanceId, target, { ...entry, display })
-    }
-    setSessionDraftPrompt(instanceId, target, [draft, text].filter(Boolean).join("\n\n"))
+    replaceSessionDraftPrompt(instanceId, target, text)
+    setDraftAttachments(instanceId, target, attachments)
+    clearSessionDraftPrompt(instanceId, sessionId)
+    clearAttachments(instanceId, sessionId)
   })
   showToastNotification({ category: "projects", variant: "warning", message: tGlobal("sessionState.cleanup.draftRecovered") })
+}
+
+export function recoveredDraftIds(instanceId: string) {
+  return [...new Set([
+    ...Object.keys(getSessionDraftPromptsForInstance(instanceId)),
+    ...Object.keys(getSessionAttachmentsForInstance(instanceId)),
+  ])].filter(isRecoveredDraftId).sort()
+}
+
+export function switchRecoveredDraft(instanceId: string, id: string) {
+  if (!isRecoveredDraftId(id)) return
+  const text = getSessionDraftPrompt(instanceId, id)
+  const attachments = getAttachments(instanceId, id)
+  if (!text && !attachments.length) return
+  batch(() => {
+    setSessionDraftPrompt(instanceId, id, getSessionDraftPrompt(instanceId, composer))
+    setDraftAttachments(instanceId, id, getAttachments(instanceId, composer))
+    replaceSessionDraftPrompt(instanceId, composer, text)
+    setDraftAttachments(instanceId, composer, attachments)
+  })
 }

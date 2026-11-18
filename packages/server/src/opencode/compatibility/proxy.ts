@@ -1,4 +1,4 @@
-import { Readable } from "node:stream"
+import { PassThrough, Readable } from "node:stream"
 import type { FastifyReply, FastifyRequest } from "fastify"
 
 export async function forwardRuntimeRequest(args: {
@@ -22,6 +22,7 @@ export async function forwardRuntimeRequest(args: {
   let detached = false
   let confirmed = false
   let grace: ReturnType<typeof setTimeout> | undefined
+  let downstreamRelay: PassThrough | undefined
   const release = () => {
     if (released) return
     released = true
@@ -35,6 +36,7 @@ export async function forwardRuntimeRequest(args: {
   }
   const disconnect = () => {
     detached = true
+    downstreamRelay?.destroy()
     if (!args.retainMutation || !dispatched) { controller.abort(); release() }
     else {
       // A lost window bounds the detached transport wait, not the uncertainty hold.
@@ -91,6 +93,24 @@ export async function forwardRuntimeRequest(args: {
       return args.reply.send(JSON.stringify(value))
     }
     const stream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream)
+    if (args.retainMutation) {
+      // Fastify owns only the downstream relay. A closed relay wakes backpressure
+      // but cannot destroy the native reader or settle the mutation.
+      const relay = downstreamRelay = new PassThrough()
+      args.reply.send(relay)
+      try {
+        for await (const chunk of stream) {
+          if (!detached && !relay.destroyed && !relay.write(chunk)) await waitForRelay(relay)
+        }
+        confirmed = definitive
+        relay.end()
+      } catch (error) {
+        relay.destroy(error instanceof Error ? error : new Error("OpenCode response was interrupted"))
+      } finally {
+        release()
+      }
+      return
+    }
     stream.once("end", () => { confirmed = definitive; release() }).once("close", release).once("error", release)
     return args.reply.send(stream)
   } catch (error) {
@@ -99,4 +119,15 @@ export async function forwardRuntimeRequest(args: {
     if (detached) return
     throw error
   }
+}
+
+function waitForRelay(relay: PassThrough): Promise<void> {
+  if (relay.destroyed || !relay.writableNeedDrain) return Promise.resolve()
+  return new Promise(resolve => {
+    const done = () => {
+      relay.off("drain", done).off("close", done)
+      resolve()
+    }
+    relay.once("drain", done).once("close", done)
+  })
 }
