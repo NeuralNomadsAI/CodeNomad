@@ -278,6 +278,28 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
+  it("removes a bare ID that would precede the remaining definition, keeping its disabling rule", async () => {
+    const f = await fixture()
+    try {
+      const runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      for (const [globalPlugins, expected] of [
+        // Only the Project declaration remains, after Global: "acme.plugin" in Global would become a package spec.
+        [["@acme/plugin@1", "-acme.plugin", "acme.plugin"], ["-acme.plugin"]],
+        // An earlier Global declaration still defines it: the bare ID stays a selector.
+        [["@acme/plugin@1", "@acme/plugin@1", "-acme.plugin", "acme.plugin"], ["@acme/plugin@1", "-acme.plugin", "acme.plugin"]],
+      ] as const) {
+        await writeFile(f.globalFile, JSON.stringify({ plugins: globalPlugins }))
+        await writeFile(f.projectFile, JSON.stringify({ plugins: ["@acme/plugin@^1"] }))
+        f.state.runtime = runtime
+        await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1",
+          entryIndex: globalPlugins.length === 3 ? 0 : 1, expectedRevision: await revision(f) })
+        assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, expected, String(globalPlugins))
+        assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["@acme/plugin@^1"])
+      }
+    } finally { await f.cleanup() }
+  })
+
   it("keeps a plugin's rules while another declaration of it remains in any applicable document", async () => {
     const f = await fixture()
     try {

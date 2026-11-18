@@ -504,13 +504,14 @@ describe("OpenCode V2 plugin activation controls", () => {
       const targetFile = path.join(projectDirectory, ".opencode", "opencode.jsonc")
       for (const directory of [globalDirectory, projectDirectory, ancestorDirectory]) fs.mkdirSync(directory)
       if (trailingVirtualRule) fs.mkdirSync(path.dirname(targetFile))
-      fs.writeFileSync(directFile, `{ "plugins": [], "model": "unchanged" }\n`)
+      // The runtime reports "known" for this declaration, which precedes the Project layer: its bare ID selects it.
+      fs.writeFileSync(directFile, `{ "plugins": ["known-package"], "model": "unchanged" }\n`)
       fs.writeFileSync(ancestorFile, `{ "plugins": ["-known"] }\n`)
       const directBefore = fs.readFileSync(directFile, "utf8")
       const ancestorBefore = fs.readFileSync(ancestorFile, "utf8")
       const entries = [
         { type: "directory", path: globalDirectory },
-        { type: "document", path: directFile, info: { plugins: [] } },
+        { type: "document", path: directFile, info: { plugins: ["known-package"] } },
         { type: "document", path: ancestorFile, info: { plugins: ["-known"] } },
         { type: "directory", path: ancestorDirectory },
         ...(trailingVirtualRule ? [{ type: "directory", path: path.dirname(targetFile) }] : []),
@@ -619,7 +620,8 @@ describe("OpenCode V2 plugin activation controls", () => {
     fs.mkdirSync(globalDirectory, { recursive: true })
     fs.mkdirSync(projectConfigDirectory, { recursive: true })
     const entries = [
-      { type: "document", info: { plugins: ["known"] } },
+      // The leading virtual document declares the package the runtime reports "known" for.
+      { type: "document", info: { plugins: ["known-package", "known"] } },
       { type: "directory", path: globalDirectory },
       { type: "document", path: path.join(projectConfigDirectory, "opencode.jsonc"), info: { plugins: [] } },
       { type: "directory", path: projectConfigDirectory },
@@ -660,6 +662,25 @@ describe("OpenCode V2 plugin activation controls", () => {
       (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden",
     )
     assert.deepEqual((parse(fs.readFileSync(owned.globalFile, "utf8")) as any).plugins, [])
+  })
+
+  it("never writes a bare ID before its verified definition in OpenCode's applied order", async () => {
+    // The plugin is defined by the Project declaration, after Global: a bare ID in Global would be a package spec.
+    const fixture = createFixture({ globalPlugins: ["-*", "-acme.reviewer"], projectPlugins: ["@acme/reviewer"],
+      runtime: [activePlugin("acme.reviewer", "@acme/reviewer")] })
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden", "deleting the exact rule leaves the wildcard")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "-acme.reviewer"])
+    assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["@acme/reviewer"])
+  })
+
+  it("refuses an enable whose deletion leaves a wildcard disabling the plugin, writing nothing", async () => {
+    for (const wildcard of ["-*", "-acme.*"]) {
+      const fixture = createFixture({ globalPlugins: ["@acme/reviewer", wildcard, "-acme.reviewer"], runtime: [] })
+      await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: true }),
+        (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden", wildcard)
+      assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["@acme/reviewer", wildcard, "-acme.reviewer"], wildcard)
+    }
   })
 
   it("never writes a bare ID no loaded plugin defines: re-enabling deletes its rules or is refused", async () => {

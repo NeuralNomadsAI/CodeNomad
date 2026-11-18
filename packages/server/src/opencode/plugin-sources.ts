@@ -1,4 +1,4 @@
-import type { PluginControlsSnapshot } from "../api-types"
+import type { PluginConfiguredRule, PluginControlsSnapshot } from "../api-types"
 import type { Logger } from "../logger"
 import type {
   PluginSourceAddRequest,
@@ -6,6 +6,7 @@ import type {
   PluginSourceMutationResponse,
   PluginSourceRemoveRequest,
 } from "../plugin-source-types"
+import { definedBefore } from "./plugin-activation-order"
 import { appendPluginControlRule, PluginControlDocumentError, replacePluginControlRules } from "./plugin-control-document"
 import { PluginControlsError, type PluginControls, type PluginControlsErrorKind } from "./plugin-controls"
 import {
@@ -116,9 +117,9 @@ export class PluginSources {
 
   /**
    * Removes a source with every exact `id`/`-id` rule of its plugin ID in the same document, so no orphan rule is
-   * left for OpenCode to load as a package. A source whose ID is unknown (disabled, failed before exporting one), or
-   * whose plugin another declaration still loads, keeps the rules. With `pluginId`, removes the exact rules of an ID
-   * the snapshot reads as orphan.
+   * left for OpenCode to load as a package: a bare `id` stays only after another verified definition, a `-id` while
+   * another declaration of the plugin remains. A source whose ID is unknown (disabled, failed before exporting one)
+   * keeps the rules. With `pluginId`, removes the exact rules of an ID the snapshot reads as orphan.
    */
   async remove(workspaceId: string, request: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
     const { scope } = request
@@ -131,9 +132,10 @@ export class PluginSources {
       await this.options.documents.editConfigDocument(workspaceId, request.location, scope, (document, current) => {
         const declarations = current.declarations()
         if (!declarations) throw stale()
-        const rulesOf = (id: string) => {
+        const rulesOf = (id: string, keep: (rule: PluginConfiguredRule) => boolean = () => false) => {
           const sources = new Set(declarations.sources.map(source => source.entryIndex))
-          const indexes = declarations.rules.filter(rule => rule.selector === id && !sources.has(rule.entryIndex)).map(rule => rule.entryIndex)
+          const indexes = declarations.rules.filter(rule => rule.selector === id && !sources.has(rule.entryIndex) && !keep(rule))
+            .map(rule => rule.entryIndex)
           return { indexes, expected: new Set([id, `-${id}`]) }
         }
         try {
@@ -145,12 +147,17 @@ export class PluginSources {
           }
           const source = declarations.sources.find(entry => entry.entryIndex === request.entryIndex && entry.target === request.target)
           if (!source) throw stale()
-          // Another declaration of the plugin, in any applicable document, still loads it: its rules still apply.
+          // Re-evaluate the plugin's exact rules in this document without the source, in OpenCode's applied order: a
+          // bare `id` stays only after another verified definition (otherwise it becomes a package spec), and `-id`
+          // stays while any declaration of the plugin remains, keeping it disabled.
           const identities = new Set(pluginPackageIdentities(source.target))
           const remains = declarations.allSources.some(other => other !== source && (other.target === source.target
             || (source.pluginId !== undefined && other.pluginId === source.pluginId)
             || pluginPackageIdentities(other.target).some(identity => identities.has(identity))))
-          const rules = source.pluginId && !remains ? rulesOf(source.pluginId) : undefined
+          const id = source.pluginId
+          const removed = declarations.sequence.entries.find(entry => entry.document === declarations.document && entry.entryIndex === request.entryIndex)
+          const rules = id ? rulesOf(id, rule => rule.enabled
+            ? definedBefore(declarations.sequence, id, declarations.document, rule.entryIndex, removed) : remains) : undefined
           removedRules = rules?.indexes.length ?? 0
           return removePluginSourceEntry(document, request.entryIndex, request.target, rules)
         } catch (error) {

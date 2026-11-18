@@ -37,14 +37,18 @@ import { createWslPluginControlDocumentFileSystem } from "./plugin-control-docum
 import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
+import { definedBefore, enabledThrough, matchesSelector, type AppliedEntry, type AppliedSequence } from "./plugin-activation-order"
 
 /** The snapshot's reading of one edited document: its own sources and rules, every applicable document's sources
- * (`allSources`, sharing the own entries' objects) and every control. */
+ * (`allSources`, sharing the own entries' objects), every control, and the applied order with this document's
+ * position in it. */
 export interface PluginDocumentDeclarations {
   sources: PluginConfiguredSource[]
   rules: PluginConfiguredRule[]
   allSources: PluginConfiguredSource[]
   controls: PluginActivationControl[]
+  sequence: AppliedSequence
+  document: number
 }
 
 export interface NativeConfigEdit { scope: PluginControlScope; path: string; expectation: string; updated: string }
@@ -311,29 +315,26 @@ export class PluginControls {
         }
 
         const rule = request.enabled ? request.pluginId : `-${request.pluginId}`
-        const overlay = (plugins: readonly PluginConfigEntry[]) => controlsForDocuments(base, context, {
-          servicePath: target.path,
-          plugins,
-          scope: request.scope,
-        })
-        // The state appending the rule would produce is the contract; a smaller edit must reproduce it exactly.
-        const appended = overlay([...projection.plugins, rule])
         const removable = projection.noOpSafe
           ? replaceableRuleIndexes(document.plugins, projection.plugins, before, target.path, request.scope, request.pluginId, context.paths) : []
         const kept = projection.plugins.filter((_, index) => !removable.includes(index))
-        // A positive bare ID is a package spec unless a plugin defines it earlier: OpenCode would install whatever registry
-        // package has that name. Write one only for an ID the runtime reports or a verified descriptor defines (or a
-        // reserved `opencode.*` selector); otherwise re-enabling may only delete this scope's `-id` rules.
-        const writesBareId = request.enabled && control.runtime?.id !== request.pluginId && !control.managedBy && !control.builtin
-        // Prefer removing the earlier rules alone (re-enabling a plugin active without them), then replacing them.
-        let edit: { remove: number[]; rule?: string; snapshot: PluginControlsSnapshot } | undefined = writesBareId ? undefined : { remove: [], rule, snapshot: appended }
-        if (removable.length > 0) {
-          for (const candidate of writesBareId ? [{ remove: removable }] : [{ remove: removable }, { remove: removable, rule }]) {
-            const snapshot = overlay(candidate.rule === undefined ? kept : [...kept, candidate.rule])
-            if (sameActivation(snapshot, appended)) { edit = { ...candidate, snapshot }; break }
-          }
+        // Candidates in OpenCode's applied order, smallest first: delete this scope's exact rules, replace them, append.
+        // One qualifies when the scope's state (every document through its last one, wildcards included) is the requested
+        // one, and any bare `id` it writes follows a verified definition: otherwise OpenCode would install the registry
+        // package of that name. Nothing qualifying is refused before any write.
+        let edit: { remove: number[]; rule?: string; snapshot: PluginControlsSnapshot } | undefined
+        for (const candidate of [...removable.length > 0 ? [{ remove: removable }, { remove: removable, rule }] : [], { remove: [] as number[], rule }]) {
+          const plugins = candidate.rule === undefined ? kept : [...(candidate.remove.length > 0 ? kept : projection.plugins), candidate.rule]
+          const evaluated = evaluateDocuments(base, context, { servicePath: target.path, plugins, scope: request.scope })
+          const position = evaluated.documents.find(entry => entry.path && samePath(context.paths, entry.path, target.path))!.order
+          const through = Math.max(...evaluated.documents.filter(entry => entry.scope === request.scope).map(entry => entry.order))
+          if (candidate.rule !== undefined && request.enabled
+            && !definedBefore(evaluated.sequence, request.pluginId, position, plugins.length - 1)) continue
+          if (enabledThrough(evaluated.sequence, request.pluginId, through) !== request.enabled) continue
+          edit = { ...candidate, snapshot: evaluated.snapshot }
+          break
         }
-        if (!edit) throw new PluginControlsError("No loaded plugin defines this ID", "forbidden")
+        if (!edit) throw new PluginControlsError("OpenCode's plugin order cannot reach this state without a package spec", "forbidden")
         const updated = replacePluginControlRules(document, edit.remove, new Set([request.pluginId, `-${request.pluginId}`]), edit.rule)
         try {
           await replacePluginControlDocument(document, updated, {
@@ -545,10 +546,10 @@ function documentDeclarations(context: ReadContext, target: ResolvedTarget, docu
   const base = snapshotBase(context)
   const normalized = base.documents.find(entry => entry.path && samePath(context.paths, entry.path, target.path))
   if (!document.exists || !normalized || !isDeepStrictEqual(normalized.plugins, document.plugins)) return undefined
-  const snapshot = controlsForDocuments(base, context)
+  const { snapshot, sequence } = evaluateDocuments(base, context)
   const own = (item: { path?: string }) => Boolean(item.path && samePath(context.paths, item.path, target.path))
   return { sources: snapshot.configured.sources.filter(own), rules: snapshot.configured.rules.filter(own),
-    allSources: snapshot.configured.sources, controls: snapshot.controls }
+    allSources: snapshot.configured.sources, controls: snapshot.controls, sequence, document: normalized.order }
 }
 
 function controlsForDocuments(
@@ -556,6 +557,15 @@ function controlsForDocuments(
   context: ReadContext,
   overlay?: { servicePath: string; plugins: readonly PluginConfigEntry[]; scope: PluginControlScope },
 ): PluginControlsSnapshot {
+  return evaluateDocuments(base, context, overlay).snapshot
+}
+
+/** The snapshot and OpenCode's applied order of the same documents. */
+function evaluateDocuments(
+  base: SnapshotBase,
+  context: ReadContext,
+  overlay?: { servicePath: string; plugins: readonly PluginConfigEntry[]; scope: PluginControlScope },
+): { snapshot: PluginControlsSnapshot; sequence: AppliedSequence; documents: readonly ConfigDocumentView[] } {
   const { runtime, runtimeIds, runtimeSourceIds, runtimeById } = base
   const documents = overlay ? applyOverlay(base, context, overlay) : base.documents
   // IDs only associate rules after an installation has passed local provenance checks.
@@ -570,10 +580,12 @@ function controlsForDocuments(
   const declaredTargets = new Set<string>()
   const rules: PluginConfiguredRule[] = []
   const sources: PluginConfiguredSource[] = []
+  const applied: AppliedEntry[] = []
   for (const document of documents) {
     document.plugins.forEach((entry, entryIndex) => {
       if (typeof entry !== "string") {
         const runtimeId = runtimeIdForConfiguredTarget(context, document, entry.package, runtimeById, runtimeSourceIds)
+        applied.push({ document: document.order, entryIndex, remove: false, target: entry.package, ...(runtimeId ? { pluginId: runtimeId } : {}) })
         sources.push({ target: entry.package, scope: document.scope, path: document.path, entryIndex, hasOptions: entry.options !== undefined,
           ...(runtimeId ? { pluginId: runtimeId } : {}) })
         const isFirstRuntimeSourceDeclaration = Boolean((runtimeId || reportedTargets.has(entry.package)) && !declaredTargets.has(entry.package))
@@ -592,6 +604,8 @@ function controlsForDocuments(
       }
       const disabled = entry.startsWith("-")
       const selector = disabled ? entry.slice(1) : entry
+      const step: AppliedEntry = { document: document.order, entryIndex, remove: disabled, target: selector }
+      applied.push(step)
       if (disabled) {
         rules.push({ selector, enabled: false, scope: document.scope, path: document.path, order: document.order, entryIndex })
         if (isExactSelector(selector)) knownDefinitions.add(selector)
@@ -605,6 +619,7 @@ function controlsForDocuments(
       if (!selectsPlugin) {
         sources.push({ target: selector, scope: document.scope, path: document.path, entryIndex, hasOptions: false,
           ...(runtimeSourceId ? { pluginId: runtimeSourceId } : {}) })
+        if (runtimeSourceId) step.pluginId = runtimeSourceId
         declaredTargets.add(selector)
         if (runtimeSourceId) {
           if (rules.some((rule) => !rule.enabled && matchesSelector(rule.selector, runtimeSourceId))) {
@@ -650,12 +665,14 @@ function controlsForDocuments(
       ...(identified && !runtimeEntry && !managed && !builtin && !declaredIds.has(id) ? { orphan: true as const } : {}),
     } satisfies PluginActivationControl
   })
+  // Directory, builtin and SDK plugins and verified descriptors apply before every document; a declared ID is
+  // defined where it is declared.
+  const startIds = new Set([...runtime.flatMap(entry => entry.id && entry.source.type !== "package" ? [entry.id] : []), ...managedIds]
+    .filter(id => !declaredIds.has(id)))
   return {
-    location: context.location,
-    runtime,
-    configured: { rules, sources },
-    controls,
-    targets: context.targets.map(publicTarget),
+    snapshot: { location: context.location, runtime, configured: { rules, sources }, controls, targets: context.targets.map(publicTarget) },
+    sequence: { entries: applied, startIds },
+    documents,
   }
 }
 
@@ -720,22 +737,6 @@ function replaceableRuleIndexes(
     .map(source => source.entryIndex))
   return rawPlugins.flatMap((entry, index) =>
     (entry === pluginId || entry === `-${pluginId}`) && projected[index] === entry && !sources.has(index) ? [index] : [])
-}
-
-/** What a user and OpenCode observe: every control's effective state, its displayed switches, and the sources. A
- * control enabled everywhere equals its absence: deleting the last rule of an unloaded ID removes its row. */
-function sameActivation(left: PluginControlsSnapshot, right: PluginControlsSnapshot): boolean {
-  const checked = (control: PluginActivationControl, scope: PluginControlScope): boolean => {
-    const state = control[scope]
-    if (state !== "default") return state === "enabled"
-    return scope === "project" ? checked(control, "global") : true
-  }
-  const view = (snapshot: PluginControlsSnapshot) => JSON.stringify([
-    snapshot.controls.map(control => [control.id, control.effective === "disabled" ? "disabled" : "enabled", control.managedBy ?? "", checked(control, "global"), checked(control, "project")])
-      .filter(([, effective, managed, global, project]) => !(effective === "enabled" && managed === "" && global && project)),
-    snapshot.configured.sources.map(source => [source.scope, source.path ?? "", source.target, source.pluginId ?? "", source.managedBy ?? ""]).sort(),
-  ])
-  return view(left) === view(right)
 }
 
 function pluginEntriesEqual(left: PluginConfigEntry, right: PluginConfigEntry | undefined): boolean {
@@ -989,10 +990,6 @@ function normalizeLocation(input: PluginControlLocation): LocationRef & PluginCo
 
 function stateForRule(rule: PluginConfiguredRule | undefined): PluginScopeRuleState {
   return rule ? (rule.enabled ? "enabled" : "disabled") : "default"
-}
-
-function matchesSelector(selector: string, pluginId: string): boolean {
-  return selector === "*" || (selector.endsWith(".*") ? pluginId.startsWith(selector.slice(0, -1)) : selector === pluginId)
 }
 
 function isExactSelector(selector: string): boolean {

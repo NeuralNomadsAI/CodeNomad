@@ -51,14 +51,15 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
 - **Removal** requires, under the document primitive, that `plugins[entryIndex]`
   still declares `target` (a string, or an object's `package`) and that the snapshot
   of the freshly read document reads it as a source; otherwise `stale` (409). The same
-  edit deletes every string entry the snapshot reads as an exact `id`/`-id` rule of the
-  source's `pluginId` in that document, never wildcards, prefixes, other plugins' rules or
-  other documents: a bare `id` left without its package is a package spec that OpenCode
-  installs from the registry. A source without `pluginId` (disabled, failed before
-  exporting an ID) keeps its rules, and so does a source whose plugin another declaration
-  in any applicable document still loads (same target, `pluginId` or package identity).
-  The result must parse to the original minus exactly those elements, and OpenCode's
-  package cache is never touched.
+  edit re-evaluates, in the [applied order](#applied-order) without that source, every
+  string entry the snapshot reads as an exact rule of the source's `pluginId` in that
+  document: a bare `id` is deleted unless a verified definition still precedes it (it
+  would otherwise be a package spec OpenCode installs from the registry), and a `-id` is
+  deleted only when no other declaration of the plugin remains in any applicable document
+  (same target, `pluginId` or package identity). Wildcards, prefixes, other plugins'
+  rules and other documents are never touched. A source without `pluginId` (disabled,
+  failed before exporting an ID) keeps its rules. The result must parse to the original
+  minus exactly those elements, and OpenCode's package cache is never touched.
 - **Orphan rules**: a control is `orphan` when no runtime entry, verified descriptor or
   source defines its ID and every source has a `pluginId` (a runtime entry exporting an ID,
   or a verified descriptor), so no declaration can define it; a failed report without an ID
@@ -158,6 +159,23 @@ whose package has not loaded yet is therefore fetched from the registry (`packag
 and `packages/core/src/plugin/supervisor.ts` in OpenCode). Source declarations remain in place when an
 activation rule is written.
 
+### Applied order
+
+`opencode/plugin-activation-order.ts` models that order for every mutation. Builtin, SDK and directory-discovered
+plugins (including verified CodeNomad descriptors) are defined before every document; documents then apply in
+`config.get` order (Global before Project), entries in array order. Each add carries the ID it verifiably defines:
+the runtime reports that exact ID for that source, or a verified managed descriptor. A runtime package entry no
+document declares has no position. `-x` disables only plugins defined before it, and an add selects only plugins
+defined before it.
+
+- **Safe positive rule**: a bare `id` at a position is written only when a verified definition precedes it, or the
+  ID is a reserved `opencode.*` selector. CodeNomad appends at the end of the target document, so a definition in a
+  later document (Global rule, Project declaration) never qualifies.
+- **Requested state**: a scope's state evaluates the documents through that scope's last one, for that ID only,
+  wildcards included. Without a verified definition in that prefix the ID is assumed defined first, so every rule
+  that could apply to it does. An activation succeeds only when this state is the requested one; a disappearing row
+  keeps the wildcard state it evaluates to.
+
 The native plugin API offers `plugin.list`/`plugin.check`/`plugin.update`, and the
 pinned client's `config.update` accepts only its declared preference fields, so
 activation is one narrow, authenticated configuration-file mutation.
@@ -252,16 +270,13 @@ connection refuse with `stale` and require a fresh selection/confirmation.
    or filesystem errors.
 3. Edit with `jsonc-parser`: append one source spec string, delete one verified source element with its
    plugin's verified exact rules (or an orphan ID's rules), or write one activation. Element deletions take their
-   ranges from the parse tree (`deletePluginEntries`), which keeps compact arrays valid. An activation deletes the target document's earlier exact `id`/`-id` rules for
-   that plugin, then appends the requested rule, or only deletes them, whichever first produces exactly the
-   snapshot appending the rule would produce: every control's effective state and displayed switches, and
-   every source. Otherwise it only appends. Entries the snapshot reads as source declarations (a package named
-   like its ID), broad selectors and other files are never deleted, and a placeholder or watcher-lag projection
-   (not no-op safe) keeps the plain append. A control enabled everywhere compares equal to its absence (deleting
-   the last rule of an unloaded ID removes its row). A positive bare `id` is a package spec unless a plugin defines it
-   earlier, so an enable writes one only when the runtime reports that ID, a verified descriptor defines it or it is a
-   reserved `opencode.*` selector; otherwise only the removal-only edit qualifies, and without it the route refuses
-   with `forbidden` before any write. Each deleted entry is re-verified in the read document. Comments, source
+   ranges from the parse tree (`deletePluginEntries`), which keeps compact arrays valid. An activation tries, in
+   order, deleting the target document's exact `id`/`-id` rules for that plugin, deleting them and appending the
+   requested rule, and appending it, and writes the first that reaches the [requested state](#applied-order) while
+   any bare `id` it writes satisfies the safe positive rule. When none qualifies the route refuses with `forbidden`
+   before any write. Entries the snapshot reads as source declarations (a package named like its ID), broad
+   selectors and other files are never deleted, and a placeholder or watcher-lag projection (not no-op safe) only
+   appends. Each deleted entry is re-verified in the read document. Comments, source
    objects, options, unknown keys, ordering, indentation, line endings, and a
    UTF-8 BOM are retained.
 4. Serialize in-process mutations and hold a per-target interprocess lock across
@@ -368,12 +383,14 @@ guessed paths.
   re-verified deletions: `plugin-control-document.test.ts`
 - rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
   selectors, rules in another scope, source declarations named like their ID, managed re-enable), and the
-  removal-only or refused enables of IDs no loaded plugin defines: `plugin-controls.test.ts`
+  removal-only or refused enables of IDs without a preceding verified definition, wildcards left disabling:
+  `plugin-controls.test.ts`; the applied-order evaluator: `plugin-activation-order.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`
 - source add/remove ownership, scope availability, duplicates across scopes, rule removal with the source (active and
   failed plugins, wildcards, other plugins and scopes kept), rule retention for unknown IDs, bare names loaded as
-  packages, rules kept for a failed ID-less package or a remaining declaration, orphan rule removal and refusal,
+  packages, rules kept for a failed ID-less package or a remaining declaration, a bare ID removed when it would
+  precede the remaining definition, orphan rule removal and refusal,
   inventory correlation and the strict route:
   `plugin-sources.test.ts`
 - confirmed-document revisions, full-options and connection replacement refusals, ordinary native removal
