@@ -182,8 +182,10 @@ configuration directory `config.get` reports, a `.ts`/`.js` file child loading a
 through its `server` or `index` module (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`, `.cjs`). A local
 entry counts as discovered only when its reported path is exactly one of these; nested modules, package `main`,
 `server/index` and symlinked real paths do not count. Any other undeclared inventory entry (a removed declaration
-the daemon still reports while it reloads) defines nothing. A discovered folder deleted while the inventory still
-reports it keeps counting until the daemon reloads. Each
+the daemon still reports while it reloads) defines nothing. Write decisions (activation and removal, inside their
+mutation lock) also require each discovered entrypoint to exist as a regular file now: one inspection per candidate
+through the configuration's host or WSL file system, any error counting as absent, so an inventory entry outliving
+its deleted folder defines nothing and no bare `id` is written for it. Display reads skip that I/O. Each
 add carries the ID it verifiably defines: the runtime reports that exact ID for that source, or a verified managed
 descriptor. `-x` disables only plugins defined before it, and an add selects only plugins defined before it. The
 snapshot classifies each positive entry the same way: it is an activation rule only when a definition precedes it,
@@ -406,7 +408,8 @@ guessed paths.
 - rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
   selectors, rules in another scope, source declarations named like their ID, managed re-enable), and the
   removal-only or refused enables of IDs without a preceding verified definition, wildcards left disabling, undeclared
-  local inventory counted only at native discovery entrypoints (nested plugins refused):
+  local inventory counted only at native discovery entrypoints that exist (nested plugins and deleted entrypoints
+  refused):
   `plugin-controls.test.ts`; the applied-order evaluator: `plugin-activation-order.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`

@@ -366,6 +366,8 @@ describe("plugin source mutations", () => {
       // Removing the explicit declaration leaves the discovered plugin loaded in every project: its disable still applies.
       // plugin.list reports the resolved server entrypoint of the discovered plugins/reviewer folder.
       const discovered = path.join(path.dirname(f.globalFile), "plugins", "reviewer", "index.js")
+      await mkdir(path.dirname(discovered), { recursive: true })
+      await writeFile(discovered, "export default {}\n")
       f.state.runtime = [{ id: "acme.reviewer", source: { type: "local", path: discovered }, features: {}, state: { status: "active" } }]
       await mkdir(path.dirname(f.projectFile), { recursive: true })
       await writeFile(f.globalFile, JSON.stringify({ plugins: ["./plugins/reviewer", "-acme.reviewer"] }))

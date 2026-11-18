@@ -686,6 +686,8 @@ describe("OpenCode V2 plugin activation controls", () => {
     ] as const) {
       const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
       const local = path.join(fixture.globalDirectory, ...relative)
+      fs.mkdirSync(path.dirname(local), { recursive: true })
+      fs.writeFileSync(local, "export default {}\n")
       fixture.runtime.push({ id: "acme.external", source: { type: "local", path: local }, features: {}, state: { status: "active" } })
       const enable = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.external", scope: "global", enabled: true })
       const label = relative.join("/")
@@ -697,6 +699,25 @@ describe("OpenCode V2 plugin activation controls", () => {
         assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"], `no bare ID without a definition: ${label}`)
       }
     }
+  })
+
+  it("refuses a bare ID for a discovered plugin whose entrypoint no longer exists while the inventory still reports it", async () => {
+    const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+    const entrypoint = path.join(fixture.globalDirectory, "plugins", "external", "server.js")
+    fs.mkdirSync(path.dirname(entrypoint), { recursive: true })
+    fs.writeFileSync(entrypoint, "export default {}\n")
+    fixture.runtime.push({ id: "acme.external", source: { type: "local", path: entrypoint }, features: {}, state: { status: "active" } })
+    // The folder is deleted; the daemon has not reloaded yet, so plugin.list still reports the plugin.
+    fs.rmSync(path.dirname(entrypoint), { recursive: true })
+    assert.ok((await fixture.controls.read("workspace", fixture.location)).controls.some(control => control.id === "acme.external"))
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.external", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"])
+    // A directory where the entrypoint was is not a regular file either.
+    fs.mkdirSync(entrypoint, { recursive: true })
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.external", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"])
   })
 
   it("never writes a Global bare ID for a nested plugin declared only in Project", async () => {

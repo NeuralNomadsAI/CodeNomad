@@ -94,6 +94,8 @@ interface ReadContext {
   fileSystem: PluginControlDocumentFileSystem
   managedPlugins: ManagedDesktopPlugin[]
   packageVersions: Map<string, { revision: string; version: string }>
+  /** Write decisions only: discovered entrypoints that exist as regular files now. Absent for display reads. */
+  existingEntrypoints?: ReadonlySet<string>
 }
 
 interface ResolvedTarget extends PluginControlTarget {
@@ -214,6 +216,7 @@ export class PluginControls {
       if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
       const prepared: Array<{ scope: PluginControlScope; write: PluginControlDocumentPrepared }> = []
       try {
+        await this.verifyDiscoveredEntrypoints(workspaceId, context)
         const documents = await Promise.all(context.targets.map(async target => ({ target, document: await readPluginControlDocument(target.ioPath, context.fileSystem) })))
         const confirmed = documents.find(entry => entry.target.scope === scope)!
         if (expectedRevision !== this.documentRevision(workspaceId, context, confirmed.target, confirmed.document)) {
@@ -251,6 +254,27 @@ export class PluginControls {
         release()
       }
     }))
+  }
+
+  /**
+   * For a write decision, keeps the discovered local entrypoints that exist as regular files now: one inspection per
+   * candidate through the configuration's file system, any error counting as absent. A plugin whose folder was deleted
+   * while the inventory still reports it then defines nothing, and no bare ID is written for it.
+   */
+  private async verifyDiscoveredEntrypoints(workspaceId: string, context: ReadContext): Promise<void> {
+    const folders = discoveryFolders(context)
+    const candidates = new Set(context.runtime.flatMap(entry => entry?.source?.type === "local" && typeof entry.source.path === "string"
+      && discoveredEntrypoint(context.paths, folders, entry.source.path) ? [entry.source.path] : []))
+    const nativeWsl = Boolean(this.options.workspaceManager.getServiceWslDistro(workspaceId))
+    const existing = new Set<string>()
+    await Promise.all([...candidates].map(async file => {
+      try {
+        const ioPath = nativeWsl ? file : await this.options.workspaceManager.getHostPathForServicePath(workspaceId, file)
+        if (ioPath && (await context.fileSystem.inspectMany([ioPath]))[0]?.exists === true) existing.add(file)
+      } catch { /* Unverifiable: not a definition. */ }
+    }))
+    assertCurrentConnection(context.connection)
+    context.existingEntrypoints = existing
   }
 
   private documentRevision(workspaceId: string, context: ReadContext, target: ResolvedTarget, document: PluginControlDocument): string {
@@ -339,6 +363,7 @@ export class PluginControls {
       if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
 
       try {
+        await this.verifyDiscoveredEntrypoints(workspaceId, context)
         let document
         try {
           document = await readPluginControlDocument(target.ioPath, context.fileSystem)
@@ -626,10 +651,11 @@ function evaluateDocuments(
   // Defined before every document, as OpenCode applies discovery first: builtin and SDK plugins, plugins native
   // discovery loads from a reported configuration directory's plugin(s)/ folder, and verified descriptors. Any other
   // undeclared inventory entry (a declaration the daemon is still reloading) defines nothing.
-  const discovery = context.entries.flatMap(entry => entry?.type === "directory" && typeof entry.path === "string"
-    ? ["plugin", "plugins"].map(name => context.paths.join(entry.path, name)) : [])
+  // A write decision also requires the entrypoint to exist: an inventory entry can outlive its deleted folder.
+  const discovery = discoveryFolders(context)
   const startIds = new Set([...runtime.flatMap(entry => entry.id && (entry.source.type === "builtin" || entry.source.type === "sdk"
-    || (entry.source.type === "local" && discoveredEntrypoint(context.paths, discovery, entry.source.path)))
+    || (entry.source.type === "local" && discoveredEntrypoint(context.paths, discovery, entry.source.path)
+      && (!context.existingEntrypoints || context.existingEntrypoints.has(entry.source.path))))
     ? [entry.id] : []), ...managedIds])
   // Positive entries select only IDs defined before them in the applied order; a `-id` rule defines nothing.
   const knownDefinitions = new Set(startIds)
@@ -1065,6 +1091,11 @@ function samePath(paths: path.PlatformPath, left: string, right: string): boolea
   const a = normalize(left)
   const b = normalize(right)
   return paths === path.win32 ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+function discoveryFolders(context: ReadContext): string[] {
+  return context.entries.flatMap(entry => entry?.type === "directory" && typeof entry.path === "string"
+    ? ["plugin", "plugins"].map(name => context.paths.join(entry.path, name)) : [])
 }
 
 // Native module resolution infers these extensions for a directory's `server`/`index` entrypoint.
