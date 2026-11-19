@@ -112,7 +112,7 @@ import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { requestAdmission } from "./request-admission"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 import { DEFERRED_MEDIA_HEADER, deferToolMedia, wantsDeferredMedia } from "../opencode/session-media"
-import { SESSION_LOCATED_ELSEWHERE_REASON } from "../opencode/session-access-contract"
+import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../opencode/session-access-contract"
 import { decodeSessionListScope, prepareLocationImport, readRequestLocations, type SessionListScope } from "../opencode/compatibility/proxy-locations"
 import type { RemoteProxySessionManager } from "./remote-proxy"
 import { createOpenCodeUpdateService } from "../opencode-update/service"
@@ -551,6 +551,7 @@ export interface InstanceProxyWorkspaceManager {
   getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>>
   desktopPluginsReady?(): Promise<void>
   ownsLocation: WorkspaceManager["ownsLocation"]
+  resolveLocationPlacement?: WorkspaceManager["resolveLocationPlacement"]
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
 }
@@ -1191,9 +1192,19 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       }
       if (!isSessionNotFoundError(error)) throw error
     }
-    if (session && !(await wait(workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest(), { signal })))) {
+    const wantsPlacement = request.method === "GET" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
+      && request.headers[SESSION_PLACEMENT_HEADER] === "1" && workspaceManager.resolveLocationPlacement
+    const placement = session && wantsPlacement
+      ? await wait(workspaceManager.resolveLocationPlacement!(workspaceId, session.location, { signal })) : undefined
+    if (session && !(wantsPlacement ? placement
+      : await wait(workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest(), { signal })))) {
       reply.code(403).send({ error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON })
       return
+    }
+    if (session && wantsPlacement && placement) {
+      signal.throwIfAborted()
+      connection?.assertCurrent()
+      return reply.send({ data: { ...session, listWorktreeSlug: placement.listWorktreeSlug } })
     }
     authorizedSessionDirectory = session?.location.directory
     authorizedSession = session
@@ -1485,6 +1496,7 @@ function sanitizeInstanceProxyRequestHeaders(
     LOCATION_CONTEXT_HEADER,
     HUMAN_ANSWER_HEADER,
     DEFERRED_MEDIA_HEADER,
+    SESSION_PLACEMENT_HEADER,
   ])
   const connection = headers.connection
   for (const name of (Array.isArray(connection) ? connection.join(",") : connection ?? "").split(",")) blocked.add(name.trim().toLowerCase())

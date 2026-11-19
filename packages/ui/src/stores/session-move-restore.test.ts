@@ -5,7 +5,7 @@ import { OpenCode } from "@opencode/client"
 import { serverApi } from "../lib/api-client.ts"
 import { serverEvents } from "../lib/server-events.ts"
 import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "../lib/sdk-manager.ts"
-import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract.ts"
+import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../../../server/src/opencode/session-access-contract.ts"
 import { addAttachment, deleteSessionAttachments, getAttachments } from "./attachments.ts"
 import { fetchSessions } from "./session-api.ts"
 import type { Session } from "../types/session.ts"
@@ -335,6 +335,66 @@ const moved = (id: string, sessionID: string, directory: string, created = 1) =>
 // Outside the opened folder: only its registration makes it owned.
 const newWorktree = { slug: "new", directory: "/repo-worktrees/new", kind: "worktree" } as const
 
+it("lists a standalone incoming move at a registered checkout alias, not a nested repository", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const destination = setup("move-incoming-alias", "/repo")
+  const id = destination.session.instanceId
+  const originalWorktrees = serverApi.fetchWorktrees, originalFetch = globalThis.fetch
+  const localRoot = { slug: "root", directory: "/repo", kind: "root" } as const
+  const row = (sessionID: string, directory: string) => ({
+    ...destination.session, id: sessionID, parentID: undefined, location: { directory }, projectID: "project",
+  })
+  const incoming = row("incoming", "/checkout-alias"), nested = row("nested", "/nested-alias")
+  let listed = incoming
+  let departed = false
+  try {
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [localRoot, newWorktree] })
+    setInstanceMetadata(id, { project: { id: "project", canonical: "/repo" } as any })
+    const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
+    destination.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
+    destination.client.session.list = async (input: any) => ({
+      data: input.project ? [...(departed ? [] : [listed]), nested] : [row("restored", "/repo")],
+      cursor: {},
+    })
+    globalThis.fetch = async input => {
+      const path = new URL(String(input)).pathname
+      if (path.endsWith("/nested")) {
+        return Response.json({ data: nested })
+      }
+      assert.ok(path.endsWith("/incoming"), path)
+      return departed ? Response.json({ reason: SESSION_LOCATED_ELSEWHERE_REASON }, { status: 403 })
+        : Response.json({ data: { ...incoming, listWorktreeSlug: newWorktree.slug } })
+    }
+    await ensureWorktreesLoaded(id)
+    setActiveSession(id, "restored")
+    handleNativeSessionEvent(id, moved("arrive", "incoming", incoming.location.directory))
+    handleNativeSessionEvent(id, moved("nested-arrive", "nested", nested.location.directory))
+    t.mock.timers.tick(100)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(listedIds(id), ["incoming", "restored"])
+    assert.equal(sessions().get(id)?.get("incoming")?.location.directory, "/checkout-alias")
+    assert.equal(sessions().get(id)?.has("nested"), false, "proxy eligibility alone does not admit a nested repository")
+    assert.equal(activeSessionId().get(id), "restored")
+
+    listed = { ...incoming, title: "Refreshed alias title" }
+    await fetchSessions(id, { strictStatus: true })
+    assert.deepEqual(listedIds(id), ["incoming", "restored"])
+    assert.equal(sessions().get(id)?.get("incoming")?.title, listed.title)
+    setSessionDraftPrompt(id, "incoming", "keep draft")
+    departed = true
+    handleNativeSessionEvent(id, moved("leave", "incoming", "/another-project", 2))
+    t.mock.timers.tick(100)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(listedIds(id), ["restored"])
+    assert.equal(sessions().get(id)?.has("incoming"), false)
+    assert.equal(getSessionDraftPrompt(id, "incoming"), "keep draft")
+  } finally {
+    globalThis.fetch = originalFetch
+    serverApi.fetchWorktrees = originalWorktrees
+    destination.cleanup()
+  }
+})
+
 it("uses the workspace proxy to keep a session moved to an owned worktree alias", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] })
   const source = setup("move-owned-alias", "/repo")
@@ -352,7 +412,10 @@ it("uses the workspace proxy to keep a session moved to an owned worktree alias"
   const proxy = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
   let reads = 0
   let proxyReady = false
-  source.client.session.get = (...args: Parameters<typeof proxy.session.get>) => { reads++; return proxy.session.get(...args) }
+  source.client.session.get = (...args: Parameters<typeof proxy.session.get>) => {
+    if (new Headers(args[1]?.headers).get(SESSION_PLACEMENT_HEADER) === "1") reads++
+    return proxy.session.get(...args)
+  }
   globalThis.fetch = async () => proxyReady ? Response.json({ data: row }) : Response.json({ error: "Forbidden" }, { status: 403 })
   try {
     await ensureWorktreesLoaded(id)

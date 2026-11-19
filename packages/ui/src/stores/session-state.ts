@@ -35,6 +35,7 @@ import {
 export type { SessionThread } from "./session-tree"
 import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
 import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
+import { confirmedSessionListDirectory } from "./session-events"
 import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
 
 const log = getLogger("session")
@@ -232,7 +233,7 @@ function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | nul
   if (cached && cached.sessions === all && cached.worktrees === worktrees && cached.active === active && cached.away === away) return cached.scope
   const scope = unscoped ? new Set(all.get(instanceId)?.keys() ?? [])
     : selectWorkspaceFamilyIds([...(all.get(instanceId)?.values() ?? [])].map((session) => ({
-      id: session.id, parentId: session.parentId, directory: session.location?.directory })),
+      id: session.id, parentId: session.parentId, directory: confirmedSessionListDirectory(instanceId, session.id, session) ?? session.location?.directory })),
     instances().get(instanceId)?.folder ?? "", worktrees!, active ? [active] : [])
   for (const id of away.keys()) scope.delete(id)
   workspaceScopes.set(instanceId, { sessions: all, worktrees, active, away, scope })

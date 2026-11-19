@@ -91,7 +91,7 @@ import {
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import {
-  clearPendingSessionMove, confirmSessionPlacement, getPendingSessionMove, isSessionMovePending,
+  clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending,
   matchesSessionPlacement, retainConfirmedSessionPlacement,
 } from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
@@ -371,7 +371,8 @@ async function fetchCompleteSessionInventory(
   signal?.throwIfAborted()
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
   if (!directoryOnly && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
-  const projectFamilies = (rows: SDKSession[]) => selectWorkspaceSessionFamilies(rows, directory ?? "", getWorktrees(instanceId))
+  const listDirectory = (session: SDKSession) => confirmedSessionListDirectory(instanceId, session.id, session)
+  const projectFamilies = (rows: SDKSession[]) => selectWorkspaceSessionFamilies(rows, directory ?? "", getWorktrees(instanceId), listDirectory)
   const scopes: V2SessionListOptions[] = [directoryOnly
     ? { directory: directoryOnly.serviceDirectory ?? directoryOnly.directory, order: "desc" }
     : { project, order: "desc" }]
@@ -390,7 +391,7 @@ async function fetchCompleteSessionInventory(
       // This is additive only. Absence/deletion is authoritative only after the
       // complete inventory; partial families still require verified membership.
       publishFirstPage(projectFamilies(response.data).filter(session =>
-        isWorkspaceServedDirectory(session.location.directory, directory ?? "", getWorktrees(instanceId))))
+        listDirectory(session) || isWorkspaceServedDirectory(session.location.directory, directory ?? "", getWorktrees(instanceId))))
     }
     while (true) {
       if (!isCurrent()) return []

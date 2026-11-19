@@ -1,4 +1,4 @@
-import { isSessionNotFoundError } from "@opencode/client"
+import { isSessionNotFoundError, type SessionInfo } from "@opencode/client"
 import type {
   PermissionAsked,
   PermissionReplied,
@@ -57,7 +57,7 @@ import { isWorkspaceServedDirectory } from "./workspace-served-directory"
 import { locationAuthorityKey } from "./request-locations"
 import { parentSessionReadHeaders } from "../lib/sdk-manager"
 import { prioritizedRead } from "../lib/prioritized-read"
-import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
+import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../../../server/src/opencode/session-access-contract"
 import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
@@ -86,7 +86,8 @@ interface SessionMove { data: SessionMoved["data"]; unresolved?: boolean }
 const pendingSessionMoves = new Map<string, Map<string, SessionMove>>()
 /** A move remains current until its placement is settled or superseded. */
 const latestSessionMoves = new Map<string, Map<string, SessionMove>>()
-type SessionPlacement = Pick<Session, "location" | "projectID" | "subpath">
+type SessionPlacement = Pick<Session, "location" | "projectID" | "subpath"> & { listWorktreeSlug?: string }
+type SessionPlacementRead = SessionInfo & { listWorktreeSlug?: string }
 type PlacementEvidence = { placement: SessionPlacement; generation: number; client: ReturnType<typeof getRootClient> }
 const confirmedPlacements = new Map<string, Map<string, PlacementEvidence>>()
 const LOCATED_ELSEWHERE = Symbol("session located elsewhere")
@@ -96,12 +97,21 @@ export function matchesSessionPlacement(placement: SessionPlacement | undefined,
     && placement.projectID === expected.projectID && placement.subpath === expected.subpath
 }
 
-export function confirmSessionPlacement(instanceId: string, sessionId: string, { location, projectID, subpath }: SessionPlacement): void {
+export function confirmSessionPlacement(instanceId: string, sessionId: string, { location, projectID, subpath, listWorktreeSlug }: SessionPlacement): void {
   const client = instances().get(instanceId)?.client
   if (!client) return
   const placements = confirmedPlacements.get(instanceId) ?? new Map<string, PlacementEvidence>()
-  placements.set(sessionId, { placement: { location, projectID, subpath }, client, generation: getOpenCodeInstanceGeneration(instanceId) })
+  placements.set(sessionId, { placement: { location, projectID, subpath, listWorktreeSlug }, client, generation: getOpenCodeInstanceGeneration(instanceId) })
   confirmedPlacements.set(instanceId, placements)
+}
+
+/** List identity only; execution keeps the native directory. */
+export function confirmedSessionListDirectory(instanceId: string, sessionId: string, placement: SessionPlacement): string | undefined {
+  const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
+  const slug = confirmed?.placement.listWorktreeSlug
+  if (slug && confirmed.client === instances().get(instanceId)?.client && matchesSessionPlacement(placement, confirmed.placement)) {
+    return getWorktrees(instanceId).find(worktree => worktree.slug === slug)?.directory
+  }
 }
 
 /** A matching expired proof retains the row until a current probe can settle it. */
@@ -130,7 +140,7 @@ export function retainConfirmedSessionPlacement(
         removeSessionProjection(instanceId, sessionId)
       } else if (result?.id === sessionId && result.location) {
         confirmSessionPlacement(instanceId, sessionId, result)
-        if (!matchesSessionPlacement(result, confirmed.placement)) {
+        if (!matchesSessionPlacement(result, confirmed.placement) || result.listWorktreeSlug !== confirmed.placement.listWorktreeSlug) {
           applySessionMovePlacement(instanceId, { ...result, sessionID: sessionId })
           refreshSelectedMoveCatalog(instanceId, sessionId)
         }
@@ -144,7 +154,9 @@ export function retainConfirmedSessionPlacement(
 
 async function readWorkspaceSessionPlacement(instanceId: string, sessionId: string, signal?: AbortSignal) {
   try {
-    return await getRootClient(instanceId).session.get({ sessionID: sessionId }, { headers: parentSessionReadHeaders, signal })
+    return await getRootClient(instanceId).session.get({ sessionID: sessionId }, {
+      headers: { ...parentSessionReadHeaders, [SESSION_PLACEMENT_HEADER]: "1" }, signal,
+    }) as SessionPlacementRead
   } catch (error) {
     if (isSessionNotFoundError(error) && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) return LOCATED_ELSEWHERE
     throw error
@@ -440,7 +452,7 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
     const session = await readWorkspaceSessionPlacement(instanceId, sessionId)
     if (current()) {
       if (session === LOCATED_ELSEWHERE) return finishSessionMove(instanceId, sessionId, move, null)
-      if (session?.location) return finishSessionMove(instanceId, sessionId, move, session, true)
+      if (session?.id === sessionId && session.location) return finishSessionMove(instanceId, sessionId, move, session, session)
     }
   } catch (error) {
     log.warn("Failed to confirm moved session placement", { instanceId, sessionId, error })
@@ -449,14 +461,18 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
   return false
 }
 
-function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove, placement: SessionPlacement | null, verified = false): boolean {
+function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove, placement: SessionPlacement | null, verified?: SessionPlacementRead): boolean {
   if (getPendingSessionMove(instanceId, sessionId) !== move) return false
   clearPendingSessionMove(instanceId, sessionId)
   if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return false
   const { directory } = move.data.location
   if (placement) {
     if (verified) confirmSessionPlacement(instanceId, sessionId, placement)
-    applySessionMovePlacement(instanceId, { ...placement, sessionID: sessionId })
+    const held = sessions().get(instanceId)?.get(sessionId)
+    if (held) applySessionMovePlacement(instanceId, { ...placement, sessionID: sessionId })
+    else if (verified && confirmedSessionListDirectory(instanceId, sessionId, placement)) {
+      publishFetchedSessionInfo(instanceId, verified, undefined)
+    }
     return true
   }
   markSessionMovedAway(instanceId, sessionId, directory)
@@ -579,49 +595,53 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     const info = await client.session.get({ sessionID: sessionId })
     // A project closed or a client replaced during the read publishes nothing.
     if (!isInstanceGenerationCurrent(instanceId, generation)) return null
-    const fetched = createClientSession(info, instanceId)
-
-    let updatedInstanceSessions: Map<string, Session> | undefined
-
-    setSessions((prev) => {
-      const next = new Map(prev)
-      const instanceSessions = new Map(prev.get(instanceId))
-      const existing = instanceSessions.get(sessionId)
-      const compacting = existing?.status === "compacting"
-      const candidate: Session = {
-        ...fetched,
-        agent: existing?.agent ?? fetched.agent,
-        model: existing?.model ?? fetched.model,
-        status: compacting ? "compacting" : fetched.status,
-        retry: compacting ? null : fetched.retry,
-        idleSince: getIdleSinceForStatusTransition(existing?.status, compacting ? "compacting" : fetched.status, existing?.idleSince),
-        pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
-        pendingForm: existing?.pendingForm ?? false,
-        runtimeStatusKnown: compacting || existing?.runtimeStatusKnown || false,
-      }
-      const merged = mergeFetchedSessionRuntimeState(
-        candidate,
-        captured,
-        existing,
-        getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId),
-      )
-      if (!merged) return prev
-      instanceSessions.set(sessionId, merged)
-      next.set(instanceId, instanceSessions)
-      updatedInstanceSessions = instanceSessions
-      return next
-    })
-
-    reconcilePendingSessionIndicators(instanceId)
-
-    const published = updatedInstanceSessions?.get(sessionId)
-    if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
-
-    return fetched
+    return publishFetchedSessionInfo(instanceId, info, captured)
   } catch (error) {
     log.error("Failed to fetch session info", error)
     return null
   }
+}
+
+function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captured: Session | undefined): Session {
+  const sessionId = info.id
+  const fetched = createClientSession(info, instanceId)
+  let updatedInstanceSessions: Map<string, Session> | undefined
+
+  setSessions((prev) => {
+    const next = new Map(prev)
+    const instanceSessions = new Map(prev.get(instanceId))
+    const existing = instanceSessions.get(sessionId)
+    const compacting = existing?.status === "compacting"
+    const candidate: Session = {
+      ...fetched,
+      agent: existing?.agent ?? fetched.agent,
+      model: existing?.model ?? fetched.model,
+      status: compacting ? "compacting" : fetched.status,
+      retry: compacting ? null : fetched.retry,
+      idleSince: getIdleSinceForStatusTransition(existing?.status, compacting ? "compacting" : fetched.status, existing?.idleSince),
+      pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
+      pendingForm: existing?.pendingForm ?? false,
+      runtimeStatusKnown: compacting || existing?.runtimeStatusKnown || false,
+    }
+    const merged = mergeFetchedSessionRuntimeState(
+      candidate,
+      captured,
+      existing,
+      getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId),
+    )
+    if (!merged) return prev
+    instanceSessions.set(sessionId, merged)
+    next.set(instanceId, instanceSessions)
+    updatedInstanceSessions = instanceSessions
+    return next
+  })
+
+  reconcilePendingSessionIndicators(instanceId)
+
+  const published = updatedInstanceSessions?.get(sessionId)
+  if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
+
+  return fetched
 }
 
 function ensureSessionStatus(
