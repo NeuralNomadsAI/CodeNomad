@@ -34,6 +34,7 @@ import {
 export type { SessionThread } from "./session-tree"
 import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
 import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
+import { confirmedSessionListDirectory } from "./session-events"
 import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
 import { getSessionListView } from "./session-list-view"
 
@@ -218,19 +219,24 @@ function isSessionSearchLoading(instanceId: string): boolean {
 // inventory, and for Git-unavailable folders (which project their own
 // directory), every held session is in scope. The active session's family is
 // always in scope: a session opened explicitly is shown where it was opened.
-const workspaceScopes = new Map<string, { sessions: unknown; worktrees: unknown; active?: string; scope: ReadonlySet<string> }>()
+// A session a move located elsewhere (`markSessionMovedAway`) is never in scope.
+const workspaceScopes = new Map<string, { sessions: unknown; worktrees: unknown; active?: string; away: unknown; scope: ReadonlySet<string> }>()
 
 function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | null {
   const all = sessions()
   const worktrees = worktreesByInstance().get(instanceId)
-  if (!worktrees || getGitRepoStatus(instanceId) === null || getDirectoryOnlyWorktree(instanceId)) return null
+  const away = getMovedAwaySessions(instanceId)
+  const unscoped = !worktrees || getGitRepoStatus(instanceId) === null || Boolean(getDirectoryOnlyWorktree(instanceId))
+  if (unscoped && !away.size) return null
   const active = activeSessionId().get(instanceId)
   const cached = workspaceScopes.get(instanceId)
-  if (cached && cached.sessions === all && cached.worktrees === worktrees && cached.active === active) return cached.scope
-  const scope = selectWorkspaceFamilyIds([...(all.get(instanceId)?.values() ?? [])].map((session) => ({
-    id: session.id, parentId: session.parentId, directory: session.location?.directory })),
-  instances().get(instanceId)?.folder ?? "", worktrees, active ? [active] : [])
-  workspaceScopes.set(instanceId, { sessions: all, worktrees, active, scope })
+  if (cached && cached.sessions === all && cached.worktrees === worktrees && cached.active === active && cached.away === away) return cached.scope
+  const scope = unscoped ? new Set(all.get(instanceId)?.keys() ?? [])
+    : selectWorkspaceFamilyIds([...(all.get(instanceId)?.values() ?? [])].map((session) => ({
+      id: session.id, parentId: session.parentId, directory: confirmedSessionListDirectory(instanceId, session.id, session) ?? session.location?.directory })),
+    instances().get(instanceId)?.folder ?? "", worktrees!, active ? [active] : [])
+  for (const id of away.keys()) scope.delete(id)
+  workspaceScopes.set(instanceId, { sessions: all, worktrees, active, away, scope })
   return scope
 }
 
@@ -238,18 +244,52 @@ function isSessionInWorkspaceScope(instanceId: string, sessionId: string): boole
   return getWorkspaceSessionScope(instanceId)?.has(sessionId) ?? true
 }
 
-// The tab's aggregate over the sessions in scope, derived once per sessions
-// snapshot and scope, so every publication and scope change is reflected.
-const indicatorStatuses = new Map<string, { sessions: unknown; scope: ReadonlySet<string> | null; status: InstanceSessionIndicatorStatus }>()
+/** Evaluate a verified return without its departure marker or a selected-family override. */
+export function canRelistReturnedSession(instanceId: string, sessionId: string): boolean {
+  const worktrees = worktreesByInstance().get(instanceId)
+  if (!worktrees || getGitRepoStatus(instanceId) === null) return false
+  const away = getMovedAwaySessions(instanceId)
+  const members = new Map([...(sessions().get(instanceId) ?? [])].filter(([id]) => id === sessionId || !away.has(id)))
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  const scope = selectWorkspaceFamilyIds([...members.values()].map(session => ({
+    id: session.id, parentId: session.parentId,
+    directory: confirmedSessionListDirectory(instanceId, session.id, session) ?? session.location.directory,
+  })), instances().get(instanceId)?.folder ?? "", worktrees)
+  return scope.has(sessionId) && getSessionRootFromMap(members, sessionId, directoryOnly?.serviceDirectory ?? directoryOnly?.directory) !== null
+}
+
+const NO_SESSIONS: ReadonlyMap<string, Session> = new Map()
+const listedSessionMaps = new Map<string, { held: unknown; scope: unknown; listed: ReadonlyMap<string, Session> }>()
+
+/** The held sessions the list shows: in scope and connected to a listed root.
+ * Its rows, its parents' subsession activity and the tab indicator all derive
+ * from this one map, so a session outside it never renders, connects rows or
+ * contributes activity; a row under an ancestor outside the scope is left out
+ * as a child whose parent is missing is. */
+function getListedSessionMap(instanceId: string): ReadonlyMap<string, Session> {
+  const held = sessions().get(instanceId) ?? NO_SESSIONS
+  const scope = getWorkspaceSessionScope(instanceId)
+  if (!scope) return held
+  const cached = listedSessionMaps.get(instanceId)
+  if (cached && cached.held === held && cached.scope === scope) return cached.listed
+  const scoped = new Map([...held].filter(([id]) => scope.has(id)))
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  const listed = new Map([...scoped].filter(([id]) => getSessionRootFromMap(scoped, id, directory) !== null))
+  listedSessionMaps.set(instanceId, { held, scope, listed })
+  return listed
+}
+
+// The listed map can share the held map, which withSession updates in place.
+const indicatorStatuses = new Map<string, { publication: unknown; listed: unknown; status: InstanceSessionIndicatorStatus }>()
 
 export function getInstanceSessionIndicatorStatusCached(instanceId: string): InstanceSessionIndicatorStatus {
-  const all = sessions()
-  const scope = getWorkspaceSessionScope(instanceId)
+  const publication = sessions()
+  const listed = getListedSessionMap(instanceId)
   const cached = indicatorStatuses.get(instanceId)
-  if (cached && cached.sessions === all && cached.scope === scope) return cached.status
+  if (cached && cached.publication === publication && cached.listed === listed) return cached.status
   let status: InstanceSessionIndicatorStatus = "idle"
-  for (const session of all.get(instanceId)?.values() ?? []) {
-    if (scope && !scope.has(session.id)) continue
+  for (const session of listed.values()) {
     if (session.pendingPermission || session.pendingForm) {
       status = "permission"
       break
@@ -257,7 +297,7 @@ export function getInstanceSessionIndicatorStatusCached(instanceId: string): Ins
     if (session.status === "compacting") status = "compacting"
     else if (session.status === "working" && status === "idle") status = "working"
   }
-  indicatorStatuses.set(instanceId, { sessions: all, scope, status })
+  indicatorStatuses.set(instanceId, { publication, listed, status })
   return status
 }
 
@@ -453,6 +493,48 @@ function getAuthoritativeSessionExpansionIdsForInstance(instanceId: string): Rea
 
 function markSessionDeletedAuthoritative(instanceId: string, sessionId: string): void {
   addAuthoritativeKey(setAuthoritativelyDeletedSessionKeys, getDraftKey(instanceId, sessionId))
+}
+
+/** Per instance, the destination of each session located elsewhere (null if
+ * the proxy refused a parent read without revealing its directory). It is never
+ * listed there, whatever path brings it; a later inventory serving that
+ * destination lists it again. Released when a refresh lists it at a served
+ * directory, it is deleted or moves again, or the instance closes. */
+const [movedAwaySessions, setMovedAwaySessions] = createSignal<ReadonlyMap<string, ReadonlyMap<string, string | null>>>(new Map())
+const NO_MOVED_AWAY: ReadonlyMap<string, string | null> = new Map()
+
+function updateMovedAwaySessions(instanceId: string, update: (away: Map<string, string | null>) => void): void {
+  setMovedAwaySessions((previous) => {
+    const away = new Map(previous.get(instanceId) ?? NO_MOVED_AWAY)
+    update(away)
+    const next = new Map(previous)
+    if (away.size) next.set(instanceId, away)
+    else next.delete(instanceId)
+    return next
+  })
+}
+
+function markSessionMovedAway(instanceId: string, sessionId: string, directory: string | null): void {
+  if (movedAwaySessions().get(instanceId)?.get(sessionId) === directory) return
+  updateMovedAwaySessions(instanceId, (away) => { away.set(sessionId, directory) })
+}
+
+function forgetSessionMovedAway(instanceId: string, sessionId: string): void {
+  if (!movedAwaySessions().get(instanceId)?.has(sessionId)) return
+  updateMovedAwaySessions(instanceId, (away) => { away.delete(sessionId) })
+}
+
+function getMovedAwaySessions(instanceId: string): ReadonlyMap<string, string | null> {
+  return movedAwaySessions().get(instanceId) ?? NO_MOVED_AWAY
+}
+
+function getMovedAwaySessionIds(instanceId: string): string[] {
+  return [...getMovedAwaySessions(instanceId).keys()]
+}
+
+function clearInstanceMovedAwaySessions(instanceId: string): void {
+  if (!movedAwaySessions().has(instanceId)) return
+  setMovedAwaySessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
 }
 
 function clearInstanceDeletedSessionAuthority(instanceId: string): void {
@@ -915,13 +997,20 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
 }
 
 function getSessionThreads(instanceId: string): SessionThread[] {
-  return buildSessionThreads(instanceId, getSessionListIds(instanceId).filter((id) => isSessionInWorkspaceScope(instanceId, id)))
+  // A row under an ancestor outside the listed map is shown as a child whose
+  // parent is missing is: not at all.
+  const listed = getListedSessionMap(instanceId) as Map<string, Session>
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  return buildSessionThreadsFromMap(listed, getSessionListIds(instanceId).filter((id) => listed.has(id)), undefined,
+    directoryOnly?.serviceDirectory ?? directoryOnly?.directory)
 }
 
 function getSessionSearchSessions(instanceId: string): Session[] {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return []
+  const away = getMovedAwaySessions(instanceId)
   return getSessionSearchResultIds(instanceId).flatMap(id => {
+    if (away.has(id)) return []
     const session = instanceSessions.get(id)
     return session ? [session] : []
   })
@@ -1225,6 +1314,7 @@ export {
   sessions,
   setSessions,
   isSessionInWorkspaceScope,
+  getListedSessionMap,
   activeSessionId,
   activeParentSessionId,
   agents,
@@ -1260,6 +1350,11 @@ export {
   getAuthoritativelyDeletedSessionIdsForInstance,
   getAuthoritativeSessionExpansionIdsForInstance,
   markSessionDeletedAuthoritative,
+  markSessionMovedAway,
+  forgetSessionMovedAway,
+  getMovedAwaySessions,
+  getMovedAwaySessionIds,
+  clearInstanceMovedAwaySessions,
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
   hydrateSessionDraftPrompt,

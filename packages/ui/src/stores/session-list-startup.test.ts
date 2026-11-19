@@ -2,12 +2,14 @@ import assert from "node:assert/strict"
 import { it } from "node:test"
 import { OpenCode } from "@opencode/client"
 import { serverApi } from "../lib/api-client"
-import { sdkManager } from "../lib/sdk-manager"
+import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "../lib/sdk-manager"
+import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
 import { addInstance, removeInstance } from "./instances"
 import { setInstanceMetadata } from "./instance-metadata"
 import { fetchSessions, hydrateRestoredSessionChain, refreshSessionRuntimeStatus } from "./session-api"
 import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data"
 import { beginSessionGenerationAdmission, getSessionListIds, getSessionListError, loading, sessions, setSessions, setSessionStatus } from "./session-state"
+import { getMovedAwaySessionIds } from "./session-state"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -252,6 +254,52 @@ it("loads valid families beside an orphan and keeps unrelated parent-read failur
     assert.ok(getSessionListError(id), "authorization failures must not be swallowed as missing parents")
     assert.equal(loading().fetchingSessions.get(id), false)
   } finally {
+    serverApi.fetchWorktrees = originalWorktrees
+    destroyOpenCodeData(id)
+    setSessions(previous => { const next = new Map(previous); next.delete(id); return next })
+    removeInstance(id, { authoritative: false })
+    sdkManager.destroyClientsForInstance(id)
+  }
+})
+
+it("treats a parent the workspace refuses as located elsewhere like a missing parent, and no other refusal", async () => {
+  const id = "parent-located-elsewhere"
+  const originalWorktrees = serverApi.fetchWorktrees
+  const originalFetch = globalThis.fetch
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  const root = page("root").data[0]
+  // A conversation moved to another project left this child behind.
+  const child = { ...page("child").data[0], parentID: "moved" }
+  let refusal: Record<string, string> = { error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON }
+  const reads: string[] = []
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith("/api/session/active")) return Response.json({})
+    if (url.pathname.endsWith("/api/session/moved")) {
+      reads.push(url.pathname)
+      return Response.json(refusal, { status: 403 })
+    }
+    return Response.json({ data: url.searchParams.has("project") ? [root, child] : [root], cursor: {} })
+  }
+  const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
+  const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+  ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
+  addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
+  setInstanceMetadata(id, { project: { id: "project", canonical: "/repo" } as any })
+  try {
+    // A fresh tab, as after a reload: nothing remembers the move.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await fetchSessions(id, { reset: true, strictStatus: true })
+      assert.equal(getSessionListError(id), undefined)
+      assert.deepEqual(getSessionListIds(id), ["root"])
+    }
+    assert.equal(reads.length, 2)
+    assert.deepEqual(getMovedAwaySessionIds(id), ["moved"], "the typed refusal keeps a reintroduced parent out of scope")
+    refusal = { error: "Session does not belong to workspace" }
+    await assert.rejects(fetchSessions(id, { reset: true, strictStatus: true }))
+    assert.ok(getSessionListError(id), "an untyped refusal stays an error")
+  } finally {
+    globalThis.fetch = originalFetch
     serverApi.fetchWorktrees = originalWorktrees
     destroyOpenCodeData(id)
     setSessions(previous => { const next = new Map(previous); next.delete(id); return next })

@@ -174,8 +174,10 @@ describe("InstanceEventBridge", () => {
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] })
-      await waitFor(() => received.length === events.length)
-      assert.deepEqual(received, ["a", "a", "b"])
+      // The move itself reaches both owners.
+      await waitFor(() => received.length === events.length + 1)
+      assert.deepEqual(received.filter(id => id === "a"), ["a", "a"])
+      assert.deepEqual(received.filter(id => id === "b"), ["b", "b"])
       assert.equal(sessionGets(), 1)
     } finally { bridge.shutdown() }
   })

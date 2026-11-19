@@ -34,6 +34,7 @@ import {
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
 import { refreshSessionRuntimeStatus } from "./session-api"
+import { clearPendingSessionMove } from "./session-events"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
@@ -50,6 +51,7 @@ import {
   setSessionPendingForm,
   setSessionPendingPermission,
   invalidateSessionMessageLoad,
+  clearInstanceMovedAwaySessions,
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
@@ -1631,6 +1633,8 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   clearSessionCatalogState(id)
   clearInstanceAttachments(id)
   clearInstanceDeletedSessionAuthority(id)
+  clearInstanceMovedAwaySessions(id)
+  clearPendingSessionMove(id)
   clearInstanceSessionExpansionState(id)
   clearInstanceSessionSelection(id)
   if (removedInstance && removedOccurrence >= 0 && options.authoritative !== false) {

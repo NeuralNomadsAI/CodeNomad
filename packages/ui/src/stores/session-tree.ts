@@ -152,7 +152,7 @@ export type DescendantActivity = { permission: number; working: number; compacti
 
 /** Per-ancestor counts; idle participates only while its status badge is visible. */
 export function collectDescendantActivity(
-  instanceSessions: Map<string, Session> | undefined,
+  instanceSessions: ReadonlyMap<string, Session> | undefined,
   showIdleStatus: (session: Session) => boolean = () => false,
 ): Map<string, DescendantActivity> {
   const activity = new Map<string, DescendantActivity>()

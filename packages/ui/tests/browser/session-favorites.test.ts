@@ -53,7 +53,7 @@ test("favorites persist, keep requests first and synchronize over the real route
   const removed: string[] = []
   let holdRemoval: (() => Promise<void>) | undefined
   const serverSession = (sessionID: string) => ({ id: sessionID, projectID: "bureau", time: { created: 1, updated: 1 }, parentID: ["ses_conseil", "ses_conseil_notes"].includes(sessionID) ? "ses_equipe" : undefined,
-    location: { directory: sessionID === "ses_foreign" ? "/unrelated" : "/bureau" },
+    location: { directory: sessionID === "ses_foreign" ? "/unrelated" : sessionID === "ses_dossier_01" ? "/bureau/ventes-alias" : "/bureau" },
     metadata: { thirdParty: { verified: "leave alone" } } })
   const settings = new SettingsService(cfg, bus, logger)
   registerSettingsRoutes(app, { settings, logger })
@@ -76,7 +76,8 @@ test("favorites persist, keep requests first and synchronize over the real route
     getSharedServiceConnection: async () => connection,
     getExistingSharedServiceConnection: () => connection,
     getWorktreeIdentityForPath: async () => "/bureau",
-    ownsLocation: async (id: string, location: { directory: string }) => id !== "unrelated" && location.directory === "/bureau",
+    ownsLocation: async (id: string, location: { directory: string }) =>
+      id !== "unrelated" && ["/bureau", "/bureau/ventes-alias"].includes(location.directory),
   } as any
   const cleanup = new SessionCleanupFence()
   const isProtected = registerSessionFavoritesRoutes(app, { settings, eventBus: bus, workspaceManager, cleanup })
@@ -362,6 +363,8 @@ test("favorites persist, keep requests first and synchronize over the real route
     await setup(reopened, true)
     await favoriteRow(reopened, "dossier_01").waitFor()
     assert.ok(await reopened.evaluate(() => (window as any).favoriteFixture.gets.includes("ses_dossier_01")))
+    assert.deepEqual(await reopened.evaluate(() => (window as any).favoriteFixture.placement("ses_dossier_01")),
+      { location: "/bureau/ventes-alias", slug: "ventes" })
     assert.equal(await reopened.evaluate(() => (window as any).favoriteFixture.lists.some((query: any) => query.cursor)), false)
     await reopened.close()
 

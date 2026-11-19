@@ -26,7 +26,8 @@ import { decodeClientSnapshotV2, encodeClientSnapshotV2 } from "../../../src/sto
 import { retainClosedWorkspaceDrafts, restoreClosedWorkspaceDrafts } from "../../../src/stores/closed-workspace-drafts"
 import { recoveredDraftIds } from "../../../src/stores/session-draft-recovery"
 import { createClientSession } from "../../../src/types/session"
-import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
+import { ensureWorktreesLoaded, getWorktreeSlugForSession } from "../../../src/stores/worktrees"
+import { SESSION_PLACEMENT_HEADER } from "../../../../server/src/opencode/session-access-contract"
 import "../../../src/index.css"
 
 const id = "favorites-workspace", main = "/bureau", ventes = "/bureau-ventes"
@@ -45,7 +46,7 @@ const seed = [
   make("search_only", "Projet secret", 0),
   ...Array.from({ length: 60 }, (_, index) => {
     const n = String(index + 1).padStart(2, "0")
-    return make(`dossier_${n}`, `Dossier ${n}`, index + 5, index % 2 ? ventes : main)
+    return make(`dossier_${n}`, `Dossier ${n}`, index + 5, index === 0 ? "/bureau/ventes-alias" : index % 2 ? ventes : main)
   }),
 ]
 const initial = seed.filter(row => row.id !== "ses_dossier_01" && row.id !== "ses_search_only")
@@ -63,12 +64,14 @@ const emit = (type: string, data: Record<string, unknown>, directory = main) => 
 }
 const client = {
   session: {
-    get: async ({ sessionID }: { sessionID: string }) => {
+    get: async ({ sessionID }: { sessionID: string }, options?: { headers?: HeadersInit }) => {
       gets.push(sessionID)
       if (sessionID === "ses_fixture_transport") throw new Error("fixture transport unavailable")
       if (sessionID === "ses_fixture_foreign") throw Object.assign(new Error("fixture foreign location"), { status: 403 })
       if (!native.has(sessionID)) throw { _tag: "SessionNotFoundError", sessionID, message: "Gone" }
-      return structuredClone(native.get(sessionID))
+      const session = structuredClone(native.get(sessionID)!)
+      return sessionID === "ses_dossier_01" && new Headers(options?.headers).get(SESSION_PLACEMENT_HEADER) === "1"
+        ? { ...session, listWorktreeSlug: "ventes" } : session
     },
     list: async (input: { parentID?: string | null; directory?: string; search?: string; cursor?: string }) => {
       lists.push(input)
@@ -161,6 +164,10 @@ void serverEvents.connect()
 emit("permission.asked", { sessionID: "ses_validation", id: "fixture-permission", action: "read", resources: ["budget"] })
 Object.assign(window, { favoriteFixture: {
   gets, lists, removes, activeId,
+  placement: (sessionID: string) => ({
+    location: sessions().get(id)?.get(sessionID)?.location.directory,
+    slug: getWorktreeSlugForSession(id, sessionID),
+  }),
   has: (sessionID: string) => sessions().get(id)?.has(sessionID),
   selected: () => activeSessionId().get(id),
   navigate: (command: string, from: string) => {

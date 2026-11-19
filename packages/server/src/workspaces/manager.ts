@@ -315,18 +315,24 @@ export class WorkspaceManager {
 
   // Strict probes reject unreadable ownership instead of turning it into a negative.
   async ownsLocation(id: string, location: LocationRef, _client?: OpenCodeClient, { signal, purpose = "request", strict = false }: LocationOwnershipOptions = {}): Promise<boolean> {
+    return Boolean(await this.resolveLocationPlacement(id, location, { signal, purpose, strict }))
+  }
+
+  async resolveLocationPlacement(id: string, location: LocationRef, { signal, purpose = "request", strict = false }: LocationOwnershipOptions = {}): Promise<{ directory: string; listWorktreeSlug?: string } | undefined> {
     signal?.throwIfAborted()
     // OpenCode V2 identifies locations by directory; a retired workspace selector
     // is never authorized, whatever directory it names.
-    if (location.workspaceID !== undefined) return false
-    const record = this.workspaces.get(id)
-    if (!record?.[WORKSPACE_STATE].published) return false
-    const directory = await this.getServiceDirectoryForPath(id, location.directory, { purpose, strict })
+    if (location.workspaceID !== undefined) return undefined
+    const placement = await this.resolveServicePlacement(id, location.directory, purpose, strict)
     signal?.throwIfAborted()
-    return Boolean(directory)
+    return placement
   }
 
   async getServiceDirectoryForPath(id: string, directory: string, { purpose = "request", strict = false }: Pick<LocationOwnershipOptions, "purpose" | "strict"> = {}): Promise<string | undefined> {
+    return (await this.resolveServicePlacement(id, directory, purpose, strict))?.directory
+  }
+
+  private async resolveServicePlacement(id: string, directory: string, purpose: "request" | "event", strict: boolean) {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
     // Directory authorization does not need the checkout's Git mutation identity.
@@ -335,14 +341,15 @@ export class WorkspaceManager {
       const [target, root] = await Promise.all([
         ownershipRealpath(directory, strict), ownershipRealpath(record.path, strict),
       ])
-      if (target && target === root) return target
+      if (target && target === root) return { directory: target, listWorktreeSlug: "root" }
     }
     const owned = await this.resolveOwnedWorktree(record, directory, purpose, strict)
     if (!owned) return undefined
-    if (!record.wslDistro) return owned.directory
+    const listWorktreeSlug = owned.exact ? owned.slug : undefined
+    if (!record.wslDistro) return { directory: owned.directory, listWorktreeSlug }
     const translated = await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
     if (strict && !translated) throw new Error("WSL service directory translation unavailable")
-    return translated ?? undefined
+    return translated ? { directory: translated, listWorktreeSlug } : undefined
   }
 
   async getWorktreeIdentityForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
@@ -493,13 +500,13 @@ export class WorkspaceManager {
     if (target && target === root) {
       try {
         const { repoRoot } = await resolveRepoRoot(root)
-        return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot) }
+        return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot), exact: true }
       } catch (error) {
         if (!(error instanceof GitRequiredError)) throw error
         // Without Git only the explicitly opened physical folder is authority.
         // The deletion fence compares ancestor/descendant identities as well,
         // covering a checkout parent even if Git disappears or returns mid-send.
-        return { slug: "root", directory: target, worktreeDirectory: root }
+        return { slug: "root", directory: target, worktreeDirectory: root, exact: true }
       }
     }
     if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target, { strict })) return null

@@ -11,6 +11,7 @@ import { SessionCleanupFence } from "../session-cleanup-fence"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
+import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../../opencode/session-access-contract"
 import { observePendingDiscovery, PENDING_RECONCILIATION_HEADER, PENDING_DISCOVERY_DEFERRED } from "../../workspaces/pending-discovery"
 
 const apps: FastifyInstance[] = []
@@ -379,6 +380,52 @@ describe("instance proxy location enforcement", () => {
       payload: { model: "gpt-realtime", transport: { type: "websocket" } } })
     assert.equal(voice.statusCode, 403)
     assert.equal(requestCount(), 1)
+  })
+
+  it("types its refusal of a session located outside the workspace", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, { foreign: "/other" })
+    const foreign = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/foreign" })
+    assert.equal(foreign.statusCode, 403)
+    assert.deepEqual(foreign.json(), { error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON })
+    assert.equal(requestCount(), 0)
+  })
+
+  it("refuses an unreadable session placement without reporting a move", async () => {
+    const { app, manager, requestCount } = await harness("/repo/worktree")
+    const unavailable = async (_id: string, _location: unknown, options?: { strict?: boolean }) => {
+      if (options?.strict) throw new Error("WSL host directory translation unavailable")
+      return undefined
+    }
+    manager.resolveLocationPlacement = unavailable
+    manager.ownsLocation = async (id, location, _client, options) => Boolean(await unavailable(id, location, options))
+    for (const headers of [{}, { [SESSION_PLACEMENT_HEADER]: "1" }]) {
+      const response = await app.inject({ url: "/workspaces/workspace/instance/api/session/owned", headers })
+      assert.equal(response.statusCode, 403)
+      assert.deepEqual(response.json(), { error: "Session does not belong to workspace" })
+    }
+    assert.equal(requestCount(), 0)
+  })
+
+  it("returns registered list identity only for an exact placement, keeping its native directory", async () => {
+    const { app, manager, requestCount } = await harness("/repo/worktree", {}, {
+      alias: "/checkout-alias", nested: "/repo/nested", foreign: "/other",
+    })
+    manager.resolveLocationPlacement = async (_id, { directory }) => {
+      if (directory === "/checkout-alias") return { directory: "/repo/worktree", listWorktreeSlug: "linked" }
+      if (directory === "/repo/nested") return { directory }
+    }
+    const read = (id: string) => app.inject({ url: `/workspaces/workspace/instance/api/session/${id}`,
+      headers: { [SESSION_PLACEMENT_HEADER]: "1" } })
+    const alias = await read("alias")
+    assert.equal(alias.statusCode, 200)
+    assert.deepEqual(alias.json().data, { id: "alias", location: { directory: "/checkout-alias" }, listWorktreeSlug: "linked" })
+    const nested = await read("nested")
+    assert.equal(nested.statusCode, 200)
+    assert.equal(nested.json().data.listWorktreeSlug, undefined)
+    const foreign = await read("foreign")
+    assert.equal(foreign.statusCode, 403)
+    assert.equal(foreign.json().reason, SESSION_LOCATED_ELSEWHERE_REASON)
+    assert.equal(requestCount(), 0, "the placement uses the admitted session read")
   })
 
   it("rejects side generation for a foreign session and during worktree deletion", async () => {

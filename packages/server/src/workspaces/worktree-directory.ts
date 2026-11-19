@@ -11,7 +11,7 @@ type WorktreeCacheEntry = {
   expiresAt: number
   refreshedOnMiss: boolean
   worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string; directoryOnly?: boolean; verifyCheckoutAbsence: boolean }>
-  resolvedDirectories: Map<string, { slug: string; directory: string; worktreeDirectory: string } | null>
+  resolvedDirectories: Map<string, OwnedWorktreePath | null>
 }
 
 const WORKTREE_CACHE_TTL_MS = 10_000
@@ -203,13 +203,15 @@ export function isPathWithinWorktree(root: string, candidate: string): boolean {
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
+type OwnedWorktreePath = { slug: string; directory: string; worktreeDirectory: string; exact: boolean }
+
 export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   workspaceId: string
   workspacePath: string
   directory: string
   strict?: boolean
   logger?: LogLike
-}, budget = params.strict ? { restarts: 0 } : undefined): Promise<{ slug: string; directory: string; worktreeDirectory: string } | null> {
+}, budget = params.strict ? { restarts: 0 } : undefined): Promise<OwnedWorktreePath | null> {
   const target = params.strict ? await realpath(params.directory) : await resolveDirectoryPath(params.directory)
   if (!target) return null
   const find = (worktrees: WorktreeCacheEntry["worktrees"]) => worktrees
@@ -252,7 +254,8 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
     restartWorktreeRead(budget)
     return resolveOwnedWorktreePath(params, budget)
   }
-  const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory } : null
+  const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory,
+    exact: match.normalizedDirectory === target } : null
   entry.resolvedDirectories.set(target, resolved)
   return resolved
 }

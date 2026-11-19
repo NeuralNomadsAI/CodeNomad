@@ -121,6 +121,105 @@ test("session move and deletion barriers retain per-recipient order across a pen
   } finally { h.bridge.shutdown(); old.resolve(false) }
 })
 
+test("a session move reaches its old owner, its new owner and earlier recipients only", async () => {
+  const locations: Record<string, LocationRef> = { s: { directory: "/other" }, t: { directory: "/other" } }
+  const h = harness(async (id, loc) => (id === "fast" && loc.directory === "/repo") || (id === "slow" && loc.directory === "/other"),
+    async id => locations[id]!)
+  const move = (id: string, sessionID: string, envelope?: string) => ({ id, type: "session.moved",
+    ...(envelope ? { location: { directory: envelope } } : {}), data: { sessionID, location: { directory: "/other" } } }) as OpenCodeEvent
+  try {
+    await until(() => h.streams.length === 1)
+    h.streams[0].send(delta("before", "s", "/repo"))
+    h.streams[0].send(move("moved", "s", "/repo"))
+    h.streams[0].send(delta("after", "s"))
+    // Another client's move can arrive without the old envelope.
+    h.streams[0].send(delta("u-before", "u", "/repo"))
+    locations.u = { directory: "/other" }
+    h.streams[0].send(move("u-moved", "u"))
+    // A workspace owning neither location that never held the session learns nothing.
+    h.streams[0].send(move("t-moved", "t", "/elsewhere"))
+    await until(() => h.received.length === 8)
+    await turn()
+    const ids = (instanceId: string) => h.received.filter(x => x.instanceId === instanceId).map(x => "id" in x.event && x.event.id)
+    for (const [instanceId, lanes] of [
+      ["fast", [["before", "moved"], ["u-before", "u-moved"]]],
+      ["slow", [["moved", "after"], ["u-moved"], ["t-moved"]]],
+    ] as const) {
+      const delivered = ids(instanceId)
+      const expected: readonly (readonly string[])[] = lanes
+      assert.deepEqual([...delivered].sort(), expected.flat().sort(), "exact recipients, with no duplicate deliveries")
+      for (const lane of expected) {
+        assert.deepEqual(delivered.filter(id => typeof id === "string" && lane.includes(id)), lane, "each session keeps its order")
+      }
+    }
+  } finally { h.bridge.shutdown() }
+})
+
+test("a failed old-location lookup still delivers the move to its destination owner", async () => {
+  const destinationChecks: string[] = []
+  const h = harness(async (id, location) => {
+    if (location.directory === "/repo") {
+      if (id === "fast") return true
+      throw new Error("Old checkout is temporarily unreadable")
+    }
+    destinationChecks.push(id)
+    return id === "slow" && location.directory === "/other-alias"
+  })
+  h.workspaces.push({ id: "unrelated", path: "/third" })
+  try {
+    await until(() => h.streams.length === 1)
+    h.streams[0].send({ id: "move", type: "session.moved", location: { directory: "/repo" },
+      data: { sessionID: "s", location: { directory: "/other-alias" } } } as OpenCodeEvent)
+    h.streams[0].send(delta("after", "s", "/other-alias"))
+    await until(() => h.received.some(x => x.instanceId === "slow" && x.event.type === "session.text.delta"))
+    assert.deepEqual(h.received.filter(x => x.event.type === "session.moved").map(x => x.instanceId).sort(), ["fast", "slow"])
+    await until(() => h.statuses.includes("error"))
+    assert.ok(destinationChecks.includes("unrelated"))
+    assert.equal(h.statuses.filter(status => status === "error").length, 1, "only the unresolved recipient reconciles")
+  } finally { h.bridge.shutdown() }
+})
+
+test("a move without an envelope reaches the payload destination without reading the session", async () => {
+  let sessionReads = 0
+  const h = harness(async (id, location) =>
+    (id === "fast" && location.directory === "/repo") || (id === "slow" && location.directory === "/other-alias"),
+  async () => {
+    sessionReads++
+    throw new Error("Session lookup unavailable")
+  })
+  h.workspaces.push({ id: "unrelated", path: "/third" })
+  try {
+    await until(() => h.streams.length === 1)
+    h.streams[0].send(delta("before", "s", "/repo"))
+    await until(() => h.received.length === 1)
+    h.streams[0].send({ id: "move", type: "session.moved",
+      data: { sessionID: "s", location: { directory: "/other-alias" } } } as OpenCodeEvent)
+    h.streams[0].send(delta("after", "s", "/other-alias"))
+    await until(() => h.received.some(x => x.instanceId === "slow" && x.event.type === "session.text.delta"))
+    assert.deepEqual(h.received.filter(x => x.event.type === "session.moved").map(x => x.instanceId).sort(), ["fast", "slow"])
+    assert.equal(sessionReads, 0)
+  } finally { h.bridge.shutdown() }
+})
+
+test("the destination of a move receives the next envelope-free departure", async () => {
+  const folders = new Map([["fast", "/repo"], ["slow", "/other"], ["third", "/third"]])
+  const h = harness(async (id, location) => folders.get(id) === location.directory)
+  h.workspaces.push({ id: "third", path: "/third" })
+  try {
+    await until(() => h.streams.length === 1)
+    h.streams[0].send({ id: "to-second", type: "session.moved", location: { directory: "/repo" },
+      data: { sessionID: "s", location: { directory: "/other" } } } as OpenCodeEvent)
+    h.streams[0].send({ id: "to-third", type: "session.moved",
+      data: { sessionID: "s", location: { directory: "/third" } } } as OpenCodeEvent)
+    await until(() => h.received.some(x => x.instanceId === "third" && x.event.id === "to-third"))
+    await turn()
+    const ids = (id: string) => h.received.filter(x => x.instanceId === id).map(x => x.event.id)
+    assert.deepEqual(ids("fast"), ["to-second"])
+    assert.deepEqual(ids("slow"), ["to-second", "to-third"])
+    assert.deepEqual(ids("third"), ["to-third"])
+  } finally { h.bridge.shutdown() }
+})
+
 test("native and local inventory invalidations fence pending ownership before publication", async () => {
   for (const native of [false, true]) {
     const pending = deferred<boolean>()

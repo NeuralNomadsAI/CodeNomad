@@ -50,7 +50,7 @@ import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
 import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
-import { getDescendantSessions, getSessionAncestorIds, isSessionInWorkspaceScope, revealSubsession } from "../stores/session-state"
+import { getDescendantSessions, getListedSessionMap, getSessionAncestorIds, isSessionInWorkspaceScope, revealSubsession } from "../stores/session-state"
 import { getSessionListView } from "../stores/session-list-view"
 import { instances } from "../stores/instances"
 import { hydrateRestoredSessionChain } from "../stores/session-api"
@@ -107,7 +107,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       if (!client || !ids.size) return
       const controller = new AbortController()
       onCleanup(() => controller.abort())
-      void hydrateRestoredSessionChain(id, [...ids], controller.signal).catch(error => {
+      void hydrateRestoredSessionChain(id, [...ids], controller.signal, undefined, { resolveListPlacement: true }).catch(error => {
         if (!controller.signal.aborted) log.warn("Could not load favorite sessions", error)
       })
     }))
@@ -171,8 +171,9 @@ const SessionList: Component<SessionListProps> = (props) => {
     return loading().fetchingSessions.get(props.instanceId) ?? false
   })
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
+  // Over the listed sessions only, like the rows and the tab indicator.
   const descendantActivity = createMemo(() => collectDescendantActivity(
-    sessionStateSessions().get(props.instanceId),
+    getListedSessionMap(props.instanceId),
     session => !session.retry && session.generationRecovery !== "interrupted"
       && shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus),
   ))
