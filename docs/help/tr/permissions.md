@@ -62,7 +62,7 @@ Bir konuşma seçip **Durum → İzinler** bölümünü açın.
 - **Özerk** — OpenCode’un izin kurallarını uygular.
 - **Denetimli** — Ajanın dosya değişikliklerinden ve kabuk komutlarından önce onay ister; yasaklanmış veya önceden onaylanmış işlemler hariçtir. Bu bir yalıtım ortamı değildir.
 
-Kurallar yeni alt ajanlara kopyalanır. Açık istekler ilk kurallarını korur.
+Yeni alt ajanlar ve çatallanan konuşmalar kuralların bir kopyasını alır. Bunların modunu değiştirmek kaynak konuşmayı etkilemez. Açık istekler ilk kurallarını korur.
 
 **Ayarlar → Genel → Yeni konuşmaların izinleri** bölümünde CodeNomad’da oluşturulan yeni konuşmaların başlangıç modunu seçin.
 

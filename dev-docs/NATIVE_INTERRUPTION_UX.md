@@ -96,15 +96,18 @@ native absolute path cannot be established. Agent-specific or pre-existing
 session refusals can become requests where the appended block takes precedence.
 Saved project approvals can still allow an `ask`; external-directory
 and MCP actions retain their own policy. Tool approval is separate from a person
-running a command directly. Open requests keep their original decision context;
-subagents and forks keep the rules copied at creation. Configuration changes are
-picked up the next time Supervised is enabled.
+running a command directly. Open requests keep their original decision context.
+Configuration changes are picked up the next time Supervised is enabled.
 
-The exact contiguous block is recorded in private backend state. Reads check
-native membership, and returning to Autonomous removes only that block; a
-duplicate matching block makes removal ambiguous. Writes from one backend
-serialize, read immediately before and after the native update, and retry a
-detected concurrent change from fresh rules. OpenCode replaces the whole array
+The exact contiguous block is recorded in private backend state. Subagents and
+forks start with native copies. With no matching local block, the backend checks
+the copy against blocks recorded along its owned native parent or fork lineage,
+including blocks retired by a source that changed modes. Returning to Autonomous
+removes only the matching block from the selected conversation; ambiguous matches
+are left unchanged. A missing or unowned ancestor ends the lookup. Proof uses
+native lineage and exact rule values; rules have no per-entry native identity.
+Writes from one backend serialize, read immediately before and after the native
+update, and retry a detected concurrent change from fresh rules. OpenCode replaces the whole array
 without compare-and-swap, so a write by an independent native client between
 the check and update can be undetectable.
 
@@ -129,8 +132,10 @@ changed-diff and late-copy regressions. Both run on isolated fixtures only.
 `permissions/receipts.test.ts` exercises disk reload, all decisions and their
 provenance, cascades, ownership, deletion and mutation failure paths.
 `session-permission-mode.test.ts` covers config projection, two tabs, exact
-removal, concurrent changes and private state. `node scripts/test-session-permission-mode-native.mjs <absolute-opencode-executable>`
-exercises the route and proxy against a private OpenCode process.
+removal, inherited blocks, concurrent changes and private state.
+`node scripts/test-session-permission-mode-native.mjs <absolute-opencode-executable>`
+exercises the route and proxy, including native child and fork copies, against
+a private OpenCode process.
 `tests/browser/conversation-permissions.test.ts` exercises the native Status
 selector, a second window, reconnect, saved customization and General settings.
 `tests/browser/permission-receipts.test.ts` covers reload, hidden tools, empty-page

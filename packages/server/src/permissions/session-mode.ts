@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import type { LocationPublicRef, OpenCodeClient, PermissionRule, SessionInfo } from "@opencode/client"
+import { z } from "zod"
 import type { ConversationPermissionMode, ConversationPermissionModeResponse } from "../api-types"
 import type { SettingsService } from "../settings/service"
 import { blockPositions, sameRules, sessionPermissionRules, supervisedRules } from "./session-mode-rules"
@@ -12,11 +13,17 @@ type Settings = Pick<SettingsService, "getPrivateSessionPermissionState" | "setP
 type NativeTarget = {
   client: OpenCodeClient
   read(): Promise<SessionInfo>
+  readAncestor(sessionID: string): Promise<SessionInfo | undefined>
   current(): void
   signal: AbortSignal
   distro: string | undefined
 }
 type NativeCreation = { client: OpenCodeClient; location: LocationPublicRef; distro: string | undefined; signal: AbortSignal }
+
+const blockStart = supervisedRules([], false)
+const savedBlock = sessionPermissionRules.refine(block => sameRules(block.slice(0, 2), blockStart))
+const savedBlocks = z.object({ active: savedBlock.nullish(), previous: z.array(savedBlock) })
+const sourceSessionID = (session: SessionInfo) => session.fork?.sessionID ?? session.parentID
 
 export function newConversationMode(value: unknown): ConversationPermissionMode {
   if (value === undefined || value === "autonomous") return "autonomous"
@@ -39,15 +46,36 @@ export class SessionPermissionModes {
     return sessionPermissionRules.parse(session.permissions ?? [])
   }
 
-  private owned(key: string) {
-    const block = sessionPermissionRules.min(2).optional().parse(this.settings.getPrivateSessionPermissionState()[key])
-    if (block && !sameRules(block.slice(0, 2), supervisedRules([], false))) throw new Error("Invalid stored permission block")
-    return block
+  private owned(key: string, state = this.settings.getPrivateSessionPermissionState()) {
+    const saved = state[key]
+    return Array.isArray(saved) ? { active: savedBlock.parse(saved), previous: [] }
+      : savedBlocks.optional().parse(saved) ?? { previous: [] }
   }
 
-  private remember(key: string, block: PermissionRule[] | null) {
-    // Start the synchronous merge from a readable, authoritative state document.
-    this.settings.setPrivateSessionPermissionBlock(key, block)
+  private remember(key: string, active: PermissionRule[] | null, previous: PermissionRule[][] = []) {
+    this.settings.setPrivateSessionPermissionBlock(key, active, previous)
+  }
+
+  private async inheritedBlock(target: NativeTarget, session: SessionInfo, rules: PermissionRule[]) {
+    let source = sourceSessionID(session)
+    if (!source || !blockPositions(rules, blockStart).length) return
+    const state = this.settings.getPrivateSessionPermissionState()
+    const visited = new Set([session.id])
+    let match: PermissionRule[] | undefined
+    while (source) {
+      if (visited.has(source) || visited.size > 64) throw new SessionModeConflict("Invalid permission ancestry")
+      visited.add(source)
+      const ancestor = await target.readAncestor(source)
+      if (!ancestor) break
+      const { active, previous } = this.owned(this.key(target.distro, ancestor), state)
+      for (const block of active ? [active, ...previous] : previous) {
+        if (!blockPositions(rules, block).length) continue
+        if (match && !sameRules(match, block)) return "ambiguous" as const
+        match = block
+      }
+      source = sourceSessionID(ancestor)
+    }
+    return match
   }
 
   private async configBlock({ client, location, distro, signal }: NativeCreation) {
@@ -69,23 +97,36 @@ export class SessionPermissionModes {
 
   read(target: NativeTarget): Promise<ConversationPermissionModeResponse> {
     return this.exclusive(target, async (key, session) => {
-      const block = this.owned(key)
-      return { mode: block && blockPositions(this.rules(session), block).length ? "supervised" : "autonomous" }
+      const { active } = this.owned(key)
+      const rules = this.rules(session)
+      const block = active && blockPositions(rules, active).length ? active : await this.inheritedBlock(target, session, rules)
+      return { mode: block ? "supervised" : "autonomous" }
     })
   }
 
   write(target: NativeTarget, mode: ConversationPermissionMode): Promise<ConversationPermissionModeResponse> {
     return this.exclusive(target, async (key, initial) => {
-      const stored = this.owned(key)
+      const { active, previous } = this.owned(key)
       const currentRules = (session: SessionInfo) => {
         target.current()
         if (this.key(target.distro, session) !== key || session.location.directory !== initial.location.directory
-          || session.projectID !== initial.projectID) throw new SessionModeConflict("Session placement changed")
+          || session.projectID !== initial.projectID || sourceSessionID(session) !== sourceSessionID(initial)) {
+          throw new SessionModeConflict("Session placement changed")
+        }
         return this.rules(session)
       }
-      let block = stored
-      if (mode === "supervised" && !(stored && blockPositions(currentRules(initial), stored).length)) {
-        block = await this.configBlock({ ...target, location: initial.location })
+      const original = currentRules(initial)
+      const local = active && blockPositions(original, active).length ? active : undefined
+      const owned = local ?? await this.inheritedBlock(target, initial, original)
+      if (owned === "ambiguous") {
+        if (mode === "supervised") return { mode }
+        throw new SessionModeConflict("Ambiguous permission block")
+      }
+      const block = owned ?? (mode === "supervised" ? await this.configBlock({ ...target, location: initial.location }) : undefined)
+      const history = active && !previous.some(block => sameRules(block, active)) ? [...previous, active] : previous
+      const forget = () => {
+        // A descendant can still carry this block after the source changes mode.
+        if (active) this.remember(key, null, history)
       }
       let retained = false
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -93,21 +134,30 @@ export class SessionPermissionModes {
         // the whole array and has no compare-and-swap precondition.
         let rules = currentRules(await target.read())
         let positions = block ? blockPositions(rules, block) : []
-        if (mode === "supervised" && stored && blockPositions(rules, stored).length) return { mode }
+        if (mode === "supervised" && owned && positions.length) return { mode }
+        if (sourceSessionID(initial) && !local && !sameRules(rules, original)) {
+          const fresh = await this.inheritedBlock(target, initial, rules)
+          if (fresh && (fresh === "ambiguous" || !block || !sameRules(fresh, block))) {
+            throw new SessionModeConflict("Permission rules changed")
+          }
+          // Keep the rule read immediately before dispatch if ancestry required I/O.
+          if (!sameRules(currentRules(await target.read()), rules)) continue
+        }
         if (mode === "autonomous" && !positions.length) {
-          if (stored) this.remember(key, null)
+          forget()
           return { mode }
         }
         if (!block || positions.length > 1) throw new SessionModeConflict("Ambiguous permission block")
         if (mode === "supervised" && !retained) {
+          if (owned) throw new SessionModeConflict("Permission rules changed")
           // Identical unowned rules do not grant a right to remove them later.
           if (positions.length) throw new SessionModeConflict("Permission block already exists without ownership")
-          this.remember(key, block)
+          this.remember(key, block, history)
           retained = true
           rules = currentRules(await target.read())
           positions = blockPositions(rules, block)
           if (positions.length) {
-            this.remember(key, stored ?? null)
+            this.remember(key, active ?? null, previous)
             throw new SessionModeConflict("Permission rules changed")
           }
         }
@@ -121,13 +171,13 @@ export class SessionPermissionModes {
         catch (error) { writeFailure = { error } }
         const confirmed = currentRules(await target.read())
         if (sameRules(confirmed, updated)) {
-          if (mode === "autonomous") this.remember(key, null)
+          if (mode === "autonomous") forget()
           return { mode }
         }
         // A failed transport is never replayed. A successful write followed by
         // divergence can rebase against a fresh read in the next iteration.
         if (writeFailure) throw writeFailure.error
-        if (retained && attempt === 2 && !blockPositions(confirmed, block).length) this.remember(key, stored ?? null)
+        if (retained && attempt === 2 && !blockPositions(confirmed, block).length) this.remember(key, active ?? null, previous)
       }
       throw new SessionModeConflict("Permission rules changed")
     })

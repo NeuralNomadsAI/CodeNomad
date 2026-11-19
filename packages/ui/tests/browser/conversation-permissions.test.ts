@@ -169,7 +169,7 @@ test("General saves the new-conversation mode immediately before Queue sent prom
     })
     await events.route(page)
     await page.goto(`${url}?settings`)
-    const setting = page.getByRole("button", { name: /^Permissions for new conversations\b/ })
+    const setting = page.getByRole("button", { name: /^New conversation permissions\b/ })
     assert.equal(await setting.innerText(), "Autonomous")
     assert.match(await setting.evaluate(el => el.closest(".settings-toggle-row")?.nextElementSibling?.textContent ?? ""), /Queue sent prompts/)
     async function supervise() {

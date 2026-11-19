@@ -62,7 +62,7 @@ Sélectionnez une conversation et ouvrez **Statut → Permissions**.
 - **Autonome** — Applique les règles de permissions d’OpenCode.
 - **Supervisé** — Demande confirmation avant les modifications de fichiers et les commandes shell de l’agent, sauf si elles sont interdites ou déjà autorisées. Ce n’est pas un bac à sable.
 
-Les règles sont copiées aux nouveaux sous-agents. Les demandes ouvertes gardent leurs règles initiales.
+Les nouveaux sous-agents et les conversations bifurquées héritent d’une copie des règles. Changer leur mode laisse la conversation source intacte. Les demandes ouvertes gardent leurs règles initiales.
 
 Choisissez le mode initial des nouvelles conversations dans **Paramètres → Général → Permissions des nouvelles conversations**.
 

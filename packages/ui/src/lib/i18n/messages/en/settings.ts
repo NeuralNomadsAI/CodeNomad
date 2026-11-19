@@ -545,7 +545,7 @@ export const settingsMessages = {
   "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle": "Bring the most recently used CodeNomad window forward instead of opening a new one.",
   "settings.behavior.promptVoiceInput.title": "Prompt voice input",
   "settings.behavior.promptVoiceInput.subtitle": "Show the microphone control for speech-to-text prompt input when speech is configured.",
-  "settings.behavior.newConversationPermissions.title": "Permissions for new conversations",
+  "settings.behavior.newConversationPermissions.title": "New conversation permissions",
   "settings.behavior.newConversationPermissions.info": "Starting mode for new conversations created in CodeNomad.",
   "settings.behavior.newConversationPermissions.saveFailed": "Couldn’t save the default. Try again.",
   "settings.behavior.followUpBehavior.title": "Queue sent prompts",

@@ -62,9 +62,9 @@ Select a conversation and open **Status → Permissions**.
 - **Autonomous** — Follows OpenCode’s permission rules.
 - **Supervised** — Asks before agent edits and shell commands, except where denied or already approved. This is not a sandbox.
 
-The rules are copied to new subagents. Open requests keep their original rules.
+New subagents and forks inherit a copy of the rules. Changing their mode leaves the source unchanged. Open requests keep their original rules.
 
-Choose the starting mode in **Settings → General → Permissions for new conversations**.
+Choose the starting mode in **Settings → General → New conversation permissions**.
 
 ## Recover missing or stale requests {#request-recovery}
 

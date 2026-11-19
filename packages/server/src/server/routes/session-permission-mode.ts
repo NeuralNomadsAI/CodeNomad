@@ -54,7 +54,7 @@ export function registerSessionPermissionModeRoutes(app: FastifyInstance, deps: 
           releaseSession = deps.cleanup.enterMutation(sessionID)
           if (!releaseWorktree || !releaseSession) return reply.code(409).send()
         }
-        const target = { client, current, signal, distro: manager.getServiceWslDistro(id), read: async () => {
+        const read = async () => {
           current()
           const latest = await client.session.get({ sessionID }, { signal })
           current()
@@ -63,7 +63,23 @@ export function registerSessionPermissionModeRoutes(app: FastifyInstance, deps: 
             throw new SessionModeConflict("Conversation changed")
           }
           return latest
-        } }
+        }
+        const readAncestor = async (ancestorID: string) => {
+          if (!sessionIDPattern.test(ancestorID) || isReservedMissionScheduleSessionID(ancestorID)) return
+          current()
+          try {
+            const ancestor = await client.session.get({ sessionID: ancestorID }, { signal })
+            const owned = ancestor.id === ancestorID && ancestor.projectID === initial.projectID
+              && await manager.ownsLocation(id, ancestor.location, client, { signal })
+            current()
+            return owned ? ancestor : undefined
+          } catch (error) {
+            current()
+            if (isSessionNotFoundError(error) && error.sessionID === ancestorID) return
+            throw error
+          }
+        }
+        const target = { client, current, signal, distro: manager.getServiceWslDistro(id), read, readAncestor }
         return parsed?.success ? await deps.modes.write(target, parsed.data.mode) : await deps.modes.read(target)
       } catch (error) {
         if (isSessionNotFoundError(error) && error.sessionID === sessionID) return reply.code(404).send()

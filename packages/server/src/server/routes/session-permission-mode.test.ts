@@ -46,21 +46,30 @@ async function fixture(t: TestContext) {
   const settings = new SettingsService(resolveConfigLocation(root), bus, logger)
   const sessionID = "ses_example"
   const session = { id: sessionID, projectID: "test", time: { created: 100 }, location: { directory: "/worktree" }, permissions: [read] } as SessionInfo
+  const sessions = new Map([[sessionID, session]])
   const actions: string[] = []
+  const writes: string[] = []
   let mutate: ((rules: PermissionRule[]) => void) | undefined
+  let configEntries = config
   const client = {
     session: {
-      get: async () => { actions.push("read"); return structuredClone(session) },
-      update: async ({ permissions }: { permissions: PermissionRule[] }) => {
+      get: async ({ sessionID }: { sessionID: string }) => {
+        actions.push("read")
+        const selected = sessions.get(sessionID)
+        if (!selected) throw Object.assign(new Error("Absent"), { _tag: "SessionNotFoundError", sessionID })
+        return structuredClone(selected)
+      },
+      update: async ({ sessionID, permissions }: { sessionID: string; permissions: PermissionRule[] }) => {
         actions.push("write")
+        writes.push(sessionID)
         if (mutate) return mutate(permissions)
-        session.permissions = permissions
+        sessions.get(sessionID)!.permissions = permissions
       },
     },
     config: { get: async ({ location }: { location: { directory: string } }) => {
       actions.push("config")
       assert.equal(location.directory, "/worktree")
-      return config
+      return configEntries
     } },
   } as unknown as ServiceConnection["client"]
   const connection = { client, assertCurrent() {} } as ServiceConnection
@@ -69,7 +78,7 @@ async function fixture(t: TestContext) {
     get: (id: string) => workspaces[id] as never,
     getSharedServiceConnection: async () => connection,
     getServiceWslDistro: () => undefined,
-    ownsLocation: async (id: string) => id !== "foreign",
+    ownsLocation: async (id: string, location: SessionInfo["location"]) => id !== "foreign" && location.directory === "/worktree",
     getWorktreeIdentityForPath: async () => "/worktree",
   }
   const modes = new SessionPermissionModes(settings)
@@ -77,10 +86,11 @@ async function fixture(t: TestContext) {
     worktreeDeletionFence: new WorktreeDeletionFence(), cleanup: new SessionCleanupFence() })
   registerSettingsRoutes(app, { settings, logger })
   t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }) })
-  const url = (id: string) => `/api/workspaces/${id}/sessions/${sessionID}/permission-mode`
-  return { app, bus, settings, modes, actions, session, client, url, mutate: (next: typeof mutate) => { mutate = next },
-    get: (id = "one") => app.inject({ url: url(id) }),
-    set: (mode: string, id = "one") => app.inject({ method: "PUT", url: url(id), payload: { mode } }) }
+  const url = (id: string, selected: string) => `/api/workspaces/${id}/sessions/${selected}/permission-mode`
+  return { app, bus, settings, modes, actions, writes, session, sessions, client, mutate: (next: typeof mutate) => { mutate = next },
+    replaceConfig: (next: ConfigGetOutput) => { configEntries = next },
+    get: (id = "one", selected = sessionID) => app.inject({ url: url(id, selected) }),
+    set: (mode: string, id = "one", selected = sessionID) => app.inject({ method: "PUT", url: url(id, selected), payload: { mode } }) }
 }
 
 test("serializes two windows on one session, confirms each mode from native reads and removes only the owned block", async t => {
@@ -95,6 +105,58 @@ test("serializes two windows on one session, confirms each mode from native read
   assert.deepEqual((await f.set("autonomous", "two")).json(), { mode: "autonomous" })
   assert.deepEqual(f.session.permissions, [external, read, shell("deny", "outside")])
   assert.deepEqual((await f.get()).json(), { mode: "autonomous" })
+})
+
+test("finds inherited blocks in native child and fork lineage, and removes only the chosen copy", async t => {
+  const f = await fixture(t)
+  assert.deepEqual((await f.set("supervised")).json(), { mode: "supervised" })
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
+  const descendant = { ...child, id: "ses_descendant", parentID: child.id, permissions: [external, read, ...block] }
+  const fork = { ...child, id: "ses_fork", fork: { sessionID: child.id } } as SessionInfo
+  for (const copy of [child, descendant, fork]) f.sessions.set(copy.id, copy)
+  for (const copy of [child, descendant, fork]) assert.deepEqual((await f.get("one", copy.id)).json(), { mode: "supervised" })
+  assert.deepEqual((await f.set("supervised", "two", child.id)).json(), { mode: "supervised" })
+  assert.deepEqual(f.writes, [f.session.id], "selecting the existing mode does not append anything")
+
+  assert.deepEqual((await f.set("autonomous", "two", child.id)).json(), { mode: "autonomous" })
+  assert.deepEqual(child.permissions, [read])
+  assert.deepEqual(f.session.permissions, [read, ...block])
+  assert.deepEqual((await f.set("autonomous")).json(), { mode: "autonomous" })
+  assert.deepEqual((await f.get("one", fork.id)).json(), { mode: "supervised" })
+  assert.deepEqual((await f.set("autonomous", "one", descendant.id)).json(), { mode: "autonomous" })
+  assert.deepEqual(descendant.permissions, [external, read])
+  assert.deepEqual(fork.permissions, [read, ...block])
+  assert.deepEqual(f.writes, [f.session.id, child.id, f.session.id, descendant.id])
+})
+
+test("recognizes earlier copies when a source gets a different supervised block", async t => {
+  const f = await fixture(t)
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
+  f.sessions.set(child.id, child)
+  assert.equal((await f.set("autonomous")).statusCode, 200)
+  const newConfig: ConfigGetOutput = [{ type: "document", info: { permissions: [shell("deny", "new *")] } }]
+  f.replaceConfig(newConfig)
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  assert.deepEqual((await f.get("one", child.id)).json(), { mode: "supervised" })
+  assert.equal((await f.set("autonomous", "one", child.id)).statusCode, 200)
+  assert.deepEqual(child.permissions, [read])
+  assert.deepEqual(f.session.permissions, [read, ...supervisedRules(newConfig, false)])
+})
+
+test("does not remove ambiguous copies or use ownership records from a foreign source", async t => {
+  const f = await fixture(t)
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id, permissions: [...block, ...block] }
+  f.sessions.set(child.id, child)
+  assert.deepEqual((await f.get("one", child.id)).json(), { mode: "supervised" })
+  assert.equal((await f.set("autonomous", "two", child.id)).statusCode, 409)
+  f.session.location = { directory: "/foreign" }
+  child.permissions = [...block]
+  assert.deepEqual((await f.get("one", child.id)).json(), { mode: "autonomous" })
+  assert.deepEqual((await f.set("autonomous", "two", child.id)).json(), { mode: "autonomous" })
+  assert.deepEqual(child.permissions, block)
+  assert.deepEqual(f.writes, [f.session.id])
 })
 
 test("retries an observed post-write conflict from fresh native rules, but never replays a failed transport", async t => {
