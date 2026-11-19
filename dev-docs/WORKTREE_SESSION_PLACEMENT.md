@@ -82,8 +82,10 @@ Implementation:
   and no deletion marker is set.
   The record keeps the session out
   of the scope (below) and makes a later published inventory serving the destination
-  list it again; it is released when a session refresh reads it at a served
-  directory, it is deleted or moved again, or the instance closes.
+  list it again. A current placement read confirming a registered checkout
+  also clears the prior departure, including for a favorite reopened through
+  an alias. A session refresh at a served directory, deletion, another move,
+  or closing the instance releases the record.
   Each instance settles moves from its own ordered relay stream, using a per-session
   generation to fence inventory reads and probes overtaken by a later move.
   The relay checks the payload destination independently of the envelope. Without

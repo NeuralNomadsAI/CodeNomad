@@ -1,3 +1,4 @@
+import { batch } from "solid-js"
 import {
   getIdleSinceForStatusTransition,
   isSelectablePrimaryAgent,
@@ -583,6 +584,7 @@ async function hydrateRestoredSessionChainAttempt(
         const captured = session
         const move = getPendingSessionMove(instanceId, sessionId)
         const evidenceCurrent = captureSessionPlacementEvidence(instanceId, sessionId)
+        const capturedAway = getMovedAwaySessions(instanceId).get(sessionId)
         let placementReadCurrent: (() => boolean) | undefined
         if (readOptions.headers) {
           const key = messagePageKey(instanceId, sessionId)
@@ -611,7 +613,7 @@ async function hydrateRestoredSessionChainAttempt(
           const needsPlacementEvidence = Boolean(readOptions.headers)
             && (listWorktreeSlug !== undefined
               || !isWorkspaceServedDirectory(apiSession.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId)))
-          setSessions((prev) => {
+          batch(() => setSessions((prev) => {
             if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
             const next = new Map(prev)
             const instanceSessions = new Map(next.get(instanceId) ?? new Map())
@@ -621,15 +623,18 @@ async function hydrateRestoredSessionChainAttempt(
             const merged = mergeFetchedSessionRuntimeState(toClientSessionV2(instanceId, apiSession, captured), captured, latest)
             if (merged) {
               // Publish the matching proof before the row notifies sidebar readers.
-              if (needsPlacementEvidence && getPendingSessionMove(instanceId, sessionId) === move
-                && !getMovedAwaySessions(instanceId).has(sessionId) && matchesSessionPlacement(merged, placement)) {
-                confirmSessionPlacement(instanceId, sessionId, placement)
+              if (needsPlacementEvidence && getPendingSessionMove(instanceId, sessionId) === move && matchesSessionPlacement(merged, placement)) {
+                const away = getMovedAwaySessions(instanceId)
+                const returned = !move && capturedAway !== undefined && away.get(sessionId) === capturedAway
+                  && listWorktreeSlug !== undefined && getWorktrees(instanceId).some(worktree => worktree.slug === listWorktreeSlug)
+                if (!away.has(sessionId) || returned) confirmSessionPlacement(instanceId, sessionId, placement)
+                if (returned) forgetSessionMovedAway(instanceId, sessionId)
               }
               instanceSessions.set(sessionId, merged)
             }
             next.set(instanceId, instanceSessions)
             return next
-          })
+          }))
           session = sessions().get(instanceId)?.get(sessionId)
           const ownsPlacement = () => isRequestCurrent() && !signal?.aborted
             && getPendingSessionMove(instanceId, sessionId) === move

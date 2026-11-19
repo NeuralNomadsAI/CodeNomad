@@ -19,6 +19,7 @@ import { confirmSessionPlacement, handleNativeSessionEvent, handleSessionDeleted
 import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data"
 import { NO_SESSION_DRAFT_SESSION_ID } from "./local-draft-ids"
 import { recoveredDraftIds } from "./session-draft-recovery"
+import { getMovedAwaySessions, markSessionMovedAway } from "./session-state"
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import type { Session } from "../types/session"
 
@@ -396,6 +397,43 @@ for (const directory of ["/linked-alias", "/repo/linked-alias"]) test(`cold rest
     assert.equal(activeSessionId().get(id), undefined, "a different placement cannot inherit the alias confirmation")
     assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees; f.cleanup() }
+})
+
+for (const mode of ["return", "new departure", "unregistered"] as const) test(`favorite placement reconciles a previous departure (${mode})`, async () => {
+  const id = `favorite-return-${mode.replaceAll(" ", "-")}`, f = fixture(id)
+  const originalWorktrees = serverApi.fetchWorktrees
+  const started = deferred<void>(), read = deferred<any>()
+  const alias = { ...row("root"), parentID: undefined, location: { directory: "/repo/linked-alias" },
+    listWorktreeSlug: mode === "unregistered" ? undefined : "linked" }
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
+    { slug: "root", directory: "/repo", kind: "root" },
+    { slug: "linked", directory: "/repo-linked", kind: "worktree" },
+  ] })
+  f.client.session.get = async () => { started.resolve(); return read.promise }
+  f.client.session.list = async (input: any) => ({ data: input.project ? [alias] : [], cursor: {} })
+  setInstanceMetadata(id, { project: { id: "project" } as any })
+  let restoring: Promise<unknown> | undefined
+  try {
+    await ensureWorktreesLoaded(id)
+    markSessionMovedAway(id, "root", "/other-project")
+    setSessionDraftPrompt(id, "root", "keep draft")
+    restoring = hydrateRestoredSessionChain(id, ["root"], undefined, undefined, { resolveListPlacement: true })
+    await started.promise
+    if (mode === "new departure") markSessionMovedAway(id, "root", "/newer-project")
+    read.resolve(alias)
+    await restoring
+    await fetchSessions(id, { strictStatus: true })
+    assert.equal(getMovedAwaySessions(id).get("root"), mode === "return" ? undefined
+      : mode === "new departure" ? "/newer-project" : "/other-project")
+    assert.equal(getSessionThreads(id).some(thread => thread.session.id === "root"), mode === "return")
+    assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
+    if (mode === "return") assert.equal(sessions().get(id)?.get("root")?.location.directory, alias.location.directory)
+  } finally {
+    read.resolve(alias)
+    await restoring
+    serverApi.fetchWorktrees = originalWorktrees
+    f.cleanup()
+  }
 })
 
 test("complete inventory keeps a saved selection while its placement read is pending", async () => {
