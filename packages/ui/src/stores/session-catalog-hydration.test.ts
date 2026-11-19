@@ -306,6 +306,44 @@ for (const failureFirst of [false, true]) test(`cold restore applies a parent de
   }
 })
 
+test("cold restore retries after reconnect supersedes a sibling read error", async () => {
+  const id = "restore-stale-sibling-error", f = fixture(id)
+  const parent = deferred<void>(), child = deferred<void>()
+  const reads = new Map<string, number>()
+  Object.assign(f.saved, { activeSessionId: "child", drafts: { child: "keep draft" } })
+  f.client.session.get = async ({ sessionID }: { sessionID: string }) => {
+    const count = (reads.get(sessionID) ?? 0) + 1
+    reads.set(sessionID, count)
+    if (count === 1) {
+      if (sessionID === "child") {
+        await child.promise
+        throw new Error("Unexpected status 503")
+      }
+      await parent.promise
+    }
+    return { ...row(sessionID), parentID: sessionID === "child" ? "root" : undefined, location: { directory: "/repo" } }
+  }
+  try {
+    const restoring = hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual([...reads.keys()].sort(), ["child", "root"])
+    child.resolve()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    applyOpenCodeDataEvent(id, "/repo", { id: "connected", type: "server.connected", created: 1, data: {} } as any)
+    parent.resolve()
+    await restoring
+    assert.equal(reads.get("root"), 2)
+    assert.equal(reads.get("child"), 2)
+    assert.equal(activeSessionId().get(id), "child")
+    assert.equal(getSessionDraftPrompt(id, "child"), "keep draft")
+  } finally {
+    parent.resolve()
+    child.resolve()
+    destroyOpenCodeData(id)
+    f.cleanup()
+  }
+})
+
 for (const directory of ["/linked-alias", "/repo/linked-alias"]) test(`cold restore keeps a proxy-confirmed alias selected at ${directory}`, async () => {
   const originalFetch = globalThis.fetch
   const originalWorktrees = serverApi.fetchWorktrees

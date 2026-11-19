@@ -648,7 +648,9 @@ async function hydrateRestoredSessionChainAttempt(
     pending = parents.flatMap(result => result.status === "fulfilled" && result.value ? [result.value] : [])
   }
   // A selected local child may finish loading after its parent's refusal.
-  if (isRequestCurrent() && !signal?.aborted) for (const depart of departures) depart()
+  signal?.throwIfAborted()
+  if (!isRequestCurrent()) return
+  for (const depart of departures) depart()
   if (readFailure) throw readFailure.reason
 }
 
