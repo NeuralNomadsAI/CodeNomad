@@ -1,7 +1,7 @@
 ---
 name: codenomad-architecture-guide
 description: |
-  Architecture and native OpenCode V2 navigation guide for CodeNomad. Use for cross-package changes, OpenCode client calls, server routes, events, workspaces, Git, Yolo, UI, or desktop integration.
+  Architecture and native OpenCode V2 navigation guide for CodeNomad. Use for cross-package changes, OpenCode client calls, server routes, events, workspaces, Git, permissions, UI, or desktop integration.
 ---
 
 # CodeNomad Architecture Guide
@@ -25,7 +25,7 @@ description: |
 - The server uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global OpenCode daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and uses no cross-namespace PID operations.
 - The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
 - OpenCode owns session APIs, native Forms, session Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), location-scoped shells, and interactive PTYs. Forms list through `client.form.list({ location })` and settle through `client.session.form.reply/cancel`; global Forms use the encoded directory header. The Status panel joins native background-job shell IDs to the Location's `client.shell.list` records through the owned background-shells route, refreshing on Shell events, tool completion and reconnect while visible. Output/removal use the ownership-checking Shell proxy; a tool shell is authorized by its originating session. Interactive `client.pty.*` terminals remain separate.
-- CodeNomad owns logical project records, directory authorization, Git status/diff/stage/unstage/commit, Yolo persistence/auto-replies, and `/api/events`. Closing a project tab deletes that occurrence's backend record; native sessions continue. CodeNomad never evicts native Locations. Whole-window close, quit and reload preserve restoration behavior.
+- CodeNomad owns logical project records, directory authorization, Git status/diff/stage/unstage/commit, session permission block ownership, and `/api/events`. Closing a project tab deletes that occurrence's backend record; native sessions continue. CodeNomad never evicts native Locations. Whole-window close, quit and reload preserve restoration behavior.
 - OpenCode owns the global daemon's standard state and database. Configured environment variables are passed to `service start` for a missing daemon; an existing daemon is unchanged. Before each session prompt/command/shell send, the authorized proxy also applies the profile's complete execution-host environment via `session.environment`. `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored. See `dev-docs/SESSION_ENVIRONMENT.md` for scope and limitations.
 - Native desktop identity is data profile plus config identity (`dev-docs/DESKTOP_DATA_PROFILES.md`): one singleton process/backend per scope and multiple UUID windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window. Each scope isolates native state; OpenCode sessions/messages are shared while tabs/drafts/views are per-window.
 - Client-state V3 is a per-window envelope over the V2 content-addressed partition graph with atomic publication/migration, ownership-fenced writes, and conservative post-commit GC. Iframe preview fallbacks are sandboxed without same-origin access; native browser guests share one preview profile kept separate from the application renderer and get no application capabilities (frame policy in `dev-docs/architecture.md`).
@@ -37,7 +37,7 @@ External right-panel UI addons use `packages/server/src/panel-extensions/` and
 They are sandboxed UI packages with their own consent and loading path. Never import
 author code into the primary renderer, expose generic RPC or grant native commands.
 
-- `packages/server/`: Fastify control API, shared OpenCode service, locations, auth, filesystem, Git, Yolo, speech.
+- `packages/server/`: Fastify control API, shared OpenCode service, locations, auth, filesystem, Git, permissions, speech.
 - `packages/ui/`: SolidJS application, generated client adapters, stores, components, i18n.
 - `packages/electron-app/`: Electron host.
 - `packages/tauri-app/`: Tauri host.
@@ -53,7 +53,7 @@ author code into the primary renderer, expose generic RPC or grant native comman
 - Root client authority: `packages/ui/src/stores/opencode-client.ts`
 - Native session calls: `packages/ui/src/stores/session-api.ts`, `session-actions.ts`
 - Git mutations: `packages/server/src/workspaces/git-mutations.ts`
-- Yolo: `packages/server/src/permissions/`, `packages/server/src/server/routes/yolo.ts`
+- Conversation permissions: `packages/server/src/permissions/`, `packages/server/src/server/routes/session-permission-mode.ts`
 - Desktop hosts: `packages/electron-app/electron/main/`, `packages/electron-app/electron/preload/index.cjs`, `packages/tauri-app/src-tauri/src/`
 - Desktop automation: `packages/server/src/opencode/automation-plugin.ts`, `packages/server/src/opencode/automation/desktop-plugin.ts`, `packages/server/src/server/routes/automation-plugin.ts`, `packages/server/src/developer-cdp.ts`, `packages/server/src/automation/page/`
 
@@ -64,7 +64,7 @@ author code into the primary renderer, expose generic RPC or grant native comman
 - Send CodeNomad operations through `/api/*`; send OpenCode operations through `/workspaces/:id/instance/api/*`.
 - Consume the multiplexed CodeNomad SSE stream at `/api/events`; do not create one OpenCode process or event stream per workspace. Native events are volatile, so reconnect must reconcile authoritative state.
 - Treat the instance proxy allowlist as an integration boundary. Upstream routes are exposed only after review.
-- Keep Git mutations and Yolo in CodeNomad: they are its policy/security boundaries.
+- Keep Git mutations and permission mode ownership in CodeNomad; OpenCode owns permission evaluation and settlement.
 - Check `packages/server/src/api-types.ts` and UI consumers together when changing CodeNomad events or responses.
 - Desktop behavior must remain at strict Electron/Tauri parity in the same change; use the shared native abstraction and test both hosts.
 

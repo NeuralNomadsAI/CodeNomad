@@ -13,7 +13,6 @@ interface CoreRightPanelRenderers {
 interface CoreStatusSectionRenderers {
   renderTokens: () => JSX.Element
   renderTokensSummary?: () => JSX.Element
-  renderYoloModeSection: () => JSX.Element
   renderProviderUsage: () => JSX.Element
   renderBackgroundProcesses: () => JSX.Element
   renderMcpStatus: () => JSX.Element
@@ -47,7 +46,6 @@ export function createCoreRightPanelModule(renderers: CoreRightPanelRenderers): 
 export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRenderers): RightPanelModule {
   const sectionRenderers: Record<string, () => JSX.Element> = {
     tokens: renderers.renderTokens,
-    "yolo-mode": renderers.renderYoloModeSection,
     "provider-usage": renderers.renderProviderUsage,
     "background-processes": renderers.renderBackgroundProcesses,
     mcp: renderers.renderMcpStatus,

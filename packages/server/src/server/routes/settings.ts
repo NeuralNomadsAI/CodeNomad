@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { BinaryValidationResult } from "../../api-types"
 import { probeOpenCodeBinary } from "../../workspaces/spawn"
-import { SESSION_FAVORITES_OWNER, type SettingsService } from "../../settings/service"
+import { SESSION_FAVORITES_OWNER, SESSION_PERMISSION_BLOCKS_OWNER, type SettingsService } from "../../settings/service"
 import type { Logger } from "../../logger"
 import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-config"
 import { resolveDefaultInstallation } from "../../opencode-update/shared-installation"
@@ -10,6 +10,16 @@ import { applyConditionalMissionPreferences, MissionPreferenceConflictError } fr
 import { SettingsReadError } from "../../settings/yaml-doc-store"
 import { HostOnlySettingError, hostOnlyServerCheck } from "../../settings/host-only-settings"
 import { isLocalRequest } from "../../remote-control/request-origin"
+import { NEW_CONVERSATION_PERMISSIONS, newConversationMode } from "../../permissions/session-mode"
+
+const privateStateOwners = [SESSION_FAVORITES_OWNER, SESSION_PERMISSION_BLOCKS_OWNER]
+
+function checkConversationDefault(before: Record<string, unknown>, after: Record<string, unknown>) {
+  const mode = (document: Record<string, unknown>) =>
+    (document.ui as { settings?: Record<string, unknown> } | undefined)?.settings?.[NEW_CONVERSATION_PERMISSIONS]
+  const next = mode(after)
+  if (next !== mode(before)) newConversationMode(next)
+}
 
 interface RouteDeps {
   settings: SettingsService
@@ -78,7 +88,10 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
           }
           body = bodyObj
         }
-        return deps.settings.mergePatchDoc("config", body, hostOnlyServerCheck(isLocalRequest(request)))
+        return deps.settings.mergePatchDoc("config", body, (before, after) => {
+          hostOnlyServerCheck(isLocalRequest(request))?.(before, after)
+          checkConversationDefault(before, after)
+        })
       })
       if (body && typeof body === "object" && "server" in body && body.server && typeof body.server === "object"
         && "opencodeBinary" in body.server) await refreshLoginStart(deps)
@@ -118,7 +131,10 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         const processed = request.params.owner === "server"
           ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
           : request.body ?? {}
-        return deps.settings.mergePatchOwner("config", request.params.owner, processed, hostOnlyServerCheck(isLocalRequest(request)))
+        return deps.settings.mergePatchOwner("config", request.params.owner, processed, (before, after) => {
+          hostOnlyServerCheck(isLocalRequest(request))?.(before, after)
+          if (request.params.owner === "ui") checkConversationDefault(before, after)
+        })
       })
       if (request.params.owner === "server" && request.body && typeof request.body === "object" && "opencodeBinary" in request.body)
         await refreshLoginStart(deps)
@@ -132,14 +148,15 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   const publicState = () => {
     const doc = { ...deps.settings.getDoc("state") }
-    delete doc[SESSION_FAVORITES_OWNER]
+    for (const owner of privateStateOwners) delete doc[owner]
     return doc
   }
   app.get("/api/storage/state", async () => publicState())
   app.patch("/api/storage/state", async (request, reply) => {
     try {
-      if (request.body && typeof request.body === "object" && Object.hasOwn(request.body, SESSION_FAVORITES_OWNER)) {
-        return reply.code(403).send({ error: "Session favorites require a workspace" })
+      const patch = request.body
+      if (patch && typeof patch === "object" && privateStateOwners.some(owner => Object.hasOwn(patch, owner))) {
+        return reply.code(403).send()
       }
       deps.settings.mergePatchDoc("state", request.body ?? {})
       return publicState()
@@ -150,12 +167,12 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   })
 
   app.get<{ Params: { owner: string } }>("/api/storage/state/:owner", async (request, reply) => {
-    if (request.params.owner === SESSION_FAVORITES_OWNER) return reply.code(403).send()
+    if (privateStateOwners.includes(request.params.owner)) return reply.code(403).send()
     return deps.settings.getOwner("state", request.params.owner)
   })
 
   app.patch<{ Params: { owner: string } }>("/api/storage/state/:owner", async (request, reply) => {
-    if (request.params.owner === SESSION_FAVORITES_OWNER) return reply.code(403).send()
+    if (privateStateOwners.includes(request.params.owner)) return reply.code(403).send()
     try {
       return deps.settings.mergePatchOwner("state", request.params.owner, request.body ?? {})
     } catch (error) {

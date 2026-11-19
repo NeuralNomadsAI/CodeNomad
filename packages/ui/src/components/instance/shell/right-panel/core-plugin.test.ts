@@ -13,11 +13,11 @@ it("defines built-in tabs and status sections without a plugin loading layer", a
     const render = () => undefined as any
     const summary = () => undefined as any
     const module = createCoreRightPanelModule({ renderFilesTab: render, renderStatusTab: render })
-    const sections = createCoreStatusSectionManifest({ renderTokens: render, renderTokensSummary: summary, renderYoloModeSection: render,
+    const sections = createCoreStatusSectionManifest({ renderTokens: render, renderTokensSummary: summary,
       renderProviderUsage: render, renderBackgroundProcesses: render, renderMcpStatus: render, renderPluginStatus: render })
     assert.deepEqual(module.tabs?.map(entry => entry.id), ["files", "status"])
     assert.equal(module.tabs?.find(entry => entry.id === "status")?.alwaysVisible, true)
-    assert.deepEqual(sections.statusSections?.map(entry => entry.id), ["tokens", "yolo-mode", "provider-usage", "background-processes", "mcp", "plugins"])
+    assert.deepEqual(sections.statusSections?.map(entry => entry.id), ["tokens", "provider-usage", "background-processes", "mcp", "plugins"])
     assert.equal(module.tabs?.every(entry => entry.render === render), true)
     assert.equal(sections.statusSections?.every(entry => entry.render === render), true)
     assert.equal(sections.statusSections?.every(entry => typeof entry.renderInfo === "function"), true)

@@ -23,7 +23,7 @@
 - Keep the OpenCode proxy method/path allowlist explicit; add upstream routes only after review.
 - Resolve worktree slugs server-side before filesystem or Git operations.
 - Keep Git path traversal checks and commit validation in CodeNomad.
-- Keep Yolo persistence and automatic permission replies server-side.
+- Keep ownership of CodeNomad's appended permission block in private backend state.
 
 ## Configuration
 
@@ -44,5 +44,5 @@
 - Instance proxy: `packages/server/src/server/http-server.ts`
 - CodeNomad SSE: `packages/server/src/server/routes/events.ts`
 - Git reads/mutations: `packages/server/src/workspaces/git-status.ts`, `git-mutations.ts`
-- Yolo: `packages/server/src/permissions/`, `packages/server/src/server/routes/yolo.ts`
+- Conversation permissions: `packages/server/src/permissions/`, `packages/server/src/server/routes/session-permission-mode.ts`
 - Desktop automation: `packages/server/src/opencode/automation-plugin.ts`, `packages/server/src/opencode/automation/desktop-plugin.ts`, `packages/server/src/server/routes/automation-plugin.ts`, `packages/server/src/developer-cdp.ts`, `packages/server/src/automation/page/`

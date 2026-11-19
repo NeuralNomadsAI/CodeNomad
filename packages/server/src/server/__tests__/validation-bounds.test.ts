@@ -33,7 +33,7 @@ function fixture(t: TestContext) {
     remoteControlManager: { gate: () => ({}) } as never,
     eventBus, settings: stub, fileSystemBrowser: stub, serverMeta: {} as never,
     speechService: stub, sidecarManager: stub, previewManager: stub,
-    clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
+    clientConnectionManager: stub, remoteProxySessionManager: stub,
     uiStaticDir: "", logger, nativeParent: stub, automationBridgeToken: "fixture-bridge",
   }).instance
   t.after(() => app.close())

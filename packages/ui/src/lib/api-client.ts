@@ -50,7 +50,6 @@ import type {
   RemoteControlPairing,
   RemoteControlStartResponse,
   RemoteControlStatus,
-  YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
   WorktreeGitCommitRequest,
@@ -975,17 +974,6 @@ export const serverApi = {
   },
   deleteInstanceData(id: string): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
-  },
-  getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-    return request<YoloStateResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
-    )
-  },
-  toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-    return request<YoloStateResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
-      { method: "POST" },
-    )
   },
   sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
     const init: RequestInit = {

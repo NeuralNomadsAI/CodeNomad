@@ -56,8 +56,8 @@ Reads are bounded and ownership-checked.
 
 Native permission events are ephemeral and replies omit the reason. CodeNomad
 therefore captures confirmed replies and observed native settlements separately,
-since a native settlement can come from another client or a cascade. Yolo
-decisions are identified as automatic. A failed or ambiguous reply never becomes
+since a native settlement can come from another client or a cascade. Stored
+automatic decisions retain their original provenance. A failed or ambiguous reply never becomes
 a fabricated decision and is never replayed automatically. Decisions made while
 CodeNomad was offline have no receipt; never reconstruct one from a tool's
 success/error or from saved permission rules.
@@ -74,6 +74,40 @@ registered-only workspace ownership before querying pending permissions. This
 includes descendant directories inside the project and its worktrees; it never
 uses the daemon's default directory as a substitute or triggers strategy discovery.
 
+## Conversation permissions
+
+`GET`/`PUT /api/workspaces/:id/sessions/:sessionId/permission-mode` reads or sets
+`{ mode: "autonomous" | "supervised" }` for an owned conversation. Read that
+route on selection and reconnect, and on a native `session.permissions` event
+for that conversation. OpenCode owns evaluation and settlement; CodeNomad
+only replies to an explicit decision.
+
+Autonomous contributes no rules. Supervised appends `ask edit *` and `ask shell *`,
+then projects the effective global and project configuration onto those two actions
+in order. Configured `deny` stays `deny`; `allow` becomes `ask`. Home-relative edit
+resources that need expansion by the native config loader are refused if their
+native absolute path cannot be established. Agent-specific or pre-existing
+session refusals can become requests where the appended block takes precedence.
+Saved project approvals can still allow an `ask`; external-directory
+and MCP actions retain their own policy. Tool approval is separate from a person
+running a command directly. Open requests keep their original decision context;
+subagents and forks keep the rules copied at creation. Configuration changes are
+picked up the next time Supervised is enabled.
+
+The exact contiguous block is recorded in private backend state. Reads check
+native membership, and returning to Autonomous removes only that block; a
+duplicate matching block makes removal ambiguous. Writes from one backend
+serialize, read immediately before and after the native update, and retry a
+detected concurrent change from fresh rules. OpenCode replaces the whole array
+without compare-and-swap, so a write by an independent native client between
+the check and update can be undetectable.
+
+`ui.settings.newConversationPermissions` defaults to Autonomous. The workspace
+proxy, paused Mission creation, managed independent roots and the Images
+conversation creation path send the selected rules at creation. Existing
+conversations, imports, forks and roots created by the native unattended
+schedule runtime use the native rules for their creation path.
+
 ## Validation
 
 `tests/browser/interruption-dock.test.ts` exercises real Solid session, transcript,
@@ -86,8 +120,11 @@ geometry with reachable footer actions.
 `permission-fallback-diff.test.ts` keeps the dock's full-source access,
 changed-diff and late-copy regressions. Both run on isolated fixtures only.
 
-`permissions/receipts.test.ts` exercises disk reload, all decisions, native versus
-manual/Yolo provenance, cascades, ownership, deletion and mutation failure paths.
+`permissions/receipts.test.ts` exercises disk reload, all decisions and their
+provenance, cascades, ownership, deletion and mutation failure paths.
+`session-permission-mode.test.ts` covers config projection, two tabs, exact
+removal, concurrent changes and private state. `node scripts/test-session-permission-mode-native.mjs <absolute-opencode-executable>`
+exercises the route and proxy against a private OpenCode process.
 `tests/browser/permission-receipts.test.ts` covers reload, hidden tools, empty-page
 pagination, SSE refresh, stale reads and long receipts in light/dark mobile layouts.
 `node scripts/test-permission-receipts-native.mjs` runs isolated native recovery

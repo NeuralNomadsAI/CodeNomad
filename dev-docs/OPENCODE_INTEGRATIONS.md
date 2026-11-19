@@ -265,7 +265,7 @@ display and native actions; source mutations keep their writable document/revisi
 
 - its `displayName` followed by its muted installed version (every row with a known package version shows it
   right after the name, its buttons at the row's end);
-- Global/Project switches in the accent colour of Yolo and the settings switches (`ACCENT_SWITCH_SX`,
+- Global/Project switches use the settings switch accent (`ACCENT_SWITCH_SX`,
   `var(--accent-primary)`): `PluginActivationSwitch`'s `integration` flag replaces the green variant that plain
   plugin and MCP rows keep. A native integration's Project switch is locked to Global;
 - the name's native `title` (also the row's `aria-describedby` text) starts with **Integration: <plugin ID>** where a
@@ -385,7 +385,7 @@ Commands:
   native error data, concurrent requests and error recovery, with positive ordinary-route diagnostics checks.
 - `packages/ui/tests/browser/integration-plugin-row.test.ts` (fixture `fixtures/integration-plugin-row.tsx`, HTTP
   model `integration-plugin-row-model.ts`) renders the real right panel: one row per integration with its name,
-  version, accent switches equal to the Yolo accent and tooltip kind; the chain button across `hosts_changed`/`status_changed`,
+  version, primary accent switches and tooltip kind; the chain button across `hosts_changed`/`status_changed`,
   conversation changes and `unknown`; the version right after the name and the state line under it; every state's
   text, tone and colour in light and dark (captures with `CODENOMAD_INTEGRATION_SCREENSHOTS`), truncation with the full
   title; attaching the only open document, detaching, informing without a document or a conversation, choosing

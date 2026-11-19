@@ -3,6 +3,7 @@ import type { EventBus } from "../events/bus"
 import type { ConfigLocation } from "../config/location"
 import { z } from "zod"
 import { YamlDocStore, SettingsReadError, type SettingsDoc } from "./yaml-doc-store"
+import type { PermissionRule } from "@opencode/client"
 import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
@@ -16,6 +17,7 @@ import { lstatSync, statSync } from "node:fs"
 
 export type DocKind = "config" | "state"
 export const SESSION_FAVORITES_OWNER = "sessionFavorites"
+export const SESSION_PERMISSION_BLOCKS_OWNER = "sessionPermissionBlocks"
 /** Refuses a config write by throwing, given the authoritative document and the would-be result. */
 export type ConfigWriteCheck = (before: SettingsDoc, after: SettingsDoc) => void
 
@@ -193,6 +195,15 @@ export class SettingsService {
     return value
   }
 
+  getPrivateSessionPermissionState(): SettingsDoc {
+    return this.stateStore.getAuthoritativeOwner(SESSION_PERMISSION_BLOCKS_OWNER)
+  }
+
+  setPrivateSessionPermissionBlock(key: string, block: PermissionRule[] | null): void {
+    this.getPrivateSessionPermissionState()
+    this.stateStore.mergePatchOwner(SESSION_PERMISSION_BLOCKS_OWNER, { [key]: block })
+  }
+
   /** A cleanup decision requires readable persisted favorites, not the display fallback. */
   getSessionFavoritesState(): SettingsDoc {
     const stamp = () => {
@@ -239,7 +250,7 @@ export class SettingsService {
       type,
       owner,
       value: kind === "config" ? sanitizeConfigOwner(owner, nextValue)
-        : owner === SESSION_FAVORITES_OWNER ? {} : nextValue,
+        : owner === SESSION_FAVORITES_OWNER || owner === SESSION_PERMISSION_BLOCKS_OWNER ? {} : nextValue,
     } as any
     try {
       this.eventBus.publish(payload)

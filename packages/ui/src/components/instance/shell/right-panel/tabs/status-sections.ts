@@ -10,13 +10,6 @@ export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey:
     order: 0,
   },
   {
-    id: "yolo-mode",
-    labelKey: "instanceShell.rightPanel.sections.yoloMode",
-    tooltipKey: "instanceShell.rightPanel.sections.yoloMode.tooltip",
-    help: { page: "permissions", anchor: "yolo-mode" },
-    order: 10,
-  },
-  {
     id: "provider-usage",
     labelKey: "providerUsage.title",
     tooltipKey: "providerUsage.tooltip",

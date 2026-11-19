@@ -30,7 +30,7 @@ test("HTTP shutdown ends SSE and upgraded connections without waiting for client
     authManager: new AuthManager({ dangerouslySkipAuth: true } as never, logger),
     clientConnectionManager: connections, remoteProxySessionManager: stub,
     remoteControlManager: { gate: () => ({}), previewsAllowed: () => true } as never,
-    yoloManager: stub, nativeParent: stub, automationBridgeToken: "test-bridge", uiStaticDir: "", logger,
+    nativeParent: stub, automationBridgeToken: "test-bridge", uiStaticDir: "", logger,
   })
   const bus = server.instance
   // An accepted durable mutation must finish before the server reports closed.
@@ -92,7 +92,7 @@ test("HTTP shutdown drains an already-started stream and closes its keep-alive c
     authManager: new AuthManager({ dangerouslySkipAuth: true } as never, logger),
     clientConnectionManager: connections, remoteProxySessionManager: stub,
     remoteControlManager: { gate: () => ({}), previewsAllowed: () => true } as never,
-    yoloManager: stub, nativeParent: stub, automationBridgeToken: "test-bridge", uiStaticDir: "", logger,
+    nativeParent: stub, automationBridgeToken: "test-bridge", uiStaticDir: "", logger,
   })
   const agent = new Agent({ keepAlive: true, maxSockets: 1 })
   t.after(async () => { agent.destroy(); stream.destroy(); connections.shutdown(); await server.stop() })

@@ -10,7 +10,6 @@ import {
 } from "@thisbeyond/solid-dnd"
 import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
-import Switch from "@suid/material/Switch"
 
 import { ChevronRight, GripVertical, Info } from "lucide-solid"
 
@@ -21,8 +20,6 @@ import ContextUsagePanel from "../../../../session/context-usage-panel"
 import ProviderUsagePanel from "../../../../session/provider-usage-panel"
 import SessionGoalLine from "../../../../session/session-goal-line"
 import InstanceServiceStatus from "../../../../instance-service-status"
-import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
-import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
 import { applyRightPanelItemCustomization, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
 import { createCoreStatusSectionManifest } from "../core-plugin"
 import { shellStore } from "../../../../../stores/shells"
@@ -116,36 +113,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     void shellStore.load(props.instanceId, directory, workspaceID)
   })
 
-  const renderYoloModeSection = () => {
-    const session = props.activeSession()
-    if (!session) {
-      return (
-        <div class="right-panel-empty right-panel-empty--left">
-          <span class="text-xs">{props.t("instanceShell.yoloMode.noSessionSelected")}</span>
-        </div>
-      )
-    }
-
-    return (
-      <div class="flex items-center justify-between gap-2 border border-base bg-surface-secondary px-3 py-2">
-        <p class="min-w-0 text-xs leading-5 text-secondary">{props.t("instanceShell.yoloMode.description")}</p>
-        <div class="-mr-2 shrink-0">
-          <Switch
-            class="yolo-mode-switch"
-            checked={isPermissionAutoAcceptEnabled(props.instanceId, session.id)}
-            size="small"
-            sx={{
-              "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--session-yolo-accent)" },
-              "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--session-yolo-accent)" },
-            }}
-            inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
-            onChange={() => togglePermissionAutoAcceptForSession(props.instanceId, session.id)}
-          />
-        </div>
-      </div>
-    )
-  }
-
   const removeShell = async (shellId: string, command: string, running: boolean, source: HTMLButtonElement) => {
     const instanceId = props.instanceId
     const location = { ...shellLocation() }
@@ -234,7 +201,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} summary expanded={isSectionExpanded("tokens")} />
         </Show>
       ),
-      renderYoloModeSection,
       renderProviderUsage,
       renderBackgroundProcesses,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
