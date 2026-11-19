@@ -291,6 +291,7 @@ export class InstanceEventBridge {
         const lookupStarted = Date.now()
         const heldSession = Boolean(destination && sessionId && this.sessionRecipients.get(sessionId)?.has(instanceId))
         let allowed: boolean
+        let ownsDestination: boolean
         let lookupFailed: boolean
         let revision: number
         const owns = (candidate: LocationRef) => this.resolveLocationOwner(instanceId, candidate, current, route.signal).catch(() => {
@@ -303,7 +304,8 @@ export class InstanceEventBridge {
           allowed = heldSession || (!location && !destination) || (!!location && await owns(location))
           // An unreadable source does not settle ownership of the destination.
           if (!current()) return
-          if (!allowed && destination) allowed = await owns(destination)
+          ownsDestination = !!destination && await owns(destination)
+          allowed ||= ownsDestination
           if (!current()) return
         } while (revision !== this.ownershipRevision)
         if (!allowed && lookupFailed) {
@@ -327,7 +329,8 @@ export class InstanceEventBridge {
         // A recipient that received this session's events and is now refused
         // without a move cannot tell an unreadable checkout from a foreign one:
         // it reconciles. A location it never owned stays a silent rejection.
-        if (event.type === "session.moved" || event.type === "session.deleted") this.forgetSessionRecipient(sessionId, instanceId)
+        if (event.type === "session.moved" && ownsDestination) this.rememberSessionRecipient(sessionId, instanceId)
+        else if (event.type === "session.moved" || event.type === "session.deleted") this.forgetSessionRecipient(sessionId, instanceId)
         else if (allowed) this.rememberSessionRecipient(sessionId, instanceId)
         else if (location && this.sessionRecipients.get(sessionId)?.has(instanceId)) this.requestRoutingResync(instanceId)
       })

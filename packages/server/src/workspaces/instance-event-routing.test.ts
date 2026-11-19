@@ -201,6 +201,25 @@ test("a move without an envelope reaches the payload destination without reading
   } finally { h.bridge.shutdown() }
 })
 
+test("the destination of a move receives the next envelope-free departure", async () => {
+  const folders = new Map([["fast", "/repo"], ["slow", "/other"], ["third", "/third"]])
+  const h = harness(async (id, location) => folders.get(id) === location.directory)
+  h.workspaces.push({ id: "third", path: "/third" })
+  try {
+    await until(() => h.streams.length === 1)
+    h.streams[0].send({ id: "to-second", type: "session.moved", location: { directory: "/repo" },
+      data: { sessionID: "s", location: { directory: "/other" } } } as OpenCodeEvent)
+    h.streams[0].send({ id: "to-third", type: "session.moved",
+      data: { sessionID: "s", location: { directory: "/third" } } } as OpenCodeEvent)
+    await until(() => h.received.some(x => x.instanceId === "third" && x.event.id === "to-third"))
+    await turn()
+    const ids = (id: string) => h.received.filter(x => x.instanceId === id).map(x => x.event.id)
+    assert.deepEqual(ids("fast"), ["to-second"])
+    assert.deepEqual(ids("slow"), ["to-second", "to-third"])
+    assert.deepEqual(ids("third"), ["to-third"])
+  } finally { h.bridge.shutdown() }
+})
+
 test("native and local inventory invalidations fence pending ownership before publication", async () => {
   for (const native of [false, true]) {
     const pending = deferred<boolean>()

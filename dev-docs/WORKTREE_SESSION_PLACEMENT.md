@@ -85,7 +85,8 @@ Implementation:
   generation to fence inventory reads and probes overtaken by a later move.
   The relay checks the payload destination independently of the envelope. Without
   an envelope, it routes to the destination owner and prior recipients from that
-  payload directly.
+  payload directly. Verified destination owners become prior recipients for the
+  next move, even if no other session events arrive between moves.
   Family members left behind stay sessions of their own location
   (`stores/session-move-restore.test.ts`, `tests/browser/session-external-move.test.ts`).
   The workspace proxy's 403 for a session located outside the workspace carries
