@@ -153,6 +153,183 @@ function descriptor(id: string, path: string) {
   return { id, path, status: "ready", port: 1234, proxyPath: `/workspaces/${id}/instance`, binaryId: "fixture", createdAt: "", updatedAt: "" }
 }
 
+for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "failed-reconnect"
+  ? "web reload keeps failed reconnect status after a deferred first-open inventory"
+  : mode === "disappears"
+  ? "web reload preserves the active remote tab when the next inventory omits its project during hydration"
+  : "web reload restores the active remote tab when SSE opens during its inventory", { timeout: 90_000 }, async () => {
+  const context = await browser.newContext(), page = await context.newPage()
+  const creates: string[] = []
+  const disappears = mode === "disappears", failedReconnect = mode === "failed-reconnect"
+  let reload = false, reads = 0, remotePresent = true, remoteAvailable = true
+  const releaseHydration = Promise.withResolvers<void>(), omitProject = Promise.withResolvers<void>()
+  await context.addInitScript(disappears => {
+    ;(window as any).__name = (value: unknown) => value
+    Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "web", __CODENOMAD_WINDOW_CONTEXT__: "remote" })
+    let openRemote: () => void
+    let connections = 0
+    Object.assign(window, { openRemoteEvents: () => openRemote(), remoteConnections: () => connections })
+    window.EventSource = class extends EventTarget {
+      constructor(private url: string) { super() }
+      set onopen(open: () => void) {
+        if (new URL(this.url, location.href).pathname === "/api/backends/a/api/events") {
+          openRemote = open
+          connections++
+        }
+      }
+      close() {}
+    } as any
+    if (!sessionStorage.getItem("codenomad.client-state.v1")) sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
+      version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: [
+        { folder: "/local", workspaceId: "same" }, { folder: "/remote", workspaceId: "a~same", backendId: "a" },
+      ].map(project => ({ kind: "workspace", ...project,
+        ...(disappears && project.backendId ? { activeParentSessionId: "held-session", activeSessionId: "held-session" } : {}),
+        drafts: { __no_session_draft__: project.folder,
+          ...(disappears && project.backendId ? { "held-session": "unsent conversation draft" } : {}) },
+        attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {}, viewState: { version: 1, rightPanelTab: "files" } })) },
+    }))
+  }, disappears)
+  await context.route(/\/(?:api|workspaces)\//, async route => {
+    const request = route.request(), pathname = new URL(request.url()).pathname
+    const remote = pathname.startsWith("/api/backends/a/")
+    const path = remote ? pathname.slice("/api/backends/a".length) : pathname
+    let body: unknown = {}
+    if (path === "/api/meta") {
+      if (remote && !remoteAvailable) return route.fulfill({ status: 503, json: { error: "offline" } })
+      body = { apiContract: CODENOMAD_API_CONTRACT, serverId: remote ? "a" : "local", localRequest: !remote }
+    }
+    else if (path === "/api/auth/status") body = { authenticated: true }
+    else if (!remote && path.endsWith("/config/ui")) body = { settings: { multiBackend: true, locale: "en" } }
+    else if (!remote && path.endsWith("/state/ui")) body = { remoteServers: [
+      { id: "a", name: "Server A", baseUrl: "https://a.test", skipTlsVerify: false, createdAt: "", updatedAt: "" },
+    ] }
+    else if (path === "/api/workspaces") {
+      if (request.method() === "POST") {
+        creates.push(pathname)
+        return route.fulfill({ status: 500, json: {} })
+      }
+      if (remote && reload && ++reads === 1) {
+        // Dispatch open while the admission request is held. Wait for the
+        // handler's module import before letting the response reach Chromium.
+        await page.evaluate(async () => {
+          ;(window as any).openRemoteEvents()
+          const registryModule = "/src/stores/remote-backends.ts"
+          await import(registryModule)
+        })
+        if (failedReconnect) {
+          remoteAvailable = false
+          await page.evaluate(() => (window as any).restoreFixture.disconnect())
+          await page.waitForFunction(() => (window as any).restoreFixture.state() === "unreachable")
+        }
+      }
+      if (remote && reload && disappears && reads === 2) {
+        // Wait until the admitted record owns the tab and its saved session read is in flight.
+        await omitProject.promise
+        remotePresent = false
+      }
+      body = remote && !remotePresent ? [] : [descriptor("same", remote ? "/remote" : "/local")]
+    } else if (path.endsWith("/worktrees")) body = { isGitRepo: false, worktrees: [] }
+    else if (remote && path.endsWith("/instance/api/session/held-session")) {
+      if (reload) await releaseHydration.promise
+      body = { data: { id: "held-session", title: "Saved conversation", projectID: "global", location: { directory: "/remote" },
+        time: { created: 1, updated: 1 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } } }
+    }
+    else if (path.includes("/instance/api/")) body = { data: [], cursor: {} }
+    await route.fulfill({ json: body, headers: remote && path === "/api/meta" ? { [RELAY_AUTHORITY_HEADER]: "x".repeat(43) } : undefined })
+  })
+  try {
+    const restored = async () => {
+      await page.locator('[data-restoring="false"]').waitFor()
+      return page.evaluate(() => (window as any).restoreFixture.tabs().map((tab: any) => tab.id))
+    }
+    await page.goto(url)
+    const expected = ["instance:same", "instance:a~same"]
+    assert.deepEqual(await restored(), expected)
+    reload = true
+    await Promise.all([
+      disappears && page.waitForRequest(request =>
+        new URL(request.url()).pathname === "/api/backends/a/workspaces/same/instance/api/session/held-session"),
+      page.reload({ waitUntil: "domcontentloaded" }),
+    ])
+    if (failedReconnect) {
+      await restored()
+      const state = () => page.evaluate(() => (window as any).restoreFixture.state())
+      const tabs = () => page.evaluate(() => (window as any).restoreFixture.tabs())
+      await page.evaluate(() => (window as any).restoreFixture.waitForInventory())
+      assert.equal(await state(), "unreachable", "the older opening must not repair a newer failed reconnect")
+      assert.equal(reads, 1, "only admission's inventory ran before the failed reconnect")
+      const suspended = await tabs()
+      assert.deepEqual(suspended.map((tab: any) => tab.kind), ["instance", "remote-restore"])
+      assert.deepEqual(suspended.map((tab: any) => tab.drafts.__no_session_draft__), ["/local", "/remote"])
+      assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), suspended[1].id)
+      remoteAvailable = true
+      await page.evaluate(() => (window as any).restoreFixture.disconnect())
+      await page.waitForFunction(() => (window as any).remoteConnections() === 2)
+      await page.evaluate(async () => {
+        ;(window as any).openRemoteEvents()
+        await (window as any).restoreFixture.waitForInventory()
+      })
+      assert.equal(reads, 2, "the next valid opening refreshes inventory once")
+      assert.equal(await state(), "compatible")
+      await page.getByRole("button", { name: "Retry", exact: true }).click()
+      await page.locator('[data-ready]').filter({ hasText: "instance:a~same" }).waitFor()
+      assert.deepEqual((await tabs()).map((tab: any) => tab.id), expected)
+      assert.deepEqual((await tabs()).map((tab: any) => tab.drafts.__no_session_draft__), ["/local", "/remote"])
+      assert.deepEqual(creates, [], "reload, reconnect and Retry only rebind existing records")
+      return
+    }
+    if (disappears) {
+      await page.getByText("instance:a~same", { exact: true }).waitFor()
+      omitProject.resolve()
+      await page.waitForFunction(() => {
+        const f = (window as any).restoreFixture
+        return !f.tabs().some((tab: any) => tab.id === "instance:a~same")
+      })
+      assert.equal(await page.locator('[data-restoring="true"]').count(), 1, "hydration remains pending at removal")
+      releaseHydration.resolve()
+      await restored()
+      const tabs = () => page.evaluate(() => (window as any).restoreFixture.tabs())
+      const state = await tabs()
+      assert.equal(state.length, 2, "the missing remote project keeps its tab")
+      assert.equal(state[0].id, "instance:same")
+      assert.equal(state[0].drafts.__no_session_draft__, "/local")
+      assert.equal(state[1].kind, "remote-restore")
+      assert.equal(state[1].folder, "/remote")
+      assert.deepEqual(state[1].drafts, { __no_session_draft__: "/remote", "held-session": "unsent conversation draft" })
+      assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), state[1].id)
+      const placeholder = page.locator('[data-remote-restore="a"]')
+      const retry = placeholder.getByRole("button", { name: "Retry", exact: true })
+      await retry.click()
+      await page.waitForFunction(() => !document.querySelector("[data-remote-restore] button:disabled"))
+      assert.equal(reads, 3, "Retry reads inventory while the project remains absent")
+      assert.deepEqual(await tabs(), state)
+      remotePresent = true
+      await retry.click()
+      await page.locator('[data-ready]').filter({ hasText: "instance:a~same" }).waitFor()
+      await page.waitForFunction(() => (window as any).restoreFixture.tabs()[1]?.drafts["held-session"] === "unsent conversation draft")
+      assert.deepEqual((await tabs()).map((tab: any) => tab.id), expected)
+      assert.deepEqual((await tabs())[1].drafts, state[1].drafts)
+      assert.equal(await page.evaluate(() => (window as any).restoreFixture.view("a~same")?.rightPanelTab), "files")
+      assert.equal(reads, 4)
+      assert.deepEqual(creates, [], "reload and both retries only rebind existing workspaces")
+      return
+    }
+    assert.deepEqual(await restored(), expected, "both existing occurrences must rebind without Retry")
+    assert.equal(await page.locator("[data-ready]").textContent(), "instance:a~same", "keep the saved remote selection")
+    await page.evaluate(() => (window as any).restoreFixture.disconnect())
+    await page.waitForFunction(() => (window as any).remoteConnections() === 2)
+    const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/a/api/workspaces")
+    await page.evaluate(() => (window as any).openRemoteEvents())
+    assert.equal((await refreshed).status(), 200, "a real reconnect also reads inventory")
+    assert.equal(reads, 3, "admission, first open and reconnect each reconcile once")
+    assert.deepEqual(creates, [], "reload and reconnect do not create any workspace")
+  } finally {
+    omitProject.resolve()
+    releaseHydration.resolve()
+    await context.close()
+  }
+})
+
 const primaryCases = [
   ...[false, true].flatMap(multiBackend => ["open", "retry"].map(recovery => ({ multiBackend, recovery, initiallyUnavailable: false }))),
   { multiBackend: false, recovery: "retry", initiallyUnavailable: true },

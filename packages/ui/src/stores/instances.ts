@@ -1434,21 +1434,23 @@ async function refreshWorkspaceList(
   backendId: BackendId = LOCAL_BACKEND_ID,
   api: Pick<typeof serverApi, "fetchWorkspaces"> = serverApi,
   signal = serverEvents.signal(backendId),
+  connectionCurrent?: () => boolean,
 ): Promise<boolean> {
-  if (signal?.aborted) return false
+  const active = () => !signal?.aborted && (connectionCurrent?.() ?? true)
+  if (!active()) return false
   // Preferences imports shared controls, but does not own workspace/session
   // hydration. Its provider editor receives an explicit location from the host.
   if (!usesClientState()) return false
   if (backendId !== LOCAL_BACKEND_ID && api === serverApi) throw new Error("A non-local workspace list needs its backend API")
   const inventoryPublished = backendId === LOCAL_BACKEND_ID ? undefined
     : (await import("./remote-backends")).backendRegistry.workspaceReadGuard(backendId, signal)
-  if (signal?.aborted) return false
+  if (!active()) return false
   const requestFence = workspaceListReconciliationFence.begin(backendId)
   const removalCandidates = new Set([...instances().values()]
     .filter((instance) => backendIdOf(instance) === backendId).map(({ id }) => id))
   try {
     const listed = await api.fetchWorkspaces(signal)
-    if (signal?.aborted || !workspaceListReconciliationFence.isCurrent(requestFence)) return false
+    if (!active() || !workspaceListReconciliationFence.isCurrent(requestFence)) return false
     // Workspaces are keyed by instance key: the workspace id itself for the local backend.
     const workspaces = listed.map((workspace) => {
       const id = instanceKey(backendId, workspace.id)
@@ -1456,9 +1458,10 @@ async function refreshWorkspaceList(
     })
     const remoteIds = new Set(workspaces.map(({ id }) => id))
     for (const descriptor of workspaces) {
+      if (!active()) return false
       const workspace = observeRestoreWorkspace(descriptor)
       if (!workspace) continue
-      if (signal?.aborted) return false
+      if (!active()) return false
       if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
       restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
       if (restoreCreationCommitGates.deferRefreshWorkspace(workspace)) continue
@@ -1473,11 +1476,11 @@ async function refreshWorkspaceList(
     for (const instanceId of getUnavailableWorkspaceIds(
       unchangedCandidates, remoteIds, (id) => restoreCreatedWorkspaceCleanup.owns(id),
     )) {
-      if (signal?.aborted) return false
+      if (!active()) return false
       releaseInstanceResources(instanceId)
       removeInstance(instanceId, { authoritative: false })
     }
-    const published = !signal?.aborted && workspaceListReconciliationFence.isCurrent(requestFence)
+    const published = active() && workspaceListReconciliationFence.isCurrent(requestFence)
     if (published) inventoryPublished?.()
     return published
   } finally {
@@ -1540,8 +1543,19 @@ function isRegisteredTemporary(instance: Instance): boolean {
 serverEvents.onOpen((backendId) => {
   temporaryRegistries.delete(backendId)
   const backend = backends.get(backendId)
-  if (!backend) return
-  publishLatestWorkspaceLoad(refreshWorkspaceList(backendId, backend.api).then(
+  const signal = serverEvents.signal(backendId)
+  if (!backend || !signal) return
+  const connectionCurrent = backendId === LOCAL_BACKEND_ID ? undefined : backend.events.connectionGuard()
+  const refresh = async () => {
+    if (backendId !== LOCAL_BACKEND_ID) {
+      const { backendRegistry } = await import("./remote-backends")
+      // Reconcile changes made before SSE opened without superseding admission's read.
+      await backendRegistry.initialInventory(backend)
+      if (signal.aborted || serverEvents.signal(backendId) !== signal) return
+    }
+    await refreshWorkspaceList(backendId, backend.api, signal, connectionCurrent)
+  }
+  publishLatestWorkspaceLoad(refresh().then(
     () => ({}),
     (error) => {
       log.warn("Failed to reconcile workspaces after event reconnect", error)
