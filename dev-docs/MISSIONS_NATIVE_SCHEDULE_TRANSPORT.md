@@ -1,8 +1,8 @@
 # Native schedule transport
 
 `native-mission-schedule-runtime.ts` registers the product carrier hooks, local
-provider, receiving wake/status RPC, after-idle maintenance and fixed business
-bridge. Its durable calendar owner and passage engine share the project document
+provider, receiving wake/status/admit RPC, the code wake tool, after-idle
+maintenance and fixed business bridge. Its durable calendar owner and passage engine share the project document
 exclusion. The daily document runtime keeps its own admission and control path.
 
 `native-schedule-transport*` and `native-schedule-carrier*` supply the shared
@@ -28,8 +28,9 @@ after I/O and synchronously before every CAS/native effect, alongside its fresh
 mapping/Location/generation/state guards. The receiver resolves its registration
 path from its owned durable mapping and requires the supplied path to match it.
 
-The adapter calls only the internal `codenomad.missions.schedule.wake` mutation
-and `status` read through the official client. Register these methods in the
+The adapter calls only the internal `codenomad.missions.schedule.wake` mutation,
+the `status` read and, for [code wakes](#code-wakes), the `admit` mutation through
+the official client. Register these methods in the
 current native RPC invocation graph, using the existing `nativeInvocation`
 bridge where Promise business code needs scoped Core services. `status` reads the
 exact saved outcome and can return `messagePresent` from a bounded point-read of
@@ -38,7 +39,9 @@ read hint preserves an `unknown` outcome and every prior dispatch hold. Returned
 replies correlate the full wake key; business outcomes and archive/cursor updates
 remain the receiver's CAS concern.
 
-Every mutation requires a caller-owned durable `claim`: under the shared Mission
+`admit` takes no claim: it only writes a preparation, under the document exclusion,
+for a code run whose own program is live in this process (see [code wakes](#code-wakes)).
+Every `wake` requires a caller-owned durable `claim`: under the shared Mission
 mutation exclusion, persist the exact dispatch intent/incarnation and return true
 only for the first dispatch. Any unresolved dispatch in that Mission, and every
 prior dispatch of the exact identity, returns false, including after a reload.
@@ -67,6 +70,66 @@ Never add lifecycle calls, CLI children, default registration discovery, alterna
 namespace lookup or standalone fallback to the wake transport. Effective
 `experimental.automations`, service ownership and autonomous admission remain
 distinct receiver guards.
+
+## Code wakes
+
+New calendars are Automation rows whose action is the fixed Code Mode program
+`MISSION_WAKE_CODE` (`native-mission-automation.ts`). It calls the
+`codenomad.mission_schedule_wake` tool (`native-mission-schedule-code-wake.ts`), so
+a due run needs no model, provider or carrier message. Rows created with the
+carrier prompt keep it, and the carrier hooks and local provider serve them, until
+they retire. The kind of a calendar is the action of its row; documents record none.
+
+OpenCode authorizes the program once at creation from the carrier session, which
+carries exactly `MISSION_WAKE_PERMISSIONS` (Code Mode and the tool's own permission);
+a carrier created without rules receives them before its code row, and a carrier
+with other rules is refused. OpenCode counts a run only after its program returns,
+fails a program that throws and retries the same run after a minute, and pauses the
+row after three failures; the owner resumes a principal or auxiliary row it finds
+paused while the Mission runs, at the row's next slot.
+
+The tool accepts only an unattended run (`Permission/Unattended` is set) whose
+context session is a verified current carrier and whose context message is
+`msg_<aut>_<run>` for that carrier's calendar. A retiring carrier returns without
+effect. Its deadline is twenty seconds, below the program's thirty.
+
+- Each tool call registers its wake process-wide (`runningMissionCodeWake`) before any
+  effect. Row state alone also fits a future occurrence, so first admission and an
+  auxiliary's uncounted-run proof require that live registration.
+- A principal run first reconciles an unsettled claim on another occurrence and a
+  counted preparation of an earlier run. `admit` then checks, under the document
+  exclusion, the exact code row, its unchanged count (`run - 1`) and its next due
+  time, and the prompt-entry control barriers, and writes the preparation. Wakes of
+  one Mission share a transport lane; a call that finds it busy waits within its deadline. The
+  program returns once admitted (`pending`) or consumed (`applied`); the dispatch
+  that follows is retried by later wakes like a carrier turn's. A refused admission
+  writes nothing, so the program fails and OpenCode retries the same run. A row
+  resumed after failed runs reuses the count at its next slot: admission replaces the
+  unreserved preparation of that count with the new due time.
+- An auxiliary run dispatches itself through status, claim and wake, then the
+  original next principal preparations, and returns only once applied.
+
+`missionCodeWakeProof` replaces the native message wherever a code row's wake needs
+proof (receiver reads, passage coverage, auxiliary preflight): a run at or below
+high-water, a principal's preparation, or an auxiliary run still in flight. A code
+row's count may trail high-water by one while its program returns; any count above
+the calendar's high-water and preparation fails closed. A prepared code run is the
+fan-in barrier from admission. OpenCode counts a returned program even after its
+row was paused, so each tool call registers its wake process-wide for its whole run
+(`runningMissionCodeWake`). `wakeAcknowledged` accepts a counted run, or a prepared
+run of a paused or done row whose program is no longer running in this process.
+
+A code auxiliary that settles the last passage reconciles cleanup within its own run:
+with no carrier turn its carrier is quiet, so its row, carrier and index are removed
+before its program returns, and OpenCode's count of the removed row writes nothing.
+A retained retiring auxiliary's code run asks the same cleanup-only maintenance RPC
+that prompt-row carrier turns reach through their after-idle hints.
+
+A run Missions consumed but OpenCode had not yet counted when the service stopped is
+retried by OpenCode once its row is due again while active, and then counted. If the
+row is paused before OpenCode retries it, including after the restart, after Resume
+the row reuses that run number for its next slot, which the receiver reports as
+consumed, so that slot launches nothing.
 
 ## Business result bounds
 

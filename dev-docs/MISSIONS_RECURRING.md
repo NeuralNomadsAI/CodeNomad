@@ -232,7 +232,8 @@ The durable auxiliary reconciliation calendar remains until that passage settles
 A Mission whose calendar OpenCode migrated keeps its durable calendar and wake IDs.
 The native adapter resolves that calendar to the matching `aut_` row, checks the
 exact owned session, project, timing and fixed action, and verifies each pending
-wake against its unique durable native message. An absent or conflicting row
+wake against its unique durable native message, or a code row's durable preparation.
+An absent or conflicting row
 does not authorize a new calendar, wake or passage.
 OpenCode migrates active or paused timer rows that have a next due time and no
 native condition or run count limit. Mission conditions and passage limits are
@@ -339,7 +340,7 @@ active native principal's saved date; events label it as a check. Paused
 rows contribute their counter but have no active next wake. `nativeStatus`
 separately exposes active/paused/done/mixed principals beside the document's
 desired state. `wakeCount` sums
-native principal prompt admissions in the current `timeGeneration`; auxiliary
+native principal runs (prompt admissions or returned code programs) in the current `timeGeneration`; auxiliary
 wakes, source-verification counts and lifetime business launch/success totals
 have separate meanings. Available actions are durable-state candidates; the
 authenticated mutation rechecks capabilities, source/actor proofs and CAS.
@@ -480,6 +481,9 @@ can prepare a separate one-time or calendar-backed Mission through `mission.prep
 owns its preparation and read-only target access in the ordinary project journal.
 An explicitly requested `startOnCreation` continues only fresh creation through the
 guarded first-Play contract in [Missions](MISSIONS.md#mission-profile-selection-and-creation-recovery).
+New calendars run a fixed Code Mode program that calls the wake tool, with no model
+turn and no carrier message ([code wakes](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#code-wakes)).
+Rows created with the carrier prompt keep that action until they retire.
 Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
 local title/compaction hooks and authoritative ordinary-input guards.
 Context classification and recovery follow the schedule transport's
@@ -487,12 +491,12 @@ Context classification and recovery follow the schedule transport's
 Ordinary sidebar browsing/search and Mission criterion conversation-source pickers
 exclude this namespace through the shared carrier-identity predicate; native
 observations remain available to ownership and reconciliation readers.
-Technical turns keep native model-selection events/statistics while making zero
+Prompt-row technical turns keep native model-selection events/statistics while making zero
 provider HTTP requests. Their compaction preserves the carrier/calendar identity
 and bounds processed context. Persisted native messages and events follow native
 retention and may grow until explicit terminal cleanup; the thirty Mission result
 receipts have their own independent bound.
-Technical wake conversations use a zero-token local model, so OpenCode's background precompaction never applies to them; their automatic local compaction does.
+Prompt-row wake conversations use a zero-token local model, so OpenCode's background precompaction never applies to them; their automatic local compaction does.
 
 Implementation contracts and isolated qualification commands:
 [native contracts](MISSIONS_NATIVE_CONTRACTS.md) and

@@ -9,6 +9,7 @@ import { closeNativeScheduleCarrierClaimLocked, registerNativeScheduleCarrierLoo
   readNativeScheduleCarrierOwnership, assertNativeScheduleCarrierArtifacts, type NativeScheduleCarrierBinding } from "./native-schedule-carrier-binding"
 import { nativeScheduleCalendarMatches, type NativeScheduleCalendarService } from "./native-schedule-calendar-service"
 import { assertNativeScheduleWake, type NativeScheduleWake } from "./native-schedule-transport-contract"
+import { missionCodeWakeRunning } from "./native-mission-automation"
 
 export interface NativeScheduleOwnerBindings {
   register(locked: NativeMissionDocumentStore, missionID: string, slot: MissionCalendarOwnerSlot, current: () => true): Promise<void>
@@ -34,7 +35,9 @@ export async function readNativeScheduleAuxiliaryWakeBinding(ctx: Plugin.Context
   assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
   assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation)
   const rows = await native.list({ missionID: doc.id, descriptor: slot }, current)
-  if (rows.length !== 1 || rows[0].id !== wake.scheduleID || !nativeScheduleCalendarMatches(rows[0], slot) || rows[0].runCount < wake.run) return undefined
+  // A code run is counted only after its program returns: an uncounted run must be live in this process.
+  if (rows.length !== 1 || rows[0].id !== wake.scheduleID || !nativeScheduleCalendarMatches(rows[0], slot) || rows[0].runCount < wake.run
+    && !(rows[0].code && rows[0].runCount === wake.run - 1 && missionCodeWakeRunning(wake.scheduleID, wake.run))) return undefined
   const fresh = await run(readNativeScheduleCarrierOwnership(ctx, wake.sessionID))
   guard()
   if (!fresh?.verified || fresh.document?.revision !== doc.revision || canonicalAuthority(fresh.reference) !== canonicalAuthority(ownership.reference)) return undefined

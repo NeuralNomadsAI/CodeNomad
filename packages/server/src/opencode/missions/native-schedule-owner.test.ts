@@ -9,6 +9,7 @@ import { nativeScheduleCarrierLookupKey, NATIVE_SCHEDULE_CARRIER_MARKER, readNat
 import { readNativeScheduleAuxiliaryWakeBinding } from "./native-schedule-owner-bindings"
 import { NativeScheduleControlRefusal, missionCalendarOwnerReady, nativeScheduleOwnerControlReceipt } from "./native-schedule-owner"
 import { ownerFixture } from "./native-schedule-owner-test-fixture"
+import { runningMissionCodeWake } from "./native-mission-automation"
 
 test("Play persists ownership before carrier, acknowledges auxiliary first, and replay creates nothing", async t => {
   const f = await ownerFixture(t), before = await f.read()
@@ -499,4 +500,18 @@ test("known paused admitted final passage can resume through the internal proof 
   assert.equal(doc.pending!.messageID, pending!.messageID)
   assert.equal(doc.launchedCount, 1)
   assert.equal(f.calls.filter(value => value.startsWith("create:")).length, 2)
+})
+
+test("a code auxiliary whose create acknowledgement was lost is identified by its first run in flight", async t => {
+  const f = await ownerFixture(t)
+  f.createCodeRows(); f.loseCreateACK("reconciliation")
+  const doc = await f.control("play"), info = [...f.calendars.values()][0]
+  const read = (run: number) => readNativeScheduleAuxiliaryWakeBinding(f.ctx, { missionID: doc.id, generation: doc.timeGeneration,
+    sessionID: info.sessionID, scheduleID: info.id, run, messageID: `msg_${info.id}_${run}` }, f.native, Effect.runPromise, f.current)
+  assert.equal(info.runCount, 0)
+  assert.equal(await read(1), undefined, "row state alone also fits a run that has not fired")
+  await runningMissionCodeWake(info.id, 1, async () => {
+    assert.equal((await read(1))?.calendar.scheduleID, info.id, "OpenCode counts a code run only after its program returns")
+    assert.equal(await read(2), undefined)
+  })
 })
