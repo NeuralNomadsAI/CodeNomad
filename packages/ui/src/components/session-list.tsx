@@ -7,7 +7,7 @@ import { preserveListFocus } from "../lib/preserve-list-focus"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
-import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
+import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Star } from "lucide-solid"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -50,7 +50,11 @@ import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
 import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
-import { getDescendantSessions, getListedSessionMap, getSessionAncestorIds, revealSubsession } from "../stores/session-state"
+import { getDescendantSessions, getListedSessionMap, getSessionAncestorIds, isSessionInWorkspaceScope, revealSubsession } from "../stores/session-state"
+import { getSessionListView } from "../stores/session-list-view"
+import { instances } from "../stores/instances"
+import { hydrateRestoredSessionChain } from "../stores/session-api"
+import { useSessionFavorites } from "../stores/session-favorites"
 const log = getLogger("session")
 
 
@@ -78,15 +82,35 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [renameTarget, setRenameTarget] = createSignal<{ id: string; title: string; label: string } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
 
-  const [filterQuery, setFilterQuery] = createSignal("")
-  const [sortBy, setSortBy] = createSignal<SessionFamilySort>("activity")
-  const [worktreeDirectory, setWorktreeDirectory] = createSignal("")
-  const [includeMainSessions, setIncludeMainSessions] = createSignal(true)
-  const [includeSubsessions, setIncludeSubsessions] = createSignal(false)
-  const [archiveFilter, setArchiveFilter] = createSignal<SessionArchiveFilter>("active")
+  const view = getSessionListView(props.instanceId)
+  const [filterQuery, setFilterQuery] = view.query
+  const [sortBy, setSortBy] = view.sort
+  const [worktreeDirectory, setWorktreeDirectory] = view.directory
+  const [includeMainSessions, setIncludeMainSessions] = view.main
+  const [includeSubsessions, setIncludeSubsessions] = view.children
+  const [archiveFilter, setArchiveFilter] = view.archive
+  const [favoritesOnly, setFavoritesOnly] = view.favoritesOnly
+  const favoriteStore = useSessionFavorites(() => props.instanceId, view)
+  const favorites = createMemo(() => new Set(Object.keys(favoriteStore.records())))
+  const includesFavorite = (id: string) => favorites().has(id)
+    || getDescendantSessions(props.instanceId, id).some(session => favorites().has(session.id))
+  let favoritesFilter: HTMLButtonElement | undefined
+  let searchInput: HTMLInputElement | undefined
   const [archivingSessionIds, setArchivingSessionIds] = createSignal<Set<string>>(new Set())
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
   let failedSortExhaustion: string | undefined
+
+  // Resolve known IDs directly, using the same owned proxy and ancestry restore
+  // as saved selection. Do not exhaust history just to bring favorites forward.
+  createEffect(on(() => [props.instanceId, instances().get(props.instanceId)?.client, favorites()] as const,
+    ([id, client, ids]) => {
+      if (!client || !ids.size) return
+      const controller = new AbortController()
+      onCleanup(() => controller.abort())
+      void hydrateRestoredSessionChain(id, [...ids], controller.signal).catch(error => {
+        if (!controller.signal.aborted) log.warn("Could not load favorite sessions", error)
+      })
+    }))
 
   createEffect(() => {
     const selected = normalizeSessionDirectory(worktreeDirectory())
@@ -105,6 +129,9 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [listViewportAttached, setListViewportAttached] = createSignal(false)
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
   const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
+  const [actionFocusSessionId, setActionFocusSessionId] = createSignal<string>()
+  let actionFocus: ReturnType<typeof claimActionFocus>
+  onCleanup(() => actionFocus?.release())
   const [menuSessionId, setMenuSessionId] = createSignal<string>()
   const [expanderMenuSessionId, setExpanderMenuSessionId] = createSignal<string>()
   let attachmentFrame: number | undefined
@@ -234,16 +261,19 @@ const SessionList: Component<SessionListProps> = (props) => {
     return sessionId.toLowerCase().includes(query)
   }
 
-  const filteredThreads = createMemo<SessionThread[]>(() => {
+  const getWorktreeLabel = (directory: string) => {
+    const worktrees = getWorktrees(props.instanceId)
+    const normalized = normalizeSessionDirectory(directory)
+    const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.serviceDirectory ?? candidate.directory) === normalized)
+    return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.label ?? worktree?.slug ?? directory
+  }
+  const normalThreads = createMemo(() => projectSessionFamilies(projectUnarchivedSessionThreads(props.threads, props.activeSessionId), {
+    sort: "activity", getWorktreeLabel, favoriteIds: favorites(),
+  }))
+  const searchMatches = createMemo<SessionThread[]>(() => {
+    if (!props.enableFilterBar) return []
     const query = normalizedQuery()
     const hasSearchResults = query && getSessionSearchQuery(props.instanceId) === query && !isSessionSearchLoading(props.instanceId)
-    const worktrees = getWorktrees(props.instanceId)
-    const getWorktreeLabel = (directory: string) => {
-      const normalized = normalizeSessionDirectory(directory)
-      const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.serviceDirectory ?? candidate.directory) === normalized)
-      return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.label ?? worktree?.slug ?? directory
-    }
-    if (!props.enableFilterBar) return projectSessionFamilies(projectUnarchivedSessionThreads(props.threads, props.activeSessionId), { sort: sortBy(), getWorktreeLabel })
     const instanceSessions = sessionStateSessions().get(props.instanceId)
     const candidates = hasSearchResults ? getSessionSearchSessions(props.instanceId)
       : collectSessionThreadIds(props.threads).flatMap(id => {
@@ -252,16 +282,22 @@ const SessionList: Component<SessionListProps> = (props) => {
       })
     return projectSessionSearchResults(candidates, {
       sort: sortBy(),
+      favoriteIds: favorites(),
       worktreeDirectory: worktreeDirectory(),
-      includeSubsessions: includeSubsessions(),
-      includeMainSessions: includeMainSessions(),
+      includeSubsessions: true,
+      includeMainSessions: true,
       archive: archiveFilter(),
       getWorktreeLabel,
-      ...(query && !hasSearchResults
-        ? { matchesSession: (session) => sessionMatchesQuery(session.id, query) }
-        : {}),
+      matchesSession: session => (!favoritesOnly() || favorites().has(session.id))
+        && (!query || Boolean(hasSearchResults) || sessionMatchesQuery(session.id, query)),
     })
   })
+  const filteredThreads = createMemo(() => {
+    if (!props.enableFilterBar) return normalThreads()
+    return searchMatches().filter(({ session }) => session.parentId ? includeSubsessions() : includeMainSessions())
+  })
+  const hiddenMatchCount = createMemo(() =>
+    normalizedQuery() ? searchMatches().length - filteredThreads().length : 0)
 
   const visibleProjection = createMemo(() => {
     const expandAll = Boolean(normalizedQuery())
@@ -279,9 +315,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
     return { ids, rowsById, indexById }
   })
+  createEffect(() => {
+    view.ids = visibleProjection().ids
+    view.projected = true
+  })
   const keptMountedIndexes = createMemo(() => {
     const indexes = new Set<number>()
-    for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId()]) {
+    for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId(), actionFocusSessionId()]) {
       const index = sessionId ? visibleProjection().indexById.get(sessionId) : undefined
       if (index !== undefined) indexes.add(index)
     }
@@ -361,6 +401,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) }),
       {
         title: t("sessionList.delete.title"),
+        detail: includesFavorite(sessionId) ? t("sessionList.favorite.deleteWarning") : undefined,
         variant: "warning",
         confirmLabel: t("sessionList.delete.confirmLabel"),
         cancelLabel: t("sessionList.delete.cancelLabel"),
@@ -535,6 +576,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       t(selected.length === 1 ? "sessionList.bulkDelete.confirmMessage.one" : "sessionList.bulkDelete.confirmMessage.other", { count: selected.length }),
       {
         title: t("sessionList.bulkDelete.title"),
+        detail: selected.some(includesFavorite) ? t("sessionList.favorite.deleteWarning") : undefined,
         variant: "warning",
         confirmLabel: t("sessionList.bulkDelete.confirmLabel"),
         cancelLabel: t("sessionList.bulkDelete.cancelLabel"),
@@ -595,6 +637,115 @@ const SessionList: Component<SessionListProps> = (props) => {
       })
     }
   }
+
+  function claimActionFocus(sessionId: string): {
+    sessionId: string
+    release: () => void
+    restore: (releaseAfter: boolean, fallback?: HTMLElement) => void
+  } | undefined {
+    const list = listEl()
+    const instanceId = props.instanceId
+    const rowSelector = `.session-item-base[data-session-id="${CSS.escape(sessionId)}"]`
+    const overflowTrigger = ".action-overflow-trigger"
+    const favoriteButton = ".session-item-inline-actions [data-action-key='favorite']"
+    const isAction = (target: EventTarget | null) => target instanceof Element
+      && !!target.closest(`${overflowTrigger}, ${favoriteButton}`)?.closest(rowSelector)
+      && Boolean(list?.contains(target))
+    if (!list || !isAction(document.activeElement)) return
+    actionFocus?.release()
+
+    const controller = new AbortController()
+    let frame = 0
+    const release = () => {
+      controller.abort()
+      cancelAnimationFrame(frame)
+      if (actionFocus?.release === release) {
+        actionFocus = undefined
+        setActionFocusSessionId(undefined)
+      }
+    }
+    const options = { capture: true, signal: controller.signal }
+    document.addEventListener("focusin", event => {
+      if (event.target !== document.body && !isAction(event.target)) release()
+    }, options)
+    window.addEventListener("blur", release, { signal: controller.signal })
+    document.addEventListener("keydown", event => { if (event.key === "Tab") release() }, options)
+    document.addEventListener("pointerdown", event => {
+      // A resize drag prevents pointerdown's focus change.
+      queueMicrotask(() => {
+        if (!controller.signal.aborted && !event.defaultPrevented && !isAction(event.target)) release()
+      })
+    }, options)
+
+    const restore = (releaseAfter: boolean, fallback?: HTMLElement) => {
+      cancelAnimationFrame(frame)
+      const done = () => { if (releaseAfter) release() }
+      // Keep the row mounted by ID while Virtua applies its new index and geometry.
+      let framesLeft = 12
+      const settle = () => {
+        if (controller.signal.aborted || props.instanceId !== instanceId || listEl() !== list || !list.isConnected
+          || !document.hasFocus() || (document.activeElement !== document.body && !isAction(document.activeElement))) {
+          release()
+          return
+        }
+        if (!visibleProjection().indexById.has(sessionId)) {
+          fallback?.focus({ preventScroll: true })
+          done()
+          return
+        }
+        const row = list.querySelector<HTMLElement>(rowSelector)
+        const button = row?.querySelector<HTMLButtonElement>(
+          row.dataset.compactActions === "true" ? overflowTrigger : favoriteButton,
+        )
+        if (row && button && !button.closest("[inert]") && button.checkVisibility({ checkVisibilityCSS: true })) {
+          const bounds = row.getBoundingClientRect(), top = list.getBoundingClientRect().top + list.clientTop
+          const bottom = top + list.clientHeight
+          const delta = bounds.top < top - 0.5 ? bounds.top - top
+            : bounds.bottom > bottom + 0.5 ? bounds.bottom - bottom : 0
+          if (delta) list.scrollTop += delta
+          else {
+            button.focus({ preventScroll: true })
+            if (document.activeElement === button) { done(); return }
+          }
+        }
+        // Bound retries if the panel becomes hidden or its controls disappear.
+        if (--framesLeft) frame = requestAnimationFrame(settle)
+        else done()
+      }
+      frame = requestAnimationFrame(settle)
+    }
+    const claimed = { sessionId, release, restore }
+    actionFocus = claimed
+    setActionFocusSessionId(sessionId)
+    return claimed
+  }
+
+  const toggleFavorite = async (sessionId: string) => {
+    const instanceId = props.instanceId
+    if (!favoriteStore.ready() || favoriteStore.pending().has(sessionId)
+      || !isSessionInWorkspaceScope(instanceId, sessionId)) return
+    const remove = favorites().has(sessionId)
+    const focus = claimActionFocus(sessionId)
+    try {
+      await favoriteStore.save(sessionId, !remove)
+      if (focus && actionFocus === focus) focus.restore(true,
+        remove && !favorites().has(sessionId) && props.enableFilterBar && favoritesOnly() ? favoritesFilter : undefined)
+    } catch {
+      focus?.release()
+      showToastNotification({ category: "sessions", variant: "error", message: t("sessionList.favorite.error") })
+    }
+  }
+
+  const resetFilters = () => batch(() => {
+    setFilterQuery("")
+    setSortBy("activity")
+    setWorktreeDirectory("")
+    setIncludeMainSessions(true)
+    setIncludeSubsessions(false)
+    setArchiveFilter("active")
+    setFavoritesOnly(false)
+    setSelectedSessionIds(new Set<string>())
+  })
 
   const SessionRow: Component<{
     session: SessionThread["session"]
@@ -751,9 +902,33 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
 
     const [rowElement, setRowElement] = createSignal<HTMLDivElement>()
-    const actionsOverflow = useSessionRowOverflow(rowElement)
-    const compactActions = () => actionsOverflow() || menuSessionId() === sessionId()
+    const menuOpen = () => menuSessionId() === sessionId()
+    const overflow = useSessionRowOverflow(rowElement)
+    const compactActions = () => overflow() || menuOpen()
+    const releaseMenu = () => {
+      if (!menuOpen()) return
+      const resizeHandoff = !overflow()
+      const pending = actionFocus?.sessionId === sessionId() ? actionFocus : undefined
+      const focus = resizeHandoff ? pending ?? claimActionFocus(sessionId()) : undefined
+      setMenuSessionId(undefined)
+      focus?.restore(!pending)
+    }
+    const favorite = () => favorites().has(sessionId())
+    const favoriteLabel = () => t(favorite() ? "sessionList.favorite.remove" : "sessionList.favorite.add")
     const actionItems: ActionOverflowMenuItem[] = [
+      {
+        key: "favorite",
+        get label() { return favoriteLabel() },
+        get icon() { return <Star class="w-3.5 h-3.5" fill={favorite() ? "currentColor" : "none"} /> },
+        get disabled() { return !favoriteStore.ready() || favoriteStore.pending().has(sessionId()) || !isSessionInWorkspaceScope(props.instanceId, sessionId()) },
+        onSelect: () => toggleFavorite(sessionId()),
+      },
+      {
+        key: "rename",
+        get label() { return t("sessionList.actions.rename.title") },
+        get icon() { return <Pencil class="w-3.5 h-3.5" /> },
+        onSelect: () => openRenameDialog(sessionId()),
+      },
       {
         key: "copy",
         get label() { return t("sessionList.actions.copyId.title") },
@@ -768,10 +943,11 @@ const SessionList: Component<SessionListProps> = (props) => {
         onSelect: () => handleReloadSession(sessionId()),
       },
       {
-        key: "rename",
-        get label() { return t("sessionList.actions.rename.title") },
-        get icon() { return <Pencil class="w-3.5 h-3.5" /> },
-        onSelect: () => openRenameDialog(sessionId()),
+        key: "archive",
+        get label() { return t(isSessionArchived(rowProps.session) ? "sessionList.actions.restore.title" : "sessionList.actions.archive.title") },
+        get icon() { return isSessionArchived(rowProps.session) ? <ArchiveRestore class="w-3.5 h-3.5" /> : <Archive class="w-3.5 h-3.5" /> },
+        get disabled() { return archivingSessionIds().has(sessionId()) || isSessionDeleting(sessionId()) },
+        onSelect: () => handleArchiveSession(sessionId()),
       },
       {
         key: "delete",
@@ -779,13 +955,6 @@ const SessionList: Component<SessionListProps> = (props) => {
         get icon() { return <Trash2 class="w-3.5 h-3.5" /> },
         get disabled() { return isSessionDeleting(sessionId()) },
         onSelect: () => handleDeleteSession(sessionId()),
-      },
-      {
-        key: "archive",
-        get label() { return t(isSessionArchived(rowProps.session) ? "sessionList.actions.restore.title" : "sessionList.actions.archive.title") },
-        get icon() { return isSessionArchived(rowProps.session) ? <ArchiveRestore class="w-3.5 h-3.5" /> : <Archive class="w-3.5 h-3.5" /> },
-        get disabled() { return archivingSessionIds().has(sessionId()) || isSessionDeleting(sessionId()) },
-        onSelect: () => handleArchiveSession(sessionId()),
       },
     ]
 
@@ -797,6 +966,7 @@ const SessionList: Component<SessionListProps> = (props) => {
           data-session-id={sessionId()}
           ref={setRowElement}
           data-compact-actions={compactActions()}
+          data-favorite={favorite() || undefined}
         >
           <Show when={props.enableFilterBar}>
             <input
@@ -833,11 +1003,15 @@ const SessionList: Component<SessionListProps> = (props) => {
             onClick={selectRow}
             title={title()}
             aria-current={isActive() ? "true" : undefined}
+            aria-description={favorite() ? t("sessionList.favorite.label") : undefined}
           >
             <Show when={isSubsession()} fallback={<User class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />}>
               <Bot class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />
             </Show>
             <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
+            <Show when={compactActions() && favorite()}>
+              <Star class="session-item-favorite" size={12} fill="currentColor" aria-hidden="true" />
+            </Show>
           </button>
           {/* Badges sit beside the select button so a clearable one can be its own button;
               the rest of the badge area still selects the row. */}
@@ -857,7 +1031,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                 fallback={
                   <span
                     class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}
-                    title={statusTooltip()}
+                    title={needsInput() ? statusText() : statusTooltip()}
                     translate="no"
                   >
                     {statusContent()}
@@ -887,13 +1061,15 @@ const SessionList: Component<SessionListProps> = (props) => {
           </span>
           <div class="session-item-actions">
             <div class="session-item-inline-actions" inert={compactActions()}>
-              <For each={actionItems}>{(item) => (
+              <For each={actionItems}>{item => (
                 <button
                   type="button"
                   class="session-item-close"
                   title={item.label}
                   aria-label={item.label}
-                  aria-disabled={item.disabled}
+                  aria-disabled={item.disabled || undefined}
+                  data-favorite-action={item.key === "favorite" ? favorite() : undefined}
+                  data-action-key={item.key}
                   onClick={() => { if (!item.disabled) void item.onSelect() }}
                 >
                   {item.icon}
@@ -901,21 +1077,8 @@ const SessionList: Component<SessionListProps> = (props) => {
               )}</For>
             </div>
             <div class="session-item-overflow-actions">
-              <ActionOverflowMenu
-                label={t("messageItem.actions.more")}
-                onOpenChange={(open) => {
-                  setMenuSessionId(open ? sessionId() : undefined)
-                  if (!open && !actionsOverflow()) requestAnimationFrame(() => {
-                    const row = rowElement()
-                    if (!row?.isConnected) return
-                    const active = document.activeElement
-                    if (active === document.body || row.querySelector(".session-item-overflow-actions")?.contains(active)) {
-                      row.querySelector<HTMLButtonElement>(".session-item-inline-actions button")?.focus({ preventScroll: true })
-                    }
-                  })
-                }}
-                items={actionItems}
-              />
+              <ActionOverflowMenu label={t("messageItem.actions.more")} items={actionItems}
+                onOpenChange={open => { if (open) setMenuSessionId(sessionId()) }} onFocusRestored={releaseMenu} />
             </div>
           </div>
         </div>
@@ -954,6 +1117,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                 <Search class="w-4 h-4" />
               </span>
               <input
+                ref={searchInput}
                 type="text"
                 class="form-input pl-9"
                 value={filterQuery()}
@@ -1032,6 +1196,26 @@ const SessionList: Component<SessionListProps> = (props) => {
               {t("sessionList.filter.includeSubsessions")}
             </label>
           </div>
+          <div class="mt-2 flex items-center justify-between gap-2">
+            <button type="button" class="icon-toggle button-tertiary inline-flex items-center gap-2"
+              ref={favoritesFilter} aria-pressed={favoritesOnly()} onClick={() => batch(() => {
+                if (!favoritesOnly()) setIncludeSubsessions(true)
+                setFavoritesOnly(value => !value)
+              })}>
+              <Star size={14} aria-hidden="true" />{t("sessionList.favorite.only")}
+            </button>
+            <button type="button" class="button-tertiary" onClick={resetFilters}>{t("sessionList.filter.reset")}</button>
+          </div>
+
+          <Show when={hiddenMatchCount() > 0}>
+            <button type="button" class="button-tertiary mt-2 w-full" onClick={() => {
+              searchInput?.focus({ preventScroll: true })
+              batch(() => { setIncludeMainSessions(true); setIncludeSubsessions(true) })
+            }}>
+              {t(hiddenMatchCount() === 1 ? "sessionList.filter.showHidden.one" : "sessionList.filter.showHidden.other",
+                { count: hiddenMatchCount() })}
+            </button>
+          </Show>
 
           <Show when={selectedCount() > 0}>
             <div class="mt-2 flex items-center justify-end gap-2">
@@ -1094,6 +1278,11 @@ const SessionList: Component<SessionListProps> = (props) => {
                 onRetry={handleRetrySessions}
               />
             )}
+          </Show>
+
+          <Show when={props.enableFilterBar && favoritesOnly() && !sessionListError() && !hasMore()
+            && !isFetchingSessions() && !isSessionSearchLoading(props.instanceId) && visibleProjection().ids.length === 0}>
+            <div class="p-3 text-xs text-muted" role="status">{t("sessionList.favorite.empty")}</div>
           </Show>
 
           <Show when={!sessionListError() && (hasMore() || isFetchingSessions()) && visibleProjection().ids.length === 0}>

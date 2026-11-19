@@ -52,6 +52,20 @@ type SessionFamilyProjection = {
   worktreeDirectory?: string
   sort: SessionFamilySort
   getWorktreeLabel: (directory: string) => string
+  favoriteIds?: ReadonlySet<string>
+}
+
+// Pending requests bring their branch forward; favorites rank only their own row.
+function prioritizeActivity(threads: SessionThread[], favoriteIds: ReadonlySet<string>): SessionThread[] {
+  const rank = new Map<SessionThread, number>()
+  const visit = (siblings: SessionThread[]): SessionThread[] => siblings.map(thread => {
+    const children = visit(thread.children)
+    const row = { ...thread, children }
+    const own = thread.session.pendingPermission || thread.session.pendingForm ? 2 : favoriteIds.has(thread.session.id) ? 1 : 0
+    rank.set(row, children.some(child => rank.get(child) === 2) ? 2 : own)
+    return row
+  }).sort((a, b) => rank.get(b)! - rank.get(a)!)
+  return visit(threads)
 }
 
 function someSession(thread: SessionThread, predicate: (session: Session) => boolean): boolean {
@@ -70,7 +84,7 @@ export function projectSessionFamilies(
     return someSession(thread, (session) => normalizeSessionDirectory(session.location?.directory) === worktreeDirectory)
   })
 
-  return [...projected].sort((left, right) => {
+  const sorted = [...projected].sort((left, right) => {
     if (options.sort === "activity") {
       return right.latestUpdated - left.latestUpdated || right.session.id.localeCompare(left.session.id)
     }
@@ -81,6 +95,7 @@ export function projectSessionFamilies(
     const rightLabel = options.getWorktreeLabel(right.session.location?.directory ?? "")
     return leftLabel.localeCompare(rightLabel) || (left.session.title ?? "").localeCompare(right.session.title ?? "")
   })
+  return options.sort === "activity" && options.favoriteIds ? prioritizeActivity(sorted, options.favoriteIds) : sorted
 }
 
 // Search rows are independent leaves: filtering, sorting and selection all use

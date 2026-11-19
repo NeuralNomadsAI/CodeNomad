@@ -25,6 +25,7 @@ import {
   setActiveSession,
   setActiveSessionFromList,
   clearSessionDraftPrompt,
+  evictSessionDraftPrompt,
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
   markSessionMovedAway,
@@ -70,7 +71,8 @@ import {
   sessionInfoByInstance,
 } from "./session-state"
 import { settleAbandonedSessionListRestoration } from "./session-list-restoration"
-import { deleteSessionAttachments } from "./attachments"
+import { clearAttachments, deleteSessionAttachments } from "./attachments"
+import { recoverRemovedSessionDraft } from "./session-draft-recovery"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -136,7 +138,7 @@ interface MessagePageRequest {
 
 const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
-const deleteSessionAuthorities = new Map<string, object>()
+const deleteSessionAuthorities = new Map<string, { cleanup: boolean }>()
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
 const MESSAGE_CURSOR_SEEK_LIMIT = 1000
@@ -520,18 +522,21 @@ async function hydrateRestoredSessionChain(
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
-  reconcileInitialDeparture = false,
-): Promise<void> {
+  { verifyDrafts = false, reconcileDeparture = false }: { verifyDrafts?: boolean; reconcileDeparture?: boolean } = {},
+): Promise<ReadonlyMap<string, () => boolean>> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
     const releaseReads: Array<() => void> = []
+    const absent = new Map<string, () => boolean>()
     try {
-      await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, releaseReads, signal, () => isCurrent() && generationCurrent(), reconcileInitialDeparture)
+      await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, releaseReads, signal, () => isCurrent() && generationCurrent(),
+        reconcileDeparture, verifyDrafts ? absent : undefined)
     } finally {
       for (const release of releaseReads) release()
     }
     signal?.throwIfAborted()
-    if (!isCurrent() || generationCurrent()) return
+    if (!isCurrent()) return new Map()
+    if (generationCurrent()) return absent
   }
   throw new Error("Restored session hydration was superseded by reconnect")
 }
@@ -543,6 +548,7 @@ async function hydrateRestoredSessionChainAttempt(
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
   reconcileInitialDeparture = false,
+  absentDrafts?: Map<string, () => boolean>,
 ): Promise<void> {
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -567,6 +573,7 @@ async function hydrateRestoredSessionChainAttempt(
       if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return null
 
       let session = sessions().get(instanceId)?.get(sessionId)
+      const verify = absentDrafts !== undefined && requestedIds.includes(sessionId)
       if (!session || session.catalogSnapshot) {
         const captured = session
         const move = getPendingSessionMove(instanceId, sessionId)
@@ -618,12 +625,12 @@ async function hydrateRestoredSessionChainAttempt(
               || !isWorkspaceServedDirectory(apiSession.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId)))) {
             confirmSessionPlacement(instanceId, sessionId, apiSession)
           }
-          if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
         } catch (error) {
           if (signal?.aborted) throw error
           if (!isRequestCurrent()) return null
-          if (!isSessionNotFoundError(error)) throw error
-          if ("reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
+          const missing = isSessionNotFoundError(error)
+          if (!missing && !absentDrafts) throw error
+          if (missing && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
             departures.push(() => {
               // Catalogue merges are display updates, not fresh ownership evidence.
               if (!evidenceCurrent() || placementReadCurrent?.() === false
@@ -634,6 +641,12 @@ async function hydrateRestoredSessionChainAttempt(
               markSessionMovedAway(instanceId, sessionId, null)
               removeSessionProjection(instanceId, sessionId, (selectedId) => ownedReads.get(selectedId)?.() ?? false)
             })
+          } else if (verify && missing && error.sessionID === sessionId) {
+            const holds = () => isRequestCurrent() && !signal?.aborted && evidenceCurrent()
+              && getPendingSessionMove(instanceId, sessionId) === move
+              && !getMovedAwaySessions(instanceId).has(sessionId)
+              && sessions().get(instanceId)?.get(sessionId) === captured
+            if (placementReadCurrent?.() !== false && holds()) absentDrafts.set(sessionId, holds)
           }
           log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
           return null
@@ -641,7 +654,12 @@ async function hydrateRestoredSessionChainAttempt(
       }
       // In directory-only mode ancestors outside the inventory are not session
       // authority. Keep native parent metadata; local display roots are derived.
-      return getDirectoryOnlyWorktree(instanceId) ? null : session?.parentId ?? null
+      const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+      if (session && (directoryOnly || session.parentId === null) && isRequestCurrent() && !signal?.aborted) {
+        const root = getSessionRoot(instanceId, sessionId)
+        if (root && !getSessionListIds(instanceId).includes(root.id)) prependSessionListId(instanceId, root.id)
+      }
+      return directoryOnly ? null : session?.parentId ?? null
     }))
     readFailure = parents.find(result => result.status === "rejected")
     if (readFailure) break
@@ -669,7 +687,7 @@ async function ensureV2ParentChainsLoaded(
   const missingChains = apiSessions
     .filter((session) => hasMissingParentChain(session, loaded))
     .map((session) => session.parentID)
-  if (missingChains.length > 0) await hydrateRestoredSessionChain(instanceId, missingChains, signal, isCurrent, true)
+  if (missingChains.length > 0) await hydrateRestoredSessionChain(instanceId, missingChains, signal, isCurrent, { reconcileDeparture: true })
 }
 
 async function fetchSessions(instanceId: string, options?: {
@@ -1406,6 +1424,14 @@ async function forkSession(
 }
 
 async function deleteSession(instanceId: string, sessionId: string): Promise<void> {
+  await removeSession(instanceId, sessionId, false)
+}
+
+export function deleteBlankSession(instanceId: string, sessionId: string, signal: AbortSignal): Promise<boolean> {
+  return removeSession(instanceId, sessionId, true, signal)
+}
+
+async function removeSession(instanceId: string, sessionId: string, cleanup: boolean, signal?: AbortSignal): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1413,7 +1439,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const loadingKey = messagePageKey(instanceId, sessionId)
-  const loadingAuthority = {}
+  const loadingAuthority = { cleanup }
   deleteSessionAuthorities.set(loadingKey, loadingAuthority)
 
   setLoading((prev) => {
@@ -1426,10 +1452,15 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.remove for instance ${instanceId}`, { sessionId })
-    await client.session.remove({ sessionID: sessionId })
+    if (cleanup) {
+      if (!(await serverApi.cleanupSession(instanceId, sessionId, signal)).deleted) return false
+    } else {
+      await client.session.remove({ sessionID: sessionId })
+    }
     if (!generationCurrent()) throw new Error("Session deletion was superseded by reconnect")
 
     removeSessionRuntimeState(instanceId, sessionId)
+    return true
 
   } catch (error) {
     log.error("Failed to delete session:", error)
@@ -1449,23 +1480,30 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   }
 }
 
-function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
-  cancelSessionGenerationAdmissions(instanceId, sessionId)
-  clearSessionSeenInterruption(instanceId, sessionId)
-  if (authoritative) {
-    markSessionDeletedAuthoritative(instanceId, sessionId)
-    forgetSessionMovedAway(instanceId, sessionId)
-    clearPendingSessionMove(instanceId, sessionId)
+/** Apply a confirmed native deletion, whether requested here or observed. */
+function removeSessionRuntimeState(instanceId: string, sessionId: string, source: "request" | "observation" = "request"): void {
+  const requested = deleteSessionAuthorities.get(messagePageKey(instanceId, sessionId))
+  const preserve = requested?.cleanup ?? (source === "observation")
+  if (preserve) recoverRemovedSessionDraft(instanceId, sessionId)
+  markSessionDeletedAuthoritative(instanceId, sessionId)
+  forgetSessionMovedAway(instanceId, sessionId)
+  clearPendingSessionMove(instanceId, sessionId)
+  if (preserve) {
+    deleteSessionAttachments(instanceId, sessionId)
+    evictSessionDraftPrompt(instanceId, sessionId)
+  } else {
+    clearAttachments(instanceId, sessionId)
+    clearSessionDraftPrompt(instanceId, sessionId)
   }
-  deleteSessionAttachments(instanceId, sessionId)
-  clearSessionDraftPrompt(instanceId, sessionId)
-  setSessionExpanded(instanceId, sessionId, false)
   removeSessionProjection(instanceId, sessionId)
 }
 
 /** Removes the session from this instance's list, selection and transcript
  * caches only; its draft, attachments and other per-session state stay. */
 function removeSessionProjection(instanceId: string, sessionId: string, ownsSelection?: (sessionId: string) => boolean): void {
+  cancelSessionGenerationAdmissions(instanceId, sessionId)
+  clearSessionSeenInterruption(instanceId, sessionId)
+  setSessionExpanded(instanceId, sessionId, false)
   setSessions((prev) => {
     const next = new Map(prev)
     const instanceSessions = next.get(instanceId)
@@ -2215,3 +2253,4 @@ export {
   clearSessionListRequestState,
   clearSessionCatalogState,
 }
+import { serverApi } from "../lib/api-client"

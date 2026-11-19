@@ -3,13 +3,12 @@ import { beginGesture, type SurfaceGesture } from "./session-surface"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
-import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
+import { loadMessages, refreshSessionCatalog } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
 import { instances, ensureYoloStateSynced } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
-import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
@@ -37,6 +36,7 @@ import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from 
 import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
 import { confirmedSessionListDirectory } from "./session-events"
 import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
+import { getSessionListView } from "./session-list-view"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -434,6 +434,11 @@ function hydrateSessionDraftPrompt(instanceId: string, sessionId: string, value:
   for (const listener of sessionDraftHydratedListeners) listener(instanceId, sessionId, value)
 }
 
+export function replaceSessionDraftPrompt(instanceId: string, sessionId: string, value: string): void {
+  markSessionDraftAuthoritative(instanceId, sessionId)
+  hydrateSessionDraftPrompt(instanceId, sessionId, value)
+}
+
 function onSessionDraftHydrated(listener: SessionDraftHydratedListener): () => void {
   sessionDraftHydratedListeners.add(listener)
   return () => sessionDraftHydratedListeners.delete(listener)
@@ -539,6 +544,11 @@ function clearSessionDraftPrompt(instanceId: string, sessionId: string) {
     next.delete(key)
     return next
   })
+}
+
+/** A passive eviction clears the live value, not an unhydrated saved draft. */
+export function evictSessionDraftPrompt(instanceId: string, sessionId: string) {
+  if (getSessionDraftPrompt(instanceId, sessionId)) writeSessionDraftPrompt(instanceId, sessionId, "")
 }
 
 function clearInstanceDraftPromptValues(instanceId: string) {
@@ -1112,6 +1122,12 @@ function getPersistentExpandedSessionIds(instanceId: string): string[] {
 }
 
 function getVisibleSessionIds(instanceId: string): string[] {
+  const view = getSessionListView(instanceId)
+  if (view.projected) {
+    const known = sessions().get(instanceId)
+    const scope = getWorkspaceSessionScope(instanceId)
+    return view.ids.filter(id => known?.has(id) && (!scope || scope.has(id)))
+  }
   const threads = projectUnarchivedSessionThreads(getSessionThreads(instanceId), activeSessionId().get(instanceId))
   if (threads.length === 0) return []
 
@@ -1214,51 +1230,6 @@ function updateThreadTotalsForSession(instanceId: string, sessionId: string): vo
   for (const familyId of familyIds) updateThreadTotalsForParent(instanceId, familyId)
 }
 
-async function isDeepCleanupCandidate(session: Session, instanceId: string): Promise<boolean> {
-  const instance = instances().get(instanceId)
-  if (!instance?.client) {
-    return false
-  }
-  let messages: any[] = []
-  try {
-    const client = getRootClient(instanceId)
-    messages = (await client.message.list({ sessionID: session.id })).data
-  } catch (error) {
-    log.error(`Failed to fetch messages for session ${session.id}`, error)
-    return false
-  }
-
-  // Specific logic by session type
-  if (session.parentId === null) {
-    // Parent: blank if no messages and no children (fresh !== blank sometimes!)
-    const hasChildren = getChildSessions(instanceId, session.id).length > 0
-    return messages.length === 0 && !hasChildren
-  } else if (session.title?.includes("subagent)")) {
-    // Subagent: "blank" (really: finished doing its job) if actually blank...
-    // ... OR no streaming, no pending perms, no tool parts
-    if (messages.length === 0) return true
-
-    const hasStreaming = messages.some((msg) => {
-      return msg.type === "assistant" && !msg.time?.completed
-    })
-
-    const lastMessage = messages[messages.length - 1]
-    const lastParts = lastMessage?.type === "assistant" ? lastMessage.content : []
-    const hasToolPart = lastParts.some((part: any) =>
-      part.type === "tool" || part.data?.type === "tool"
-    )
-
-    return !hasStreaming && !session.pendingPermission && !session.pendingForm && !hasToolPart
-  } else {
-    // Fork: blank if somehow has no messages or at revert point
-    if (messages.length === 0) return true
-
-    const lastMessage = messages[messages.length - 1]
-    return lastMessage?.id === session.revert?.messageID
-  }
-}
-
-
 const automaticCleanupRequests = new Map<string, {
   client: unknown
   generation: number
@@ -1312,18 +1283,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
     if (!current()) break
     if (sessionId === excludeSessionId) continue
     if (sessions().get(instanceId)?.get(sessionId) !== session) continue
-    if (!fetchIfNeeded) {
-      if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
-      continue
-    }
-    if (!await isDeepCleanupCandidate(session, instanceId)) continue
-    if (!current() || sessions().get(instanceId)?.get(sessionId) !== session) continue
-    try {
-      await deleteSession(instanceId, sessionId)
-      deletedCount++
-    } catch (error) {
-      log.error(`Failed to deep clean session ${sessionId}`, error)
-    }
+    if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
   }
 
   if (deletedCount > 0) {

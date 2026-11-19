@@ -1,11 +1,13 @@
 import assert from "node:assert/strict"
 import { afterEach, describe, it } from "node:test"
 import { Readable } from "node:stream"
+import http from "node:http"
 import Fastify, { type FastifyInstance } from "fastify"
 import replyFrom from "@fastify/reply-from"
 import { OpenCode, isSessionNotFoundError, type OpenCodeClient, type SessionInfo } from "@opencode/client"
 import type { Logger } from "../../logger"
 import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
+import { SessionCleanupFence } from "../session-cleanup-fence"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
@@ -72,6 +74,7 @@ async function harness(
     reply.header("www-authenticate", 'Basic realm="OpenCode"')
     reply.header("proxy-authenticate", 'Basic realm="OpenCode proxy"')
     if (request.headers["x-test-challenge"] === "1") reply.code(401)
+    if (request.headers["x-test-unavailable"] === "1") reply.code(503)
     return { url: request.raw.url, body: request.body, headers: request.headers }
   })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
@@ -166,9 +169,10 @@ async function harness(
   }
   const app = Fastify()
   const worktreeDeletionFence = new WorktreeDeletionFence()
+  const sessionCleanup = new SessionCleanupFence()
   apps.push(app)
   await app.register(replyFrom)
-  registerInstanceProxyRoutes(app, { workspaceManager: manager, logger: logger(), worktreeDeletionFence })
+  registerInstanceProxyRoutes(app, { workspaceManager: manager, logger: logger(), worktreeDeletionFence, sessionCleanup })
   await app.ready()
   return {
     app,
@@ -176,6 +180,7 @@ async function harness(
     servicePathCalls,
     sessionGets,
     worktreeDeletionFence,
+    sessionCleanup,
     requestCount: () => requests,
     delayedUpstreamStarted,
     releaseDelayedUpstream: () => releaseDelayedUpstream?.(),
@@ -184,6 +189,93 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("drains native settlement after the downstream disconnects mid-response", { timeout: 10_000 }, async () => {
+    const { app, sessionCleanup, releaseDelayedUpstream } = await harness()
+    const base = await app.listen({ host: "127.0.0.1", port: 0 })
+    let closed!: () => void, released!: () => void
+    const downstreamClosed = new Promise<void>(resolve => { closed = resolve })
+    const nativeSettled = new Promise<void>(resolve => { released = resolve })
+    app.server.on("request", (_request, response) => response.once("close", closed))
+    const enter = sessionCleanup.enterMutation.bind(sessionCleanup)
+    sessionCleanup.enterMutation = id => {
+      const release = enter(id)
+      return release && (() => { release(); released() })
+    }
+    const request = http.request(`${base}/workspaces/workspace/instance/api/session/ses_thread/prompt`, {
+      method: "POST", headers: { "x-test-delay-upstream-body": "1", "content-type": "application/json", "content-length": "2" },
+    })
+    const fragment = new Promise<string>((resolve, reject) => {
+      request.on("error", reject)
+      request.on("response", response => {
+        response.on("error", () => {})
+        response.once("data", chunk => resolve(String(chunk)))
+      })
+    })
+    request.end("{}")
+    try {
+      assert.equal(await fragment, '{"started":')
+      request.destroy()
+      await downstreamClosed
+      assert.equal(sessionCleanup.enterCleanup("ses_thread"), undefined)
+    } finally { releaseDelayedUpstream() }
+    await nativeSettled
+    assert.equal(sessionCleanup.hasUncertain("ses_thread"), false)
+    const release = sessionCleanup.enterCleanup("ses_thread")
+    assert.ok(release)
+    release()
+  })
+  it("disconnecting after native prompt dispatch leaves the cleanup reservation until native settlement", { timeout: 10_000 }, async () => {
+    const { app, sessionCleanup, delayedUpstreamStarted, releaseDelayedUpstream, requestCount } = await harness()
+    let disconnected!: () => void
+    const closed = new Promise<void>(resolve => { disconnected = resolve })
+    app.server.on("request", (request, response) => {
+      if (request.headers["x-test-delay-upstream"] === "1") response.once("close", disconnected)
+    })
+    const address = await app.listen({ host: "127.0.0.1", port: 0 })
+    const url = "/workspaces/workspace/instance/api/session/ses_thread/prompt"
+    const request = http.request(address + url, { method: "POST", headers: {
+      "x-test-delay-upstream": "1", "content-type": "application/json", "content-length": "2",
+    } })
+    request.on("error", () => {})
+    request.end("{}")
+    let settled!: () => void
+    const nativeSettled = new Promise<void>(resolve => { settled = resolve })
+    const open = sessionCleanup.enterMutation.bind(sessionCleanup)
+    // Install before request admission, observing its reservation release only.
+    sessionCleanup.enterMutation = id => {
+      const release = open(id)
+      return release && (() => { release(); settled() })
+    }
+    try {
+      await delayedUpstreamStarted
+      request.destroy()
+      await closed
+      assert.equal(sessionCleanup.enterCleanup("ses_thread"), undefined)
+      assert.equal(requestCount(), 1)
+    } finally { releaseDelayedUpstream() }
+    await nativeSettled
+    const release = sessionCleanup.enterCleanup("ses_thread")
+    assert.ok(release)
+    release()
+  })
+
+  it("holds the cleanup fence across a real forwarded prompt and refuses a new prompt while cleaning", async () => {
+    const { app, sessionCleanup, requestCount, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
+    const url = "/workspaces/workspace/instance/api/session/ses_thread/prompt"
+    const release = sessionCleanup.enterCleanup("ses_thread")!
+    assert.equal((await app.inject({ method: "POST", url, payload: {} })).statusCode, 409)
+    assert.equal(requestCount(), 0)
+    release()
+    const pending = app.inject({ method: "POST", url, payload: {}, headers: { "x-test-delay-upstream": "1" } }).then(response => response)
+    try {
+      await delayedUpstreamStarted
+      assert.equal(sessionCleanup.enterCleanup("ses_thread"), undefined)
+    } finally { releaseDelayedUpstream() }
+    assert.equal((await pending).statusCode, 200)
+    const after = sessionCleanup.enterCleanup("ses_thread")
+    assert.ok(after)
+    after()
+  })
   it("defers legacy pending lists before slow ownership, rechecks at forwarding, and admits only authorized settlement reconciliation", async () => {
     const { app, manager, requestCount } = await harness()
     const connection = (await manager.getSharedServiceConnection!("workspace"))!
@@ -380,7 +472,7 @@ describe("instance proxy location enforcement", () => {
     const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/session/session/wait" })
     assert.equal(response.statusCode, 200)
     assert.equal(JSON.parse(response.body).url, "/api/experimental/session/session/wait")
-    assert.deepEqual(sessionGets, ["session", "session"])
+    assert.deepEqual(sessionGets, ["session"])
     assert.equal(requestCount(), 1)
   })
 
@@ -389,6 +481,27 @@ describe("instance proxy location enforcement", () => {
     const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/session/session/wait" })
     assert.equal(response.statusCode, 403)
     assert.equal(requestCount(), 0)
+  })
+
+  it("allows a rename after a failed settlement read, but holds a session after an uncertain rename", async () => {
+    const { app, requestCount, sessionCleanup } = await harness()
+    const root = "/workspaces/workspace/instance/api"
+    const unavailable = { "x-test-unavailable": "1" }
+    const wait = () => app.inject({ method: "POST", url: `${root}/experimental/session/session/wait`, headers: unavailable })
+    const rename = (title: string, headers = {}) => app.inject({
+      method: "PATCH", url: `${root}/session/session`, payload: { title }, headers,
+    })
+
+    assert.equal((await wait()).statusCode, 503)
+    const renamed = await rename("First rename")
+    assert.equal(renamed.statusCode, 200)
+    assert.deepEqual(renamed.json().body, { title: "First rename" })
+    assert.equal(requestCount(), 2)
+    assert.equal((await rename("Uncertain rename", unavailable)).statusCode, 503)
+    assert.equal(sessionCleanup.hasUncertain("session"), true)
+    assert.equal((await wait()).statusCode, 503, "read remains available during an uncertain write")
+    assert.equal((await rename("Conflicting rename")).statusCode, 409)
+    assert.equal(requestCount(), 4)
   })
 
   it("proxies session instruction entries with or without ambient location context", async () => {

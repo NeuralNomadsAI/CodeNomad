@@ -139,7 +139,14 @@ impl DeveloperMode {
             .is_some()
             .then(|| Self::focused_window_id(app))
             .flatten();
-        Ok(json!({ "status": self.status(port, window_id), "logs": [] }))
+        Ok(self.snapshot(port, window_id))
+    }
+
+    fn snapshot(&self, port: Option<u16>, window_id: Option<String>) -> Value {
+        json!({
+            "status": self.status(port, window_id),
+            "logs": crate::embedded_view::diagnostics::logs(),
+        })
     }
 
     pub(crate) fn request_restart(&self, app: &AppHandle) -> Result<Value, String> {
@@ -159,6 +166,19 @@ impl DeveloperMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_snapshot_includes_recorded_preview_failure() {
+        let error = crate::embedded_view::diagnostics::preview_error(
+            "snapshot regression",
+            "Paramètre incorrect. (0x80070057)",
+        );
+        let mode = DeveloperMode::new("tauri:test".into(), None);
+        let snapshot = mode.snapshot(None, None);
+        assert!(snapshot["logs"].as_array().unwrap().iter().any(|log| {
+            log["level"] == "error" && log["text"] == error
+        }));
+    }
 
     #[test]
     fn normal_startup_prepares_stable_profile_and_clears_only_stale_endpoint() {

@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { BinaryValidationResult } from "../../api-types"
 import { probeOpenCodeBinary } from "../../workspaces/spawn"
-import type { SettingsService } from "../../settings/service"
+import { SESSION_FAVORITES_OWNER, type SettingsService } from "../../settings/service"
 import type { Logger } from "../../logger"
 import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-config"
 import { resolveDefaultInstallation } from "../../opencode-update/shared-installation"
@@ -130,21 +130,32 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
   })
 
-  app.get("/api/storage/state", async () => deps.settings.getDoc("state"))
+  const publicState = () => {
+    const doc = { ...deps.settings.getDoc("state") }
+    delete doc[SESSION_FAVORITES_OWNER]
+    return doc
+  }
+  app.get("/api/storage/state", async () => publicState())
   app.patch("/api/storage/state", async (request, reply) => {
     try {
-      return deps.settings.mergePatchDoc("state", request.body ?? {})
+      if (request.body && typeof request.body === "object" && Object.hasOwn(request.body, SESSION_FAVORITES_OWNER)) {
+        return reply.code(403).send({ error: "Session favorites require a workspace" })
+      }
+      deps.settings.mergePatchDoc("state", request.body ?? {})
+      return publicState()
     } catch (error) {
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
     }
   })
 
-  app.get<{ Params: { owner: string } }>("/api/storage/state/:owner", async (request) => {
+  app.get<{ Params: { owner: string } }>("/api/storage/state/:owner", async (request, reply) => {
+    if (request.params.owner === SESSION_FAVORITES_OWNER) return reply.code(403).send()
     return deps.settings.getOwner("state", request.params.owner)
   })
 
   app.patch<{ Params: { owner: string } }>("/api/storage/state/:owner", async (request, reply) => {
+    if (request.params.owner === SESSION_FAVORITES_OWNER) return reply.code(403).send()
     try {
       return deps.settings.mergePatchOwner("state", request.params.owner, request.body ?? {})
     } catch (error) {

@@ -21,6 +21,16 @@ La exploración normal es jerárquica; los resultados de búsqueda/filtro son en
 
 Atrás/Adelante es un historial de visitas por pestaña de proyecto y ventana, no el orden de la lista. En cambio, **Sesión anterior** / **Siguiente sesión** en la paleta recorren cíclicamente la lista visible.
 
+## Guardar conversaciones en favoritos {#favorites}
+
+Pasa el puntero por una fila de sesión o enfócala para ver sus acciones. En pantallas táctiles están visibles directamente. Usa el botón de la estrella o, si falta espacio, abre **Más acciones** (⋯) y elige **Añadir a favoritos** o **Quitar de favoritos**.
+
+En el árbol van primero las solicitudes que esperan tu respuesta. Los favoritos solo suben entre sesiones del mismo nivel y con la misma sesión padre. Cada rama conserva su estado expandido o contraído. En la búsqueda, **Actividad** da prioridad a los favoritos que coinciden, incluidas las subsesiones que se muestran. **Nombre** y **Worktree** siguen su propio orden.
+
+En la búsqueda de sesiones, elige **Solo favoritas**. **Mostrar … resultados ocultos** habilita ambos tipos de sesión sin cambiar la búsqueda, el worktree ni los demás filtros. **Restablecer** recupera los filtros y el orden predeterminados.
+
+Las ventanas conectadas al mismo servidor CodeNomad que abren la misma carpeta comparten los favoritos. La limpieza conserva los favoritos y sus antecesores; eliminarlos explícitamente sigue siendo posible.
+
 ## Archivar y restaurar {#archive}
 
 Elige **Archivar sesión** en las acciones de una fila para conservar su historial y ocultar su rama inactiva de la navegación normal. La conversación seleccionada y las que tienen trabajo en curso o preguntas pendientes siguen accesibles. Archivar no detiene el trabajo, no elimina mensajes ni cambia el estado de archivo propio de las subsesiones.

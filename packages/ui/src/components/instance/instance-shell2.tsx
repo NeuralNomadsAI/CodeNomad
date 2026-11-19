@@ -29,6 +29,7 @@ import { MissionReader } from "../mission-reader"
 import { missionProjectView } from "../../stores/mission-view-state"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
+import RecoveredDrafts from "../prompt-input/recovered-drafts"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../action-overflow-menu"
@@ -1213,6 +1214,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
                     </div>
 
+                    <RecoveredDrafts instanceId={props.instance.id} />
                     <Show when={draftAttachments().length > 0}>
                       <PromptAttachmentsBar
                         attachments={draftAttachments()}
