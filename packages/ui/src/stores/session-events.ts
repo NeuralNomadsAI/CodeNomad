@@ -55,9 +55,9 @@ import { getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees
 import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
 import { isWorkspaceServedDirectory } from "./workspace-served-directory"
 import { locationAuthorityKey } from "./request-locations"
-import { parentSessionReadHeaders } from "../lib/sdk-manager"
+import { workspaceSessionPlacementHeaders } from "../lib/sdk-manager"
 import { prioritizedRead } from "../lib/prioritized-read"
-import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../../../server/src/opencode/session-access-contract"
+import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
 import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
@@ -159,7 +159,7 @@ export function retainConfirmedSessionPlacement(
 async function readWorkspaceSessionPlacement(instanceId: string, sessionId: string, signal?: AbortSignal) {
   try {
     return await getRootClient(instanceId).session.get({ sessionID: sessionId }, {
-      headers: { ...parentSessionReadHeaders, [SESSION_PLACEMENT_HEADER]: "1" }, signal,
+      headers: workspaceSessionPlacementHeaders, signal,
     }) as SessionPlacementRead
   } catch (error) {
     if (isSessionNotFoundError(error) && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) return LOCATED_ELSEWHERE

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { OpenCode } from "@opencode/client"
-import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
+import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../../../server/src/opencode/session-access-contract"
 import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "../lib/sdk-manager"
 import { serverApi } from "../lib/api-client"
 import { addInstance, removeInstance } from "./instances"
 import { setInstanceMetadata } from "./instance-metadata"
 import { fetchSessions, hydrateRestoredSessionChain, refreshSessionRuntimeStatus, removeSessionRuntimeState } from "./session-api"
 import { hydrateRestoredWorkspaceState, seedRestoredWorkspaceState } from "./app-session-workspace-hydration"
-import { ensureWorktreesLoaded } from "./worktrees"
+import { ensureWorktreesLoaded, getWorktreeSlugForParentSession } from "./worktrees"
 import { captureSessionCatalog } from "./session-catalog-persistence"
 import { activeParentSessionId, activeSessionId, getInstanceSessionIndicatorStatusCached, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, setActiveParentSession, setActiveSessionFromList, setSessionPendingPermission, setSessionStatus, sessions, setSessions, withSession } from "./session-state"
 import { messageStoreBus } from "./message-v2/bus"
@@ -287,12 +287,17 @@ test("cold restore keeps a proxy-confirmed alias selected through catalogue reco
   })
   const alias = native("root", "/linked-alias")
   let catalogueRoot = alias
+  let localChildPresent = false
   try {
     Object.assign(f.saved, { activeSessionId: "root", drafts: { root: "keep draft" }, sessionCatalog: undefined })
-    globalThis.fetch = async () => Response.json({ data: alias })
+    globalThis.fetch = async (input, init) => {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
+      return Response.json({ data: headers.get(SESSION_PLACEMENT_HEADER) === "1"
+        ? { ...alias, listWorktreeSlug: "linked" } : alias })
+    }
     f.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
     f.client.session.list = async (input: any) => ({ data: input.project
-      ? [catalogueRoot, native("child", "/repo", "root")]
+      ? [catalogueRoot, ...(localChildPresent ? [native("child", "/repo", "root")] : [])]
       : [native("other", "/repo")], cursor: {} })
     setInstanceMetadata(id, { project: { id: "project" } as any })
     await ensureWorktreesLoaded(id)
@@ -302,8 +307,13 @@ test("cold restore keeps a proxy-confirmed alias selected through catalogue reco
     await fetchSessions(id, { strictStatus: true })
     assert.equal(activeSessionId().get(id), "root", "a lexical miss cannot undo the owned restore read")
     assert.equal(sessions().get(id)?.get("root")?.location.directory, "/linked-alias")
+    assert.equal(getWorktreeSlugForParentSession(id, "root"), "linked")
+    setActiveSessionFromList(id, "other")
+    assert.ok(getSessionThreads(id).some(thread => thread.session.id === "root"), "the alias remains listed after switching")
+    setActiveSessionFromList(id, "root")
 
     catalogueRoot = native("root", "/independent-clone")
+    localChildPresent = true
     await fetchSessions(id, { strictStatus: true })
     assert.equal(activeSessionId().get(id), undefined, "a different placement cannot inherit the alias confirmation")
     assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")

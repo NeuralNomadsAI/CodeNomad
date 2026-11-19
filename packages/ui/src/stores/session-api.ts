@@ -81,7 +81,7 @@ import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { buildProviderCatalog } from "../lib/model-catalog"
 import { getRootClient } from "./opencode-client"
-import { parentSessionReadHeaders } from "../lib/sdk-manager"
+import { workspaceSessionPlacementHeaders } from "../lib/sdk-manager"
 import { tGlobal } from "../lib/i18n"
 import {
   PROJECT_SESSION_LIST_LIMIT,
@@ -549,7 +549,7 @@ async function hydrateRestoredSessionChainAttempt(
     const level = [...new Set(pending)].filter((sessionId) => !visited.has(sessionId))
     pending = []
     level.forEach((sessionId) => visited.add(sessionId))
-    const readOptions = { ...(signal ? { signal } : {}), ...(reconcileDeparture ? { headers: parentSessionReadHeaders } : {}) }
+    const readOptions = { ...(signal ? { signal } : {}), ...(reconcileDeparture ? { headers: workspaceSessionPlacementHeaders } : {}) }
     reconcileDeparture = true
     const parents = await Promise.all(level.map(async (sessionId) => {
       if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return null

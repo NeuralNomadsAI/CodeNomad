@@ -5,7 +5,7 @@ import { authenticatedFetch } from "./auth-recovery"
 import { prioritizedRead } from "./prioritized-read"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
-import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
+import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../../../server/src/opencode/session-access-contract"
 
 class SDKManager {
   private clients = new Map<string, OpenCodeClient>()
@@ -113,6 +113,7 @@ export function withDeferredMedia(input: RequestInfo | URL, init: RequestInit | 
  * workspace departure becomes a missing session, retaining its reason. */
 const PARENT_SESSION_READ_HEADER = "x-codenomad-parent-read"
 export const parentSessionReadHeaders = { [PARENT_SESSION_READ_HEADER]: "1" } as const
+export const workspaceSessionPlacementHeaders = { ...parentSessionReadHeaders, [SESSION_PLACEMENT_HEADER]: "1" } as const
 
 function parentSessionReadId(input: RequestInfo | URL, init: RequestInit | undefined, method: string, apiPath: string): string | undefined {
   if (method !== "GET") return undefined
