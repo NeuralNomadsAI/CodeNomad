@@ -75,6 +75,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], art
       listRanges: () => readRange(range => range.listRanges()),
       readOrdered: (...args) => readRange(range => range.readOrdered(...args)),
       readEvent: (...args) => readRange(range => range.readEvent(...args)),
+      readDisplay: (...args) => readRange(range => range.readDisplay!(...args)),
+      saveDisplay: (...args) => readRange(range => range.saveDisplay!(...args)),
     }
     // On a cold daemon the setup graph can lack the database even though the
     // request graph has it. Background work keeps its setup-owned capability.

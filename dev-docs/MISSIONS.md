@@ -1017,16 +1017,47 @@ work uses the activation's qualified reader when available. Ordinary reads enume
 mission keys, then reconstruct each selected map in replay order. The source
 holds one transaction per range and reads batches of at most 128 rows and 1 MiB
 of event bodies, except that an oversized existing row is read alone. Receipt
-and report lookups stay inside the same observation. The activation retains one
-derived live map; reuse requires hashing the current source bytes again. A cold
-open or changed range replays event bodies, and maps still retain their live
-task/report bodies. Explicit history and cleanup/purge authority may still
-materialize all the historical events. SQL batches bound individual transfers,
-while the total bytes hashed and the scalar replay headers grow with the history.
-This path uses the existing event keys and does not migrate the journal or write
-a persisted checkpoint. Builds and adapters with only the generic scanner still
-have its entry limit; rolling back to one of those builds leaves event bytes
-intact, but a journal beyond its limit needs a range-capable build.
+and report lookups stay inside the same observation. The activation retains up
+to 64 derived maps and folds, weighted by a total of 64 MiB of source bodies.
+This is a cache weight, not a heap limit. A disposable SQLite head table stores one stamp
+per changed range; triggers publish it in the transaction that changes the
+event, including same-size replacements by another connection. The head and
+the event rows are read in one SQLite snapshot. Installation uses one immediate
+transaction and checks the exact schema. A changed schema cookie requalifies the
+definitions and renews the incarnation before reuse. An unavailable index uses
+the exact byte-hash fallback; a failed installation can retry on later demand,
+at most once per read. Stamps are scoped to the range and index incarnation.
+
+An unchanged head transfers no event bodies. A single strictly ordered task
+declaration or briefing advances the fold from its own event if it cannot
+occupy a prior receipt slot. Other changes, eviction and restart replay in
+bounded batches; total cold bytes and scalar headers grow with history. Selected
+declaration and briefing still inspect every range for project damage and
+timestamps, and verify document bindings, but copy only the selected map. An
+evicted range needs replay even during warm project operations.
+The first reconstruction reads source bodies and retains live text in the fold.
+An explicit panel header read may persist a display-only record of at most
+48 KiB in the head table, including descriptors and original event identities
+for objective and notes. A qualified reopen reads that header without loading
+event bodies. Reading either recorded input point-reads its event in the same
+SQLite snapshot and verifies the body descriptor. Document bindings stay live
+reads. Misses, changed stamps and invalid records reconstruct from the journal;
+an event write updates its head and does not regenerate display projections.
+The first task window and the header's exact pinned selection each retain one
+compact record of at most 96 KiB. The records include only display rows,
+descriptors and event keys for their task briefs and unambiguous reports.
+Requests for those bodies verify their descriptors against the original event.
+The directory, later windows and bodies outside those selections retain the
+normal projection path. Compact panel and body reads copy only their projected result.
+While the fold is cached, an old
+objective pair is read by its two event keys, fenced by the range stamp.
+Other explicit old plan changes and cleanup/purge authority can materialize
+historical events. The head table and
+triggers are derived; the event format and keys stay unchanged. A range-capable
+build can read those same events on rollback; scanner-only builds retain their
+entry limit. On an offline copy, remove the three
+`codenomad_mission_head_v1_*` triggers and then the `codenomad_mission_head_v1`
+table in one transaction to remove the optimization while retaining `kv`.
 
 Briefing replay checks the exact ordered event position and preceding timestamp during
 reduction. Prefix run state is derived from creation and control events; the returned
@@ -1039,6 +1070,17 @@ open → declare → briefing → restart and exact replay → declare → Stop 
 on the same synthetic database. Output includes counts and bytes by event type and read,
 latency and memory samples by operation. The warm read uses the same fixture copy as the
 measured operation; both modes use the system's current filesystem cache.
+`--read-budget` compares 128 and 10,148 events with the same live work and
+different superseded objectives. It asserts the warm historical byte budget,
+then verifies that a declaration whose write acknowledgement was lost is
+reconciled after reopening the database without issuing another write.
+`--compare 1` compares both builds on byte-identical synthetic databases and
+checks cold and warm resume from the same paused copy.
+`--panel-io` measures the registered HTTP header and body reads on a synthetic
+SQLite copy and verifies reopen, damage handling and index removal.
+`node scripts/test-mission-journal-head-native.mjs <absolute-isolated-opencode-cli>`
+qualifies the index on the daemon's transaction and storage adapters using
+synthetic rows in a private database.
 
 **Panel reads** (`missions/mission-summary.ts`, `MissionControl.list`/`mission`, `server/routes/missions.ts`). The panel never loads every full map. The read-mostly `list({ include?, summariesVersion? })` RPC takes the open missions (`openIDs()`) plus at most four `include` IDs, re-reads each range with `missionView`, and returns their compact maps (§Compact maps) stamped with the project damage flags, one `MissionSummary` row per live map in snapshot order (id, title, objective label of 502 code points with whitespace runs collapsed and a newline kept, enough for the row title, status, runState, coordinator and actor session IDs, updatedAt, a finished map's `finishSequence`, revision, its plan's task count (a compact map's from its task page); rows of re-read ranges come from their fresh maps, and an included map the hints missed gets its row), the hints' cleanup history and discarded count, and `summariesVersion`, a content hash of the rows; `summaries` is omitted when the caller sent that version. The `mission({ missionID })` RPC returns one range's compact map (absent when it holds no live map), that range's own cleanups and the project flags. Both are hints-based reads (§Journal index): rows and cleanup history can miss a foreign write until the rebuild, while included and open maps are read from storage on every call; neither authorizes anything, and every write keeps its authoritative read in the plugin. `GET /api/workspaces/:id/missions?include=<id,…>&summaries=<version>` brokers `list` and projects activity over the returned maps only; `GET /api/workspaces/:id/missions/:missionID` brokers `mission` for display reconciliation (the editor's lost-acknowledgement checks, cleanup retries). `GET /api/workspaces/:id/missions/:missionID/admission` answers the same shape from the full `snapshot` RPC, its map full: the admission read of an application-authored native prompt (the coordinator message), which hints must never authorize. The list and single routes compact the maps they return too (`compactMissionReads`, `compactMissionMap`), since a reload can briefly pair this backend with an older plugin that returns full maps, with or without descriptors (§Compact maps); the admission route never does. A plugin build without `list` (`rpc.method_not_found`) answers `plugin-unavailable`: its only other read, the snapshot, carries every full map, which the panel never loads. A plugin without `mission` answers the single read from its snapshot, that one map compacted; any other RPC failure stays a failure. Bridge routes (assignment, report, lifecycle, prepare, root creation, task conversations) keep the full `snapshot`: they authorize native effects. The UI store (`stores/mission-store.ts`) keeps compact maps (`missions`) and rows (`summaries`; derived from the maps of a list without summaries, which carries every map). Consumers register the maps they need with `want(instanceId, owner, missionID)`: the selected Mission (MissionControl) and the central reader. Includes and the held version are sent only once the backend has answered with a `summariesVersion`, so the first read after a load sends none; a wanted row still without its map, or a newly wanted one, schedules one coalesced follow-up read. `want` and the reads it starts run untracked, and components register through a memo of the target ID only, so store publications never re-run a registration; a mission already asked for by the read in flight starts nothing, and a failed read stays parked until new demand, an invalidation or an explicit refresh. Publication keeps the generation fence and trailing coalescing: when the wanted set changed while a read ran, the maps (and their activity) of rows wanted now that the read neither asked for nor returned stay from the last good display, and one follow-up reads the current includes unless a deactivation (`setDemand(false)`) happened while the read ran, in which case activation reads them; a reader's want needs no panel demand; an omitted list repeats the version this read sent, else the read fails and keeps the last good display. Picker rows, marks, completion seeding, empty states and the reader's absence check use the rows; the selected detail, the task tree, its questions and the readers use the compact maps, and a selected row waits for its map with a loading line. A parked failed read leaves the refresh button available. Native queue requests count for a Mission's declared and observed actors, their observed family and its proven native task conversations (`nativeMissionQuestions`: exact task-session evidence survives unknown family coverage; unknown descendants and global requests never count). A closed row's questions are its declared actors' open native requests; observed-family members count only for open and wanted missions. The row's flag turns red only for the questions it carries (`components/mission-question-owners.ts`, pure; `components/mission-questions.ts` reads the queues and the known task conversations): the coordinator's own, one of the coordinator's family no known task conversation carries, and, once its map is read, one no loaded live task row carries; the rest are its tasks', carried by its chevron (`data-child-activity`, the session list's rule: once the map is read, the task rows' own states through `missionTaskRowState`, input before active before an unseen finished task; before, `working` while a task actor works). Observed activity states, the coordinator's included, cover whole families and never redden the flag: only a question it can open does. Questions and session membership read only current observation pages (`currentMissionObservations`): a Mission's own current activity windows, else its current marks-lane window (a closed row's, `markObservations`); superseded or failed windows read as `unknown` and never count, for the red, the schedule's request count or navigation.
 
