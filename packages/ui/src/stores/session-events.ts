@@ -129,19 +129,24 @@ export function hasPendingSessionReturn(instanceId: string, sessionId: string): 
   return confirmedPlacements.get(instanceId)?.get(sessionId)?.returnFrom !== undefined
 }
 
-/** A matching expired proof retains the row until a current probe can settle it. */
+/** Expired proof or a changed pending return needs a current probe. */
 export function retainConfirmedSessionPlacement(
   instanceId: string, sessionId: string, placement: SessionPlacement | undefined,
   revalidations: Map<string, () => Promise<void>>, isCurrent: () => boolean, signal?: AbortSignal,
 ): boolean {
   const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
-  if (!confirmed || !matchesSessionPlacement(placement, confirmed.placement)) return false
-  if (confirmed.client === instances().get(instanceId)?.client && confirmed.generation === getOpenCodeInstanceGeneration(instanceId)) return true
+  if (!confirmed || !placement) return false
+  const matching = matchesSessionPlacement(placement, confirmed.placement)
+  const pendingReturn = confirmed.returnFrom !== undefined
+    && getMovedAwaySessions(instanceId).get(sessionId) === confirmed.returnFrom
+  if (!matching && !pendingReturn) return false
+  if (matching && confirmed.client === instances().get(instanceId)?.client && confirmed.generation === getOpenCodeInstanceGeneration(instanceId)) return true
+  const capturedPlacement = { ...placement }
   revalidations.set(sessionId, async () => {
     const current = () => isCurrent() && !signal?.aborted && !isSessionMovePending(instanceId, sessionId)
       && confirmedPlacements.get(instanceId)?.get(sessionId) === confirmed
       && (confirmed.returnFrom === undefined || getMovedAwaySessions(instanceId).get(sessionId) === confirmed.returnFrom)
-      && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), confirmed.placement)
+      && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), capturedPlacement)
     const readSignal = signal ?? new AbortController().signal
     try {
       const result = await prioritizedRead(
@@ -156,7 +161,7 @@ export function retainConfirmedSessionPlacement(
         removeSessionProjection(instanceId, sessionId)
       } else if (result?.id === sessionId && result.location) {
         confirmSessionPlacement(instanceId, sessionId, result, confirmed.returnFrom)
-        if (!matchesSessionPlacement(result, confirmed.placement) || result.listWorktreeSlug !== confirmed.placement.listWorktreeSlug) {
+        if (!matchesSessionPlacement(result, capturedPlacement) || result.listWorktreeSlug !== confirmed.placement.listWorktreeSlug || !matching) {
           applySessionMovePlacement(instanceId, { ...result, sessionID: sessionId })
           refreshSelectedMoveCatalog(instanceId, sessionId)
         }

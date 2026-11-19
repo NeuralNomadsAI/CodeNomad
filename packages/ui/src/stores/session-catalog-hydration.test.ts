@@ -399,7 +399,7 @@ for (const directory of ["/linked-alias", "/repo/linked-alias"]) test(`cold rest
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees; f.cleanup() }
 })
 
-for (const mode of ["return", "late inventory", "late inventory after reconnect", "late inventory after reconnect with child", "late inventory after departure", "new departure", "unregistered"] as const) test(`favorite placement reconciles a previous departure (${mode})`, async () => {
+for (const mode of ["return", "late inventory", "late inventory after reconnect", "late inventory after reconnect with child", "late inventory after reconnect at root", "late inventory after departure", "new departure", "unregistered"] as const) test(`favorite placement reconciles a previous departure (${mode})`, async () => {
   const id = `favorite-return-${mode.replaceAll(" ", "-")}`, f = fixture(id)
   const originalWorktrees = serverApi.fetchWorktrees
   const started = deferred<void>(), read = deferred<any>()
@@ -411,11 +411,16 @@ for (const mode of ["return", "late inventory", "late inventory after reconnect"
     ...(hasLinked ? [{ slug: "linked", directory: "/repo-linked", kind: "worktree" } as const] : []),
   ] })
   let reads = 0
-  f.client.session.get = async () => { reads++; started.resolve(); return read.promise }
+  let returnedSession = alias
+  f.client.session.get = async () => {
+    if (++reads > 1) return returnedSession
+    started.resolve()
+    return read.promise
+  }
   const reconnects = mode.includes("reconnect")
   const child = { ...row("child", "root"), parentID: "root", location: { directory: "/repo" } }
   f.client.session.list = async (input: any) => ({
-    data: input.project ? [alias, ...(mode === "late inventory after reconnect with child" ? [child] : [])] : [], cursor: {},
+    data: input.project ? [returnedSession, ...(mode === "late inventory after reconnect with child" ? [child] : [])] : [], cursor: {},
   })
   setInstanceMetadata(id, { project: { id: "project" } as any })
   let restoring: Promise<unknown> | undefined
@@ -435,6 +440,9 @@ for (const mode of ["return", "late inventory", "late inventory after reconnect"
       if (reconnects) {
         applyOpenCodeDataEvent(id, "/repo", { id: "connected", type: "server.connected", created: 1, data: {} } as any)
       }
+      if (mode === "late inventory after reconnect at root") {
+        returnedSession = { ...alias, location: { directory: "/repo" }, listWorktreeSlug: "root" }
+      }
       hasLinked = true
       await reloadWorktrees(id, true)
       if (reconnects) assert.equal(getSessionThreads(id).some(thread => thread.session.id === "root"), false)
@@ -446,8 +454,8 @@ for (const mode of ["return", "late inventory", "late inventory after reconnect"
     assert.equal(getSessionThreads(id).some(thread => thread.session.id === "root"), returned)
     assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
     if (returned) {
-      assert.equal(sessions().get(id)?.get("root")?.location.directory, alias.location.directory)
-      assert.equal(getWorktreeSlugForParentSession(id, "root"), "linked")
+      assert.equal(sessions().get(id)?.get("root")?.location.directory, returnedSession.location.directory)
+      assert.equal(getWorktreeSlugForParentSession(id, "root"), returnedSession.listWorktreeSlug)
     }
     if (reconnects) assert.equal(reads, 2, "the expired proof needs exactly one fresh read")
   } finally {
