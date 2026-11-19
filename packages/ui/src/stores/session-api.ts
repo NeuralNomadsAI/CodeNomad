@@ -118,6 +118,7 @@ import {
 const log = getLogger("api")
 const sessionLog = getLogger("session")
 const sessionListRequestIds = new Map<string, number>()
+const restorePlacementReads = new Map<string, Set<() => boolean>>()
 const catalogLocations = new Map<string, string>()
 const catalogRefreshes = new Map<string, { key: string; promise: Promise<void>; pending: boolean }>()
 const agentRequestIds = new Map<string, number>()
@@ -519,7 +520,12 @@ async function hydrateRestoredSessionChain(
 ): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
-    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent(), reconcileInitialDeparture)
+    const releaseReads: Array<() => void> = []
+    try {
+      await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, releaseReads, signal, () => isCurrent() && generationCurrent(), reconcileInitialDeparture)
+    } finally {
+      for (const release of releaseReads) release()
+    }
     signal?.throwIfAborted()
     if (!isCurrent() || generationCurrent()) return
   }
@@ -529,6 +535,7 @@ async function hydrateRestoredSessionChain(
 async function hydrateRestoredSessionChainAttempt(
   instanceId: string,
   requestedIds: Array<string | null | undefined>,
+  releaseReads: Array<() => void>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
   reconcileInitialDeparture = false,
@@ -558,6 +565,18 @@ async function hydrateRestoredSessionChainAttempt(
       if (!session || session.catalogSnapshot) {
         const captured = session
         const move = getPendingSessionMove(instanceId, sessionId)
+        if (readOptions.headers) {
+          const key = messagePageKey(instanceId, sessionId)
+          const reads = restorePlacementReads.get(key) ?? new Set<() => boolean>()
+          const current = () => isRequestCurrent() && !signal?.aborted
+            && getPendingSessionMove(instanceId, sessionId) === move
+          reads.add(current)
+          restorePlacementReads.set(key, reads)
+          releaseReads.push(() => {
+            reads.delete(current)
+            if (!reads.size) restorePlacementReads.delete(key)
+          })
+        }
         try {
           signal?.throwIfAborted()
           const read = () => isRequestCurrent()
@@ -586,7 +605,8 @@ async function hydrateRestoredSessionChainAttempt(
             && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), apiSession)
           ownedReads.set(sessionId, ownsPlacement)
           if (readOptions.headers && ownsPlacement()
-            && !isWorkspaceServedDirectory(apiSession.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId))) {
+            && (("listWorktreeSlug" in apiSession && typeof apiSession.listWorktreeSlug === "string")
+              || !isWorkspaceServedDirectory(apiSession.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId)))) {
             confirmSessionPlacement(instanceId, sessionId, apiSession)
           }
           if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
@@ -811,7 +831,8 @@ async function fetchSessions(instanceId: string, options?: {
       const currentSessions = sessions().get(instanceId) ?? new Map()
       const revalidations = new Map<string, () => Promise<void>>()
       const retainPlacement = (id: string, session: Session | undefined) =>
-        retainConfirmedSessionPlacement(instanceId, id, session, revalidations, isCurrent, options?.signal)
+        [...(restorePlacementReads.get(messagePageKey(instanceId, id)) ?? [])].some(current => current())
+          || retainConfirmedSessionPlacement(instanceId, id, session, revalidations, isCurrent, options?.signal)
       const staleIds = new Set(getDisconnectedCapturedSessionIds(existingSessions, currentSessions, validRootIds))
       const fetchedIds = new Set(authoritativeSessions.map(session => session.id))
       // Parents may live outside the enumerated project after a native move.

@@ -271,7 +271,7 @@ test("cold restore reconciles a departed parent after the local child read witho
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees }
 })
 
-test("cold restore keeps a proxy-confirmed alias selected through catalogue reconciliation", async () => {
+for (const directory of ["/linked-alias", "/repo/linked-alias"]) test(`cold restore keeps a proxy-confirmed alias selected at ${directory}`, async () => {
   const originalFetch = globalThis.fetch
   const originalWorktrees = serverApi.fetchWorktrees
   serverApi.fetchWorktrees = async () => ({
@@ -285,7 +285,7 @@ test("cold restore keeps a proxy-confirmed alias selected through catalogue reco
   const native = (id: string, directory: string, parentID?: string) => ({
     ...row(id), parentID, location: { directory }, model: { providerID: "p", id: "m" },
   })
-  const alias = native("root", "/linked-alias")
+  const alias = native("root", directory)
   let catalogueRoot = alias
   let localChildPresent = false
   try {
@@ -306,7 +306,7 @@ test("cold restore keeps a proxy-confirmed alias selected through catalogue reco
 
     await fetchSessions(id, { strictStatus: true })
     assert.equal(activeSessionId().get(id), "root", "a lexical miss cannot undo the owned restore read")
-    assert.equal(sessions().get(id)?.get("root")?.location.directory, "/linked-alias")
+    assert.equal(sessions().get(id)?.get("root")?.location.directory, directory)
     assert.equal(getWorktreeSlugForParentSession(id, "root"), "linked")
     setActiveSessionFromList(id, "other")
     assert.ok(getSessionThreads(id).some(thread => thread.session.id === "root"), "the alias remains listed after switching")
@@ -318,6 +318,39 @@ test("cold restore keeps a proxy-confirmed alias selected through catalogue reco
     assert.equal(activeSessionId().get(id), undefined, "a different placement cannot inherit the alias confirmation")
     assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees; f.cleanup() }
+})
+
+test("complete inventory keeps a saved selection while its placement read is pending", async () => {
+  const id = "catalog-pending-alias", f = fixture(id)
+  const originalWorktrees = serverApi.fetchWorktrees
+  const started = deferred<void>(), read = deferred<any>()
+  const alias = { ...row("root"), parentID: undefined, location: { directory: "/linked-alias" }, listWorktreeSlug: "linked" }
+  Object.assign(f.saved, { activeSessionId: "root", drafts: { root: "keep draft" }, sessionCatalog: captureSessionCatalog([alias]) })
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
+    { slug: "root", directory: "/repo", kind: "root" },
+    { slug: "linked", directory: "/repo-linked", kind: "worktree" },
+  ] })
+  f.client.session.get = async () => { started.resolve(); return read.promise }
+  f.client.session.list = async (input: any) => ({ data: input.project ? [alias] : [], cursor: {} })
+  setInstanceMetadata(id, { project: { id: "project" } as any })
+  let restoration: Promise<unknown> | undefined
+  try {
+    await ensureWorktreesLoaded(id)
+    restoration = hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+    await started.promise
+    await fetchSessions(id, { strictStatus: true })
+    assert.equal(activeSessionId().get(id), "root", "inventory absence is not a refusal of an in-flight restore")
+    read.resolve(alias)
+    await restoration
+    assert.equal(activeSessionId().get(id), "root")
+    assert.equal(getWorktreeSlugForParentSession(id, "root"), "linked")
+    assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
+  } finally {
+    read.resolve(alias)
+    await restoration
+    serverApi.fetchWorktrees = originalWorktrees
+    f.cleanup()
+  }
 })
 
 for (const mode of ["standalone", "local descendant", "absent parent"] as const) {
