@@ -224,6 +224,34 @@ for (const [order, description] of [
   })
 }
 
+for (const recovery of ["reconnect", "expiry"] as const) {
+  test(`a lost voice execution start stops parking prompts after ${recovery}`, async () => {
+    const { page, context, start, snapshot, waitForSent } = await fixture()
+    try {
+      await page.clock.install()
+      const send = await start()
+      await page.evaluate(() => (window as any).fixture.setFirstPrompt("delay"))
+      async function prompt(id: string) {
+        send({ type: "tool-call", id, name: "send_to_agent", arguments: { text: id } })
+        return JSON.parse((await waitForSent(item => item.id === id)).output).delivery
+      }
+      assert.equal(await prompt("first"), "submitted")
+      if (recovery === "reconnect") {
+        assert.deepEqual(await page.evaluate(() => (window as any).fixture.resyncIdle()),
+          { known: true, status: "idle", idle: 1 })
+      } else {
+        await page.clock.fastForward(10_000)
+        assert.equal(await prompt("inside-bound"), "queued")
+        await page.clock.fastForward(5_100)
+      }
+      assert.equal(await prompt("after-recovery"), "submitted")
+      const last = (await snapshot()).info.prompts.at(-1)
+      assert.equal(last.delivery, "steer")
+      assert.equal(last.resume, undefined)
+    } finally { await context.close() }
+  })
+}
+
 test("OpenAI final text replaces deltas; unknown tools fail closed", async () => {
   const { page, context, start, closed, snapshot, waitForSent } = await fixture("openai")
   try {

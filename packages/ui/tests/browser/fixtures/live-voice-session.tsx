@@ -7,6 +7,7 @@ import { SpeechSettingsSection } from "../../../src/components/settings/speech-s
 import { serverApi } from "../../../src/lib/api-client"
 import { useLiveVoiceConversation } from "../../../src/lib/hooks/use-live-voice-conversation"
 import { I18nProvider } from "../../../src/lib/i18n"
+import { refreshSessionRuntimeStatus } from "../../../src/stores/session-api"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -14,7 +15,7 @@ import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { activeSettingsSection, openSettingsRow, settingsOpen } from "../../../src/stores/settings-screen"
-import { activeSessionId, getSessionDraftPrompt, setActiveSession, setSessionDraftPrompt, setSessions, setSessionStatus } from "../../../src/stores/session-state"
+import { activeSessionId, getSessionDraftPrompt, sessions, setActiveSession, setSessionDraftPrompt, setSessions, setSessionStatus } from "../../../src/stores/session-state"
 import { loadVoiceConversationEngine, setVoiceConversationEngine } from "../../../src/stores/voice-conversation-engine"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
@@ -53,7 +54,11 @@ const client: any = {
       }
       return { id: input.id }
     },
-    active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
+    active: async () => ({}),
+    get: async () => ({
+      id: sessionId, title, location: { directory: path }, time: { created: 1, updated: 1, idle: 1 },
+    }),
+    inbox: { list: async () => ({ data: [] }) },
   },
   message: { list: async () => ({ data: [], cursor: {} }) },
 }
@@ -62,7 +67,7 @@ sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
 addInstance({ id: instanceId, folder: path, projectName: "Project", port: 0, pid: 0, proxyPath: path, status: "ready", client })
 setSessions(previous => new Map(previous).set(instanceId, new Map([sessionId, "other"].map(id => [id, {
   id, instanceId, parentId: null, title, location: { directory: path },
-  status: "idle", agent: "", model: { providerId: "", modelId: "" }, time: { created: 1, updated: 1 },
+  status: "idle", agent: "", model: { providerId: "", modelId: "" }, time: { created: 1, updated: 1, idle: 1 },
 } as any]))))
 setActiveInstanceId(instanceId)
 setActiveSession(instanceId, sessionId)
@@ -115,6 +120,12 @@ function Fixture() {
     setFirstPrompt: (value: typeof firstPrompt) => { firstPrompt = value },
     startExecution: () => emit("session.execution.started", {}),
     finishExecution: () => emit("session.execution.succeeded", {}),
+    resyncIdle: async () => {
+      emit("server.connected", { daemon: "voice-fixture" })
+      await refreshSessionRuntimeStatus(instanceId)
+      const session = sessions().get(instanceId)?.get(sessionId)
+      return { known: session?.runtimeStatusKnown, status: session?.status, idle: session?.time.idle }
+    },
     holdAdmission: () => { info.admissionHeld = true },
     waitingAdmission: () => Boolean(releaseAdmission),
     releaseAdmission: (keepHolding = true) => {

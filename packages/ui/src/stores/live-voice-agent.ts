@@ -15,6 +15,7 @@ import { isSessionBusy } from "./session-status"
 import { getWorktrees } from "./worktrees"
 
 const title = (label: string | undefined) => (label ?? "").slice(0, 256)
+const EXECUTION_START_GRACE_MS = 15_000
 
 export function liveVoiceTargetSession(instanceId: string, sessionId: string | undefined) {
   if (!sessionId || activeInstanceId() !== instanceId || activeSessionId().get(instanceId) !== sessionId) return
@@ -56,10 +57,15 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
   const instanceId = instance.id
   const sessionId = session.id
   const lifecycle = () => nativeSessionLifecycleGeneration(instanceId, sessionId)
-  const idleBoundary = () => sessions().get(instanceId)?.get(sessionId)?.time.idle ?? 0
-  let awaitingExecution: { generation: number; idle: number } | undefined
+  const currentSession = () => sessions().get(instanceId)?.get(sessionId)
+  const idleBoundary = () => currentSession()?.time.idle ?? 0
+  let awaitingExecution: { generation: number; idle: number; admission: number; expires: number } | undefined
   function busyFromAcknowledgement() {
-    if (awaitingExecution && (awaitingExecution.generation !== lifecycle() || idleBoundary() > awaitingExecution.idle)) {
+    if (awaitingExecution && (
+      awaitingExecution.generation !== lifecycle() || idleBoundary() > awaitingExecution.idle ||
+      (currentSession()?.idleReadAdmissionEpoch ?? 0) >= awaitingExecution.admission ||
+      performance.now() >= awaitingExecution.expires
+    )) {
       awaitingExecution = undefined
     }
     return awaitingExecution !== undefined
@@ -113,9 +119,10 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
           onDispatch: () => {
             if (delivery !== "steer") return
             const generation = lifecycle(), idle = idleBoundary()
+            const admission = currentSession()?.generationAdmissionEpoch
             return () => {
-              if (current() && generation === lifecycle() && idleBoundary() <= idle) {
-                awaitingExecution = { generation, idle }
+              if (admission !== undefined && current() && generation === lifecycle() && idleBoundary() <= idle) {
+                awaitingExecution = { generation, idle, admission, expires: performance.now() + EXECUTION_START_GRACE_MS }
               }
             }
           },

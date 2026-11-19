@@ -29,6 +29,14 @@ export function resolveAuthoritativeGenerationRecovery(
   return current ?? null
 }
 
+// An activity read can cover an acknowledged send even without a new outcome
+// or idle timestamp. A read begun during admission cannot cover that send.
+export function idleReadAdmissionEpoch(baseline: Session | undefined, latest = baseline): number | undefined {
+  return baseline?.generationAdmissionToken === undefined && baseline?.generationAdmissionEpoch === latest?.generationAdmissionEpoch
+    ? baseline?.generationAdmissionEpoch
+    : latest?.idleReadAdmissionEpoch
+}
+
 export function reconcileFetchedSessionRuntime(
   session: Session,
   existing: Session | undefined,
@@ -54,6 +62,8 @@ export function reconcileFetchedSessionRuntime(
     outcome,
     retry: activeSessions === null ? existing?.retry ?? null : null,
     runtimeStatusKnown: activeSessions === null ? existing?.runtimeStatusKnown ?? false : true,
+    idleReadAdmissionEpoch: activeSessions !== null && status === "idle"
+      ? idleReadAdmissionEpoch(existing) : existing?.idleReadAdmissionEpoch,
     generationRecovery: activeSessions === null
       ? existing?.generationRecovery ?? null
       : resolveAuthoritativeGenerationRecovery(existing?.generationRecovery, status, outcome),
@@ -106,7 +116,7 @@ function mergeRuntimeState(
   // event can have the same status as the baseline yet clear recovery/token;
   // a stale fetch must not graft an old interruption onto that newer state.
   const authorityKeys = ["status", "runtimeStatusKnown", "generationRecovery", "generationAdmissionToken", "generationAdmissionEpoch", "generationAdmissionIdleBoundary"] as const
-  const runtimeKeys = [...authorityKeys, "outcome", "retry", "idleSince"] as const
+  const runtimeKeys = [...authorityKeys, "outcome", "retry", "idleSince", "idleReadAdmissionEpoch"] as const
   if (authorityKeys.some(key => !captured || !Object.is(captured[key], latest[key]))) {
     for (const key of runtimeKeys) {
       if (Object.prototype.hasOwnProperty.call(latest, key)) (merged as any)[key] = latest[key]

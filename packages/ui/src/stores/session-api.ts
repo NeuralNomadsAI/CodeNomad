@@ -97,7 +97,7 @@ import {
   captureSessionPlacementEvidence, clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending,
   hasPendingSessionReturn, matchesSessionPlacement, retainConfirmedSessionPlacement, settleListedReturn,
 } from "./session-events"
-import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
+import { idleReadAdmissionEpoch, mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
 import {
@@ -498,9 +498,15 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
       const latest = current.get(id)
       if (!latest) continue
       const info = outcomes.get(id)
-      // A failed outcome read is neither idle nor deletion authority. Preserve
-      // this row unless the later activity read positively observes new work.
-      if (outcomes.has(id) && !info && !Object.prototype.hasOwnProperty.call(active, id)) continue
+      // Activity can release an acknowledged send's brief delivery hold even
+      // if the historical outcome could not be read. Keep the rest of the row.
+      if (outcomes.has(id) && !info && !Object.prototype.hasOwnProperty.call(active, id)) {
+        const epoch = idleReadAdmissionEpoch(baseline, latest)
+        if (epoch !== latest.idleReadAdmissionEpoch) {
+          current.set(id, { ...latest, idleReadAdmissionEpoch: epoch })
+        }
+        continue
+      }
       const fetched = withRuntimeStatus(info ? toClientSessionV2(instanceId, info, baseline) : baseline, baseline, active)
       const merged = mergeFetchedSessionRuntimeState(fetched, baseline, latest)
       if (merged) current.set(id, merged)
@@ -1248,6 +1254,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     generationAdmissionToken: existingSession?.generationAdmissionToken,
     generationAdmissionEpoch: existingSession?.generationAdmissionEpoch,
     generationAdmissionIdleBoundary: existingSession?.generationAdmissionIdleBoundary,
+    idleReadAdmissionEpoch: existingSession?.idleReadAdmissionEpoch,
     outcome: apiSession.outcome,
     cost: apiSession.cost,
     tokens: apiSession.tokens,
