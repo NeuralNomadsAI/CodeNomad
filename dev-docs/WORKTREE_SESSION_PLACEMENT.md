@@ -74,7 +74,7 @@ Implementation:
   generation. A complete catalogue rechecks expired placement evidence through
   the proxy for an absent alias, including an ancestor retained by a local descendant.
   A successful read applies the current placement and renews the evidence;
-  a typed departure removes the old list,
+  a typed departure or native session-not-found removes the old list,
   selection and transcript
   projection (`removeSessionProjection`). Other read failures keep the move
   unresolved until a later worktree publication retries it. Confirmation updates

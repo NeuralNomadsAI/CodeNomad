@@ -476,7 +476,7 @@ for (const mode of ["departure", "newer proof", "settled move"] as const) test(`
   }
 })
 
-for (const mode of ["standalone", "local descendant", "absent parent"] as const) {
+for (const mode of ["standalone", "local descendant", "absent parent", "deleted"] as const) {
   test(`revalidates a confirmed alias after first connection (${mode})`, async () => {
     const id = `catalog-alias-reconnect-${mode.replaceAll(" ", "-")}`, f = fixture(id)
     const originalFetch = globalThis.fetch, originalWorktrees = serverApi.fetchWorktrees
@@ -484,11 +484,13 @@ for (const mode of ["standalone", "local descendant", "absent parent"] as const)
       ...row(id), parentID, location: { directory }, model: { providerID: "p", id: "m" },
     })
     let alias = native("root", "/linked-alias")
+    let deleted = false
     const moved = { ...native("root", "/second-linked-alias"), projectID: "moved-project", subpath: "pkg" }
     const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
     const replies = {
       owned: () => Response.json({ data: alias }),
       forbidden: () => Response.json({ error: "Forbidden" }, { status: 403 }),
+      missing: () => Response.json({ _tag: "SessionNotFoundError", sessionID: "root", message: "Session not found" }, { status: 404 }),
       departed: () => Response.json({ reason: SESSION_LOCATED_ELSEWHERE_REASON }, { status: 403 }),
     }
     let reply: () => Response | Promise<Response> = replies.owned, reads = 0
@@ -505,7 +507,8 @@ for (const mode of ["standalone", "local descendant", "absent parent"] as const)
       f.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
       f.client.agent = { list: async ({ location }: any) => { agentDirectories.push(location.directory); return [] } }
       f.client.session.list = async (input: any) => ({ data: input.project
-        ? [...(mode === "absent parent" ? [] : [alias]), ...(mode === "standalone" ? [] : [native("child", "/repo", "root")])]
+        ? [...(mode === "absent parent" || deleted ? [] : [alias]),
+          ...(mode === "local descendant" || mode === "absent parent" ? [native("child", "/repo", "root")] : [])]
         : [native("other", "/repo")], cursor: {} })
       Object.assign(f.saved, { activeSessionId: "root", drafts: { root: "keep draft" }, sessionCatalog: undefined })
       setInstanceMetadata(id, { project: { id: "project" } as any })
@@ -556,12 +559,13 @@ for (const mode of ["standalone", "local descendant", "absent parent"] as const)
       assert.equal(activeSessionId().get(id), "root")
       withSession(id, "root", session => { session.location = moved.location })
 
-      reply = replies.departed
+      deleted = mode === "deleted"
+      reply = deleted ? replies.missing : replies.departed
       await fetchSessions(id, { strictStatus: true })
       assert.equal(reads, 7)
-      assert.equal(activeSessionId().get(id), undefined, "typed departure removes the projection")
+      assert.equal(activeSessionId().get(id), undefined, "typed absence removes the projection")
       assert.equal(sessions().get(id)?.has("root") ?? false, false)
-      if (mode !== "standalone") assert.equal(sessions().get(id)?.has("child"), true)
+      if (mode === "local descendant" || mode === "absent parent") assert.equal(sessions().get(id)?.has("child"), true)
       assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
     } finally {
       delayed.resolve(replies.forbidden())

@@ -91,6 +91,7 @@ type SessionPlacementRead = SessionInfo & { listWorktreeSlug?: string }
 type PlacementEvidence = { placement: SessionPlacement; generation: number; client: ReturnType<typeof getRootClient> }
 const confirmedPlacements = new Map<string, Map<string, PlacementEvidence>>()
 const LOCATED_ELSEWHERE = Symbol("session located elsewhere")
+const SESSION_MISSING = Symbol("session not found")
 
 export function captureSessionPlacementEvidence(instanceId: string, sessionId: string): () => boolean {
   const evidence = confirmedPlacements.get(instanceId)?.get(sessionId)
@@ -143,9 +144,9 @@ export function retainConfirmedSessionPlacement(
         () => current() ? readWorkspaceSessionPlacement(instanceId, sessionId, readSignal) : Promise.resolve(undefined),
       )
       if (!current()) return
-      if (result === LOCATED_ELSEWHERE) {
+      if (result === LOCATED_ELSEWHERE || result === SESSION_MISSING) {
         clearPendingSessionMove(instanceId, sessionId)
-        markSessionMovedAway(instanceId, sessionId, null)
+        if (result === LOCATED_ELSEWHERE) markSessionMovedAway(instanceId, sessionId, null)
         removeSessionProjection(instanceId, sessionId)
       } else if (result?.id === sessionId && result.location) {
         confirmSessionPlacement(instanceId, sessionId, result)
@@ -167,7 +168,9 @@ async function readWorkspaceSessionPlacement(instanceId: string, sessionId: stri
       headers: workspaceSessionPlacementHeaders, signal,
     }) as SessionPlacementRead
   } catch (error) {
-    if (isSessionNotFoundError(error) && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) return LOCATED_ELSEWHERE
+    if (isSessionNotFoundError(error)) {
+      return "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON ? LOCATED_ELSEWHERE : SESSION_MISSING
+    }
     throw error
   }
 }
@@ -454,7 +457,7 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
   try {
     const session = await readWorkspaceSessionPlacement(instanceId, sessionId)
     if (current()) {
-      if (session === LOCATED_ELSEWHERE) return finishSessionMove(instanceId, sessionId, move, null)
+      if (session === LOCATED_ELSEWHERE || session === SESSION_MISSING) return finishSessionMove(instanceId, sessionId, move, session)
       if (session?.id === sessionId && session.location) return finishSessionMove(instanceId, sessionId, move, session, session)
     }
   } catch (error) {
@@ -464,12 +467,12 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
   return false
 }
 
-function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove, placement: SessionPlacement | null, verified?: SessionPlacementRead): boolean {
+function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove, placement: SessionPlacement | typeof LOCATED_ELSEWHERE | typeof SESSION_MISSING, verified?: SessionPlacementRead): boolean {
   if (getPendingSessionMove(instanceId, sessionId) !== move) return false
   clearPendingSessionMove(instanceId, sessionId)
   if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return false
   const { directory } = move.data.location
-  if (placement) {
+  if (typeof placement !== "symbol") {
     if (verified) confirmSessionPlacement(instanceId, sessionId, placement)
     const held = sessions().get(instanceId)?.get(sessionId)
     if (held) applySessionMovePlacement(instanceId, { ...placement, sessionID: sessionId })
@@ -478,7 +481,7 @@ function finishSessionMove(instanceId: string, sessionId: string, move: SessionM
     }
     return true
   }
-  markSessionMovedAway(instanceId, sessionId, directory)
+  if (placement === LOCATED_ELSEWHERE) markSessionMovedAway(instanceId, sessionId, directory)
   if (!sessions().get(instanceId)?.has(sessionId)) return true
   nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
   dismissRetryToast(instanceId, sessionId)
