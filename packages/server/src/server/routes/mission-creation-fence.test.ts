@@ -659,8 +659,8 @@ test("connection/ownership retirement during managed creation cannot release an 
   } finally { await f.close() }
 })
 
-test("managed creation uses the authenticated desktop bridge without generic native inputs", async () => {
-  const f = await fixture(true), held = deferred()
+test("managed creation uses the authenticated desktop bridge and applies the configured default", async () => {
+  const f = await fixture(true, 2_000, true), held = deferred()
   try {
     const { mission } = await specialist(f)
     const response = await f.app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
@@ -671,6 +671,9 @@ test("managed creation uses the authenticated desktop bridge without generic nat
     await assert.rejects(delegate(f), /admission failed/); assert.equal(f.creates, 0)
     held.resolve(); await deletion
     await delegate(f); assert.equal(f.creates, 1)
+    const block = [{ action: "edit", resource: "*", effect: "ask" }, { action: "shell", resource: "*", effect: "ask" }]
+    assert.deepEqual([...f.sessions.values()].find(session => session.id !== "ses_coordinator").permissions, block)
+    assert.deepEqual(f.confirmedPermissions, [block])
   } finally { held.resolve(); await f.close() }
 })
 

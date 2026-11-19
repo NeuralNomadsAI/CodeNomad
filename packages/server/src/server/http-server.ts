@@ -1325,7 +1325,10 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     if (createRoot && !authorizedSession && args.permissionModes) {
       const modes = args.permissionModes
       const distro = workspaceManager.getServiceWslDistro?.(workspaceId)
-      const location = { directory: runtimeLocation.directory }
+      const input = (body ?? {}) as { id?: unknown; location?: LocationRef; permissions?: unknown }
+      // Native root creation selects its directory from the JSON body, not
+      // from an ambient query or header. Read that Location's configuration.
+      const location = { directory: input.location?.directory ?? runtimeLocation.directory }
       let block
       try {
         block = await wait(modes.newRootRules({ client: await clientForRequest(), location, distro, signal }))
@@ -1334,7 +1337,6 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         return reply.code(503).send({ error: "Conversation permissions unavailable" })
       }
       if (block) {
-        const input = (body ?? {}) as Record<string, unknown>
         const original = sessionPermissionRules.safeParse(input.permissions ?? [])
         if (!original.success || blockPositions(original.data, block).length) {
           releaseMutation?.()
@@ -1347,6 +1349,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
             const { data: created } = await response.clone().json()
             connection?.assertCurrent()
             if (!created || (typeof input.id === "string" && created.id !== input.id)
+              || !sameLocation(readLocationRef(created.location), location)
               || !await workspaceManager.ownsLocation(workspaceId, created.location, connection?.client)) throw new Error("Foreign session")
             connection?.assertCurrent()
             modes.confirmNewRoot(created, distro, block, original.data)

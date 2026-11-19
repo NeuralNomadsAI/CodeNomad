@@ -31,8 +31,11 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
   const app = Fastify()
   const location = await client.location.get({ location: { directory: root } })
   const directory = location.directory
+  const otherDirectory = path.join(directory, "other")
+  await mkdir(otherDirectory)
+  const otherLocation = await client.location.get({ location: { directory: otherDirectory } })
   const workspaces = Object.fromEntries(["a", "b"].map(id => [id, { id, path: directory }]))
-  const owns = candidate => path.resolve(candidate) === path.resolve(directory)
+  const owns = candidate => [directory, otherLocation.directory].some(owned => path.resolve(candidate) === path.resolve(owned))
   const connection = { ...native, profile: async () => "modern" }
   const workspaceManager = {
     get: id => workspaces[id],
@@ -48,8 +51,8 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
   }
   registerInstanceProxyRoutes(app, { workspaceManager, logger, worktreeDeletionFence, sessionCleanup: cleanup, permissionModes: modes })
   registerSessionPermissionModeRoutes(app, { workspaceManager, modes, cleanup, worktreeDeletionFence })
-  const create = async (payload = {}) => {
-    const reply = await app.inject({ method: "POST", url: "/workspaces/a/instance/api/session", payload })
+  const create = async (payload = {}, query = "") => {
+    const reply = await app.inject({ method: "POST", url: `/workspaces/a/instance/api/session${query}`, payload })
     assert.equal(reply.statusCode, 200, reply.body)
     return reply.json().data
   }
@@ -73,6 +76,9 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
     assert.deepEqual(created.permissions, [initial, ...expected])
     assert.equal(await mode("b", created.id), "supervised")
     assert.equal(await mode("b", original.id), "autonomous")
+    const elsewhere = await create({ location: { directory: otherLocation.directory } }, `?directory=${encodeURIComponent(directory)}`)
+    assert.equal(elsewhere.location.directory, otherLocation.directory, "the create body owns the config and placement")
+    assert.equal(await mode("a", elsewhere.id), "supervised")
     const read = () => client.session.get({ sessionID: original.id }, options)
     const nativePermission = (sessionID, action, resource, extra) =>
       client.permission.create({ sessionID, action, resources: [resource], agent: "build", ...extra }, options)
