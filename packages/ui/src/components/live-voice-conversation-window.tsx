@@ -69,7 +69,8 @@ export default function LiveVoiceConversationWindow(props: {
   let microphone: HTMLButtonElement | undefined
   createRenderEffect(() => {
     const current = state()
-    if (current.phase === "ended" && current.reason === "idle" && document.activeElement === microphone) {
+    if (current.phase === "ended" && (current.reason === "idle" || current.reason === "duration") &&
+      document.activeElement === microphone) {
       untrack(() => close?.focus({ preventScroll: true }))
     }
   })

@@ -60,7 +60,7 @@ the bearer `Authorization` header on their provider WebSockets.
   latest visible reply and up to three recent errors of 500 characters each.
   `send_to_agent` submits a user message directly, without a confirmation dialog,
   through native `sendMessage` with the composer's delivery rules and no
-  attachments. An in-flight voice send counts as busy for follow-up delivery.
+  attachments. Follow-up delivery uses the session state at serialized admission.
   Normal permission, question and Yolo handling apply. A call ID is
   admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.

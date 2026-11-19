@@ -42,6 +42,7 @@ const client: any = {
     } },
     prompt: async (input: { id: string; text: string }) => {
       info.prompts.push(input)
+      if (input.text === "first") emit("session.execution.started", {})
       if (input.text === "Ask the agent") {
         emit("permission.asked", { id: "allow", action: "bash", resources: ["git status"], metadata: {} })
         emit("form.created", { form: question })

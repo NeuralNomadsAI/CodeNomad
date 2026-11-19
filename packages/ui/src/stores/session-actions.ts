@@ -216,7 +216,7 @@ async function sendMessage(
   sessionId: string,
   prompt: string,
   attachments: Attachment[] = [],
-  options: { delivery?: SessionInboxDelivery; restoredPayload?: SessionInboxUserPayload;
+  options: { delivery?: SessionInboxDelivery | (() => SessionInboxDelivery); restoredPayload?: SessionInboxUserPayload;
     preserveNativeProfile?: boolean; admissionCurrent?: () => boolean } = {},
 ): Promise<string> {
   const instance = instances().get(instanceId)
@@ -315,12 +315,12 @@ async function sendMessage(
   }
 
   const store = messageStoreBus.getOrCreate(instanceId)
-  const createdAt = Date.now()
-
-  clearConversationPlaybackForSession(instanceId, sessionId)
-
-  const projectOptimistically = options.delivery !== "queue"
-  if (projectOptimistically) {
+  let projected = false
+  let delivery = typeof options.delivery === "function" ? undefined : options.delivery
+  function projectSend() {
+    clearConversationPlaybackForSession(instanceId, sessionId)
+    if (delivery === "queue") return
+    const createdAt = Date.now()
     store.upsertMessage({
       id: messageId,
       sessionId,
@@ -334,7 +334,9 @@ async function sendMessage(
     })
     store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
     store.markSendPending(messageId)
+    projected = true
   }
+  if (typeof options.delivery !== "function") projectSend()
 
   withSession(instanceId, sessionId, () => {
     /* trigger reactivity for legacy session data */
@@ -352,20 +354,10 @@ async function sendMessage(
     ...(agents.length > 0 ? { agents } : {}),
     ...(skills.length ? { skills } : {}),
     ...(options.restoredPayload ? { metadata: { ...options.restoredPayload.metadata, displayText: prompt } } : {}),
-    ...(options.delivery ? { delivery: options.delivery } : {}),
-    ...(options.delivery === "queue" ? { resume: false } : {}),
   }
 
-  log.info("sendMessage", {
-    instanceId,
-    sessionId,
-    requestBody,
-  })
-
-  let confirmedId = messageId
   try {
-    log.info("session.prompt", { instanceId, sessionId, requestBody })
-    await admitSessionAction(instanceId, sessionId, async () => {
+    return await admitSessionAction(instanceId, sessionId, async () => {
       const currentInstance = instances().get(instanceId)
       const currentSession = sessions().get(instanceId)?.get(sessionId)
       if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
@@ -373,25 +365,32 @@ async function sendMessage(
       if (!currentSession) throw new Error("Session not found")
       const client = getRootClient(instanceId)
       await syncSessionInstructions(client, instanceId, sessionId)
-      if (options.delivery !== "queue" && !options.preserveNativeProfile) {
+      if (typeof options.delivery === "function") {
+        if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
+        delivery = options.delivery()
+        projectSend()
+      }
+      if (delivery !== "queue" && !options.preserveNativeProfile) {
         if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
         if (currentSession.model.providerId && currentSession.model.modelId) {
           await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, currentSession.model) })
         }
       }
       if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
-      const result = await client.session.prompt({ sessionID: sessionId, ...requestBody })
-      confirmedId = result?.id || messageId
-      if (projectOptimistically && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
-      if (projectOptimistically) store.acceptSend(confirmedId)
+      const input = { sessionID: sessionId, ...requestBody, ...(delivery ? { delivery } : {}),
+        ...(delivery === "queue" ? { resume: false } : {}) }
+      log.info("session.prompt", { instanceId, sessionId, requestBody: input })
+      const result = await client.session.prompt(input)
+      const confirmedId = result?.id || messageId
+      if (projected && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
+      if (projected) store.acceptSend(confirmedId)
+      return confirmedId
     })
   } catch (error) {
-    if (projectOptimistically) store.failSend(messageId)
+    if (projected) store.failSend(messageId)
     log.error("Failed to send prompt", error)
     throw error
   }
-
-  return confirmedId
 }
 
 async function executeCustomCommand(

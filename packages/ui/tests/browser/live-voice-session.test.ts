@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { after, before, test } from "node:test"
 import { chromium, type Browser, type WebSocketRoute } from "playwright"
+import { LIVE_VOICE_ABSOLUTE_MS, LIVE_VOICE_IDLE_MS } from "../../../server/src/speech/live-voice-contract"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
@@ -177,25 +178,28 @@ test("Gemini cancellation and target changes fence calls through native admissio
   } finally { await context.close() }
 })
 
-test("a second voice send queues while the idle session admits the first send", async () => {
-  const { page, context, start, snapshot, waitForSent } = await fixture()
-  try {
-    const send = await start()
-    await page.evaluate(() => (window as any).fixture.holdAdmission())
-    const call = (id: string) => ({ type: "tool-call", id, name: "send_to_agent", arguments: { text: id } })
-    send(call("first"))
-    await page.waitForFunction(() => (window as any).fixture.waitingAdmission())
-    send(call("second"))
-    send({ type: "tool-call", id: "status", name: "get_session_status", arguments: {} })
-    assert.equal(JSON.parse((await waitForSent(item => item.id === "status")).output).status, "idle")
-    assert.deepEqual((await snapshot()).info.prompts, [])
-    await page.evaluate(() => (window as any).fixture.releaseAdmission(false))
-    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "second")).output), { delivery: "queued" })
-    assert.deepEqual((await snapshot()).info.prompts.map((item: any) => [item.text, item.delivery, item.resume]), [
-      ["first", "steer", undefined], ["second", "queue", false],
-    ])
-  } finally { await context.close() }
-})
+for (const cancelled of [false, true]) {
+  test(`a waiting voice send ${cancelled ? "starts on idle after the first call is cancelled" : "queues once the first prompt starts work"}`, async () => {
+    const { page, context, start, snapshot, waitForSent } = await fixture()
+    try {
+      const send = await start()
+      await page.evaluate(() => (window as any).fixture.holdAdmission())
+      const call = (id: string) => ({ type: "tool-call", id, name: "send_to_agent", arguments: { text: id } })
+      send(call("first"))
+      await page.waitForFunction(() => (window as any).fixture.waitingAdmission())
+      send(call("second"))
+      if (cancelled) send({ type: "tool-cancel", id: "first" })
+      send({ type: "tool-call", id: "status", name: "get_session_status", arguments: {} })
+      assert.equal(JSON.parse((await waitForSent(item => item.id === "status")).output).status, "idle")
+      assert.deepEqual((await snapshot()).info.prompts, [])
+      await page.evaluate(() => (window as any).fixture.releaseAdmission(false))
+      assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "second")).output),
+        { delivery: cancelled ? "submitted" : "queued" })
+      assert.deepEqual((await snapshot()).info.prompts.map((item: any) => [item.text, item.delivery, item.resume]),
+        cancelled ? [["second", "steer", undefined]] : [["first", "steer", undefined], ["second", "queue", false]])
+    } finally { await context.close() }
+  })
+}
 
 test("OpenAI final text replaces deltas; unknown tools fail closed", async () => {
   const { page, context, start, closed, snapshot, waitForSent } = await fixture("openai")
@@ -370,6 +374,29 @@ test("inactivity moves focus from the microphone to Close without stealing other
       assert.ok(await expected.evaluate(el => document.activeElement === el))
     } finally { await context.close() }
   }
+})
+
+test("the duration limit transfers focus from the microphone to Close", async () => {
+  const { page, context, live, openConsent, acceptConsent, waitForSent } = await fixture("gemini", true)
+  try {
+    await page.clock.install()
+    await openConsent()
+    const send = await acceptConsent()
+    const mic = live.getByRole("button", { name: "Mute microphone" })
+    await mic.focus()
+    assert.ok(await mic.evaluate(el => document.activeElement === el))
+    // Renew inactivity often enough to hit the absolute limit first.
+    const step = LIVE_VOICE_IDLE_MS / 2
+    for (let elapsed = step; elapsed < LIVE_VOICE_ABSOLUTE_MS; elapsed += step) {
+      await page.clock.fastForward(step)
+      send({ type: "activity" })
+      send({ type: "tool-call", id: `activity-${elapsed}`, name: "get_session_status", arguments: {} })
+      await waitForSent(item => item.id === `activity-${elapsed}`)
+    }
+    await page.clock.fastForward(step + 100)
+    await live.getByText("Conversation time limit reached", { exact: true }).waitFor()
+    assert.ok(await live.getByRole("button", { name: "Close", exact: true }).evaluate(el => document.activeElement === el))
+  } finally { await context.close() }
 })
 
 test("the live log adds one receipt and one interruption, not partial speech", async () => {
