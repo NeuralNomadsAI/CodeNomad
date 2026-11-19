@@ -29,6 +29,7 @@ const shown = new Map<string, string[]>((() => {
     })
   } catch { return [] }
 })())
+const proofControllers = new WeakMap<string[], AbortController>()
 
 function persist(): void {
   try { storage()?.setItem(STORAGE_KEY, JSON.stringify([...shown])) } catch { /* Deduplication still holds for this page. */ }
@@ -41,7 +42,10 @@ export function recordPendingRecoveryFailure(project: string, cause: PendingReco
   const claimed = shown.get(key)
   if (!claimed?.length) return
   const failed = new Set(cause.directories.map(({ directory }) => normalizeWorkspacePath(directory)))
-  if (claimed.some(directory => failed.has(normalizeWorkspacePath(directory)))) shown.set(key, [...claimed])
+  if (claimed.some(directory => failed.has(normalizeWorkspacePath(directory)))) {
+    shown.set(key, [...claimed])
+    proofControllers.get(claimed)?.abort()
+  }
 }
 
 /** True the first time a notice is claimed, until its project recovers. */
@@ -68,9 +72,18 @@ export function capturePendingRecoveryNotices(project: string) {
   return {
     current,
     missing,
+    proofSignal() {
+      if (!failed || !current()) return AbortSignal.abort()
+      let controller = proofControllers.get(failed)
+      if (!controller) proofControllers.set(failed, controller = new AbortController())
+      return controller.signal
+    },
     release(directories: readonly string[]) {
       let changed = plugin !== undefined && shown.get(UNSUPPORTED) === plugin && shown.delete(UNSUPPORTED)
-      if (current() && !missing(directories).length) changed = shown.delete(key) || changed
+      if (failed && current() && !missing(directories).length) {
+        changed = shown.delete(key) || changed
+        proofControllers.get(failed)?.abort()
+      }
       if (changed) persist()
     },
   }

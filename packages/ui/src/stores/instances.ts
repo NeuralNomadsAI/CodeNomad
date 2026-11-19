@@ -1113,15 +1113,16 @@ async function runPendingRequestSync(
               if (existing?.current()) return
               existing?.controller.abort()
               const controller = new AbortController()
+              const signal = AbortSignal.any([controller.signal, notices.proofSignal()])
               const scope = pendingRecoveryNoticeScope(instanceId)
-              const probeCurrent = () => !controller.signal.aborted && notices.current()
+              const probeCurrent = () => !signal.aborted && notices.current()
                 && instances().get(instanceId)?.client === client
                 && pendingRequestSyncGenerations.get(instanceId) === generation
                 && pendingRecoveryNoticeScope(instanceId) === scope
               const check = { controller, current: probeCurrent }
               pendingRecoveryNoticeChecks.set(instanceId, check)
-              void pendingRecoveryNoticeReads.run(controller.signal, () => readPendingRequestSnapshot(instanceId, probeCurrent, {
-                reconcileInventory: false, onlyDirectories: missing, noticeSignal: controller.signal,
+              void pendingRecoveryNoticeReads.run(signal, () => readPendingRequestSnapshot(instanceId, probeCurrent, {
+                reconcileInventory: false, onlyDirectories: missing, noticeSignal: signal,
               })).then(async proof => {
                 // Let an overlapping real scan confirm recovery before re-arming.
                 await pendingRequestSyncs.get(instanceId)?.promise.catch(() => {})

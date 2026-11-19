@@ -803,6 +803,7 @@ for (const mode of ["rearm", "supersede", "budget", "routine", "sibling failure"
               : { directory, status: "ok", locations: [emptyLocation(directory)] }),
           })
           await assert.rejects(syncPendingRequests(sibling.id))
+          assert.equal(last?.aborted, true, "the sibling's failure cancels stale proof before the request finishes")
         } finally { sibling.cleanup() }
       }
       replacement.resolve(excluded(removed.slice(8)))
