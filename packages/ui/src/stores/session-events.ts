@@ -387,40 +387,33 @@ function refreshSelectedMoveCatalog(instanceId: string, sessionId: string): void
   }
 }
 
-function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {
+function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): void {
   const { sessionID: sessionId, location } = data
-  const targetInstanceIds = Array.from(instances().keys()).filter((instanceId) => listsSessionDirectory(instanceId, location.directory))
-
-  // A location can be open in several instances. Keep the native event with
-  // its source whenever that source still owns the destination instead of
-  // assigning it to an arbitrary duplicate view.
-  const sourceOwnsLocation = targetInstanceIds.includes(sourceInstanceId)
-  if (sourceOwnsLocation) {
-    applySessionMovePlacement(sourceInstanceId, data)
-    refreshSelectedMoveCatalog(sourceInstanceId, sessionId)
+  // The relay delivers each move to both owners in their own ordered streams.
+  // Forwarding it here could supersede a later move in another instance.
+  if (listsSessionDirectory(instanceId, location.directory)) {
+    applySessionMovePlacement(instanceId, data)
+    refreshSelectedMoveCatalog(instanceId, sessionId)
   }
 
-  const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]
-  for (const instanceId of new Set(affectedInstanceIds)) {
-    const move: SessionMove = { data }
-    confirmedPlacements.get(instanceId)?.delete(sessionId)
-    const latest = latestSessionMoves.get(instanceId) ?? new Map()
-    latest.set(sessionId, move)
-    latestSessionMoves.set(instanceId, latest)
-    forgetSessionMovedAway(instanceId, sessionId)
-    pendingSessionMoves.set(instanceId, (pendingSessionMoves.get(instanceId) ?? new Map()).set(sessionId, move))
-    const pending = movedSessionRefreshTimers.get(instanceId)
-    if (pending) clearTimeout(pending)
-    movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
-      movedSessionRefreshTimers.delete(instanceId)
-      const moves = pendingSessionMoves.get(instanceId) ?? new Map<string, SessionMove>()
-      pendingSessionMoves.delete(instanceId)
-      void reloadWorktrees(instanceId).catch(error => {
-        log.warn("Failed to refresh moved-session worktrees", { instanceId, error })
-      }).then(() => Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move))))
-        .then(() => refreshMovedSessions(instanceId))
-    }, 100))
-  }
+  const move: SessionMove = { data }
+  confirmedPlacements.get(instanceId)?.delete(sessionId)
+  const latest = latestSessionMoves.get(instanceId) ?? new Map()
+  latest.set(sessionId, move)
+  latestSessionMoves.set(instanceId, latest)
+  forgetSessionMovedAway(instanceId, sessionId)
+  pendingSessionMoves.set(instanceId, (pendingSessionMoves.get(instanceId) ?? new Map()).set(sessionId, move))
+  const pending = movedSessionRefreshTimers.get(instanceId)
+  if (pending) clearTimeout(pending)
+  movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
+    movedSessionRefreshTimers.delete(instanceId)
+    const moves = pendingSessionMoves.get(instanceId) ?? new Map<string, SessionMove>()
+    pendingSessionMoves.delete(instanceId)
+    void reloadWorktrees(instanceId).catch(error => {
+      log.warn("Failed to refresh moved-session worktrees", { instanceId, error })
+    }).then(() => Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move))))
+      .then(() => refreshMovedSessions(instanceId))
+  }, 100))
 }
 
 async function settleSessionMove(instanceId: string, sessionId: string, move: SessionMove, fresh = false): Promise<boolean> {

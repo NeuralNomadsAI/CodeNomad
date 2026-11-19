@@ -139,6 +139,10 @@ it("still removes the old instance projection when the session really leaves its
       id: "different-location", type: "session.moved", created: 1,
       data: { sessionID: "restored", location: { directory: "/other" } },
     } as any)
+    handleNativeSessionEvent(target.session.instanceId, {
+      id: "different-location", type: "session.moved", created: 1,
+      data: { sessionID: "restored", location: { directory: "/other" } },
+    } as any)
     await delay(150)
     assert.equal(sessions().get(source.session.instanceId)?.has("restored") ?? false, false)
     assert.equal(sessions().get(target.session.instanceId)?.get("restored")?.location.directory, "/other")
@@ -332,6 +336,45 @@ it("releases a moved-away record on deletion, on a refresh that lists the sessio
 const moved = (id: string, sessionID: string, directory: string, created = 1) => ({
   id, type: "session.moved", created, data: { sessionID, location: { directory } },
 }) as any
+
+it("settles moves in each recipient's order even when another recipient runs late", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const source = setup("ordered-move-source", "/source")
+  const destination = setup("ordered-move-destination", "/destination")
+  const id = destination.session.instanceId
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async (instanceId: string) => ({
+    isGitRepo: true,
+    worktrees: [{ slug: "root", directory: instanceId === id ? "/destination" : "/source", kind: "root" }],
+  })
+  const child = { ...destination.session, id: "child", parentId: "restored", parentID: "restored" }
+  setSessions(previous => new Map(previous).set(id, new Map([...previous.get(id)!, [child.id, child]])))
+  setInstanceMetadata(id, { project: { id: "destination-project", canonical: "/destination" } as any })
+  destination.client.session.list = async (input: any) => ({ data: input.project ? [child] : [] })
+  destination.client.session.get = movedOutsideWorkspace
+  source.client.session.list = async () => ({ data: [] })
+  source.client.session.get = movedOutsideWorkspace
+  try {
+    await Promise.all([ensureWorktreesLoaded(source.session.instanceId), ensureWorktreesLoaded(id)])
+    setActiveSession(id, "restored")
+    setSessionDraftPrompt(id, "restored", "keep draft")
+    const arrival = moved("arrival", "restored", "/destination")
+    handleNativeSessionEvent(id, arrival)
+    handleNativeSessionEvent(id, moved("departure", "restored", "/third", 2))
+    handleNativeSessionEvent(source.session.instanceId, arrival)
+    t.mock.timers.tick(100)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(sessions().get(id)?.has("restored") ?? false, false)
+    assert.equal(activeSessionId().get(id), undefined)
+    assert.equal(sessions().get(id)?.has("child"), true)
+    assert.equal(getSessionDraftPrompt(id, "restored"), "keep draft")
+  } finally {
+    serverApi.fetchWorktrees = original
+    source.cleanup()
+    destination.cleanup()
+  }
+})
+
 // Outside the opened folder: only its registration makes it owned.
 const newWorktree = { slug: "new", directory: "/repo-worktrees/new", kind: "worktree" } as const
 
