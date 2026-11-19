@@ -554,6 +554,7 @@ async function hydrateRestoredSessionChainAttempt(
   const visited = new Set<string>()
   const departures: Array<() => void> = []
   const ownedReads = new Map<string, () => boolean>()
+  let readFailure: PromiseRejectedResult | undefined
   while (pending.length > 0) {
     if (!isRequestCurrent()) return
     signal?.throwIfAborted()
@@ -562,7 +563,7 @@ async function hydrateRestoredSessionChainAttempt(
     level.forEach((sessionId) => visited.add(sessionId))
     const readOptions = { ...(signal ? { signal } : {}), ...(reconcileDeparture ? { headers: workspaceSessionPlacementHeaders } : {}) }
     reconcileDeparture = true
-    const parents = await Promise.all(level.map(async (sessionId) => {
+    const parents = await Promise.allSettled(level.map(async (sessionId) => {
       if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return null
 
       let session = sessions().get(instanceId)?.get(sessionId)
@@ -642,10 +643,13 @@ async function hydrateRestoredSessionChainAttempt(
       // authority. Keep native parent metadata; local display roots are derived.
       return getDirectoryOnlyWorktree(instanceId) ? null : session?.parentId ?? null
     }))
-    pending = parents.filter((id): id is string => Boolean(id))
+    readFailure = parents.find(result => result.status === "rejected")
+    if (readFailure) break
+    pending = parents.flatMap(result => result.status === "fulfilled" && result.value ? [result.value] : [])
   }
   // A selected local child may finish loading after its parent's refusal.
   if (isRequestCurrent() && !signal?.aborted) for (const depart of departures) depart()
+  if (readFailure) throw readFailure.reason
 }
 
 async function ensureV2ParentChainsLoaded(

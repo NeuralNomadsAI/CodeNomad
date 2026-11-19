@@ -271,6 +271,41 @@ test("cold restore reconciles a departed parent after the local child read witho
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees }
 })
 
+for (const failureFirst of [false, true]) test(`cold restore applies a parent departure despite a failed child read (${failureFirst ? "failure first" : "departure first"})`, async () => {
+  const id = `restore-parent-departure-${failureFirst}`, f = fixture(id)
+  const parent = deferred<Error>(), child = deferred<Error>()
+  const departure = Object.assign(new Error("Session located elsewhere"), {
+    _tag: "SessionNotFoundError", reason: SESSION_LOCATED_ELSEWHERE_REASON,
+  })
+  const unavailable = new Error("Unexpected status 503")
+  const reads: string[] = []
+  Object.assign(f.saved, { activeSessionId: "child", drafts: { root: "keep draft" } })
+  try {
+    f.client.session.get = async ({ sessionID }: { sessionID: string }) => {
+      reads.push(sessionID)
+      throw await (sessionID === "root" ? parent.promise : child.promise)
+    }
+    const restoring = hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+    const rejected = assert.rejects(restoring, /503/)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(reads.sort(), ["child", "root"])
+    if (failureFirst) child.resolve(unavailable)
+    else parent.resolve(departure)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    if (failureFirst) parent.resolve(departure)
+    else child.resolve(unavailable)
+    await rejected
+    assert.notEqual(activeParentSessionId().get(id), "root")
+    assert.equal(sessions().get(id)?.has("root"), false)
+    assert.equal(sessions().get(id)?.has("child"), true)
+    assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
+  } finally {
+    parent.resolve(departure)
+    child.resolve(unavailable)
+    f.cleanup()
+  }
+})
+
 for (const directory of ["/linked-alias", "/repo/linked-alias"]) test(`cold restore keeps a proxy-confirmed alias selected at ${directory}`, async () => {
   const originalFetch = globalThis.fetch
   const originalWorktrees = serverApi.fetchWorktrees
