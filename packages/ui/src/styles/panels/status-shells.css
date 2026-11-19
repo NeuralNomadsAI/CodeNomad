@@ -1,13 +1,78 @@
 .status-process-card {
-  @apply flex items-center gap-2 border px-2 py-1;
-  background-color: var(--surface-inset);
+  @apply flex min-w-0 items-center gap-1;
 }
 
-.status-process-card:hover {
+.status-process-command {
+  @apply flex min-w-0 flex-1 items-center gap-2 border px-2 py-1 text-xs text-primary;
+  height: 28px;
+  border-color: color-mix(in srgb, var(--border-base) 50%, transparent);
+  background-color: var(--surface-control);
+  border-radius: 0;
+  text-align: start;
+}
+
+.status-process-command:hover {
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
-  box-shadow: none;
 }
 
-.status-process-actions {
-  @apply flex shrink-0 items-center gap-1;
+.status-process-command:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.status-process-label {
+  @apply flex min-w-0 flex-1 items-center gap-1 overflow-hidden whitespace-nowrap;
+  unicode-bidi: isolate;
+}
+
+.status-process-label strong {
+  @apply min-w-0 truncate;
+  font-weight: 600;
+}
+
+.status-process-args {
+  @apply shrink-0 truncate;
+  max-width: calc(100% - 1ch);
+}
+
+.status-process-state {
+  @apply shrink-0;
+  color: var(--text-muted);
+}
+
+.status-process-state svg {
+  width: 10px;
+  height: 10px;
+}
+
+.status-process-state[data-state="running"] {
+  color: var(--status-ready-fg);
+}
+
+.status-process-state[data-state="running"] svg {
+  width: 6px;
+  height: 6px;
+  margin-inline: 2px;
+}
+
+.status-process-state:is([data-state="failed"], [data-state="timeout"]) {
+  color: var(--status-error-fg);
+}
+
+.status-process-card > .window-icon-button {
+  flex-shrink: 0;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.status-process-tooltip {
+  max-width: min(32rem, calc(100vw - 16px));
+  max-height: var(--kb-popper-content-available-height, calc(100dvh - 16px));
+  overflow: auto;
+  white-space: normal;
+}
+
+.status-process-detail-command {
+  white-space: pre-wrap;
+  unicode-bidi: isolate;
 }

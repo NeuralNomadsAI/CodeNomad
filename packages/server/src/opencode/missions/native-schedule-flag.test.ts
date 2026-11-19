@@ -9,7 +9,7 @@ test("native flag reader uses the acquired resolver and classifies only its boun
   const read = () => Effect.runPromise(readNativeScheduleFlag({ location } as any).pipe(
     Effect.provideService(Context.Service<never, unknown>("@opencode/Config"), { entries: () => Effect.succeed(entries) }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Flag"), { resolve: (input: unknown) => {
-      assert.equal(input, entries); return { schedules: state, unrelated: { secret: "private" } }
+      assert.equal(input, entries); return { automations: state, unrelated: { secret: "private" } }
     } }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Location"), location),
     Effect.provideService(Context.Service<never, unknown>("@opencode/LocationLifecycle"), { isClosed: () => closed }),

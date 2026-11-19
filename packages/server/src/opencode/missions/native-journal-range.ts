@@ -7,6 +7,7 @@ import { compareEvents, orderedMissionLookups, type MissionEvent } from "../../m
 import { stableToken } from "../../missions/receipt-identity"
 import { cleanupReceiptID, documentCleanupReceiptID } from "../../missions/cleanup-projection"
 import type { NativeMissionDocumentRunner } from "./native-mission-document-storage"
+import { journalHeadSQL } from "./native-journal-head"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const clientSchema = Schema.declare<SqlClient.SqlClient>((value): value is SqlClient.SqlClient => Predicate.isFunction(value)
@@ -22,10 +23,10 @@ const BATCH_BYTES = 1024 * 1024
 
 type NativeDatabase = { db: { $client: SqlClient.SqlClient
   transaction<A>(callback: () => Effect.Effect<A, unknown>,
-     config: { behavior: "deferred" }): Effect.Effect<A, unknown> } }
+     config: { behavior: "deferred" | "immediate" }): Effect.Effect<A, unknown> } }
 
 export interface NativeJournalRangeObservation {
-  /** Exact content fence for the physical range, including malformed rows. */
+  /** Exact observation fence for the physical range, including malformed rows. */
   digest: string
   discardedEvents: number
   rows: number
@@ -38,15 +39,26 @@ export interface NativeJournalRange {
   readOrdered(missionID: string, visit: (batch: readonly MissionEvent[], related: ReadonlyMap<string, MissionEvent>,
     reports: ReadonlyMap<string, MissionEvent>) => void, prepare?: (observed: NativeJournalRangeObservation,
     created: Extract<MissionEvent, { type: "mission.created" }> | undefined) => boolean,
-    cachedDigest?: string): Promise<NativeJournalRangeObservation>
+    cachedDigest?: string, advance?: (event: MissionEvent) => boolean): Promise<NativeJournalRangeObservation>
   listRanges(): Promise<{ missionIDs: string[]; stray: number }>
   /** Point observation for lost-ack recovery; no new mutation is authorized by this read. */
   readEvent(missionID: string, eventID: string): Promise<MissionEvent | undefined>
+  readDisplay?(missionID: string, pick?: (value: string) => string | undefined, slot?: "tasks" | "pins"):
+    Promise<{ value: string; event?: MissionEvent } | undefined>
+  saveDisplay?(missionID: string, digest: string, value: string, slot?: "tasks" | "pins"): Promise<void>
 }
 
+const DISPLAY_BYTES = 48 * 1024
+const displayKey = (range: string, slot?: "tasks" | "pins") => slot ? `display-${slot}:v1:${range}` : `display:v1:${range}`
+const displayLimit = (slot?: "tasks" | "pins") => slot ? 96 * 1024 : DISPLAY_BYTES
 type Header = { key: string; bytes: number }
 type EventHeader = Header & Pick<MissionEvent, "id" | "createdAt">
 type Body = { key: string; value: string }
+type HeadQualification = { cookie: number; usable: boolean }
+type HeadState = { qualification?: HeadQualification; pending?: Promise<HeadQualification | undefined> }
+const preparedHeads = new WeakMap<SqlClient.SqlClient, HeadState>()
+const stampPattern = /^[0-9A-F]{48}$/
+const headPattern = /^([^/]+)\/(\d+)\/(\d+)\/(\d+)$/
 
 function readHeader(row: Record<string, unknown>): Header {
   if (typeof row.key !== "string" || typeof row.bytes !== "number" || !Number.isSafeInteger(row.bytes) || row.bytes < 0)
@@ -63,7 +75,7 @@ function digestBody(hash: ReturnType<typeof createHash>, key: string, body: stri
   hash.update(`${Buffer.byteLength(key)}:${key}${Buffer.byteLength(body)}:`).update(body)
 }
 
-/** Acquire in the current native invocation. No schema changes or fallback to an unbounded native scan. */
+/** Acquire in the current native invocation. No fallback to an unbounded native scan. */
 export const acquireNativeJournalRange = Effect.fn("missions.acquireNativeJournalRange")(function* (
   ctx: Pick<Plugin.Context, "location">,
   invocationRun?: NativeMissionDocumentRunner,
@@ -81,6 +93,61 @@ export const acquireNativeJournalRange = Effect.fn("missions.acquireNativeJourna
   const query = (sql: string, params: readonly unknown[]) => db.$client.unsafe(sql, params).withoutTransform.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(rows)))
   const transaction = <A>(use: () => Effect.Effect<A, unknown>) => run(db.transaction(use, { behavior: "deferred" }))
+  const head = journalHeadSQL(`${ns}${MISSION_JOURNAL_STORAGE_PREFIX}/`)
+  const state = preparedHeads.get(db.$client) ?? {}
+  preparedHeads.set(db.$client, state)
+  const schemaCookie = () => query(head.cookie, []).pipe(Effect.map(result => {
+    const cookie = result[0]?.schema_version
+    return typeof cookie === "number" && Number.isInteger(cookie) ? cookie : undefined
+  }), Effect.catch(() => Effect.succeed(undefined)))
+  const headAt = (range: string, cookie: number) => Effect.gen(function* () {
+    const result = yield* query(head.read, [range, head.epoch, cookie]).pipe(Effect.option)
+    const row = Option.isSome(result) ? result.value[0] : undefined
+    if (typeof row?.epoch !== "string" || !stampPattern.test(row.epoch)
+      || typeof row.stamp !== "string" || (row.stamp !== "" && !stampPattern.test(row.stamp))) return undefined
+    const scope = `${stableToken(range, 24)}.${row.epoch}`
+    return { token: `${scope}.${row.stamp}`, prior: `${scope}.${row.prior}`, tail: row.tail }
+  })
+  const ensureHead = () => state.pending ??= Promise.resolve().then(() => run(db.transaction(() => Effect.gen(function* () {
+    const existingCookie = yield* schemaCookie()
+    if (existingCookie === undefined) return undefined
+    const objects = yield* query(`SELECT name,sql FROM main.sqlite_schema WHERE name COLLATE NOCASE IN (?,?,?,?)`, head.names)
+    if (objects.length === 0) {
+      for (const sql of head.schema) yield* query(sql, [])
+    } else if (objects.length !== head.names.length
+      || !head.names.every((name, i) => objects.some(row => row.name === name && row.sql === head.schema[i]))) {
+      return { cookie: existingCookie, usable: false }
+    }
+    const cookie = objects.length ? existingCookie : yield* schemaCookie()
+    if (cookie === undefined) return yield* Effect.fail(new Error("Native Mission journal schema cookie unavailable"))
+    // A different client may already have renewed the incarnation at this cookie.
+    if (!(yield* headAt(head.epoch, cookie))) yield* query(head.renew, [head.epoch, cookie])
+    return { cookie, usable: true }
+  }), { behavior: "immediate" }))).catch(() => undefined).then(qualification => {
+    state.qualification = qualification
+    state.pending = undefined
+    return qualification
+  })
+  type Head = NonNullable<Effect.Success<ReturnType<typeof headAt>>>
+  const observeHead = async <A>(range: string, use: (current: Head | undefined) => Effect.Effect<A, unknown>): Promise<A> => {
+    const qualification = state.qualification
+    if (qualification) {
+      const observed = await transaction(() => Effect.gen(function* () {
+        const current = qualification.usable ? yield* headAt(range, qualification.cookie) : undefined
+        if (qualification.usable ? !current : (yield* schemaCookie()) !== qualification.cookie) return undefined
+        return { value: yield* use(current) }
+      }))
+      if (observed) return observed.value
+    }
+    // At most one immediate transaction per read. Failed attempts are retried
+    // on later demand, not while holding a range snapshot or spinning on a lock.
+    const refreshed = await ensureHead()
+    return transaction(() => Effect.gen(function* () {
+      return yield* use(refreshed?.usable ? yield* headAt(range, refreshed.cookie) : undefined)
+    }))
+  }
+  const indexedObservation = (token: string, observation: Omit<NativeJournalRangeObservation, "digest">) =>
+    ({ ...observation, digest: `${token}/${observation.rows}/${observation.bytes}/${observation.discardedEvents}` })
 
   function keys(missionID: string) {
     if (!safeKey.test(missionID)) throw new Error("Invalid Mission journal range")
@@ -96,7 +163,7 @@ export const acquireNativeJournalRange = Effect.fn("missions.acquireNativeJourna
   const readBodies = (headers: readonly Header[]) => Effect.gen(function* () {
     // CROSS JOIN keeps the bounded lookup list outermost and preserves its ordinal.
     const values = yield* query(`SELECT k.key,k.value FROM json_each(?) AS requested
-      CROSS JOIN kv k ON k.key=requested.value ORDER BY requested.key`, [JSON.stringify(headers.map(row => row.key))])
+      CROSS JOIN main.kv k ON k.key=requested.value ORDER BY requested.key`, [JSON.stringify(headers.map(row => row.key))])
     if (values.length !== headers.length) throw new Error("Native Mission journal range changed")
     return values.map((row, index): Body => {
       const header = headers[index]
@@ -119,14 +186,14 @@ export const acquireNativeJournalRange = Effect.fn("missions.acquireNativeJourna
 
   /** One SQLite snapshot; scan by the existing key index. Key order only feeds
    * the digest. Keep scalar ordering records, not bodies, for the replay pass. */
-  const traverse = (range: ReturnType<typeof keys>, onBody?: (body: Body, bytes: number) => void) =>
+  const traverse = (range: ReturnType<typeof keys>, onBody?: (body: Body, bytes: number) => void, hashBodies = true) =>
     Effect.gen(function* () {
-      const hash = createHash("sha256")
+      const hash = hashBodies ? createHash("sha256") : undefined
       // Domain-separate even empty ranges so an observation cannot cross scopes.
-      hash.update(range.lower)
+      hash?.update(range.lower)
       let after = range.lower, count = 0, bytes = 0
       for (;;) {
-        const headers = (yield* query(`SELECT key,length(CAST(value AS BLOB)) AS bytes FROM kv
+        const headers = (yield* query(`SELECT key,length(CAST(value AS BLOB)) AS bytes FROM main.kv
           WHERE key>=? AND key<? AND key>=? ORDER BY key LIMIT ?`, [range.lower, range.upper, after, BATCH_ROWS + 1])).map(readHeader)
         if (!headers.length) break
         const page = headers.slice(0, BATCH_ROWS)
@@ -134,7 +201,7 @@ export const acquireNativeJournalRange = Effect.fn("missions.acquireNativeJourna
           const values = yield* readBodies(batch)
           for (let i = 0; i < values.length; i++) {
             const body = values[i], size = batch[i].bytes
-            digestBody(hash, body.key, body.value)
+            if (hash) digestBody(hash, body.key, body.value)
             count++; bytes += size
             onBody?.(body, size)
           }
@@ -142,44 +209,32 @@ export const acquireNativeJournalRange = Effect.fn("missions.acquireNativeJourna
         if (headers.length <= BATCH_ROWS) break
         after = headers[BATCH_ROWS].key
       }
-      return { digest: hash.digest("base64url"), rows: count, bytes }
+      return { digest: hash?.digest("base64url"), rows: count, bytes }
     })
 
-  const valueAt = (key: string) => query("SELECT value FROM kv WHERE key=?", [key]).pipe(Effect.map(result => {
+  const valueAt = (key: string) => query("SELECT value FROM main.kv WHERE key=?", [key]).pipe(Effect.map(result => {
     const row = result[0]
     if (!row) return undefined
     if (typeof row.value !== "string") throw new Error("Native Mission journal value unavailable")
     return row.value
   }))
 
-  const adapter: NativeJournalRange = {
-    listRanges: () => transaction(() => Effect.gen(function* () {
-      const root = projectPrefix + "/", missionIDs = new Set<string>()
-      let after = projectPrefix, stray = 0
-      for (;;) {
-        const page = yield* query("SELECT key FROM kv WHERE key>=? AND key<? AND key>=? ORDER BY key LIMIT ?",
-          [projectPrefix, projectUpper, after, BATCH_ROWS + 1])
-        let skip: string | undefined
-        for (const row of page.slice(0, BATCH_ROWS)) {
-          if (typeof row.key !== "string") throw new Error("Native Mission journal key unavailable")
-          const suffix = row.key.startsWith(root) ? row.key.slice(root.length) : "", end = suffix.indexOf("/")
-          const id = end < 0 ? "" : suffix.slice(0, end)
-          if (safeKey.test(id)) { missionIDs.add(id); skip = `${root}${id}0`; break }
-          else stray++
+  const readOrdered: NativeJournalRange["readOrdered"] = async (missionID, visit, prepare, cachedDigest, advance) => {
+    const range = keys(missionID)
+    return observeHead(range.lower, current => Effect.gen(function* () {
+      const headers: EventHeader[] = []
+      const known = cachedDigest && headPattern.exec(cachedDigest)
+      if (current && known) {
+        const previous = { rows: Number(known[2]), bytes: Number(known[3]), discardedEvents: Number(known[4]) }
+        if (current.token === known[1]) return indexedObservation(current.token, previous)
+        if (advance && current.prior === known[1] && typeof current.tail === "string" && current.tail.startsWith(range.lower)) {
+          const value = yield* valueAt(current.tail)
+          if (value !== undefined) {
+            const event = parse({ key: current.tail, value }, range.lower, missionID)
+            if (event && advance(event)) return indexedObservation(current.token,
+              { ...previous, rows: previous.rows + 1, bytes: previous.bytes + Buffer.byteLength(value) })
+          }
         }
-        if (skip) { after = skip; continue }
-        if (page.length <= BATCH_ROWS) break
-        const cursor = page[BATCH_ROWS].key
-        if (typeof cursor !== "string") throw new Error("Native Mission journal key unavailable")
-        after = cursor
-      }
-      return { missionIDs: [...missionIDs], stray }
-    })),
-    readOrdered: (missionID, visit, prepare, cachedDigest) => transaction(() => Effect.gen(function* () {
-      const range = keys(missionID), headers: EventHeader[] = []
-      if (cachedDigest) {
-        const metadata = yield* traverse(range)
-        if (metadata.digest === cachedDigest) return { ...metadata, discardedEvents: 0 }
       }
       const byID = new Map<string, EventHeader>(), reportHeaders = new Map<string, EventHeader>()
       let created: Extract<MissionEvent, { type: "mission.created" }> | undefined
@@ -197,8 +252,10 @@ export const acquireNativeJournalRange = Effect.fn("missions.acquireNativeJourna
             if (!previous || compareEvents(event, previous) > 0) reportHeaders.set(event.report.id, header)
           }
         }
-      })
-      const observation = { digest, rows, bytes, discardedEvents }
+      }, !current)
+      const observation = current ? indexedObservation(current.token, { rows, bytes, discardedEvents })
+        : { digest: digest!, rows, bytes, discardedEvents }
+      if (!current && digest === cachedDigest) return observation
       if (prepare && !prepare(observation, created)) return observation
       headers.sort(compareEvents)
       for (const batch of batches(headers)) {
@@ -238,6 +295,54 @@ export const acquireNativeJournalRange = Effect.fn("missions.acquireNativeJourna
         }
       }
       return observation
+    }))
+  }
+
+  const adapter: NativeJournalRange = {
+    readDisplay: (missionID, pick, slot) => {
+      const { lower } = keys(missionID)
+      return observeHead(lower, current => Effect.gen(function* () {
+        if (!current) return undefined
+        const result = yield* query(head.displayRead, [displayKey(lower, slot), current.token, displayLimit(slot)]).pipe(Effect.option)
+        const row = Option.isSome(result) ? result.value[0] : undefined
+        if (typeof row?.value !== "string" || stableToken(row.value, 64) !== row.checksum) return undefined
+        const eventID = pick?.(row.value)
+        if (!eventID || !safeKey.test(eventID)) return { value: row.value }
+        const key = lower + eventID, value = yield* valueAt(key)
+        return { value: row.value, event: value === undefined ? undefined : parse({ key, value }, lower, missionID) }
+      }))
+    },
+    saveDisplay: async (missionID, digest, value, slot) => {
+      const token = headPattern.exec(digest)?.[1], qualification = state.qualification
+      if (!token || !qualification?.usable || Buffer.byteLength(value) > displayLimit(slot)) return
+      const { lower } = keys(missionID)
+      await run(db.transaction(() => Effect.gen(function* () {
+        const current = yield* headAt(lower, qualification.cookie)
+        if (current?.token === token) yield* query(head.displayWrite, [displayKey(lower, slot), stableToken(value, 64), token, value])
+      }), { behavior: "immediate" })).catch(() => undefined)
+    },
+    readOrdered,
+    listRanges: () => transaction(() => Effect.gen(function* () {
+      const root = projectPrefix + "/", missionIDs = new Set<string>()
+      let after = projectPrefix, stray = 0
+      for (;;) {
+        const page = yield* query("SELECT key FROM main.kv WHERE key>=? AND key<? AND key>=? ORDER BY key LIMIT ?",
+          [projectPrefix, projectUpper, after, BATCH_ROWS + 1])
+        let skip: string | undefined
+        for (const row of page.slice(0, BATCH_ROWS)) {
+          if (typeof row.key !== "string") throw new Error("Native Mission journal key unavailable")
+          const suffix = row.key.startsWith(root) ? row.key.slice(root.length) : "", end = suffix.indexOf("/")
+          const id = end < 0 ? "" : suffix.slice(0, end)
+          if (safeKey.test(id)) { missionIDs.add(id); skip = `${root}${id}0`; break }
+          else stray++
+        }
+        if (skip) { after = skip; continue }
+        if (page.length <= BATCH_ROWS) break
+        const cursor = page[BATCH_ROWS].key
+        if (typeof cursor !== "string") throw new Error("Native Mission journal key unavailable")
+        after = cursor
+      }
+      return { missionIDs: [...missionIDs], stray }
     })),
     readEvent: (missionID, eventID) => run(Effect.gen(function* () {
       const { lower } = keys(missionID)

@@ -10,6 +10,8 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
 import { deferPendingDiscovery, markLoadedPendingSupported, PENDING_DISCOVERY_DEFERRED } from "../../workspaces/pending-discovery"
+import { awaitNativePlugin } from "../../opencode/plugin-activation"
+import { READINESS_WAIT_MS } from "../../opencode/desktop-plugin-readiness"
 
 const directorySchema = z.string().min(1).max(4096)
 const directoryListSchema = z.union([directorySchema, z.array(directorySchema).min(1).max(64)])
@@ -68,7 +70,7 @@ const missingHost = (host: string) => lstat(host).then(() => false, error => (er
 
 export interface PendingRequestsRouteDeps {
   logger: Pick<Logger, "warn">
-  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation" | "desktopPluginsReady">
+  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation">
   worktreeDeletionFence: Pick<WorktreeDeletionFence, "isBlocked" | "captureDisplay">
   /** Test seam only; production always uses the real Git common-directory reader. */
   readGitCommonDirectory?: typeof readGitCommonDirectory
@@ -90,7 +92,6 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
     const deadline = AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)
     const signal = AbortSignal.any([abandoned.signal, deadline])
     const timedOut = () => deadline.aborted && signal.reason === deadline.reason
-    const deadlineAt = Date.now() + PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS
     const bootstrap = manager.getServiceLocation(id)
     const fences = [deps.worktreeDeletionFence.captureDisplay(bootstrap ? [bootstrap.directory] : [])]
     const started = Date.now()
@@ -326,14 +327,13 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       }
       assertCurrent()
       record("ownership")
-      // Initial resolution above admits this read. Revalidate after all native
-      // and placement IO, not repeatedly within the same pre/post-read phase.
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
-      // Even an all-excluded historical batch must negotiate real RPC capability.
-      // The established root is the only bootstrap, never an inactive candidate.
-      phase = "plugin-preparation"
-      await manager.desktopPluginsReady({ connection, location: { directory: bootstrapDirectory }, signal, deadlineAt, assertCurrent })
-      record("plugin-preparation")
+      // Warm only the authorized bootstrap. The validated read itself proves
+      // registration; the separate presence challenge can expire on a working RPC.
+      phase = "plugin-activation"
+      await awaitNativePlugin(connection.client, "codenomad-session-pruning", { directory: bootstrapDirectory },
+        AbortSignal.any([signal, AbortSignal.timeout(READINESS_WAIT_MS)]), assertCurrent)
+      record("plugin-activation")
       phase = "ownership-revalidation"
       await assertOrigin(bootstrapDirectory)
       await revalidateCandidates()

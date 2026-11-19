@@ -1,4 +1,4 @@
-import { createOrderedMissionFold, type MissionEvent } from "./model"
+import { compareEvents, createOrderedMissionFold, orderedMissionLookups, type MissionEvent } from "./model"
 import type { NativeJournalRange } from "../opencode/missions/native-journal-range"
 import { cleanupReceiptID, documentCleanupReceiptID, isCleanupReceipt, isDocumentCleanupReceipt,
   hasInvalidCleanupHistory, projectMissionCleanups } from "./cleanup-projection"
@@ -13,18 +13,36 @@ function reference(event: MissionEvent): MissionEvent | undefined {
   }
 }
 
-export async function foldJournalRange(range: NativeJournalRange, missionID: string, cachedDigest?: string) {
+export interface CachedJournalFold {
+  digest: string
+  advance(event: MissionEvent): boolean
+  project: ReturnType<typeof createOrderedMissionFold>["project"]
+  objectives: ReadonlyMap<number, { before: string; after: string }>
+  inputSources: ReturnType<typeof createOrderedMissionFold>["inputSources"]
+  taskSources: ReadonlyMap<string, string>
+  reportSources: ReadonlyMap<string, string>
+}
+
+export async function foldJournalRange(range: NativeJournalRange, missionID: string, cached?: CachedJournalFold) {
   let fold: ReturnType<typeof createOrderedMissionFold> | undefined
   let related: ReadonlyMap<string, MissionEvent>, reports: ReadonlyMap<string, MissionEvent>
   const references: MissionEvent[] = [], cleanupEvents: MissionEvent[] = []
   let objective: MissionEvent | undefined
+  const slots = new Set<string>()
+  const objectives = new Map<number, { before: string; after: string }>()
+  const seenChanges = new Set<number>()
+  const taskSources = new Map<string, string>(), reportSources = new Map<string, string>()
+  let last: Pick<MissionEvent, "id" | "createdAt"> | undefined
+  let advanced = false
   let cleanupUnavailable = false, created = false, validEvents = 0, first: Pick<MissionEvent, "id" | "createdAt"> | undefined
   const observation = await range.readOrdered(missionID, (batch, relatedBatch, reportBatch) => {
     related = relatedBatch; reports = reportBatch
     fold!.append(batch)
+    for (const id of orderedMissionLookups(batch).events) slots.add(id)
     validEvents += batch.length
     for (const event of batch) {
       first ??= { id: event.id, createdAt: event.createdAt }
+      last = { id: event.id, createdAt: event.createdAt }
       const ref = reference(event)
       if (ref) references.push(ref)
       if ((event.type === "mission.updated" || event.type === "mission.prepared" || event.type === "mission.revised")
@@ -43,14 +61,33 @@ export async function foldJournalRange(range: NativeJournalRange, missionID: str
         }
       } else if (event.type === "mission.session-cleaned" || event.type === "mission.document-cleaned") cleanupEvents.push(event)
     }
+    related = reports = new Map()
   }, (_, creation) => {
     created = creation !== undefined
     if (creation) cleanupEvents.push({ ...creation, objective: creation.objective.slice(0, 240), notes: undefined })
     fold = createOrderedMissionFold({ created: creation, readEvent: id => related.get(id),
-      readReport: id => { const event = reports.get(id); return event?.type === "task.reported" ? event : undefined } })
+      readReport: id => { const event = reports.get(id); return event?.type === "task.reported" ? event : undefined },
+      onTask: (key, id) => taskSources.set(key, id),
+      onReport: (key, id) => reportSources.set(key, reportSources.has(key) ? "" : id),
+      onChange: (change, source) => {
+        if (seenChanges.has(change.revision)) return
+        seenChanges.add(change.revision)
+        if (source.objective) objectives.set(change.revision, source.objective)
+      } })
     return true
-  }, cachedDigest)
+  }, cached?.digest, event => advanced = cached?.advance(event) ?? false)
+  if (advanced && cached) return { observation, unchanged: false as const, advanced: true as const, ...cached.project() }
   if (!fold) return { observation, unchanged: true as const }
-  return { observation, unchanged: false as const, ...fold.finish(), references, created, validEvents, first,
+  const project = fold.project
+  const advance = (event: MissionEvent) => {
+    // These transitions have no range lookups or cleanup side effects. An
+    // insert into an earlier lookup's empty slot can change the prefix's fold.
+    if ((event.type !== "task.created" && event.type !== "mission.briefed") || slots.has(event.id)
+      || !last || compareEvents(last, event) >= 0) return false
+    fold!.append([event])
+    last = { id: event.id, createdAt: event.createdAt }
+    return true
+  }
+  return { observation, unchanged: false as const, advanced: false as const, ...project(), advance, project, objectives, inputSources: fold.inputSources, taskSources, reportSources, references, created, validEvents, first,
     cleanups: projectMissionCleanups(cleanupEvents), cleanupUnavailable: cleanupUnavailable || hasInvalidCleanupHistory(cleanupEvents) }
 }

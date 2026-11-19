@@ -35,7 +35,7 @@ import { parseDeletionRecord, planDeletionPurge, type MissionDeletionRecord } fr
 import { MissionJournalIndex, noteMissionJournalWrite, type MissionIndexHints, type MissionIndexRange, type SynchronousHint } from "./journal-index"
 import { MISSION_DOCUMENT_PREFIX } from "./mission-document"
 import type { NativeJournalRange } from "../opencode/missions/native-journal-range"
-import { foldJournalRange } from "./journal-range-view"
+import { foldJournalRange, type CachedJournalFold } from "./journal-range-view"
 
 // Storage generation, independent of the event wire/schema version. No legacy reads.
 export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
@@ -44,6 +44,8 @@ const MAX_TEXT = 20_000
 const MAX_SHORT_TEXT = 240
 // One intent's native target fan-out, independent of journal history length.
 const MAX_INTENT_TARGETS = 2_000
+const RANGE_CACHE_COUNT = 64
+const RANGE_CACHE_SOURCE_BYTES = 64 * 1024 * 1024
 // A key's mission range, relative to the project prefix; anything else lies outside every range.
 const RANGE = /^\/([A-Za-z0-9_-]{3,100})\//
 const MISSION_FULL = `Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit of this mission`
@@ -54,6 +56,7 @@ type CapacitySlot = { intent: CapacityIntent; sessionID: string }
 type CapacityEntries = { count: number; events: MissionEvent[] }
 /** `unreadable`: missions whose deletion record could not be read, kept as damage. */
 interface Observation { events: MissionEvent[]; discardedEvents: number; purged: MissionEvent[]; unreadable: string[] }
+type SelectedSnapshot = MissionSnapshot & { latestUpdatedAt?: number; otherDocuments?: Pick<MissionMap, "id" | "coordinatorSessionId" | "document">[] }
 
 /** One mission's range reduced like a snapshot: `mission` is absent when the
  * range holds no live map (deleted, purged, damaged or unknown). */
@@ -82,8 +85,12 @@ export interface MissionStorage {
 
 export class MissionJournal {
   readonly projectToken: string
-  /** Small activation-local MRU. Cache hits verify the actual source bytes. */
-  private readonly rangeViews = new Map<string, { digest: string; range: MissionIndexRange }>()
+  /** Activation-local LRU. Charge source bytes as a conservative weight for the
+   * retained map and fold, which include scalar state as well as live bodies. */
+  private readonly rangeViews = new Map<string, CachedJournalFold & {
+    range: MissionIndexRange; bytes: number
+  }>()
+  private rangeViewBytes = 0
 
   /** `index`: the plugin activation's shared index; without one, `readHints` builds its own. */
   constructor(
@@ -125,7 +132,6 @@ export class MissionJournal {
   /** Every ordinary write attempt, before it starts: the index re-reads that mission. */
   private written(missionID: string): void {
     if (this.storage.isolated) return
-    this.rangeViews.delete(missionID)
     // Counted with or without an index: other journals' indexes see it as foreign.
     const generation = noteMissionJournalWrite(this.projectToken)
     this.index?.written(missionID, generation)
@@ -157,21 +163,63 @@ export class MissionJournal {
   /** Business state without the historical event collection. */
   async missionProjection(missionID: string): Promise<Omit<MissionView, "events">> {
     return runMissionExclusive(`append:${this.projectToken}`, async () =>
-      (await this.projectRange(missionID)).view)
+      structuredClone((await this.projectRange(missionID)).view))
+  }
+
+  /** Only projected output leaves the lane. The projector may point-read a
+   * document, but must not enter the journal again. */
+  async readProjection<T>(missionID: string, read: (view: Readonly<Omit<MissionView, "events">>,
+    provenance?: { digest: string; sources: ReturnType<CachedJournalFold["inputSources"]>;
+      taskSources: ReadonlyMap<string, string>; reportSources: ReadonlyMap<string, string> }) => T | Promise<T>): Promise<T> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const { view } = await this.projectRange(missionID)
+      const cached = this.rangeViews.get(missionID)
+      return structuredClone(await read(view, cached && { digest: cached.digest, sources: cached.inputSources(),
+        taskSources: cached.taskSources, reportSources: cached.reportSources }))
+    })
+  }
+
+  readDisplay(missionID: string, pick?: (value: string) => string | undefined, slot?: "tasks" | "pins") {
+    return isSafeKey(missionID) ? this.storage.range?.readDisplay?.(missionID, pick, slot) : undefined
+  }
+
+  saveDisplay(missionID: string, digest: string, value: string, slot?: "tasks" | "pins") {
+    return this.storage.range?.saveDisplay?.(missionID, digest, value, slot)
+  }
+
+  /** An old objective is resolved by provenance and two point reads, fenced by
+   * the same exact incarnation/stamp. A byte hash cannot fence A → B → A. */
+  async changeObjective(missionID: string, revision: number): Promise<{ revision: number; value: { before: string; after: string } } | undefined> {
+    if (!this.storage.range) return
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const { view } = await this.projectRange(missionID)
+      const cached = this.rangeViews.get(missionID)
+      const source = cached?.digest.includes("/") && cached.objectives.get(revision)
+      if (!view.mission || !cached || !source) return
+      const objective = async (id: string) => {
+        const event = await this.event(missionID, id)
+        return event && "objective" in event ? event.objective : undefined
+      }
+      const before = await objective(source.before), after = await objective(source.after)
+      await this.projectRange(missionID)
+      if (this.rangeViews.get(missionID)?.digest !== cached.digest || before === undefined || after === undefined) return
+      return { revision: view.mission.revision, value: { before, after } }
+    })
   }
 
   private async projectRange(missionID: string): Promise<MissionIndexRange> {
     if (!this.storage.range || !isSafeKey(missionID)) return this.range(missionID, await this.observeMission(missionID))
     const cached = this.rangeViews.get(missionID)
-    const result = await foldJournalRange(this.storage.range, missionID, cached?.digest)
     this.rangeViews.delete(missionID)
+    this.rangeViewBytes -= cached?.bytes ?? 0
+    const result = await foldJournalRange(this.storage.range, missionID, cached)
     if (result.unchanged && cached) {
-      this.rangeViews.set(missionID, cached)
-      return structuredClone(cached.range)
+      this.cacheRange(missionID, cached)
+      return cached.range
     }
     if (result.unchanged) throw new Error("Missing Mission journal projection")
     const malformed = result.observation.discardedEvents
-    if (!result.created && result.validEvents) {
+    if (!result.advanced && !result.created && result.validEvents) {
       // A missing creation can be an interrupted purge. The sidecar is outside
       // this range, so these views are never cached.
       if (await this.readRecord(missionID).catch(() => undefined)) return this.range(missionID, {
@@ -179,19 +227,38 @@ export class MissionJournal {
       })
       return this.range(missionID, await this.observeMission(missionID))
     }
+    const previous = result.advanced ? cached?.range : undefined
+    if (result.advanced && !previous) throw new Error("Missing previous Mission journal projection")
+    const events = result.advanced ? previous!.view.events : result.references
+    const cleanups = result.advanced ? previous!.view.cleanups : result.cleanups
+    const cleanupUnavailable = result.advanced ? previous!.view.cleanupUnavailable : result.cleanupUnavailable
+    const first = result.advanced ? previous!.first : result.first
     const view: MissionView = { missionID, version: MISSION_SCHEMA_VERSION, projectID: this.projectID,
-      generatedAt: this.now(), events: result.references, cleanups: result.cleanups,
+      generatedAt: this.now(), events, cleanups,
       discardedEvents: result.discardedEvents + malformed,
       ...(result.mission ? { mission: result.mission } : {}),
       ...(result.controlUnavailable || malformed ? { controlUnavailable: true as const } : {}),
       ...(result.notificationUnavailable || malformed ? { notificationUnavailable: true as const } : {}),
-      ...(result.cleanupUnavailable || malformed ? { cleanupUnavailable: true as const } : {}) }
-    // Keep only one map; live task/report cardinality still controls its size.
+      ...(cleanupUnavailable || malformed ? { cleanupUnavailable: true as const } : {}) }
     if (result.mission) {
-      this.rangeViews.clear()
-      this.rangeViews.set(missionID, { digest: result.observation.digest, range: { view: structuredClone(view), uncertain: false, first: result.first } })
+      const { advance, project, objectives, inputSources, taskSources, reportSources } = result.advanced ? cached! : result
+      this.cacheRange(missionID, { digest: result.observation.digest, advance, project, objectives, inputSources, taskSources, reportSources, bytes: result.observation.bytes,
+        range: { view, uncertain: false, first } })
     }
-    return { view, uncertain: false, first: result.first }
+    return { view, uncertain: false, first }
+  }
+
+  private cacheRange(missionID: string, cached: CachedJournalFold & {
+    range: MissionIndexRange; bytes: number
+  }): void {
+    if (cached.bytes > RANGE_CACHE_SOURCE_BYTES) return
+    while (this.rangeViews.size >= RANGE_CACHE_COUNT || this.rangeViewBytes + cached.bytes > RANGE_CACHE_SOURCE_BYTES) {
+      const oldest = this.rangeViews.keys().next().value!
+      this.rangeViewBytes -= this.rangeViews.get(oldest)!.bytes
+      this.rangeViews.delete(oldest)
+    }
+    this.rangeViews.set(missionID, cached)
+    this.rangeViewBytes += cached.bytes
   }
 
   private range(missionID: string, { events, discardedEvents, unreadable }: Observation): MissionIndexRange {
@@ -334,37 +401,41 @@ export class MissionJournal {
     return record
   }
 
-  async snapshot(): Promise<MissionSnapshot> {
-    if (this.storage.range) return runMissionExclusive(`append:${this.projectToken}`, () => this.projectSnapshot())
+  async snapshot(selected?: string): Promise<SelectedSnapshot> {
+    if (this.storage.range) return runMissionExclusive(`append:${this.projectToken}`, () => this.projectSnapshot(selected))
     const { events, discardedEvents } = await this.events()
     return this.reduce(events, discardedEvents)
   }
 
-  private async projectSnapshot(): Promise<MissionSnapshot> {
+  private async projectSnapshot(selected?: string): Promise<SelectedSnapshot> {
     const missions: { map: MissionMap; first?: Pick<MissionEvent, "id" | "createdAt"> }[] = [], cleanups: NonNullable<MissionSnapshot["cleanups"]> = []
-    let discardedEvents = 0, cleanupUnavailable = false, controlUnavailable = false, notificationUnavailable = false
+    const otherDocuments: NonNullable<SelectedSnapshot["otherDocuments"]> = []
+    let discardedEvents = 0, cleanupUnavailable = false, controlUnavailable = false, notificationUnavailable = false, latestUpdatedAt = 0
     const stray = await this.scanRanges(({ view, first }) => {
       discardedEvents += view.discardedEvents
       cleanupUnavailable ||= Boolean(view.cleanupUnavailable)
       controlUnavailable ||= Boolean(view.controlUnavailable)
       notificationUnavailable ||= Boolean(view.notificationUnavailable)
-      if (view.mission) missions.push({ map: view.mission, first: first ?? view.events.reduce<MissionEvent | undefined>(
+      if (view.mission) latestUpdatedAt = Math.max(latestUpdatedAt, view.mission.updatedAt)
+      if (view.mission && (selected === undefined || selected === view.missionID)) missions.push({ map: view.mission, first: first ?? view.events.reduce<MissionEvent | undefined>(
         (early, event) => !early || compareEvents(event, early) < 0 ? event : early, undefined) })
-      for (const cleanup of view.cleanups ?? []) cleanups.push(cleanup)
+      else if (view.mission) otherDocuments.push({ id: view.mission.id, coordinatorSessionId: view.mission.coordinatorSessionId })
+      for (const cleanup of view.cleanups ?? []) cleanups.push(structuredClone(cleanup))
     })
     // Stray entries are malformed across all three journals of receipts.
     discardedEvents += stray
     if (stray) cleanupUnavailable = controlUnavailable = notificationUnavailable = true
     missions.sort((a, b) => b.map.updatedAt - a.map.updatedAt || (a.first && b.first ? compareEvents(a.first, b.first) : 0))
     return { version: MISSION_SCHEMA_VERSION, generatedAt: this.now(), projectID: this.projectID, discardedEvents,
-      cleanups: orderMissionCleanups(cleanups),
+      cleanups: orderMissionCleanups(cleanups), ...(selected === undefined ? {} : { latestUpdatedAt, otherDocuments }),
       ...(cleanupUnavailable ? { cleanupUnavailable: true } : {}),
       ...(controlUnavailable ? { controlUnavailable: true } : {}),
       ...(notificationUnavailable ? { notificationUnavailable: true } : {}),
       missions: missions.map(({ map }) => {
-        if (controlUnavailable) map.controlUnavailable = true
-        if (notificationUnavailable) map.notificationUnavailable = true
-        return map
+        const published = structuredClone(map)
+        if (controlUnavailable) published.controlUnavailable = true
+        if (notificationUnavailable) published.notificationUnavailable = true
+        return published
       }) }
   }
 
@@ -391,11 +462,11 @@ export class MissionJournal {
   /** Reuse the authoritative publication read for capacity and the returned map.
    * The append lane holds the observation through the write. Unguarded display hints
    * never enter this path. Callers must serialize business admission separately. */
-  appendWithSnapshot(event: MissionEvent, current?: () => void): Promise<MissionSnapshot> {
+  appendWithSnapshot(event: MissionEvent, current?: () => void): Promise<SelectedSnapshot> {
     return runMissionExclusive(`append:${this.projectToken}`, async () => {
       if (this.storage.range) {
         await this.appendUnlocked(event, current)
-        return this.projectSnapshot()
+        return this.projectSnapshot(event.missionID)
       }
       const missionID = safeKey(event.missionID)
       const capacity = { prefix: `${this.prefix()}/${missionID}/`, count: 0, events: [] as MissionEvent[] }

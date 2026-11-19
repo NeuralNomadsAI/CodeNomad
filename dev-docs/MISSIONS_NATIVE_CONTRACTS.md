@@ -147,17 +147,17 @@ Exact request receipts remain point reads through `scheduleRead`.
 | --- | --- | --- |
 | `@opencode/client/service` | `discover({file})` returns Endpoint/undefined; `headers(endpoint)` builds authentication; public `Info` describes registration fields | Exact absolute registration, bounded non-secret id/pid/url/version projection, current PID/incarnation before dispatch and inside receiving RPC. Keep credentials in operation memory. For wake transport, forbid ensure/start/stop/terminate, CLI children, standalone and alternate namespaces. |
 | Client HTTP/RPC | `OpenCode.make(...).rpc(definition).method(input,{location,signal})` | Acquired authenticated connection, exact native directory and cancellation; preserve uncertainty after dispatch. |
-| Schedule HTTP contract | `experimental.schedule.create/list/get/pause/resume/delete`, `{data:Info}`, session-filtered list, delete 204 | `opencode/native-schedule-capability.ts` recognizes the consumed request/response shapes read-only. The Location's `scheduleFlag` RPC reads native flag resolution independently. Never create probe schedules. |
+| Automation HTTP contract | `experimental.automation.create/list/get/pause/resume/delete`, `{data:Info}`, session-filtered list, delete 204 | `opencode/native-schedule-capability.ts` recognizes the consumed request/response shapes read-only. The Location's `scheduleFlag` RPC reads native flag resolution independently. Never create probe schedules. |
 | Plugin Session facade | get/create/prompt/synthetic/interrupt/context | Prefer facade methods when they expose the required operation. Preserve exact session/message IDs and fixed profiles at admission. Use bounded point/page reads for source coverage. |
 | Session/AISDK hooks | prompt/context/title/compaction/language | Context admission requires the exact durable user message and schedule correlation. Title/compaction/language carry only local technical work. Treat metadata as correlation within service privileges. |
 | Native context message classification | Context message IDs select native carrier records | [Read bounds and authority](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds). |
 
-The HTTP create payload accepts optional `when` and condition keys `if`/`until`.
-Missions supplies its validated timing and fixed prompt; source conditions stay in
-the business reader. The generated Promise client unwraps the HTTP `{data:Info}`
+Missions supplies a validated timer trigger, a fixed prompt targeted at its own
+technical session and an optional expiration; source conditions stay in the
+business reader. The generated Promise client unwraps the HTTP `{data:Info}`
 envelope for create/get/pause/resume and `{data:Info[]}` for list. Callers consume
-those decoded values directly. Capability recognition validates the complete
-`when` shape independently of its required/optional marker; the read-only
+those decoded values directly. Capability recognition validates the consumed
+timer trigger, action and target shapes; the read-only
 `scripts/test-native-schedule-openapi.mjs` check exercises versioned native OpenAPI
 documents without imposing a runtime version list.
 
@@ -169,7 +169,7 @@ documents without imposing a runtime version list.
 | Session message readers | messages({sessionID,limit,order,cursor:{id,direction}}) → array; message({sessionID,messageID}) → Info/undefined | Same adapter: ≤32 messages/source, ≤256 KiB native message, 16,384-character launch envelope; point-read anchor and each message, stable complete prefix, source placement/bytes rechecked after I/O. Deleted/moved/changed anchors block. |
 | Session active | `active` is an Effect returning a ReadonlySet | `native-passage-observation.ts`: actual Set, ≤4096 sessions. Treat activity as a process-local observation. Require correlated durable terminal evidence and complete family quiescence for restart settlement. Keep an old execution claim uncertain during asynchronous native recovery. |
 | `@opencode/Location` | directory/workspaceID/project{id,directory,canonical} | `native-service-adapter.ts`, `native-service-clock.ts`, recurrence readers: structural Location.Info fields, exact native/physical placement and current graph checks after I/O and before effects. |
-| `@opencode/Flag`, `@opencode/Config` | `resolve(entries).schedules` → `{enabled:boolean,source:"env"|"config"|"default"}`; `entries()` → Effect of ordered documents/directories | `native-schedule-flag.ts`: receiving RPC/Location graph, checked methods/Effect, at most 256 entries, checked result and live Location/lifecycle before and after the read. `scheduleFlag` returns only effective state and provenance (`environment`, `experimental-block`, `all-flags`, `channel-default`). The calendar facade uses this same reader before carrier effects and retains `Schedule.enabled(sessionID)` for the carrier's own Location. Missing service or shape blocks admission. |
+| `@opencode/Flag`, `@opencode/Config` | `resolve(entries).automations` → `{enabled:boolean,source:"env"|"config"|"default"}`; `entries()` → Effect of ordered documents/directories | `native-schedule-flag.ts`: receiving RPC/Location graph, checked methods/Effect, at most 256 entries, checked result and live Location/lifecycle before and after the read. `scheduleFlag` returns only effective state and provenance (`environment`, `experimental-block`, `all-flags`, `channel-default`). The calendar facade uses this same reader before carrier effects and checks `Automation.enabled(directory)` in the carrier's Location. Missing service or shape blocks admission. |
 | `@opencode/storage/Database` | db.$client.unsafe(sql,params).withoutTransform → Effect rows; db.transaction(callback,{behavior:"immediate"}) | `native-recurrence-storage.ts`, `native-passage-observation.ts`: current graph, actual SQL client/transaction, safe row types and synchronous query guard. Preserve the driver's transaction Context when composing effects. Asynchronous-only reads cannot implement the synchronous admission fence. |
 | KV/CAS SQL | kv(key,value,time_created,time_updated); plugin namespace is plugin ID encoded as padded UTF-16 hex | `native-recurrence-storage.ts`: exact project key/bytes/revision, immediate transaction, conditional update and readback. Publish invalidation after commit; an invalidation failure preserves the committed result. |
 | Family SQL | session_v2 placement/parent/time_suspended, session_inbox, session_message id/type/seq/content/idle | `native-passage-observation.ts`: family ≤4096, exact message/inbox presence and nonnegative counts. Anchor the original input in durable seq order and require a later terminal idle as the latest projection. Count failures only between that input and terminal, then recheck family, claims and requests. Missing anchor/terminal or any remaining claim keeps uncertainty. |
@@ -191,14 +191,14 @@ checks the consumed part columns before passage admission.
 
 ## Schedule integration qualification
 
-Before consuming private `@opencode/Schedule`, qualify each actual method in its
-current RPC graph: create/list({sessionID})/get/pause/resume/remove/enabled. Core
-create takes tagged `when` and `action:{type:"prompt",prompt}`; HTTP create takes
-the public `when` input and `prompt`. Core list/get/pause/remove require explicit
+Before consuming private `@opencode/Automation`, qualify each actual method in its
+current RPC graph: create/list/get/pause/resume/remove/enabled. Core and HTTP create
+take a tagged timer trigger and a prompt action targeting the owned session.
+Core list/get/pause/remove require explicit
 flag/session/mapping checks at the caller. Bound adoption to the exact carrier.
 
-Semantic qualification covers deterministic `msg_<scheduleID>_<run>`, context ID
-preservation and prompt/stored-message schedule metadata, native missed-slot/phase rules, durable turn ordering, local cached
+Semantic qualification covers deterministic `msg_<automationID>_<run>`, context ID
+preservation and prompt/stored-message automation metadata, native missed-slot/phase rules, durable turn ordering, local cached
 language/title/compaction, and continuation concurrent with schedule recovery.
 Keep a pending passage uncertain while its terminal correlation or family
 coverage is incomplete. Tests of method presence and typechecks accompany these

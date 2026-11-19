@@ -20,12 +20,13 @@ await withProductRuntime(cli, async ({ root }) => {
         JSON.stringify({ sessionID: event.sessionID, messages: event.messages.map(({ id, role, metadata }) => ({ id, role, metadata })) }) + "\\n")))
     }) })
   `)
-  return { experimental: { schedules: true }, plugins: [plugin] }
+  return { experimental: { automations: true }, plugins: [plugin] }
 }, async ({ client, root }) => {
   assert.equal((await client.server.info()).version, version)
   const session = await client.session.create({ title: "Schedule context contract", location: { directory: root } })
-  const schedule = await client.experimental.schedule.create({ sessionID: session.id,
-    when: { at: new Date(Date.now() + 2000).toISOString() }, prompt: "FIXTURE_SCHEDULE_WAKE" })
+  const schedule = await client.experimental.automation.create({ sessionID: session.id, name: "Schedule context contract",
+    trigger: { type: "at", at: new Date(Date.now() + 3500).toISOString() },
+    action: { type: "prompt", prompt: "FIXTURE_SCHEDULE_WAKE" } })
   const id = `msg_${schedule.id}_1`
   let context
   for (const end = Date.now() + 20000; Date.now() < end;) {
@@ -39,15 +40,15 @@ await withProductRuntime(cli, async ({ root }) => {
   let stored
   try { stored = db.prepare("SELECT id,type,data FROM session_message WHERE id=? AND session_id=?").get(id, session.id) } finally { db.close() }
   assert.equal(stored.type, "user")
-  const metadata = JSON.parse(stored.data).metadata.schedule
+  const metadata = JSON.parse(stored.data).metadata.automation
   assert.equal(metadata.id, schedule.id); assert.equal(metadata.run, 1)
   assert(Number.isSafeInteger(metadata.dueAt) && metadata.dueAt >= 0)
   assert.equal(typeof metadata.late, "boolean")
   assert.equal(JSON.parse(stored.data).text, "FIXTURE_SCHEDULE_WAKE")
   const projected = context.messages.find(message => message.id === id)
   assert.equal(projected.role, "user")
-  if (projected.metadata?.schedule) assert.deepEqual(projected.metadata.schedule, metadata)
-  const result = { version, context: projected, stored: { id: stored.id, type: stored.type, schedule: metadata } }
+  if (projected.metadata?.automation) assert.deepEqual(projected.metadata.automation, metadata)
+  const result = { version, context: projected, stored: { id: stored.id, type: stored.type, automation: metadata } }
   await writeFile(path.join(root, "schedule-context-proof.json"), JSON.stringify(result, null, 2))
   console.log(JSON.stringify(result))
 }, { service: true })

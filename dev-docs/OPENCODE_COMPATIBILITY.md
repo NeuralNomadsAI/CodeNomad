@@ -21,7 +21,7 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
-Minimum and recommended runtime **2.3.0** (`runtime-support.ts`), with **2.3.0**
+Minimum and recommended runtime **2.3.2** (`runtime-support.ts`), with **2.3.2**
 client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
 qualifies only the 2.3 subagent contract: every subagent call returns at once
 (`metadata.status: "running"`) and the child reports to its parent through
@@ -46,8 +46,8 @@ undergo authenticated contract recognition; missing canonical APIs, session
 environment or the replay shape give a concrete reason. OpenCode reads older
 stored data.
 
-Missions schedules qualify the consumed Schedule API, effective
-`experimental.schedules` flag and retained plugin/provider bundle independently
+Missions schedules qualify the consumed Automation API, effective
+`experimental.automations` flag and retained plugin/provider bundle independently
 of general runtime admission: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
 and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
 consumed capabilities, including on future versions. Schedule delivery qualification
@@ -55,6 +55,10 @@ uses the minimum/latest CI matrix, including cold scheduled passage admission wi
 the retained product bundle and CodeNomad backend closed; keep results in PR/CI evidence.
 Context hooks retain native message IDs; Missions consumes the transport's
 [native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
+
+GPT-6.2 on Responses routes uses OpenCode's cacheable developer-message prefix
+for both ordinary steps and provider compaction. CodeNomad leaves prompt
+assembly and token caching to OpenCode.
 
 ### Native Codex subscription usage
 
@@ -233,19 +237,21 @@ capability is deliberately never probed during an observed compaction.
 
 Candidate traversal constructs no cold Locations; native HTTP middleware may
 warm or rebuild the single bootstrap root, and root eviction or a config rebuild
-constructs it again. Snapshots can go stale after leases release, so per-kind
+constructs it again. Pending recovery waits for catalogue activation at that
+owned root, then rechecks ownership and compaction admission and dispatches once.
+The authenticated, validated snapshot itself establishes coverage. Snapshots
+can go stale after leases release, so per-kind
 mutation fences and settlement tombstones stay essential.
 
 ### Fixed pruning broker admission
 
 The session-pruning, session-history, ranked-history, navigation, Images
-conversation, extension assets, API 4 session reads and pending bootstrap brokers
+conversation, extension assets and API 4 session reads
 use targeted Location preparation. Workspace-record and root-Location identities,
 the captured connection and monotone display/deletion fences span the wait. Session
 descriptors establish session ownership before any activation-capable catalogue
 read. History prepares the selected page directory; ranked history prepares each
-queried directory, including continuations. Pending prepares only its established
-owned bootstrap and retains loaded-only candidates.
+queried directory, including continuations.
 
 Each broker revalidates ownership after preparation, checks the same connection
 and signal beside dispatch and fences publication after IO. Extension grants are

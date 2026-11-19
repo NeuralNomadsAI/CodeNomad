@@ -38,15 +38,21 @@ export function readMissionContent(projectID: string, request: MissionContentReq
   changes: () => readonly MissionPlanChange[] = () => mission?.history ?? []): MissionContentResult {
   const base = { version: 1 as const, projectID, missionID: request.missionID }
   if (!mission || mission.id !== request.missionID) return { ...base, refused: "mission-not-found" }
-  const { missionID: _missionID, digest: expected, offset, ...selector } = request
+  const { missionID: _missionID, digest: _digest, offset: _offset, ...selector } = request
   let value: unknown
   try { value = missionContentValue(mission, selector, selector.kind === "change" ? changes() : mission.history) }
   catch { return { ...base, revision: mission.revision, refused: "content-not-found" } }
+  return readMissionContentValue(projectID, request, mission.revision, value)
+}
+
+export function readMissionContentValue(projectID: string, request: MissionContentRequest, revision: number, value: unknown): MissionContentResult {
+  const { missionID, digest: expected, offset, ...selector } = request
+  const base = { version: 1 as const, projectID, missionID, revision }
   const text = contentText(value), digest = contentDigest(text)
   if ((expected === undefined ? offset !== 0 : expected !== digest) || offset > text.length) {
-    return { ...base, revision: mission.revision, refused: "content-changed" }
+    return { ...base, refused: "content-changed" }
   }
-  const answer = (end: number): MissionContentResult => ({ ...base, revision: mission.revision, content: {
+  const answer = (end: number): MissionContentResult => ({ ...base, content: {
     ...selector, digest, offset, characters: text.length, ...(typeof value === "string" ? {} : { json: true as const }),
     text: text.slice(offset, end), ...(end < text.length ? { next: end } : {}),
   } })

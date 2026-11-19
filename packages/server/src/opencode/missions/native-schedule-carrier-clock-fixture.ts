@@ -15,7 +15,7 @@ export default Plugin.define({ id: "codenomad.schedule-clock-qualification", eff
     tick: raw => Effect.gen(function* () {
       const at = (raw as { at: number }).at
       if (!Number.isSafeInteger(at) || at < 0) throw new Error("qualification-clock")
-      const native = yield* Effect.serviceOption(Context.Service<never, unknown>("@opencode/Schedule"))
+      const native = yield* Effect.serviceOption(Context.Service<never, unknown>("@opencode/Automation"))
       if (Option.isNone(native)) throw new Error("qualification-schedule-contract")
       const tick = (native.value as { tick: Effect.Effect<void, unknown> }).tick
       if (!Effect.isEffect(tick)) throw new Error("qualification-schedule-contract")
@@ -35,7 +35,7 @@ export default Plugin.define({ id: "codenomad.schedule-clock-qualification", eff
       if (Option.isNone(found)) throw new Error("qualification-database-contract")
       const client = (found.value as { db: { $client: SqlClient.SqlClient } }).db.$client
       const query = (sql: string, params: readonly unknown[]) => client.unsafe(sql, params).withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)))
-      const schedule = (yield* query("SELECT id,session_id,status,\"when\",next_due_at,ends_at,remaining_runs,run_count,last_outcome,time_created,time_updated FROM schedule WHERE id=?", [input.scheduleID]))[0]
+      const schedule = (yield* query('SELECT id,session_id,status,trigger AS "when",next_due_at,expires_at AS ends_at,run_count,last_outcome,time_created,time_updated FROM automation WHERE id=?', [input.scheduleID]))[0]
       const session = (yield* query("SELECT id,title,model,metadata FROM session_v2 WHERE id=?", [input.sessionID]))[0]
       const messages = yield* query(`SELECT id,type,seq,length(CAST(data AS BLOB)) AS bytes,
         json_extract(data,'$.reason') AS reason,json_extract(data,'$.status') AS status,

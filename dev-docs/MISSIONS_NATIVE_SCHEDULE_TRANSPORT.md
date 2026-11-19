@@ -65,7 +65,7 @@ native exception text and endpoint authentication out of logs and model messages
 
 Never add lifecycle calls, CLI children, default registration discovery, alternate
 namespace lookup or standalone fallback to the wake transport. Effective
-`experimental.schedules`, service ownership and autonomous admission remain
+`experimental.automations`, service ownership and autonomous admission remain
 distinct receiver guards.
 
 ## Business result bounds
