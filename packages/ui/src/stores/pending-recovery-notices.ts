@@ -34,6 +34,16 @@ function persist(): void {
   try { storage()?.setItem(STORAGE_KEY, JSON.stringify([...shown])) } catch { /* Deduplication still holds for this page. */ }
 }
 
+/** A newer failure invalidates in-flight coverage without showing another warning. */
+export function recordPendingRecoveryFailure(project: string, cause: PendingRecoveryCause): void {
+  if (cause.kind !== "directories") return
+  const key = projectKey(project)
+  const claimed = shown.get(key)
+  if (!claimed?.length) return
+  const failed = new Set(cause.directories.map(({ directory }) => normalizeWorkspacePath(directory)))
+  if (claimed.some(directory => failed.has(normalizeWorkspacePath(directory)))) shown.set(key, [...claimed])
+}
+
 /** True the first time a notice is claimed, until its project recovers. */
 export function claimPendingRecoveryNotice(project: string, cause: PendingRecoveryCause): boolean {
   const key = cause.kind === "unsupported" ? UNSUPPORTED : projectKey(project)

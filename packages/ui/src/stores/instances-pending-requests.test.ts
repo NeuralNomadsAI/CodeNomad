@@ -700,11 +700,11 @@ test("a scan started before a project warning cannot rearm it", async () => {
   } finally { reopened.cleanup() }
 })
 
-for (const mode of ["rearm", "supersede", "budget", "routine"] as const) test(`a removed checkout is checked independently of recovery (${mode})`, { timeout: 3_000 }, async () => {
+for (const mode of ["rearm", "supersede", "budget", "routine", "sibling failure"] as const) test(`a removed checkout is checked independently of recovery (${mode})`, { timeout: 3_000 }, async () => {
   const refreshDuringProbe = mode !== "rearm"
   const project = `pending-probe-${mode}`
   const h = harness(`/${project}`)
-  const removed = Array.from({ length: mode === "routine" ? 9 : 1 }, (_, i) => `${h.directory}/removed-checkout-${i}`)
+  const removed = Array.from({ length: mode === "routine" || mode === "sibling failure" ? 9 : 1 }, (_, i) => `${h.directory}/removed-checkout-${i}`)
   const worktrees = serverApi.fetchWorktrees
   const probeStarted = deferred<AbortSignal | undefined>()
   const probe = deferred<WorkspacePendingRequestsResponse>()
@@ -789,8 +789,22 @@ for (const mode of ["rearm", "supersede", "budget", "routine"] as const) test(`a
       pending = false
       probe.resolve(excluded(removed.slice(0, 8)))
       const last = await replacementStarted.promise
-      await syncPendingRequests(h.id)
-      assert.equal(last?.aborted, false, "an equivalent refresh lets the second batch finish")
+      if (mode === "routine") {
+        await syncPendingRequests(h.id)
+        assert.equal(last?.aborted, false, "an equivalent refresh lets the second batch finish")
+      } else {
+        const sibling = harness(h.directory)
+        try {
+          serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "returned", directory: removed[0], kind: "worktree" }] })
+          await reloadWorktrees(sibling.id, true)
+          serverApi.getPendingRequests = async (_id, directories) => ({
+            supported: true, directories: directories.map(directory => directory === removed[0]
+              ? { directory, status: "error", reason: "unverified" }
+              : { directory, status: "ok", locations: [emptyLocation(directory)] }),
+          })
+          await assert.rejects(syncPendingRequests(sibling.id))
+        } finally { sibling.cleanup() }
+      }
       replacement.resolve(excluded(removed.slice(8)))
     }
     await recovery
@@ -805,8 +819,8 @@ for (const mode of ["rearm", "supersede", "budget", "routine"] as const) test(`a
     })
     await assert.rejects(syncPendingRequests(h.id))
     await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings(project).length, 2)
-    assert.equal(exclusions, mode === "routine" ? 2 : 1)
+    assert.equal(recoveryWarnings(project).length, mode === "sibling failure" ? 1 : 2)
+    assert.equal(exclusions, mode === "rearm" ? 1 : 2)
   } finally {
     probe.resolve(excluded(removed))
     replacement.resolve(excluded(removed))

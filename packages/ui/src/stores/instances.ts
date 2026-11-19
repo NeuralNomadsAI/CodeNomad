@@ -38,7 +38,7 @@ import { clearPendingSessionMove } from "./session-events"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { BackgroundReadQueue, backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
-import { capturePendingRecoveryNotices, claimPendingRecoveryNotice } from "./pending-recovery-notices"
+import { capturePendingRecoveryNotices, claimPendingRecoveryNotice, recordPendingRecoveryFailure } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
@@ -331,6 +331,7 @@ function markPendingRecovery(instanceId: string, incomplete: boolean, cause?: Pe
     return
   }
   if (!cause) return
+  recordPendingRecoveryFailure(pendingRecoveryProject(instanceId), cause)
   const failures = (failedPendingRecoveries.get(instanceId) ?? 0) + 1
   failedPendingRecoveries.set(instanceId, failures)
   if (failures >= PENDING_RECOVERY_WARNING_ATTEMPTS && !notifiedPendingRecovery.has(instanceId)) {
