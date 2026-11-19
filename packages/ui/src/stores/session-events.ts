@@ -125,6 +125,10 @@ export function confirmedSessionListDirectory(instanceId: string, sessionId: str
   return confirmedSessionWorktree(instanceId, sessionId, placement)?.directory
 }
 
+export function hasPendingSessionReturn(instanceId: string, sessionId: string): boolean {
+  return confirmedPlacements.get(instanceId)?.get(sessionId)?.returnFrom !== undefined
+}
+
 /** A matching expired proof retains the row until a current probe can settle it. */
 export function retainConfirmedSessionPlacement(
   instanceId: string, sessionId: string, placement: SessionPlacement | undefined,
@@ -527,7 +531,7 @@ function confirmListedReturn(instanceId: string, id: string): boolean {
 /** A later inventory that serves a moved-away session's destination lists it again. */
 function relistReturnedSessions(instanceId: string): void {
   const returned = [...getMovedAwaySessions(instanceId)].filter(([id, directory]) => {
-    if (confirmedPlacements.get(instanceId)?.get(id)?.returnFrom !== undefined) return confirmListedReturn(instanceId, id)
+    if (hasPendingSessionReturn(instanceId, id)) return confirmListedReturn(instanceId, id)
     return directory !== null && servesSessionDirectory(instanceId, directory)
   }).map(([id]) => id)
   if (!returned.length) return

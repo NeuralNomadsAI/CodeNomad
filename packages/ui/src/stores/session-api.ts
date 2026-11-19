@@ -95,7 +95,7 @@ const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import {
   captureSessionPlacementEvidence, clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending,
-  matchesSessionPlacement, retainConfirmedSessionPlacement,
+  hasPendingSessionReturn, matchesSessionPlacement, retainConfirmedSessionPlacement,
 } from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
@@ -860,6 +860,7 @@ async function fetchSessions(instanceId: string, options?: {
     const worktrees = getWorktrees(instanceId)
     for (const session of apiSessions) {
       if (currentAway.has(session.id) && capturedAway.get(session.id) === currentAway.get(session.id)
+        && !hasPendingSessionReturn(instanceId, session.id)
         && isWorkspaceServedDirectory(session.location.directory, instance.folder, worktrees)) {
         forgetSessionMovedAway(instanceId, session.id)
       }
@@ -885,6 +886,10 @@ async function fetchSessions(instanceId: string, options?: {
       const retainPlacement = (id: string, session: Session | undefined) =>
         [...(restorePlacementReads.get(messagePageKey(instanceId, id)) ?? [])].some(current => current())
           || retainConfirmedSessionPlacement(instanceId, id, session, revalidations, isCurrent, options?.signal)
+      // Catalogue containment cannot settle a verified return waiting on its checkout.
+      for (const { id } of apiSessions) {
+        if (hasPendingSessionReturn(instanceId, id) && !isSessionMovePending(instanceId, id)) retainPlacement(id, currentSessions.get(id))
+      }
       const staleIds = new Set(getDisconnectedCapturedSessionIds(existingSessions, currentSessions, validRootIds))
       const fetchedIds = new Set(authoritativeSessions.map(session => session.id))
       // Parents may live outside the enumerated project after a native move.
