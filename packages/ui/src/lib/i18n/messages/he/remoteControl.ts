@@ -27,4 +27,5 @@ export const remoteControlMessages = {
   "remoteControl.devices.empty": "עדיין אין מכשירים מצומדים.",
   "remoteControl.devices.lastSeen": "נראה לאחרונה: {time}",
   "remoteControl.devices.revoke": "בטל גישה",
+  "remoteControl.devices.revocationPending": "ביטול הגישה ממתין",
 } as const

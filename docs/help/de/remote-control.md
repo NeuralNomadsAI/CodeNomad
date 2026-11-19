@@ -17,7 +17,7 @@ Um einen weiteren CodeNomad-Desktop zu koppeln, wählen Sie auf dessen Startseit
 
 1. Kehren Sie auf dem Host zu **Einstellungen → Remote-Zugriff → Fernsteuerung** zurück.
 2. Prüfen Sie **Gekoppelte Geräte** und deren **Zuletzt gesehen:**-Zeit. Jedes Gerät ist nach der Plattform und dem Browser benannt, die es gekoppelt haben, etwa `iPhone · Safari`.
-3. Wählen Sie **Widerrufen** für ein Gerät, das nicht länger zugreifen soll.
+3. Wählen Sie **Widerrufen** für ein Gerät, das nicht länger zugreifen soll. Steht dort **Widerruf ausstehend**, wählen Sie vor dem Neustart des Hosts erneut **Widerrufen**.
 
 Widerruf beendet aktuelle HTTP-/SSE-Verbindungen des Geräts sowie zukünftigen Zugriff. Koppeln Sie zum Wiederherstellen mit einem neuen Link. Ein Gerät verfällt nach **30 Tagen ohne Nutzung**. Bei der **Grenze von 32 Geräten** ersetzt eine neue Kopplung das am längsten nicht gesehene Gerät und schließt dessen Verbindungen.
 

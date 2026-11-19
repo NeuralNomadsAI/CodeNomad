@@ -860,6 +860,7 @@ export interface RemoteControlDevice {
   name: string
   createdAt: string
   lastSeenAt: string
+  revocationPending?: true
 }
 
 export interface RemoteControlStartResponse {

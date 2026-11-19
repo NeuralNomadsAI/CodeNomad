@@ -601,6 +601,39 @@ test("the live reply control identifies local-only Gemini playback and OpenAI in
   }
 })
 
+test("playback overflow interrupts only the reply and truncates OpenAI at the rendered position", async () => {
+  for (const engine of ["gemini", "openai"] as const) {
+    const { page, context, live, openConsent, acceptConsent, sent, waitForSent } = await fixture(engine, true)
+    try {
+      await openConsent()
+      const send = await acceptConsent()
+      const openAI = engine === "openai"
+      const audio = (itemId: string) => ({ type: "audio", pcm, ...(openAI ? { itemId, contentIndex: 0 } : {}) })
+      send(openAI ? { type: "thinking", responseId: "overflow-reply" } : { type: "thinking" })
+      send(audio("oversized"))
+      await page.waitForFunction(() => (window as any).fixture.playback.rendered > 0)
+      // Each frame is half a second of valid PCM; the burst outruns the 12 s ring.
+      for (let index = 0; index < 32; index++) send(audio("oversized"))
+      await live.getByRole("list").getByText("Response interrupted", { exact: true }).waitFor()
+      await page.waitForFunction(() => (window as any).fixture.playback.flushed > 0)
+      const flushed = await page.evaluate(() => (window as any).fixture.playback.flushed)
+      if (openAI) {
+        assert.deepEqual(await waitForSent(item => item.type === "interrupt"), { type: "interrupt", responseId: "overflow-reply" })
+        assert.deepEqual(await waitForSent(item => item.type === "truncate"), {
+          type: "truncate", itemId: "oversized", contentIndex: 0, audioEndMs: Math.floor(flushed * 1000 / 24_000),
+        })
+      } else assert.equal(sent.some(item => item.type === "interrupt" || item.type === "truncate"), false)
+
+      send({ type: "turn-complete" })
+      send(audio("next"))
+      await page.waitForFunction(() => (window as any).fixture.playback.rendered > 0)
+      send({ type: "tool-call", id: "still-open", name: "get_session_status", arguments: {} })
+      assert.equal(JSON.parse((await waitForSent(item => item.id === "still-open")).output).status, "idle")
+      assert.equal(await live.getByRole("list").getByText("Response interrupted", { exact: true }).count(), 1)
+    } finally { await context.close() }
+  }
+})
+
 test("the live log adds one receipt and one interruption, not partial speech", async () => {
   const { context, live, openConsent, acceptConsent, waitForSent } = await fixture("gemini", true)
   try {

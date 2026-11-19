@@ -268,7 +268,7 @@ export function openLiveVoiceSession(options: {
             Number(value.contentIndex) < 0 || Number(value.contentIndex) > 32))) return stop("invalid-message")
         if (!discardResponse) {
           responseOpen = responseSpoken = true
-          audio.play(value as AudioEvent)
+          if (audio.play(value as AudioEvent) === "overflow") interrupt(true)
         }
         break
       case "transcript":

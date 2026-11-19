@@ -91,7 +91,8 @@ test("playback tracks separate OpenAI items and never counts queued audio as pla
     { type: "truncate", itemId: "current", contentIndex: 0, audioEndMs: 50 },
     { type: "truncate", itemId: "queued", contentIndex: 0, audioEndMs: 0 },
   ])
-  assert.throws(() => playback.append(LIVE_VOICE_PLAYBACK_CAPACITY, audio("full")), /overrun/)
+  assert.equal(playback.append(LIVE_VOICE_PLAYBACK_CAPACITY, audio("full")), false)
+  assert.deepEqual(playback.interrupt(25_200).at(-1), { type: "truncate", itemId: "full", contentIndex: 0, audioEndMs: 0 })
 })
 
 test("a fully rendered item only truncates while its response can still generate audio", () => {

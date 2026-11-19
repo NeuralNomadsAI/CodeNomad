@@ -17,7 +17,7 @@ Başka masaüstü CodeNomad istemcisini eşleştirmek için onun ana sayfasında
 
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesine dönün.
 2. **Eşleştirilmiş cihazlar** ve **Son görülme** zamanlarını inceleyin. Her cihaz, onu eşleştiren platform ve tarayıcıya göre adlandırılır; örneğin `iPhone · Safari`.
-3. Artık bağlanmaması gereken cihaz için **İptal et** eylemini seçin.
+3. Artık bağlanmaması gereken cihaz için **İptal et** eylemini seçin. **İptal beklemede** görünüyorsa ana makineyi yeniden başlatmadan önce tekrar **İptal et** seçeneğini kullanın.
 
 İptal, cihazın mevcut HTTP/SSE bağlantılarını ve gelecekteki erişimini sonlandırır. Yeniden erişim için yeni bağlantıyla eşleştirin. Cihazın süresi **30 gün kullanılmadığında** dolar. **32 cihaz sınırında**, yeni eşleştirme en uzun süredir görülmeyen cihazın yerini alır ve bağlantılarını kapatır.
 

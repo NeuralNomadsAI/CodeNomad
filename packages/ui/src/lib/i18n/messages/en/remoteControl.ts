@@ -27,4 +27,5 @@ export const remoteControlMessages = {
   "remoteControl.devices.empty": "No devices are paired yet.",
   "remoteControl.devices.lastSeen": "Last seen {time}",
   "remoteControl.devices.revoke": "Revoke",
+  "remoteControl.devices.revocationPending": "Revocation pending",
 } as const

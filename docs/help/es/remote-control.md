@@ -17,7 +17,7 @@ Para emparejar otro CodeNomad de escritorio, elige **Conectar servidor CodeNomad
 
 1. En el equipo anfitrión, vuelve a **Configuración → Acceso remoto → Control remoto**.
 2. Revisa **Dispositivos emparejados** y su hora de **Última actividad**. Cada dispositivo recibe el nombre de la plataforma y el navegador que lo emparejaron, como `iPhone · Safari`.
-3. Elige **Revocar** para un dispositivo que ya no deba conectarse.
+3. Elige **Revocar** para un dispositivo que ya no deba conectarse. Si aparece **Revocación pendiente**, vuelve a seleccionar **Revocar** antes de reiniciar el anfitrión.
 
 La revocación finaliza las conexiones HTTP/SSE actuales del dispositivo y su acceso futuro. Vuelve a emparejarlo con un enlace nuevo para restaurar el acceso. Un dispositivo caduca tras **30 días sin uso**. Al alcanzar el **límite de 32 dispositivos**, un emparejamiento nuevo reemplaza el dispositivo con actividad más antigua y cierra sus conexiones.
 

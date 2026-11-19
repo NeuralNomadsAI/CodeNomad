@@ -28,6 +28,18 @@ const interactive = params.has("ui")
 const title = params.get("title") ?? (interactive ? "Feature ABC — משימה 42" : "Conversation")
 const path = "/voice-fixture"
 const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false, historyReads: 0 }
+const playback = { rendered: 0, flushed: -1 }
+window.AudioWorkletNode = class extends AudioWorkletNode {
+  constructor(...args: ConstructorParameters<typeof AudioWorkletNode>) {
+    super(...args)
+    if (args[1] === "codenomad-live-playback") this.port.addEventListener("message", ({ data }) => {
+      if (data.flush) {
+        playback.flushed = data.rendered
+        playback.rendered = 0
+      } else if (typeof data.rendered === "number") playback.rendered = data.rendered
+    })
+  }
+}
 let firstPrompt: "start" | "delay" | "fail" | "holdAck" = "start"
 let releaseAck: (() => void) | undefined
 let latestPage: Promise<void> | undefined
@@ -177,6 +189,7 @@ function Interactive() {
   Object.assign(window, { fixture: {
     info, switchSession: () => setActiveSession(instanceId, "other"), setVoiceConversationEngine,
     openVoiceSettings: () => openSettingsRow("speech", "voice-dictation"),
+    playback,
     removeProviderKey: () => { geminiConfigured = false; return loadSpeechCapabilities(true) },
     microphoneEnabled: () => microphone?.enabled,
   } })

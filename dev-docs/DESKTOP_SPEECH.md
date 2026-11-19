@@ -38,7 +38,8 @@ the bearer `Authorization` header on their provider WebSockets.
 - Start audio from the user's activation and send its 20 ms PCM frames only after
   the gateway confirms the expected rates. The audio processor resamples mono
   capture off the UI thread, and resamples and plays 24 kHz PCM from a bounded
-  12-second ring. An interruption clears the ring and counts PCM frames rendered
+  12-second ring. A reply that fills the ring is interrupted and the session
+  stays open. An interruption clears the ring and counts PCM frames rendered
   per item, excluding queued audio and silent gaps. Socket backpressure is the
   session controller's responsibility.
 - The audio graph requires a secure top-level application document. Local Linux
@@ -69,9 +70,9 @@ the bearer `Authorization` header on their provider WebSockets.
   admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.
 - The two voices are transcribed in memory until the window is dismissed.
-  The Gemini gateway emits a separate user completion. An explicit transcription
-  flag takes precedence; input without one uses model turn completion as a
-  best-effort boundary.
+  The Gemini gateway emits a separate user completion. Speech start closes a
+  pending segment; input without an explicit completion flag also uses model
+  turn completion as a best-effort boundary.
   A stop, target change, closed document, provider failure or disconnect
   releases capture and sockets, with no reconnect or engine fallback.
 - Each backend admits one live conversation per identity and four in total.

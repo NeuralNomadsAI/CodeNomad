@@ -17,7 +17,7 @@ To pair another desktop CodeNomad, choose **Connect CodeNomad Server** on its ho
 
 1. On the host, return to **Settings → Remote Access → Remote Control**.
 2. Review **Paired devices** and their **Last seen** time. Each device is named after the platform and browser that paired it, such as `iPhone · Safari`.
-3. Choose **Revoke** for a device that should no longer connect.
+3. Choose **Revoke** for a device that should no longer connect. If it shows **Revocation pending**, retry **Revoke** before restarting the host.
 
 Revocation ends that device's current HTTP/SSE connections as well as future access. Pair again with a new link to restore access. A device expires after **30 days without use**. At the **32-device limit**, a new pairing replaces the least recently seen device and closes its connections.
 

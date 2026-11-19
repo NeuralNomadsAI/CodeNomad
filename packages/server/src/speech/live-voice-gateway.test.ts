@@ -166,9 +166,13 @@ test("a pending revocation refuses upgrades and can be retried durably", { timeo
   }
   await denied(target(), gemini, { host: FAKE_TUNNEL_HOST, origin: `https://${FAKE_TUNNEL_HOST}`,
     cookie: `${DEVICE_COOKIE_NAME}=${token}` }, 403)
+  const devices = () => fetch(`http://${local}/api/remote-control/devices`).then(response => response.json())
+  assert.deepEqual(await devices(), { devices: [{ ...device, revocationPending: true }] })
+  assert.equal(manager.status().pairedDevices, 0)
   assert.equal(new RemoteDeviceRegistry(registryPath).isPaired(device.id), true)
   fs.rmdirSync(tempPath)
   assert.equal((await revoke()).status, 204)
+  assert.deepEqual(await devices(), { devices: [] })
   assert.equal(new RemoteDeviceRegistry(registryPath).authenticate(token), null)
   const absent = await revoke()
   await absent.text()
@@ -196,6 +200,26 @@ test("Gemini emits a user boundary between raw transcripts without a finished fl
   assert.deepEqual(await client.next(), { type: "turn-complete" })
   assert.deepEqual(await client.next(), { type: "activity" })
   assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "speaking", final: true })
+})
+
+test("Gemini speech start closes a late input transcript before the next utterance", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })
+  const client = connect(t, local, gemini, { origin: `http://${local}` })
+  const upstream = await setupGemini(client, fake)
+  upstream.send({ serverContent: { turnComplete: true } })
+  upstream.send({ serverContent: { inputTranscription: { text: "Late A" } } })
+  upstream.send({ voiceActivity: { type: "ACTIVITY_START" } })
+  upstream.send({ serverContent: { inputTranscription: { text: "New B" } } })
+  upstream.send({ serverContent: { turnComplete: true } })
+  assert.deepEqual(await client.next(), { type: "turn-complete" })
+  for (const text of ["Late A", "New B"]) {
+    assert.deepEqual(await client.next(), { type: "activity" })
+    assert.deepEqual(await client.next(), { type: "transcript", role: "user", text, final: false })
+    if (text === "Late A") assert.deepEqual(await client.next(), { type: "activity" })
+    assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "", final: true })
+  }
+  assert.deepEqual(await client.next(), { type: "turn-complete" })
 })
 
 test("direct admission, Gemini binary messages, fixed tools, cancellation and password logout", { timeout: 10000 }, async t => {

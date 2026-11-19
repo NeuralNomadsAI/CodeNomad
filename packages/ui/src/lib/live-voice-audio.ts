@@ -193,13 +193,13 @@ export async function startLiveVoiceAudio(options: {
         for (const sample of samples) power += sample * sample
         return Math.min(1, Math.sqrt(power / samples.length) * 4)
       },
-      play(message: AudioMessage) {
+      play(message: AudioMessage): "overflow" | void {
         if (own.aborted) return
         try {
           if (!message.pcm.length || message.pcm.length > LIVE_VOICE_PROVIDER_BYTES) throw new Error("Invalid PCM length")
           const pcm = Uint8Array.from(atob(message.pcm), character => character.charCodeAt(0)).buffer
           if (!pcm.byteLength || pcm.byteLength % 2 !== 0) throw new Error("Invalid PCM length")
-          playback.append(pcm.byteLength / 2, message)
+          if (!playback.append(pcm.byteLength / 2, message)) return "overflow"
           player.port.postMessage(pcm, [pcm])
           playbackChanged()
         } catch (error) { fail(error) }

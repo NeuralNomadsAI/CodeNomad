@@ -83,7 +83,7 @@ export class RemoteControlManager {
       previews: this.options.registry.previewsAllowed(),
       state,
       ...(tunnel ? { remoteUrl: tunnel.url } : {}),
-      pairedDevices: this.options.registry.list().length,
+      pairedDevices: this.options.registry.pairedCount(),
       ...(this.lastConnectedAt ? { lastConnectedAt: this.lastConnectedAt } : {}),
       ...(this.error ? { error: this.error } : {}),
     }

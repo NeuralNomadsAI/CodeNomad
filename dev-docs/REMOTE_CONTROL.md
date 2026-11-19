@@ -211,8 +211,8 @@ credentials follow their separate registry lifetime and revocation rules.
   single-conversation slot is keyed by paired device at this ingress and by
   username on the direct listener. Device revocation or tunnel shutdown ends
   voice; the preview switch affects previews alone. A failed revocation write
-  denies the device in memory and is retried by the next DELETE for that device
-  or successful registry write.
+  denies the device in memory and keeps its row marked as pending so the host
+  can retry Revoke. Any successful registry write also commits the removal.
 - The Tauri TLS-exception proxy accepts this one upgrade from its exact window
   origin and checks a per-window HttpOnly credential from bootstrap. The proxy
   connects only to that window's configured HTTPS target via the pinned DNS

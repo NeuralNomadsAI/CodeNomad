@@ -130,6 +130,11 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     io.stop("provider-error")
     return false
   }
+  function finishGeminiInput() {
+    if (!geminiInput) return
+    transcript("user", "", true)
+    geminiInput = undefined
+  }
   function fromGemini(event: JsonObject) {
     if (Object.hasOwn(event, "goAway")) return io.stop("provider-disconnected")
     if (object(event.setupComplete)) return ready()
@@ -149,6 +154,7 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     const interimUser = object(content?.interimInputTranscription)
     if (activity === "ACTIVITY_START" || activity === "ACTIVITY_END"
       || (transcriptText(user?.text) && user.text.trim()) || (transcriptText(interimUser?.text) && interimUser.text.trim())) io.speech()
+    if (activity === "ACTIVITY_START") finishGeminiInput()
     if (activity === "ACTIVITY_END") io.emit({ type: "thinking" })
     if (!content) return
     if (content.interrupted === true) io.emit({ type: "interrupted" })
@@ -174,10 +180,7 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     if (content.turnComplete === true) {
       // Gemini doesn't guarantee input ordering or a final flag. Use the model
       // turn as a best-effort boundary only for input without explicit completion.
-      if (geminiInput === "implicit") {
-        transcript("user", "", true)
-        geminiInput = undefined
-      }
+      if (geminiInput === "implicit") finishGeminiInput()
       io.emit({ type: "turn-complete" })
     }
   }

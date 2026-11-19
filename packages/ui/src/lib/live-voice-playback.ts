@@ -13,11 +13,19 @@ export class LiveVoicePlayback {
   private received = 0
   private rendered = 0
   private openItem?: Item
+  private overflowItem?: Item
 
   get pending() { return this.received > this.rendered }
 
   append(frames: number, message: AudioMessage) {
-    if (this.received - this.rendered + frames > LIVE_VOICE_PLAYBACK_CAPACITY) throw new Error("Playback overrun")
+    if (this.received - this.rendered + frames > LIVE_VOICE_PLAYBACK_CAPACITY) {
+      const { itemId, contentIndex } = message
+      if (itemId !== undefined && contentIndex !== undefined) {
+        // Truncate the rejected item too, including a new item with zero played frames.
+        this.overflowItem = this.items.get(itemId) ?? { itemId, contentIndex, played: 0, received: 0 }
+      }
+      return false
+    }
     let item: Item | undefined
     if (message.itemId !== undefined && message.contentIndex !== undefined) {
       item = this.items.get(message.itemId)
@@ -42,6 +50,7 @@ export class LiveVoicePlayback {
       if (this.queued.length >= 256) throw new Error("Playback item overrun")
       this.queued.push({ item, end: this.received })
     }
+    return true
   }
 
   progress(rendered: number) {
@@ -60,8 +69,10 @@ export class LiveVoicePlayback {
 
   interrupt(rendered: number): TruncateMessage[] {
     this.progress(rendered)
-    return Array.from(this.items.values())
-      .filter(item => item === this.openItem || item.received > item.played)
+    const items = [...this.items.values()]
+    if (this.overflowItem && !this.items.has(this.overflowItem.itemId)) items.push(this.overflowItem)
+    return items
+      .filter(item => item === this.openItem || item === this.overflowItem || item.received > item.played)
       .map(({ itemId, contentIndex, played }) => ({
         type: "truncate",
         itemId,

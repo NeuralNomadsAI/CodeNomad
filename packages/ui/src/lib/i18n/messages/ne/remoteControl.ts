@@ -27,4 +27,5 @@ export const remoteControlMessages = {
   "remoteControl.devices.empty": "अहिलेसम्म कुनै उपकरण जोडिएको छैन।",
   "remoteControl.devices.lastSeen": "अन्तिम पटक: {time}",
   "remoteControl.devices.revoke": "हटाउनुहोस्",
+  "remoteControl.devices.revocationPending": "पहुँच हटाउन बाँकी",
 } as const

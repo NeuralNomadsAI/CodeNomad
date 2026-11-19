@@ -17,7 +17,7 @@ Pour appairer un autre CodeNomad de bureau, choisissez **Se connecter au serveur
 
 1. Sur l’hôte, revenez à **Paramètres → Accès distant → Contrôle à distance**.
 2. Vérifiez **Appareils appairés** et leur heure **Dernière activité**. Chaque appareil porte le nom de la plateforme et du navigateur qui l’ont appairé, par exemple `iPhone · Safari`.
-3. Choisissez **Révoquer** pour un appareil qui ne doit plus se connecter.
+3. Choisissez **Révoquer** pour un appareil qui ne doit plus se connecter. Si **Révocation en attente** s’affiche, choisissez de nouveau **Révoquer** avant de redémarrer l’hôte.
 
 La révocation termine les connexions HTTP/SSE actuelles de cet appareil ainsi que son accès futur. Appairez-le à nouveau avec un nouveau lien pour rétablir l’accès. Un appareil expire après **30 jours sans utilisation**. À la **limite de 32 appareils**, un nouvel appairage remplace l’appareil vu le moins récemment et ferme ses connexions.
 

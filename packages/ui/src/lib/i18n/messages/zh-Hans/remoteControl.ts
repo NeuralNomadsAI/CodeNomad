@@ -27,4 +27,5 @@ export const remoteControlMessages = {
   "remoteControl.devices.empty": "尚未配对任何设备。",
   "remoteControl.devices.lastSeen": "上次活动：{time}",
   "remoteControl.devices.revoke": "撤销",
+  "remoteControl.devices.revocationPending": "撤销待保存",
 } as const
