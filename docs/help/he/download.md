@@ -42,6 +42,6 @@ npx @neuralnomads/codenomad --generate-token --launch
 
 ## תמיכה בפיתוח {#support-development}
 
-העמוד [תמכו ב־CodeNomad](sponsor.md) מסביר למה משמשת החסות.
+העמוד [תמכו ב־CodeNomad](sponsor.md) מסביר למה החסות חשובה ואיך היא מנוהלת.
 
 {{funding}}

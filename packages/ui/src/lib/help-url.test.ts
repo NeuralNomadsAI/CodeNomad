@@ -67,6 +67,27 @@ test("startup labels stay concise and match the localized help", async () => {
   }
 })
 
+test("OpenCode binary chooser and compact version labels stay translated and documented", async () => {
+  const locales = ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]
+  const { settingsMessages: english } = await import("./i18n/messages/en/settings")
+  const { instanceMessages: englishInstance } = await import("./i18n/messages/en/instance")
+  for (const locale of locales) {
+    const { settingsMessages } = await import(`./i18n/messages/${locale}/settings.ts`)
+    const { instanceMessages } = await import(`./i18n/messages/${locale}/instance.ts`)
+    assert.deepEqual(Object.keys(settingsMessages).sort(), Object.keys(english).sort(), locale)
+    assert.deepEqual(Object.keys(instanceMessages).sort(), Object.keys(englishInstance).sort(), locale)
+    const label = instanceMessages["opencodeBinarySelector.actions.chooseOther"]
+    assert.ok(label, locale)
+    const article = await readFile(new URL(`../../../../docs/help/${locale}/opencode.md`, import.meta.url), "utf8")
+    assert.ok(article.includes(`**${label}**`), locale)
+    assert.ok(settingsMessages["settings.opencode.setup.recommended"], locale)
+    for (const key of ["settings.opencode.setup.source.path", "settings.opencode.setup.source.user",
+      "settings.opencode.logLevel.subtitle", "settings.opencode.logLevel.selector.title", "settings.opencode.update.upToDate"]) {
+      assert.equal(settingsMessages[key], undefined, `${locale}: ${key}`)
+    }
+  }
+})
+
 test("every Missions scheduling explanation links to contextual help instead of the settings popover", async () => {
   const root = fileURLToPath(new URL("../../../..", import.meta.url))
   for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {

@@ -5,6 +5,7 @@ import { authenticatedFetch } from "./auth-recovery"
 import { prioritizedRead } from "./prioritized-read"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
+import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../../../server/src/opencode/session-access-contract"
 
 class SDKManager {
   private clients = new Map<string, OpenCodeClient>()
@@ -54,13 +55,22 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
     const apiPath = requestUrl.pathname.startsWith(basePath)
       ? `/${requestUrl.pathname.slice(basePath.length)}` : requestUrl.pathname
     const method = init?.method ?? (input instanceof Request ? input.method : "GET")
+    const parentSessionId = parentSessionReadId(input, init, method, apiPath)
     // Transcript pages: CodeNomad defers their large tool images to session-media paths.
-    const requestInit = method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(apiPath) ? withDeferredMedia(input, init) : init
+    const requestInit = method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(apiPath) ? withDeferredMedia(input, init)
+      : parentSessionId ? withoutHeader(input, init, PARENT_SESSION_READ_HEADER) : init
     const read = async () => {
       const response = await authenticatedFetch(input, {
         ...requestInit,
         credentials: init?.credentials ?? "include",
       })
+      if (parentSessionId && response.status === 403) {
+        const body = await response.clone().json().catch(() => undefined)
+        // Parent and restore reads reconcile a session located elsewhere as absent.
+        if (body?.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
+          return Response.json({ _tag: "SessionNotFoundError", sessionID: parentSessionId, message: "Session not found", reason: body.reason }, { status: 404 })
+        }
+      }
       if (response.status === 426) {
         const { reportOpenCodeSetupRequired } = await import("../stores/opencode-setup")
         reportOpenCodeSetupRequired()
@@ -96,6 +106,26 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
 export function withDeferredMedia(input: RequestInfo | URL, init: RequestInit | undefined): RequestInit {
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
   headers.set(DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE)
+  return { ...init, headers }
+}
+
+/** Client-side opt-in for parent or restore reads (never sent). Only a typed
+ * workspace departure becomes a missing session, retaining its reason. */
+const PARENT_SESSION_READ_HEADER = "x-codenomad-parent-read"
+export const parentSessionReadHeaders = { [PARENT_SESSION_READ_HEADER]: "1" } as const
+export const workspaceSessionPlacementHeaders = { ...parentSessionReadHeaders, [SESSION_PLACEMENT_HEADER]: "1" } as const
+
+function parentSessionReadId(input: RequestInfo | URL, init: RequestInit | undefined, method: string, apiPath: string): string | undefined {
+  if (method !== "GET") return undefined
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
+  if (!headers.has(PARENT_SESSION_READ_HEADER)) return undefined
+  const match = /^\/api\/session\/([^/]+)\/?$/.exec(apiPath)
+  return match ? decodeURIComponent(match[1]!) : undefined
+}
+
+function withoutHeader(input: RequestInfo | URL, init: RequestInit | undefined, name: string): RequestInit {
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
+  headers.delete(name)
   return { ...init, headers }
 }
 

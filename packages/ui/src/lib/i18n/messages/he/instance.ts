@@ -342,6 +342,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.title": "קובץ בינארי של OpenCode",
   "opencodeBinarySelector.customPath.placeholder": "הזן נתיב לקובץ בינארי של {name}…",
   "opencodeBinarySelector.actions.add": "הוסף",
+  "opencodeBinarySelector.actions.chooseOther": "בחר קובץ בינארי אחר…",
   "opencodeBinarySelector.actions.browse": "עיין אחר קובץ בינארי…",
   "opencodeBinarySelector.actions.removeTitle": "הסר קובץ בינארי",
   "opencodeBinarySelector.status.checkingVersions": "בודק גרסאות…",

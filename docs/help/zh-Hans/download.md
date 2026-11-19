@@ -42,6 +42,6 @@ npx @neuralnomads/codenomad --generate-token --launch
 
 ## 支持开发 {#support-development}
 
-[赞助 CodeNomad](sponsor.md)页面说明了赞助的用途。
+[赞助 CodeNomad](sponsor.md)页面说明了赞助为何重要以及如何处理。
 
 {{funding}}

@@ -23,12 +23,15 @@ La pestaña seleccionada del panel derecho y el modo de Archivos se guardan por 
 
 1. En **General**, selecciona **Idioma**: inglés, español, francés, ruso, japonés, chino simplificado, hebreo, alemán, nepalí o turco.
 2. En **Esquema de color**, elige **Modo**: **Auto**, **Oscuro** o **Claro**. Auto sigue al sistema operativo.
-3. Elige una paleta para la apariencia mostrada. Las selecciones clara y oscura se guardan por separado; Auto usa la correspondiente.
-4. Para colores personalizados, usa las muestras y **Guardar**; **Restablecer** restaura los colores de una paleta integrada. Usa **Nuevo** para dar nombre a otra paleta y **Eliminar** para quitar una que hayas creado.
+3. Junto a **Modo**, elige **Contraste**: **Auto** (predeterminado) sigue la preferencia de contraste del sistema; **Activado** aumenta el contraste de cualquier paleta; **Desactivado** usa el contraste normal.
+4. Elige una paleta para la apariencia mostrada. Las selecciones clara y oscura se guardan por separado; Auto usa la correspondiente.
+5. Para colores personalizados, usa las muestras y **Guardar**; **Restablecer** restaura los colores de una paleta integrada. Usa **Nuevo** para dar nombre a otra paleta y **Eliminar** para quitar una que hayas creado.
+
+El contraste se aplica y guarda inmediatamente, independientemente de **Guardar** los colores. Adapta la visualización y conserva la paleta seleccionada, los colores editables y el borrador de conversación. La **i** muestra el estado actual del contraste en Auto.
 
 La interfaz se actualiza sin reiniciar una conversación. El hebreo usa disposición de derecha a izquierda; el código y los valores técnicos siguen legibles en su propia dirección. La selección de idioma cambia el texto de la interfaz, no el idioma de los mensajes existentes ni las instrucciones del agente. Los menús nativos de escritorio pasan al idioma de la interfaz en cuanto se ha cargado una ventana de CodeNomad.
 
-Si los colores se vuelven difíciles de leer, selecciona una paleta integrada o restablece la editada. Cambiar de paleta puede pedir que descartes ediciones de color sin guardar; no descarta un borrador de conversación.
+Si los colores se vuelven difíciles de leer, elige **Contraste → Activado**. También puedes seleccionar una paleta integrada o restablecer la editada. Cambiar de paleta puede pedir que descartes ediciones de color sin guardar; el borrador de conversación se conserva.
 
 ## Mantener el ordenador activo {#keep-computer-awake}
 
@@ -43,7 +46,7 @@ Abre **Preferencias → General → Memoria** (o **Configuración → General** 
 - **Acerca de ti**: hasta 60 entradas compartidas entre los proyectos de esta configuración.
 - **Proyecto**: hasta 200 entradas. Esta interfaz usa el proyecto seleccionado en Preferencias, o el proyecto activo de la ventana principal en los ajustes integrados. El servidor identifica el repositorio por su dirección remota Git normalizada, con la ruta local del repositorio como alternativa; los worktrees comparten esta memoria. Abre un proyecto para seleccionar este ámbito.
 
-1. Selecciona un ámbito y una entrada. **Nuevo** y **Modificado** señalan cambios desde la última consulta correcta de ese ámbito en esta vista del navegador o escritorio; siguen visibles durante la visita actual.
+1. Selecciona un ámbito, despliega su número de entradas (por ejemplo **7/200**) y selecciona una entrada. **Nuevo** y **Modificado** señalan cambios desde la última vez que se mostraron las entradas de ese ámbito en esta vista del navegador o escritorio; la línea del contador plegada también los muestra, y siguen visibles durante la visita actual.
 2. Edita **Título**, **Tipo** (**Hecho**, **Preferencia** o **Referencia**) y **Texto**, y pulsa **Guardar**. El título admite 60 caracteres y el texto 2000. **Cancelar** restaura el contenido guardado. Si alguien modificó la entrada, usa **Recargar** y revísala antes de guardar de nuevo.
 3. Para quitar una entrada, abre su menú de acciones y confirma **Olvidar**. Sale de la memoria activa; Git conserva su historial local, incluido el texto anterior. Olvidar retira la entrada del uso del agente, sin borrarla de forma segura.
 4. Si la memoria está llena, combina u olvida entradas antes de reintentar. Los títulos coincidentes o textos muy similares reemplazan una entrada existente; Git conserva su texto anterior.

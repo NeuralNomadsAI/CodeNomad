@@ -10,13 +10,23 @@ Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak 
 
 **Görev oluştur**, oluşturana veya iptal edene kadar ağacın yerine formu gösterir. Oluşturma doğrulanınca görev seçilir; reddedilince form düzenlenebilir kalır.
 
+Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşmasındaki ajandan ayrı, tek seferlik veya zamanlanmış bir Görev hazırlamasını isteyin. Konuşması değişmez; varsayılan olarak yeni bir koordinatör konuşması oluşturulur. İlgili CodeNomad arka ucunu kullanılabilir tutun. **Otomatik başlat**, yeni Görevin ilk başlatılmasına izin verir; kurtarma özgün sonucu okur. Ajanlar, düzenleyicide oluşturduklarınız dahil projenin tüm zamanlamalarını listeleyebilir, inceleyebilir, başlatabilir, duraklatabilir, durdurabilir, sürdürebilir, şimdi çalıştırabilir, kontrol edebilir, düzenleyebilir ve silebilir. Aynı revizyon ve kabul kontrolleri uygulanır; zamanlamanın açıkça kapatılması korunur. Doğrulanmamış işlem, salt okunur durum sorgusu için özgün isteğini saklar.
+
 ### Yapılandırma {#saved-briefs}
 
+Ajanlar, projeye ait her konuşmadan sizin oluşturduklarınız dahil tüm Görevleri okuyabilir. Salt okunur görünümler işleri, sonuçları, temizliği, zamanlanmış çalıştırmaları ve kaynak seçeneklerini kapsar; görüntülemek işi başlatmaz veya yeniden denemez.
+
+Ajanlar ayrıca zamanlamayı tanılayabilir, açık OFF durumunu koruyarak ayarları hazırlayabilir, doğrulanmış kısmi düzenlemeyi özgün istekle sürdürebilir ve günlük zamanlamalar oluşturup yönetebilir.
+
 **Yapılandırma**, kayıtlı hedefi, notları, rehberi, profilleri ve görev oturumlarını yükler; adı düzenlenebilir başlık olur. Alanları kontrol edin.
+
+Ajanlar yapılandırmaları okuyabilir, kaydedebilir, değiştirebilir veya yeniden adlandırabilir, kaldırabilir ve onarabilir; mevcut bir Görevin talimatlarını da kaydedebilir. Ayrıca genel veya rehbere özel profil ve görev oturumu varsayılanlarını değiştirebilir, devralmayı geri getirebilir, geçersiz tercihleri sıfırlayabilir ve görev konuşmalarını silme tercihini değiştirebilir. Kitaplık ve bu tercihler CodeNomad profilinin tüm projelerinde geçerlidir. Projenin alt ajan derinliği, boş yapılandırma bloğunun onarımı dahil 1–10 veya **Devral** seçeneğini destekler. Her değişiklik son okunan değeri denetler ve sonradan yapılan insan düzenlemelerini korur.
 
 Altta İptal ve Oluştur yanındaki **Yapılandırmayı kaydet**, yeniden kullanılabilir bir yapılandırma saklar; Görev oluşturmaz veya başlatmaz. Zamanlama ve otomatik başlatma ayrı seçilir. Dişli, Tercihler ve kitaplığı açar; yapılandırmayı silmek mevcut görevleri ve konuşmaları korur.
 
 ### Hedef, Başlık ve Notlar {#mission-instructions}
+
+Tek seferlik Missions için ajanlar başlatabilir, sürdürebilir, mevcut adımdan sonra duraklatabilir, hemen kesebilir, durdurabilir, düzenleyebilir, silebilir, hata sonrası koordinasyonu sürdürebilir ve eksik rapor veya güncelleme isteyebilir. Sizin oluşturduğunuz Missions da panelle aynı kabul ve revizyon kontrollerine tabidir. Açıkça başka bir seçenek belirtilmedikçe silme işlemi, yönetilen oturumları silme tercihinizi kullanır. Onaylanmamış kontroller ve temizlik özgün kimliklerini korur; ajanlar, doğrulanmış kısmi bir işlemi açıkça sürdürmeden önce kayıtlı durumu okur.
 
 **Hedef**, istenen sonucu ve doğrulamasını anlatır. **Başlık**, ağaçtaki addır; boş görevde hedefin ilk cümlesinden en çok 60 karakter alır ve değiştirilebilir. **Notlar**, ajanlara iletilen isteğe bağlı bağlam, kısıtlar veya ek talimatlardır.
 
@@ -81,6 +91,8 @@ Seçilen program durumunu, sonraki uyanma/kontrolü, başlatılmış/başarılı
 **Takip edilen konuşmalar** altında **Konuşma ekle** ile bir konuşma seçin; anında Görev için de kullanılabilir. Başlatmadan önce seçimi değiştirin veya × düğmesiyle kaldırın.
 
 ### Mevcut günlük programlar {#existing-daily-schedules}
+
+Aracılar bu programları, başka bir çalışma ağacı da dahil olmak üzere aynı projeye ait herhangi bir konuşmadan bulabilir ve kontrol edebilir.
 
 Kendi kontrollerini ve saat dilimini korurlar. Hizmet yeniden başlayınca kesintiye uğramış günlük kayıtlar Devam gerektirir. Kaçırılan tüm günler yerine son uygun günü telafi ederler. Sonuçlar seçilen kayıttadır.
 

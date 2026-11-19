@@ -101,3 +101,25 @@
     min-height: var(--touch-target-size);
   }
 }
+
+.session-item-favorite {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
+
+.session-item-inline-actions .session-item-close[data-favorite-action="true"]:not(:hover, :focus-visible) {
+  color: var(--accent-primary);
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .session-item-base[data-compact-actions="false"][data-favorite="true"] .session-item-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .session-item-base[data-favorite="true"]:not(:hover, :focus-within) .session-item-close:not([data-favorite-action="true"]) {
+    opacity: 0;
+    pointer-events: none;
+  }
+}

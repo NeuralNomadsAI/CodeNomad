@@ -1,7 +1,12 @@
-import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
 import type { WorkspaceManager } from "../../workspaces/manager"
-import { assertRecurrenceProofFresh, recurrenceControlRequestDigest } from "../../missions/recurrence-control-proof"
+import { assertRecurrenceProofFresh, assertSchedulePrincipalAction, recurrenceControlProofSchema,
+  recurrenceControlRequestDigest, recurrenceSchedulePrincipal, type RecurrenceControlProofBody } from "../../missions/recurrence-control-proof"
+import { missionPreparationBindingSchema } from "../../missions/creation-intent"
+import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
+import { canonicalAuthority } from "../../missions/authority-protocol"
+import { automaticMissionStartID } from "../../missions/preparation-result"
+import { missionScheduleID } from "../../missions/mission-schedule-contract"
 import { sameLocation } from "../../opencode/compatibility/location"
 import type { SettingsService } from "../../settings/service"
 import type { FastifyRequest } from "fastify"
@@ -30,44 +35,85 @@ export function recurrenceHumanSession(request: FastifyRequest, deps: HumanDeps)
   return session.sessionId.startsWith(REMOTE_DEVICE_SESSION) ? undefined : session
 }
 
-const proofSchema = z.object({ sessionID: z.string().min(1).max(256), workspaceID: z.string().min(1).max(200),
-  requestID: z.string().min(1).max(128), location: z.object({ directory: z.string().min(1).max(4096),
-    workspaceID: z.string().optional() }).strict(), scheduleID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
-  expectedRevision: z.number().int().nonnegative(), action: z.enum(["play", "pause", "stop", "resume", "run-now", "check", "create", "configure", "delete"]),
-  configDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  profileSource: z.object({ profileID: z.string(), executionHost: z.string(), configYamlPath: z.string() }).strict(),
-  issuedAt: z.number().int().nonnegative(), digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
+export type VerifyScheduleAgentCreation = (body: RecurrenceControlProofBody,
+  signal: AbortSignal) => Promise<boolean>
+const preparationProofSchema = z.object({ binding: missionPreparationBindingSchema.optional() }).strict()
 
 /** Read-only callback through the existing private bridge. No registration of
  * an alternate auth session/store: cookie admission is checked in AuthManager,
  * paired devices in the live Remote Control registry. */
-export async function verifyHumanRecurrenceRequest(input: unknown, deps: {
+export async function verifyRecurrenceRequest(input: unknown, deps: {
   auth: Pick<AuthManager, "isAuthEnabled" | "getSessionFromHeaders" | "getCookieName">
   manager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro">
   settings?: Pick<SettingsService, "getProfileScope">
   remoteDevices?: HumanDeps["remoteDevices"]
+  /** Reads the original immutable preparation binding; absence refuses agent CREATE. */
+  verifyAgentCreation?: VerifyScheduleAgentCreation
 }, signal: AbortSignal, now: () => number = Date.now): Promise<{ admitted: true }> {
-  const body = proofSchema.parse(input), { digest, ...identity } = body
+  const body = recurrenceControlProofSchema.parse(input), { digest, ...identity } = body
+  const principal = recurrenceSchedulePrincipal(body)
+  assertSchedulePrincipalAction(principal, body.action)
   signal.throwIfAborted()
   assertRecurrenceProofFresh(body.issuedAt, now())
-  if (!deps.auth.isAuthEnabled() || body.sessionID === "auth-disabled" || recurrenceControlRequestDigest(identity) !== digest) throw new Error("Recurrence human request unavailable")
-  // The signed sessionID names its principal: a paired device stays one, never a cookie.
-  const authenticated = () => body.sessionID.startsWith(REMOTE_DEVICE_SESSION)
-    ? body.sessionID.length > REMOTE_DEVICE_SESSION.length
-      && deps.remoteDevices?.isDeviceAuthorized(body.sessionID.slice(REMOTE_DEVICE_SESSION.length)) === true
-    : deps.auth.getSessionFromHeaders({ cookie: `${deps.auth.getCookieName()}=${body.sessionID}` })?.sessionId === body.sessionID
+  if (recurrenceControlRequestDigest(identity) !== digest) throw new Error("Recurrence request unavailable")
+  // Only human principals enter cookie/device authentication.
+  const authenticated = () => principal.kind === "agent" || deps.auth.isAuthEnabled() && principal.sessionID !== "auth-disabled"
+    && (principal.sessionID.startsWith(REMOTE_DEVICE_SESSION)
+      ? principal.sessionID.length > REMOTE_DEVICE_SESSION.length
+        && deps.remoteDevices?.isDeviceAuthorized(principal.sessionID.slice(REMOTE_DEVICE_SESSION.length)) === true
+      : deps.auth.getSessionFromHeaders({ cookie: `${deps.auth.getCookieName()}=${principal.sessionID}` })?.sessionId === principal.sessionID)
   if (!authenticated() || !deps.settings
-    || deps.settings.getProfileScope().key !== body.profileSource.profileID) throw new Error("Recurrence human request unavailable")
+    || deps.settings.getProfileScope().key !== body.profileSource.profileID) throw new Error("Recurrence request unavailable")
   const workspace = deps.manager.get(body.workspaceID)
   const distro = deps.manager.getServiceWslDistro(body.workspaceID)
   if (body.profileSource.executionHost !== (distro ? `wsl:${distro}` : "local")) throw new Error("Recurrence execution host changed")
   const connection = await deps.manager.getSharedServiceConnection(body.workspaceID)
   if (!workspace || !connection || !await deps.manager.ownsLocation(body.workspaceID, body.location, connection.client, { signal })) throw new Error("Recurrence owner unavailable")
   const location = await connection.client.location.get({ location: { directory: body.location.directory } }, { signal })
+  if (principal.kind === "agent") {
+    const authorCurrent = async () => {
+      const author = await connection.client.session.get({ sessionID: principal.author.coordinatorSessionID }, { signal })
+       if (author.id !== principal.author.coordinatorSessionID || author.projectID !== location.project.id
+         || principal.creationRequestID && !sameLocation(author.location, body.location)
+        || !await deps.manager.ownsLocation(body.workspaceID, author.location, connection.client, { signal }))
+        throw new Error("Recurrence agent owner unavailable")
+    }
+    await authorCurrent()
+    if (body.action === "create" && principal.creationRequestID) {
+      if (body.requestID !== principal.creationRequestID
+        || body.scheduleID !== missionScheduleID(location.project.id, location.project.canonical, body.requestID))
+        throw new Error("Recurrence agent creation identity differs")
+      if (deps.verifyAgentCreation) {
+        if (!await deps.verifyAgentCreation(body, signal)) throw new Error("Recurrence agent creation unavailable")
+      } else {
+        const result = preparationProofSchema.parse(await connection.client.rpc(CODENOMAD_MISSIONS_RPC).schedulePreparationRead(
+          { creationRequestID: principal.creationRequestID }, { location: { directory: body.location.directory }, signal }))
+        const { kind: _kind, ...expected } = principal
+        if (!result.binding || canonicalAuthority(result.binding) !== canonicalAuthority(expected))
+          throw new Error("Recurrence agent creation unavailable")
+      }
+    } else if (principal.creationRequestID) {
+      const result = await connection.client.rpc(CODENOMAD_MISSIONS_RPC).scheduleRead({ missionID: body.scheduleID },
+        { location: { directory: body.location.directory }, signal }) as { document?: {
+          firstPlayedAt: number | null; revision: number; state: string; creation?: { requestID: string; digest: string; author?: unknown;
+            automaticStart?: { requestID: string; attempted: boolean }; input?: { startOnCreation: boolean } } } }
+      const document = result.document, creation = document?.creation
+      if (!document || document.firstPlayedAt !== null || document.state !== "paused" || document.revision !== body.expectedRevision
+        || creation?.requestID !== principal.creationRequestID || creation.digest !== principal.creationDigest
+        || canonicalAuthority(creation.author ?? null) !== canonicalAuthority(principal.author)
+        || creation.input?.startOnCreation !== true || creation.automaticStart?.attempted !== false
+        || creation.automaticStart.requestID !== body.requestID || body.requestID !== automaticMissionStartID(creation.requestID))
+        throw new Error("Recurrence agent first Play unavailable")
+    }
+    await authorCurrent()
+  }
   connection.assertCurrent(); signal.throwIfAborted()
   if (!sameLocation(location, body.location) || deps.manager.get(body.workspaceID) !== workspace
     || deps.manager.getServiceWslDistro(body.workspaceID) !== distro
-    || !deps.auth.isAuthEnabled() || !authenticated()) throw new Error("Recurrence owner changed")
+    || deps.settings.getProfileScope().key !== body.profileSource.profileID
+    || !authenticated()) throw new Error("Recurrence owner changed")
   assertRecurrenceProofFresh(body.issuedAt, now())
   return { admitted: true }
 }
+export const verifyHumanRecurrenceRequest = verifyRecurrenceRequest
+import { z } from "zod"

@@ -181,6 +181,29 @@ test("panel maps project exact unified documents with bounded missing and damage
   }
 })
 
+test("opening a document-backed panel does not clone hidden text with the complete mission map", async t => {
+  const f = fixture()
+  const objective = "Large objective ".repeat(800), notes = "Large notes ".repeat(800)
+  const mission = (await f.control.create({ requestID: "compact-open", objective, notes, template: "custom" })).mission
+  const clone = t.mock.method(globalThis, "structuredClone")
+  const page = await f.control.panelPage({ source: "mission", missionID: mission.id, header: true })
+  assert.ok(page.available)
+  const payload = JSON.parse(page.page.pieces[0].text)
+  assert.ok(payload.root.bodies.objective && payload.root.bodies.notes)
+  assert.ok(payload.root.document)
+  assert.equal(JSON.stringify(payload).includes(objective), false)
+  assert.equal(JSON.stringify(payload).includes(notes), false)
+  assert.equal(clone.mock.calls.some(({ arguments: [value] }) => {
+    const map = (value as { mission?: { objective?: unknown; notes?: unknown } } | undefined)?.mission
+    return map?.objective === objective && map.notes === notes
+  }), false, "full hidden bodies were cloned")
+  const body = await f.control.content({ missionID: mission.id, kind: "mission", field: "notes",
+    digest: payload.root.bodies.notes.digest, offset: 0 })
+  assert.ok("content" in body)
+  assert.equal(body.content.text, notes)
+  assert.equal(JSON.stringify(body).includes(objective), false)
+})
+
 test("existing user objective/notes updates keep unified stored configuration current without prompting", async () => {
   const f = fixture(), mission = (await f.control.create({ requestID: "create-original", objective: "Work", template: "custom" })).mission
   const update = { missionID: mission.id, requestID: "edit-original", expectedRevision: mission.revision, objective: "Clarified work", notes: "Keep this note" }

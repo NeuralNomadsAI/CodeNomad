@@ -6,11 +6,11 @@ Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend.
 
 1. Cliquez sur **Nouvelle instance** (`+`) pour ouvrir l’accueil.
 2. Choisissez **Parcourir les dossiers**, sélectionnez le dossier du backend et ouvrez-le ; ou choisissez une entrée sous **Dossiers récents**.
-3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
+3. Pour une copie de dépôt, choisissez **Cloner un dépôt Git**, saisissez **URL du dépôt** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
 
 Parcourir un serveur distant signifie parcourir son système de fichiers, pas votre téléphone ou ordinateur portable. Ouvrir un projet ne crée pas un démon OpenCode distinct par onglet. Les conversations sont des sessions natives OpenCode ; leur durée de vie n’est pas celle de l’onglet.
 
-Le clonage écrit un dépôt dans la destination. **Supprimer d'abord le dossier de destination s'il existe deja.** est destructeur : n’activez cette option que si tout ce qui s’y trouve peut être supprimé. Dans le doute, utilisez une nouvelle destination.
+Le clonage écrit un dépôt dans la destination. **Supprimer d'abord le dossier de destination s'il existe déjà.** est destructeur : n’activez cette option que si tout ce qui s’y trouve peut être supprimé. Dans le doute, utilisez une nouvelle destination.
 
 Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** change son nom affiché ; **Retirer des récents** retire le raccourci, pas ses fichiers ni ses conversations. Cliquer sur un projet récent déjà ouvert ouvre un nouvel onglet ; son bouton **Ouvert** (**Basculer vers le projet ouvert**) sélectionne plutôt l’onglet existant.
 
@@ -38,7 +38,7 @@ Si une autre fenêtre affiche la même connexion de projet, son onglet se ferme 
 
 Fermer une fenêtre entière, quitter ou recharger ne ferme pas ses connexions de projet ; la restauration normale au démarrage s’applique toujours. Arrêtez explicitement les exécutions concernées si vous devez vérifier qu’elles sont terminées. CodeNomad ne décharge jamais les Locations natives ; la maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
 
-Lorsque la restauration au démarrage est activée, chaque onglet restant retrouve ses propres choix de panneaux, sa sélection et son lecteur de Mission ainsi que l’URL et l’historique du navigateur enregistrés. Les pages du navigateur enregistrées se chargent à leur réouverture explicite. Fermer une occurrence retire uniquement sa vue enregistrée ; rouvrir le dossier crée une nouvelle occurrence.
+Lorsque la restauration au démarrage est activée, chaque onglet restant retrouve ses propres choix de panneaux, sa sélection et son lecteur de Mission ainsi que son choix entre le chat et l’aperçu web. Les URL et l’historique du navigateur sont partagés par session ; les pages enregistrées se chargent uniquement lorsque l’aperçu web est explicitement rouvert. Fermer une occurrence retire uniquement sa vue enregistrée ; rouvrir le dossier crée une nouvelle occurrence.
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 
@@ -76,7 +76,7 @@ Le sélecteur de la zone de saisie déplace la conversation parente et ses desce
 
 La suppression retire le dossier local du worktree. La copie principale de Git n’est pas une cible supprimable. CodeNomad ramène les familles de conversations concernées vers la copie racine et vérifie leur emplacement avant de retirer le worktree ; des sessions actives peuvent bloquer la suppression. La suppression n’est ni une archive ni une sauvegarde des fichiers non validés.
 
-Si Git refuse des fichiers modifiés/non suivis, préservez ou nettoyez ces fichiers avant de réessayer. La suppression forcée les détruit explicitement. Pour un répertoire verrouillé, fermez les terminaux, éditeurs, observateurs et processus en arrière-plan qui l’utilisent. La boîte d’erreur propose **Copier la version nettoyee** pour partager un diagnostic ; relisez même le texte nettoyé.
+Si Git refuse des fichiers modifiés/non suivis, préservez ou nettoyez ces fichiers avant de réessayer. La suppression forcée les détruit explicitement. Pour un répertoire verrouillé, fermez les terminaux, éditeurs, observateurs et processus en arrière-plan qui l’utilisent. La boîte d’erreur propose **Copier la version nettoyée** pour partager un diagnostic ; relisez même le texte nettoyé.
 
 ## Initialiser Git ou travailler sans lui {#initialize-git}
 

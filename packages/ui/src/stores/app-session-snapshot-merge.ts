@@ -113,6 +113,18 @@ export function getPreservedWorkspaceState(
   const source = preservation.sourceTabs[index]
   return source?.kind === "workspace" ? source : null
 }
+export function retirePreservedWorkspacePrompts(
+  preservation: RestorableSessionPreservation,
+  runtimeTabId: string,
+  consumed: ReadonlySet<string>,
+) {
+  const index = preservation.results.findIndex(result => result.runtimeTabId === runtimeTabId)
+  const source = preservation.sourceTabs[index]
+  if (source?.kind !== "workspace") return
+  const drafts = { ...source.drafts }, attachments = { ...source.attachments }
+  for (const id of consumed) { delete drafts[id]; delete attachments[id] }
+  preservation.sourceTabs[index] = { ...source, drafts, attachments }
+}
 export function getPreservedWorkspaceReopenTarget(
   preservation: RestorableSessionPreservation,
   workspace: { runtimeTabId: string; folder: string; occurrence: number },

@@ -1,7 +1,10 @@
 import { Context, Effect, Option, Predicate, Schema } from "effect"
+import { createHash } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Shell } from "@opencode/schema/shell"
+import { Form } from "@opencode/schema/form"
+import { Permission } from "@opencode/schema/permission"
 import type { SqlClient } from "effect/sql"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { stableToken } from "../../missions/receipt-identity"
@@ -27,6 +30,14 @@ export function assertNativeBackgroundRows(rows: readonly Record<string, unknown
     throw new Error("Native passage background coverage unavailable")
 }
 
+export function nativeShellBlocksFamily(item: { status?: unknown; metadata?: unknown }, ids: ReadonlySet<string>): boolean {
+  if (item.status !== "running") return false
+  const metadata = item.metadata
+  const owner = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>).sessionID : undefined
+  return typeof owner !== "string" || !owner.trim() || ids.has(owner)
+}
+
 /** Exact read-only source projections, checked again synchronously in the target
  * document transaction. No lease or native asynchronous effect enters that CAS. */
 export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")(function* (alive: () => true) {
@@ -40,6 +51,26 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
     const result = Effect.runSync(database.db!.$client!.unsafe(sql, args).withoutTransform.pipe(Effect.provide(transactionGraph.getStore() ?? graph)))
     if (!Array.isArray(result)) throw new Error("Mission source projection unavailable")
     return result as Record<string, unknown>[]
+  }
+  // Match the ordinary range reader's boundaries, including stray project keys.
+  // Rehash inside the existing synchronous transaction fence, including malformed
+  // values and original JSON spelling; timestamps and event counts are not proof.
+  const journalDigest = (prefix: string) => {
+    const start = nativeKey(prefix)
+    const end = start.slice(0, -1) + String.fromCharCode(start.charCodeAt(start.length - 1) + 1)
+    const hash = createHash("sha256")
+    let after = start, inclusive = true
+    for (;;) {
+      const page = read(`SELECT key,value FROM kv WHERE key${inclusive ? ">=" : ">"}? AND key<? ORDER BY key LIMIT 32`, [after, end])
+      for (const { key, value } of page) {
+        if (typeof key !== "string" || typeof value !== "string" || !key.startsWith(start) || key === after && !inclusive)
+          throw new Error("Mission source journal projection unavailable")
+        hash.update(`${key.length}:${key}${value.length}:`, "utf16le").update(value, "utf16le")
+        after = key
+        inclusive = false
+      }
+      if (page.length < 32) return hash.digest("base64url")
+    }
   }
   return () => {
     const proofs: { sql: string; args: readonly unknown[]; digest: string }[] = []
@@ -81,12 +112,52 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           throw new Error("Prepared coordinator is not empty or its selection changed")
       },
       document: (key: string) => { pin("SELECT value FROM kv WHERE key=? AND length(value)<=262144", [nativeKey(key)]) },
-      journal: (prefix: string) => {
+      journal: (prefix: string, exceptKey?: string, ordinary = false) => {
+        if (ordinary && exceptKey === undefined) {
+          const digest = journalDigest(prefix)
+          checks.push(() => { if (journalDigest(prefix) !== digest) throw new Error("Mission source changed during preparation") })
+          return
+        }
         const start = nativeKey(prefix), end = `${start}\uffff`
-        const size = read("SELECT count(*) AS count,coalesce(sum(length(value)),0) AS size FROM kv WHERE key>=? AND key<?", [start, end])[0]
+        const args = [start, end, exceptKey === undefined ? "" : nativeKey(exceptKey)]
+        const size = read("SELECT count(*) AS count,coalesce(sum(length(value)),0) AS size FROM kv WHERE key>=? AND key<? AND key<>?", args)[0]
         if (!size || !Number.isSafeInteger(size.count) || Number(size.count) > 2036 || !Number.isSafeInteger(size.size)
           || Number(size.size) > 16 * 1024 * 1024) throw new Error("Mission source journal capacity")
-        pin("SELECT key,value FROM kv WHERE key>=? AND key<? ORDER BY key LIMIT 2037", [start, end])
+        pin("SELECT key,value FROM kv WHERE key>=? AND key<? AND key<>? ORDER BY key LIMIT 2037", args)
+      },
+      coordinator: (id: string) => {
+        const cte = `WITH RECURSIVE family(id) AS (SELECT id FROM session_v2 WHERE id=? UNION SELECT s.id FROM session_v2 s JOIN family f ON s.parent_id=f.id LIMIT 4097)`
+        const members = pin(`${cte} SELECT s.id,s.parent_id,s.project_id,s.directory,s.workspace_id,s.metadata,s.agent,s.model,s.time_suspended,
+          (SELECT count(*) FROM session_inbox i WHERE i.session_id=s.id) AS inbox,
+          (SELECT count(*) FROM session_message m,json_each(${nativeMessageDataSQL},'$.content') p
+            WHERE m.session_id=s.id AND m.type='assistant' AND json_extract(p.value,'$.type')='tool'
+            AND json_extract(p.value,'$.state.status') IN ('running','streaming')) AS tools
+          FROM session_v2 s JOIN family f ON s.id=f.id ORDER BY s.id`, [id])
+        if (!members.length || members.length > 4096 || members.some(row => row.time_suspended != null || row.inbox !== 0 || row.tools !== 0))
+          throw new Error("coordinator-busy")
+        const ids = new Set(members.map(row => String(row.id)))
+        const list = (name: string, codec: Schema.Codec<unknown, unknown>) => {
+          const service = Context.get(graph, Context.Service<never, unknown>(name)) as { list?(): Effect.Effect<unknown, unknown> }
+          if (!Predicate.isFunction(service.list)) throw new Error("Coordinator request coverage unavailable")
+          const effect = service.list()
+          if (!Effect.isEffect(effect)) throw new Error("Coordinator request coverage unavailable")
+          const value = Effect.runSync(effect.pipe(Effect.provide(graph)))
+          Schema.decodeUnknownSync(codec)(value)
+          if (!Array.isArray(value) || value.length > 1024) throw new Error("Coordinator request coverage unavailable")
+          return value as Record<string, unknown>[]
+        }
+        checks.push(() => {
+          const sessions = Context.get(graph, Context.Service<never, unknown>("@opencode/Session")) as { active?: unknown }
+          if (!Effect.isEffect(sessions.active)) throw new Error("Coordinator activity coverage unavailable")
+          const active = Effect.runSync((sessions.active as Effect.Effect<unknown, unknown>).pipe(Effect.provide(graph)))
+          if (!(active instanceof Set) || active.size > 4096) throw new Error("Coordinator activity coverage unavailable")
+          const requests = [...list("@opencode/Form", Schema.Array(Schema.toType(Form.Info))),
+            ...list("@opencode/Permission", Schema.Array(Schema.toType(Permission.Request)))]
+          const shells = list("@opencode/Shell", Schema.Array(Schema.toType(Shell.Info)))
+          if ([...active].some(member => ids.has(String(member)))
+            || requests.some(item => item.sessionID == null || ids.has(String(item.sessionID)))
+            || shells.some(item => nativeShellBlocksFamily(item, ids))) throw new Error("coordinator-busy")
+        })
       },
       conversation: (id: string) => {
         const rows = pin("SELECT id,parent_id,project_id,directory,workspace_id,metadata,revert,time_suspended FROM session_v2 WHERE id=?", [id])
@@ -179,4 +250,6 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
     }
   }
 })
-export type NativeSourceFence = Omit<ReturnType<Effect.Success<ReturnType<typeof acquireNativeSourceFence>>>, "preparedSession" | "selectedSession" | "absentSession">
+type SourceFence = ReturnType<Effect.Success<ReturnType<typeof acquireNativeSourceFence>>>
+export type NativeSourceFence = Omit<SourceFence, "preparedSession" | "selectedSession" | "absentSession" | "coordinator">
+  & Partial<Pick<SourceFence, "coordinator">>

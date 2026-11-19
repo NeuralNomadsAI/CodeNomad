@@ -8,6 +8,7 @@ import type { NativeMissionDocumentStore } from "../../missions/mission-document
 import type { MissionDocument } from "../../missions/mission-document"
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { acquireNativePassageObservation } from "./native-passage-observation"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 
 /** Native reads stay in this RPC graph; creation uses only the public facade. */
 export const configureNativeMissionPreparation = Effect.fn("missions.configurePreparation")(function* (
@@ -15,6 +16,7 @@ export const configureNativeMissionPreparation = Effect.fn("missions.configurePr
   admitted?: (document: MissionDocument) => void,
 ) {
   const observation = yield* acquireNativePassageObservation(undefined, run)
+  const range = yield* optionalOrdinaryJournalRange(ctx, run)
   const project = (value: typeof Session.Info.Type): NativeMissionSession => ({ id: value.id, projectID: value.projectID,
     location: { ...value.location }, parentID: value.parentID, title: value.title, agent: value.agent,
     model: value.model ? { ...value.model } : undefined, metadata: value.metadata ? JSON.parse(JSON.stringify(value.metadata)) : undefined })
@@ -39,7 +41,7 @@ export const configureNativeMissionPreparation = Effect.fn("missions.configurePr
   }
   const control = new MissionControl({ project: { id: ctx.location.project.id, canonical: ctx.location.project.canonical,
     location: { directory: ctx.location.directory, ...(ctx.location.workspaceID ? { workspaceID: ctx.location.workspaceID } : {}) } },
-    storage: { get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
+    storage: { range, get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
       set: async (key, value, guard) => { current(); guard?.(); await run(ctx.storage.set(key, value)) } },
     sessions, documents: use => use(store), documentReads: use => use(store) })
   return yield* Effect.tryPromise(() => control.configurePreparation(input, {

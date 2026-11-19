@@ -6,6 +6,8 @@ import { missionSummary, missionInventorySummary, type MissionSummary, type Miss
 import { activityActorWindow, missionActivityContext, MISSION_MARK_ACTORS, MISSION_MARK_MISSIONS,
   type MissionActivityContext } from "./mission-activity-context"
 import { contentDigest } from "./content-digest"
+import { missionListEntry } from "./coordinator-actions"
+type ToolSummary = Omit<ReturnType<typeof missionListEntry>, "summary">
 
 /** How a mission's events name a session: its creation's coordinator or hand-off
  * author, or a task actor (independent dispatch or native binding). */
@@ -22,7 +24,7 @@ export const MISSION_INDEX_STALE_AFTER_MS = 60_000
 export type SynchronousHint<T> = T extends { then(...args: never[]): unknown } ? never : T
 
 /** One mission range read by its journal; `uncertain` when its deletion record was unreadable. */
-export interface MissionIndexRange { view: MissionView; uncertain: boolean }
+export interface MissionIndexRange { view: MissionView; uncertain: boolean; first?: Pick<MissionEvent, "createdAt" | "id"> }
 
 /** The journal's unlocked readers; the index calls them under the append exclusion. */
 export interface MissionIndexSource {
@@ -51,6 +53,7 @@ export interface MissionIndexHints {
   cleanups(allPending?: boolean): MissionCleanup[]
   /** One panel row per live map, in snapshot order. */
   summaries(): MissionSummary[]
+  toolSummaries(sessionID: string): ToolSummary[]
   inventorySummaries(): MissionInventorySummary[]
   /** Lightweight mark contexts, up to 16 missions and 10 actors each; no range rereads. */
   activity(offset: number): { contexts: MissionActivityContext[]; order: string; offset: number; end: number; total: number }
@@ -68,6 +71,7 @@ interface Entry {
   /** Live (non-deleted) map only. */
   updatedAt?: number
   summary?: MissionSummary
+  toolSummary?: ToolSummary
   activity?: MissionActivityContext
   open: boolean
   discardedEvents: number
@@ -208,8 +212,8 @@ export class MissionJournalIndex {
   }
 }
 
-function put(state: State, { view }: MissionIndexRange): void {
-  const entry = entryOf(view)
+function put(state: State, { view, first }: MissionIndexRange): void {
+  const entry = entryOf(view, first)
   if (!entry) return
   state.entries.set(entry.missionID, entry)
   for (const sessionID of entry.refs.keys()) {
@@ -219,7 +223,7 @@ function put(state: State, { view }: MissionIndexRange): void {
   }
 }
 
-function entryOf(view: MissionView): Entry | undefined {
+function entryOf(view: MissionView, first?: OrderToken): Entry | undefined {
   const { events, mission } = view
   // A purged or empty range holds nothing a cross-mission question can see.
   if (!events.length && !view.discardedEvents) return undefined
@@ -228,7 +232,6 @@ function entryOf(view: MissionView): Entry | undefined {
     const kinds = refs.get(sessionID) ?? []
     if (!kinds.includes(kind)) refs.set(sessionID, [...kinds, kind].sort((a, b) => KINDS.indexOf(a) - KINDS.indexOf(b)))
   }
-  let first: MissionEvent | undefined
   for (const event of events) {
     if (!first || compareEvents(event, first) < 0) first = event
     if (event.type === "mission.created") {
@@ -240,7 +243,10 @@ function entryOf(view: MissionView): Entry | undefined {
   }
   return {
     missionID: view.missionID, refs, ...(first ? { first: { createdAt: first.createdAt, id: first.id } } : {}),
-    ...(mission ? { updatedAt: mission.updatedAt, summary: missionSummary(mission) } : {}),
+    ...(mission ? { updatedAt: mission.updatedAt, summary: missionSummary(mission), toolSummary: (() => {
+      const { summary: _body, ...row } = missionListEntry(mission, "project")
+      return row
+    })() } : {}),
     ...(mission ? { activity: missionActivityContext(mission, { discardedEvents: view.discardedEvents,
       controlUnavailable: Boolean(view.controlUnavailable), notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }) } : {}),
     open: missionWorkRemains({ ...view, missions: mission ? [mission] : [] }),
@@ -306,6 +312,14 @@ function hints(state: State, live: () => void): MissionIndexHints {
       live()
       return entries().filter(entry => entry.summary).sort(compareEntries)
         .map(({ summary }) => ({ ...summary!, actorSessionIds: [...summary!.actorSessionIds] }))
+    },
+    toolSummaries: sessionID => {
+      live()
+      return entries().filter(entry => entry.toolSummary).map(entry => {
+        const kinds = entry.refs.get(sessionID)
+        return { ...entry.toolSummary!, relation: kinds?.some(kind => kind !== "prepared-by") ? "member" as const
+          : kinds?.includes("prepared-by") ? "prepared" as const : "project" as const }
+      }).sort((a, b) => b.createdAt - a.createdAt)
     },
     inventorySummaries: () => {
       live()

@@ -40,26 +40,32 @@ export function registerMissionScheduleList(app: FastifyInstance, deps: Deps) {
           if (page.projectID !== location.project.id) throw new Error("Foreign Mission schedule list")
           return page
         }
-        if (!deps.scheduleCapability) throw new Error("Mission schedule capability unavailable")
-        const view = await lifetime.wait(deps.scheduleCapability.read(selected.data.id, owned.location))
-        await owned.refresh()
-        let activation: MissionScheduleCapability["activation"] = { available: false, reason: "unavailable", targets: [] }
-        if (view.api.available && deps.scheduleSettingsActivation) {
-          try {
-            const plan = await lifetime.wait(deps.scheduleSettingsActivation.prepare(selected.data.id, owned.location))
-            activation = { available: true, targets: plan.targets.map(({ path, scope }) => ({ path, scope })) }
-          } catch (error) {
-            const refusal = missionScheduleActivationRefusal(error)
-            activation = { available: false, reason: error instanceof PluginControlsError ? error.kind : "unavailable", targets: [],
-              ...(refusal ? { code: "schedule-activation-refused", refusal } : {}) }
-          }
-        }
-        await owned.refresh()
-        return { ...view, activation } satisfies MissionScheduleCapability
+         return readMissionScheduleCapability(deps, selected.data.id, owned.location, owned.refresh)
       })
     } catch (error) {
       const status = error instanceof MissionMapMutationError ? error.status : 503
       return reply.code(status).send({ error: "Mission schedule read unavailable", code: "schedule-read-unavailable" })
     } finally { lifetime.dispose() }
   })
+}
+
+/** UI and agent diagnostics share the same passive activation plan and OFF refusal. */
+export async function readMissionScheduleCapability(deps: Pick<Deps, "scheduleCapability" | "scheduleSettingsActivation">,
+  workspaceID: string, location: { directory: string }, refresh: () => Promise<void>): Promise<MissionScheduleCapability> {
+  if (!deps.scheduleCapability) throw new Error("Mission schedule capability unavailable")
+  const view = await deps.scheduleCapability.read(workspaceID, location)
+  await refresh()
+  let activation: MissionScheduleCapability["activation"] = { available: false, reason: "unavailable", targets: [] }
+  if (view.api.available && deps.scheduleSettingsActivation) {
+    try {
+      const plan = await deps.scheduleSettingsActivation.prepare(workspaceID, location)
+      activation = { available: true, targets: plan.targets.map(({ path, scope }) => ({ path, scope })) }
+    } catch (error) {
+      const refusal = missionScheduleActivationRefusal(error)
+      activation = { available: false, reason: error instanceof PluginControlsError ? error.kind : "unavailable", targets: [],
+        ...(refusal ? { code: "schedule-activation-refused", refusal } : {}) }
+    }
+  }
+  await refresh()
+  return { ...view, activation }
 }

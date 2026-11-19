@@ -811,7 +811,8 @@ for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its
     await ready(page); f.lose = true
     await form(page).locator('button[type="submit"]').click()
     if (kind === "create") {
-      await page.waitForFunction(() => Boolean(window.schedulingEditor.held()))
+      // The hold is pending while its POST is in flight, then uncertain once the lost reply settles.
+      await page.waitForFunction(() => window.schedulingEditor.held()?.state === "uncertain")
       assert.equal(await form(page).locator("[role=alert]").count(), 0)
     } else await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     const held = await page.evaluate(() => window.schedulingEditor.held())

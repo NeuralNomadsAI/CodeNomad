@@ -30,6 +30,8 @@ const nativeModel = (id: string, variants: { id: string }[] = []) => ({ provider
   enabled: true, capabilities: { tools: true }, cost: [], limit: { context: 1, output: 1 }, variants })
 const modelID = "70d47119-e4c3-4b18-814b-3e72ff93a1b2"
 const text = (page: Page, key: string) => page.evaluate(key => window.missionDefaultsModels.text(key), key)
+// An unknown creation result keeps its request held: the footer offers only reading the original back.
+const uncertainCreation = async (page: Page) => page.getByRole("button", { name: await text(page, "missions.control.refresh"), exact: true }).waitFor()
 const ensureOptions = async (page: Page) => {
   await page.getByLabel("Playbook", { exact: true }).waitFor()
   await page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true }).waitFor()
@@ -157,7 +159,7 @@ test("creation waits for loaded defaults and exposes exact requested choices", a
     assert.equal(await page.getByLabel("Coordinator · Thinking", { exact: true }).inputValue(), "high")
     await page.getByLabel("Playbook", { exact: true }).selectOption("wayfinder")
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
-    await page.getByRole("alert").waitFor()
+    await uncertainCreation(page)
     assert.deepEqual(fixture.creates[0].profiles, { coordinator: profiles.coordinator,
       roles: Object.fromEntries(["cartographer", "research", "prototype", "grilling", "decision"].map(role => [role, profiles.roles.specialist])) })
     assert.equal(fixture.creates[0].directory, undefined)
@@ -220,7 +222,7 @@ test("saved models store briefs only and manual use creates fresh authority requ
     assert.notEqual(saved.id, model.id)
     assert.equal(fixture.bucket().unrelated, "keep"); assert.equal(fixture.bucket().settings.showThinkingBlocks, true)
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
-    await page.getByRole("alert").waitFor()
+    await uncertainCreation(page)
     const submitted = fixture.creates[0]
     assert.deepEqual(submitted.profiles, profiles)
     assert.equal(submitted.coordinatorSessionID, undefined)
@@ -681,7 +683,7 @@ test("earlier unrelated SSE during write B is reconciled from owner authority be
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "all")
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Freeze accepted B")
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
-    await page.getByRole("alert").waitFor()
+    await uncertainCreation(page)
     assert.equal(fixture.creates[0].profiles.coordinator.agent, "all")
     assert.equal(fixture.bucket().settings.unrelated, "earlier-window-field")
     assert.deepEqual(fixture.errors, [])
@@ -785,7 +787,7 @@ test("initial mission readiness waits for a stable owner barrier when an earlier
     await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "all")
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
-    await page.getByRole("alert").waitFor()
+    await uncertainCreation(page)
     assert.equal(fixture.creates[0].profiles.coordinator.agent, "all")
     assert.equal(reads, 2)
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
@@ -811,7 +813,7 @@ test("new independent Missions freeze task policy and expose only primary/all ta
     await task.selectOption("root")
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Independent policy snapshot")
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
-    await page.getByRole("alert").waitFor()
+    await uncertainCreation(page)
     assert.equal(fixture.creates[0].taskMode, "independent")
     assert.equal(fixture.creates[0].profiles.roles.specialist.agent, "root")
     await page.getByRole("button", { name: "Cancel", exact: true }).click()

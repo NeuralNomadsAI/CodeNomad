@@ -16,7 +16,7 @@ import { missionProfileRoles, profilesForTemplate } from "./mission-profile-cont
 import { useConfig } from "../stores/preferences"
 import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionTaskMode } from "../lib/mission-defaults"
 import type { MissionProfileDefault } from "../lib/mission-defaults"
-import { retainSubmittedMissionModel, submittedMissionModel, type UserMissionModel } from "../lib/mission-model-library"
+import { missionConfigurationTitle, retainSubmittedMissionModel, submittedMissionModel, type UserMissionModel } from "../lib/mission-model-library"
 import { MissionBriefPicker, MissionBriefSave } from "./mission-model-library"
 import { MissionTaskModeControls } from "./mission-task-mode-controls"
 import { MissionSubagentDepth } from "./mission-subagent-depth"
@@ -420,7 +420,7 @@ export function MissionEditor(props: {
       } else {
         const result = await serverApi.createMission(instanceId, { ...fields, directory, requestId })
         if (kind === "create") releaseMissionCreation(origin, creation.requestId)
-        if (kind === "create" && current()) await start(result.mission)
+        if (kind === "create" && result.acknowledgement === "fresh" && current()) await start(result.mission)
         if (current()) props.onSaved(result.mission)
         else if (identity() === origin && missionStore.demandedInstanceIds().includes(instanceId)) void missionStore.refresh(instanceId)
       }
@@ -462,7 +462,7 @@ export function MissionEditor(props: {
     <Show when={kind === "create"}><MissionBriefPicker disabled={locked() || !isActive()} active={isActive} value={selectedModel()?.id}
       onUse={model => {
         requestId = generateUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
-        const configurationTitle = model.name.replace(/\s+/g, " ").trim().slice(0, MISSION_TITLE_MAX).replace(/[\uD800-\uDBFF]$/, "").trimEnd()
+        const configurationTitle = missionConfigurationTitle(model.name)
         setObjective(model.objective); setTitleOverride(configurationTitle); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
         setCustomProfiles(model.profiles !== undefined)
         setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))

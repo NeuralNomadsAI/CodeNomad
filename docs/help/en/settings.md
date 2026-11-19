@@ -23,12 +23,15 @@ The selected right-panel tab and Files mode are saved separately for each projec
 
 1. In **General**, select **Language**: English, Spanish, French, Russian, Japanese, Simplified Chinese, Hebrew, German, Nepali or Turkish.
 2. In **Color scheme**, choose **Mode**: **Auto**, **Dark** or **Light**. Auto follows the operating system.
-3. Choose a palette for the displayed appearance. Light and dark selections are saved independently; Auto uses the matching one.
-4. For custom colors, use the swatches and **Save**; **Reset** restores a built-in palette's colors. Use **New** to name a separate palette and **Delete** to remove one you created.
+3. Beside **Mode**, choose **Contrast**: **Auto** (the default) follows the system's contrast preference; **On** increases contrast with any palette; **Off** uses normal contrast.
+4. Choose a palette for the displayed appearance. Light and dark selections are saved independently; Auto uses the matching one.
+5. For custom colors, use the swatches and **Save**; **Reset** restores a built-in palette's colors. Use **New** to name a separate palette and **Delete** to remove one you created.
+
+Contrast applies and saves immediately, independently of **Save** for colors. It adapts rendering while preserving your selected palette, editable colors and conversation draft. The **i** shows the current contrast state in Auto.
 
 The UI updates without restarting a conversation. Hebrew uses right-to-left layout; code and technical values remain readable in their own direction. Language selection changes interface text, not the language of existing messages or agent instructions. Native desktop menus switch to the interface language once a CodeNomad window has loaded.
 
-If colors become hard to read, select a built-in palette or reset the edited one. Switching palettes can ask you to discard unsaved color edits; it does not discard a conversation draft.
+If colors become hard to read, set **Contrast → On**. You can also select a built-in palette or reset the edited one. Switching palettes can ask you to discard unsaved color edits; your conversation draft is preserved.
 
 ## Keep the computer awake {#keep-computer-awake}
 
@@ -43,7 +46,7 @@ Open **Preferences → General → Memory** (or **Settings → General** in a br
 - **About you**: up to 60 entries shared across projects using this configuration.
 - **Project**: up to 200 entries. This interface uses the project selected in Preferences, or the main window's active project in embedded Settings. The server identifies the repository by its normalized Git remote address, falling back to its local repository path; worktrees share this memory. Open a project to select this scope.
 
-1. Select a scope and an entry. **New** and **Modified** mark changes since this browser or desktop view last successfully consulted that scope; they stay visible during the current visit.
+1. Select a scope, unfold its entry count (for example **7/200**) and select an entry. **New** and **Modified** mark changes since this browser or desktop view last showed that scope's entries; the folded count line repeats them, and they stay visible during the current visit.
 2. Edit **Title**, **Type** (**Fact**, **Preference** or **Reference**) and **Text**, then **Save**. Titles allow 60 characters and text 2,000. **Cancel** restores the selected entry's saved content. If another writer changed it, use **Reload** and review before saving again.
 3. To remove an entry, open its action menu and confirm **Forget**. It leaves active memory; local Git retains its history, including the old text. Treat forgetting as removal from agent use, not secure erasure.
 4. If memory is full, merge or forget entries before retrying. Matching titles or strongly overlapping text replace an existing entry while Git keeps its previous text.

@@ -14,37 +14,37 @@ test("the two experimental authors preserve companions, false, zero, JSONC and u
   const original = document('{\r\n\t// keep\r\n\t"experimental": {"todo":true},\r\n\t"model":"keep"\r\n}\r\n')
   const depth = editMissionExperimental(original, "subagent_depth", 0, { schedules: true })
   assert.ok(depth.startsWith("\uFEFF")); assert.match(depth, /\r\n\t\/\/ keep/)
-  assert.deepEqual(value(depth), { experimental: { todo: true, schedules: true, subagent_depth: 0 }, model: "keep" })
+  assert.deepEqual(value(depth), { experimental: { todo: true, automations: true, subagent_depth: 0 }, model: "keep" })
   const next = { ...original, text: depth.slice(1) }
-  assert.deepEqual(value(editMissionExperimental(next, "subagent_depth", undefined, {})).experimental, { todo: true, schedules: true })
+  assert.deepEqual(value(editMissionExperimental(next, "subagent_depth", undefined, {})).experimental, { todo: true, automations: true })
   for (const inherited of [{}, { schedules: false }]) {
     assert.deepEqual(value(editMissionExperimental(document("{}"), "subagent_depth", 8, inherited)).experimental, { subagent_depth: 8 })
   }
   assert.deepEqual(value(editMissionExperimental(document('{"experimental":{"schedules":false}}'), "subagent_depth", 8,
     { schedules: true })).experimental, { schedules: false, subagent_depth: 8 })
-  const activated = editMissionExperimental(document('{"experimental":{"subagent_depth":0}}'), "schedules", true, { subagent_depth: 9 })
-  assert.deepEqual(value(activated).experimental, { subagent_depth: 0, schedules: true })
-  assert.throws(() => editMissionExperimental(document('{"experimental":{"schedules":false}}'), "schedules", true, {}), /explicitly disabled/)
-  assert.deepEqual(value(editMissionExperimental(document('{"experimental":{"schedules":false}}'), "schedules", true,
-    { subagent_depth: 0 }, "global")).experimental, { schedules: true })
-  assert.deepEqual(value(editMissionExperimental(document("{}"), "schedules", true,
-    { subagent_depth: 0 }, "global")).experimental, { subagent_depth: 0, schedules: true }, "a new block preserves inherited depth")
+  const activated = editMissionExperimental(document('{"experimental":{"subagent_depth":0}}'), "automations", true, { subagent_depth: 9 })
+  assert.deepEqual(value(activated).experimental, { subagent_depth: 0, automations: true })
+  assert.throws(() => editMissionExperimental(document('{"experimental":{"schedules":false}}'), "automations", true, {}), /explicitly disabled/)
+  assert.deepEqual(value(editMissionExperimental(document('{"experimental":{"schedules":false}}'), "automations", true,
+    { subagent_depth: 0 }, "global")).experimental, { schedules: false, automations: true })
+  assert.deepEqual(value(editMissionExperimental(document("{}"), "automations", true,
+    { subagent_depth: 0 }, "global")).experimental, { subagent_depth: 0, automations: true }, "a new block preserves inherited depth")
   assert.equal(value(editMissionExperimental(document('{"experimental":{"subagent_depth":8}}'), "subagent_depth", undefined, {})).experimental, undefined)
   assert.equal(value(editMissionExperimental(document('{"experimental":{"subagent_depth":8}}'), "subagent_depth", undefined,
     { schedules: true })).experimental, undefined, "sole-depth removal exposes the inherited block")
   assert.deepEqual(value(editMissionExperimental(document('{"experimental":{"subagent_depth":8,"todo":true}}'), "subagent_depth", undefined,
-    { schedules: true })).experimental, { todo: true, schedules: true }, "a surviving block keeps inherited schedule activation")
+    { schedules: true })).experimental, { todo: true, automations: true }, "a surviving block keeps inherited schedule activation")
 })
 
 test("schedule activation preserves the depth default selected by an existing whole project block", () => {
   for (const experimental of [{ todo: true }, {}, { schedules: true }]) {
-    const saved = value(editMissionExperimental(document(JSON.stringify({ experimental })), "schedules", true,
+    const saved = value(editMissionExperimental(document(JSON.stringify({ experimental })), "automations", true,
       { subagent_depth: 8 }))
-    assert.deepEqual(saved.experimental, { ...experimental, schedules: true })
+    assert.deepEqual(saved.experimental, { ...experimental, automations: true })
     assert.equal(saved.experimental.subagent_depth, undefined, "the existing block keeps the native depth default")
   }
-  assert.deepEqual(value(editMissionExperimental(document("{}"), "schedules", true, { subagent_depth: 8 })).experimental,
-    { subagent_depth: 8, schedules: true }, "only creating a block needs companion inheritance")
+  assert.deepEqual(value(editMissionExperimental(document("{}"), "automations", true, { subagent_depth: 8 })).experimental,
+    { subagent_depth: 8, automations: true }, "only creating a block needs companion inheritance")
 })
 
 test("companion inheritance uses the block before the target, not the final project depth or a deep merge", () => {
@@ -56,9 +56,9 @@ test("companion inheritance uses the block before the target, not the final proj
   assert.deepEqual(inheritedMissionExperimental(entries, "/project/.opencode/opencode.jsonc", "/project"), { subagent_depth: 8 })
   assert.deepEqual(effectiveMissionExperimental(entries), { todo: true, origin: "/project/.opencode/opencode.jsonc" })
   assert.deepEqual(inheritedMissionExperimental(entries.slice(0, -1), "/project/.opencode/opencode.jsonc", "/project"), { subagent_depth: 8 })
-  const globalWrite = editMissionExperimental(document("{}"), "schedules", true,
+  const globalWrite = editMissionExperimental(document("{}"), "automations", true,
     inheritedMissionExperimental(entries, "/global/opencode.jsonc", "/project"), "global")
-  assert.deepEqual(value(globalWrite).experimental, { schedules: true, subagent_depth: 2 }, "project depth never leaks into global")
+  assert.deepEqual(value(globalWrite).experimental, { schedules: true, subagent_depth: 2, automations: true }, "project depth never leaks into global")
   assert.deepEqual(inheritedMissionExperimental([
     entry("C:\\global\\opencode.jsonc", { schedules: true }),
     { type: "directory", path: "C:\\global" } as ConfigEntry,
@@ -71,10 +71,10 @@ test("companion inheritance uses the block before the target, not the final proj
 })
 
 test("creating an activation block preserves all effective inherited experimental options", () => {
-  const inherited = { subagent_depth: 0, todo: true, background_compaction: false, all_flags: false,
+  const inherited = { subagent_depth: 0, todo: true, all_flags: false,
     image_generate: { model: "fixture/image" }, location_idle_timeout: "4 hours" }
-  const saved = editMissionExperimental(document('{\r\n\t// keep\r\n\t"model":"keep"\r\n}\r\n'), "schedules", true, inherited)
-  assert.deepEqual(value(saved), { model: "keep", experimental: { ...inherited, schedules: true } })
+  const saved = editMissionExperimental(document('{\r\n\t// keep\r\n\t"model":"keep"\r\n}\r\n'), "automations", true, inherited)
+  assert.deepEqual(value(saved), { model: "keep", experimental: { ...inherited, automations: true } })
   assert.match(saved, /\r\n\t\/\/ keep/)
 })
 

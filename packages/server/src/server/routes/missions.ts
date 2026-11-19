@@ -7,6 +7,7 @@ import type { MissionActivityProjection, MissionList, MissionListResponse, Missi
 import { compactMissionMap, compactMissionReads, missionTaskPage, missionTaskRequestSchema } from "../../missions/mission-compact-map"
 import { MISSION_TASK_PAGE, type MissionTaskPageResponse, type MissionTaskPageResult } from "../../missions/mission-panel-map"
 import { projectMissionActivity, type MissionActivityInput, type MissionObservedRequests } from "../../missions/activity"
+import type { MissionActivityCache } from "../../missions/activity-cache"
 import { MissionPanelObservationError, readMissionPanelObservation } from "../../missions/mission-panel-observation"
 import { MISSION_LIST_MAX_INCLUDE } from "../../missions/mission-summary"
 import { missionContentRequestSchema, type MissionContentResponse, type MissionContentResult } from "../../missions/mission-content"
@@ -49,6 +50,8 @@ export interface MissionRouteDeps {
   /** Whether this backend publishes the local bridge Missions dispatch through,
    * and therefore provisions the plugin. Omitted means it does. */
   missionsHost?: () => boolean
+  /** Display activity memory shared by the panel reads (family trees, deleted sessions). */
+  activityCache?: MissionActivityCache
 }
 
 const MissionParamsSchema = z.object({ id: z.string().trim().min(1).max(200) })
@@ -312,7 +315,7 @@ async function readMissionPlugin<T>(request: FastifyRequest<{ Params: { id: stri
             try { connection.assertCurrent(); return true } catch { return false }
           }
         return projectMissionActivity({
-          client, snapshot, workspaceID, onRequests: requests,
+          client, snapshot, workspaceID, onRequests: requests, cache: deps.activityCache,
           ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager), isCurrent: observationCurrent,
         })
       },

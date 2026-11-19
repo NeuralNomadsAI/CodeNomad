@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { PluginControlsSnapshot } from "../../../server/src/api-types"
-import { PLUGIN_SOURCE_PENDING_TIMEOUT_MS, PluginSourcesStore, removableSources } from "./plugin-sources"
+import { PLUGIN_SOURCE_PENDING_TIMEOUT_MS, PluginSourcesStore, removableRules, removableSources } from "./plugin-sources"
 
 const location = { directory: "/repo" }
 
@@ -25,7 +25,7 @@ function harness(options: { failRemove?: boolean; failAdd?: boolean; install?: (
     removePluginSource: async (instanceId, payload) => {
       calls.push(["remove", instanceId, payload])
       if (options.failRemove) throw new Error("stale")
-      return { scope: payload.scope, spec: payload.target, reloadPending: true }
+      return { scope: payload.scope, spec: "pluginId" in payload ? payload.pluginId : payload.target, reloadPending: true }
     },
   }, instanceId => invalidations.push(instanceId), () => now, (run, delay) => timers.push({ at: now + delay, run }),
   instanceId => refreshes.push(instanceId))
@@ -132,7 +132,7 @@ describe("plugin sources store", () => {
   it("drops an install hint when its source is removed or its instance stops", async () => {
     const { store } = harness()
     await store.installIntegration("instance", location, "fixture", "global")
-    await store.remove("instance", location, { target: SPEC, scope: "global", entryIndex: 0, hasOptions: false, expectedRevision: "a".repeat(64) })
+    await store.remove("instance", location, { target: SPEC, scope: "global", entryIndex: 0, expectedRevision: "a".repeat(64) })
     assert.equal(store.installation("instance", location, fixture({ declared: false })), undefined)
     await store.installIntegration("instance", location, "fixture", "global")
     store.clearInstance("instance")
@@ -195,5 +195,26 @@ describe("plugin sources store", () => {
     } as PluginControlsSnapshot
     assert.deepEqual(removableSources(snapshot, source => source.target === "a").map(source => source.scope), ["global"])
     assert.deepEqual(removableSources(snapshot, source => source.target === "b").map(source => source.entryIndex), [1])
+  })
+
+  it("offers an orphan ID's rules per writable scope and removes them by ID", async () => {
+    const globalPath = "/g/opencode.jsonc", projectPath = "/repo/.opencode/opencode.jsonc"
+    const rule = (selector: string, scope: "global" | "project" | "other", path: string, entryIndex: number) =>
+      ({ selector, enabled: false, scope, path, order: 0, entryIndex })
+    const snapshot = {
+      location, runtime: [],
+      controls: [{ id: "ponytail", builtin: false, effective: "disabled", global: "disabled", project: "disabled", orphan: true },
+        { id: "kept.id", builtin: false, effective: "disabled", global: "disabled", project: "default" }],
+      targets: [{ scope: "global", path: globalPath, exists: true, expectedRevision: "a".repeat(64) }, { scope: "project", path: projectPath, exists: true }],
+      configured: { sources: [], rules: [rule("ponytail", "global", globalPath, 0), rule("ponytail", "project", projectPath, 0),
+        rule("ponytail", "other", "/elsewhere/opencode.json", 0), rule("kept.id", "global", globalPath, 1)] },
+    } as PluginControlsSnapshot
+    assert.deepEqual(removableRules(snapshot, "ponytail"), [
+      { scope: "global", target: "ponytail", path: globalPath, expectedRevision: "a".repeat(64) },
+      { scope: "project", target: "ponytail", path: projectPath, expectedRevision: undefined }])
+    assert.deepEqual(removableRules(snapshot, "kept.id"), [], "a plugin that may be declared keeps its rules")
+    const { store, calls } = harness()
+    await store.remove("instance", location, removableRules(snapshot, "ponytail")[0]!)
+    assert.deepEqual(calls, [["remove", "instance", { location, scope: "global", pluginId: "ponytail", expectedRevision: "a".repeat(64) }]])
   })
 })

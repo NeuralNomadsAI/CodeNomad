@@ -16,6 +16,7 @@ import type { AutonomousProfileSource } from "./autonomous-environment"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 import { runMissionExclusive } from "../../missions/exclusive"
 import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human-answer"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 
 export type NativePassagePlacement = Readonly<{ projectID: string; projectCanonical: string; directory: string;
   workspaceID?: string; scheduleID: string; profileID: string; executionHost: string;
@@ -62,7 +63,9 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
       const answers = yield* acquireNativeHumanAnswers(exact)
       return yield* Effect.tryPromise(() => use(answers))
     })))
+    const range = yield* optionalOrdinaryJournalRange(exact, run)
     const storage: MissionStorage = {
+      range,
       get: key => run(storageContext.get(key)) as ReturnType<MissionStorage["get"]>,
       scan: options => run(storageContext.scan(options)) as ReturnType<MissionStorage["scan"]>,
       set: async (key, value, fence) => { current(); fence?.(); await run(storageContext.set(key, value)); current(); fence?.() },

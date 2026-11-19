@@ -116,7 +116,6 @@ blockquote { border-inline-start: 3px solid var(--accent); margin: 1.5rem 0; pad
 /* Block flow, not flex: flex items would drop the space before the channel's <bdi>. */
 .funding a { display: inline-block; text-align: center; min-block-size: 44px; padding: .5rem 1.5rem; border: 2px solid var(--accent); color: var(--accent); font-weight: 600; text-decoration: none; border-radius: 0; }
 .funding a:hover { background: var(--accent); color: var(--on-accent); }
-.funding span { color: var(--muted); font-size: .9rem; }
 .tour { margin: 1.5rem 0 2rem; }
 .tour video, article .tour img { display: block; inline-size: 100%; block-size: auto; aspect-ratio: 16 / 9; margin: 0; border: 1px solid var(--border); background: var(--code); object-fit: contain; }
 article .tour img { display: none; }

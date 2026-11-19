@@ -1,3 +1,4 @@
+import { batch } from "solid-js"
 import {
   getIdleSinceForStatusTransition,
   isSelectablePrimaryAgent,
@@ -8,7 +9,9 @@ import type { Instance } from "../types/instance"
 import { forkAfterMessage } from "./session-fork"
 import { historyWindowCursor, historyWindowTarget, readHistoryWindow, MissingHistoryAnchorError } from "./history-window"
 import { captureWorktreeMoveReconciliation, ensureWorktreesLoaded, getDirectoryOnlyWorktree, getGitRepoStatus, getWorktrees } from "./worktrees"
-import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
+import { isWorkspaceServedDirectory } from "./workspace-served-directory"
+import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
+import { isWorkspaceSessionDirectory, selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import { isSessionNotFoundError, type LocationRef, type SessionInfo as SDKSession, type SessionMessagesResponse } from "@opencode/client"
 
 import { activeInstanceId, instances, reconcilePendingSessionIndicators, waitForInstanceReady } from "./instances"
@@ -21,9 +24,14 @@ import {
   clearActiveSession,
   clearActiveParentSession,
   setActiveSession,
+  setActiveSessionFromList,
   clearSessionDraftPrompt,
+  evictSessionDraftPrompt,
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
+  markSessionMovedAway,
+  forgetSessionMovedAway,
+  getMovedAwaySessions,
   getAuthoritativelyDeletedSessionIdsForInstance,
   messagesLoaded,
   getSessionMessagesLoadError,
@@ -64,7 +72,8 @@ import {
   sessionInfoByInstance,
 } from "./session-state"
 import { settleAbandonedSessionListRestoration } from "./session-list-restoration"
-import { deleteSessionAttachments } from "./attachments"
+import { clearAttachments, deleteSessionAttachments } from "./attachments"
+import { recoverRemovedSessionDraft } from "./session-draft-recovery"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -75,6 +84,7 @@ import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { buildProviderCatalog } from "../lib/model-catalog"
 import { getRootClient } from "./opencode-client"
+import { workspaceSessionPlacementHeaders } from "../lib/sdk-manager"
 import { tGlobal } from "../lib/i18n"
 import {
   PROJECT_SESSION_LIST_LIMIT,
@@ -83,6 +93,10 @@ import {
 
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
+import {
+  captureSessionPlacementEvidence, clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending,
+  hasPendingSessionReturn, matchesSessionPlacement, retainConfirmedSessionPlacement, settleListedReturn,
+} from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
@@ -107,6 +121,7 @@ import {
 const log = getLogger("api")
 const sessionLog = getLogger("session")
 const sessionListRequestIds = new Map<string, number>()
+const restorePlacementReads = new Map<string, Set<() => boolean>>()
 const catalogLocations = new Map<string, string>()
 const catalogRefreshes = new Map<string, { key: string; promise: Promise<void>; pending: boolean }>()
 const agentRequestIds = new Map<string, number>()
@@ -124,7 +139,7 @@ interface MessagePageRequest {
 
 const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
-const deleteSessionAuthorities = new Map<string, object>()
+const deleteSessionAuthorities = new Map<string, { cleanup: boolean }>()
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
 const MESSAGE_CURSOR_SEEK_LIMIT = 1000
@@ -360,6 +375,8 @@ async function fetchCompleteSessionInventory(
   signal?.throwIfAborted()
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
   if (!directoryOnly && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
+  const listDirectory = (session: SDKSession) => confirmedSessionListDirectory(instanceId, session.id, session)
+  const projectFamilies = (rows: SDKSession[]) => selectWorkspaceSessionFamilies(rows, directory ?? "", getWorktrees(instanceId), listDirectory)
   const scopes: V2SessionListOptions[] = [directoryOnly
     ? { directory: directoryOnly.serviceDirectory ?? directoryOnly.directory, order: "desc" }
     : { project, order: "desc" }]
@@ -377,7 +394,8 @@ async function fetchCompleteSessionInventory(
       if (!getDirectoryOnlyWorktree(instanceId) && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
       // This is additive only. Absence/deletion is authoritative only after the
       // complete inventory; partial families still require verified membership.
-      publishFirstPage(selectWorkspaceSessionFamilies(response.data, directory ?? "", getWorktrees(instanceId)))
+      publishFirstPage(projectFamilies(response.data).filter(session =>
+        listDirectory(session) || isWorkspaceServedDirectory(session.location.directory, directory ?? "", getWorktrees(instanceId))))
     }
     while (true) {
       if (!isCurrent()) return []
@@ -393,7 +411,7 @@ async function fetchCompleteSessionInventory(
   if (!isCurrent()) return []
   signal?.throwIfAborted()
   if (!getDirectoryOnlyWorktree(instanceId) && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
-  return selectWorkspaceSessionFamilies(Array.from(inventory.values()), directory ?? "", getWorktrees(instanceId))
+  return projectFamilies(Array.from(inventory.values()))
 }
 
 function getDisconnectedCapturedSessionIds(
@@ -495,17 +513,32 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   return active
 }
 
+export function invalidateRestorePlacementRead(instanceId: string, sessionId: string): void {
+  restorePlacementReads.delete(messagePageKey(instanceId, sessionId))
+}
+
+/** Parent reads and saved workspace references reconcile a typed departure. */
 async function hydrateRestoredSessionChain(
   instanceId: string,
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
-): Promise<void> {
+  { verifyDrafts = false, reconcileDeparture = false, resolveListPlacement = false }:
+    { verifyDrafts?: boolean; reconcileDeparture?: boolean; resolveListPlacement?: boolean } = {},
+): Promise<ReadonlyMap<string, () => boolean>> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
-    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent())
+    const releaseReads: Array<() => void> = []
+    const absent = new Map<string, () => boolean>()
+    try {
+      await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, releaseReads, signal, () => isCurrent() && generationCurrent(),
+        reconcileDeparture || resolveListPlacement, verifyDrafts ? absent : undefined, resolveListPlacement)
+    } finally {
+      for (const release of releaseReads) release()
+    }
     signal?.throwIfAborted()
-    if (!isCurrent() || generationCurrent()) return
+    if (!isCurrent()) return new Map()
+    if (generationCurrent()) return absent
   }
   throw new Error("Restored session hydration was superseded by reconnect")
 }
@@ -513,64 +546,154 @@ async function hydrateRestoredSessionChain(
 async function hydrateRestoredSessionChainAttempt(
   instanceId: string,
   requestedIds: Array<string | null | undefined>,
+  releaseReads: Array<() => void>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
+  reconcileInitialDeparture = false,
+  absentDrafts?: Map<string, () => boolean>,
+  resolveListPlacement = false,
 ): Promise<void> {
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  let reconcileDeparture = reconcileInitialDeparture
   const isRequestCurrent = () => generationCurrent() && isCurrent()
   const foreground = () => activeInstanceId() === instanceId
     && requestedIds.some(id => id && (id === activeSessionId().get(instanceId) || id === activeParentSessionId().get(instanceId)))
   let pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
   const visited = new Set<string>()
+  const departures: Array<() => void> = []
+  const ownedReads = new Map<string, () => boolean>()
+  let readFailure: PromiseRejectedResult | undefined
   while (pending.length > 0) {
     if (!isRequestCurrent()) return
     signal?.throwIfAborted()
     const level = [...new Set(pending)].filter((sessionId) => !visited.has(sessionId))
     pending = []
     level.forEach((sessionId) => visited.add(sessionId))
-    const parents = await Promise.all(level.map(async (sessionId) => {
+    const readOptions = { ...(signal ? { signal } : {}), ...(reconcileDeparture ? { headers: workspaceSessionPlacementHeaders } : {}) }
+    reconcileDeparture = true
+    const parents = await Promise.allSettled(level.map(async (sessionId) => {
       if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return null
 
       let session = sessions().get(instanceId)?.get(sessionId)
-      if (!session || session.catalogSnapshot) {
+      const verify = absentDrafts !== undefined && requestedIds.includes(sessionId)
+      const needsListPlacement = resolveListPlacement && session && requestedIds.includes(sessionId)
+        && !isWorkspaceSessionDirectory(session.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId))
+        && !confirmedSessionListDirectory(instanceId, sessionId, session)
+      if (!session || session.catalogSnapshot || needsListPlacement) {
         const captured = session
+        const move = getPendingSessionMove(instanceId, sessionId)
+        const evidenceCurrent = captureSessionPlacementEvidence(instanceId, sessionId)
+        const capturedAway = getMovedAwaySessions(instanceId).get(sessionId)
+        let placementReadCurrent: (() => boolean) | undefined
+        if (readOptions.headers) {
+          const key = messagePageKey(instanceId, sessionId)
+          const reads = restorePlacementReads.get(key) ?? new Set<() => boolean>()
+          const current = () => isRequestCurrent() && !signal?.aborted
+            && restorePlacementReads.get(key) === reads
+            && getPendingSessionMove(instanceId, sessionId) === move
+          placementReadCurrent = current
+          reads.add(current)
+          restorePlacementReads.set(key, reads)
+          releaseReads.push(() => {
+            reads.delete(current)
+            if (!reads.size && restorePlacementReads.get(key) === reads) restorePlacementReads.delete(key)
+          })
+        }
         try {
           signal?.throwIfAborted()
           const read = () => isRequestCurrent()
-            ? client.session.get({ sessionID: sessionId }, signal ? { signal } : undefined)
+            ? client.session.get({ sessionID: sessionId }, readOptions)
             : Promise.resolve(null)
           const apiSession = await prioritizedRead(foreground, signal ?? new AbortController().signal, read)
           signal?.throwIfAborted()
-          if (!apiSession || !isRequestCurrent()) return null
-          setSessions((prev) => {
-            if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
+          if (!apiSession || !isRequestCurrent() || (placementReadCurrent && (!placementReadCurrent() || !evidenceCurrent()))) return null
+          const listWorktreeSlug = "listWorktreeSlug" in apiSession && typeof apiSession.listWorktreeSlug === "string" ? apiSession.listWorktreeSlug : undefined
+          const placement = { location: apiSession.location, projectID: apiSession.projectID, subpath: apiSession.subpath, listWorktreeSlug }
+          const needsPlacementEvidence = Boolean(readOptions.headers)
+            && (capturedAway !== undefined || listWorktreeSlug !== undefined
+              || !isWorkspaceServedDirectory(apiSession.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId)))
+          batch(() => {
+            if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return
+            const prev = sessions()
             const next = new Map(prev)
             const instanceSessions = new Map(next.get(instanceId) ?? new Map())
             const latest = instanceSessions.get(sessionId)
             // A concurrent event or selection owns fields changed since this
             // read began, including when replacing a restored display row.
             const merged = mergeFetchedSessionRuntimeState(toClientSessionV2(instanceId, apiSession, captured), captured, latest)
-            if (merged) instanceSessions.set(sessionId, merged)
+            let returning = false
+            if (merged) {
+              // Publish the matching proof before the row notifies sidebar readers.
+              if (needsPlacementEvidence && getPendingSessionMove(instanceId, sessionId) === move && matchesSessionPlacement(merged, placement)) {
+                const away = getMovedAwaySessions(instanceId)
+                returning = !move && capturedAway !== undefined && away.get(sessionId) === capturedAway
+                if (!away.has(sessionId) || returning) {
+                  confirmSessionPlacement(instanceId, sessionId, placement, returning ? capturedAway : undefined)
+                }
+              }
+              instanceSessions.set(sessionId, merged)
+            }
             next.set(instanceId, instanceSessions)
-            return next
+            setSessions(next)
+            if (returning) settleListedReturn(instanceId, sessionId)
           })
           session = sessions().get(instanceId)?.get(sessionId)
-          if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
+          const ownsPlacement = () => isRequestCurrent() && !signal?.aborted
+            && getPendingSessionMove(instanceId, sessionId) === move
+            && !getMovedAwaySessions(instanceId).has(sessionId)
+            && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
+            && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), placement)
+          ownedReads.set(sessionId, ownsPlacement)
         } catch (error) {
           if (signal?.aborted) throw error
           if (!isRequestCurrent()) return null
-          if (!isSessionNotFoundError(error)) throw error
+          const missing = isSessionNotFoundError(error)
+          if (!missing && !absentDrafts) throw error
+          if (missing && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
+            departures.push(() => {
+              // Catalogue merges are display updates, not fresh ownership evidence.
+              if (!evidenceCurrent() || placementReadCurrent?.() === false
+                || getPendingSessionMove(instanceId, sessionId) !== move
+                || getMovedAwaySessions(instanceId).has(sessionId)
+                || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return
+              clearPendingSessionMove(instanceId, sessionId)
+              markSessionMovedAway(instanceId, sessionId, null)
+              removeSessionProjection(instanceId, sessionId, (selectedId) => ownedReads.get(selectedId)?.() ?? false)
+            })
+          } else if (verify && missing && error.sessionID === sessionId) {
+            const holds = () => isRequestCurrent() && !signal?.aborted && evidenceCurrent()
+              && getPendingSessionMove(instanceId, sessionId) === move
+              && !getMovedAwaySessions(instanceId).has(sessionId)
+              && sessions().get(instanceId)?.get(sessionId) === captured
+            if (placementReadCurrent?.() !== false && holds()) absentDrafts.set(sessionId, holds)
+          }
           log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
           return null
         }
       }
       // In directory-only mode ancestors outside the inventory are not session
       // authority. Keep native parent metadata; local display roots are derived.
-      return getDirectoryOnlyWorktree(instanceId) ? null : session?.parentId ?? null
+      const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+      if (session && (directoryOnly || session.parentId === null) && isRequestCurrent() && !signal?.aborted) {
+        const root = getSessionRoot(instanceId, sessionId)
+        if (root && !getSessionListIds(instanceId).includes(root.id)) prependSessionListId(instanceId, root.id)
+      }
+      return directoryOnly ? null : session?.parentId ?? null
     }))
-    pending = parents.filter((id): id is string => Boolean(id))
+    readFailure = parents.find(result => result.status === "rejected")
+    if (readFailure) break
+    pending = parents.flatMap(result => result.status === "fulfilled" && result.value ? [result.value] : [])
   }
+  // A selected local child may finish loading after its parent's refusal.
+  signal?.throwIfAborted()
+  if (!isRequestCurrent()) return
+  batch(() => {
+    for (const depart of departures) depart()
+    // A verified return can rejoin its family once its ancestors are loaded.
+    for (const id of visited) settleListedReturn(instanceId, id)
+  })
+  if (readFailure) throw readFailure.reason
 }
 
 async function ensureV2ParentChainsLoaded(
@@ -588,7 +711,7 @@ async function ensureV2ParentChainsLoaded(
   const missingChains = apiSessions
     .filter((session) => hasMissingParentChain(session, loaded))
     .map((session) => session.parentID)
-  if (missingChains.length > 0) await hydrateRestoredSessionChain(instanceId, missingChains, signal, isCurrent)
+  if (missingChains.length > 0) await hydrateRestoredSessionChain(instanceId, missingChains, signal, isCurrent, { reconcileDeparture: true })
 }
 
 async function fetchSessions(instanceId: string, options?: {
@@ -604,6 +727,8 @@ async function fetchSessions(instanceId: string, options?: {
   }
 
   const requestId = beginSessionListRequest(instanceId)
+  const capturedAway = getMovedAwaySessions(instanceId)
+  const capturedSelection = [activeParentSessionId().get(instanceId), activeSessionId().get(instanceId)]
   const worktreeMoveProject = getInstanceMetadata(instanceId)?.project?.id
   const reconcileWorktreeMoves = captureWorktreeMoveReconciliation(instanceId)
   const client = instance.client
@@ -735,6 +860,16 @@ async function fetchSessions(instanceId: string, options?: {
       next.set(instanceId, instanceSessions)
       return next
     })
+    // A session read at a directory this workspace serves is no longer located elsewhere.
+    const currentAway = getMovedAwaySessions(instanceId)
+    const worktrees = getWorktrees(instanceId)
+    for (const session of apiSessions) {
+      if (currentAway.has(session.id) && capturedAway.get(session.id) === currentAway.get(session.id)
+        && !hasPendingSessionReturn(instanceId, session.id)
+        && isWorkspaceServedDirectory(session.location.directory, instance.folder, worktrees)) {
+        forgetSessionMovedAway(instanceId, session.id)
+      }
+    }
     await ensureV2ParentChainsLoaded(instanceId, apiSessions, options?.signal, isCurrent)
     if (!isCurrent()) {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
@@ -752,6 +887,14 @@ async function fetchSessions(instanceId: string, options?: {
         .map((session) => session.id))
       const validRootIds = new Set([...fetchedRootIds, ...concurrentRootIds])
       const currentSessions = sessions().get(instanceId) ?? new Map()
+      const revalidations = new Map<string, () => Promise<void>>()
+      const retainPlacement = (id: string, session: Session | undefined) =>
+        [...(restorePlacementReads.get(messagePageKey(instanceId, id)) ?? [])].some(current => current())
+          || retainConfirmedSessionPlacement(instanceId, id, session, revalidations, isCurrent, options?.signal)
+      // Catalogue containment cannot settle a verified return waiting on its checkout.
+      for (const { id } of apiSessions) {
+        if (hasPendingSessionReturn(instanceId, id) && !isSessionMovePending(instanceId, id)) retainPlacement(id, currentSessions.get(id))
+      }
       const staleIds = new Set(getDisconnectedCapturedSessionIds(existingSessions, currentSessions, validRootIds))
       const fetchedIds = new Set(authoritativeSessions.map(session => session.id))
       // Parents may live outside the enumerated project after a native move.
@@ -760,6 +903,8 @@ async function fetchSessions(instanceId: string, options?: {
         let parent = currentSessions.get(id)?.parentId
         while (parent && !fetchedIds.has(parent)) {
           fetchedIds.add(parent)
+          // Family membership retains the row, not its previous placement.
+          if (!isSessionMovePending(instanceId, parent)) retainPlacement(parent, currentSessions.get(parent))
           parent = currentSessions.get(parent)?.parentId
         }
       }
@@ -769,8 +914,31 @@ async function fetchSessions(instanceId: string, options?: {
         if (captured.catalogSnapshot && !fetchedIds.has(id) && currentSessions.get(id) === captured) staleIds.add(id)
       }
       for (const sessionId of staleIds) {
-        if (currentSessions.get(sessionId) !== existingSessions.get(sessionId)) continue
-        removeSessionRuntimeState(instanceId, sessionId, false)
+        const current = currentSessions.get(sessionId)
+        if (current !== existingSessions.get(sessionId) || isSessionMovePending(instanceId, sessionId)
+          || retainPlacement(sessionId, current)) continue
+        // An absent row may still exist in another workspace.
+        removeSessionProjection(instanceId, sessionId)
+      }
+
+      // Native project IDs span clones. Let a pending move reconcile first;
+      // otherwise use the merged placement, which retains newer move metadata.
+      for (const { id, location } of inventory) {
+        const directory = currentSessions.get(id)?.location.directory
+        if (isSessionMovePending(instanceId, id) || directory !== location.directory
+          || isWorkspaceServedDirectory(directory, instance.folder, worktrees)
+          || retainPlacement(id, currentSessions.get(id))) continue
+        if (!getMovedAwaySessions(instanceId).has(id)) markSessionMovedAway(instanceId, id, directory)
+        if (capturedSelection.includes(id) || activeParentSessionId().get(instanceId) === id || activeSessionId().get(instanceId) === id) {
+          removeSessionProjection(instanceId, id)
+        }
+      }
+      if (revalidations.size) {
+        await Promise.all([...revalidations.values()].map(revalidate => revalidate()))
+        if (!isCurrent()) {
+          if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+          return
+        }
       }
     }
     const rootIds: string[] = []
@@ -1285,6 +1453,14 @@ async function forkSession(
 }
 
 async function deleteSession(instanceId: string, sessionId: string): Promise<void> {
+  await removeSession(instanceId, sessionId, false)
+}
+
+export function deleteBlankSession(instanceId: string, sessionId: string, signal: AbortSignal): Promise<boolean> {
+  return removeSession(instanceId, sessionId, true, signal)
+}
+
+async function removeSession(instanceId: string, sessionId: string, cleanup: boolean, signal?: AbortSignal): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1292,7 +1468,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const loadingKey = messagePageKey(instanceId, sessionId)
-  const loadingAuthority = {}
+  const loadingAuthority = { cleanup }
   deleteSessionAuthorities.set(loadingKey, loadingAuthority)
 
   setLoading((prev) => {
@@ -1305,10 +1481,15 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.remove for instance ${instanceId}`, { sessionId })
-    await client.session.remove({ sessionID: sessionId })
+    if (cleanup) {
+      if (!(await serverApi.cleanupSession(instanceId, sessionId, signal)).deleted) return false
+    } else {
+      await client.session.remove({ sessionID: sessionId })
+    }
     if (!generationCurrent()) throw new Error("Session deletion was superseded by reconnect")
 
     removeSessionRuntimeState(instanceId, sessionId)
+    return true
 
   } catch (error) {
     log.error("Failed to delete session:", error)
@@ -1328,14 +1509,30 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   }
 }
 
-function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
+/** Apply a confirmed native deletion, whether requested here or observed. */
+function removeSessionRuntimeState(instanceId: string, sessionId: string, source: "request" | "observation" = "request"): void {
+  const requested = deleteSessionAuthorities.get(messagePageKey(instanceId, sessionId))
+  const preserve = requested?.cleanup ?? (source === "observation")
+  if (preserve) recoverRemovedSessionDraft(instanceId, sessionId)
+  markSessionDeletedAuthoritative(instanceId, sessionId)
+  forgetSessionMovedAway(instanceId, sessionId)
+  clearPendingSessionMove(instanceId, sessionId)
+  if (preserve) {
+    deleteSessionAttachments(instanceId, sessionId)
+    evictSessionDraftPrompt(instanceId, sessionId)
+  } else {
+    clearAttachments(instanceId, sessionId)
+    clearSessionDraftPrompt(instanceId, sessionId)
+  }
+  removeSessionProjection(instanceId, sessionId)
+}
+
+/** Removes the session from this instance's list, selection and transcript
+ * caches only; its draft, attachments and other per-session state stay. */
+function removeSessionProjection(instanceId: string, sessionId: string, ownsSelection?: (sessionId: string) => boolean): void {
   cancelSessionGenerationAdmissions(instanceId, sessionId)
   clearSessionSeenInterruption(instanceId, sessionId)
-  if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
-  deleteSessionAttachments(instanceId, sessionId)
-  clearSessionDraftPrompt(instanceId, sessionId)
   setSessionExpanded(instanceId, sessionId, false)
-
   setSessions((prev) => {
     const next = new Map(prev)
     const instanceSessions = next.get(instanceId)
@@ -1375,8 +1572,15 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
   })
 
   const parent = activeParentSessionId().get(instanceId), active = activeSessionId().get(instanceId)
-  if (sessionId === parent) clearActiveParentSession(instanceId)
-  else if (sessionId === active) {
+  if (sessionId === parent) {
+    const selected = active && sessions().get(instanceId)?.get(active)
+    const away = getMovedAwaySessions(instanceId)
+    if (away.has(sessionId) && selected && !away.has(selected.id)
+      && (ownsSelection?.(selected.id)
+        || isWorkspaceServedDirectory(selected.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId)))) {
+      setActiveSessionFromList(instanceId, selected.id)
+    } else clearActiveParentSession(instanceId)
+  } else if (sessionId === active) {
     if (parent && sessions().get(instanceId)?.has(parent)) setActiveSession(instanceId, parent)
     else clearActiveSession(instanceId)
   }
@@ -1777,6 +1981,8 @@ async function loadMessages(
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
     let apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
+    // The reducer seed records which fragments the page itself installed.
+    const fetchedMessages = [...apiMessages]
     if (rowSnapshot) {
       apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, apiMessages.reverse(), rowSnapshot).reverse()
     }
@@ -1873,11 +2079,14 @@ async function loadMessages(
         reconcilePendingPermissionsV2(instanceId, sessionId)
         committed = true
         // Streamed events reach the display only through the session reducer,
-        // which ignores them for messages it does not hold. A session known
-        // to be idle has no such message.
+        // which ignores them for messages it does not hold: every committed
+        // latest page offers it a seed. A first load's page is merged with the
+        // rows streamed during its fetch; any other latest commit passed the
+        // revision check, so no event changed the transcript during its fetch.
         const current = sessions().get(instanceId)?.get(sessionId)
-        if (initialSeed && (current?.status !== "idle" || current.runtimeStatusKnown !== true)) {
-          void seedOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder, authoritativeApiMessages)
+        if (nextWindow.kind === "latest") {
+          void seedOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder, authoritativeApiMessages,
+            current?.status === "idle" && current.runtimeStatusKnown === true, fetchedMessages)
         }
       }
     }
@@ -2045,6 +2254,7 @@ export {
   isCreatingSession,
   deleteSession,
   removeSessionRuntimeState,
+  removeSessionProjection,
   fetchAgents,
   fetchProviders,
   getActiveCatalogLocation,
@@ -2072,3 +2282,4 @@ export {
   clearSessionListRequestState,
   clearSessionCatalogState,
 }
+import { serverApi } from "../lib/api-client"

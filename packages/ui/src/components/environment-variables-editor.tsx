@@ -87,6 +87,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                   <input
                     type="text"
                     value={key}
+                    readOnly
                     disabled={props.disabled}
                     class="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-surface-secondary border border-base text-muted cursor-not-allowed"
                     placeholder={t("envEditor.fields.name.placeholder")}

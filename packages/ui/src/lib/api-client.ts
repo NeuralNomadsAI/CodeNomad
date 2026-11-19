@@ -675,6 +675,17 @@ export const serverApi = {
   fetchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
     return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`)
   },
+  readSessionFavoritesInBackground(instanceId: string, signal: AbortSignal, reconcile: boolean): Promise<import("../../../server/src/api-types").SessionFavoritesSnapshot> {
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-favorites${reconcile ? "?reconcile=1" : ""}`, { signal }))
+  },
+  saveSessionFavorite(instanceId: string, sessionId: string, favorite: boolean): Promise<import("../../../server/src/api-types").SessionFavoritesSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-favorites/${encodeURIComponent(sessionId)}`, {
+      method: "PUT", body: JSON.stringify({ favorite }),
+    })
+  },
+  cleanupSession(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<{ deleted: boolean }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-cleanup/${encodeURIComponent(sessionId)}`, { method: "POST", signal })
+  },
   patchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
     return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`, {
       method: "PATCH",
@@ -922,7 +933,7 @@ export const serverApi = {
   }): Promise<{ schedule: { id: string; revision: number; state: "paused"; digest: string; projectID: string; projectCanonical: string } }> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
   },
-  createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; watchedConversationIDs?: readonly string[]; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
+  createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; watchedConversationIDs?: readonly string[]; directory?: string; requestId: string }): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
     return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "POST", input)
   },

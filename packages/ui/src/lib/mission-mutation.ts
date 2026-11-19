@@ -21,7 +21,7 @@ export class MissionMutationError extends HttpResponseError {
 
 // Only reviewed redacted codes cross this seam. Never display or log arbitrary
 // upstream error text, and never replay an already dispatched mutation.
-export async function missionMutationRequest(url: string, method: "POST" | "PATCH", input: object): Promise<{ mission: MissionMap }> {
+export async function missionMutationRequest(url: string, method: "POST" | "PATCH", input: object): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
   const response = await authenticatedFetch(url, { method, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
   if (!response.ok) {
     const operation = method === "POST" ? "create" : "edit"
@@ -33,7 +33,7 @@ export async function missionMutationRequest(url: string, method: "POST" | "PATC
   if (!mission || typeof mission !== "object" || typeof (mission as { id?: unknown }).id !== "string") {
     throw new TypeError("Mission change acknowledgement is unreadable")
   }
-  return body as { mission: MissionMap }
+  return body as { mission: MissionMap; acknowledgement?: "fresh" | "recovered" }
 }
 
 export function isUncertainCreation(error: unknown): boolean {

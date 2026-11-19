@@ -25,11 +25,15 @@ export const missionStore = createMissionPanelInventory({
       && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
   } })
 
+/** Least time between a settled panel read and the next journal-change read: a running
+ * mission writes its journal continuously, and each read observes every listed actor. */
+export const MISSION_URGENT_REFRESH_INTERVAL_MS = 1_500
+
 // Every native status change of a large running family is an invalidation:
-// activity revalidates at a bounded rate, journal changes promptly.
+// activity revalidates at a bounded rate, journal changes promptly but spaced.
 const refreshes = createEventRefreshScheduler((instanceId) => {
   if (missionStore.demandedInstanceIds().includes(instanceId)) return missionStore.refresh(instanceId, false)
-})
+}, { urgentIntervalMs: MISSION_URGENT_REFRESH_INTERVAL_MS })
 
 export function activateMissionDemand(instanceId: string): void {
   missionStore.setDemand(instanceId, true)

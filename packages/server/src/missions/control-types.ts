@@ -7,6 +7,7 @@ import type { MissionRecipe, missionRecipeCatalog } from "./recipes"
 import type { MissionProfiles } from "./playbook-profiles"
 import type { MissionCreationChoices, MissionCreationMetadata } from "./creation-defaults"
 import type { MissionCreationSelection } from "./profile-defaults"
+import type { MissionPreparationOptions } from "./preparation-input"
 
 export interface NativeMissionSession extends MissionExecution {
   id: string
@@ -59,6 +60,8 @@ export type MissionManagedRootCreation = (coordinatorID: string,
 
 export interface MissionStartInput {
   objective: string
+  /** Optional short label (1–60 characters, trimmed). */
+  title?: string
   template: MissionTemplateId
   notes?: string
   profiles?: MissionProfiles
@@ -68,6 +71,8 @@ export interface MissionStartInput {
 export interface MissionInspectInput {
   missionID?: string
   start?: MissionStartInput
+  configurations?: true | string
+  project?: unknown
 }
 
 export interface MissionDelegateInput {
@@ -126,6 +131,7 @@ export type MissionNativeReportAuthorization = (request: MissionNativeReportRequ
 }>
 
 export interface MissionInspection {
+  schedule?: import("./mission-schedule-view").MissionScheduleRead
   selection?: MissionCreationSelection
   mission: Omit<MissionMap, "creationDefaults"> | null
   actor: MissionActor | null
@@ -138,17 +144,17 @@ export interface MissionInspection {
 }
 
 export interface MissionCreateInput extends MissionStartInput {
+  preparationOptions?: MissionPreparationOptions
+  startOnCreation?: boolean
   /** Original agent request and frozen preference provenance, supplied by the owning backend. */
   creationDefaults?: MissionCreationMetadata
-  /** Optional short label (1–60 characters, trimmed). */
-  title?: string
   prepared?: boolean
   requestID: string
   coordinatorSessionID?: string
   watchedConversationIDs?: string[]
   expectedCoordinatorLocation?: NativeMissionSession["location"]
-  /** Trusted backend hand-off identity, never HTTP input. */
-  preparedBy?: { missionID: string; coordinatorSessionID: string }
+  /** Trusted author session and optional source mission, never HTTP input. */
+  preparedBy?: { missionID?: string; coordinatorSessionID: string }
 }
 
 export interface MissionUpdateInput {
@@ -188,6 +194,11 @@ export interface MissionReviseInput {
 }
 
 export interface MissionInputTransport {
+  projectControl?(sessionID: string, command: import("./project-control-tool").ProjectToolCommand): Promise<unknown>
+  verifyProjectControl?(proof: import("./project-control-proof").ProjectControlProof): Promise<unknown>
+  requestProjectUpdate?(proof: import("./project-control-proof").ProjectControlProof): Promise<unknown>
+  schedule?(sessionID: string, input: import("./schedule-tool").ScheduleToolInput): Promise<unknown>
+  readConfigurations?(sessionID: string): Promise<unknown>
   resolveCreationDefaults?(sessionID: string, input: MissionCreationChoices & { template: MissionTemplateId; coordinatorModel?: MissionExecution["model"] }): Promise<unknown>
   lifecycle?(coordinatorID: string, input: { missionID: string; operationID: string; sessionID: string;
     startText?: string;
@@ -196,13 +207,14 @@ export interface MissionInputTransport {
   prompt(coordinatorID: string, input: Parameters<MissionSessionAdapter["prompt"]>[0]): Promise<unknown>
   synthetic(coordinatorID: string, input: Parameters<MissionSessionAdapter["synthetic"]>[0]): Promise<unknown>
   /** Backend coordinator actions behind the authenticated bridge; absent without backend presence. */
-  prepare?(coordinatorID: string, input: MissionPrepareRequest & { missionID: string }): Promise<unknown>
+  prepare?(coordinatorID: string, input: MissionPrepareRequest & { missionID?: string; observeOnly?: true }): Promise<unknown>
   observeTask?(coordinatorID: string, input: { missionID: string; taskKey: string }): Promise<unknown>
   interruptTask?(coordinatorID: string, input: { missionID: string; taskKey: string }): Promise<unknown>
 }
 
-/** A coordinator's paused hand-off mission: what the Mission editor submits, never Play. */
-export interface MissionPrepareRequest {
+/** An owned author's separate mission; automatic first Play is an explicit creation choice. */
+export interface MissionPrepareRequest extends MissionPreparationOptions {
+  startOnCreation?: boolean
   /** Trusted resolved creation metadata, carried only through the backend transport. */
   creationDefaults?: MissionCreationMetadata
   requestID: string

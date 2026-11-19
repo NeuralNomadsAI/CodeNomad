@@ -27,7 +27,7 @@ Ce sont des demandes au service configuré, pas une garantie que chaque point d�
 
 1. Enregistrez d’abord les changements de point d’accès, clé, modèle et voix.
 2. Choisissez **Tester l'entrée**, accordez l’accès au microphone, parlez, puis **Arrêter l'enregistrement**. Vérifiez la transcription reçue.
-3. Choisissez **Tester la lecture** pour entendre l’extrait ; **Arreter l'extrait** l’arrête.
+3. Choisissez **Tester la lecture** pour entendre l’extrait ; **Arrêter l'extrait** l’arrête.
 
 Le test de lecture utilise immédiatement le mode/format sélectionné, mais le point d’accès, la clé, le modèle et la voix viennent des paramètres enregistrés. Tester l’entrée n’envoie pas de prompt de conversation. Les tests envoient malgré tout de l’audio/du texte au fournisseur vocal configuré et peuvent être facturés.
 
@@ -45,12 +45,12 @@ L’enregistrement dans un navigateur distant nécessite un contexte sécurisé,
 ## Lire les messages à voix haute {#playback}
 
 1. Utilisez **Lire le message** sur un message, ou la même action sur un appel d’outil, lorsque TTS est disponible.
-2. Utilisez **Arreter la lecture** sur la même commande pour l’arrêter ; démarrer une autre lecture arrête celle en cours.
+2. Utilisez **Arrêter la lecture** sur la même commande pour l’arrêter ; démarrer une autre lecture arrête celle en cours.
 3. Changez la voix, le modèle, le mode ou le format enregistrés dans **Voix** pour les demandes suivantes.
 
 La lecture utilise la projection textuelle CodeNomad, pas une capture d’écran racontée : les octets binaires/d’images et les reçus d’autorisation ne sont pas du contenu vocal. Elle n’exécute pas de prompt et ne change pas le modèle OpenCode sélectionné.
 
-Pour la voix automatique de conversation, utilisez **Activer le mode conversation** dans le menu **Plus d'actions** de la zone de saisie ; il s’applique à cet onglet de projet et n’est pas conservé après un rechargement. Tant qu’il est actif, CodeNomad demande à l’agent, avec chaque prompt que vous envoyez, de commencer sa réponse par un court résumé dans un bloc clôturé `spoken`. Seul ce bloc terminé est lu, dans la session principale active ; ce n’est pas une lecture automatique de chaque réponse ou sous-agent. **Desactiver le mode conversation** arrête sa file et ne demande plus le résumé. Démarrer le microphone arrête aussi la voix de conversation active. Le commutateur apparaît avec la saisie vocale, ou si le mode conversation est déjà actif, et exige un TTS fonctionnel pour l’activer.
+Pour la voix automatique de conversation, utilisez **Activer le mode conversation** dans le menu **Plus d'actions** de la zone de saisie ; il s’applique à cet onglet de projet et n’est pas conservé après un rechargement. Tant qu’il est actif, CodeNomad demande à l’agent, avec chaque prompt que vous envoyez, de commencer sa réponse par un court résumé dans un bloc clôturé `spoken`. Seul ce bloc terminé est lu, dans la session principale active ; ce n’est pas une lecture automatique de chaque réponse ou sous-agent. **Désactiver le mode conversation** arrête sa file et ne demande plus le résumé. Démarrer le microphone arrête aussi la voix de conversation active. Le commutateur apparaît avec la saisie vocale, ou si le mode conversation est déjà actif, et exige un TTS fonctionnel pour l’activer.
 
 ## Flux de données et confidentialité {#privacy}
 

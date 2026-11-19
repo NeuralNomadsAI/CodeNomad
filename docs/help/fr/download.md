@@ -42,6 +42,6 @@ Téléchargez uniquement depuis cette page ou les [versions officielles](https:/
 
 ## Soutenir le développement {#support-development}
 
-La page [Soutenir CodeNomad](sponsor.md) explique ce que finance le parrainage.
+La page [Soutenir CodeNomad](sponsor.md) explique pourquoi le parrainage compte et comment il est géré.
 
 {{funding}}

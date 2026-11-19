@@ -7,20 +7,28 @@ import { NativeMissionDocumentStore } from "../../missions/mission-document-stor
 import { nativeInvocation } from "./native-invocation"
 import { nativeScheduleCarrierLookupKey } from "./native-schedule-carrier-binding"
 import type { NativeScheduleArtifacts } from "./native-schedule-installation"
-import { acquireNativeMissionScheduleAuthority, NATIVE_MISSION_SCHEDULE_CONTROL_TIMEOUT_MS } from "./native-mission-schedule-authority"
+import { acquireNativeMissionScheduleAuthority, nativeMissionScheduleAgentCreationVerifier,
+  NATIVE_MISSION_SCHEDULE_CONTROL_TIMEOUT_MS } from "./native-mission-schedule-authority"
 import { controlNativeMissionSchedule } from "./native-mission-schedule-control"
 import { readMissionSchedulePage } from "../../missions/mission-schedule-list"
 import { nativeMissionScheduleObservation } from "./native-mission-schedule-display"
 import { readNativeScheduleFlag } from "./native-schedule-flag"
+import { readMissionPreparationBinding } from "../../missions/creation-intent"
 
 const readInput = z.object({ missionID: documentID, requestID: z.string().min(1).max(128).optional() }).strict()
 const carrierInput = z.object({ sessionID: nativeDocumentID }).strict()
+const preparationInput = z.object({ creationRequestID: z.string().min(1).max(128) }).strict()
 
 /** Every method acquires its own RPC graph. Public KV reads remain available
  * independently of the private calendar capability and desktop presence. */
 export function nativeMissionScheduleHandlers(ctx: Plugin.Context, artifacts?: NativeScheduleArtifacts) {
   const invocation = nativeInvocation(NATIVE_MISSION_SCHEDULE_CONTROL_TIMEOUT_MS)
   return {
+    schedulePreparationRead: (raw: unknown) => invocation.capture(Effect.tryPromise(() => invocation.check(async run => {
+      const { creationRequestID } = preparationInput.parse(raw)
+      const binding = await readMissionPreparationBinding({ get: key => run(ctx.storage.get(key)) }, ctx.location.project, creationRequestID)
+      return binding ? { binding } : {}
+    })).pipe(Effect.orDie)),
     scheduleFlag: () => readNativeScheduleFlag(ctx).pipe(Effect.orDie),
     scheduleList: (raw: unknown) => invocation.capture(Effect.tryPromise(() => invocation.check(run =>
       readMissionSchedulePage({ scan: input => run(ctx.storage.scan(input)) }, ctx.location.project, raw,
@@ -43,7 +51,7 @@ export function nativeMissionScheduleHandlers(ctx: Plugin.Context, artifacts?: N
     }).pipe(Effect.orDie),
     scheduleControl: (raw: unknown) => invocation.capture(Effect.gen(function* () {
       return yield* Effect.tryPromise({ try: () => invocation.check(run => run(Effect.scoped(Effect.gen(function* () {
-        const authority = yield* acquireNativeMissionScheduleAuthority(ctx, raw, run)
+        const authority = yield* acquireNativeMissionScheduleAuthority(ctx, raw, run, nativeMissionScheduleAgentCreationVerifier(ctx, run))
         return yield* controlNativeMissionSchedule(ctx, authority, artifacts, run)
       })))), catch: error => error })
     }).pipe(Effect.orDie)),

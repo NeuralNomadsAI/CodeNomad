@@ -1,8 +1,9 @@
 import { createSignal } from "solid-js"
 import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
-import { normalizeTabViewState, type RestorableTabViewState } from "./tab-view-state-codec"
+import { normalizeTabViewState, tabPreviewModes, type RestorableTabViewState } from "./tab-view-state-codec"
 import { bindLocalTabView, saveLocalTabView, unbindLocalTabView, adoptLocalLegacyPreview, retireLocalLegacyPreview } from "./tab-view-state-local"
-export type { RestorableTabViewState, RestorableTabPreview, RestorableTabMissionView } from "./tab-view-state-codec"
+import { importSessionBrowsers } from "./session-browser-persistence"
+export type { RestorableTabViewState, RestorableTabMissionView } from "./tab-view-state-codec"
 
 const empty: RestorableTabViewState = { version: 1 }
 const [states, setStates] = createSignal<ReadonlyMap<string, RestorableTabViewState>>(new Map())
@@ -30,7 +31,8 @@ export function adoptLegacyTabPreview(instanceId: string, sessionId: string): vo
   if (previews?.[sessionId] !== undefined) return
   const legacy = adoptLocalLegacyPreview(instanceId, sessionId)
   if (legacy) {
-    updateTabViewState(instanceId, { previews: { ...previews, ...legacy.view.previews } })
+    const imported = importSessionBrowsers([legacy.view])
+    updateTabViewState(instanceId, { previews: { ...previews, ...(imported ? tabPreviewModes(legacy.view) : legacy.view).previews } })
     if (saveLocalTabView(instanceId, getTabViewState(instanceId))) retireLocalLegacyPreview(legacy)
   }
 }
@@ -38,7 +40,8 @@ export function adoptLegacyTabPreview(instanceId: string, sessionId: string): vo
 /** Seed once: repeated asynchronous session hydration must preserve local view gestures. */
 export function seedTabViewState(instanceId: string, value: RestorableTabViewState | undefined): void {
   if (states().has(instanceId)) return
-  const next = normalizeTabViewState(value) ?? { version: 1 as const }
+  const normalized = normalizeTabViewState(value) ?? { version: 1 as const }
+  const next = importSessionBrowsers([normalized]) ? tabPreviewModes(normalized) : normalized
   const reader = next.missions?.reader
   if (reader?.instanceId) reader.instanceId = instanceId
   if (reader?.recurrence) reader.recurrence.instanceId = instanceId

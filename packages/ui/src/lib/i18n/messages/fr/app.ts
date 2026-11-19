@@ -19,7 +19,7 @@ export const appMessages = {
   "window.menu.view": "Affichage",
   "window.menu.leftPanel": "Volet gauche",
   "window.menu.rightPanel": "Volet droit",
-  "window.menu.timeline": "Timeline",
+  "window.menu.timeline": "Chronologie",
   "window.menu.window": "Fenêtre",
   "window.menu.help": "Aide",
   "window.menu.native.getUpdates": "Rechercher des mises à jour…",

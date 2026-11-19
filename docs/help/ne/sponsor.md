@@ -1,29 +1,16 @@
 # CodeNomad लाई आर्थिक सहयोग गर्नुहोस्
 
-## CodeNomad लाई किन प्रायोजन गर्ने {#why}
-
-CodeNomad [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) अन्तर्गत प्रकाशित छ र डाउनलोड वा प्रयोग गर्न केही पनि लाग्दैन। Pascal André र Shantur Rathore ले समुदायको योगदानसहित आफ्नै समयमा यसलाई maintain गर्छन्। OpenCode स्वतन्त्र रूपमा update हुन्छ, त्यसैले कुनै नयाँ feature भन्दा पहिले compatible रहन मात्र पनि CodeNomad लाई नियमित काम चाहिन्छ।
-
-## प्रायोजनले के खर्च बेहोर्छ {#how-it-helps}
-
-- **मर्मतसम्भार**: report गरिएका bug fix गर्ने र CodeNomad लाई नयाँ OpenCode version सँग compatible राख्ने।
-- **रिलिज**: Windows, macOS र Linux एप build, test र publish गर्ने।
-- **भाषा**: interface र यो help site दस भाषामा अद्यावधिक राख्ने।
-- **नयाँ feature**, जस्तै [मिसन](missions.md), [Remote Control](remote-control.md) र [इतिहास खोज](history.md) पछाडिको काम।
-
-## आर्थिक सहयोग नीति {#policy}
-
-- प्रायोजन योगदान हो, खरिद होइन। यसले कुनै feature, roadmap प्रभाव, support प्राथमिकता वा license अधिकार किन्दैन।
-- प्रायोजकले अरू सबैले पाउने उही CodeNomad पाउँछन्। कुनै paid edition वा sponsor-only build छैन।
-- तपाईं प्रायोजन गर्नुहोस् वा नगर्नुहोस्, bug report र feature request आफ्नै योग्यताका आधारमा handle गरिन्छन्।
-- CodeNomad डाउनलोड, प्रयोग वा update गर्न प्रायोजन कहिल्यै आवश्यक पर्दैन।
-- हरेक channel ले पैसा कसले पाउँछ भनेर बताउँछ। भुक्तानी channel को आफ्नै site मा हुन्छ; यो help site ले तपाईंको भुक्तानी विवरण कहिल्यै देख्दैन।
-
-## प्रायोजन गर्नुहोस् {#channels}
-
-हरेक channel को पृष्ठमा रकम र कति पटक योगदान गर्ने भन्ने रोज्न सकिन्छ।
-
 {{funding}}
+
+म CodeNomad पूर्णकालीन रूपमा विकास र maintain गर्छु। यो निःशुल्क र open source हो, र वास्तविक काममा प्रयोग हुने tool ले पाउनुपर्ने ध्यान म यसलाई दिइरहन चाहन्छु।
+
+मेरो पृष्ठभूमि 3D र visual effects हो: तीन दशकसम्म सिर्जना गर्ने, production का समस्याहरू समाधान गर्ने र software प्रयोग गर्ने मानिसहरूसँगै software बनाउने काम। त्यही अनुभवले CodeNomad प्रतिको मेरो दृष्टिकोण बनाउँछ: कुनै tool पहिलो demonstration भन्दा पर पनि टिक्नुपर्छ, लामो session, जटिल project र दैनिक कामका अप्रत्याशित कुराहरूमा पनि।
+
+प्रतिक्रिया, bug report र code योगदानले CodeNomad लाई अझ राम्रो बनाउँछन्। चन्दाले त्यसलाई भरपर्दो बनाउन र OpenCode विकसित हुँदै जाँदा यसलाई maintain गर्न मैले दिने समयलाई सहयोग गर्छ।
+
+यो काम पूर्णकालीन रूपमा जारी राख्न मलाई त्यो आर्थिक सहयोग चाहिन्छ। यदि CodeNomad तपाईंको कामको हिस्सा बनेको छ भने, प्रायोजनले सबैका लागि उपलब्ध रहने tool बनाउँदै र maintain गर्दै जीविका चलाउन मलाई सहयोग गर्छ।
+
+Pascal André
 
 ## सहयोगका अन्य तरिका {#other-ways}
 

@@ -10,13 +10,23 @@ Les connexions distantes utilisent le même formulaire et les mêmes commandes. 
 
 Choisissez **Créer une mission**. Le formulaire remplace l’arbre jusqu’à la création ou l’annulation. Une création confirmée sélectionne la Mission ; une création refusée laisse le formulaire modifiable.
 
+Demandez à un agent dans toute conversation du projet, y compris un sous-agent ou un passage programmé, de préparer une Mission séparée, ponctuelle ou programmée. Sa conversation reste inchangée ; une nouvelle coordination est créée par défaut. Gardez le backend CodeNomad propriétaire disponible. Demander explicitement **Démarrer automatiquement** autorise le premier démarrage de cette nouvelle Mission ; la récupération lit le résultat d’origine. Les agents peuvent aussi lister, inspecter, démarrer, mettre en pause, arrêter, reprendre, **Lancer maintenant**, vérifier, modifier et supprimer toute programmation du projet, y compris celles créées dans l’éditeur. Les mêmes contrôles de révision et d’admission s’appliquent ; une désactivation explicite de la programmation est préservée. Une action non confirmée conserve sa demande d’origine pour consulter son état en lecture seule.
+
 ### Configuration {#saved-briefs}
 
+Les agents peuvent consulter toutes les Missions du projet, y compris les vôtres, depuis toute conversation possédée. Les vues en lecture seule couvrent tâches, résultats, nettoyage, passages programmés et choix des sources ; consulter ne lance ni ne relance le travail.
+
+Les agents peuvent aussi diagnostiquer la programmation, préparer ses réglages en préservant un OFF explicite, reprendre une modification partielle confirmée avec sa demande d’origine, et créer ou contrôler les programmations quotidiennes.
+
 **Configuration** charge éventuellement un objectif, des notes, un scénario et des choix d’agents, de modèles et de sessions enregistrés. Son nom fournit le titre modifiable. Vérifiez les champs remplis avant de créer.
+
+Les agents peuvent lire, enregistrer, remplacer ou renommer, supprimer et réparer les configurations, y compris enregistrer les instructions d’une Mission existante. Ils peuvent aussi modifier les profils et sessions par défaut, globalement ou par scénario, rétablir l’héritage, réinitialiser les préférences invalides et modifier la préférence de suppression des conversations de tâches. La bibliothèque et ces préférences s’appliquent à tous les projets du profil CodeNomad. La profondeur des sous-agents du projet accepte 1 à 10 ou **Hériter**, avec réparation d’un bloc de configuration vide. Chaque modification vérifie la valeur lue et préserve les changements humains intervenus depuis.
 
 **Enregistrer la configuration**, en bas à côté d’Annuler et Créer, nomme et conserve une configuration réutilisable. Cette action ne crée ni ne démarre de Mission. Programmation et **Démarrer automatiquement** se règlent séparément. L’engrenage des Missions ouvre les Préférences et la bibliothèque ; supprimer une configuration conserve les missions et conversations existantes.
 
 ### Objectif, Titre et Notes {#mission-instructions}
+
+Pour les Missions ponctuelles, les agents peuvent démarrer, reprendre, mettre en pause douce, interrompre immédiatement, arrêter, modifier, supprimer, reprendre la coordination après échec, demander un rapport manquant ou un point. Cela inclut vos Missions, avec les mêmes contrôles d’admission et de révision que le panneau. La suppression suit votre préférence de suppression des sessions gérées, sauf choix explicite. Un contrôle ou nettoyage non confirmé conserve son identité ; les agents lisent son état enregistré avant de poursuivre explicitement une action partielle confirmée.
 
 - **Objectif** : le résultat souhaité et comment le vérifier.
 - **Titre** : le nom dans l’arbre. Pour une Mission vierge, il suit la première phrase de l’objectif, dans la limite de 60 caractères ; vous pouvez le modifier.
@@ -91,6 +101,8 @@ Une politique enregistrée que l’éditeur ne sait pas représenter reste sous 
 Dans **Conversations suivies**, utilisez **Ajouter une conversation** puis choisissez une conversation, y compris pour une Mission immédiate. Avant Play, changez une sélection ou utilisez son bouton × pour la retirer.
 
 ### Programmations quotidiennes existantes {#existing-daily-schedules}
+
+Les agents peuvent trouver et contrôler ces programmations depuis toute conversation appartenant au même projet, y compris dans un autre worktree.
 
 Les entrées quotidiennes existantes conservent leurs contrôles et leur fuseau. Après un redémarrage du service, elles indiquent **Interrompue** et demandent **Reprendre**. Elles rattrapent le dernier jour admissible plutôt que chaque jour manqué. L’entrée sélectionnée donne accès aux résultats conservés.
 

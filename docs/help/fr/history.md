@@ -66,8 +66,9 @@ Supprimer une session parente supprime aussi ses sous-sessions descendantes et l
 
 1. Préférez **Supprimer la session** sur une ligne précise lorsque vous savez exactement quelle conversation doit disparaître.
 2. Pour une maintenance plus large, exécutez **Nettoyer les sessions** et lisez la confirmation **Nettoyage approfondi des sessions**.
-3. Confirmez uniquement si les sessions vides, les sessions de sous-agents terminées et les bifurcations inutilisées peuvent être supprimées.
 
-Le nettoyage agit sur les sessions candidates connues du projet actuel et peut retirer davantage que les seules sessions principales vides. Ce n’est pas un archivage et il n’y a pas d’annulation. Ne l’utilisez pas simplement pour masquer une barre latérale chargée. La préférence indépendante **Nettoyage auto des sessions vides** est plus restreinte : elle vérifie qu’une session est réellement vide au lieu de considérer une transcription non chargée comme vide.
+Les deux nettoyages suppriment uniquement les sessions vérifiées comme vides, inactives et sans sous-session. Les favoris et leurs ancêtres sont préservés même s’ils sont marqués dans un autre dossier.
+
+Si une conversation disparaît pendant le nettoyage, retrouvez son texte non envoyé et ses pièces jointes dans le composeur de nouvelle conversation du projet. Utilisez **Changer de brouillon** pour ouvrir un brouillon enregistré sans écraser celui en cours. La récupération fonctionne aussi à la réouverture du projet.
 
 La suppression retire des conversations, pas des commits Git, et n’annule pas les effets sur le système de fichiers ou les services externes. Si le nettoyage ne réussit qu’en partie, les sessions déjà supprimées le restent. Vérifiez la liste restante et les erreurs avant de réessayer. Voir [Conversations](conversations.md) pour les bifurcations/annulations et [Projets](projects.md) pour supprimer des dossiers temporaires ou worktrees.

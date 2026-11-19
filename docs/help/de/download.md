@@ -42,6 +42,6 @@ Laden Sie nur von dieser Seite oder den [offiziellen Releases](https://github.co
 
 ## Entwicklung unterstützen {#support-development}
 
-Die Seite [CodeNomad unterstützen](sponsor.md) erklärt, was Sponsoring finanziert.
+Die Seite [CodeNomad unterstützen](sponsor.md) erklärt, warum Sponsoring zählt und wie es gehandhabt wird.
 
 {{funding}}

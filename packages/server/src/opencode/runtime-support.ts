@@ -10,12 +10,13 @@
  * CodeNomad qualifies only the 2.3 subagent contract: every subagent runs in the
  * background and delivers synthetic `<subagent>` reports to its parent
  * (scripts/test-missions-native-trajectory.mjs, scripts/test-subagent-nesting-native.mjs).
- * OpenCode reads data stored by older releases. See
+ * The native Automation contract backs Mission calendars. OpenCode 2.3.2
+ * also fixes cached system prompts for GPT-6.2 Responses routes. See
  * dev-docs/OPENCODE_COMPATIBILITY.md for the demonstrated boundary.
  */
-export const MINIMUM_OPENCODE_VERSION = "2.3.0"
+export const MINIMUM_OPENCODE_VERSION = "2.3.2"
 /** Qualification target, independent of the technically required minimum. */
-export const RECOMMENDED_OPENCODE_VERSION = "2.3.0"
+export const RECOMMENDED_OPENCODE_VERSION = "2.3.2"
 export const OPENCODE_UPDATE_REQUIRED = "opencode_update_required"
 
 export function isBelowOpenCodeMinimum(version: string): boolean {
@@ -39,7 +40,7 @@ export class UnsupportedOpenCodeError extends Error {
   readonly minimumVersion = MINIMUM_OPENCODE_VERSION
   constructor(readonly actualVersion: string, readonly reason: OpenCodeIncompatibility = "native_contract") {
     super(`${OPENCODE_UPDATE_REQUIRED}: OpenCode ${actualVersion}; ${reason === "native_contract"
-      ? `requires the background subagent report contract, experimental_image_generate tool contract, native replay and compaction contract (native, metadata.keepID) and Code Mode job ordering of ${MINIMUM_OPENCODE_VERSION}`
+      ? `requires the background subagent report contract, native image generation, replay, Code Mode job ordering and Mission Automations of ${MINIMUM_OPENCODE_VERSION}`
       : reason === "session_environment" ? "requires PUT /api/session/{sessionID}/environment with variables"
         : "does not expose the canonical session, permission, Form and inbox API contract"}`)
     this.name = "UnsupportedOpenCodeError"

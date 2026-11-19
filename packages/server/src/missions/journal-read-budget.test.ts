@@ -68,7 +68,7 @@ test("read-mostly paths read one mission's range, never the finished history", a
     assert.deepEqual(inspected.value.mission, (await f.journal.snapshot()).missions.find(candidate => candidate.id === mission.id))
   }
   const listed = await cost(f, () => control.listMissions(coordinator))
-  assert.deepEqual([listed.value.map(entry => entry.missionID), listed.fullScans, listed.entries <= own], [[mission.id], 0, true])
+  assert.deepEqual([listed.value.length, listed.value[0]?.missionID, listed.fullScans, listed.entries], [HISTORY_MISSIONS + 1, mission.id, 0, 0])
 
   const outbox = await cost(f, () => control.retryPendingNotifications())
   assert.deepEqual([outbox.value, outbox.fullScans, outbox.entries <= own], [{ attempted: 0, failed: 0 }, 0, true])
@@ -164,6 +164,20 @@ test("capacity checks and appends read only their mission's range", async () => 
   const appended = await cost(f, () => f.journal.append({ version: 1, id: "evt_budget", type: "task.dispatched", missionID: mission.id,
     projectID: "project-1", taskKey: "work", createdAt: 90_000 }))
   assert.deepEqual([appended.fullScans, appended.entries], [0, own])
+})
+
+test("declaration and briefing share the publication read with the append capacity check", async () => {
+  const { f, mission, own } = await liveMission(12)
+  const control = f.control()
+  const session = mission.coordinatorSessionId
+  const added = await cost(f, () => control.declare(session, { missionID: mission.id, taskKey: "publication",
+    title: "Publication", brief: "A single publication read", role: "specialist", blockedBy: [] }))
+  const briefed = await cost(f, () => control.briefing(session, { missionID: mission.id, requestID: "publication",
+    basedOnRevision: added.value.mission.revision, summary: "The declaration was published.",
+    achieved: [], ongoing: [], obstacles: [], next: [] }))
+  assert.equal(added.value.mission.revision, mission.revision + 2)
+  assert.equal(briefed.value.mission.revision, added.value.mission.revision + 1)
+  assert.deepEqual([added.entries, briefed.entries], [2 * (HISTORY + own), 2 * (HISTORY + own + 1)])
 })
 
 test("membership refusals and damage gates read what the hints have not seen", async () => {

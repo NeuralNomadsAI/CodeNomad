@@ -26,7 +26,7 @@ import type { PromptDelivery, PromptInputApi, PromptInsertMode } from "../prompt
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
 import { useConfig } from "../../stores/preferences"
 import { getSessionPreview } from "../../stores/session-previews"
-import { SessionPreviewView } from "../session-preview-view"
+import { SessionPreviewSlot } from "../session-preview-view"
 import { FilesPreviewView } from "../files-preview-view"
 import { closeFilePreview } from "../../stores/files-preview"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
@@ -105,7 +105,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
-  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceId))
+  const preview = createMemo(() => getSessionPreview(props.sessionId))
   const surface = createMemo(() => getSessionSurface({ instanceId: props.instanceId, sessionId: props.sessionId }))
   const missionReader = () => {
     const current = surface()
@@ -617,13 +617,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       }
     >
       <div ref={rootRef} class="session-view" classList={{ "mission-reading": readingMission() }}>
-        <Show when={preview()}>
-          <SessionPreviewView
-            preview={preview()!}
+          <SessionPreviewSlot
+            sessionId={props.sessionId}
+            instanceId={props.instanceId}
             active={centralPreview()}
             onInsertComment={handleInsertPreviewComment}
           />
-        </Show>
         <Show when={props.isActive !== false}>
         {/* The active web preview owns the central flex space; the transcript surface yields it. */}
         <div class="mission-transcript-surface" style={{ display: centralPreview() ? "none" : undefined }}>

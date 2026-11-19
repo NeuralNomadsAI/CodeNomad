@@ -1,4 +1,4 @@
-import { createContext, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js"
+import { createContext, createRenderEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js"
 import { createTheme, ThemeProvider as MuiThemeProvider } from "@suid/material/styles"
 import CssBaseline from "@suid/material/CssBaseline"
 import { useConfig } from "../stores/preferences"
@@ -9,6 +9,7 @@ import {
   type NormalizedColorScheme,
 } from "./theme-scheme"
 import { resolveCssColor } from "./css-color"
+import { effectiveHighContrast } from "./high-contrast"
 
 export type ThemeMode = "system" | "light" | "dark"
 
@@ -19,6 +20,7 @@ interface ThemeContextValue {
   cycleThemeMode: () => void
   colorScheme: () => NormalizedColorScheme
   setColorScheme: (scheme: NormalizedColorScheme) => void
+  highContrast: () => boolean
 }
 
 const ThemeContext = createContext<ThemeContextValue>()
@@ -78,31 +80,35 @@ const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
 
 export function ThemeProvider(props: { children: JSX.Element }) {
   const mediaQuery = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null
+  const contrastQuery = typeof window !== "undefined" ? window.matchMedia("(prefers-contrast: more)") : null
   const config = useConfig()
   const [systemDark, setSystemDark] = createSignal(mediaQuery?.matches ?? false)
   const [isDark, setIsDarkSignal] = createSignal(true)
   const [themeRevision, setThemeRevision] = createSignal(0)
+  const [systemContrast, setSystemContrast] = createSignal(contrastQuery?.matches ?? false)
+  const highContrast = createMemo(() => effectiveHighContrast(config.highContrastPreference(), systemContrast()))
 
   const themeMode = () => config.themePreference()
   const colorScheme = () => config.getAppearancePalette(effectiveAppearance(themeMode(), systemDark()))
 
   const applyResolvedTheme = () => {
-    const dark = applyColorScheme(colorScheme(), { systemDark: mediaQuery?.matches })
+    const dark = applyColorScheme(colorScheme(), { systemDark: mediaQuery?.matches, highContrast: highContrast() })
     setIsDarkSignal(dark)
-    if (typeof window !== "undefined") {
-      requestAnimationFrame(() => setThemeRevision((v) => v + 1))
-    } else {
-      setThemeRevision((v) => v + 1)
-    }
+    setThemeRevision((v) => v + 1)
   }
 
-  createEffect(() => {
+  createRenderEffect(() => {
     applyResolvedTheme()
   })
 
   const handleSystemThemeChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
   mediaQuery?.addEventListener("change", handleSystemThemeChange)
-  onCleanup(() => mediaQuery?.removeEventListener("change", handleSystemThemeChange))
+  const handleSystemContrastChange = (event: MediaQueryListEvent) => setSystemContrast(event.matches)
+  contrastQuery?.addEventListener("change", handleSystemContrastChange)
+  onCleanup(() => {
+    mediaQuery?.removeEventListener("change", handleSystemThemeChange)
+    contrastQuery?.removeEventListener("change", handleSystemContrastChange)
+  })
 
   const setColorScheme = (scheme: NormalizedColorScheme) => {
     void config.setColorSchemePreference(normalizeColorScheme(scheme))
@@ -195,8 +201,8 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   })
 
   return (
-    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, cycleThemeMode, colorScheme, setColorScheme }}>
-      <MuiThemeProvider theme={muiTheme()}>
+    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, cycleThemeMode, colorScheme, setColorScheme, highContrast }}>
+      <MuiThemeProvider theme={muiTheme}>
         <CssBaseline />
         {props.children}
       </MuiThemeProvider>

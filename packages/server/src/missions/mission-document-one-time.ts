@@ -11,6 +11,9 @@ import { isDeepStrictEqual } from "node:util"
 import { missionSlotEndsAt } from "./launch-policy"
 import { documentPassageSources, documentSourceStartText } from "./mission-document-passage-input"
 import type { QualifiedDocumentSourceSnapshot } from "../opencode/missions/native-scheduled-passage-sources"
+import { automaticMissionStartID, type CreationAcknowledgement } from "./preparation-result"
+import { missionCreationChoices } from "./creation-defaults"
+import { normalizedPreparationOptions } from "./preparation-input"
 
 /** The owner keeps every operation inside its current native invocation graph. */
 export type MissionDocumentSources = (document: MissionDocument, current: () => true) => Promise<QualifiedDocumentSourceSnapshot>
@@ -33,27 +36,38 @@ export async function requireMissionOneTimeDocument(access: MissionDocumentAcces
 }
 
 export async function prepareMissionOneTimeDocument(access: MissionDocumentAccess, project: MissionProject,
-  id: string, input: MissionCreateInput, coordinatorSessionID: string, createdAt: number, current: () => true): Promise<MissionDocument> {
+  id: string, input: MissionCreateInput, coordinatorSessionID: string, createdAt: number, current: () => true): Promise<CreationAcknowledgement<MissionDocument>> {
   const digest = stableToken(canonicalAuthority(JSON.parse(JSON.stringify(input))), 64)
+  const options = normalizedPreparationOptions(input.preparationOptions ?? {})
+  if (options.kind !== "one-time" || options.coordinatorSessionID) throw new MissionControlError("Use scheduled Mission preparation", "invalid-input")
   return access(async store => {
     const previous = await store.read(id)
     if (previous) {
       if ("deletedAt" in previous) throw new MissionControlError("Mission deleted", "mission-deleted")
       if (previous.oneTime?.creationRequestID !== input.requestID || previous.oneTime.creationDigest !== digest)
         throw new MissionCreateNoEffectError(input.requestID, id)
-      return previous
+      return { acknowledgement: "recovered", value: previous }
     }
     const location = input.expectedCoordinatorLocation ?? project.location
-    return store.create(id, { title: input.title ?? input.objective.trim().replace(/\s+/g, " ").slice(0, 60),
+    const value = await store.create(id, { title: input.title ?? input.objective.trim().replace(/\s+/g, " ").slice(0, 60),
       objective: input.objective, ...(input.notes === undefined ? {} : { notes: input.notes }), template: input.template,
       ...(input.profiles === undefined ? {} : { profiles: input.profiles }), taskMode: input.taskMode ?? "native",
       // One-time admission resolves the owning backend/profile afresh at each send.
       profileID: null, executionHost: null, roots: [{ mode: "directory-only", directory: location.directory }],
-      watchedConversationIDs: input.watchedConversationIDs ?? [],
+      watchedConversationIDs: input.watchedConversationIDs ?? options.watchedConversationIDs,
       launch: { timing: { kind: "immediate" }, condition: null, ends: { maxLaunches: null, afterMs: null, at: null } },
     }, createdAt, current, { creationRequestID: input.requestID, creationDigest: digest,
       ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),
-      coordinatorSessionID, location: { ...location }, firstPlay: null })
+      coordinatorSessionID, location: { ...location }, firstPlay: null }, input.preparedBy ? {
+        requestID: input.requestID, digest, author: input.preparedBy,
+        input: { objective: input.objective, template: input.template, startOnCreation: input.startOnCreation === true,
+          ...(input.title === undefined ? {} : { title: input.title }), ...(input.notes === undefined ? {} : { notes: input.notes }),
+          ...missionCreationChoices(input.creationDefaults?.request ?? input),
+          ...(input.preparationOptions ? { watchedConversationIDs: options.watchedConversationIDs } : {}) },
+        ...(input.creationDefaults ? { creationDefaults: input.creationDefaults } : {}),
+        ...(input.startOnCreation ? { automaticStart: { requestID: automaticMissionStartID(input.requestID), attempted: false } } : {}),
+      } : undefined)
+    return { acknowledgement: "fresh", value }
   })
 }
 
@@ -166,6 +180,7 @@ export async function markMissionDocumentTaskCreation(access: MissionDocumentAcc
 export function missionDocumentSummary(doc: MissionDocument) {
   const play = doc.oneTime?.firstPlay
   return { revision: doc.revision, configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration,
+    ...(doc.creation?.automaticStart ? { automaticStart: doc.creation.automaticStart } : {}),
     state: doc.state, firstPlayedAt: doc.firstPlayedAt, launchedCount: doc.launchedCount, everCreatedTask: doc.everCreatedTask,
     launch: doc.configuration.launch, firstPlay: play ? { requestID: play.requestID, expectedRevision: play.expectedRevision,
       operationID: play.operationID, messageID: play.messageID, requestedAt: play.requestedAt, admittedAt: play.admittedAt,
@@ -174,7 +189,8 @@ export function missionDocumentSummary(doc: MissionDocument) {
 }
 export type MissionDocumentSummary = ReturnType<typeof missionDocumentSummary>
 
-export async function projectMissionDocuments(access: MissionDocumentAccess, missions: MissionMap[]): Promise<void> {
+export async function projectMissionDocuments(access: MissionDocumentAccess,
+  missions: Pick<MissionMap, "id" | "coordinatorSessionId" | "document">[]): Promise<void> {
   await access(async store => {
     for (const mission of missions) {
       const doc = await store.read(mission.id)

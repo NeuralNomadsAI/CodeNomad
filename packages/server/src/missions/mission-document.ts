@@ -5,9 +5,11 @@ import { missionCoordinatorSessionID, isMissionCoordinatorSession } from "./sess
 import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { missionCalendarOwnerSchema } from "./mission-calendar-owner-state"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
-import { missionCreationDefaultsSchema } from "./creation-defaults"
+import { missionCreationDefaultsSchema, missionCreationChoicesSchema, missionCreationTemplateSchema } from "./creation-defaults"
 import { missionGithubKinds } from "./mission-github-condition"
 import { coordinatorBaselineSchema } from "./mission-coordinator-baseline"
+import { automaticMissionStartID } from "./preparation-result"
+import { missionPreparationCreationSchema } from "./preparation-input"
 import {
   documentCounter, documentID, documentTimestamp, nativeDocumentID, missionConfigurationSchema,
   missionLaunchLimit, missionLaunchModel, missionSlotEndsAt, requiresMissionCalendar, MISSION_DOCUMENT_MAX_BYTES,
@@ -106,7 +108,7 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
   checks: z.object({ count: documentCounter, since: documentTimestamp }).strict().nullable().optional(),
   lastSuccessfulPassageID: documentID.nullable().default(null), everCreatedTask: z.boolean(),
   blocked: z.enum(["failed", "ended-without-report", "unknown"]).nullable(),
-  creation: z.object({ requestID, digest }).strict().optional(),
+  creation: missionPreparationCreationSchema.optional(),
   oneTime: oneTime.nullable(), scheduleActivation: missionScheduleActivationSchema.nullable(),
   dormantJournal: z.object({ revision: documentCounter.positive(), deleted: z.boolean() }).strict().nullable().optional(),
   preparation: z.object({ requestID, expectedRevision: documentCounter, expectedJournalRevision: documentCounter.positive(),
@@ -134,6 +136,12 @@ export type MissionSourceCheckpoint = z.infer<typeof checkpoint>
 export function parseMissionDocument(input: unknown, identity: Pick<MissionDocument, "id" | "projectID" | "projectCanonical">): MissionDocument {
   const doc = document.parse(JSON.parse(canonicalAuthority(input, MISSION_DOCUMENT_MAX_BYTES)))
   const fail = () => { throw new Error("Invalid Mission document identity or progress") }
+  const creation = doc.creation
+  if (creation && (Boolean(creation.author) !== Boolean(creation.input)
+    || creation.creationDefaults && !creation.author
+    || creation.automaticStart && (!creation.author || creation.input?.startOnCreation !== true
+      || creation.automaticStart.requestID !== automaticMissionStartID(creation.requestID))
+    || creation.author && doc.oneTime && (creation.requestID !== doc.oneTime.creationRequestID || creation.digest !== doc.oneTime.creationDigest))) fail()
   const model = missionLaunchModel(doc.configuration.launch)
   const once = model.schedules.find(item => item.kind === "now" || item.kind === "at" || item.kind === "in") as Extract<MissionLaunchSchedule, { kind: "now" | "at" | "in" }> | undefined
   if (doc.id !== identity.id || doc.projectID !== identity.projectID || doc.projectCanonical !== identity.projectCanonical
@@ -183,8 +191,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   const textEdit = doc.calendarOwner?.operation.textEdit
   if (textEdit) {
     const passage = passages.find(item => item.id === textEdit.passageID)
-    const { objective: _objective, notes: _notes, ...structure } = textEdit.configuration
-    const { objective: _oldObjective, notes: _oldNotes, ...oldStructure } = doc.configuration
+    const { objective: _objective, notes: _notes, coordinatorSelectionAuthor: _author, ...structure } = textEdit.configuration
+    const { objective: _oldObjective, notes: _oldNotes, coordinatorSelectionAuthor: _oldAuthor, ...oldStructure } = doc.configuration
     if (!passage || passage.admittedAt === null || passage.missionID !== textEdit.missionID
       || passage.coordinatorSessionID !== textEdit.coordinatorSessionID || textEdit.createdAt < passage.createdAt
       || canonicalAuthority(structure) !== canonicalAuthority(oldStructure)
@@ -275,7 +283,8 @@ export function missionDocumentPassageID(doc: Pick<MissionDocument, "projectID" 
 
 export const missionTombstoneSchema = missionDocumentDeletionIdentitySchema.extend({ version: z.literal(1), id: documentID, projectID: nativeDocumentID,
   projectCanonical: z.string().min(1).max(4096), revision: documentCounter,
-  deletedAt: documentTimestamp, timeGeneration: generation }).strict()
+  deletedAt: documentTimestamp, timeGeneration: generation,
+  creation: missionPreparationCreationSchema.pick({ requestID: true, digest: true, author: true }).optional() }).strict()
 export type MissionDocumentTombstone = z.infer<typeof missionTombstoneSchema>
 export const missionTombstoneRegistrySchema = z.object({ version: z.literal(1), revision: documentCounter,
   entries: z.array(z.object({ id: documentID, requestID, deletedAt: documentTimestamp }).strict()).max(MISSION_TOMBSTONE_LIMIT)
