@@ -91,7 +91,7 @@ import {
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import {
-  clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending,
+  captureSessionPlacementEvidence, clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending,
   matchesSessionPlacement, retainConfirmedSessionPlacement,
 } from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
@@ -510,6 +510,10 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   return active
 }
 
+export function invalidateRestorePlacementRead(instanceId: string, sessionId: string): void {
+  restorePlacementReads.delete(messagePageKey(instanceId, sessionId))
+}
+
 /** Parent reads and saved workspace references reconcile a typed departure. */
 async function hydrateRestoredSessionChain(
   instanceId: string,
@@ -565,16 +569,20 @@ async function hydrateRestoredSessionChainAttempt(
       if (!session || session.catalogSnapshot) {
         const captured = session
         const move = getPendingSessionMove(instanceId, sessionId)
+        const evidenceCurrent = captureSessionPlacementEvidence(instanceId, sessionId)
+        let placementReadCurrent: (() => boolean) | undefined
         if (readOptions.headers) {
           const key = messagePageKey(instanceId, sessionId)
           const reads = restorePlacementReads.get(key) ?? new Set<() => boolean>()
           const current = () => isRequestCurrent() && !signal?.aborted
+            && restorePlacementReads.get(key) === reads
             && getPendingSessionMove(instanceId, sessionId) === move
+          placementReadCurrent = current
           reads.add(current)
           restorePlacementReads.set(key, reads)
           releaseReads.push(() => {
             reads.delete(current)
-            if (!reads.size) restorePlacementReads.delete(key)
+            if (!reads.size && restorePlacementReads.get(key) === reads) restorePlacementReads.delete(key)
           })
         }
         try {
@@ -584,7 +592,7 @@ async function hydrateRestoredSessionChainAttempt(
             : Promise.resolve(null)
           const apiSession = await prioritizedRead(foreground, signal ?? new AbortController().signal, read)
           signal?.throwIfAborted()
-          if (!apiSession || !isRequestCurrent()) return null
+          if (!apiSession || !isRequestCurrent() || (placementReadCurrent && (!placementReadCurrent() || !evidenceCurrent()))) return null
           setSessions((prev) => {
             if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
             const next = new Map(prev)
@@ -616,7 +624,8 @@ async function hydrateRestoredSessionChainAttempt(
           if (!isSessionNotFoundError(error)) throw error
           if ("reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
             departures.push(() => {
-              if (sessions().get(instanceId)?.get(sessionId) !== captured
+              // Catalogue merges are display updates, not fresh ownership evidence.
+              if (!evidenceCurrent() || placementReadCurrent?.() === false
                 || getPendingSessionMove(instanceId, sessionId) !== move
                 || getMovedAwaySessions(instanceId).has(sessionId)
                 || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return

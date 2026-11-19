@@ -67,7 +67,8 @@ Implementation:
   and catalogue filtering use that slug against the workspace inventory, as does
   the worktree selector for its current option. Execution keeps the native
   directory. A complete catalogue retains a restored row while its current
-  placement read settles. Nested independent repositories follow
+  placement read settles. A typed departure remains authoritative across catalogue
+  merges; a newer move or verified placement supersedes it. Nested independent repositories follow
   the same list rules as their canonical directories. Move and restore reads
   confirm the exact placement across catalogue refreshes for the current client
   generation. A complete catalogue rechecks expired placement evidence through

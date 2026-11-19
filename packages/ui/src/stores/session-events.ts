@@ -48,7 +48,7 @@ import { getRetrySeconds } from "./session-status"
 import { observeSessionInterruption, retireSessionInterruptionBoundary } from "./session-interruption-seen"
 import { tGlobal } from "../lib/i18n"
 
-import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionProjection, removeSessionRuntimeState } from "./session-api"
+import { fetchSessions, invalidateRestorePlacementRead, loadMessages, refreshSessionCatalog, removeSessionProjection, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
@@ -91,6 +91,11 @@ type SessionPlacementRead = SessionInfo & { listWorktreeSlug?: string }
 type PlacementEvidence = { placement: SessionPlacement; generation: number; client: ReturnType<typeof getRootClient> }
 const confirmedPlacements = new Map<string, Map<string, PlacementEvidence>>()
 const LOCATED_ELSEWHERE = Symbol("session located elsewhere")
+
+export function captureSessionPlacementEvidence(instanceId: string, sessionId: string): () => boolean {
+  const evidence = confirmedPlacements.get(instanceId)?.get(sessionId)
+  return () => confirmedPlacements.get(instanceId)?.get(sessionId) === evidence
+}
 
 export function matchesSessionPlacement(placement: SessionPlacement | undefined, expected: SessionPlacement): boolean {
   return !!placement && locationAuthorityKey(placement.location) === locationAuthorityKey(expected.location)
@@ -393,6 +398,7 @@ function refreshSelectedMoveCatalog(instanceId: string, sessionId: string): void
 
 function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): void {
   const { sessionID: sessionId, location } = data
+  invalidateRestorePlacementRead(instanceId, sessionId)
   // The relay delivers each move to both owners in their own ordered streams.
   // Forwarding it here could supersede a later move in another instance.
   if (listsSessionDirectory(instanceId, location.directory)) {

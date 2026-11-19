@@ -12,7 +12,7 @@ import { ensureWorktreesLoaded, getWorktreeSlugForParentSession } from "./worktr
 import { captureSessionCatalog } from "./session-catalog-persistence"
 import { activeParentSessionId, activeSessionId, getInstanceSessionIndicatorStatusCached, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, setActiveParentSession, setActiveSessionFromList, setSessionPendingPermission, setSessionStatus, sessions, setSessions, withSession } from "./session-state"
 import { messageStoreBus } from "./message-v2/bus"
-import { handleNativeSessionEvent } from "./session-events"
+import { confirmSessionPlacement, handleNativeSessionEvent, isSessionMovePending } from "./session-events"
 import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data"
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import type { Session } from "../types/session"
@@ -344,6 +344,56 @@ test("complete inventory keeps a saved selection while its placement read is pen
     await restoration
     assert.equal(activeSessionId().get(id), "root")
     assert.equal(getWorktreeSlugForParentSession(id, "root"), "linked")
+    assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
+  } finally {
+    read.resolve(alias)
+    await restoration
+    serverApi.fetchWorktrees = originalWorktrees
+    f.cleanup()
+  }
+})
+
+for (const mode of ["departure", "newer proof", "settled move"] as const) test(`reconciles restore refusal after a catalogue merge (${mode})`, async (t) => {
+  const id = `catalog-refusal-after-merge-${mode.replaceAll(" ", "-")}`, f = fixture(id)
+  const originalWorktrees = serverApi.fetchWorktrees
+  const started = deferred<void>(), read = deferred<any>()
+  const alias = { ...row("root"), location: { directory: "/linked-alias" } }
+  const foreign = { ...alias, location: { directory: "/independent-clone" } }
+  const child = { ...row("child", "root"), parentID: "root", location: { directory: "/repo" } }
+  const refusal = Object.assign(new Error("Session located elsewhere"), {
+    _tag: "SessionNotFoundError", reason: SESSION_LOCATED_ELSEWHERE_REASON,
+  })
+  Object.assign(f.saved, { activeSessionId: "root", drafts: { root: "keep draft" }, sessionCatalog: captureSessionCatalog([alias]) })
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  f.client.session.get = async () => { started.resolve(); return read.promise }
+  f.client.session.list = async (input: any) => ({ data: input.project ? [foreign, child] : [], cursor: {} })
+  setInstanceMetadata(id, { project: { id: "project" } as any })
+  let restoration: Promise<unknown> | undefined
+  try {
+    await ensureWorktreesLoaded(id)
+    restoration = hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+    await started.promise
+    await fetchSessions(id, { strictStatus: true })
+    assert.equal(sessions().get(id)?.get("root")?.location.directory, foreign.location.directory)
+    assert.equal(activeSessionId().get(id), "root", "inventory defers to the pending placement read")
+    if (mode === "newer proof") {
+      withSession(id, "root", session => { session.location = { directory: "/repo" } })
+      confirmSessionPlacement(id, "root", sessions().get(id)!.get("root")!)
+    }
+    if (mode === "settled move") {
+      t.mock.timers.enable({ apis: ["setTimeout"] })
+      f.client.session.list = async (input: any) => ({ data: input.project ? [child] : [], cursor: {} })
+      handleNativeSessionEvent(id, { id: "move-back", type: "session.moved", created: 2,
+        data: { sessionID: "root", location: { directory: "/repo" } } } as any)
+      t.mock.timers.tick(100)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(isSessionMovePending(id, "root"), false)
+    }
+    read.resolve(Promise.reject(refusal))
+    await restoration
+    assert.equal(activeSessionId().get(id), mode === "departure" ? undefined : "root")
+    assert.equal(sessions().get(id)?.has("root"), mode !== "departure")
+    assert.equal(sessions().get(id)?.has("child"), true)
     assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
   } finally {
     read.resolve(alias)
