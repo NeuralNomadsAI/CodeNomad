@@ -284,7 +284,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   })
 
   // panel.notes: one note per session, filed under the agent-memory project identity of the
-  // displayed conversation's Location (else the instance's), so worktrees and clones share them.
+  // displayed conversation's Location (else the instance's): worktrees share them, clones when their remote normalizes alike.
   const projectIdentity = deps.projectIdentity ?? resolveMemoryProjectIdentity
   const project = async (context: RouteContext, instanceId: string, sessionID: string | undefined) => {
     const connection = await connect(instanceId)
@@ -295,11 +295,20 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     if (!location) throw new Refused(403)
     if (session) fenceSession(context, instanceId, client, sessionID!, session.location)
     else fenceLocation(context, instanceId, client, location.directory)
+    // The anchor still where it was, for a write about to commit inside the store queue.
+    const recheck = async () => {
+      if (session) {
+        const latest = readLocationRef((await ownedSession(instanceId, client, sessionID!, context.signal)).location)
+        if (JSON.stringify(latest) !== JSON.stringify(location)) throw new Refused(409)
+      } else if (!await manager.ownsLocation(instanceId, { directory: location.directory }, client, { signal: context.signal })) throw new Refused(403)
+      connection.assertCurrent()
+      context.signal.throwIfAborted()
+    }
     const directory = await manager.getServiceDirectoryForPath(instanceId, location.directory)
     if (!directory) throw new Refused(403)
     const { id } = await projectIdentity({ directory, distro: manager.getServiceWslDistro(instanceId) })
     context.signal.throwIfAborted()
-    return { id, client, session }
+    return { id, client, session, recheck }
   }
   /** The session, or `undefined` once it is deleted; any other failure fails the request. */
   const unlessDeleted = <T>(signal: AbortSignal, read: Promise<T>) => read.catch(error => {
@@ -315,9 +324,9 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   // JSON escapes can grow the text sixfold; the store measures its UTF-8 bytes.
   route("notesSet", "panel.notes", { sessionID: Id, text: z.string().max(PANEL_EXTENSION_LIMITS.noteBytes), revision: Revision },
     6 * PANEL_EXTENSION_LIMITS.noteBytes + 8192, async (input, context) => {
-      const { id: projectId, session } = await project(context, input.instanceId, input.sessionID)
+      const { id: projectId, session, recheck } = await project(context, input.instanceId, input.sessionID)
       await context.authorize()
-      return deps.store.setNote(context.id, input.digest, projectId, input.sessionID, input.revision, { title: session!.title ?? "", text: input.text })
+      return deps.store.setNote(context.id, input.digest, projectId, input.sessionID, input.revision, { title: session!.title ?? "", text: input.text }, recheck)
     })
   route("notesList", "panel.notes", { sessionID: Id.optional(), cursor: z.string().regex(/^\d{1,4}$/).optional() }, 8192, async (input, context) => {
     const { id: projectId, client } = await project(context, input.instanceId, input.sessionID)
@@ -330,9 +339,9 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     return { notes, cursor: start + page.length < all.length ? String(start + page.length) : null } satisfies PanelNotesPage
   })
   route("notesDelete", "panel.notes", { sessionID: Id.optional(), target: Id, revision: Revision.min(1) }, 8192, async (input, context) => {
-    const { id: projectId } = await project(context, input.instanceId, input.sessionID)
+    const { id: projectId, recheck } = await project(context, input.instanceId, input.sessionID)
     await context.authorize()
-    const result = await deps.store.setNote(context.id, input.digest, projectId, input.target, input.revision, { title: "", text: "" })
+    const result = await deps.store.setNote(context.id, input.digest, projectId, input.target, input.revision, { title: "", text: "" }, recheck)
     return { status: result.status === "saved" ? "deleted" as const : "conflict" as const }
   })
   // Only a session with a note in this project, still owned by this instance, may be shown.

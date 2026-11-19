@@ -4,7 +4,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { instances } from "./instances"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
-import { applySurface, beginGesture } from "./session-surface"
+import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
 import { setSessionSearchDestination } from "./session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -118,10 +118,11 @@ export function openHistoryMatchSession(instanceId: string, sessionId: string, m
 
 /**
  * Shows another session of the instance, hydrating only it and its parents, as
- * its conversation; `prepare` runs in the same batch, before it is selected.
+ * its conversation; `prepare` runs in the same batch, before it is selected. A
+ * deferred caller passes the gesture it took when the user acted.
  */
-export async function openListedSession(instanceId: string, sessionId: string, current: () => boolean, prepare?: () => void): Promise<boolean> {
-  const intent = beginGesture({ instanceId, sessionId })
+export async function openListedSession(instanceId: string, sessionId: string, current: () => boolean, prepare?: () => void,
+  intent: SurfaceGesture = beginGesture({ instanceId, sessionId })): Promise<boolean> {
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const admitted = () => intent.current() && current() && instances().get(instanceId)?.client === client

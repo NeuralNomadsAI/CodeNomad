@@ -571,6 +571,7 @@ jobs:
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/components/panel-extensions/api4-notes-channel.test.ts
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
           packages/ui/src/components/instance/shell/useSessionCache.test.ts

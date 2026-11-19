@@ -88,14 +88,16 @@ export function useApi4Channel(props: {
     }, CHANGE_DELAY_MS)
   }
   onCleanup(serverEvents.on("instance.event", payload => {
-    if (payload.type !== "instance.event" || payload.instanceId !== props.instanceId) return
+    if (payload.type !== "instance.event") return
     const event = payload.event as { type?: string; data?: { sessionID?: string } }
     const type = event.type ?? ""
+    // A deleted session leaves an orphan note, in any window sharing the project (another
+    // clone, another instance); other title changes show on the next read.
+    if (type === "session.deleted") invalidate(false, false, true)
+    if (payload.instanceId !== props.instanceId) return
     const own = Boolean(session) && event.data?.sessionID === session
     if (own && GALLERY_EVENTS.has(type)) invalidate(true, type === "session.updated" || type === "session.moved")
     else if (STATUS_EVENTS.has(type)) invalidate(false, true)
-    // A deleted session leaves an orphan note; other title changes show on the next read.
-    if (type === "session.deleted") invalidate(false, false, true)
   }))
   // Data-free and per package: the frame re-reads what its own authority shows.
   onCleanup(serverEvents.on("panelExtensions.notesChanged", event => {
@@ -192,12 +194,15 @@ export function useApi4Channel(props: {
       },
       open: async (input, signal) => {
         const { sessionID } = z.object({ sessionID: Session }).strict().parse(input)
+        // Taken now, so anything the user does while the host checks wins over this navigation.
+        const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.sessionId ?? null })
         const { openable } = await panelExtensionsApi4.notes<{ openable: boolean }>(authority, "notesOpen", { ...displayed(), target: sessionID }, signal)
         if (!openable) return { result: { opened: false } }
         // Answer first: showing the session remounts the panel.
         const selected = props.sessionId
         return { result: { opened: true }, after: () => {
-          void openListedSession(props.instanceId, sessionID, () => (props.host.activeSessionId() ?? null) === selected).then(opened => {
+          void openListedSession(props.instanceId, sessionID, () => !disposed && (props.host.activeSessionId() ?? null) === selected,
+            undefined, intent).then(opened => {
             if (opened && props.host.isPhoneLayout()) props.host.closePanel()
           }, () => {})
         } }

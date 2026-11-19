@@ -23,6 +23,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
   onSessionGet?: (sessionID: string, reads: number, signal?: AbortSignal) => unknown
   onSettingsRead?: (signal?: AbortSignal) => unknown
   onLocationGet?: (signal?: AbortSignal) => unknown
+  onProjectIdentity?: (directory: string) => unknown
   routeBudgetMs?: number
   fence?: WorktreeDeletionFence
 } = {}) {
@@ -70,7 +71,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
     excludeDesignFolder: async value => { excluded.push(value.directory); return "excluded" },
     checkDesignFolderExclusion: async value => { checked.push(value.directory); return excluded.includes(value.directory) ? "excluded" : "missing" },
     ...(options.routeBudgetMs ? { routeBudgetMs: options.routeBudgetMs } : {}),
-    projectIdentity: async ({ directory }) => ({ id: (directory === "/repo" ? "a" : "b").repeat(64), source: "local" }),
+    projectIdentity: async ({ directory }) => (await options.onProjectIdentity?.(directory), { id: (directory === "/repo" ? "a" : "b").repeat(64), source: "local" }),
     imageSettings: { read: async (_workspace: string, _location: unknown, signal?: AbortSignal) => {
       await options.onSettingsRead?.(signal)
       return { location: { directory: "/repo" }, mediaStorage: null,
@@ -333,4 +334,12 @@ test("notes routes: the displayed session's note in its project, a paged project
   assert.deepEqual((await post("notesList", { sessionID: "ses_other" })).json(), { notes: [], cursor: null })
   owned.delete("/repo")
   assert.equal((await post("notesList", {})).statusCode, 403, "a disowned Location has no project")
+})
+
+test("notes: a session moved while its project resolves is refused before anything is written", async t => {
+  let f: Fixture = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => { f.sessions.ses_work.location = { directory: "/linked" } } })
+  f.owned.add("/linked")
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "stale", revision: 0 })).statusCode, 409)
+  assert.deepEqual(await f.store.notes(f.pkg.manifest.id, f.pkg.digest, "a".repeat(64)), [], "the old project stays empty")
+  assert.deepEqual(f.notesChanged, [])
 })

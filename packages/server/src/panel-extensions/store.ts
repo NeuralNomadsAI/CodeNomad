@@ -17,7 +17,8 @@ type Preferences = Record<string, unknown>
 // API 4 `panel.notes`: one file per package and project identity, beside the catalogue.
 const NoteSchema = z.object({ sessionID: z.string().min(1).max(256), title: z.string().max(256), text: z.string().min(1),
   revision: z.number().int().min(1), updated: z.number().int().min(0) }).strict()
-const NotesSchema = z.object({ version: z.literal(1), notes: z.array(NoteSchema).max(PANEL_EXTENSION_LIMITS.notes) }).strict()
+// `revision`: the highest one issued in this project, kept after deletions so it is never issued twice.
+const NotesSchema = z.object({ version: z.literal(1), revision: z.number().int().min(0), notes: z.array(NoteSchema).max(PANEL_EXTENSION_LIMITS.notes) }).strict()
 export type PanelStoredNote = z.infer<typeof NoteSchema>
 export type PanelNoteChange = { status: "saved"; revision: number } | { status: "conflict"; note: { text: string; revision: number } | null }
   | { status: "too-large" } | { status: "full" }
@@ -118,51 +119,52 @@ export class PanelExtensionStore {
   async notes(id: string, digest: string, project: string): Promise<PanelStoredNote[]> {
     return this.serialize(async () => {
       granted(await this.read(), id, digest, "panel.notes")
-      return (await this.readNotes(id, project)).sort((a, b) => b.updated - a.updated || (a.sessionID < b.sessionID ? -1 : 1))
+      return (await this.readNotes(id, project)).notes.sort((a, b) => b.updated - a.updated || (a.sessionID < b.sessionID ? -1 : 1))
     })
   }
 
   /**
    * Replaces `sessionID`'s note when its current revision is `revision` (0 when it has
-   * none); empty text deletes it. Revisions are increasing timestamps, so a recreated
-   * note never takes a stale writer's revision.
+   * none); empty text deletes it. Revisions grow past every one the project issued,
+   * deleted notes' included, so a recreated note never takes a stale writer's.
    */
   async setNote(id: string, digest: string, project: string, sessionID: string, revision: number,
-    next: { title: string; text: string }): Promise<PanelNoteChange> {
+    next: { title: string; text: string }, check?: () => Promise<void>): Promise<PanelNoteChange> {
     if (Buffer.byteLength(next.text) > PANEL_EXTENSION_LIMITS.noteBytes) return { status: "too-large" }
     return this.serialize(async () => {
       granted(await this.read(), id, digest, "panel.notes")
-      const notes = await this.readNotes(id, project)
+      const { notes, revision: issued } = await this.readNotes(id, project)
       const current = notes.find(note => note.sessionID === sessionID)
       if ((current?.revision ?? 0) !== revision) return { status: "conflict", note: current ? { text: current.text, revision: current.revision } : null }
       const others = notes.filter(note => note !== current)
+      // The caller's authority, revalidated where nothing else can write first.
+      await check?.()
       if (!next.text) {
-        if (current) await this.writeNotes(id, project, others)
+        if (current) await this.writeNotes(id, project, others, issued)
         return { status: "saved", revision: 0 }
       }
       if (!current && notes.length >= PANEL_EXTENSION_LIMITS.notes) return { status: "full" }
-      const now = Date.now(), note = { sessionID, title: next.title.slice(0, 256), text: next.text, revision: Math.max(now, revision + 1), updated: now }
-      await this.writeNotes(id, project, [...others, note])
+      const now = Date.now(), note = { sessionID, title: next.title.slice(0, 256), text: next.text, revision: Math.max(now, issued + 1), updated: now }
+      await this.writeNotes(id, project, [...others, note], note.revision)
       return { status: "saved", revision: note.revision }
     })
   }
 
   private notesDirectory(id: string) { return path.join(this.directory, "notes", id) }
 
-  private async readNotes(id: string, project: string): Promise<PanelStoredNote[]> {
+  private async readNotes(id: string, project: string): Promise<{ notes: PanelStoredNote[]; revision: number }> {
     if (!Project.test(project)) throw new PanelExtensionError("invalid")
     try {
-      return NotesSchema.parse(JSON.parse(await fs.readFile(path.join(this.notesDirectory(id), `${project}.json`), "utf8"))).notes
+      return NotesSchema.parse(JSON.parse(await fs.readFile(path.join(this.notesDirectory(id), `${project}.json`), "utf8")))
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { notes: [], revision: 0 }
       throw new PanelExtensionError("unavailable")
     }
   }
 
-  private async writeNotes(id: string, project: string, notes: PanelStoredNote[]) {
-    const directory = this.notesDirectory(id), file = path.join(directory, `${project}.json`)
-    if (!notes.length) await fs.rm(file, { force: true })
-    else await this.replace(directory, file, JSON.stringify({ version: 1, notes }))
+  private async writeNotes(id: string, project: string, notes: PanelStoredNote[], revision: number) {
+    const directory = this.notesDirectory(id)
+    await this.replace(directory, path.join(directory, `${project}.json`), JSON.stringify({ version: 1, revision, notes }))
     this.notesChanged(id)
   }
 
@@ -189,7 +191,8 @@ export class PanelExtensionStore {
     }
   }
 
-  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true, after?: () => Promise<void>): Promise<void> {
+  /** `before` runs once the update is valid, before the catalogue is written, so a failure leaves the record to retry. */
+  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true, before?: () => Promise<void>): Promise<void> {
     return this.serialize(async () => {
       const records = await this.read()
       if (requiredId && !records.some(record => record.manifest.id === requiredId)) throw new PanelExtensionError("missing")
@@ -197,8 +200,8 @@ export class PanelExtensionStore {
       if (!StoreSchema.safeParse({ version: 1, records: next }).success) throw new PanelExtensionError("limit")
       const text = JSON.stringify({ version: 1, records: next })
       if (Buffer.byteLength(text) > PANEL_EXTENSION_LIMITS.storageBytes) throw new PanelExtensionError("limit")
+      await before?.()
       await this.replace(this.directory, path.join(this.directory, "installed.json"), text)
-      await after?.()
       if (notify) this.changed()
     })
   }

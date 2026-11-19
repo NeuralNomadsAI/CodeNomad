@@ -317,20 +317,26 @@ codenomad.notes.onChanged(() => { /* read again */ })
   settings there; never treat preferences as a security boundary.
 - **Notes**: one plain-text note per session, at most 32 KiB UTF-8 and 256 per project,
   filed in `panel-extensions/notes/<id>/<project>.json` under the agent-memory project
-  identity of the displayed conversation's Location (else the instance's), so worktrees
-  and clones of one repository share them. `get`/`set` act only on the displayed
-  conversation; `set` replaces the note when `revision` is its current one (0 for
-  none), else answers `conflict` with the current note; empty text deletes it.
-  Revisions are increasing timestamps, so a recreated note never takes a stale
-  writer's. `list` pages the project's notes newest first (16 a page, decimal
-  cursor), with each session's current title, or, for a deleted session (`orphan`),
-  the last title written. `delete` takes any note of the project at its revision;
-  `open` shows only a session with a note in the project, still owned by this window,
-  answering the frame first. The store checks the exact enabled package in its queue;
-  a corrupt file answers an error and is never rewritten. Writes publish a data-free
-  `panelExtensions.notesChanged { id }`; the channel coalesces it with session
-  deletions and reconnects into `notes:changed` for that package only, and the frame
-  reads again. Deactivation and replacement keep notes; removal deletes them.
+  identity of the displayed conversation's Location (else the instance's): worktrees of
+  one repository share them, clones only when their selected remotes normalize to the
+  same repository (a local-path remote identifies each clone's own root).
+  `get`/`set` act only on the displayed conversation; `set` replaces the note when
+  `revision` is its current one (0 for none), else answers `conflict` with the current
+  note; empty text deletes it. Each project file keeps the highest revision it issued,
+  deleted notes' included, so a recreated note never takes a stale writer's. Writes
+  recheck the session's Location (or the instance Location's ownership) inside the store
+  queue, just before committing. `list` pages the project's notes newest first (16 a
+  page, decimal cursor), with each session's current title, or, for a deleted session
+  (`orphan`), the last title written. `delete` takes any note of the project at its
+  revision; `open` shows only a session with a note in the project, still owned by this
+  window, answering the frame first; its navigation gesture is taken when the request
+  arrives, so a later user action wins, and it stops if the frame unmounts. The store
+  checks the exact enabled package in its queue; a corrupt file answers an error and is
+  never rewritten. Writes publish a data-free `panelExtensions.notesChanged { id }`; the
+  channel coalesces it with reconnects and with session deletions in any instance
+  (another clone may share the project) into `notes:changed` for that package only, and
+  the frame reads again. Deactivation and replacement keep notes; removal deletes them
+  before the catalogue record, so a failed deletion leaves the removal to retry.
 - **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
   and method names select only own entries of `Map`s; never index an object with frame
   data (inherited names such as `constructor` would run). Inputs are validated per

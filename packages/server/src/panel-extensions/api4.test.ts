@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises"
+import { promises as fs } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { PANEL_EXTENSION_API4_PERMISSIONS } from "./contract"
@@ -185,5 +186,32 @@ test("notes: one per session and project, revision-checked, empty deletes, cappe
     await store.remove(id, replacement.digest)
     await store.install(replacement); await store.activate(id, replacement.digest, true)
     assert.deepEqual(await store.notes(id, replacement.digest, project), [], "removal deletes them")
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+test("notes: a recreated note gets a newer revision even at the same instant; a failed cleanup leaves removal retryable", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-retry-"))
+  try {
+    const store = new PanelExtensionStore(directory)
+    const pkg = await api4(["session.context", "panel.notes"])
+    await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
+    const id = pkg.manifest.id, project = "a".repeat(64)
+    const clock = t.mock.method(Date, "now", () => 1_800_000_000_000)
+    const first = await store.setNote(id, pkg.digest, project, "ses_1", 0, { title: "", text: "first" }) as { revision: number }
+    await store.setNote(id, pkg.digest, project, "ses_1", first.revision, { title: "", text: "" })
+    const again = await new PanelExtensionStore(directory).setNote(id, pkg.digest, project, "ses_1", 0, { title: "", text: "second" }) as { revision: number }
+    assert.ok(again.revision > first.revision, "a stale writer's revision is never issued again")
+    clock.mock.restore()
+
+    const rm = fs.rm
+    const busy = t.mock.method(fs, "rm", async (file: Parameters<typeof rm>[0], options: Parameters<typeof rm>[1]) => {
+      if (file === path.join(directory, "notes", id)) throw Object.assign(new Error("busy"), { code: "EBUSY" })
+      return rm(file, options)
+    })
+    await assert.rejects(store.remove(id, pkg.digest), { code: "EBUSY" })
+    busy.mock.restore()
+    assert.equal((await store.notes(id, pkg.digest, project)).length, 1, "the package and its notes stay until removal succeeds")
+    await store.remove(id, pkg.digest)
+    await store.install(pkg); await store.activate(id, pkg.digest, true)
+    assert.deepEqual(await store.notes(id, pkg.digest, project), [])
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
