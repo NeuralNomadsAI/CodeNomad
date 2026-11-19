@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-test("saved warning claims survive reload without retaining diagnostics", async () => {
+test("saved warning claims keep failed coverage without retaining diagnostic text", async () => {
   const storage = new Map([["codenomad.pendingRecoveryNotices", JSON.stringify([
     "/project\nHTTP 503 from first checkout",
     "/project\nTimed out in another checkout",
     "unsupported",
+    ['project:"/scoped"', ["/scoped/worktree"]],
   ])]])
   Object.defineProperty(globalThis, "window", { configurable: true, value: {
     sessionStorage: {
@@ -15,14 +16,19 @@ test("saved warning claims survive reload without retaining diagnostics", async 
   } })
   try {
     const { claimPendingRecoveryNotice, releasePendingRecoveryNotices } = await import("./pending-recovery-notices")
-    assert.equal(claimPendingRecoveryNotice("/project", "directories"), false)
-    assert.equal(claimPendingRecoveryNotice("/other", "unsupported"), false)
-    assert.equal(claimPendingRecoveryNotice("/other", "request"), true)
+    const cause = { kind: "request", detail: "test" } as const
+    assert.equal(claimPendingRecoveryNotice("/project", cause), false)
+    assert.equal(claimPendingRecoveryNotice("/other", { kind: "unsupported" }), false)
+    assert.equal(claimPendingRecoveryNotice("/other", cause), true)
     assert.doesNotMatch([...storage.values()].join(), /checkout/)
-    releasePendingRecoveryNotices("/other")
-    assert.equal(claimPendingRecoveryNotice("/project", "unstable"), false)
-    releasePendingRecoveryNotices("/project")
-    assert.equal(claimPendingRecoveryNotice("/project", "unstable"), true)
+    releasePendingRecoveryNotices("/other", ["/other"])
+    assert.equal(claimPendingRecoveryNotice("/project", cause), false)
+    releasePendingRecoveryNotices("/project", ["/project"])
+    assert.equal(claimPendingRecoveryNotice("/project", cause), true)
+    releasePendingRecoveryNotices("/scoped", ["/scoped"])
+    assert.equal(claimPendingRecoveryNotice("/scoped", cause), false)
+    releasePendingRecoveryNotices("/scoped", ["/scoped", "/scoped/worktree"])
+    assert.equal(claimPendingRecoveryNotice("/scoped", cause), true)
   } finally {
     Reflect.deleteProperty(globalThis, "window")
   }

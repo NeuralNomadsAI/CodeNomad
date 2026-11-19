@@ -198,6 +198,42 @@ test("recovery failures log their phase without native request contents", async 
   } finally { await h.cleanup() }
 })
 
+test("ownership revalidation timing excludes plugin preparation", async (t) => {
+  const h = await harness()
+  let now = Date.now()
+  t.mock.method(Date, "now", () => now)
+  try {
+    h.manager.desktopPluginsReady = async () => {
+      now += 120
+      h.state.allowed.delete(h.root)
+    }
+    const response = await h.app.inject({ url: h.url() })
+    assert.equal(response.statusCode, 503)
+    assert.match(String(response.headers["server-timing"]), /plugin-preparation;dur=120, ownership-revalidation;dur=0$/)
+  } finally { await h.cleanup() }
+})
+
+for (const deadlineFirst of [true, false]) test(`failure logging follows the first abort (${deadlineFirst ? "deadline" : "client close"})`, async (t) => {
+  const logs: string[] = []
+  const h = await harness({ logs })
+  const deadline = new AbortController()
+  t.mock.method(AbortSignal, "timeout", () => deadline.signal)
+  let close: () => void
+  h.app.addHook("onRequest", async (_request, reply) => { close = () => { reply.raw.emit("close") } })
+  h.connection.fetch = async (_url, options) => {
+    const expire = () => deadline.abort(new DOMException("Deadline exceeded", "TimeoutError"))
+    if (deadlineFirst) { expire(); close() }
+    else { close(); expire() }
+    options?.signal?.throwIfAborted()
+    assert.fail("the native read should be cancelled")
+  }
+  try {
+    await assert.rejects(h.app.inject({ url: h.url() }), { code: "LIGHT_ECONNRESET" })
+    const diagnostic = logs.map(line => JSON.parse(line)).find(line => line.msg === "Pending request recovery failed")
+    assert.equal(diagnostic?.timedOut, deadlineFirst ? true : undefined)
+  } finally { await h.cleanup() }
+})
+
 test("final publication revalidates root, candidate and submitted aliases after placement checks", async () => {
   for (const changed of ["root", "candidate", "alias"] as const) {
     const h = await harness()
@@ -396,7 +432,7 @@ test("a deleting worktree withholds only its own coverage while siblings recover
     assert.equal(response.statusCode, 200, response.body)
     assert.deepEqual(response.json().directories.map((entry: any) => [entry.directory, entry.status]), [[h.root, "ok"], [h.subdirectory, "error"]])
     assert.deepEqual(response.json().directories[0].locations[0].permissions, [permission])
-    assert.match(String(response.headers["server-timing"]), /^ownership;dur=\d+, native;dur=\d+, placement;dur=\d+, revalidation;dur=\d+$/)
+    assert.match(String(response.headers["server-timing"]), /^connection;dur=\d+, ownership;dur=\d+, plugin-preparation;dur=\d+, ownership-revalidation;dur=\d+, native;dur=\d+, placement;dur=\d+, revalidation;dur=\d+$/)
     h.state.result = { data: [complete(h.root)] }
     const blocked = await h.app.inject({ url: h.url([h.root, h.subdirectory]) })
     assert.deepEqual(blocked.json().directories.map((entry: any) => [entry.directory, entry.status]), [[h.subdirectory, "error"], [h.root, "ok"]])

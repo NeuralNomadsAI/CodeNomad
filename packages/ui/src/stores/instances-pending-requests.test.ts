@@ -622,6 +622,11 @@ test("a project's repeated recovery warnings are deduplicated as failed batches 
     await failTwice(first, "first-checkout")
     assert.equal(warnings().length, 1)
     assert.match(warnings()[0]?.message ?? "", /HTTP 503.*first-checkout|first-checkout.*HTTP 503/)
+    const sibling = harness(directory)
+    try {
+      await recover(sibling.id)
+      assert.equal(incompletePendingRecovery().has(first.id), true, "only the sibling's root recovered")
+    } finally { sibling.cleanup() }
   } finally { first.cleanup() }
 
   const other = harness("/pending-other-project")
@@ -635,6 +640,9 @@ test("a project's repeated recovery warnings are deduplicated as failed batches 
   try {
     await failTwice(reopened, "second-checkout", "timeout")
     assert.equal(warnings().length, 1, "changing folders or failure details does not start a new incident")
+    await recover(reopened.id)
+    await failTwice(reopened, "first-checkout")
+    assert.equal(warnings().length, 1, "a successful scan must cover the checkout that triggered the warning")
     await recover(reopened.id)
     await failTwice(reopened, "second-checkout", "timeout")
     assert.equal(warnings().length, 2, "complete recovery re-arms the project warning")

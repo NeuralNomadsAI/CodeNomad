@@ -87,7 +87,9 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
     const abandoned = new AbortController()
     const abort = () => { if (!reply.raw.writableEnded) abandoned.abort() }
     reply.raw.once("close", abort)
-    const signal = AbortSignal.any([abandoned.signal, AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)])
+    const deadline = AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)
+    const signal = AbortSignal.any([abandoned.signal, deadline])
+    const timedOut = () => deadline.aborted && signal.reason === deadline.reason
     const deadlineAt = Date.now() + PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS
     const bootstrap = manager.getServiceLocation(id)
     const fences = [deps.worktreeDeletionFence.captureDisplay(bootstrap ? [bootstrap.directory] : [])]
@@ -106,14 +108,16 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
     const recordFailure = () => {
       record(phase)
       // Keep paths, native payloads and queue contents out of diagnostic logs.
-      deps.logger.warn({ workspaceId: id, phase, nativeStatus, timedOut: signal.reason?.name === "TimeoutError", elapsedMs: Date.now() - started }, "Pending request recovery failed")
+      deps.logger.warn({ workspaceId: id, phase, nativeStatus, timedOut: timedOut(), elapsedMs: Date.now() - started }, "Pending request recovery failed")
     }
     try {
       const connection = await manager.getSharedServiceConnection(id)
+      signal.throwIfAborted()
       if (!connection) {
         recordFailure()
         return reply.code(503).send({ error: "Pending requests unavailable" })
       }
+      record("connection")
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
       phase = "ownership"
       const submitted = [...new Set(typeof query.data.directories === "string" ? [query.data.directories] : query.data.directories)]
@@ -329,10 +333,12 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       // The established root is the only bootstrap, never an inactive candidate.
       phase = "plugin-preparation"
       await manager.desktopPluginsReady({ connection, location: { directory: bootstrapDirectory }, signal, deadlineAt, assertCurrent })
+      record("plugin-preparation")
       phase = "ownership-revalidation"
       await assertOrigin(bootstrapDirectory)
       await revalidateCandidates()
       assertCurrent()
+      record("ownership-revalidation")
       const admitted = resolved.filter(entry => !failed.has(entry.submitted))
       if (!admitted.length && failed.size) return reply.code(403).send({ error: "Directory does not belong to workspace", directories: [
         ...result.directories.filter(entry => !failed.has(entry.directory)),
@@ -420,9 +426,9 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       ]
       return result
     } catch {
-      if (!abandoned.signal.aborted) recordFailure()
+      if (!signal.aborted || timedOut()) recordFailure()
       // Never convert transport, malformed coverage or ownership errors to empty.
-      return reply.code(503).send({ error: "Pending requests unavailable; retain existing queues", ...(signal.aborted ? { code: "timeout" } : {}) })
+      return reply.code(503).send({ error: "Pending requests unavailable; retain existing queues", ...(timedOut() ? { code: "timeout" } : {}) })
     } finally { reply.raw.removeListener("close", abort) }
   })
 }

@@ -294,7 +294,7 @@ const failedPendingRecoveries = new Map<string, number>()
 const PENDING_RECOVERY_WARNING_ATTEMPTS = 2
 function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause): void {
   log.warn("Pending request recovery is incomplete", { instanceId, cause })
-  if (!claimPendingRecoveryNotice(pendingRecoveryProject(instanceId), cause.kind)) return
+  if (!claimPendingRecoveryNotice(pendingRecoveryProject(instanceId), cause)) return
   const instance = instances().get(instanceId)
   // Name the sessions that made these directories required: active or holding a request.
   const sessionTitlesIn = (directories: readonly string[]) => {
@@ -793,6 +793,7 @@ function pendingSnapshotResults<T>(
   select: (entry: { permissions: PermissionRequest[]; forms: FormWithLocation[] }) => T[],
 ): PromiseSettledResult<{ location: { directory: string }; response: { location: { directory: string }; data: T[]; complete: boolean } }>[] {
   return snapshot.directories.flatMap<PromiseSettledResult<{ location: { directory: string }; response: { location: { directory: string }; data: T[]; complete: boolean } }>>((entry) => {
+    if (entry.status === "excluded") return []
     // Only broker-validated native placement keys are authority, never UI aliases.
     const locations = entry.locations ?? []
     return [
@@ -842,8 +843,7 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
         if (entry.status !== "excluded") snapshot.directories.push(entry)
         else if (!optional.includes(entry.directory) || currentRequired.has(normalizeWorkspacePath(entry.directory))) {
           snapshot.directories.push({ directory: entry.directory, status: "error", reason: "excluded" })
-        }
-        // Excluded historical hints never authorize clearing a known queue.
+        } else snapshot.directories.push(entry)
       }
     }
     try {
@@ -1075,9 +1075,10 @@ async function runPendingRequestSync(
         syncPendingForms(instanceId, true, isCurrent, snapshot, targetLocations),
       ])
       for (const result of results) if (result.status === "rejected") throw result.reason
+      const coverage = await snapshot
       if (!targetLocations && isCurrent()) {
         successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
-        releasePendingRecoveryNotices(pendingRecoveryProject(instanceId))
+        if (coverage?.supported) releasePendingRecoveryNotices(pendingRecoveryProject(instanceId), coverage.directories.map(entry => entry.directory))
         markPendingRecovery(instanceId, false)
       }
       return

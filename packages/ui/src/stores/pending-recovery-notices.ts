@@ -1,4 +1,5 @@
 import type { PendingRecoveryCause } from "./pending-recovery-cause"
+import { normalizeWorkspacePath } from "./app-session-reconciliation"
 
 // Recovery incidents already reported in this tab, including across reloads.
 const STORAGE_KEY = "codenomad.pendingRecoveryNotices"
@@ -12,17 +13,19 @@ function storage(): Storage | undefined {
   try { return typeof window === "undefined" ? undefined : window.sessionStorage } catch { return undefined }
 }
 
-const shown = new Set<string>((() => {
+const shown = new Map<string, string[]>((() => {
   try {
     const stored: unknown = JSON.parse(storage()?.getItem(STORAGE_KEY) ?? "[]")
     if (!Array.isArray(stored)) return []
     // Collapse saved project + message claims to the project alone.
-    return stored.flatMap((key) => {
-      if (typeof key !== "string") return []
-      if (key === UNSUPPORTED) return [key]
-      const separator = key.indexOf("\n")
-      if (separator >= 0) return [projectKey(key.slice(0, separator))]
-      return key.startsWith(PROJECT_PREFIX) ? [key] : []
+    return stored.flatMap((entry): [string, string[]][] => {
+      if (Array.isArray(entry) && typeof entry[0] === "string" && Array.isArray(entry[1])) {
+        return [[entry[0], entry[1].filter((directory): directory is string => typeof directory === "string")]]
+      }
+      if (typeof entry !== "string") return []
+      const separator = entry.indexOf("\n")
+      if (separator >= 0) return [[projectKey(entry.slice(0, separator)), []]]
+      return entry === UNSUPPORTED || entry.startsWith(PROJECT_PREFIX) ? [[entry, []]] : []
     })
   } catch { return [] }
 })())
@@ -32,16 +35,23 @@ function persist(): void {
 }
 
 /** True the first time a notice is claimed, until its project recovers. */
-export function claimPendingRecoveryNotice(project: string, kind: PendingRecoveryCause["kind"]): boolean {
-  const key = kind === "unsupported" ? UNSUPPORTED : projectKey(project)
+export function claimPendingRecoveryNotice(project: string, cause: PendingRecoveryCause): boolean {
+  const key = cause.kind === "unsupported" ? UNSUPPORTED : projectKey(project)
   if (shown.has(key)) return false
-  shown.add(key)
+  const directories = cause.kind === "directories" ? [...new Set(cause.directories.map(({ directory }) => normalizeWorkspacePath(directory)))] : []
+  shown.set(key, directories)
   persist()
   return true
 }
 
-/** A complete recovery of `project` proves the plugin answers and re-arms that project's notices. */
-export function releasePendingRecoveryNotices(project: string): void {
-  const plugin = shown.delete(UNSUPPORTED)
-  if (shown.delete(projectKey(project)) || plugin) persist()
+/** A complete scan re-arms the project warning if it accounted for its failed directories. */
+export function releasePendingRecoveryNotices(project: string, directories: readonly string[]): void {
+  let changed = shown.delete(UNSUPPORTED)
+  const key = projectKey(project)
+  const failed = shown.get(key)
+  if (failed) {
+    const covered = new Set(directories.map(normalizeWorkspacePath))
+    if (failed.every(directory => covered.has(directory))) changed = shown.delete(key) || changed
+  }
+  if (changed) persist()
 }
