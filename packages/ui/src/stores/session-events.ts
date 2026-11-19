@@ -58,6 +58,7 @@ import { locationAuthorityKey } from "./request-locations"
 import { workspaceSessionPlacementHeaders } from "../lib/sdk-manager"
 import { prioritizedRead } from "../lib/prioritized-read"
 import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
+import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
@@ -904,6 +905,7 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
 
 function announceCompaction(instanceId: string, event: SessionCompactionEnded): void {
   const sessionID = event.data.sessionID
+  if (isReservedMissionScheduleSessionID(sessionID)) return
   // Announced by the project whose list shows the session, not by an owning parent.
   if (sessions().get(instanceId)?.has(sessionID) && !isSessionInWorkspaceScope(instanceId, sessionID)) return
   if (!claimCompactionNotice(event)) return
