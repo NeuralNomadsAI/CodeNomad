@@ -44,9 +44,9 @@ test("creation Effect prevalidation is read-only, guards native state and foreig
   const session = Schema.decodeUnknownSync(Session.Info)({ id: "ses_root", projectID: "project", location: { directory: "/project" },
     agent: "worker", model: { providerID: "fixture", id: "fixture" }, cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 } })
-  let effects = 0
+  let effects = 0, authorActive = false
   const unexpected = () => Effect.sync(() => { effects++; throw new Error("Unexpected native mutation") })
-  const native = { get: () => Effect.succeed(session), active: Effect.succeed(new Set()),
+  const native = { get: () => Effect.succeed(session), active: Effect.sync(() => new Set(authorActive ? ["ses_root"] : [])),
     inbox: () => Effect.succeed([]), create: unexpected, environment: unexpected, prompt: unexpected, synthetic: unexpected }
   const tag = (key: string) => Context.Service<never, unknown>(key)
   const client = { unsafe: (sql: string, args: readonly unknown[]) => ({
@@ -71,10 +71,18 @@ test("creation Effect prevalidation is read-only, guards native state and foreig
   "agent configuration retains idle-root safeguards on human-created documents")
   const human = await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined }))
   assert.equal(human(), true, "explicit human adoption remains allowed while busy")
-  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: { coordinatorSessionID: "ses_root" } })), /coordinator-is-author/)
-  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined,
-    configuration: { ...configuration, coordinatorSelectionAuthor: { coordinatorSessionID: "ses_root" } } })), /coordinator-is-author/)
+  const self = { coordinatorSessionID: "ses_root" }
+  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: self })), /coordinator-busy/)
   db.exec("DELETE FROM session_inbox")
+  authorActive = true
+  db.exec(`INSERT INTO session_message VALUES('msg_tool','ses_root',1,'assistant',
+    '{"content":[{"type":"tool","state":{"status":"running"}}]}')`)
+  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, input)), /coordinator-busy/)
+  assert.equal((await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: self })))(), true)
+  assert.equal((await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined,
+    configuration: { ...configuration, coordinatorSelectionAuthor: self } })))(), true, "the author can set its own root on an existing schedule")
+  db.exec("DELETE FROM session_message WHERE id='msg_tool'")
+  authorActive = false
   const creation = await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, input))
   const prefix = `${MISSION_DOCUMENT_PREFIX}/project/${stableToken("project\0/project", 24)}/missions/`
   db.prepare("INSERT INTO kv VALUES(?,?)").run(nativeKey(prefix + input.missionID), '{"revision":0}')

@@ -189,9 +189,10 @@ the Missions metadata key. Existing transcript, title, permissions and unrelated
 remain. The user's choice authorizes ordinary Mission controls over that conversation
 and its work, including Stop cancellation of existing queued user/synthetic inputs.
 For human-authored choices, never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
-Agent-authored preparations and configurations restrict explicit adoption to an idle eligible root:
-the author, followed/event sources, active family work, queued inputs, durable claims,
-open requests and active or uncertain ownership by another Mission refuse adoption.
+An agent can explicitly select its own eligible root when saving a schedule. Saving
+allows that root's current turn; passage admission requires it to be idle.
+Followed/event sources, other active family work, queued inputs, durable claims,
+open requests and active or uncertain ownership by another Mission refuse agent adoption.
 Preparation, configuration and every authoritative adoption revalidate this boundary before native
 profile, metadata, environment or input effects; the current passage's own marker is allowed.
 A missing chosen root stays missing; attempted admission retains its original proof rules.

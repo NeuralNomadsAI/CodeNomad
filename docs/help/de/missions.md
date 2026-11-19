@@ -88,6 +88,8 @@ Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die 
 
 **Koordinator-Sitzung** verwendet standardmäßig für jeden Durchlauf eine **Neue Sitzung**. Mit einem Zeitplan oder Ereignis können Sie unter **Vorhandene Sitzung** eine Stamm-Unterhaltung dieses Projekts und derselben Ausführungs-Location wählen. Jeder Durchlauf setzt sie mit dem konfigurierten Agenten und Modell fort; Verlauf, Titel und Berechtigungen bleiben erhalten. Missionssteuerungen betreffen auch vorhandene Arbeit darin. Jeder Durchlauf behält sein eigenes Ergebnis und Journal im Verlauf.
 
+Sie können einen Agenten bitten, den Zeitplan mit seiner aktuellen Stamm-Unterhaltung vorzubereiten. Die Durchläufe warten, bis die Unterhaltung inaktiv ist.
+
 Der ausgewählte Zeitplan zeigt Zustand, nächsten Termin beziehungsweise Prüfung, gestartete/erfolgreiche Durchläufe und frühere Ergebnisse. Der Verlauf hält 30 Ergebnisse; Gesamtzähler bleiben. Ein zugelassenes **Jetzt ausführen** zählt mit. Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
 
 Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, auch für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.

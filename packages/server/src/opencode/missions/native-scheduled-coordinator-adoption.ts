@@ -23,7 +23,6 @@ type Author = NonNullable<NonNullable<MissionDocument["creation"]>["author"]>
 export function assertAgentScheduledCoordinatorSelection(configuration: MissionConfiguration, author?: Author) {
   const id = configuration.coordinatorSessionID
   if (!author || !id) return
-  if (id === author.coordinatorSessionID) throw new Error("coordinator-is-author")
   if (configuration.watchedConversationIDs.includes(id) || missionLaunchModel(configuration.launch).events.some(event =>
     event.kind === "conversation-message" && event.conversationID === id)) throw new Error("coordinator-is-source")
 }
@@ -32,10 +31,10 @@ type AdoptionDocument = Pick<MissionDocument, "id" | "projectID" | "projectCanon
   & { creation?: Pick<NonNullable<MissionDocument["creation"]>, "author"> }
 type Validation = Pick<NativeScheduledPassageContext, "native" | "observation" | "signal" | "current">
   & { document: AdoptionDocument; storage: Pick<MissionStorage, "get" | "scan" | "range">; fence: Pick<NativeSourceFence, "family" | "current">
-    & Partial<Pick<NativeSourceFence, "journal" | "coordinator">> }
+    & Partial<Pick<NativeSourceFence, "journal" | "coordinator">>; preparing?: true }
 
 export const acquireAgentScheduledCoordinatorValidation = Effect.fn("missions.validateAgentScheduledCoordinator")(function* (
-  ctx: Plugin.Context, run: MissionNativeRunner, document: AdoptionDocument, current: () => true, signal: AbortSignal,
+  ctx: Plugin.Context, run: MissionNativeRunner, document: AdoptionDocument, current: () => true, signal: AbortSignal, preparing?: true,
 ) {
    const configuration = document.pending?.configuration ?? document.configuration
    const author = configuration.coordinatorSelectionAuthor ?? document.creation?.author
@@ -45,7 +44,7 @@ export const acquireAgentScheduledCoordinatorValidation = Effect.fn("missions.va
   const observation = yield* acquireNativePassageObservation(undefined, run)
   const fences = yield* acquireNativeSourceFence(current)
   const range = yield* optionalOrdinaryJournalRange(ctx, run)
-  return yield* Effect.tryPromise({ try: () => prepareAgentScheduledCoordinator({ document, native, observation, current, signal, fence: fences(),
+  return yield* Effect.tryPromise({ try: () => prepareAgentScheduledCoordinator({ document, native, observation, current, signal, preparing, fence: fences(),
     storage: { range, get: key => run(ctx.storage.get(key)) as ReturnType<MissionStorage["get"]>,
       scan: value => run(ctx.storage.scan(value)) as ReturnType<MissionStorage["scan"]> } }), catch: error => error })
 })
@@ -58,7 +57,7 @@ export const prevalidateAgentScheduledCoordinatorCreation = Effect.fn("missions.
 ) {
   return yield* acquireAgentScheduledCoordinatorValidation(ctx, run, { id: input.missionID, configuration: input.configuration,
     projectID: ctx.location.project.id, projectCanonical: ctx.location.project.canonical,
-    pending: null, creation: { author: input.author } }, input.current, input.signal)
+    pending: null, creation: { author: input.author } }, input.current, input.signal, true)
 })
 
 /** Read-only prevalidation. Its native fence is also consumed inside CAS/effects;
@@ -76,7 +75,9 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
   fence.journal(`${MISSION_JOURNAL_STORAGE_PREFIX}/${token}${storage.range ? "" : "/"}`, undefined, !!storage.range)
   fence.journal(documents, `${documents}${doc.id}`)
   fence.family(id, undefined, true)
-  fence.coordinator(id)
+  // Saving records a future selection; it does not adopt or dispatch into the current turn.
+  const savingSelf = input.preparing && id === author.coordinatorSessionID
+  fence.coordinator(id, savingSelf)
   const session = await input.native.get({ sessionID: id }, { signal: input.signal })
   if (session.id !== id || session.parentID || session.projectID !== doc.projectID
     || session.location.directory !== input.native.location.directory || session.location.workspaceID !== input.native.location.workspaceID
@@ -86,7 +87,8 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
   for (let index = 0; index < family.length; index++) {
     input.signal.throwIfAborted(); input.current()
     const state = await observation.session(family[index])
-    if (state.active || state.inbox || state.suspended || state.runningTools) throw new Error("coordinator-busy")
+    if (state.inbox || state.suspended || (!(savingSelf && index === 0) && (state.active || state.runningTools)))
+      throw new Error("coordinator-busy")
     for (const child of await observation.children(family[index])) {
       if (seen.has(child) || seen.size >= MAX_CONTROL_FAMILY_SESSIONS) throw new Error("Coordinator family coverage unavailable")
       seen.add(child); family.push(child)

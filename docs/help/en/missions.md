@@ -94,6 +94,8 @@ Events at the beginning can launch a passage on each new occurrence; trigger eve
 
 **Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**.
 
+You can ask an agent to prepare the schedule using its current root conversation. Passages wait for the conversation to be idle.
+
 Select a schedule to read its state, next wake or check, launched and successful passage counts, and **Past runs**. The history retains 30 results; lifetime counts remain. **Run now** counts as a launched passage once admitted.
 
 A saved policy that the editor cannot represent stays under **Stored scheduling policy** until you explicitly replace it. Review any retained end or launch limit before editing.

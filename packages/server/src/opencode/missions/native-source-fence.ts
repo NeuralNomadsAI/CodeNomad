@@ -125,7 +125,7 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           || Number(size.size) > 16 * 1024 * 1024) throw new Error("Mission source journal capacity")
         pin("SELECT key,value FROM kv WHERE key>=? AND key<? AND key<>? ORDER BY key LIMIT 2037", args)
       },
-      coordinator: (id: string) => {
+      coordinator: (id: string, allowRootTurn = false) => {
         const cte = `WITH RECURSIVE family(id) AS (SELECT id FROM session_v2 WHERE id=? UNION SELECT s.id FROM session_v2 s JOIN family f ON s.parent_id=f.id LIMIT 4097)`
         const members = pin(`${cte} SELECT s.id,s.parent_id,s.project_id,s.directory,s.workspace_id,s.metadata,s.agent,s.model,s.time_suspended,
           (SELECT count(*) FROM session_inbox i WHERE i.session_id=s.id) AS inbox,
@@ -133,7 +133,8 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
             WHERE m.session_id=s.id AND m.type='assistant' AND json_extract(p.value,'$.type')='tool'
             AND json_extract(p.value,'$.state.status') IN ('running','streaming')) AS tools
           FROM session_v2 s JOIN family f ON s.id=f.id ORDER BY s.id`, [id])
-        if (!members.length || members.length > 4096 || members.some(row => row.time_suspended != null || row.inbox !== 0 || row.tools !== 0))
+        if (!members.length || members.length > 4096 || members.some(row => row.time_suspended != null || row.inbox !== 0
+          || (row.tools !== 0 && !(allowRootTurn && row.id === id))))
           throw new Error("coordinator-busy")
         const ids = new Set(members.map(row => String(row.id)))
         const list = (name: string, codec: Schema.Codec<unknown, unknown>) => {
@@ -154,7 +155,7 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           const requests = [...list("@opencode/Form", Schema.Array(Schema.toType(Form.Info))),
             ...list("@opencode/Permission", Schema.Array(Schema.toType(Permission.Request)))]
           const shells = list("@opencode/Shell", Schema.Array(Schema.toType(Shell.Info)))
-          if ([...active].some(member => ids.has(String(member)))
+          if ([...active].some(member => ids.has(String(member)) && !(allowRootTurn && member === id))
             || requests.some(item => item.sessionID == null || ids.has(String(item.sessionID)))
             || shells.some(item => nativeShellBlocksFamily(item, ids))) throw new Error("coordinator-busy")
         })

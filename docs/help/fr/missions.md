@@ -94,6 +94,8 @@ Les événements en tête peuvent lancer un passage à chaque nouvelle occurrenc
 
 **Session du coordinateur** utilise par défaut une **Nouvelle session** à chaque passage. Avec un horaire ou événement, **Session existante** permet de choisir une conversation racine du projet et de la même Location d’exécution. Chaque passage y continue avec l’agent et le modèle configurés, en conservant le transcript, le titre et les permissions. Les contrôles de la mission affectent aussi les travaux qui s’y trouvent. Chaque passage garde son résultat et son journal dans les **Exécutions passées** .
 
+Vous pouvez demander à un agent de préparer la programmation dans sa conversation racine actuelle. Les passages attendent que la conversation soit au repos.
+
 Sélectionnez un programme pour lire son état, le prochain réveil ou contrôle, les nombres de passages lancés et réussis et les **Exécutions passées**. L’historique conserve 30 résultats ; les compteurs cumulés restent. **Lancer maintenant** compte comme passage lancé une fois admis.
 
 Une politique enregistrée que l’éditeur ne sait pas représenter reste sous **Politique de lancement enregistrée** jusqu’à son remplacement explicite. Vérifiez les éventuelles limites de fin ou de nombre de passages avant de modifier.
