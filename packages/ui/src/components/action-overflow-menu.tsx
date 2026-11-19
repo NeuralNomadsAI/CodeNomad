@@ -1,5 +1,5 @@
 import { DropdownMenu } from "@kobalte/core/dropdown-menu"
-import { For, Show, createSignal, onCleanup, type JSXElement } from "solid-js"
+import { For, Show, createMemo, createSignal, onCleanup, type JSXElement } from "solid-js"
 import { MoreHorizontal } from "lucide-solid"
 import { suppressCompatibilityClick } from "../lib/compatibility-click"
 
@@ -30,6 +30,7 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
   let selectedAction: ActionOverflowMenuItem["onSelect"] | undefined
   let pointerType: string | undefined
   const [hoveredItem, setHoveredItem] = createSignal<ActionOverflowMenuItem | null>(null)
+  const itemsByKey = createMemo(() => new Map(props.items.map(item => [item.key, item])))
   const enabledItems = () => props.items.filter((item) => !item.disabled)
   const hasItems = () => props.items.length >= (props.minItems ?? 1)
   const clearHoveredItem = () => {
@@ -67,45 +68,50 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
               props.onFocusRestored?.()
             })
           }}>
-            <For each={props.items}>
-              {(item) => (
-                <DropdownMenu.Item
-                  class="action-overflow-item"
-                  data-action-key={item.key}
-                  role={typeof item.checked === "boolean" ? "menuitemcheckbox" : undefined}
-                  aria-checked={typeof item.checked === "boolean" ? item.checked : undefined}
-                  disabled={item.disabled}
-                  aria-description={item.description}
-                  title={item.description}
-                  onPointerEnter={() => {
-                    if (item.disabled) return
-                    const previous = hoveredItem()
-                    if (previous !== item) previous?.onMouseLeave?.()
-                    setHoveredItem(item)
-                    item.onMouseEnter?.()
-                  }}
-                  onPointerLeave={() => {
-                    if (item.disabled) return
-                    if (hoveredItem() === item) setHoveredItem(null)
-                    item.onMouseLeave?.()
-                  }}
-                  // Kobalte selects on pointerup; record it for the selection below.
-                  onPointerUp={(event) => { pointerType = event.pointerType }}
-                  onKeyDown={() => { pointerType = undefined }}
-                  onSelect={() => {
-                    clearHoveredItem()
-                    if (pointerType && pointerType !== "mouse") suppressCompatibilityClick()
-                    pointerType = undefined
-                    if (item.selectBeforeClose) void item.onSelect()
-                    else selectedAction = item.onSelect
-                  }}
-                >
-                  <Show when={item.icon} fallback={<span class="action-overflow-item-icon" aria-hidden="true" />}>
-                    {(icon) => <span class="action-overflow-item-icon" aria-hidden="true">{icon()}</span>}
-                  </Show>
-                  <span class="action-overflow-item-label">{item.label}</span>
-                </DropdownMenu.Item>
-              )}
+            <For each={[...itemsByKey().keys()]}>
+              {(key) => {
+                const item = () => itemsByKey().get(key)
+                onCleanup(() => { if (hoveredItem()?.key === key) clearHoveredItem() })
+                return (
+                  <DropdownMenu.Item
+                    class="action-overflow-item"
+                    data-action-key={key}
+                    role={typeof item()?.checked === "boolean" ? "menuitemcheckbox" : undefined}
+                    aria-checked={item()?.checked}
+                    disabled={item()?.disabled}
+                    textValue={item()?.label}
+                    aria-description={item()?.description}
+                    title={item()?.description}
+                    onPointerEnter={() => {
+                      const entry = item()
+                      if (!entry || entry.disabled) return
+                      clearHoveredItem()
+                      setHoveredItem(entry)
+                      entry.onMouseEnter?.()
+                    }}
+                    onPointerLeave={() => {
+                      if (hoveredItem()?.key === key) clearHoveredItem()
+                    }}
+                    // Kobalte selects on pointerup; record it for the selection below.
+                    onPointerUp={(event) => { pointerType = event.pointerType }}
+                    onKeyDown={() => { pointerType = undefined }}
+                    onSelect={() => {
+                      const entry = item()
+                      clearHoveredItem()
+                      if (pointerType && pointerType !== "mouse") suppressCompatibilityClick()
+                      pointerType = undefined
+                      if (!entry || entry.disabled) return
+                      if (entry.selectBeforeClose) void entry.onSelect()
+                      else selectedAction = entry.onSelect
+                    }}
+                  >
+                    <Show when={item()?.icon} fallback={<span class="action-overflow-item-icon" aria-hidden="true" />}>
+                      {(icon) => <span class="action-overflow-item-icon" aria-hidden="true">{icon()}</span>}
+                    </Show>
+                    <span class="action-overflow-item-label">{item()?.label}</span>
+                  </DropdownMenu.Item>
+                )
+              }}
             </For>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>

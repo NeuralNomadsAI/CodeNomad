@@ -60,13 +60,17 @@ the bearer `Authorization` header on their provider WebSockets.
   latest visible reply and up to three recent errors of 500 characters each.
   `send_to_agent` submits a user message directly, without a confirmation dialog,
   through native `sendMessage` with the composer's delivery rules and no
-  attachments. Follow-up delivery uses the session state at serialized admission.
-  An acknowledged steering prompt counts as busy for up to 15 seconds, until
-  native execution, settlement or a fresh idle observation.
+  attachments. A send from history loads the latest message window and then
+  rechecks its target. Follow-up delivery uses the session state at serialized
+  admission. An acknowledged steering prompt counts as busy for that native
+  session, including across window reopen, for up to 15 seconds, until native
+  execution, settlement or a fresh idle observation.
   Normal permission, question and Yolo handling apply. A call ID is
   admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.
 - The two voices are transcribed in memory until the window is dismissed.
+  Gemini user rows close on their own transcription completion, independently
+  of the model turn.
   A stop, target change, closed document, provider failure or disconnect
   releases capture and sockets, with no reconnect or engine fallback.
 - Each backend admits one live conversation per identity and four in total.

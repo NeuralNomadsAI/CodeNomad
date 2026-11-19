@@ -150,10 +150,12 @@ export class RemoteControlManager {
   }
 
   revokeDevice(id: string): boolean {
-    const revoked = this.options.registry.revoke(id)
-    // Revocation also ends live HTTP and SSE connections already admitted.
-    this.ingress.disconnectDevice(id)
-    return revoked
+    try {
+      return this.options.registry.revoke(id)
+    } finally {
+      // In-memory revocation still applies if the registry cannot be saved.
+      this.ingress.disconnectDevice(id)
+    }
   }
 
   previewsAllowed(): boolean {

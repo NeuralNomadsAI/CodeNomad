@@ -15,6 +15,7 @@ import { isLocalRequest } from "../remote-control/request-origin"
 import { isLiveVoiceRoute, refuseVoiceUpgrade } from "../speech/live-voice-gateway"
 import { LIVE_VOICE_PATH } from "../speech/live-voice-contract"
 import { proxyRemoteVoice } from "./remote-proxy-voice"
+import { requestAdmission } from "./request-admission"
 import type { Socket } from "node:net"
 
 const LOOPBACK_HOST = "127.0.0.1"
@@ -448,7 +449,6 @@ async function proxyRequest(args: {
     method: request.method,
     headers,
     dispatcher: session.dispatcher,
-    signal: session.abortController.signal,
     redirect: "manual",
   }
 
@@ -460,8 +460,10 @@ async function proxyRequest(args: {
     }
   }
 
+  const admission = requestAdmission(request, reply)
+  const signal = AbortSignal.any([session.abortController.signal, admission.signal])
   try {
-    const response = await fetch(upstreamUrl, init as any)
+    const response = await fetch(upstreamUrl, { ...init, signal })
     reply.code(response.status)
     applyResponseHeaders(reply, response, session)
 
@@ -474,10 +476,13 @@ async function proxyRequest(args: {
     reply.raw.writeHead(reply.statusCode, toOutgoingHeaders(reply.getHeaders()))
     await pipeline(Readable.fromWeb(response.body as any), reply.raw)
   } catch (error) {
+    if (admission.signal.aborted) return
     logger.error({ err: error, upstreamUrl }, "Failed to proxy remote session request")
     if (!reply.sent) {
       reply.code(502).send({ error: "Remote proxy request failed" })
     }
+  } finally {
+    admission.dispose()
   }
 }
 

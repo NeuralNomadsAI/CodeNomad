@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
 import { showAlertDialog } from "../../stores/alerts"
-import { loadSpeechCapabilities, speechCapabilities } from "../../stores/speech"
+import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError } from "../../stores/speech"
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { useI18n } from "../../lib/i18n"
 import { microphoneUse } from "../../lib/microphone-lease"
@@ -99,6 +99,9 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       return "voice.microphone.unavailable"
     }
     if (remoteDictation && !remoteDictation.choice()) return "promptInput.remoteDictation.unavailable"
+    if (engine() === apiEngine && !speechCapabilities()) {
+      return speechCapabilitiesError() ? "voice.command.capabilitiesError" : "voice.command.loading"
+    }
     return "voice.command.setupDictation"
   }
   const canStartRecording = () => state() === "idle" && !unavailableKey()

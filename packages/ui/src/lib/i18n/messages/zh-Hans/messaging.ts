@@ -347,6 +347,7 @@ export const messagingMessages = {
   "voice.command.secureContext": "需要安全连接",
   "voice.command.activeSession": "活动会话",
   "voice.command.loading": "正在检查语音设置…",
+  "voice.command.capabilitiesError": "无法检查语音设置",
   "voice.command.setupPlayback": "设置播放",
   "voice.command.unsupportedFormat": "不支持此播放格式",
   "voice.command.noSession": "选择会话",

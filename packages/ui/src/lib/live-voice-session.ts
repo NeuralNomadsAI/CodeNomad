@@ -165,12 +165,7 @@ export function openLiveVoiceSession(options: {
     }
     assistantRows.clear()
     keys.delete("assistant")
-    // Gemini segments do not have item IDs. OpenAI inputs finish independently.
-    const user = keys.get("user")
-    if (!interrupted && user !== undefined) {
-      rows.set(user, { ...rows.get(user)!, final: true, announce: true })
-      keys.delete("user")
-    }
+    // User rows close on their own transcription's final event, independently of model turns.
   }
 
   function interrupt(manual: boolean) {

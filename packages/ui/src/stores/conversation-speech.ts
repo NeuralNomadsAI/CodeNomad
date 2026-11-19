@@ -6,7 +6,7 @@ import { getLogger } from "../lib/logger"
 import { formatToMimeType, getSpeechPlaybackSupport } from "../lib/speech-playback-support"
 import { createObjectUrlFromBase64, streamToMediaSource } from "../lib/audio-utils"
 import { serverSettings } from "./preferences"
-import { loadSpeechCapabilities, speechCapabilities } from "./speech"
+import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError } from "./speech"
 import { getActiveSession, sessions } from "./session-state"
 import type { ClientPart, MessageInfo } from "../types/message"
 import { messageStoreBus } from "./message-v2/bus"
@@ -95,7 +95,8 @@ export function isConversationModeEnabled(instanceId: string): boolean {
   return conversationModeInstances().get(instanceId) === true
 }
 
-export function classicConversationUnavailable(): "loading" | "setupPlayback" | "unsupportedFormat" | undefined {
+export function classicConversationUnavailable(): "loading" | "capabilitiesError" | "setupPlayback" | "unsupportedFormat" | undefined {
+  if (speechCapabilitiesError()) return "capabilitiesError"
   if (!voiceConversationEngineLoaded() || voiceConversationEngine() !== "classic") return "loading"
   const capabilities = speechCapabilities()
   if (!capabilities?.available || !capabilities.ttsConfigured || !capabilities.supportsTts) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { EventEmitter } from "node:events"
+import { EventEmitter, once } from "node:events"
 import { after, before, test } from "node:test"
 import { chromium, type Browser, type WebSocketRoute } from "playwright"
 import { LIVE_VOICE_ABSOLUTE_MS, LIVE_VOICE_IDLE_MS } from "../../../server/src/speech/live-voice-contract"
@@ -66,6 +66,7 @@ async function fixture(engine: "gemini" | "openai" = "gemini", interactive = fal
     })
     ws.onClose(() => close())
     opened(ws)
+    events.emit("socket", ws)
   })
   const destination = new URL(url)
   if (engine === "openai") destination.searchParams.set("openai", "")
@@ -111,6 +112,7 @@ async function fixture(engine: "gemini" | "openai" = "gemini", interactive = fal
     return send
   }
   return { page, context, start, sent, closed, errors, snapshot, waitForSent, socket, opens: () => opens,
+    nextSocket: async () => (await once(events, "socket", { signal: AbortSignal.timeout(8_000) }))[0] as WebSocketRoute,
     consent, live, openConsent, acceptConsent }
 }
 
@@ -269,6 +271,63 @@ test("Gemini cancellation while awaiting a native ack still queues the next voic
     assert.deepEqual((await snapshot()).info.prompts.map((item: any) => [item.text, item.delivery]), [["first", "steer"], ["second", "queue"]])
     assert.equal(sent.some(item => item.type === "tool-result" && item.id === "first"), false)
   } finally { await context.close() }
+})
+
+test("a voice send acknowledged after reopening still makes the new controller queue", async () => {
+  const { page, context, start, closed, snapshot, sent, waitForSent, nextSocket } = await fixture()
+  try {
+    const send = await start()
+    await page.evaluate(() => (window as any).fixture.setFirstPrompt("holdAck"))
+    const call = (id: string) => ({ type: "tool-call", id, name: "send_to_agent", arguments: { text: id } })
+    send(call("first"))
+    await page.waitForFunction(() => (window as any).fixture.waitingAck())
+    await page.getByRole("button", { name: "Close", exact: true }).click()
+    await closed
+    await page.waitForFunction(() => (window as any).fixture.info.released === 1)
+    const pending = nextSocket()
+    await page.getByRole("button", { name: "Start", exact: true }).click()
+    const reopened = await pending
+    reopened.send(JSON.stringify({ type: "ready", inputRate: 16_000, outputRate: 24_000 }))
+    await page.waitForFunction(() => (window as any).fixture.state().phase === "live")
+    reopened.send(JSON.stringify(call("second")))
+    await page.evaluate(() => (window as any).fixture.releaseAck())
+    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "second")).output), { delivery: "queued" })
+    assert.deepEqual((await snapshot()).info.prompts.map((item: any) => [item.text, item.delivery]), [["first", "steer"], ["second", "queue"]])
+    assert.equal(sent.some(item => item.type === "tool-result" && item.id === "first"), false)
+  } finally { await context.close() }
+})
+
+test("voice sends from an older page await the latest window and recheck the target", async () => {
+  for (const switchTarget of [false, true]) {
+    const { page, context, start, closed, snapshot, waitForSent } = await fixture()
+    try {
+      const send = await start()
+      await page.evaluate(() => (window as any).fixture.openHistory())
+      const history = () => page.evaluate(() => (window as any).fixture.history())
+      const before = await history()
+      assert.equal(before.kind, "history")
+      assert.equal(before.ids.length, 200)
+      send({ type: "tool-call", id: "send", name: "send_to_agent", arguments: { text: "From history" } })
+      await page.waitForFunction(() => (window as any).fixture.info.historyReads === 1)
+      assert.deepEqual(await history(), before)
+      assert.deepEqual((await snapshot()).info.prompts, [])
+      if (switchTarget) {
+        await page.evaluate(() => (window as any).fixture.switchSession())
+        await closed
+      }
+      await page.evaluate(() => (window as any).fixture.releaseHistory())
+      await page.waitForFunction(() => (window as any).fixture.history().kind === "latest")
+      if (switchTarget) {
+        assert.deepEqual((await snapshot()).info.prompts, [])
+        assert.deepEqual((await history()).ids, ["latest-assistant"])
+      } else {
+        assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "send")).output), { delivery: "submitted" })
+        const [prompt] = (await snapshot()).info.prompts
+        assert.equal(prompt.text, "From history")
+        assert.deepEqual((await history()).ids, ["latest-assistant", prompt.id])
+      }
+    } finally { await context.close() }
+  }
 })
 
 test("OpenAI final text replaces deltas; unknown tools fail closed", async () => {

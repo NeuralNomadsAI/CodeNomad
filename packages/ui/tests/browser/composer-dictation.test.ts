@@ -7,7 +7,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>
 before(async () => { fixture = await startProductFixture("composer-dictation") })
 after(async () => { await fixture?.close() })
 
-async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured = false) {
+async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false) {
   const context = await fixture.browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
@@ -127,9 +127,16 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
       }
       await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(native)}); }`)
     }
-    await context.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/speech/capabilities")
-      ? { available: true, sttConfigured: !ttsOnly && !unconfigured, supportsStt: true, ttsConfigured: ttsOnly, supportsTts: true }
-      : ttsOnly && route.request().url().endsWith("/config/server") ? { speech: { playbackMode: "buffered" } } : {} }))
+    await context.route("**/api/**", async route => {
+      const url = route.request().url()
+      if (url.endsWith("/speech/capabilities")) {
+        const status = typeof unconfigured === "boolean" ? 200 : await unconfigured
+        return route.fulfill({ status, json: status === 200
+          ? { available: true, sttConfigured: !ttsOnly && unconfigured !== true, supportsStt: true, ttsConfigured: ttsOnly, supportsTts: true }
+          : { error: "Capabilities unavailable" } })
+      }
+      return route.fulfill({ json: ttsOnly && url.endsWith("/config/server") ? { speech: { playbackMode: "buffered" } } : {} })
+    })
     const target = new URL(fixture.url)
     if (native === "wsl") target.searchParams.set("wsl", "1")
     if (pcm) target.searchParams.set("pcm", "1")
@@ -167,6 +174,46 @@ const finish = async (page: Page, text: string) => {
   await page.evaluate(value => (window as any).capture.requests[0].resolve(value), text)
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(null))))
 }
+
+test("Dictate retains keyboard focus and its node when capabilities finish loading", async () => {
+  let resolve!: (status: number) => void
+  const response = new Promise<number>(done => { resolve = done })
+  await withComposer(async page => {
+    const more = page.getByRole("button", { name: "More actions", exact: true })
+    await more.press("Enter")
+    const loading = page.getByRole("menuitem", { name: /Dictate.*Checking voice settings/ })
+    await loading.focus()
+    const node = (await loading.elementHandle())!
+    assert.equal(await node.evaluate(el => document.activeElement === el), true)
+    resolve(200)
+    await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
+    assert.equal(await node.evaluate(el => el.isConnected && document.activeElement === el), true)
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(() => (window as any).capture.starts === 1)
+  }, false, undefined, false, "en", false, response)
+})
+
+test("a speech capabilities 503 shows read failure and opens each command's own Voice card", async () => {
+  let resolve!: (status: number) => void
+  const response = new Promise<number>(done => { resolve = done })
+  await withComposer(async page => {
+    const more = page.getByRole("button", { name: "More actions", exact: true })
+    await more.press("Enter")
+    await page.getByRole("menuitem", { name: /Conversation mode.*Checking voice settings/ }).waitFor()
+    resolve(503)
+    const failure = /Couldn’t check voice settings/
+    const conversation = page.getByRole("menuitem", { name: /^Conversation mode/ }).filter({ hasText: failure })
+    const dictate = page.getByRole("menuitem", { name: /^Dictate/ }).filter({ hasText: failure })
+    await dictate.waitFor()
+    await conversation.click()
+    await page.waitForFunction(() => document.activeElement?.id === "voice-conversation")
+    await page.evaluate(() => (window as any).fixture.closeSettings())
+    await more.press("Enter")
+    await dictate.click()
+    await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
+    assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+  }, false, undefined, false, "en", false, response)
+})
 
 test("dictation replaces only its original selection and neither sends nor steals focus", () => withComposer(async page => {
   await field(page).fill("before replace after")

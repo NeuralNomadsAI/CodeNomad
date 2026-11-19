@@ -2,14 +2,14 @@ import { batch, createRenderEffect, createSignal, onCleanup } from "solid-js"
 import { liveVoiceTarget, type LiveVoiceEngine } from "../../../../server/src/speech/live-voice-contract"
 import { liveVoiceAgent, liveVoiceContext, liveVoiceTargetSession } from "../../stores/live-voice-agent"
 import type { FollowUpBehavior } from "../../stores/preferences"
-import { speechCapabilities } from "../../stores/speech"
+import { speechCapabilities, speechCapabilitiesError } from "../../stores/speech"
 import { voiceConversationEngine, voiceConversationEngineLoaded } from "../../stores/voice-conversation-engine"
 import { CODENOMAD_API_BASE } from "../api-base"
 import { liveVoiceAudioUnavailable, startLiveVoiceAudio } from "../live-voice-audio"
 import { hasLiveVoiceConsent, rememberLiveVoiceConsent } from "../live-voice-consent"
 import { openLiveVoiceSession, type LiveVoiceActivity, type LiveVoiceStopReason, type LiveVoiceTranscriptRow } from "../live-voice-session"
 
-export type LiveVoiceUnavailable = "loading" | "noSession" | "missingKey" | "secureContext" | "remoteWebKit" | "device"
+export type LiveVoiceUnavailable = "loading" | "capabilitiesError" | "noSession" | "missingKey" | "secureContext" | "remoteWebKit" | "device"
 export type LiveVoiceState =
   | { phase: "closed" }
   | { phase: "consent" | "starting" | "live"; engine: LiveVoiceEngine }
@@ -47,6 +47,7 @@ export function useLiveVoiceConversation(options: {
   }
 
   function unavailable(): LiveVoiceUnavailable | undefined {
+    if (speechCapabilitiesError()) return "capabilitiesError"
     if (!voiceConversationEngineLoaded()) return "loading"
     const engine = selectedEngine()
     if (!engine) return

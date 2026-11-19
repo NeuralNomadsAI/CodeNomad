@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { after, afterEach, describe, it } from "node:test"
 import fs from "node:fs"
+import { once } from "node:events"
 import http, { type IncomingMessage, type ServerResponse } from "node:http"
+import https from "node:https"
 import os from "node:os"
 import path from "node:path"
 
@@ -319,6 +321,33 @@ describe("RemoteProxySessionManager", () => {
     })
   })
 
+  it("aborts upstream TLS-exception transcription on request cancellation and keeps the window usable", { timeout: 8000 }, async () => {
+    const started = deferred<ServerResponse>()
+    await withUpstreamServer(async (baseUrl) => {
+      const manager = createSessionManager()
+      const created = await manager.createSession(baseUrl, true)
+      const window = new URL(created.windowUrl)
+      assert.equal(await activateSession({ proxyOrigin: window.origin, token: window.hash.slice(1) }), true)
+      const controller = new AbortController()
+      const cancelled = assert.rejects(proxyFetch(`${window.origin}/api/speech/transcribe`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ audioBase64: "YXVkaW8=", mimeType: "audio/wav" }), signal: controller.signal,
+      }), { name: "AbortError" })
+      const upstream = await started.promise
+      const closed = once(upstream, "close", { signal: AbortSignal.timeout(2000) })
+      controller.abort()
+      try {
+        await Promise.all([cancelled, closed])
+        assert.equal(upstream.writableFinished, false)
+        assert.equal(await (await proxyFetch(`${window.origin}/status`)).text(), "ok")
+      } finally { upstream.destroy() }
+    }, (req, res) => {
+      if (req.url !== "/api/speech/transcribe") return void res.writeHead(200).end("ok")
+      req.resume()
+      req.once("end", () => started.resolve(res))
+    }, true)
+  })
+
   it("surfaces listener disposal failures", async () => {
     await withUpstreamServer(async (upstreamBaseUrl) => {
       const manager = createSessionManager()
@@ -438,13 +467,14 @@ async function proxyFetch(url: string, init?: Parameters<typeof fetch>[1]) {
 async function withUpstreamServer(
   callback: (baseUrl: string) => Promise<void>,
   handler: (req: IncomingMessage, res: ServerResponse<IncomingMessage>) => void,
+  secure = false,
 ) {
-  const server = http.createServer(handler)
+  const server = secure ? https.createServer(sharedHttpsOptions, handler) : http.createServer(handler)
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
   try {
     const address = server.address()
     if (!address || typeof address === "string") throw new Error("Failed to resolve upstream server address")
-    await callback(`http://127.0.0.1:${address.port}`)
+    await callback(`${secure ? "https" : "http"}://127.0.0.1:${address.port}`)
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
   }

@@ -348,6 +348,7 @@ export const messagingMessages = {
   "voice.command.secureContext": "安全な接続が必要です",
   "voice.command.activeSession": "アクティブなセッション",
   "voice.command.loading": "音声設定を確認中…",
+  "voice.command.capabilitiesError": "音声設定を確認できませんでした",
   "voice.command.setupPlayback": "音声再生を設定",
   "voice.command.unsupportedFormat": "対応していない再生形式です",
   "voice.command.noSession": "セッションを選択",

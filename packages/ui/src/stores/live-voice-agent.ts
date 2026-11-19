@@ -8,6 +8,7 @@ import { isLatestWindow, MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-w
 import type { FollowUpBehavior } from "./preferences"
 import { locationAuthorityKey } from "./request-locations"
 import { sendMessage } from "./session-actions"
+import { isLatestMessageWindow, loadLatestMessageWindow } from "./session-api"
 import { nativeSessionLifecycleGeneration } from "./session-events"
 import { normalizeSessionDirectory } from "./session-list-options"
 import { activeSessionId, sessions } from "./session-state"
@@ -26,6 +27,9 @@ export function liveVoiceTargetSession(instanceId: string, sessionId: string | u
 }
 
 type Target = NonNullable<ReturnType<typeof liveVoiceTargetSession>>
+type Acknowledgement = { client: Target["instance"]["client"]; generation: number; idle: number; admission: number; expires: number }
+// A native receipt can arrive after the voice window closes or is reopened.
+const awaitingExecution = new Map<string, Acknowledgement>()
 
 function sessionStatus(instanceId: string, sessionId: string) {
   const session = sessions().get(instanceId)?.get(sessionId)
@@ -63,16 +67,18 @@ export function liveVoiceAgent({ instance, session, key }: Target, options: {
   const lifecycle = () => nativeSessionLifecycleGeneration(instanceId, sessionId)
   const currentSession = () => sessions().get(instanceId)?.get(sessionId)
   const idleBoundary = () => currentSession()?.time.idle ?? 0
-  let awaitingExecution: { generation: number; idle: number; admission: number; expires: number } | undefined
   function busyFromAcknowledgement() {
-    if (awaitingExecution && (
-      awaitingExecution.generation !== lifecycle() || idleBoundary() > awaitingExecution.idle ||
-      (currentSession()?.idleReadAdmissionEpoch ?? 0) >= awaitingExecution.admission ||
-      performance.now() >= awaitingExecution.expires
-    )) {
-      awaitingExecution = undefined
+    const pending = awaitingExecution.get(key)
+    if (!pending) return false
+    if (
+      pending.client !== instance.client || pending.generation !== lifecycle() || idleBoundary() > pending.idle ||
+      (currentSession()?.idleReadAdmissionEpoch ?? 0) >= pending.admission ||
+      performance.now() >= pending.expires
+    ) {
+      awaitingExecution.delete(key)
+      return false
     }
-    return awaitingExecution !== undefined
+    return true
   }
   function recentAssistant() {
     const store = messageStoreBus.getInstance(instanceId)
@@ -113,9 +119,12 @@ export function liveVoiceAgent({ instance, session, key }: Target, options: {
       case "send_to_agent": {
         const admissionCurrent = () => current() && options.canSend()
         if (!admissionCurrent()) return { error: "This conversation cannot accept a message now." }
+        const latest = () => isLatestMessageWindow(instanceId, sessionId)
+        if (!latest()) await loadLatestMessageWindow(instanceId, sessionId)
+        if (!admissionCurrent() || !latest()) return { error: "This conversation cannot accept a message now." }
         let delivery: "queue" | "steer" | undefined
         await sendMessage(instanceId, sessionId, tool.arguments.text.trim(), [], {
-          admissionCurrent,
+          admissionCurrent: () => admissionCurrent() && latest(),
           delivery: () => delivery = resolvePromptDelivery(
             busyFromAcknowledgement() || isSessionBusy(instanceId, sessionId) || !!options.composerSending?.(),
             options.followUp(),
@@ -127,7 +136,9 @@ export function liveVoiceAgent({ instance, session, key }: Target, options: {
             return () => {
               // Provider cancellation stops tool delivery, not a native send already on the wire.
               if (admission !== undefined && targetCurrent() && generation === lifecycle() && idleBoundary() <= idle) {
-                awaitingExecution = { generation, idle, admission, expires: performance.now() + EXECUTION_START_GRACE_MS }
+                const pending = { client: instance.client, generation, idle, admission, expires: performance.now() + EXECUTION_START_GRACE_MS }
+                awaitingExecution.set(key, pending)
+                setTimeout(() => { if (awaitingExecution.get(key) === pending) awaitingExecution.delete(key) }, EXECUTION_START_GRACE_MS)
               }
             }
           },

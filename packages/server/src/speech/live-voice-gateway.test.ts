@@ -134,6 +134,23 @@ test("an unwritable paired-device registry closes only the affected voice upgrad
   await setupGemini(connect(t, target(), gemini, headers), fake)
 })
 
+test("a failed revocation write reports failure and disconnects the live device and provider", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { local, manager, target, code, registryPath } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })
+  const { device, token } = manager.exchangePairing(code, undefined)!
+  const headers = { host: FAKE_TUNNEL_HOST, origin: `https://${FAKE_TUNNEL_HOST}`, cookie: `${DEVICE_COOKIE_NAME}=${token}` }
+  const client = connect(t, target(), gemini, headers)
+  const upstream = await setupGemini(client, fake)
+  fs.mkdirSync(`${registryPath}.${process.pid}.tmp`)
+  const response = await fetch(`http://${local}/api/remote-control/devices/${device.id}`, { method: "DELETE" })
+  await response.text()
+  assert.equal(response.status, 500)
+  assert.equal(manager.isDeviceAuthorized(device.id), false)
+  assert.deepEqual(await client.closed, [1006, ""])
+  await upstream.closed
+  await denied(target(), gemini, headers, 403)
+})
+
 test("direct admission, Gemini binary messages, fixed tools, cancellation and password logout", { timeout: 10000 }, async t => {
   const fake = await provider(t)
   const { log, logs } = logger()

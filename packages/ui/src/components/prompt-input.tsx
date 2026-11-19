@@ -810,7 +810,8 @@ export default function PromptInput(props: PromptInputProps) {
   const conversationReason = () => {
     if (!conversationIsLiveEngine()) {
       const reason = classicConversationUnavailable()
-      if (reason) return { text: t(`voice.command.${reason}`), row: reason === "loading" ? "voice-conversation" : "voice-playback" } as const
+      if (reason) return { text: t(`voice.command.${reason}`),
+        row: reason === "loading" || reason === "capabilitiesError" ? "voice-conversation" : "voice-playback" } as const
       return
     }
     const unavailable = liveVoice.unavailable()

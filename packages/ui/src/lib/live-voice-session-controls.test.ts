@@ -101,6 +101,19 @@ test("muting flushes Gemini audio once per transition without sending an OpenAI 
   }
 })
 
+test("Gemini closes user rows on transcription completion, independent of model turns", async t => {
+  const f = await fixture(t, "gemini-live")
+  f.receive({ type: "transcript", role: "user", text: "First ", final: false })
+  f.receive({ type: "turn-complete" })
+  assert.deepEqual(f.rows().map(row => [row.text, row.final, row.announce]), [["First ", false, undefined]])
+  f.receive({ type: "transcript", role: "user", text: "utterance", final: false })
+  f.receive({ type: "transcript", role: "user", text: "", final: true })
+  f.receive({ type: "transcript", role: "user", text: "Second utterance", final: true })
+  assert.deepEqual(f.rows().map(row => [row.text, row.final, row.announce]), [
+    ["First utterance", true, true], ["Second utterance", true, true],
+  ])
+})
+
 test("Gemini manual interrupt drops local output only, and receipts require a confirmed native send", async t => {
   let confirm!: (value: { delivery: "queued" }) => void
   const execution = new Promise<{ delivery: "queued" }>(resolve => { confirm = resolve })

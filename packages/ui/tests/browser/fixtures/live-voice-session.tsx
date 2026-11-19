@@ -13,6 +13,7 @@ import { sseManager } from "../../../src/lib/sse-manager"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
+import { MESSAGE_WINDOW_PAGE_SIZE } from "../../../src/stores/message-v2/message-window"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { activeSettingsSection, openSettingsRow, settingsOpen } from "../../../src/stores/settings-screen"
 import { activeSessionId, getSessionDraftPrompt, sessions, setActiveSession, setSessionDraftPrompt, setSessions, setSessionStatus } from "../../../src/stores/session-state"
@@ -25,9 +26,11 @@ const params = new URLSearchParams(location.search)
 const interactive = params.has("ui")
 const title = params.get("title") ?? (interactive ? "Feature ABC — משימה 42" : "Conversation")
 const path = "/voice-fixture"
-const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false }
+const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false, historyReads: 0 }
 let firstPrompt: "start" | "delay" | "fail" | "holdAck" = "start"
 let releaseAck: (() => void) | undefined
+let latestPage: Promise<void> | undefined
+let releaseHistory: (() => void) | undefined
 let microphone: MediaStreamTrack | undefined
 let eventId = 0
 let releaseAdmission: (() => void) | undefined
@@ -39,6 +42,8 @@ const question = { id: "question", sessionID: sessionId, title: "Native question
   state: { status: "pending" } }
 const client: any = {
   session: {
+    switchAgent: async () => {},
+    switchModel: async () => {},
     instructions: { entry: {
       remove: async () => {},
       put: async () => { if (info.admissionHeld) await new Promise<void>(resolve => { releaseAdmission = resolve }) },
@@ -62,7 +67,13 @@ const client: any = {
     }),
     inbox: { list: async () => ({ data: [] }) },
   },
-  message: { list: async () => ({ data: [], cursor: {} }) },
+  message: { list: async () => {
+    if (!latestPage) return { data: [], cursor: {} }
+    info.historyReads++
+    await latestPage
+    return { data: [{ id: "latest-assistant", type: "assistant", agent: "build",
+      model: { providerID: "fixture", id: "fixture" }, time: { created: 10 }, content: [] }], cursor: {} }
+  } },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
@@ -122,6 +133,16 @@ function Fixture() {
     setFirstPrompt: (value: typeof firstPrompt) => { firstPrompt = value },
     waitingAck: () => Boolean(releaseAck),
     releaseAck: () => releaseAck?.(),
+    openHistory: () => {
+      for (let index = 0; index < MESSAGE_WINDOW_PAGE_SIZE - 1; index++) {
+        store.upsertMessage({ id: `older-${index}`, sessionId, role: "assistant",
+          status: "complete", parts: [], createdAt: index + 2, updatedAt: index + 2 })
+      }
+      store.setMessageWindow(sessionId, { kind: "history", resumeCursor: "older", newerCursors: [null] })
+      latestPage = new Promise(resolve => { releaseHistory = resolve })
+    },
+    releaseHistory: () => releaseHistory?.(),
+    history: () => ({ kind: store.getMessageWindow(sessionId)?.kind, ids: store.getSessionMessageIds(sessionId) }),
     startExecution: () => emit("session.execution.started", {}),
     finishExecution: () => emit("session.execution.succeeded", {}),
     resyncIdle: async () => {

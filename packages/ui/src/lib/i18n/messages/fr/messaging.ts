@@ -348,6 +348,7 @@ export const messagingMessages = {
   "voice.command.secureContext": "Une connexion sécurisée est nécessaire",
   "voice.command.activeSession": "Session active",
   "voice.command.loading": "Vérification des réglages vocaux…",
+  "voice.command.capabilitiesError": "Impossible de vérifier les réglages vocaux",
   "voice.command.setupPlayback": "Configurer la lecture audio",
   "voice.command.unsupportedFormat": "Format de lecture non pris en charge",
   "voice.command.noSession": "Sélectionner une session",

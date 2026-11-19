@@ -345,6 +345,7 @@ export const messagingMessages = {
   "voice.command.secureContext": "Eine sichere Verbindung ist erforderlich",
   "voice.command.activeSession": "Aktive Sitzung",
   "voice.command.loading": "Spracheinstellungen werden geprüft…",
+  "voice.command.capabilitiesError": "Spracheinstellungen konnten nicht geprüft werden",
   "voice.command.setupPlayback": "Wiedergabe einrichten",
   "voice.command.unsupportedFormat": "Wiedergabeformat wird nicht unterstützt",
   "voice.command.noSession": "Sitzung auswählen",
