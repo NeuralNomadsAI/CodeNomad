@@ -72,4 +72,6 @@ Yolo'nun kapatılması halihazırda kabul edilmiş bir kararı iptal etmez veya 
 1. Bağlantı göstergesini kontrol edin ve aynı arka uca/projeye yeniden bağlanın.
 2. Kurtarmanın bekleyen yerel istekleri uzlaştırmasına izin verin; Kapsamın eksik olması durumunda bilinen talepler ve taslaklar korunur.
 
+Art arda iki eksik denemeden sonra, tam kurtarma gerçekleşene kadar her proje tarayıcı sekmesi başına yalnızca bir kurtarma uyarısı gösterir.
+
 Eksik bir yanıt, yetkili bir boş kuyruk değildir ve uyarı, bir istemin, yanıtın veya onayın tekrarlanmasına izin vermez. Yapılandırmanın yeniden yüklenmesi yerel Formları/izinleri iptal edebilir; bunu rutin bir istek yenileme düğmesi olarak kullanmayın. Bkz. [Sorun Giderme](troubleshooting.md) ve [OpenCode kurulumu](opencode.md).

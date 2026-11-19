@@ -7,12 +7,14 @@ import { rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Fastify from "fastify"
+import pino from "pino"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { rememberRuntime } from "../../opencode/compatibility/runtime"
 import { registerPendingRequestRoutes, type PendingRequestsRouteDeps } from "./pending-requests"
 import { observePendingDiscovery, markLoadedPendingSupported, deferPendingDiscovery } from "../../workspaces/pending-discovery"
 import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
+import { READINESS_WAIT_MS } from "../../opencode/desktop-plugin-readiness"
 
 const git = promisify(execFile)
 const permission = { id: "permission", sessionID: "background", action: "read", resources: ["file"] }
@@ -76,8 +78,9 @@ async function harness(options: Pick<PendingRequestsRouteDeps, "readGitCommonDir
       return state.allowed.has(location.directory) && location.workspaceID === undefined
     },
   }
-  const app = Fastify(logs ? { logger: { stream: { write: (line: string) => { logs.push(line) } } } } : {})
-  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { captureDisplay: directories => () => !directories.some(identity => state.blocked || state.blockedIdentities.has(identity)), isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) }, ...deps })
+  const app = Fastify({ logger: false })
+  const logger = pino({ enabled: Boolean(logs) }, { write: (line: string) => { logs?.push(line) } })
+  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { captureDisplay: directories => () => !directories.some(identity => state.blocked || state.blockedIdentities.has(identity)), isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) }, logger, ...deps })
   const url = (directories = [root], optional: string[] = []) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams([
     ...directories.map((directory) => ["directories", directory]), ...optional.map((directory) => ["optionalDirectories", directory]),
   ])}`
@@ -212,8 +215,86 @@ test("recovery failures log their phase without native request contents", async 
     assert.ok(diagnostic.elapsedMs >= 0)
     assert.equal(JSON.stringify(diagnostic).includes("PRIVATE"), false)
     assert.equal(diagnostic.err, undefined)
+    logs.length = 0
+    h.manager.getSharedServiceConnection = async () => undefined
+    const disconnected = await h.app.inject({ url: h.url() })
+    assert.equal(disconnected.statusCode, 503)
+    assert.match(String(disconnected.headers["server-timing"]), /connection;dur=\d+/)
+    assert.equal(logs.map(line => JSON.parse(line)).find(line => line.msg === "Pending request recovery failed")?.phase, "connection")
   } finally { await h.cleanup() }
 })
+
+test("ownership revalidation timing excludes plugin activation", async (t) => {
+  const h = await harness()
+  let now = Date.now()
+  t.mock.method(Date, "now", () => now)
+  try {
+    const plugin = h.connection.client.plugin
+    const list = plugin.list
+    plugin.list = async (...args) => {
+      const catalogue = await list(...args)
+      now += 120
+      h.state.allowed.delete(h.root)
+      return catalogue
+    }
+    const response = await h.app.inject({ url: h.url() })
+    assert.equal(response.statusCode, 503)
+    assert.match(String(response.headers["server-timing"]), /plugin-activation;dur=120, ownership-revalidation;dur=0$/)
+  } finally { await h.cleanup() }
+})
+
+for (const deadlineFirst of [true, false]) test(`failure logging follows the first abort (${deadlineFirst ? "deadline" : "client close"})`, async (t) => {
+  const logs: string[] = []
+  const h = await harness({ logs })
+  const deadline = new AbortController()
+  t.mock.method(AbortSignal, "timeout", () => deadline.signal)
+  let close: () => void
+  h.app.addHook("onRequest", async (_request, reply) => { close = () => { reply.raw.emit("close") } })
+  h.connection.fetch = async (_url, options) => {
+    const expire = () => deadline.abort(new DOMException("Deadline exceeded", "TimeoutError"))
+    if (deadlineFirst) { expire(); close() }
+    else { close(); expire() }
+    options?.signal?.throwIfAborted()
+    assert.fail("the native read should be cancelled")
+  }
+  try {
+    await assert.rejects(h.app.inject({ url: h.url() }), { code: "LIGHT_ECONNRESET" })
+    const diagnostic = logs.map(line => JSON.parse(line)).find(line => line.msg === "Pending request recovery failed")
+    assert.equal(diagnostic?.timedOut, deadlineFirst ? true : undefined)
+  } finally { await h.cleanup() }
+})
+
+for (const closeOrder of ["none", "after timeout", "before timeout"] as const) {
+  test(`catalogue activation reports its first abort (${closeOrder})`, async (t) => {
+    const logs: string[] = []
+    const h = await harness({ logs })
+    const activationDeadline = new AbortController()
+    const timeout = AbortSignal.timeout
+    t.mock.method(AbortSignal, "timeout", (ms: number) =>
+      ms === READINESS_WAIT_MS ? activationDeadline.signal : timeout(ms))
+    let close: () => void
+    h.app.addHook("onRequest", async (_request, reply) => { close = () => { reply.raw.emit("close") } })
+    h.connection.client.plugin.list = async (_input, options) => {
+      if (closeOrder === "before timeout") close()
+      activationDeadline.abort(new DOMException("Catalogue activation deadline", "TimeoutError"))
+      if (closeOrder === "after timeout") close()
+      options?.signal?.throwIfAborted()
+      assert.fail("activation should be cancelled")
+    }
+    try {
+      const response = h.app.inject({ url: h.url() })
+      if (closeOrder === "none") {
+        const failure = await response
+        assert.equal(failure.statusCode, 503)
+        assert.equal(failure.json().code, "timeout")
+      } else await assert.rejects(response, { code: "LIGHT_ECONNRESET" })
+      const diagnostic = logs.map(line => JSON.parse(line)).find(line => line.msg === "Pending request recovery failed")
+      assert.equal(diagnostic?.phase, closeOrder === "before timeout" ? undefined : "plugin-activation")
+      assert.equal(diagnostic?.timedOut, closeOrder === "before timeout" ? undefined : true)
+      assert.deepEqual(h.state.calls, [])
+    } finally { await h.cleanup() }
+  })
+}
 
 test("final publication revalidates root, candidate and submitted aliases after placement checks", async () => {
   for (const changed of ["root", "candidate", "alias"] as const) {
@@ -413,7 +494,7 @@ test("a deleting worktree withholds only its own coverage while siblings recover
     assert.equal(response.statusCode, 200, response.body)
     assert.deepEqual(response.json().directories.map((entry: any) => [entry.directory, entry.status]), [[h.root, "ok"], [h.subdirectory, "error"]])
     assert.deepEqual(response.json().directories[0].locations[0].permissions, [permission])
-    assert.match(String(response.headers["server-timing"]), /^ownership;dur=\d+, plugin-activation;dur=\d+, native;dur=\d+, placement;dur=\d+, revalidation;dur=\d+$/)
+    assert.match(String(response.headers["server-timing"]), /^connection;dur=\d+, ownership;dur=\d+, plugin-activation;dur=\d+, ownership-revalidation;dur=\d+, native;dur=\d+, placement;dur=\d+, revalidation;dur=\d+$/)
     h.state.result = { data: [complete(h.root)] }
     const blocked = await h.app.inject({ url: h.url([h.root, h.subdirectory]) })
     assert.deepEqual(blocked.json().directories.map((entry: any) => [entry.directory, entry.status]), [[h.subdirectory, "error"], [h.root, "ok"]])
