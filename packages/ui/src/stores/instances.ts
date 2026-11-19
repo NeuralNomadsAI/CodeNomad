@@ -1060,7 +1060,7 @@ async function runPendingRequestSync(
   generation: number,
   token: { cancelled: boolean },
   targetLocations?: RequestLocation[],
-): Promise<void> {
+): Promise<(() => void) | undefined> {
   const startingClient = instances().get(instanceId)?.client
   for (let attempt = 0; attempt < 3 && !token.cancelled; attempt += 1) {
     if (!targetLocations && deferPendingDiscovery(instanceId)) return
@@ -1095,11 +1095,15 @@ async function runPendingRequestSync(
             // Only proven exclusions can account for folders outside the scan.
             // This probe does not publish queue data or change the scan outcome.
             const probeCurrent = () => isCurrent() && notices.current()
-            const proof = await readPendingRequestSnapshot(instanceId, probeCurrent, {
-              reconcileInventory: false, onlyDirectories: missing, noticeOnly: true,
-            }).catch(() => undefined)
-            if (probeCurrent() && proof?.supported) {
-              notices.release([...covered, ...proof.directories.filter(entry => entry.status === "excluded").map(entry => entry.directory)])
+            return () => {
+              if (!probeCurrent()) return
+              void readPendingRequestSnapshot(instanceId, probeCurrent, {
+                reconcileInventory: false, onlyDirectories: missing, noticeOnly: true,
+              }).then(proof => {
+                if (probeCurrent() && proof.supported) {
+                  notices.release([...covered, ...proof.directories.filter(entry => entry.status === "excluded").map(entry => entry.directory)])
+                }
+              }, () => {})
             }
           }
         }
@@ -1144,6 +1148,9 @@ function syncPendingRequests(
   if (!targetLocations) deferredPendingDiscovery.delete(instanceId)
   const promise = runPendingRequestSync(instanceId, generation, token, targetLocations).finally(() => {
     if (pendingRequestSyncs.get(instanceId)?.promise === promise) pendingRequestSyncs.delete(instanceId)
+  }).then(checkNotice => {
+    // Start notice-only work after releasing the shared recovery slot.
+    checkNotice?.()
   })
   pendingRequestSyncs.set(instanceId, { generation, targeted: Boolean(targetLocations), token, promise })
   registerInvalidation?.(() => {

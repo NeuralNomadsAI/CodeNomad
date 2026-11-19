@@ -699,10 +699,14 @@ test("a scan started before a project warning cannot rearm it", async () => {
   } finally { reopened.cleanup() }
 })
 
-test("a verified exclusion of a removed checkout lets a later failure warn", async () => {
-  const h = harness("/pending-removed-coverage")
+for (const refreshDuringProbe of [false, true]) test(`a removed checkout is checked independently of recovery (${refreshDuringProbe ? "concurrent refresh" : "re-arm warning"})`, { timeout: 3_000 }, async () => {
+  const project = refreshDuringProbe ? "pending-probe-refresh" : "pending-removed-coverage"
+  const h = harness(`/${project}`)
   const removed = `${h.directory}/removed-checkout`
   const worktrees = serverApi.fetchWorktrees
+  const probeStarted = deferred<AbortSignal | undefined>()
+  const probe = deferred<WorkspacePendingRequestsResponse>()
+  let recovery: Promise<void> | undefined
   try {
     serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "removed", directory: removed, kind: "worktree" }] })
     await reloadWorktrees(h.id)
@@ -713,21 +717,39 @@ test("a verified exclusion of a removed checkout lets a later failure warn", asy
     })
     await assert.rejects(syncPendingRequests(h.id))
     await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings("pending-removed-coverage").length, 1)
+    assert.equal(recoveryWarnings(project).length, 1)
     serverApi.fetchWorktrees = async () => ({ worktrees: [] })
     await reloadWorktrees(h.id, true)
 
     let exclusions = 0
-    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+    let pending = false
+    serverApi.getPendingRequests = async (_id, directories, signal, optional) => {
       if (directories.includes(removed)) {
         assert.ok(optional?.includes(removed))
         exclusions++
+        if (refreshDuringProbe) {
+          probeStarted.resolve(signal)
+          return probe.promise
+        }
       }
       return { supported: true, directories: directories.map(directory => directory === removed
         ? { directory, status: "excluded" }
-        : { directory, status: "ok", locations: [emptyLocation(directory)] }) }
+        : { directory, status: "ok", locations: [{ ...emptyLocation(directory), permissions: pending ? [permission("appeared")] : [] }] }) }
     }
-    await syncPendingRequests(h.id)
+    recovery = syncPendingRequests(h.id)
+    if (refreshDuringProbe) {
+      const signal = await probeStarted.promise
+      pending = true
+      const refreshed = syncPendingRequests(h.id)
+      assert.notEqual(refreshed, recovery, "a real refresh must not join a toast-only check")
+      await refreshed
+      assert.deepEqual(getPermissionQueue(h.id).map(entry => entry.id), ["appeared"])
+      removeInstance(h.id, { authoritative: false })
+      assert.equal(signal?.aborted, true, "workspace removal still cancels the pending probe")
+      return
+    }
+    await recovery
+    await new Promise<void>(resolve => setImmediate(resolve))
     const next = `${h.directory}/next-checkout`
     serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "next", directory: next, kind: "worktree" }] })
     await reloadWorktrees(h.id, true)
@@ -738,9 +760,14 @@ test("a verified exclusion of a removed checkout lets a later failure warn", asy
     })
     await assert.rejects(syncPendingRequests(h.id))
     await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings("pending-removed-coverage").length, 2)
+    assert.equal(recoveryWarnings(project).length, 2)
     assert.equal(exclusions, 1)
-  } finally { serverApi.fetchWorktrees = worktrees; h.cleanup() }
+  } finally {
+    probe.resolve({ supported: true, directories: [{ directory: removed, status: "excluded" }] })
+    await recovery?.catch(() => {})
+    serverApi.fetchWorktrees = worktrees
+    h.cleanup()
+  }
 })
 
 test("an unavailable recovery plugin is one notice across reconnects and projects until recovery succeeds", async () => {
