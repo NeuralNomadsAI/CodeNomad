@@ -571,6 +571,8 @@ interface OrderedMissionSource {
   /** Stream plan changes and the source keys of any before/after text. Use only
    * if finish returns a live map. Resolve old text by point-reading those keys. */
   onChange?: (change: MissionPlanChange, source: MissionChangeSource) => void
+  onTask?: (key: string, eventID: string) => void
+  onReport?: (id: string, eventID: string) => void
 }
 
 interface MissionChangeSource {
@@ -600,7 +602,7 @@ export function orderedMissionLookups(batch: readonly MissionEvent[]) {
  * A failed append invalidates the fold. After interruption, replay the source;
  * position alone is insufficient to resume without the correlated reducer state. */
 export function createOrderedMissionFold(source: OrderedMissionSource) {
-  const { created, readEvent, readReport, onChange } = source
+  const { created, readEvent, readReport, onChange, onTask, onReport } = source
   const creationID = created?.id
   const scope = created && { missionID: created.missionID, projectID: created.projectID }
   const lifecycle = orderedLifecycle(readEvent)
@@ -621,7 +623,7 @@ export function createOrderedMissionFold(source: OrderedMissionSource) {
     if (change.notes) source.notes = { before: notesSource!, after: event.id }
     if (event.type !== "mission.revised" || event.notesSpecified) notesSource = event.id
     onChange(change, source)
-  })
+  }, onTask)
 
   function append(batch: readonly MissionEvent[]) {
     if (closed || busy) throw new Error("Ordered mission fold is closed or busy")
@@ -654,6 +656,7 @@ export function createOrderedMissionFold(source: OrderedMissionSource) {
         if (event.type === "task.reported") {
           const id = event.report.id
           const accepted = reducer?.lastReport() === event.report
+          if (accepted) onReport?.(id, event.id)
           if (!notificationUnavailable || (accepted && isCoordinatorNotificationReport(event.report))) {
             const slot = readEvent(reportNotificationID(event.missionID, id))
             if (slot) {
@@ -670,14 +673,11 @@ export function createOrderedMissionFold(source: OrderedMissionSource) {
       busy = false
     }
   }
-  function finish() {
+  function project() {
     if (closed || busy) throw new Error("Ordered mission fold is closed or busy")
-    closed = true
     if (creationID !== undefined && !observedCreation) throw new Error("Missing ordered mission range creation")
     const control = lifecycle.project()
     const mission = reducer?.finish(control, id => admitted.has(id), notificationUnavailable)
-    reducer = undefined
-    admitted.clear()
     return {
       mission,
       discardedEvents: !scope ? revision : deleted ? 0 : discarded.count,
@@ -685,7 +685,14 @@ export function createOrderedMissionFold(source: OrderedMissionSource) {
       ...(notificationUnavailable ? { notificationUnavailable: true } : {}),
     }
   }
-  return { append, finish }
+  function finish() {
+    const result = project()
+    closed = true
+    reducer = undefined
+    admitted.clear()
+    return result
+  }
+  return { append, finish, project, inputSources: () => ({ objective: objectiveSource, notes: notesSource }) }
 }
 
 function reduceMission(events: readonly MissionEvent[], discarded: { count: number }, changes?: MissionPlanChange[]): MissionMap | undefined {
@@ -716,7 +723,8 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
  * derived tasks, so `finish` consumes this reducer. */
 function missionMapReducer({ objective: initialObjective, notes: initialNotes, ...created }: MissionCreatedEvent, discarded: { count: number },
   lifecycleBefore: () => ReturnType<typeof projectLifecycle>,
-  onChange: (change: MissionPlanChange, event: MissionPreparedEvent | MissionUpdatedEvent | MissionRevisedEvent) => void) {
+  onChange: (change: MissionPlanChange, event: MissionPreparedEvent | MissionUpdatedEvent | MissionRevisedEvent) => void,
+  onTask?: (key: string, eventID: string) => void) {
   const tasks = new Map<string, MissionTask>()
   const nativeCallHistory = new Map<string, { toolCalls: Set<string>; messages: Set<string>; calls: MissionNativeBinding[] }>()
   // An old completed report cannot settle a later explicitly started call.
@@ -846,6 +854,7 @@ function missionMapReducer({ objective: initialObjective, notes: initialNotes, .
           createdAt: event.createdAt,
           updatedAt: event.createdAt,
         })
+        onTask?.(added.key, event.id)
       }
       recordChange({
         revision: event.expectedRevision + 1,
@@ -875,6 +884,7 @@ function missionMapReducer({ objective: initialObjective, notes: initialNotes, .
         createdAt: event.createdAt,
         updatedAt: event.createdAt,
       })
+      onTask?.(event.task.key, event.id)
       return
     }
     if (event.type === "task.native-bound") {
@@ -1061,7 +1071,9 @@ function missionMapReducer({ objective: initialObjective, notes: initialNotes, .
 
   function project(lifecycle: ReturnType<typeof projectLifecycle>, admitted: (reportID: string) => boolean,
     notificationUnavailable: boolean): MissionMap {
-    for (const task of tasks.values()) {
+    const projectedTasks = [...tasks.values()].map(task => ({ ...task }))
+    let projectedStatus = status
+    for (const task of projectedTasks) {
       task.outstandingExecution = task.status === "withdrawn" && Boolean(task.nativeBinding
         ? task.nativeExecution?.observationConflict || task.nativeExecution?.launch && task.nativeExecution.launch.mode !== "foreground" ? hasUnsettledNativeExecution(task)
           : !task.nativeExecution?.ended && !nativeReportedExecutions.has(task.key)
@@ -1076,8 +1088,8 @@ function missionMapReducer({ objective: initialObjective, notes: initialNotes, .
     // not rewrite the already recorded terminal result. A prior Stop remains terminal.
     const finishedBeforeStop = finishIndex >= 0 && finishIndex < firstStop
     if (lifecycle.runState === "stopped" && !finishedBeforeStop) {
-      status = "stopped"
-      for (const task of tasks.values()) {
+      projectedStatus = "stopped"
+      for (const task of projectedTasks) {
         if (["ready", "blocked", "queued", "dispatching"].includes(task.status)) task.status = "withdrawn"
         task.outstandingExecution = Boolean(task.nativeBinding
           ? task.nativeExecution?.observationConflict || task.nativeExecution?.launch && task.nativeExecution.launch.mode !== "foreground" ? hasUnsettledNativeExecution(task)
@@ -1086,7 +1098,7 @@ function missionMapReducer({ objective: initialObjective, notes: initialNotes, .
             && !task.report && !task.lateReports?.length)
       }
     }
-    const taskList = [...tasks.values()].sort((left, right) => left.createdAt - right.createdAt || left.key.localeCompare(right.key))
+    const taskList = projectedTasks.sort((left, right) => left.createdAt - right.createdAt || left.key.localeCompare(right.key))
     const notificationStatus = (report: MissionReport): MissionReport => report.delivery === "coordinator-readout" ? { ...report } : ({
       ...report,
       notificationStatus: isCoordinatorNotificationReport(report)
@@ -1113,7 +1125,7 @@ function missionMapReducer({ objective: initialObjective, notes: initialNotes, .
       taskMode: created.taskMode ?? "native",
       ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
       ...(created.creationDefaults === undefined ? {} : { creationDefaults: structuredClone(created.creationDefaults) }),
-      status,
+      status: projectedStatus,
       ...lifecycle,
       ...(notificationUnavailable ? { notificationUnavailable: true } : {}),
       summary: finish?.summary,
@@ -1121,7 +1133,7 @@ function missionMapReducer({ objective: initialObjective, notes: initialNotes, .
       coordinatorSessionId: created.coordinator.sessionID,
       actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),
       tasks: taskList,
-      reports: reports.sort((left, right) => left.createdAt - right.createdAt).map(notificationStatus),
+      reports: reports.slice().sort((left, right) => left.createdAt - right.createdAt).map(notificationStatus),
       frontier: taskList.filter((task) => task.status === "ready").map((task) => task.key),
       claims: taskList.filter((task) => task.status === "dispatching" || task.status === "queued").map((task) => task.key),
       createdAt: created.createdAt,
