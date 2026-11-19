@@ -102,7 +102,7 @@ async function fixture(t: TestContext, options: { routeBudgetMs?: number; ranked
   const deps = { workspaceManager: manager, worktreeDeletionFence: fence, store, excludeDesignFolder: async () => "excluded" as const }
   registerSessionPruningRoutes(app, deps); registerImagesConversationRoute(app, deps); registerPanelExtensionAssetRoutes(app, deps)
   registerPanelExtensionApi4Routes(app, { ...deps, ...options, imageSettings: { read: async () => { throw new Error("Not requested") } } })
-  registerPendingRequestRoutes(app, { ...deps, readGitCommonDirectory: async () => "fixture-common" })
+  registerPendingRequestRoutes(app, { ...deps, logger: app.log, readGitCommonDirectory: async () => "fixture-common" })
   t.after(async () => {
     await Promise.allSettled(preparations)
     await app.close()

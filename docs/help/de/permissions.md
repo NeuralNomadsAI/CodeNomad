@@ -72,4 +72,6 @@ Yolo auszuschalten widerruft keine bereits angenommene Entscheidung und macht ke
 1. Prüfen Sie die Verbindungsanzeige und verbinden Sie sich erneut mit demselben Backend/Projekt.
 2. Lassen Sie die Wiederherstellung offene native Anfragen abgleichen; bekannte Anfragen und Entwürfe bleiben bei unvollständiger Abdeckung erhalten.
 
+Nach zwei unvollständigen Versuchen in Folge zeigt jedes Projekt pro Browser-Tab nur eine Warnung an, bis die Wiederherstellung vollständig gelingt.
+
 Eine unvollständige Antwort ist keine maßgebliche leere Warteschlange, und die Warnung erlaubt keine Wiederholung eines Prompts, einer Antwort oder Freigabe. Konfigurationsneuladen kann native Forms/Berechtigungen abbrechen; verwenden Sie es nicht als routinemäßige Anfrageaktualisierung. Siehe [Fehlerbehebung](troubleshooting.md) und [OpenCode-Einrichtung](opencode.md).

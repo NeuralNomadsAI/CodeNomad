@@ -406,7 +406,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     connectionManager: deps.clientConnectionManager,
   })
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
-  registerPendingRequestRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
+  registerPendingRequestRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,

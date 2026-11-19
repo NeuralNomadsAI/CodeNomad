@@ -72,4 +72,6 @@ Desactivar Yolo no revoca una decisión ya aceptada ni revierte efectos sobre ar
 1. Comprueba el indicador de conexión y reconecta al mismo backend/proyecto.
 2. Deja que la recuperación reconcilie las solicitudes nativas pendientes; las solicitudes conocidas y los borradores se conservan si la cobertura es incompleta.
 
+Tras dos intentos incompletos consecutivos, cada proyecto muestra un solo aviso de recuperación por pestaña del navegador hasta que la recuperación se complete.
+
 Una respuesta incompleta no es una cola vacía autoritativa, y la advertencia no autoriza a repetir un mensaje, una respuesta o una aprobación. Recargar la configuración puede cancelar formularios/permisos nativos; no lo uses como botón habitual para actualizar solicitudes. Consulta [Solución de problemas](troubleshooting.md) y [configuración de OpenCode](opencode.md).

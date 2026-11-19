@@ -36,13 +36,12 @@ const deferred = <T>() => {
   return { promise, resolve }
 }
 const emptyLocation = (directory: string) => ({ location: { directory }, permissions: [], forms: [] })
-// Harness instances live in /pending-fixture, so the warning title names that project.
 // Newest first, like the notification history.
-const recoveryWarnings = () => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryIncomplete.title", { workspace: "pending-fixture" }))
+const recoveryWarnings = (workspace = "pending-fixture") => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryIncomplete.title", { workspace }))
 
 let sequence = 0
-function harness() {
-  const id = `pending-fixture-${++sequence}`, directory = "/pending-fixture"
+function harness(directory = "/pending-fixture") {
+  const id = `pending-fixture-${++sequence}`
   const calls: string[] = []
   const client = {
     permission: { request: { list: async ({ location }: any) => { calls.push(`permission:${location.directory}`); return { location, data: [] } } } },
@@ -512,8 +511,8 @@ test("a failed partial family move retains source/target authority until complet
 })
 
 test("the recovery warning needs consecutive incomplete attempts and a success re-arms it", async () => {
-  const h = harness()
-  const warnings = () => recoveryWarnings().length
+  const h = harness("/pending-warning")
+  const warnings = () => recoveryWarnings("pending-warning").length
   try {
     const before = warnings()
     const fail = async () => {
@@ -542,7 +541,8 @@ test("the recovery warning needs consecutive incomplete attempts and a success r
 })
 
 test("the recovery warning names its cause, the folders and the sessions that required them", async () => {
-  const h = harness()
+  const h = harness("/pending-warning-details")
+  const warnings = () => recoveryWarnings("pending-warning-details")
   try {
     // The live case: an active session in a checkout the server cannot verify for this project.
     const foreign = `${h.directory}/.codenomad/worktrees/prompt-replay-yield`
@@ -552,11 +552,11 @@ test("the recovery warning names its cause, the folders and the sessions that re
     serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => directory === foreign
       ? { directory, status: "error" as const, reason: "not-owned" as const }
       : { directory, status: "ok" as const, locations: [emptyLocation(directory)] }) })
-    const before = recoveryWarnings().length
+    const before = warnings().length
     await assert.rejects(syncPendingRequests(h.id))
     await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings().length, before + 1)
-    assert.equal(recoveryWarnings()[0]?.message, `${tGlobal("interruption.recoveryIssue.notOwned", { directories: "prompt-replay-yield" })} ${
+    assert.equal(warnings().length, before + 1)
+    assert.equal(warnings()[0]?.message, `${tGlobal("interruption.recoveryIssue.notOwned", { directories: "prompt-replay-yield" })} ${
       tGlobal("interruption.recoverySessions", { sessions: "ISSUES Codenomad" })}`, "only the session that made the folder required is named")
 
     // A success re-arms the warning; a whole failed batch then names each folder with its own cause.
@@ -565,16 +565,17 @@ test("the recovery warning names its cause, the folders and the sessions that re
     serverApi.getPendingRequests = async () => { throw new DOMException("aborted", "AbortError") }
     await assert.rejects(syncPendingRequests(h.id))
     await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings().length, before + 2)
-    const message = recoveryWarnings()[0]?.message ?? ""
+    assert.equal(warnings().length, before + 2)
+    const message = warnings()[0]?.message ?? ""
     const [timeoutPrefix] = tGlobal("interruption.recoveryIssue.timeout", { directories: "\u0000" }).split("\u0000")
     assert(message.startsWith(timeoutPrefix), message)
-    for (const name of ["pending-fixture", "prompt-replay-yield", "ISSUES Codenomad"]) assert(message.includes(name), message)
+    for (const name of ["pending-warning-details", "prompt-replay-yield", "ISSUES Codenomad"]) assert(message.includes(name), message)
   } finally { h.cleanup() }
 })
 
 test("a refused batch shows each folder's real reason and leaves excluded history out", async () => {
-  const h = harness()
+  const h = harness("/pending-refused")
+  const warnings = () => recoveryWarnings("pending-refused")
   try {
     const gone = `${h.directory}/.codenomad/worktrees/gone`, history = "/old-history"
     const active = createClientSession({ id: "active", title: "Active", location: { directory: gone }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, "working")
@@ -585,15 +586,59 @@ test("a refused batch shows each folder's real reason and leaves excluded histor
         { directory: gone, status: "error", reason: "missing" }, { directory: history, status: "excluded" },
       ] })
     }
-    const before = recoveryWarnings().length
+    const before = warnings().length
     await assert.rejects(syncPendingRequests(h.id))
     await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings().length, before + 1)
-    const message = recoveryWarnings()[0]?.message ?? ""
+    assert.equal(warnings().length, before + 1)
+    const message = warnings()[0]?.message ?? ""
     assert(message.includes(tGlobal("interruption.recoveryIssue.missing", { directories: "gone" })), message)
     assert(!message.includes("old-history"), "an excluded optional hint is not reported")
     assert(!message.includes(tGlobal("interruption.recoveryIssue.notOwned", { directories: "gone" })), "not mislabelled as outside the project")
   } finally { h.cleanup() }
+})
+
+test("a project's repeated recovery warnings are deduplicated as failed batches change across reopens", async () => {
+  const directory = "/pending-reopened"
+  const warnings = () => recoveryWarnings("pending-reopened")
+  const recover = async (id: string) => {
+    serverApi.getPendingRequests = async (_id, directories) => ({
+      supported: true, directories: directories.map(directory => ({ directory, status: "ok", locations: [emptyLocation(directory)] })),
+    })
+    await syncPendingRequests(id)
+  }
+  const failTwice = async (h: ReturnType<typeof harness>, checkout: string, code?: "timeout") => {
+    const active = createClientSession({
+      id: "active", title: checkout, location: { directory: `${h.directory}/${checkout}` }, time: { created: 1, updated: 1 },
+    } as any, h.id, "", undefined, "working")
+    setSessions(previous => new Map(previous).set(h.id, new Map([[active.id, active]])))
+    serverApi.getPendingRequests = async () => { throw new HttpResponseError("Unavailable", 503, null, code) }
+    await assert.rejects(syncPendingRequests(h.id))
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+  }
+
+  const first = harness(directory)
+  try {
+    await failTwice(first, "first-checkout")
+    assert.equal(warnings().length, 1)
+    assert.match(warnings()[0]?.message ?? "", /HTTP 503.*first-checkout|first-checkout.*HTTP 503/)
+  } finally { first.cleanup() }
+
+  const other = harness("/pending-other-project")
+  try {
+    await failTwice(other, "first-checkout")
+    assert.equal(recoveryWarnings("pending-other-project").length, 1, "another project can warn independently")
+    await recover(other.id)
+  } finally { other.cleanup() }
+
+  const reopened = harness(directory)
+  try {
+    await failTwice(reopened, "second-checkout", "timeout")
+    assert.equal(warnings().length, 1, "changing folders or failure details does not start a new incident")
+    await recover(reopened.id)
+    await failTwice(reopened, "second-checkout", "timeout")
+    assert.equal(warnings().length, 2, "complete recovery re-arms the project warning")
+  } finally { reopened.cleanup() }
 })
 
 test("an unavailable recovery plugin is one notice across reconnects and projects until recovery succeeds", async () => {

@@ -38,7 +38,7 @@ import { clearPendingSessionMove } from "./session-events"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
-import { claimPendingRecoveryNotice, pendingRecoveryNoticeKey, releasePendingRecoveryNotices } from "./pending-recovery-notices"
+import { claimPendingRecoveryNotice, releasePendingRecoveryNotices } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
@@ -293,8 +293,9 @@ const failedPendingRecoveries = new Map<string, number>()
 // Warn only when recovery stays incomplete across consecutive attempts.
 const PENDING_RECOVERY_WARNING_ATTEMPTS = 2
 function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause): void {
-  const instance = instances().get(instanceId)
   log.warn("Pending request recovery is incomplete", { instanceId, cause })
+  if (!claimPendingRecoveryNotice(pendingRecoveryProject(instanceId), cause.kind)) return
+  const instance = instances().get(instanceId)
   // Name the sessions that made these directories required: active or holding a request.
   const sessionTitlesIn = (directories: readonly string[]) => {
     const wanted = new Set(directories.map(normalizeWorkspacePath))
@@ -304,7 +305,6 @@ function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause):
       .map((session) => session.title || session.id)
   }
   const { title, message } = describePendingRecovery(cause, instance ? getInstanceLabel(instance) : instanceId, sessionTitlesIn, tGlobal)
-  if (!claimPendingRecoveryNotice(pendingRecoveryNoticeKey(pendingRecoveryProject(instanceId), cause, message))) return
   // A project diagnostic, not a request itself: it keeps its bubble and History entry.
   showToastNotification({ category: "projects", title, message, variant: "warning" })
 }

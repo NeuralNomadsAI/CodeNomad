@@ -7,6 +7,7 @@ import { rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Fastify from "fastify"
+import pino from "pino"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { rememberRuntime } from "../../opencode/compatibility/runtime"
@@ -69,8 +70,9 @@ async function harness(options: Pick<PendingRequestsRouteDeps, "readGitCommonDir
       return state.allowed.has(location.directory) && location.workspaceID === undefined
     },
   }
-  const app = Fastify(logs ? { logger: { stream: { write: (line: string) => { logs.push(line) } } } } : {})
-  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { captureDisplay: directories => () => !directories.some(identity => state.blocked || state.blockedIdentities.has(identity)), isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) }, ...deps })
+  const app = Fastify({ logger: false })
+  const logger = pino({ enabled: Boolean(logs) }, { write: (line: string) => { logs?.push(line) } })
+  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { captureDisplay: directories => () => !directories.some(identity => state.blocked || state.blockedIdentities.has(identity)), isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) }, logger, ...deps })
   const url = (directories = [root], optional: string[] = []) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams([
     ...directories.map((directory) => ["directories", directory]), ...optional.map((directory) => ["optionalDirectories", directory]),
   ])}`
@@ -187,6 +189,12 @@ test("recovery failures log their phase without native request contents", async 
     assert.ok(diagnostic.elapsedMs >= 0)
     assert.equal(JSON.stringify(diagnostic).includes("PRIVATE"), false)
     assert.equal(diagnostic.err, undefined)
+    logs.length = 0
+    h.manager.getSharedServiceConnection = async () => undefined
+    const disconnected = await h.app.inject({ url: h.url() })
+    assert.equal(disconnected.statusCode, 503)
+    assert.match(String(disconnected.headers["server-timing"]), /connection;dur=\d+/)
+    assert.equal(logs.map(line => JSON.parse(line)).find(line => line.msg === "Pending request recovery failed")?.phase, "connection")
   } finally { await h.cleanup() }
 })
 
