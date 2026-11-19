@@ -74,6 +74,7 @@ test("favorites persist, keep requests first and synchronize over the real route
   const isProtected = registerSessionFavoritesRoutes(app, { settings, eventBus: bus, workspaceManager, cleanup })
   registerSessionCleanupRoute(app, { workspaceManager, isProtected, cleanup, worktreeDeletionFence: new WorktreeDeletionFence() })
   let failRefresh = false
+  let holdFavorite: ((pathname: string) => Promise<void>) | undefined
   const setup = async (page: Page, duplicate = false) => {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await events.route(page)
@@ -85,6 +86,7 @@ test("favorites persist, keep requests first and synchronize over the real route
         return
       }
       if (duplicate) pathname = pathname.replace("favorites-workspace", "other-window")
+      if (route.request().method() === "PUT") await holdFavorite?.(pathname)
       const response = await app.inject({ method: route.request().method() as "GET" | "PUT" | "POST", url: pathname,
         ...(route.request().method() === "PUT" ? { payload: route.request().postDataJSON() } : {}) })
       await route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
@@ -189,9 +191,51 @@ test("favorites persist, keep requests first and synchronize over the real route
       && response.request().method() === "GET")
     events.send({ type: "storage.stateChanged", owner: "sessionFavorites", value: {} })
     await refreshed
-    await chooseFavoriteWithKeyboard(page, "dossier_56", false)
-    await favoriteRow(page, "dossier_56").waitFor({ state: "detached" })
-    await page.waitForFunction(() => document.activeElement?.closest("[data-session-id]")?.getAttribute("data-session-id") === "ses_dossier_56")
+    await page.locator("aside").evaluate(panel => { panel.style.height = "180px" })
+    const resizeDuringFavorite = async (add: boolean, moveFocus = false) => {
+      const putReceived = Promise.withResolvers<string>(), releasePut = Promise.withResolvers<void>()
+      holdFavorite = async pathname => {
+        putReceived.resolve(pathname)
+        await releasePut.promise
+      }
+      const direct = inlineFavorite(page, "dossier_56"), compact = actions(page, "dossier_56")
+      const start = add ? direct : compact, end = add ? compact : direct
+      const selector = add ? ".action-overflow-trigger" : ".session-item-inline-actions [data-action-key='favorite']"
+      try {
+        if (add) await direct.press("Enter")
+        else await chooseFavoriteWithKeyboard(page, "dossier_56", false)
+        assert.equal(await putReceived.promise, `${owner}/ses_dossier_56`)
+        assert.equal(await start.evaluate(el => el === document.activeElement), true)
+        await resizeSidebar(page, add ? 200 : 520)
+        await end.waitFor()
+        await page.waitForFunction(selector => document.activeElement?.matches(`[data-session-id="ses_dossier_56"] ${selector}`),
+          selector, { timeout: 2_000 })
+        if (moveFocus) {
+          const outside = page.getByRole("button", { name: "Bureau", exact: true })
+          await outside.focus()
+          await outside.blur()
+        }
+      } finally {
+        holdFavorite = undefined
+        releasePut.resolve()
+      }
+      await favoriteRow(page, "dossier_56").waitFor({ state: add ? "visible" : "detached" })
+      if (moveFocus) {
+        assert.equal(await page.evaluate(() => document.activeElement?.tagName), "BODY")
+        return
+      }
+      await page.waitForFunction(selector => {
+        const focused = document.activeElement
+        if (!focused?.matches(`[data-session-id="ses_dossier_56"] ${selector}`)) return false
+        const bounds = focused.getBoundingClientRect(), list = focused.closest(".session-list")!.getBoundingClientRect()
+        return bounds.top >= list.top && bounds.bottom <= list.bottom
+      }, selector, { timeout: 5_000 })
+    }
+    await resizeDuringFavorite(false)
+    await resizeDuringFavorite(true)
+    await resizeDuringFavorite(false, true)
+    await page.locator("aside").evaluate(panel => { panel.style.height = "" })
+    await resizeSidebar(page, 200)
     await filters(page).click()
     await search(page).fill("projet secret")
     await row(page, "search_only").waitFor()

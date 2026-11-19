@@ -47,12 +47,18 @@ export function useSessionRowOverflow(row: Accessor<HTMLElement | undefined>) {
         + actions.getBoundingClientRect().width
       const next = required > available + 0.5
       if (next === compact()) return
-      const hadActionFocus = actions.contains(document.activeElement)
+      const focused = document.activeElement
+      const hadActionFocus = actions.contains(focused)
       setCompact(next)
-      if (hadActionFocus) queueMicrotask(() => {
-        if (!element.isConnected) return
-        const selector = next ? ".session-item-overflow-actions button" : ".session-item-inline-actions button:not(:disabled)"
-        element.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
+      // The revealed controls must leave the old inert/display state before focus moves.
+      if (hadActionFocus) requestAnimationFrame(() => {
+        if (!element.isConnected || !document.hasFocus()
+          || (document.activeElement !== document.body && document.activeElement !== focused)) return
+        const selector = element.dataset.compactActions === "true"
+          ? ".session-item-overflow-actions button" : ".session-item-inline-actions button:not(:disabled)"
+        if (focused !== document.activeElement || !focused?.matches(selector)) {
+          element.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
+        }
       })
     }
     const schedule = () => {

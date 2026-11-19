@@ -130,6 +130,9 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [listViewportAttached, setListViewportAttached] = createSignal(false)
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
   const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
+  const [favoriteFocusSessionId, setFavoriteFocusSessionId] = createSignal<string>()
+  let cancelFavoriteFocus: (() => void) | undefined
+  onCleanup(() => cancelFavoriteFocus?.())
   const [menuSessionId, setMenuSessionId] = createSignal<string>()
   const [expanderMenuSessionId, setExpanderMenuSessionId] = createSignal<string>()
   let attachmentFrame: number | undefined
@@ -341,7 +344,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
   const keptMountedIndexes = createMemo(() => {
     const indexes = new Set<number>()
-    for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId()]) {
+    for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId(), favoriteFocusSessionId()]) {
       const index = sessionId ? visibleProjection().indexById.get(sessionId) : undefined
       if (index !== undefined) indexes.add(index)
     }
@@ -658,26 +661,63 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
   }
 
-  const toggleFavorite = async (sessionId: string, trigger?: HTMLElement | null) => {
+  const toggleFavorite = async (sessionId: string, rowElement: () => HTMLElement | undefined) => {
     const instanceId = props.instanceId
     if (!favoriteStore.ready() || favoriteStore.pending().has(sessionId)
       || !isSessionInWorkspaceScope(instanceId, sessionId)) return
     const remove = favorites().has(sessionId)
-    const ownsFocus = trigger === document.activeElement
+    const list = listEl()
+    const isFavoriteControl = (target: EventTarget | null) => {
+      const row = rowElement()
+      return !!row && target instanceof Element && row.contains(target)
+        && !!target.closest(".action-overflow-trigger, .session-item-inline-actions [data-action-key='favorite']")
+    }
+    const focus = new AbortController()
+    const releaseFocus = () => {
+      focus.abort()
+      if (cancelFavoriteFocus === releaseFocus) {
+        cancelFavoriteFocus = undefined
+        setFavoriteFocusSessionId(undefined)
+      }
+    }
+    const ownsFocus = isFavoriteControl(document.activeElement)
+    if (ownsFocus) {
+      cancelFavoriteFocus?.()
+      cancelFavoriteFocus = releaseFocus
+      setFavoriteFocusSessionId(sessionId)
+      const options = { capture: true, signal: focus.signal }
+      document.addEventListener("focusin", event => {
+        if (event.target !== document.body && !isFavoriteControl(event.target)) releaseFocus()
+      }, options)
+      document.addEventListener("keydown", event => { if (event.key === "Tab") releaseFocus() }, options)
+      document.addEventListener("pointerdown", event => {
+        // A resize drag prevents pointerdown's focus change.
+        queueMicrotask(() => {
+          if (!focus.signal.aborted && !event.defaultPrevented && !isFavoriteControl(event.target)) releaseFocus()
+        })
+      }, options)
+    }
     const indexBefore = visibleProjection().indexById.get(sessionId)
     try {
       await favoriteStore.save(sessionId, !remove)
-      if (!ownsFocus || props.instanceId !== instanceId || !listEl()?.isConnected || !document.hasFocus()
-        || (document.activeElement !== trigger && document.activeElement !== document.body)) return
+      if (!ownsFocus || focus.signal.aborted || props.instanceId !== instanceId || !list?.isConnected || listEl() !== list || !document.hasFocus()
+        || (document.activeElement !== document.body && !isFavoriteControl(document.activeElement))) return
       const index = visibleProjection().indexById.get(sessionId)
       if (index === undefined && remove && !favorites().has(sessionId) && props.enableFilterBar && favoritesOnly()) {
         favoritesFilter?.focus({ preventScroll: true })
-      } else if (index !== undefined && index !== indexBefore && trigger?.isConnected) {
-        trigger.focus({ preventScroll: true })
-        virtualizerHandle()?.scrollToIndex(index, { align: "nearest" })
+      } else if (index !== undefined) {
+        const row = rowElement()
+        if (row?.isConnected) {
+          const selector = row.dataset.compactActions === "true" ? ".action-overflow-trigger"
+            : ".session-item-inline-actions [data-action-key='favorite']"
+          row.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
+        }
+        if (index !== indexBefore) virtualizerHandle()?.scrollToIndex(index, { align: "nearest" })
       }
     } catch {
       showToastNotification({ category: "sessions", variant: "error", message: t("sessionList.favorite.error") })
+    } finally {
+      if (ownsFocus) releaseFocus()
     }
   }
 
@@ -868,8 +908,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         get label() { return favoriteLabel() },
         get icon() { return <Star class="w-3.5 h-3.5" fill={favorite() ? "currentColor" : "none"} /> },
         get disabled() { return !favoriteStore.ready() || favoriteStore.pending().has(sessionId()) || !isSessionInWorkspaceScope(props.instanceId, sessionId()) },
-        onSelect: () => toggleFavorite(sessionId(), rowElement()?.querySelector<HTMLElement>(
-          compactActions() ? ".action-overflow-trigger" : '.session-item-inline-actions [data-action-key="favorite"]')),
+        onSelect: () => toggleFavorite(sessionId(), rowElement),
       },
       {
         key: "rename",
