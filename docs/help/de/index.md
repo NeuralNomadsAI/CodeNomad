@@ -55,7 +55,7 @@ Die genauen Grenzen erläutern [Browser-Vorschauen und SideCars](browser-sidecar
 | --- | --- |
 | Projekt-Tab / Arbeitsbereich / Instanz | Eine CodeNomad-Verbindung zu einem ausdrücklich geöffneten Ordner; mehrere Tabs können den gemeinsamen Dienst nutzen. |
 | Unterhaltung / Sitzung | Nativer OpenCode-Verlauf und Ausführung, die einem Verzeichnis zugeordnet sind. |
-| Familie | Eine Unterhaltung mit ihren rekursiven Untersitzungen; relevant für Verschieben, Aktivität, Yolo und Missionssteuerung. |
+| Familie | Eine Unterhaltung mit ihren rekursiven Untersitzungen; relevant für Verschieben, Aktivität und Missionssteuerung. |
 | Worktree | Ein zugehöriger Repository-Checkout, der zum Durchsuchen oder als Sitzungsort ausgewählt wurde. Ihn zu durchsuchen verschiebt keine Unterhaltung. |
 | Location | Der verzeichnisbezogene native Laufzeitkontext von OpenCode; das Schließen eines Projekt-Tabs schließt das Projekt nur in CodeNomad und entfernt keine native Location. |
 | CodeNomad-Backend | Der Server für Arbeitsbereiche, Git, Authentifizierung und Client-Verbindungen. Sein Konto und seine Umgebung bestimmen den Dateisystemzugriff des Backends. |

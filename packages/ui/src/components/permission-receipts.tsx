@@ -154,7 +154,7 @@ function ReceiptRows(props: { receipts: PermissionReceipt[] }) {
       <li class="permission-receipt" data-permission-request={receipt.requestId} data-decision={receipt.decision}>
         <div class="permission-receipt-heading">
           <strong>{t(`permissionReceipts.${receipt.decision}`)}</strong>
-          <span class="permission-receipt-origin">{t(`permissionReceipts.origin.${receipt.origin}`)}</span>
+          <span class="permission-receipt-origin">{t(`permissionReceipts.origin.${receipt.origin === "yolo" ? "automatic" : receipt.origin}`)}</span>
         </div>
         <Show when={receipt.action}><div class="permission-receipt-action">{receipt.action}</div></Show>
         <For each={receipt.resources}>{resource => <code class="permission-receipt-resource">{resource}</code>}</For>

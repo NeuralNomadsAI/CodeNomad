@@ -51,21 +51,20 @@ If another client settles a request, it may disappear here. A timeout or failed 
 2. For decisions without a source message, open **Session permission decisions**.
 3. Use **Load more decisions** to continue, or **Retry** after a read failure.
 
-Receipts record known requests/resources, the confirmed decision and available reason/provenance. **Decision in CodeNomad**, **Automatic · Yolo** and **Native decision** distinguish observed origins; a native settlement is not proof of a user click in this window.
+Receipts record known requests/resources, the confirmed decision and available reason/provenance. **Decision in CodeNomad**, **Automatic decision** and **Native decision** distinguish observed origins; a native settlement is not proof of a user click in this window.
 
 Receipts are read-only CodeNomad annotations, not native messages or permission-rule editors. They are excluded from native full-history search, message copy and export. They cannot reconstruct decisions missed while CodeNomad was offline, and a successful tool result is not substituted for a missing receipt. Session deletion removes its receipts.
 
-## Yolo mode and family scope {#yolo-mode}
+## Conversation permission mode {#conversation-mode}
 
-1. Select a conversation and open **Status → Yolo Mode**.
-2. Enable it only if automatic permission approval is acceptable for the whole family.
-3. Disable it before further untrusted work; inspect pending requests and any already-running tools.
+Select a conversation and open **Status → Permissions**.
 
-Although the control refers to a session, its effective scope is the resolved family root and descendants: enabling/disabling it from a child affects that family. A native fork is treated as its own root. It is not global approval for every project or independent conversation.
+- **Autonomous** — Follows OpenCode’s permission rules.
+- **Supervised** — Asks before agent edits and shell commands, except where denied or already approved. This is not a sandbox.
 
-Yolo approves **permissions only**. It does not answer questions or Forms, supply missing information, guarantee successful execution or bypass backend ownership checks. The CodeNomad backend performs the auto-approval: closing one window is not sufficient to disable it while the backend remains active, and a stopped backend cannot keep approving requests. The family setting is persisted and hydrated when the workspace is loaded again.
+The rules are copied to new subagents. Open requests keep their original rules.
 
-Turning Yolo off does not revoke a decision already accepted or roll back file/network effects. Review **Automatic · Yolo** receipts and stop execution explicitly if needed. For automation with human gates, see [Missions](missions.md).
+Choose the starting mode in **Settings → General → Permissions for new conversations**.
 
 ## Recover missing or stale requests {#request-recovery}
 

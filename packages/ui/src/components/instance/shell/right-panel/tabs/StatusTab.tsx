@@ -19,8 +19,9 @@ import type { Session } from "../../../../../types/session"
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import ProviderUsagePanel from "../../../../session/provider-usage-panel"
 import SessionGoalLine from "../../../../session/session-goal-line"
+import { ConversationPermissions, ConversationPermissionsInfo } from "../../../../session/conversation-permissions"
 import InstanceServiceStatus from "../../../../instance-service-status"
-import { applyRightPanelItemCustomization, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
+import { applyRightPanelItemCustomization, CONVERSATION_PERMISSIONS_SECTION_ID, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
 import { createCoreStatusSectionManifest } from "../core-plugin"
 import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
@@ -196,11 +197,17 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} />
         </Show>
       ),
-      renderTokensSummary: () => (
+       renderTokensSummary: () => (
         <Show when={props.activeSession()?.id}>
           <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} summary expanded={isSectionExpanded("tokens")} />
         </Show>
-      ),
+       ),
+       renderPermissions: () => (
+         <Show when={props.isActive() && isSectionExpanded(CONVERSATION_PERMISSIONS_SECTION_ID) && props.activeSession()?.id} keyed>
+           {sessionId => <ConversationPermissions instanceId={props.instanceId} sessionId={sessionId} />}
+         </Show>
+       ),
+       renderPermissionsInfo: () => <ConversationPermissionsInfo />,
       renderProviderUsage,
       renderBackgroundProcesses,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,

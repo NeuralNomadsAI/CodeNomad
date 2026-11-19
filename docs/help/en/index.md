@@ -55,7 +55,7 @@ For precise limits, see [browser previews and SideCars](browser-sidecars.md), [R
 | --- | --- |
 | Project tab / workspace / instance | A CodeNomad connection to an explicitly opened folder; multiple tabs can use the shared service. |
 | Conversation / session | Native OpenCode history and execution associated with its directory. |
-| Family | A conversation and its recursive subsessions; relevant to moves, activity, Yolo and Mission controls. |
+| Family | A conversation and its recursive subsessions; relevant to moves, activity and Mission controls. |
 | Worktree | An owned repository checkout selected for browsing or session placement. Browsing it does not move a conversation. |
 | Location | OpenCode's directory-scoped native runtime context; CodeNomad never unloads it when a project closes. |
 | CodeNomad backend | The server providing workspace, Git, authentication and client connectivity. Its account and environment determine backend filesystem access. |

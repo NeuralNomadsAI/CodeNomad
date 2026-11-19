@@ -69,7 +69,7 @@ Arrastra el borde interior de un panel acoplado para cambiar su tamaño.
 
 Reordena cualquier sección de Estado arrastrando o con las teclas Arriba/Abajo. La visibilidad y el orden persisten al recargar.
 
-Estado incluye información de tokens, modo Yolo, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
+Estado incluye información de tokens, Permisos, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
 
 La disposición integrada es disposición de ventana, no una modificación del proyecto. Las casillas de extensiones son distintas: activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).
 

@@ -13,6 +13,8 @@ import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../s
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
+  ConversationPermissionMode,
+  ConversationPermissionModeResponse,
   PermissionReceiptPage,
   PruneResult,
   BinaryValidationResult,
@@ -245,6 +247,14 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  readConversationPermissionMode(instanceId: string, sessionId: string, signal: AbortSignal): Promise<ConversationPermissionModeResponse> {
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-mode`, { signal }))
+  },
+  setConversationPermissionMode(instanceId: string, sessionId: string, mode: ConversationPermissionMode): Promise<ConversationPermissionModeResponse> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-mode`, {
+      method: "PUT", body: JSON.stringify({ mode }),
+    })
+  },
   fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
     const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
     if (cursor) params.set("cursor", cursor)

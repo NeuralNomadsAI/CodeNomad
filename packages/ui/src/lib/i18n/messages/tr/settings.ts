@@ -681,6 +681,9 @@ export const settingsMessages = {
   "settings.info.diagnostics.reportBug": "Hata bildir",
   "settings.info.diagnostics.copied": "Tanılama bilgileri kopyalandı.",
 
+  "settings.behavior.newConversationPermissions.title": "Yeni konuşmaların izinleri",
+  "settings.behavior.newConversationPermissions.info": "CodeNomad’da oluşturulan yeni konuşmaların başlangıç modu.",
+  "settings.behavior.newConversationPermissions.saveFailed": "Varsayılan mod kaydedilemedi. Tekrar deneyin.",
   "settings.behavior.followUpBehavior.title": "Gönderilen istemleri kuyruğa al",
   "settings.behavior.providerUsageCreditBalance.subtitle": "Kullanım panelinde ek sağlayıcı kredi bakiyelerini göster.",
   "settings.behavior.providerUsageCreditBalance.title": "Sağlayıcı kredi bakiyesi",

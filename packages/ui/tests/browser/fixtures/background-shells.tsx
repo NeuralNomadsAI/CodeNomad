@@ -26,7 +26,7 @@ const Fixture = () => {
   const { t } = useI18n()
   const [expanded, setExpanded] = createSignal(["background-processes"])
   const [customization, setCustomization] = createSignal({ ...DEFAULT_RIGHT_PANEL_CUSTOMIZATION,
-    hiddenStatusSectionIds: ["tokens", "yolo-mode", "provider-usage", "mcp", "plugins"] })
+    hiddenStatusSectionIds: ["tokens", "permissions", "provider-usage", "mcp", "plugins"] })
   return <aside style={{ width: "280px" }}><StatusTab t={t} instanceId={id} instance={instances().get(id)!}
     activeSession={session} isActive={() => true} expandedItems={expanded} onExpandedItemsChange={setExpanded}
     customization={customization} onCustomizationChange={setCustomization} /><AlertDialog /></aside>

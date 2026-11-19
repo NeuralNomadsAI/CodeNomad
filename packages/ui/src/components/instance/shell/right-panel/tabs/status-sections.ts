@@ -1,13 +1,19 @@
-import type { RightPanelItem } from "../registry"
+import { CONVERSATION_PERMISSIONS_SECTION_ID, type RightPanelItem } from "../registry"
 import type { HelpDestination } from "../../../../../lib/help-url"
 
-export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey: string; defaultExpanded?: boolean; help: HelpDestination })[] = [
+export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey: string; defaultExpanded?: boolean; help?: HelpDestination })[] = [
   {
     id: "tokens",
     labelKey: "instanceShell.rightPanel.sections.tokens",
     tooltipKey: "instanceShell.rightPanel.sections.tokens.tooltip",
     help: { page: "providers", anchor: "usage" },
     order: 0,
+  },
+  {
+    id: CONVERSATION_PERMISSIONS_SECTION_ID,
+    labelKey: "permissions.title",
+    tooltipKey: "permissions.info.label",
+    order: 10,
   },
   {
     id: "provider-usage",

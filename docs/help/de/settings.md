@@ -69,7 +69,7 @@ Ziehen Sie am inneren Rand eines angedockten Panels, um seine Größe zu ändern
 
 Ordnen Sie jeden Statusabschnitt per Ziehen oder mit den Tasten Auf/Ab um. Sichtbarkeit und Reihenfolge bleiben beim Neuladen erhalten.
 
-Status enthält Tokeninformationen, Yolo-Modus, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
+Status enthält Tokeninformationen, Berechtigungen, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
 
 Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskästchen sind anders: Sie aktivieren Code über alle Projekte dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
 

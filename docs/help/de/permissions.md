@@ -51,21 +51,20 @@ Erledigt ein anderer Client eine Anfrage, kann sie hier verschwinden. Ein Timeou
 2. Öffnen Sie für Entscheidungen ohne Quellnachricht **Berechtigungsentscheidungen der Sitzung**.
 3. Verwenden Sie **Weitere Entscheidungen laden** zum Fortfahren oder **Erneut versuchen** nach einem Lesefehler.
 
-Belege erfassen bekannte Anfragen/Ressourcen, die bestätigte Entscheidung sowie verfügbare Begründung/Herkunft. **Entscheidung in CodeNomad**, **Automatisch · Yolo** und **Native Entscheidung** unterscheiden beobachtete Ursprünge; eine native Erledigung beweist keinen Benutzerklick in diesem Fenster.
+Belege erfassen bekannte Anfragen/Ressourcen, die bestätigte Entscheidung sowie verfügbare Begründung/Herkunft. **Entscheidung in CodeNomad**, **Automatische Entscheidung** und **Native Entscheidung** unterscheiden beobachtete Ursprünge; eine native Erledigung beweist keinen Benutzerklick in diesem Fenster.
 
 Belege sind schreibgeschützte CodeNomad-Anmerkungen, keine nativen Nachrichten oder Berechtigungsregel-Editoren. Sie sind von nativer Vollverlaufssuche, Nachrichtenkopie und Export ausgeschlossen. Sie können während CodeNomads Offline-Zeit verpasste Entscheidungen nicht rekonstruieren; ein erfolgreiches Werkzeugergebnis ersetzt keinen fehlenden Beleg. Eine Sitzungslöschung entfernt deren Belege.
 
-## Yolo-Modus und Familienumfang {#yolo-mode}
+## Berechtigungsmodus für Unterhaltungen {#conversation-mode}
 
-1. Wählen Sie eine Unterhaltung und öffnen Sie **Status → Yolo-Modus**.
-2. Aktivieren Sie ihn nur, wenn automatische Berechtigungsfreigaben für die gesamte Familie akzeptabel sind.
-3. Deaktivieren Sie ihn vor weiterer nicht vertrauenswürdiger Arbeit; prüfen Sie offene Anfragen und bereits laufende Werkzeuge.
+Wählen Sie eine Unterhaltung und öffnen Sie **Status → Berechtigungen**.
 
-Obwohl die Steuerung eine Sitzung nennt, gilt sie effektiv für die ermittelte Familienwurzel und Nachfahren: Aktivieren/Deaktivieren von einem Kind aus betrifft diese Familie. Ein nativer Fork gilt als eigene Wurzel. Dies ist keine globale Genehmigung für alle Projekte oder unabhängigen Unterhaltungen.
+- **Autonom** — Befolgt die Berechtigungsregeln von OpenCode.
+- **Beaufsichtigt** — Fragt vor Dateiänderungen und Shell-Befehlen des Agenten nach, außer wenn sie verboten oder bereits genehmigt sind. Dies ist keine Sandbox.
 
-Yolo genehmigt **nur Berechtigungen**. Es beantwortet keine Fragen oder Forms, ergänzt keine fehlenden Angaben, garantiert keinen Ausführungserfolg und umgeht keine Backend-Zugehörigkeitsprüfungen. Das CodeNomad-Backend führt die automatische Genehmigung durch: Ein einzelnes Fenster zu schließen deaktiviert sie nicht, solange das Backend aktiv bleibt; ein gestopptes Backend kann keine Anfragen weiter genehmigen. Die Familieneinstellung wird gespeichert und beim erneuten Laden des Arbeitsbereichs wieder eingelesen.
+Neue Subagenten übernehmen die Regeln. Offene Anfragen behalten ihre ursprünglichen Regeln.
 
-Yolo auszuschalten widerruft keine bereits angenommene Entscheidung und macht keine Datei-/Netzwerkauswirkungen rückgängig. Prüfen Sie **Automatisch · Yolo**-Belege und stoppen Sie die Ausführung bei Bedarf ausdrücklich. Für Automatisierung mit menschlichen Freigaben siehe [Missionen](missions.md).
+Wählen Sie den Startmodus für neue Unterhaltungen in CodeNomad unter **Einstellungen → Allgemein → Berechtigungen für neue Unterhaltungen**.
 
 ## Fehlende oder veraltete Anfragen wiederherstellen {#request-recovery}
 

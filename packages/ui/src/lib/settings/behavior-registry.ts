@@ -35,7 +35,8 @@ export type BehaviorEnumSetting<T extends string = string> = {
   infoKey?: string
   help?: HelpDestination
   get: (preferences: Preferences) => T
-  set: (next: T) => void
+  set: (next: T) => void | Promise<boolean>
+  saveErrorKey?: string
   options: Array<{ value: T; labelKey: string }>
   disabled?: () => boolean
 }
@@ -337,6 +338,23 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
           next,
         )
       },
+    },
+    {
+      kind: "enum",
+      id: "behavior.newConversationPermissions",
+      titleKey: "settings.behavior.newConversationPermissions.title",
+      saveErrorKey: "settings.behavior.newConversationPermissions.saveFailed",
+      help: { page: "permissions", anchor: "conversation-mode" },
+      infoKey: "settings.behavior.newConversationPermissions.info",
+      get: (p) => p.newConversationPermissions,
+      set: async (next) => {
+        if (next !== "autonomous" && next !== "supervised") return false
+        return (await updatePreferences?.({ newConversationPermissions: next })) === true
+      },
+      options: [
+        { value: "autonomous", labelKey: "permissions.mode.autonomous" },
+        { value: "supervised", labelKey: "permissions.mode.supervised" },
+      ],
     },
     {
       kind: "toggle",

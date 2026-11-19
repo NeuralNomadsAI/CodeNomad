@@ -5,7 +5,7 @@ export const permissionReceiptMessages = {
   "permissionReceipts.always": "מאושר תמיד",
   "permissionReceipts.reject": "נדחה",
   "permissionReceipts.origin.codenomad": "החלטה ב־CodeNomad",
-  "permissionReceipts.origin.yolo": "אוטומטי · Yolo",
+  "permissionReceipts.origin.automatic": "החלטה אוטומטית",
   "permissionReceipts.origin.native": "החלטה מקורית",
   "permissionReceipts.more": "טעינת החלטות נוספות",
   "permissionReceipts.error": "לא ניתן לטעון החלטות הרשאה.",

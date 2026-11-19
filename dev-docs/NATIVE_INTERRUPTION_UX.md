@@ -82,6 +82,12 @@ route on selection and reconnect, and on a native `session.permissions` event
 for that conversation. OpenCode owns evaluation and settlement; CodeNomad
 only replies to an explicit decision.
 
+**Status → Permissions** reads while the selected section is shown. It shares
+the secondary read budget, coalesces invalidations during a read, and preserves
+the last confirmed value during a write. A write settles with an authoritative
+refresh and is never replayed after failure. Status customization normalizes
+saved section IDs before applying order and visibility.
+
 Autonomous contributes no rules. Supervised appends `ask edit *` and `ask shell *`,
 then projects the effective global and project configuration onto those two actions
 in order. Configured `deny` stays `deny`; `allow` becomes `ask`. Home-relative edit
@@ -125,6 +131,8 @@ provenance, cascades, ownership, deletion and mutation failure paths.
 `session-permission-mode.test.ts` covers config projection, two tabs, exact
 removal, concurrent changes and private state. `node scripts/test-session-permission-mode-native.mjs <absolute-opencode-executable>`
 exercises the route and proxy against a private OpenCode process.
+`tests/browser/conversation-permissions.test.ts` exercises the native Status
+selector, a second window, reconnect, saved customization and General settings.
 `tests/browser/permission-receipts.test.ts` covers reload, hidden tools, empty-page
 pagination, SSE refresh, stale reads and long receipts in light/dark mobile layouts.
 `node scripts/test-permission-receipts-native.mjs` runs isolated native recovery

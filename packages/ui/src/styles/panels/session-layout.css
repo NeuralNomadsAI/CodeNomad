@@ -651,15 +651,6 @@
   }
 }
 
-.status-indicator.session-yolo-mode {
-  color: var(--session-yolo-accent);
-  background-color: color-mix(in oklab, var(--session-yolo-accent) 14%, transparent);
-}
-
-.status-indicator.session-yolo-mode .status-dot {
-  background-color: var(--session-yolo-accent);
-}
-
 .status-indicator.worktree-indicator {
   color: var(--text-primary);
   background-color: color-mix(in oklab, var(--text-secondary) 14%, transparent);

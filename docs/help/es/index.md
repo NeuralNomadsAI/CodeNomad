@@ -55,7 +55,7 @@ Para conocer los límites exactos, consulta [vistas previas de navegador y SideC
 | --- | --- |
 | Pestaña de proyecto / espacio de trabajo / instancia | Una conexión de CodeNomad a una carpeta abierta explícitamente; varias pestañas pueden usar el servicio compartido. |
 | Conversación / sesión | Historial y ejecución nativos de OpenCode asociados a su directorio. |
-| Familia | Una conversación y sus subsesiones recursivas; relevante para movimientos, actividad, Yolo y controles de Misiones. |
+| Familia | Una conversación y sus subsesiones recursivas; relevante para movimientos, actividad y controles de Misiones. |
 | Worktree | Una copia de trabajo propia del repositorio seleccionada para explorar o ubicar sesiones. Explorarla no mueve una conversación. |
 | Location | Contexto de ejecución nativo de OpenCode con ámbito de directorio; cerrar una pestaña de proyecto solo cierra el proyecto en CodeNomad, sin descargar la Location nativa. |
 | Backend de CodeNomad | El servidor que proporciona el espacio de trabajo, Git, la autenticación y la conectividad de los clientes. Su cuenta y su entorno determinan el acceso del backend al sistema de archivos. |

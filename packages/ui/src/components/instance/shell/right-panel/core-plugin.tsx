@@ -1,6 +1,6 @@
 import type { JSX } from "solid-js"
 
-import type { RightPanelModule } from "./registry"
+import { CONVERSATION_PERMISSIONS_SECTION_ID, type RightPanelModule } from "./registry"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 import { SettingsInfoTip } from "../../../settings/settings-info-tip"
 import { tGlobal } from "../../../../lib/i18n"
@@ -13,6 +13,8 @@ interface CoreRightPanelRenderers {
 interface CoreStatusSectionRenderers {
   renderTokens: () => JSX.Element
   renderTokensSummary?: () => JSX.Element
+  renderPermissions: () => JSX.Element
+  renderPermissionsInfo: () => JSX.Element
   renderProviderUsage: () => JSX.Element
   renderBackgroundProcesses: () => JSX.Element
   renderMcpStatus: () => JSX.Element
@@ -46,6 +48,7 @@ export function createCoreRightPanelModule(renderers: CoreRightPanelRenderers): 
 export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRenderers): RightPanelModule {
   const sectionRenderers: Record<string, () => JSX.Element> = {
     tokens: renderers.renderTokens,
+    [CONVERSATION_PERMISSIONS_SECTION_ID]: renderers.renderPermissions,
     "provider-usage": renderers.renderProviderUsage,
     "background-processes": renderers.renderBackgroundProcesses,
     mcp: renderers.renderMcpStatus,
@@ -61,7 +64,9 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
       const render = sectionRenderers[section.id]
       if (!render) throw new Error(`Missing core right panel section renderer: ${section.id}`)
       return { ...section, render, renderStatus: section.id === "tokens" ? renderers.renderTokensSummary : undefined,
-        renderInfo: () => <SettingsInfoTip text={tGlobal(section.tooltipKey)} help={section.help} /> }
+        renderInfo: section.id === CONVERSATION_PERMISSIONS_SECTION_ID
+          ? renderers.renderPermissionsInfo
+          : () => <SettingsInfoTip text={tGlobal(section.tooltipKey)} help={section.help} /> }
     }),
   }
 }

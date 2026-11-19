@@ -51,21 +51,20 @@ Başka istemci isteği sonuçlandırırsa burada kaybolabilir. Zaman aşımı ve
 2. Kaynak mesajı olmayan kararlar için **Oturum izin kararları** öğesini açın.
 3. Devam etmek için **Daha fazla karar yükle** öğesini veya okuma hatasından sonra **Yeniden dene** öğesini kullanın.
 
-Karar kayıtları bilinen istekleri/kaynakları, doğrulanmış kararı ve mevcut gerekçe/kaynak bilgisini kaydeder. **CodeNomad'da verilen karar**, **Otomatik · Yolo** ve **Yerel karar** gözlemlenen kaynakları ayırır; OpenCode'da sonuçlandırılmış olması bu pencerede kullanıcının tıkladığının kanıtı değildir.
+Karar kayıtları bilinen istekleri/kaynakları, doğrulanmış kararı ve mevcut gerekçe/kaynak bilgisini kaydeder. **CodeNomad'da verilen karar**, **Otomatik karar** ve **Yerel karar** gözlemlenen kaynakları ayırır; OpenCode'da sonuçlandırılmış olması bu pencerede kullanıcının tıkladığının kanıtı değildir.
 
 Karar kayıtları OpenCode mesajı veya izin kuralı düzenleyicisi değil, salt okunur CodeNomad açıklamalarıdır. OpenCode tam geçmiş araması, mesaj kopyalama ve dışa aktarmaya dahil edilmezler. CodeNomad çevrimdışıyken kaçırılan kararları yeniden kuramazlar; başarılı araç sonucu eksik kaydın yerine geçmez. Oturumun silinmesi karar kayıtlarını da kaldırır.
 
-## Yolo modu ve aile kapsamı {#yolo-mode}
+## Konuşma izin modu {#conversation-mode}
 
-1. Bir görüşme seçin ve **Durum → Yolo Modu** öğesini açın.
-2. Yalnızca otomatik izin onayının tüm aile için kabul edilebilir olması durumunda etkinleştirin.
-3. Güvenilmeyen çalışmalara devam etmeden önce onu devre dışı bırakın; Bekleyen istekleri ve halihazırda çalışan araçları inceleyin.
+Bir konuşma seçip **Durum → İzinler** bölümünü açın.
 
-Kontrol bir oturumu belirtse de etkili kapsamı çözümlenen aile kökü ve alt konuşmalarıdır: alt oturumdan açmak/kapatmak o aileyi etkiler. OpenCode çatallaması kendi kökü sayılır. Her proje veya bağımsız konuşma için genel onay değildir.
+- **Özerk** — OpenCode’un izin kurallarını uygular.
+- **Denetimli** — Ajanın dosya değişikliklerinden ve kabuk komutlarından önce onay ister; yasaklanmış veya önceden onaylanmış işlemler hariçtir. Bu bir yalıtım ortamı değildir.
 
-Yolo **yalnızca izinleri** onaylar. Soruları veya Formları yanıtlamaz, eksik bilgi sağlamaz, başarılı yürütme garantisi vermez veya arka uç sahiplik kontrollerini aşmaz. Otomatik onayı CodeNomad arka ucu yapar: arka uç açıkken tek pencereyi kapatmak bunu devre dışı bırakmaya yetmez; durmuş arka uç istek onaylayamaz. Aile ayarı kalıcı kaydedilir ve çalışma alanı yeniden yüklendiğinde geri alınır.
+Kurallar yeni alt ajanlara kopyalanır. Açık istekler ilk kurallarını korur.
 
-Yolo'nun kapatılması halihazırda kabul edilmiş bir kararı iptal etmez veya dosya/ağ etkilerini geri almaz. **Otomatik · Yolo** makbuzlarını inceleyin ve gerekirse yürütmeyi açıkça durdurun. İnsan kapılarıyla otomasyon için bkz. [Görevler](missions.md).
+**Ayarlar → Genel → Yeni konuşmaların izinleri** bölümünde CodeNomad’da oluşturulan yeni konuşmaların başlangıç modunu seçin.
 
 ## Eksik veya eski istekleri kurtarma {#request-recovery}
 
