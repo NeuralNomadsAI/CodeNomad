@@ -346,6 +346,7 @@ export const messagingMessages = {
   "voice.command.activeSession": "סשן פעיל",
   "voice.command.loading": "בודק את הגדרות הקול…",
   "voice.command.capabilitiesError": "לא ניתן היה לבדוק את הגדרות הקול",
+  "voice.command.pendingTranscription": "יש להוסיף או למחוק את התמלול הממתין",
   "voice.command.setupPlayback": "הגדרת השמעה",
   "voice.command.unsupportedFormat": "פורמט ההשמעה אינו נתמך",
   "voice.command.noSession": "יש לבחור סשן",

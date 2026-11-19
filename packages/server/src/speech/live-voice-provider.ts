@@ -44,19 +44,22 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
   const gemini = settings.provider === "geminiLive"
   const instructions = `${baseInstructions}\nSession context (JSON): ${JSON.stringify(context)}`
   const inputRate = liveVoiceInputRate(gemini ? "gemini-live" : "openai-realtime")
-  const pending = new Map<string, string>()
+  const pending = new Map<string, { name: string; responseId?: string }>()
   const used = new Set<string>()
   const outputParts = new Map<string, { index: number; bytes: number; truncated: boolean }>()
   const cancelEvents = new Set<string>()
+  const completedResponses = new Set<string>()
+  const interruptedResponses = new Set<string>()
   let state: "connecting" | "configuring" | "ready" = "connecting"
-  let continueWhenToolsComplete = false
   let activeResponse: string | undefined
-  let interruptedResponse: string | undefined
   let playingResponse: string | undefined
   let cancelSequence = 0
-  let geminiInput: "implicit" | "explicit" | undefined
+  let geminiSequence = 0
+  const initialGeminiInput = { id: "user-0", text: false, final: false }
+  let geminiInput = initialGeminiInput
+  const geminiStarts = new Map<number, typeof geminiInput>()
 
-  function remember<T>(store: Map<string, T> | Set<string>) {
+  function remember<K, T>(store: Map<K, T> | Set<K>) {
     if (store.size > LIVE_VOICE_TRACKED_IDS) store.delete(store.keys().next().value!)
   }
   function ready() {
@@ -101,15 +104,20 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
       instructions,
     } })
   }
-  function callTool(id: unknown, name: unknown, args: unknown) {
+  function callTool(id: unknown, name: unknown, args: unknown, responseId?: string) {
     if (identifier(id) && (pending.has(id) || used.has(id))) return false
     const tool = readLiveVoiceTool(name, args)
-    if (!tool || !identifier(id) || pending.size >= PENDING_TOOLS || used.size + pending.size >= LIVE_VOICE_MAX_CALLS) {
+    if (!tool || !identifier(id) || used.size + pending.size >= LIVE_VOICE_MAX_CALLS) {
       io.stop("provider-error")
       return false
     }
-    pending.set(id, tool.name)
-    io.emit({ type: "tool-call", id, ...tool })
+    if (responseId && interruptedResponses.has(responseId)) {
+      cancelOpenAITool(id)
+      return false
+    }
+    if (pending.size >= PENDING_TOOLS) { io.stop("provider-error"); return false }
+    pending.set(id, { name: tool.name, responseId })
+    io.emit({ type: "tool-call", id, ...tool, ...(responseId ? { responseId } : {}) })
     return true
   }
   function cancelTool(id: unknown) {
@@ -130,10 +138,36 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     io.stop("provider-error")
     return false
   }
-  function finishGeminiInput() {
-    if (!geminiInput) return
-    transcript("user", "", true)
-    geminiInput = undefined
+  function geminiOffset(value: unknown) {
+    // Protobuf Duration's JSON representation is seconds with an optional fraction.
+    if (typeof value !== "string" || !/^\d{1,9}(?:\.\d{1,9})?s$/.test(value)) return
+    return Number(value.slice(0, -1))
+  }
+  function startGeminiInput(offset: number | undefined) {
+    if (geminiInput.text && !geminiInput.final) transcript("user", "", true, geminiInput.id)
+    geminiInput.final = true
+    geminiInput = { id: `user-${++geminiSequence}`, text: false, final: false }
+    if (offset !== undefined) {
+      geminiStarts.set(offset, geminiInput)
+      remember(geminiStarts)
+    }
+  }
+  function geminiTranscription(user: JsonObject) {
+    const offset = geminiOffset(user.startOffset)
+    let segment = geminiInput
+    if (offset !== undefined && geminiStarts.size) {
+      let preceding = -1
+      for (const [start, utterance] of geminiStarts) {
+        if (start <= offset && start >= preceding) { preceding = start; segment = utterance }
+      }
+      if (preceding < 0) {
+        if (geminiStarts.size >= LIVE_VOICE_TRACKED_IDS) return
+        segment = initialGeminiInput
+      }
+    }
+    if (transcriptText(user.text) && user.text.trim()) segment.text = true
+    if (user.finished === true) segment.final = true
+    if (segment.text) transcript("user", user.text, segment.final, segment.id)
   }
   function fromGemini(event: JsonObject) {
     if (Object.hasOwn(event, "goAway")) return io.stop("provider-disconnected")
@@ -149,12 +183,13 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
         callTool(value?.id, value?.name, value?.args === undefined ? {} : value.args)
       }
     }
-    const activity = object(event.voiceActivity)?.type
+    const voiceActivity = object(event.voiceActivity)
+    const activity = voiceActivity?.type
     const user = object(content?.inputTranscription)
     const interimUser = object(content?.interimInputTranscription)
     if (activity === "ACTIVITY_START" || activity === "ACTIVITY_END"
       || (transcriptText(user?.text) && user.text.trim()) || (transcriptText(interimUser?.text) && interimUser.text.trim())) io.speech()
-    if (activity === "ACTIVITY_START") finishGeminiInput()
+    if (activity === "ACTIVITY_START") startGeminiInput(geminiOffset(voiceActivity?.audioOffset))
     if (activity === "ACTIVITY_END") io.emit({ type: "thinking" })
     if (!content) return
     if (content.interrupted === true) io.emit({ type: "interrupted" })
@@ -167,32 +202,22 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
         }
       }
     }
-    if (user?.finished === true) {
-      transcript("user", user.text, true)
-      geminiInput = undefined
-    } else if (transcriptText(user?.text)) {
-      transcript("user", user.text, false)
-      if (user.finished === false) geminiInput = "explicit"
-      else if (user.text.trim()) geminiInput ??= "implicit"
-    }
+    if (user) geminiTranscription(user)
     const assistant = object(content.outputTranscription)
     transcript("assistant", assistant?.text, assistant?.finished === true)
-    if (content.turnComplete === true) {
-      // Gemini doesn't guarantee input ordering or a final flag. Use the model
-      // turn as a best-effort boundary only for input without explicit completion.
-      if (geminiInput === "implicit") finishGeminiInput()
-      io.emit({ type: "turn-complete" })
-    }
+    if (content.turnComplete === true) io.emit({ type: "turn-complete" })
   }
 
+  function cancelOpenAITool(id: string) {
+    cancelTool(id)
+    sendOpenAIToolOutput(id, "Interrupted by the user.")
+  }
   function interruptOpenAI(responseId: string | undefined) {
-    interruptedResponse = responseId
-    continueWhenToolsComplete = false
-    // Settle interrupted tool calls without starting another response.
-    for (const id of pending.keys()) {
-      cancelTool(id)
-      sendOpenAIToolOutput(id, "Interrupted by the user.")
-    }
+    if (!responseId || interruptedResponses.has(responseId)) return false
+    if (interruptedResponses.size >= LIVE_VOICE_MAX_CALLS) { io.stop("limit"); return false }
+    interruptedResponses.add(responseId)
+    for (const [id, call] of pending) if (call.responseId === responseId) cancelOpenAITool(id)
+    return true
   }
 
   function fromOpenAI(event: JsonObject) {
@@ -217,7 +242,7 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
         break
       case "response.output_audio_transcript.delta":
       case "response.output_audio_transcript.done":
-        if (responseId !== interruptedResponse || interruptedResponse === undefined) {
+        if (identifier(responseId) && !interruptedResponses.has(responseId)) {
           const final = type.endsWith(".done")
           transcript("assistant", final ? event.transcript : event.delta, final, itemId, final || undefined)
         }
@@ -233,7 +258,7 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
       case "response.output_audio.delta": {
         if (!identifier(itemId) || !identifier(responseId) || typeof index !== "number"
           || !Number.isInteger(index) || index < 0 || index > 32 || !audio(event.delta)) return
-        if (responseId === interruptedResponse) return
+        if (interruptedResponses.has(responseId)) return
         playingResponse = responseId
         const prior = outputParts.get(itemId)
         if (prior && (prior.index !== index || prior.truncated)) return
@@ -246,17 +271,19 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
       }
       case "response.done": {
         const response = object(event.response)
-        if (response?.id === activeResponse) activeResponse = undefined
-        if (response?.status === "failed") return io.stop("provider-error")
-        if (response?.status === "completed" && (interruptedResponse === undefined || response.id !== interruptedResponse)
-          && Array.isArray(response.output)) {
+        if (!identifier(response?.id)) return io.stop("provider-error")
+        if (response.id === activeResponse) activeResponse = undefined
+        completedResponses.add(response.id)
+        remember(completedResponses)
+        if (response.status === "failed") return io.stop("provider-error")
+        if (Array.isArray(response.output) && (response.status === "completed" || interruptedResponses.has(response.id))) {
           for (const raw of response.output) {
             const item = object(raw)
             if (item?.type !== "function_call" || item.status !== "completed") continue
             if (typeof item.arguments !== "string" || item.arguments.length > 8192) return io.stop("provider-error")
             let args: unknown
             try { args = JSON.parse(item.arguments) } catch { return io.stop("provider-error") }
-            if (callTool(item.call_id, item.name, args)) continueWhenToolsComplete = true
+            callTool(item.call_id, item.name, args, response.id)
           }
         }
         io.emit({ type: "turn-complete" })
@@ -292,12 +319,13 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
         break
       case "interrupt": {
         if (gemini) return io.stop("invalid-message")
-        if (activeResponse !== value.responseId || interruptedResponse === value.responseId) break
+        const active = activeResponse === value.responseId
+        if (!active && !completedResponses.has(value.responseId) && ![...pending.values()].some(call => call.responseId === value.responseId)) break
+        if (!interruptOpenAI(value.responseId) || !active) break
         if (cancelSequence >= LIVE_VOICE_MAX_CALLS) return io.stop("limit")
         const eventId = `codenomad-cancel-${++cancelSequence}`
         cancelEvents.add(eventId)
         remember(cancelEvents)
-        interruptOpenAI(value.responseId)
         io.send({ type: "response.cancel", response_id: value.responseId, event_id: eventId })
         break
       }
@@ -310,20 +338,17 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
         break
       }
       case "tool-result": {
-        const name = pending.get(value.id)
-        if (!name) {
+        const call = pending.get(value.id)
+        if (!call) {
           if (!used.has(value.id)) io.stop("invalid-message")
           return
         }
         pending.delete(value.id)
         used.add(value.id)
-        if (gemini) io.send({ toolResponse: { functionResponses: [{ name, id: value.id, response: { output: value.output } }] } })
+        if (gemini) io.send({ toolResponse: { functionResponses: [{ name: call.name, id: value.id, response: { output: value.output } }] } })
         else {
           sendOpenAIToolOutput(value.id, value.output)
-          if (continueWhenToolsComplete && !pending.size) {
-            continueWhenToolsComplete = false
-            io.send({ type: "response.create" })
-          }
+          if (!pending.size) io.send({ type: "response.create" })
         }
         break
       }

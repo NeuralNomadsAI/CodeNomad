@@ -37,7 +37,7 @@ Der Wiedergabetest verwendet den gewählten Modus und das Format sofort, aber En
 1. Lassen Sie **Prompt-Spracheingabe** unter **Sprache** aktiviert (standardmäßig eingeschaltet).
 2. Wählen Sie im Eingabefeld **Weitere Aktionen → Diktieren** und erlauben Sie den Mikrofonzugriff. Ist Diktat oder Gespräch nicht verfügbar, zeigt der Menüpunkt den Grund und öffnet die passende Karte unter **Sprache**. Nur eine Funktion zugleich kann das Mikrofon nutzen: Diktat, Eingabetest oder Live-Gespräch.
 3. Wählen Sie **Aufnahme stoppen und transkribieren** für den Text oder **Diktat abbrechen**, um die Aufnahme zu verwerfen. Ein Gesprächswechsel oder das Schließen des Eingabefelds bricht das Diktat ebenfalls ab.
-4. Prüfen Sie den Text. Er ersetzt die ursprüngliche Auswahl nur, wenn Entwurf und Auswahl unverändert sind. Andernfalls wählen Sie **Transkription einfügen** oder **Transkription verwerfen**. Beim Diktieren wird nichts gesendet.
+4. Prüfen Sie den Text. Er ersetzt die ursprüngliche Auswahl nur, wenn Entwurf und Auswahl unverändert sind. Andernfalls wählen Sie vor dem nächsten Diktat **Transkription einfügen** oder **Transkription verwerfen**. Beim Diktieren wird nichts gesendet.
 
 Wenn die API unter Linux mit Tauri auf WAV ausweicht, endet die Aufnahme beim Diktieren und beim Eingabetest nach 24 Sekunden. Der Ausschnitt bleibt auf diesem Gerät, bis Sie ihn mit **Transkribieren** an den Sprachanbieter senden oder mit **Abbrechen** verwerfen.
 

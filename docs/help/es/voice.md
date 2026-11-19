@@ -37,7 +37,7 @@ La prueba de reproducción usa inmediatamente el modo y el formato seleccionados
 1. Mantén activada **Entrada de voz del prompt** en **Voz** (está activada por defecto).
 2. En el editor, abre **Más acciones → Dictar** y permite el acceso al micrófono. Si el dictado o la conversación no están disponibles, el comando indica el motivo y abre la tarjeta de **Voz** correspondiente. El dictado, la prueba de entrada y la conversación en directo usan el micrófono de uno en uno.
 3. Elige **Detener grabación y transcribir** para obtener el texto o **Cancelar el dictado** para descartar la grabación. Cambiar de conversación o cerrar el editor también cancela el dictado.
-4. Revisa el texto. Solo sustituye la selección original si el borrador y la selección no han cambiado. Si han cambiado, elige **Insertar la transcripción** o **Descartar la transcripción**. El dictado nunca envía el mensaje.
+4. Revisa el texto. Solo sustituye la selección original si el borrador y la selección no han cambiado. Si han cambiado, elige **Insertar la transcripción** o **Descartar la transcripción** antes de volver a dictar. El dictado nunca envía el mensaje.
 
 Si la API recurre a WAV en Tauri para Linux, el dictado y la prueba de entrada detienen la grabación a los 24 segundos. El fragmento queda en este dispositivo hasta que elijas **Transcribir** para enviarlo al proveedor de voz o **Cancelar** para descartarlo.
 

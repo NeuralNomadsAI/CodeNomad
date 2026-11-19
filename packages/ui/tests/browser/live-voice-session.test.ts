@@ -369,7 +369,7 @@ test("OpenAI final text replaces deltas; unknown tools fail closed", async () =>
     assert.equal(truncate?.itemId, "assistant")
     assert.ok(truncate.audioEndMs >= 0 && truncate.audioEndMs < 500)
     await page.evaluate(() => (window as any).fixture.busy())
-    send({ type: "tool-call", id: "queued", name: "send_to_agent", arguments: { text: "Queue this prompt" } })
+    send({ type: "tool-call", id: "queued", responseId: "queue-reply", name: "send_to_agent", arguments: { text: "Queue this prompt" } })
     assert.equal((await waitForSent(item => item.id === "queued")).output, '{"delivery":"queued"}')
     assert.equal((await snapshot()).info.prompts[0].delivery, "queue")
     send({ type: "tool-call", id: "bad", name: "read_file", arguments: { path: "/denied" } })
@@ -627,11 +627,35 @@ test("playback overflow interrupts only the reply and truncates OpenAI at the re
       send({ type: "turn-complete" })
       send(audio("next"))
       await page.waitForFunction(() => (window as any).fixture.playback.rendered > 0)
-      send({ type: "tool-call", id: "still-open", name: "get_session_status", arguments: {} })
+      send({ type: "tool-call", id: "still-open", ...(openAI ? { responseId: "next" } : {}), name: "get_session_status", arguments: {} })
       assert.equal(JSON.parse((await waitForSent(item => item.id === "still-open")).output).status, "idle")
       assert.equal(await live.getByRole("list").getByText("Response interrupted", { exact: true }).count(), 1)
     } finally { await context.close() }
   }
+})
+
+test("an overflowing OpenAI reply leaves the preceding reply queued and truncates only the overflow", async () => {
+  const { page, context, live, openConsent, acceptConsent, sent, waitForSent } = await fixture("openai", true)
+  try {
+    await openConsent()
+    const send = await acceptConsent()
+    const audio = (itemId: string) => ({ type: "audio", pcm, itemId, contentIndex: 0 })
+    send({ type: "thinking", responseId: "A" })
+    for (let i = 0; i < 4; i++) send(audio("item-A"))
+    send({ type: "turn-complete" })
+    send({ type: "thinking", responseId: "B" })
+    for (let i = 0; i < 32; i++) send(audio("item-B"))
+    await live.getByText("Response interrupted", { exact: true }).first().waitFor()
+    assert.deepEqual(await waitForSent(item => item.type === "interrupt"), { type: "interrupt", responseId: "B" })
+    assert.deepEqual(await waitForSent(item => item.type === "truncate"), {
+      type: "truncate", itemId: "item-B", contentIndex: 0, audioEndMs: 0,
+    })
+    const flushed = await page.evaluate(() => (window as any).fixture.playback.flushed)
+    assert.ok(flushed < 48_000, "reply A still had samples at the cut")
+    // Render A's entire two seconds without sending any more PCM.
+    await page.waitForFunction(() => (window as any).fixture.playback.rendered === 48_000)
+    assert.deepEqual(sent.filter(item => item.type === "truncate").map(item => item.itemId), ["item-B"])
+  } finally { await context.close() }
 })
 
 test("the live log adds one receipt and one interruption, not partial speech", async () => {

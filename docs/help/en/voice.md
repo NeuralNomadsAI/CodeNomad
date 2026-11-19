@@ -37,7 +37,7 @@ The playback test uses the selected playback mode/format immediately, but endpoi
 1. Keep **Prompt voice input** enabled in **Voice** (it is on by default).
 2. In the composer's **More actions** menu, choose **Dictate** and allow microphone access. If dictation or conversation is unavailable, its menu item shows why and opens the relevant **Voice** card. Dictation, the input test and live conversation can use the microphone only one at a time.
 3. Choose **Stop recording and transcribe** to get text or **Cancel dictation** to discard the recording. Switching conversations or closing the composer also cancels dictation.
-4. Review the text. It replaces the original selection only if the draft and selection are unchanged; otherwise choose **Insert transcript** or **Discard transcript**. Dictation never sends the prompt.
+4. Review the text. It replaces the original selection only if the draft and selection are unchanged; otherwise choose **Insert transcript** or **Discard transcript** before dictating again. Dictation never sends the prompt.
 
 If the API uses WAV fallback on Linux Tauri, **Dictate** and **Test API input** stop recording at 24 seconds. The clip stays on this device until you choose **Transcribe** to send it to the speech provider or **Cancel** to discard it.
 

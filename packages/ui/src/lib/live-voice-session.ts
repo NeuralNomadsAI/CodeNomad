@@ -57,6 +57,7 @@ export function openLiveVoiceSession(options: {
   const inputRate = liveVoiceInputRate(options.engine)
   const outputRate = LIVE_VOICE_OUTPUT_RATE
   const calls = new Map<string, "started" | "cancelled" | "finished">()
+  const interruptedResponses = new Set<string>()
   const rows = new Map<number, LiveVoiceTranscriptRow>()
   const keys = new Map<string, number>()
   const assistantRows = new Set<number>()
@@ -140,7 +141,7 @@ export function openLiveVoiceSession(options: {
     if (discardResponse && value.role === "assistant") return
     const key = value.itemId ? `${value.role}:${value.itemId}` : value.role
     const prior = rows.get(keys.get(key) ?? 0)
-    if (prior?.final && value.itemId) return
+    if (prior?.final && value.itemId && !(options.engine === "gemini-live" && value.role === "user")) return
     let fragment = value.replace ? value.text || prior?.text || "" : (prior?.text ?? "") + value.text
     if (!fragment.trim() && !prior) return
     fragment = fragment.slice(0, ROW_CHARS)
@@ -168,16 +169,20 @@ export function openLiveVoiceSession(options: {
     // User rows close on their own transcription's final event, independently of model turns.
   }
 
-  function interrupt(manual: boolean) {
+  function interrupt(manual: boolean, overflow = false) {
     if (!ready || !audio || !current() || discardResponse) return
     const active = responseOpen || playing
     // OpenAI reports speech start as an interruption hint, including when idle.
     if (!active && (manual || options.engine === "openai-realtime")) return
     discardResponse = responseOpen || (!manual && options.engine === "gemini-live")
+    if (responseId) {
+      if (interruptedResponses.size >= LIVE_VOICE_MAX_CALLS) return stop("limit")
+      interruptedResponses.add(responseId)
+    }
     responseOpen = responseSpoken = false
-    awaitingPlayback.clear()
+    if (!overflow) awaitingPlayback.clear()
     // Resolve the flush at the hardware playback position, not bytes queued.
-    void audio.interrupt().then(truncations => {
+    void audio.interrupt(overflow).then(truncations => {
       if (options.engine === "openai-realtime") for (const item of truncations) {
         if (item.contentIndex === 0) send(item)
       }
@@ -193,7 +198,6 @@ export function openLiveVoiceSession(options: {
   function completeTurn() {
     audio?.turnComplete()
     finishTurn(discardResponse)
-    responseId = undefined
     responseOpen = responseSpoken = discardResponse = false
     updateActivity()
     publish()
@@ -208,8 +212,9 @@ export function openLiveVoiceSession(options: {
     publish()
   }
 
-  async function execute(id: string, tool: LiveVoiceTool) {
+  async function execute(id: string, tool: LiveVoiceTool, ownerResponse?: string) {
     const admitted = () => current() && socket?.readyState === OPEN && calls.get(id) === "started"
+      && !(ownerResponse && interruptedResponses.has(ownerResponse))
     if (!admitted()) return
     pendingTools++
     updateActivity()
@@ -268,7 +273,7 @@ export function openLiveVoiceSession(options: {
             Number(value.contentIndex) < 0 || Number(value.contentIndex) > 32))) return stop("invalid-message")
         if (!discardResponse) {
           responseOpen = responseSpoken = true
-          if (audio.play(value as AudioEvent) === "overflow") interrupt(true)
+          if (audio.play(value as AudioEvent) === "overflow") interrupt(true, true)
         }
         break
       case "transcript":
@@ -292,12 +297,22 @@ export function openLiveVoiceSession(options: {
         break
       case "tool-call": {
         const tool = readLiveVoiceTool(value.name, value.arguments)
-        if (!tool || !liveVoiceIdentifier(value.id) || !liveVoiceKeys(value, "type", "id", "name", "arguments")) return stop("invalid-message")
-        const id = value.id
+        const { id, responseId: ownerResponse } = value
+        const keys = ["type", "id", "name", "arguments"]
+        if (options.engine === "openai-realtime") {
+          if (!liveVoiceIdentifier(ownerResponse)) return stop("invalid-message")
+          keys.push("responseId")
+        }
+        if (!tool || !liveVoiceIdentifier(id) || !liveVoiceKeys(value, ...keys)) return stop("invalid-message")
         if (calls.has(id)) return
         if (calls.size >= LIVE_VOICE_MAX_CALLS) return stop("limit")
+        // The gateway settles calls from this response when it receives interrupt.
+        if (typeof ownerResponse === "string" && interruptedResponses.has(ownerResponse)) {
+          calls.set(id, "cancelled")
+          break
+        }
         calls.set(id, "started")
-        void execute(id, tool)
+        void execute(id, tool, ownerResponse as string | undefined)
         break
       }
       default: stop("invalid-message")

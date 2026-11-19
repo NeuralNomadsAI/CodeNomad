@@ -179,47 +179,41 @@ test("a pending revocation refuses upgrades and can be retried durably", { timeo
   assert.equal(absent.status, 404)
 })
 
-test("Gemini emits a user boundary between raw transcripts without a finished flag", { timeout: 10000 }, async t => {
+test("Gemini binds late fragments by offset when available and keeps the new utterance open across turnComplete", { timeout: 10000 }, async t => {
   const fake = await provider(t)
   const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })
   const client = connect(t, local, gemini, { origin: `http://${local}` })
   const upstream = await setupGemini(client, fake)
-  for (const text of ["First utterance", "Second utterance"]) {
-    upstream.send({ serverContent: { inputTranscription: { text } } }, true)
-    upstream.send({ serverContent: { turnComplete: true } })
+  const speechStart = async (audioOffset?: string) => {
+    upstream.send({ voiceActivity: { type: "ACTIVITY_START", audioOffset } })
     assert.deepEqual(await client.next(), { type: "activity" })
-    assert.deepEqual(await client.next(), { type: "transcript", role: "user", text, final: false })
-    assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "", final: true })
+  }
+  const fragment = async (text: string, itemId: string, startOffset?: string, final = false) => {
+    upstream.send({ serverContent: { inputTranscription: { text, startOffset } } })
+    assert.deepEqual(await client.next(), { type: "activity" })
+    assert.deepEqual(await client.next(), { type: "transcript", role: "user", text, itemId, final })
+  }
+  const turnComplete = async () => {
+    upstream.send({ serverContent: { turnComplete: true } })
     assert.deepEqual(await client.next(), { type: "turn-complete" })
   }
-  upstream.send({ serverContent: { inputTranscription: { text: "Still ", finished: false } } })
-  upstream.send({ serverContent: { turnComplete: true } })
-  upstream.send({ serverContent: { inputTranscription: { text: "speaking", finished: true } } })
-  assert.deepEqual(await client.next(), { type: "activity" })
-  assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "Still ", final: false })
-  assert.deepEqual(await client.next(), { type: "turn-complete" })
-  assert.deepEqual(await client.next(), { type: "activity" })
-  assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "speaking", final: true })
-})
+  await turnComplete()
+  await fragment("Late A", "user-0")
+  await speechStart()
+  assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "", itemId: "user-0", final: true })
+  await fragment("New B", "user-1")
+  await turnComplete()
+  await fragment(" part 2", "user-1")
 
-test("Gemini speech start closes a late input transcript before the next utterance", { timeout: 10000 }, async t => {
-  const fake = await provider(t)
-  const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })
-  const client = connect(t, local, gemini, { origin: `http://${local}` })
-  const upstream = await setupGemini(client, fake)
-  upstream.send({ serverContent: { turnComplete: true } })
-  upstream.send({ serverContent: { inputTranscription: { text: "Late A" } } })
-  upstream.send({ voiceActivity: { type: "ACTIVITY_START" } })
-  upstream.send({ serverContent: { inputTranscription: { text: "New B" } } })
-  upstream.send({ serverContent: { turnComplete: true } })
-  assert.deepEqual(await client.next(), { type: "turn-complete" })
-  for (const text of ["Late A", "New B"]) {
-    assert.deepEqual(await client.next(), { type: "activity" })
-    assert.deepEqual(await client.next(), { type: "transcript", role: "user", text, final: false })
-    if (text === "Late A") assert.deepEqual(await client.next(), { type: "activity" })
-    assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "", final: true })
-  }
-  assert.deepEqual(await client.next(), { type: "turn-complete" })
+  await speechStart("1.25s")
+  assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "", itemId: "user-1", final: true })
+  await fragment("A", "user-2", "1.40s")
+  await speechStart("2.5s")
+  assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "", itemId: "user-2", final: true })
+  await fragment("B", "user-3", "2.5s")
+  await turnComplete()
+  await fragment(" tail of A", "user-2", "2.499999999s", true)
+  await fragment(" tail of B", "user-3", "2.75s")
 })
 
 test("direct admission, Gemini binary messages, fixed tools, cancellation and password logout", { timeout: 10000 }, async t => {
@@ -318,7 +312,7 @@ test("Remote Control needs its device credential even without local auth; OpenAI
   upstream.send({ type: "response.done", response: {
     id: "response-2", status: "completed", output: [{ type: "function_call", status: "completed", call_id: "call-1", name: "get_last_reply", arguments: "{}" }],
   } })
-  assert.deepEqual(await client.next(), { type: "tool-call", name: "get_last_reply", id: "call-1", arguments: {} })
+  assert.deepEqual(await client.next(), { type: "tool-call", name: "get_last_reply", id: "call-1", arguments: {}, responseId: "response-2" })
   assert.deepEqual(await client.next(), { type: "turn-complete" })
   client.send({ type: "tool-result", id: "call-1", output: "Working" })
   assert.deepEqual(await upstream.next(), { type: "conversation.item.create", item: { type: "function_call_output", call_id: "call-1", output: "Working" } })
@@ -341,6 +335,36 @@ test("Remote Control needs its device credential even without local auth; OpenAI
   manager.revokeDevice(paired.device.id)
   assert.equal((await client.closed)[0], 1006)
   await upstream.closed
+})
+
+test("OpenAI interruption settles raced function calls for completed replies without forwarding late sends", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })
+  const client = connect(t, local, openai, { origin: `http://${local}` })
+  const upstream = await fake.next()
+  upstream.send({ type: "session.created", session: {} })
+  assert.equal((await upstream.next()).type, "session.update")
+  upstream.send({ type: "session.updated", session: {} })
+  assert.equal((await client.next()).type, "ready")
+  upstream.send({ type: "response.created", response: { id: "reply" } })
+  assert.equal((await client.next()).type, "thinking")
+  const done = (id: string) => upstream.send({ type: "response.done", response: { id: "reply", status: "completed", output: [
+    { type: "function_call", status: "completed", call_id: id, name: "send_to_agent", arguments: '{"text":"Do not send"}' },
+  ] } })
+  const cancelled = (id: string) => ({ type: "conversation.item.create", item: { type: "function_call_output", call_id: id, output: "Interrupted by the user." } })
+  done("in-flight")
+  assert.deepEqual(await client.next(), { type: "tool-call", id: "in-flight", responseId: "reply", name: "send_to_agent", arguments: { text: "Do not send" } })
+  assert.equal((await client.next()).type, "turn-complete")
+  client.send({ type: "interrupt", responseId: "reply" })
+  assert.deepEqual(await upstream.next(), cancelled("in-flight"))
+  assert.deepEqual(await client.next(), { type: "tool-cancel", id: "in-flight" })
+  done("late")
+  assert.deepEqual(await upstream.next(), cancelled("late"))
+  assert.deepEqual(await client.next(), { type: "tool-cancel", id: "late" })
+  assert.equal((await client.next()).type, "turn-complete")
+  client.send({ type: "tool-result", id: "in-flight", output: "Late browser result" })
+  client.send({ type: "audio", pcm: PCM })
+  assert.deepEqual(await upstream.next(), { type: "input_audio_buffer.append", audio: PCM })
 })
 
 test("Tauri TLS-exception window requires bootstrap and upstream login, and revokes both streams on disposal", { timeout: 15000 }, async t => {

@@ -55,8 +55,16 @@ class Playback extends AudioWorkletProcessor {
     this.read = this.write = this.count = this.phase = this.rendered = this.reported = 0
     this.port.onmessage = ({ data }) => {
       if (!(data instanceof ArrayBuffer)) {
-        this.port.postMessage({ flush: data, rendered: this.rendered })
-        this.read = this.write = this.count = this.phase = this.rendered = this.reported = 0
+        this.port.postMessage({ flush: true, rendered: this.rendered })
+        if (data === true) {
+          this.read = this.write = this.count = this.phase = this.rendered = this.reported = 0
+        } else {
+          // Keep the unread prefix and rebase only after reporting the actual cut.
+          this.count = Math.max(0, Math.min(this.count, data.keepThrough - this.rendered))
+          this.write = (this.read + this.count) % this.ring.length
+          this.rendered = this.reported = Math.min(this.rendered, data.keepThrough)
+          if (!this.count) this.phase = 0
+        }
         return
       }
       const pcm = new DataView(data)

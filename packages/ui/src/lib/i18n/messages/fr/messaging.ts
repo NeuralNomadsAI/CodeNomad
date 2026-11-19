@@ -349,6 +349,7 @@ export const messagingMessages = {
   "voice.command.activeSession": "Session active",
   "voice.command.loading": "Vérification des réglages vocaux…",
   "voice.command.capabilitiesError": "Impossible de vérifier les réglages vocaux",
+  "voice.command.pendingTranscription": "Insérez ou ignorez la transcription en attente",
   "voice.command.setupPlayback": "Configurer la lecture audio",
   "voice.command.unsupportedFormat": "Format de lecture non pris en charge",
   "voice.command.noSession": "Sélectionner une session",

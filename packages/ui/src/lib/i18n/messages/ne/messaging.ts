@@ -346,6 +346,7 @@ export const messagingMessages = {
   "voice.command.activeSession": "सक्रिय सत्र",
   "voice.command.loading": "ध्वनि सेटिङ जाँच्दै…",
   "voice.command.capabilitiesError": "ध्वनि सेटिङ जाँच्न सकिएन",
+  "voice.command.pendingTranscription": "बाँकी प्रतिलेख घुसाउनुहोस् वा त्याग्नुहोस्",
   "voice.command.setupPlayback": "प्लेब्याक सेटअप गर्नुहोस्",
   "voice.command.unsupportedFormat": "यो प्लेब्याक ढाँचा समर्थित छैन",
   "voice.command.noSession": "सत्र छान्नुहोस्",

@@ -293,6 +293,26 @@ test("the existing API path starts and stops with touch without focusing the tex
   assert.notEqual(await page.evaluate(() => document.activeElement?.tagName), "TEXTAREA")
 }, true))
 
+test("Dictate waits for the previous transcription to be inserted or discarded", () => withComposer(async page => {
+  await field(page).fill("original")
+  await start(page)
+  await stop(page)
+  await field(page).fill("updated")
+  await finish(page, "saved")
+  const insert = page.getByRole("button", { name: "Insert transcript", exact: true })
+  await insert.waitFor()
+  await page.getByRole("button", { name: "More actions", exact: true }).click()
+  const unavailable = page.getByRole("menuitem", { name: /Dictate.*Insert or discard the pending transcription/ })
+  await unavailable.waitFor()
+  assert.equal(await unavailable.isDisabled(), true)
+  await page.keyboard.press("Escape")
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 1)
+  await insert.click()
+  assert.equal(await field(page).inputValue(), "updated saved ")
+  await start(page)
+  await page.waitForFunction(() => (window as any).capture.starts === 2)
+}))
+
 test("moving the selection invalidates insertion even if it returns to the original range", () => withComposer(async page => {
   await field(page).fill("one two")
   await select(page, 0, 3)

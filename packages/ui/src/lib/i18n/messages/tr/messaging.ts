@@ -319,6 +319,7 @@ export const messagingMessages = {
   "voice.command.activeSession": "Etkin oturum",
   "voice.command.loading": "Ses ayarları kontrol ediliyor…",
   "voice.command.capabilitiesError": "Ses ayarları kontrol edilemedi",
+  "voice.command.pendingTranscription": "Bekleyen dökümü ekleyin veya atın",
   "voice.command.setupPlayback": "Ses çalmayı ayarla",
   "voice.command.unsupportedFormat": "Ses çalma biçimi desteklenmiyor",
   "voice.command.noSession": "Bir oturum seç",

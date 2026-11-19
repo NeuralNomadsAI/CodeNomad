@@ -205,22 +205,27 @@ export async function startLiveVoiceAudio(options: {
         } catch (error) { fail(error) }
       },
       turnComplete() { playback.turnComplete() },
-      interrupt(): Promise<TruncateMessage[]> {
+      interrupt(preserveEarlier = false): Promise<TruncateMessage[]> {
         if (own.aborted) return Promise.resolve([])
         if (flushes.length === 4) {
           fail(new Error("Audio interruption overrun"))
           return Promise.resolve([])
         }
         const old = playback
-        playback = new LiveVoicePlayback()
+        const retained = preserveEarlier ? old.retainEarlierReplies() : undefined
+        playback = retained?.playback ?? new LiveVoicePlayback()
         playbackChanged()
         return new Promise(resolve => {
           const timeout = window.setTimeout(() => fail(new Error("Audio interruption timed out")), 500)
           flushes.push({ playback: old, settle: rendered => {
             clearTimeout(timeout)
-            resolve(rendered < 0 ? [] : old.interrupt(rendered))
+            if (rendered >= 0 && retained) {
+              retained.playback.progress(Math.min(rendered, retained.keepThrough))
+              playbackChanged()
+            }
+            resolve(rendered < 0 ? [] : old.interrupt(rendered, preserveEarlier))
           } })
-          player.port.postMessage(true)
+          player.port.postMessage(retained ? { keepThrough: retained.keepThrough } : true)
         })
       },
       close,

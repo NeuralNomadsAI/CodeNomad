@@ -101,14 +101,34 @@ test("muting flushes Gemini audio once per transition without sending an OpenAI 
   }
 })
 
+test("OpenAI refuses an interrupted reply's late tools after turn-complete and admits another reply", async t => {
+  const executed: string[] = []
+  const f = await fixture(t, "openai-realtime", tool => {
+    if (tool.name === "send_to_agent") executed.push(tool.arguments.text)
+    return {}
+  })
+  f.receive({ type: "thinking", responseId: "interrupted" })
+  f.session.interrupt()
+  f.receive({ type: "turn-complete" })
+  f.receive({ type: "thinking", responseId: "next" })
+  const call = (id: string, responseId: string) => f.receive({
+    type: "tool-call", id, responseId, name: "send_to_agent", arguments: { text: id },
+  })
+  call("too-late", "interrupted")
+  call("new-reply", "next")
+  await Promise.resolve()
+  assert.deepEqual(executed, ["new-reply"])
+  assert.deepEqual(f.sent.filter(value => value.type === "tool-result").map(value => value.id), ["new-reply"])
+})
+
 test("Gemini closes user rows on transcription completion, independent of model turns", async t => {
   const f = await fixture(t, "gemini-live")
-  f.receive({ type: "transcript", role: "user", text: "First ", final: false })
+  f.receive({ type: "transcript", role: "user", text: "First ", final: false, itemId: "a" })
   f.receive({ type: "turn-complete" })
   assert.deepEqual(f.rows().map(row => [row.text, row.final, row.announce]), [["First ", false, undefined]])
-  f.receive({ type: "transcript", role: "user", text: "utterance", final: false })
-  f.receive({ type: "transcript", role: "user", text: "", final: true })
-  f.receive({ type: "transcript", role: "user", text: "Second utterance", final: true })
+  f.receive({ type: "transcript", role: "user", text: "", final: true, itemId: "a" })
+  f.receive({ type: "transcript", role: "user", text: "Second utterance", final: true, itemId: "b" })
+  f.receive({ type: "transcript", role: "user", text: "utterance", final: true, itemId: "a" })
   assert.deepEqual(f.rows().map(row => [row.text, row.final, row.announce]), [
     ["First utterance", true, true], ["Second utterance", true, true],
   ])

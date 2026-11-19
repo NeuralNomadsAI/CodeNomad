@@ -12,6 +12,8 @@ export class LiveVoicePlayback {
   private readonly queued: { item?: Item; end: number }[] = []
   private received = 0
   private rendered = 0
+  private replyStart = 0
+  private readonly replyItems = new Set<Item>()
   private openItem?: Item
   private overflowItem?: Item
 
@@ -42,6 +44,7 @@ export class LiveVoicePlayback {
       if (item.contentIndex !== message.contentIndex) throw new Error("Playback item changed")
       item.received += frames
       this.openItem = item
+      this.replyItems.add(item)
     }
     this.received += frames
     const tail = this.queued.at(-1)
@@ -65,14 +68,34 @@ export class LiveVoicePlayback {
 
   turnComplete() {
     this.openItem = undefined
+    this.replyItems.clear()
+    this.replyStart = this.received
   }
 
-  interrupt(rendered: number): TruncateMessage[] {
+  /** Rebase to the preceding replies. Worklet acknowledgement supplies their exact played position. */
+  retainEarlierReplies() {
+    const retained = new LiveVoicePlayback()
+    retained.received = retained.replyStart = this.replyStart
+    retained.rendered = Math.min(this.rendered, this.replyStart)
+    for (const { item, end } of this.queued) {
+      if (retained.queued.at(-1)?.end === this.replyStart || retained.rendered === this.replyStart) break
+      let copy: Item | undefined
+      if (item) {
+        copy = retained.items.get(item.itemId)
+        if (!copy) { copy = { ...item }; retained.items.set(copy.itemId, copy) }
+      }
+      retained.queued.push({ item: copy, end: Math.min(end, this.replyStart) })
+    }
+    return { playback: retained, keepThrough: this.replyStart }
+  }
+
+  interrupt(rendered: number, currentOnly = false): TruncateMessage[] {
     this.progress(rendered)
     const items = [...this.items.values()]
     if (this.overflowItem && !this.items.has(this.overflowItem.itemId)) items.push(this.overflowItem)
     return items
-      .filter(item => item === this.openItem || item === this.overflowItem || item.received > item.played)
+      .filter(item => item === this.overflowItem || (!currentOnly || this.replyItems.has(item))
+        && (item === this.openItem || item.received > item.played))
       .map(({ itemId, contentIndex, played }) => ({
         type: "truncate",
         itemId,

@@ -852,6 +852,7 @@ export default function PromptInput(props: PromptInputProps) {
       icon: voiceInput.isTranscribing()
         ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
         : <Mic class="h-4 w-4" aria-hidden="true" />,
+      disabled: dictationReason === "voice.command.pendingTranscription",
       selectBeforeClose: !dictationReason,
       onSelect: dictationReason ? () => openSettingsRow("speech", "voice-dictation")
         : voiceInput.isRecording() ? voiceInput.stopRecording : beginVoiceInput,

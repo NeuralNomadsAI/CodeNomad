@@ -89,6 +89,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     if (state() === "starting") return "settings.speech.testInput.requesting"
     if (state() === "transcribing") return "promptInput.voiceInput.transcribing.title"
     if (state() === "limitReached") return "promptInput.voiceInput.limitReached"
+    if (transcript()?.current()) return "voice.command.pendingTranscription"
     if (options.disabled()) return "voice.command.composerUnavailable"
     const purpose = microphoneUse()
     if (purpose) return `voice.microphone.${purpose}`
