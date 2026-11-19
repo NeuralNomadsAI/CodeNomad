@@ -64,6 +64,12 @@ export class ServerEvents {
     this.connectionValidator = validate
   }
 
+  /** Capture synchronously on open, before deferring connection-owned work. */
+  connectionGuard(): () => boolean {
+    const generation = this.connectGeneration
+    return () => !this.disposed && generation === this.connectGeneration
+  }
+
   start(): Promise<void> | undefined {
     if (this.started || this.disposed) return
     this.started = true

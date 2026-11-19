@@ -213,6 +213,10 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
 
   return {
     ensure, detach, retryWorkspaces,
+    initialInventory(client: BackendClient) {
+      const entry = entries.get(client.id)
+      if (entry?.client === client) return entry.pending
+    },
     workspaceReadGuard(id: string, signal?: AbortSignal) {
       const entry = entries.get(id), health = entry?.health
       return () => {

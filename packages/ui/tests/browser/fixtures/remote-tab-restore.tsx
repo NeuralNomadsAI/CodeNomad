@@ -14,7 +14,7 @@ import { backends } from "../../../src/lib/backend-client"
 import { ConfigProvider, preferences, preferencesForBackend } from "../../../src/stores/preferences"
 import { I18nProvider, preloadLocaleMessages } from "../../../src/lib/i18n"
 import { getSessionDraftPromptsForInstance } from "../../../src/stores/session-state"
-import { createInstance, refreshWorkspaceList } from "../../../src/stores/instances"
+import { createInstance, refreshWorkspaceList, waitForInitialWorkspaceLoad } from "../../../src/stores/instances"
 import InstanceTabs from "../../../src/components/instance-tabs"
 import RemoteRestoreView from "../../../src/components/remote-restore-view"
 import AlertDialog from "../../../src/components/alert-dialog"
@@ -77,6 +77,7 @@ function Fixture() {
   restartBackend: async () => { const client = backends.get("a")!; await refreshWorkspaceList("a", client.api) },
   disconnect: () => backends.get("a")!.events.restart(),
   state: () => backendRegistry.state("a"),
+  waitForInventory: () => waitForInitialWorkspaceLoad(),
   snapshot: loadedRestorableSession,
   saved: async () => { const value = (window as any).committedState; return value && decodeClientSnapshotV2(value.snapshot, 1, async key => value.partitions[key] ?? null) },
   removeServer: () => preferencesForBackend("local").removeRemoteServerProfile("a"),

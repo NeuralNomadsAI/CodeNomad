@@ -420,16 +420,12 @@ export function useAppSessionCapture() {
       nativeFallbackState = current.tabs.length ? current : null
       schedule()
     },
-    preserveRemotePlaceholder(tabId: string, snapshot: RestorableWorkspaceTabState) {
-      if (!preservation) return -1
-      let index = preservation.results.findIndex(result => result.runtimeTabId === tabId)
-      if (index < 0) {
-        index = preservation.sourceTabs.length
-        preservation.results.push({ status: "pending" })
-        preservation.removalRevisions.push(0)
-      }
-      preservation.sourceTabs[index] = snapshot
-      return index
+    getUnavailableWorkspace(tabId: string) {
+      if (!preservation) return
+      const index = preservation.results.findIndex(result => result.runtimeTabId === tabId && result.runtimeUnavailable)
+      // The unavailable lifecycle event already merged live and not-yet-hydrated state.
+      const snapshot = preservation.sourceTabs[index]
+      if (snapshot?.kind === "workspace") return { index, snapshot }
     },
     hasRestoredTabBinding(index: number, expectedRuntimeTabId: string) {
       return preservation ? hasRestoredTabBinding(preservation, index, expectedRuntimeTabId) : false

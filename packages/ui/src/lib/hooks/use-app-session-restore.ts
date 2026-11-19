@@ -320,28 +320,32 @@ export function useAppSessionRestore(): void {
     return id
   }
   const stopLifecycle = onInstanceLifecycleAuthority(event => {
-    if (!startupComplete || event.type !== "unavailable" || backendIdOf(event) === LOCAL_BACKEND_ID
-      || preferences().multiBackend !== true || !appTabs().some(tab => tab.id === getInstanceAppTabId(event.instanceId))) return
-    const captured = captureState(new Map())
-    const index = captured.tabIds.indexOf(getInstanceAppTabId(event.instanceId))
-    const tab = captured.state.tabs[index]
-    if (tab?.kind !== "workspace") return
+    if (event.type !== "unavailable" || backendIdOf(event) === LOCAL_BACKEND_ID
+      || preferences().multiBackend !== true) return
+    const runtimeTabId = getInstanceAppTabId(event.instanceId)
+    if (!appTabs().some(tab => tab.id === runtimeTabId)) return
     batch(() => {
+      let retained = capture.getUnavailableWorkspace(runtimeTabId)
       if (!context) {
+        if (!startupComplete) return
+        const captured = captureState(new Map())
+        const index = captured.tabIds.indexOf(runtimeTabId)
+        const snapshot = captured.state.tabs[index]
+        if (snapshot?.kind !== "workspace") return
         capture.start(captured.state)
         captured.tabIds.forEach((id, index) => capture.recordRestoredTab(index, id))
         context = createRestoreContext(captured.state, controller.signal, capture, offerRecovery)
+        retained = { index, snapshot }
       }
-      const sourceIndex = capture.preserveRemotePlaceholder(captured.tabIds[index], tab)
-      if (sourceIndex < 0) return
-      context.snapshot.tabs[sourceIndex] = tab
+      if (!retained) return
+      context.snapshot.tabs[retained.index] = retained.snapshot
       const id = `remote-restore:${generateUUID()}`
-      replaceRestoredAppTab(captured.tabIds[index], id, () => {
-        addPlaceholder(tab, sourceIndex, id, event.instanceId)
+      replaceRestoredAppTab(runtimeTabId, id, () => {
+        addPlaceholder(retained.snapshot, retained.index, id, event.instanceId)
         detachInstanceTabMembership(event.instanceId)
       })
     })
-    // Inventory publication owns reconciliation; only explicit Retry recreates projects.
+    // Inventory publication owns reconciliation; recovery is explicit.
   })
   createEffect(() => {
     if (preferences().multiBackend !== true) return
