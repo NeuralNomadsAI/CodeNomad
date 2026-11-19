@@ -91,8 +91,8 @@ import {
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import {
-  clearPendingSessionMove, confirmSessionPlacement, getPendingSessionMove, hasConfirmedSessionPlacement,
-  isSessionMovePending, matchesSessionPlacement,
+  clearPendingSessionMove, confirmSessionPlacement, getPendingSessionMove, isSessionMovePending,
+  matchesSessionPlacement, retainConfirmedSessionPlacement,
 } from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
@@ -808,6 +808,9 @@ async function fetchSessions(instanceId: string, options?: {
         .map((session) => session.id))
       const validRootIds = new Set([...fetchedRootIds, ...concurrentRootIds])
       const currentSessions = sessions().get(instanceId) ?? new Map()
+      const revalidations = new Map<string, () => Promise<void>>()
+      const retainPlacement = (id: string, session: Session | undefined) =>
+        retainConfirmedSessionPlacement(instanceId, id, session, revalidations, isCurrent, options?.signal)
       const staleIds = new Set(getDisconnectedCapturedSessionIds(existingSessions, currentSessions, validRootIds))
       const fetchedIds = new Set(authoritativeSessions.map(session => session.id))
       // Parents may live outside the enumerated project after a native move.
@@ -827,7 +830,7 @@ async function fetchSessions(instanceId: string, options?: {
       for (const sessionId of staleIds) {
         const current = currentSessions.get(sessionId)
         if (current !== existingSessions.get(sessionId) || isSessionMovePending(instanceId, sessionId)
-          || hasConfirmedSessionPlacement(instanceId, sessionId, current)) continue
+          || retainPlacement(sessionId, current)) continue
         // An absent row may still exist in another workspace.
         removeSessionProjection(instanceId, sessionId)
       }
@@ -837,11 +840,18 @@ async function fetchSessions(instanceId: string, options?: {
       for (const { id, location } of inventory) {
         const directory = currentSessions.get(id)?.location.directory
         if (isSessionMovePending(instanceId, id) || directory !== location.directory
-          || hasConfirmedSessionPlacement(instanceId, id, currentSessions.get(id))
-          || isWorkspaceServedDirectory(directory, instance.folder, worktrees)) continue
+          || isWorkspaceServedDirectory(directory, instance.folder, worktrees)
+          || retainPlacement(id, currentSessions.get(id))) continue
         if (!getMovedAwaySessions(instanceId).has(id)) markSessionMovedAway(instanceId, id, directory)
         if (capturedSelection.includes(id) || activeParentSessionId().get(instanceId) === id || activeSessionId().get(instanceId) === id) {
           removeSessionProjection(instanceId, id)
+        }
+      }
+      if (revalidations.size) {
+        await Promise.all([...revalidations.values()].map(revalidate => revalidate()))
+        if (!isCurrent()) {
+          if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+          return
         }
       }
     }

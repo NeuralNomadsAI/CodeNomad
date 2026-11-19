@@ -56,6 +56,7 @@ import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
 import { isWorkspaceServedDirectory } from "./workspace-served-directory"
 import { locationAuthorityKey } from "./request-locations"
 import { parentSessionReadHeaders } from "../lib/sdk-manager"
+import { prioritizedRead } from "../lib/prioritized-read"
 import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
 import {
   setSessionRevertV2,
@@ -88,6 +89,7 @@ const latestSessionMoves = new Map<string, Map<string, SessionMove>>()
 type SessionPlacement = Pick<Session, "location" | "projectID" | "subpath">
 type PlacementEvidence = { placement: SessionPlacement; generation: number; client: ReturnType<typeof getRootClient> }
 const confirmedPlacements = new Map<string, Map<string, PlacementEvidence>>()
+const LOCATED_ELSEWHERE = Symbol("session located elsewhere")
 
 export function matchesSessionPlacement(placement: SessionPlacement | undefined, expected: SessionPlacement): boolean {
   return !!placement && locationAuthorityKey(placement.location) === locationAuthorityKey(expected.location)
@@ -102,11 +104,47 @@ export function confirmSessionPlacement(instanceId: string, sessionId: string, {
   confirmedPlacements.set(instanceId, placements)
 }
 
-export function hasConfirmedSessionPlacement(instanceId: string, sessionId: string, placement: SessionPlacement | undefined): boolean {
+/** A matching expired proof retains the row until a current probe can settle it. */
+export function retainConfirmedSessionPlacement(
+  instanceId: string, sessionId: string, placement: SessionPlacement | undefined,
+  revalidations: Map<string, () => Promise<void>>, isCurrent: () => boolean, signal?: AbortSignal,
+): boolean {
   const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
-  return !!confirmed && confirmed.client === instances().get(instanceId)?.client
-    && confirmed.generation === getOpenCodeInstanceGeneration(instanceId)
-    && matchesSessionPlacement(placement, confirmed.placement)
+  if (!confirmed || !matchesSessionPlacement(placement, confirmed.placement)) return false
+  if (confirmed.client === instances().get(instanceId)?.client && confirmed.generation === getOpenCodeInstanceGeneration(instanceId)) return true
+  revalidations.set(sessionId, async () => {
+    const current = () => isCurrent() && !signal?.aborted && !isSessionMovePending(instanceId, sessionId)
+      && confirmedPlacements.get(instanceId)?.get(sessionId) === confirmed
+      && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), confirmed.placement)
+    const readSignal = signal ?? new AbortController().signal
+    try {
+      const result = await prioritizedRead(
+        () => activeSessionId().get(instanceId) === sessionId,
+        readSignal,
+        () => current() ? readWorkspaceSessionPlacement(instanceId, sessionId, readSignal) : Promise.resolve(undefined),
+      )
+      if (!current()) return
+      if (result === LOCATED_ELSEWHERE) {
+        clearPendingSessionMove(instanceId, sessionId)
+        markSessionMovedAway(instanceId, sessionId, null)
+        removeSessionProjection(instanceId, sessionId)
+      } else if (result?.id === sessionId && matchesSessionPlacement(result, confirmed.placement)) {
+        confirmSessionPlacement(instanceId, sessionId, result)
+      }
+    } catch (error) {
+      if (current()) log.warn("Failed to revalidate session placement", { instanceId, sessionId, error })
+    }
+  })
+  return true
+}
+
+async function readWorkspaceSessionPlacement(instanceId: string, sessionId: string, signal?: AbortSignal) {
+  try {
+    return await getRootClient(instanceId).session.get({ sessionID: sessionId }, { headers: parentSessionReadHeaders, signal })
+  } catch (error) {
+    if (isSessionNotFoundError(error) && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) return LOCATED_ELSEWHERE
+    throw error
+  }
 }
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
@@ -391,12 +429,12 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
   }
   // The proxy resolves filesystem aliases that the display inventory cannot.
   try {
-    const session = await getRootClient(instanceId).session.get({ sessionID: sessionId }, { headers: parentSessionReadHeaders })
-    if (current() && session?.location) return finishSessionMove(instanceId, sessionId, move, session, true)
-  } catch (error) {
-    if (current() && isSessionNotFoundError(error) && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
-      return finishSessionMove(instanceId, sessionId, move, null)
+    const session = await readWorkspaceSessionPlacement(instanceId, sessionId)
+    if (current()) {
+      if (session === LOCATED_ELSEWHERE) return finishSessionMove(instanceId, sessionId, move, null)
+      if (session?.location) return finishSessionMove(instanceId, sessionId, move, session, true)
     }
+  } catch (error) {
     log.warn("Failed to confirm moved session placement", { instanceId, sessionId, error })
   }
   move.unresolved = true

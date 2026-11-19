@@ -13,6 +13,7 @@ import { captureSessionCatalog } from "./session-catalog-persistence"
 import { activeParentSessionId, activeSessionId, getInstanceSessionIndicatorStatusCached, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, setActiveParentSession, setActiveSessionFromList, setSessionPendingPermission, setSessionStatus, sessions, setSessions } from "./session-state"
 import { messageStoreBus } from "./message-v2/bus"
 import { handleNativeSessionEvent } from "./session-events"
+import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data"
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import type { Session } from "../types/session"
 
@@ -308,6 +309,82 @@ test("cold restore keeps a proxy-confirmed alias selected through catalogue reco
     assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees; f.cleanup() }
 })
+
+for (const withDescendant of [false, true]) {
+  test(`revalidates a confirmed alias after first connection (${withDescendant ? "local descendant" : "standalone"})`, async () => {
+    const id = `catalog-alias-reconnect-${withDescendant}`, f = fixture(id)
+    const originalFetch = globalThis.fetch, originalWorktrees = serverApi.fetchWorktrees
+    const native = (id: string, directory: string, parentID?: string) => ({
+      ...row(id), parentID, location: { directory }, model: { providerID: "p", id: "m" },
+    })
+    const alias = native("root", "/linked-alias")
+    const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
+    const replies = {
+      owned: () => Response.json({ data: alias }),
+      forbidden: () => Response.json({ error: "Forbidden" }, { status: 403 }),
+      departed: () => Response.json({ reason: SESSION_LOCATED_ELSEWHERE_REASON }, { status: 403 }),
+    }
+    let reply: () => Response | Promise<Response> = replies.owned, reads = 0
+    const probeStarted = deferred<void>(), delayed = deferred<Response>()
+    try {
+      serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+      globalThis.fetch = async input => {
+        assert.ok(new URL(String(input)).pathname.endsWith("/api/session/root"))
+        reads++
+        return reply()
+      }
+      f.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
+      f.client.session.list = async (input: any) => ({ data: input.project
+        ? [alias, ...(withDescendant ? [native("child", "/repo", "root")] : [])]
+        : [native("other", "/repo")], cursor: {} })
+      Object.assign(f.saved, { activeSessionId: "root", drafts: { root: "keep draft" }, sessionCatalog: undefined })
+      setInstanceMetadata(id, { project: { id: "project" } as any })
+      await ensureWorktreesLoaded(id)
+      await hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+      await fetchSessions(id, { strictStatus: true })
+      assert.equal(activeSessionId().get(id), "root")
+      assert.equal(reads, 1, "a current proof and normal rows need no probe")
+
+      applyOpenCodeDataEvent(id, "/repo", { id: "connected", type: "server.connected", created: 1, data: {} } as any)
+      reply = replies.forbidden
+      await fetchSessions(id, { strictStatus: true })
+      assert.equal(activeSessionId().get(id), "root", "expiry and generic 403 are not a departure")
+      assert.equal(reads, 2)
+
+      reply = replies.owned
+      await fetchSessions(id, { strictStatus: true })
+      assert.equal(activeSessionId().get(id), "root")
+      assert.equal(reads, 3)
+      await fetchSessions(id, { strictStatus: true })
+      assert.equal(reads, 3, "successful revalidation renews the proof")
+
+      destroyOpenCodeData(id)
+      reply = () => { probeStarted.resolve(); return delayed.promise }
+      const older = fetchSessions(id, { strictStatus: true })
+      const superseded = assert.rejects(older, /superseded/)
+      await probeStarted.promise
+      reply = replies.forbidden
+      await fetchSessions(id, { strictStatus: true })
+      delayed.resolve(replies.departed())
+      await superseded
+      assert.equal(activeSessionId().get(id), "root", "a superseded refusal cannot evict")
+      assert.equal(reads, 5)
+
+      reply = replies.departed
+      await fetchSessions(id, { strictStatus: true })
+      assert.equal(reads, 6)
+      assert.equal(activeSessionId().get(id), undefined, "typed departure removes the projection")
+      assert.equal(sessions().get(id)?.has("root") ?? false, false)
+      assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
+    } finally {
+      delayed.resolve(replies.forbidden())
+      destroyOpenCodeData(id)
+      globalThis.fetch = originalFetch
+      serverApi.fetchWorktrees = originalWorktrees
+      f.cleanup()
+    }
+  })
+}
 
 test("cold restore retains owned child evidence only for the same placement after a runtime refresh", async () => {
   const originalFetch = globalThis.fetch

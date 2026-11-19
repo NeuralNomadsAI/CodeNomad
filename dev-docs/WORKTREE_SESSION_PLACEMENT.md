@@ -63,8 +63,10 @@ Implementation:
   inventory, consult a fresh inventory and use a workspace-scoped session read
   if placement remains uncertain. The proxy resolves aliases such as symlinks
   and junctions. Move and restore reads confirm the exact placement across
-  catalogue refreshes for the current client generation; a typed departure
-  removes the old list, selection and transcript
+  catalogue refreshes for the current client generation. A catalogue that would
+  discard a matching alias with expired evidence rechecks it through the proxy.
+  A matching read renews the evidence; a typed departure removes the old list,
+  selection and transcript
   projection (`removeSessionProjection`). Other read failures keep the move
   unresolved until a later worktree publication retries it. Confirmation updates
   the session list and selected composer catalogue. Drafts and attachments stay,
