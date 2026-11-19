@@ -86,12 +86,27 @@ const pendingSessionMoves = new Map<string, Map<string, SessionMove>>()
 /** A move remains current until its placement is settled or superseded. */
 const latestSessionMoves = new Map<string, Map<string, SessionMove>>()
 type SessionPlacement = Pick<Session, "location" | "projectID" | "subpath">
-const confirmedMovePlacements = new Map<string, Map<string, SessionPlacement>>()
+type PlacementEvidence = { placement: SessionPlacement; generation: number; client: ReturnType<typeof getRootClient> }
+const confirmedPlacements = new Map<string, Map<string, PlacementEvidence>>()
 
-export function hasConfirmedMovePlacement(instanceId: string, sessionId: string, placement: SessionPlacement | undefined): boolean {
-  const confirmed = confirmedMovePlacements.get(instanceId)?.get(sessionId)
-  return !!confirmed && !!placement && locationAuthorityKey(confirmed.location) === locationAuthorityKey(placement.location)
-    && confirmed.projectID === placement.projectID && confirmed.subpath === placement.subpath
+export function matchesSessionPlacement(placement: SessionPlacement | undefined, expected: SessionPlacement): boolean {
+  return !!placement && locationAuthorityKey(placement.location) === locationAuthorityKey(expected.location)
+    && placement.projectID === expected.projectID && placement.subpath === expected.subpath
+}
+
+export function confirmSessionPlacement(instanceId: string, sessionId: string, { location, projectID, subpath }: SessionPlacement): void {
+  const client = instances().get(instanceId)?.client
+  if (!client) return
+  const placements = confirmedPlacements.get(instanceId) ?? new Map<string, PlacementEvidence>()
+  placements.set(sessionId, { placement: { location, projectID, subpath }, client, generation: getOpenCodeInstanceGeneration(instanceId) })
+  confirmedPlacements.set(instanceId, placements)
+}
+
+export function hasConfirmedSessionPlacement(instanceId: string, sessionId: string, placement: SessionPlacement | undefined): boolean {
+  const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
+  return !!confirmed && confirmed.client === instances().get(instanceId)?.client
+    && confirmed.generation === getOpenCodeInstanceGeneration(instanceId)
+    && matchesSessionPlacement(placement, confirmed.placement)
 }
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
@@ -330,7 +345,7 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
   const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]
   for (const instanceId of new Set(affectedInstanceIds)) {
     const move: SessionMove = { data }
-    confirmedMovePlacements.get(instanceId)?.delete(sessionId)
+    confirmedPlacements.get(instanceId)?.delete(sessionId)
     const latest = latestSessionMoves.get(instanceId) ?? new Map()
     latest.set(sessionId, move)
     latestSessionMoves.set(instanceId, latest)
@@ -394,11 +409,7 @@ function finishSessionMove(instanceId: string, sessionId: string, move: SessionM
   if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return false
   const { directory } = move.data.location
   if (placement) {
-    if (verified) {
-      const placements = confirmedMovePlacements.get(instanceId) ?? new Map()
-      placements.set(sessionId, { location: placement.location, projectID: placement.projectID, subpath: placement.subpath })
-      confirmedMovePlacements.set(instanceId, placements)
-    }
+    if (verified) confirmSessionPlacement(instanceId, sessionId, placement)
     applySessionMovePlacement(instanceId, { ...placement, sessionID: sessionId })
     return true
   }
@@ -415,9 +426,9 @@ export function getPendingSessionMove(instanceId: string, sessionId: string): Se
 }
 
 export function clearPendingSessionMove(instanceId: string, sessionId?: string): void {
-  const confirmed = confirmedMovePlacements.get(instanceId)
+  const confirmed = confirmedPlacements.get(instanceId)
   if (sessionId !== undefined) confirmed?.delete(sessionId)
-  if (sessionId === undefined || !confirmed?.size) confirmedMovePlacements.delete(instanceId)
+  if (sessionId === undefined || !confirmed?.size) confirmedPlacements.delete(instanceId)
   const moves = latestSessionMoves.get(instanceId)
   if (sessionId !== undefined) moves?.delete(sessionId)
   if (sessionId === undefined || !moves?.size) latestSessionMoves.delete(instanceId)

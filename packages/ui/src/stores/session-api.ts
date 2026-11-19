@@ -90,7 +90,10 @@ import {
 
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
-import { clearPendingSessionMove, getPendingSessionMove, hasConfirmedMovePlacement, isSessionMovePending } from "./session-events"
+import {
+  clearPendingSessionMove, confirmSessionPlacement, getPendingSessionMove, hasConfirmedSessionPlacement,
+  isSessionMovePending, matchesSessionPlacement,
+} from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
@@ -575,13 +578,16 @@ async function hydrateRestoredSessionChainAttempt(
             return next
           })
           session = sessions().get(instanceId)?.get(sessionId)
-          const readLocation = locationAuthorityKey(apiSession.location)
-          ownedReads.set(sessionId, () => {
-            const current = sessions().get(instanceId)?.get(sessionId)
-            return !!current && getPendingSessionMove(instanceId, sessionId) === move
-              && locationAuthorityKey(current.location) === readLocation
-              && current.projectID === apiSession.projectID && current.subpath === apiSession.subpath
-          })
+          const ownsPlacement = () => isRequestCurrent() && !signal?.aborted
+            && getPendingSessionMove(instanceId, sessionId) === move
+            && !getMovedAwaySessions(instanceId).has(sessionId)
+            && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
+            && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), apiSession)
+          ownedReads.set(sessionId, ownsPlacement)
+          if (readOptions.headers && ownsPlacement()
+            && !isWorkspaceServedDirectory(apiSession.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId))) {
+            confirmSessionPlacement(instanceId, sessionId, apiSession)
+          }
           if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
         } catch (error) {
           if (signal?.aborted) throw error
@@ -821,7 +827,7 @@ async function fetchSessions(instanceId: string, options?: {
       for (const sessionId of staleIds) {
         const current = currentSessions.get(sessionId)
         if (current !== existingSessions.get(sessionId) || isSessionMovePending(instanceId, sessionId)
-          || hasConfirmedMovePlacement(instanceId, sessionId, current)) continue
+          || hasConfirmedSessionPlacement(instanceId, sessionId, current)) continue
         // An absent row may still exist in another workspace.
         removeSessionProjection(instanceId, sessionId)
       }
@@ -831,7 +837,7 @@ async function fetchSessions(instanceId: string, options?: {
       for (const { id, location } of inventory) {
         const directory = currentSessions.get(id)?.location.directory
         if (isSessionMovePending(instanceId, id) || directory !== location.directory
-          || hasConfirmedMovePlacement(instanceId, id, currentSessions.get(id))
+          || hasConfirmedSessionPlacement(instanceId, id, currentSessions.get(id))
           || isWorkspaceServedDirectory(directory, instance.folder, worktrees)) continue
         if (!getMovedAwaySessions(instanceId).has(id)) markSessionMovedAway(instanceId, id, directory)
         if (capturedSelection.includes(id) || activeParentSessionId().get(instanceId) === id || activeSessionId().get(instanceId) === id) {

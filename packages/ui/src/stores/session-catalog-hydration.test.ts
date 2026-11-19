@@ -37,7 +37,7 @@ function fixture(id: string) {
   addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client })
   return { saved, client, cleanup() {
     setSessions(previous => { const next = new Map(previous); next.delete(id); return next })
-    removeInstance(id, { authoritative: false }); sdkManager.destroyClientsForInstance(id)
+    removeInstance(id, { authoritative: false, drafts: "discard" }); sdkManager.destroyClientsForInstance(id)
   } }
 }
 
@@ -268,6 +268,45 @@ test("cold restore reconciles a departed parent after the local child read witho
       } finally { childRead.resolve(Response.json({ data: local("child", "root") })); f.cleanup() }
     }
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees }
+})
+
+test("cold restore keeps a proxy-confirmed alias selected through catalogue reconciliation", async () => {
+  const originalFetch = globalThis.fetch
+  const originalWorktrees = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({
+    isGitRepo: true, worktrees: [
+      { slug: "root", directory: "/repo", kind: "root" },
+      { slug: "linked", directory: "/repo-linked", kind: "worktree" },
+    ],
+  })
+  const id = "catalog-restored-alias", f = fixture(id)
+  const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
+  const native = (id: string, directory: string, parentID?: string) => ({
+    ...row(id), parentID, location: { directory }, model: { providerID: "p", id: "m" },
+  })
+  const alias = native("root", "/linked-alias")
+  let catalogueRoot = alias
+  try {
+    Object.assign(f.saved, { activeSessionId: "root", drafts: { root: "keep draft" }, sessionCatalog: undefined })
+    globalThis.fetch = async () => Response.json({ data: alias })
+    f.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
+    f.client.session.list = async (input: any) => ({ data: input.project
+      ? [catalogueRoot, native("child", "/repo", "root")]
+      : [native("other", "/repo")], cursor: {} })
+    setInstanceMetadata(id, { project: { id: "project" } as any })
+    await ensureWorktreesLoaded(id)
+    await hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+    assert.equal(activeSessionId().get(id), "root")
+
+    await fetchSessions(id, { strictStatus: true })
+    assert.equal(activeSessionId().get(id), "root", "a lexical miss cannot undo the owned restore read")
+    assert.equal(sessions().get(id)?.get("root")?.location.directory, "/linked-alias")
+
+    catalogueRoot = native("root", "/independent-clone")
+    await fetchSessions(id, { strictStatus: true })
+    assert.equal(activeSessionId().get(id), undefined, "a different placement cannot inherit the alias confirmation")
+    assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
+  } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees; f.cleanup() }
 })
 
 test("cold restore retains owned child evidence only for the same placement after a runtime refresh", async () => {
