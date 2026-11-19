@@ -41,7 +41,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, canRelistReturnedSession, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
@@ -527,8 +527,10 @@ function confirmListedReturn(instanceId: string, id: string): boolean {
   const evidence = confirmedPlacements.get(instanceId)?.get(id)
   if (evidence?.returnFrom === undefined || evidence.returnFrom !== getMovedAwaySessions(instanceId).get(id)
     || evidence.client !== instances().get(instanceId)?.client || evidence.generation !== getOpenCodeInstanceGeneration(instanceId)
-    || isSessionMovePending(instanceId, id) || !matchesSessionPlacement(sessions().get(instanceId)?.get(id), evidence.placement)
-    || !getWorktrees(instanceId).some(worktree => worktree.slug === evidence.placement.listWorktreeSlug)) return false
+    || isSessionMovePending(instanceId, id) || !matchesSessionPlacement(sessions().get(instanceId)?.get(id), evidence.placement)) return false
+  const slug = evidence.placement.listWorktreeSlug
+  if (slug === undefined ? !canRelistReturnedSession(instanceId, id)
+    : !getWorktrees(instanceId).some(worktree => worktree.slug === slug)) return false
   confirmSessionPlacement(instanceId, id, evidence.placement)
   return true
 }

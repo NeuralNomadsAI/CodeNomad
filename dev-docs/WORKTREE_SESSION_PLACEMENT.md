@@ -86,7 +86,8 @@ Implementation:
   also clears the prior departure, including for a favorite reopened through
   an alias. If the inventory is still catching up, that confirmation stays
   pending until the registered checkout is listed, fenced by the client
-  generation and the observed departure. A session refresh at a served
+  generation and the observed departure. A verified subfolder return without
+  an exact checkout match uses the existing session-family scope. A session refresh at a served
   directory, deletion, another move, or closing the instance releases the record.
   Each instance settles moves from its own ordered relay stream, using a per-session
   generation to fence inventory reads and probes overtaken by a later move.

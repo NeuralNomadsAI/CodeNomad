@@ -244,6 +244,20 @@ function isSessionInWorkspaceScope(instanceId: string, sessionId: string): boole
   return getWorkspaceSessionScope(instanceId)?.has(sessionId) ?? true
 }
 
+/** Evaluate a verified return without its departure marker or a selected-family override. */
+export function canRelistReturnedSession(instanceId: string, sessionId: string): boolean {
+  const worktrees = worktreesByInstance().get(instanceId)
+  if (!worktrees || getGitRepoStatus(instanceId) === null) return false
+  const away = getMovedAwaySessions(instanceId)
+  const members = new Map([...(sessions().get(instanceId) ?? [])].filter(([id]) => id === sessionId || !away.has(id)))
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  const scope = selectWorkspaceFamilyIds([...members.values()].map(session => ({
+    id: session.id, parentId: session.parentId,
+    directory: confirmedSessionListDirectory(instanceId, session.id, session) ?? session.location.directory,
+  })), instances().get(instanceId)?.folder ?? "", worktrees)
+  return scope.has(sessionId) && getSessionRootFromMap(members, sessionId, directoryOnly?.serviceDirectory ?? directoryOnly?.directory) !== null
+}
+
 const NO_SESSIONS: ReadonlyMap<string, Session> = new Map()
 const listedSessionMaps = new Map<string, { held: unknown; scope: unknown; listed: ReadonlyMap<string, Session> }>()
 
