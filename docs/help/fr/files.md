@@ -4,7 +4,7 @@ L’onglet **Fichiers** du panneau droit réunit la navigation dans les copies d
 
 ## Parcourir une copie de travail {#browse-workspace}
 
-1. Ouvrez **Fichiers** et choisissez **Workspace**.
+1. Ouvrez **Fichiers** et choisissez **Espace de travail**.
 2. Sélectionnez **Worktree à consulter** pour changer de copie ; développez les dossiers au besoin.
 3. Cliquez sur une ligne de fichier pour la sélectionner. Utilisez son œil pour ouvrir ou fermer l’aperçu central.
 4. Utilisez **Actualiser** si l’instantané visible doit être revérifié.

@@ -14,8 +14,10 @@ import { createHash } from "node:crypto"
 import fs from "node:fs"
 import { claimServerIdentity } from "./server-identity"
 import path from "node:path"
+import { lstatSync, statSync } from "node:fs"
 
 export type DocKind = "config" | "state"
+export const SESSION_FAVORITES_OWNER = "sessionFavorites"
 /** Refuses a config write by throwing, given the authoritative document and the would-be result. */
 export type ConfigWriteCheck = (before: SettingsDoc, after: SettingsDoc) => void
 
@@ -78,6 +80,7 @@ export class SettingsService {
   private readonly configStore: YamlDocStore
   private readonly stateStore: YamlDocStore
   private readonly serverFlags: ServerFlagReader
+  private favoritesSnapshot?: { stamp: string; owner: SettingsDoc }
 
   constructor(
     private readonly location: ConfigLocation,
@@ -231,6 +234,24 @@ export class SettingsService {
     return value
   }
 
+  /** A cleanup decision requires readable persisted favorites, not the display fallback. */
+  getSessionFavoritesState(): SettingsDoc {
+    const stamp = () => {
+      const file = this.location.stateYamlPath
+      let info
+      try { info = lstatSync(file, { bigint: true }) }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing"; throw error }
+      if (info.isSymbolicLink()) info = statSync(file, { bigint: true })
+      return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`
+    }
+    const before = stamp()
+    if (this.favoritesSnapshot?.stamp === before) return this.favoritesSnapshot.owner
+    const owner = this.stateStore.getAuthoritativeOwner(SESSION_FAVORITES_OWNER)
+    if (stamp() !== before) throw new SettingsReadError()
+    this.favoritesSnapshot = { stamp: before, owner }
+    return owner
+  }
+
   /** See `mergePatchDoc` for the config write base and `check`. */
   mergePatchOwner(kind: DocKind, owner: string, patch: unknown, check?: ConfigWriteCheck): SettingsDoc {
     if (!isPlainObject(patch)) {
@@ -245,6 +266,7 @@ export class SettingsService {
       updated = this.configStore.replaceOwner(owner, next)
     } else {
       updated = this.stateStore.mergePatchOwner(owner, patch)
+      if (owner === SESSION_FAVORITES_OWNER) this.favoritesSnapshot = undefined
     }
     this.publish(kind, owner, updated)
     return updated
@@ -257,7 +279,8 @@ export class SettingsService {
     const payload: WorkspaceEventPayload = {
       type,
       owner,
-      value: kind === "config" ? sanitizeConfigOwner(owner, nextValue) : nextValue,
+      value: kind === "config" ? sanitizeConfigOwner(owner, nextValue)
+        : owner === SESSION_FAVORITES_OWNER ? {} : nextValue,
     } as any
     try {
       this.eventBus.publish(payload)

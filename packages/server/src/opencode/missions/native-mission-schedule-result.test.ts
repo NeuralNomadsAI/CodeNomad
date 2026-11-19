@@ -7,6 +7,16 @@ import { nativeMissionScheduleResult } from "./native-mission-schedule-result"
 import { missionScheduleRpcMethods } from "../../missions/mission-schedule-contract"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
 
+test("absent document is a complete pre-dispatch read but an unknown exact receipt", async () => {
+  const ctx = {} as Parameters<typeof nativeMissionScheduleResult>[0]
+  const before = await nativeMissionScheduleResult(ctx, undefined, Effect.runPromise)
+  const recovery = await nativeMissionScheduleResult(ctx, undefined, Effect.runPromise, false, "creation_original")
+  assert.equal(before.document, null)
+  assert.equal(before.pending, false)
+  assert.equal(recovery.document, null)
+  assert.equal(recovery.pending, true)
+})
+
 test("schedule status projects exact retained controls and keeps missing receipts unknown without mutations or private paths", async t => {
   const f = await ownerFixture(t)
   const played = await f.control("play", "play_original")

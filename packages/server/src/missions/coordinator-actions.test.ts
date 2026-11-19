@@ -26,6 +26,26 @@ class MemoryStorage implements MissionStorage {
 
 const coordinator = "ses_coordinator"
 
+test("every owned project session reads a human Mission and its task without membership or effects", async () => {
+  const observed: string[] = []
+  const f = fixture({ transport: { observeTask: async id => { observed.push(id); return { sessions: [], complete: true } } } })
+  const source = await f.start("custom")
+  await f.declare("native-work", "specialist")
+  const original = structuredClone([...f.storage.values])
+  for (const [id, parentID] of [["ses_root", undefined], ["ses_child", coordinator], ["ses_actor", undefined], ["ses_passage", undefined]]) {
+    f.sessions.set(id!, { id: id!, parentID, projectID: "project-1", location: { directory: "/repo" } })
+    assert.equal((await f.control.inspect(id!, { missionID: source.id }, "read")).mission?.id, source.id)
+    assert.equal((await f.control.inspectTool(id!, { missionID: source.id, taskKey: "native-work" }, "task") as any).task.key, "native-work")
+    assert.equal((await f.control.listMissions(id!))[0]?.relation, "project")
+    assert.equal((await f.control.ownedRoot(id!)).id, id)
+  }
+  assert.deepEqual([...f.storage.values], original, "reads append and normalize nothing")
+  assert.deepEqual(observed, Array(4).fill(coordinator), "observation retains the actual task owner")
+  f.sessions.set("ses_foreign", { id: "ses_foreign", projectID: "other-project", location: { directory: "/repo" } })
+  await assert.rejects(f.control.listMissions("ses_foreign"), { code: "foreign-session" })
+  await assert.rejects(f.control.inspect("ses_foreign", { missionID: source.id }, "read"), { code: "foreign-session" })
+})
+
 function fixture(options: { transport?: Partial<MissionInputTransport>; humanGate?: NativeHumanAnswerGate;
   validateProfiles?: ConstructorParameters<typeof MissionControl>[0]["validateProfiles"];
   storage?: MemoryStorage; sessions?: Map<string, NativeMissionSession> } = {}) {
@@ -34,7 +54,7 @@ function fixture(options: { transport?: Partial<MissionInputTransport>; humanGat
   const adapter: MissionSessionAdapter = {
     get: async ({ sessionID }) => { const session = sessions.get(sessionID); if (!session) throw new Error("not found"); return session },
     create: async input => {
-      const session = { id: input.id, projectID: "project-1", title: input.title, location: input.location }
+      const session = { ...input, projectID: "project-1" }
       sessions.set(session.id, session)
       return session
     },
@@ -73,6 +93,34 @@ test("a stalled inspect-start preference read never holds the project's mutation
     clearTimeout(timer)
     release(resolveMissionCreationDefaults({ template: "custom", preferences: [] }))
     await inspect
+  }
+})
+
+test("inspect refuses missionID with start before identity reads, preferences or writes", async () => {
+  const storage = new MemoryStorage()
+  storage.get = async () => assert.fail("Must reject before creation identity or journal reads")
+  storage.scan = async () => assert.fail("Must reject before discovery")
+  const f = fixture({ storage, transport: { resolveCreationDefaults: async () => assert.fail("Must reject before preferences") } })
+  await assert.rejects(f.control.inspect(coordinator, { missionID: "msn_existing", start: { objective: "Brief", template: "custom" } }, "invalid"),
+    (error: unknown) => error instanceof MissionControlError && error.code === "invalid-input")
+  assert.equal(storage.values.size, 0)
+})
+
+test("journal-only inspect persists title and exact notes, with replay against original creation after edits", async () => {
+  for (const notes of [undefined, "", " \n keep \r\n "]) {
+    const f = fixture()
+    const start = { objective: "Original", title: "  Short label  ", notes, template: "custom" as const }
+    const created = (await f.control.inspect(coordinator, { start }, "same-start")).mission!
+    assert.equal(created.title, "Short label")
+    assert.equal(created.notes, notes)
+    await f.control.update({ missionID: created.id, objective: "Human edited", notes: "Changed", expectedRevision: created.revision, requestID: "edit" })
+    const retry = (await f.control.inspect(coordinator, { start }, "same-start")).mission!
+    assert.equal(retry.objective, "Human edited")
+    assert.equal(retry.notes, "Changed")
+    for (const changed of [{ title: "Other label" }, { title: undefined }, { notes: notes === "" ? undefined : "" }]) {
+      await assert.rejects(f.control.inspect(coordinator, { start: { ...start, ...changed } }, "same-start"),
+        (error: unknown) => error instanceof MissionControlError && error.code === "request-conflict")
+    }
   }
 })
 
@@ -156,7 +204,7 @@ test("prepare creates a paused hand-off through the backend; its coordinator may
   assert.deepEqual(mission.preparedBy, { missionId: source.id, coordinatorSessionId: coordinator })
   assert.notEqual(mission.coordinatorSessionId, coordinator)
   assert.equal((await control.prepare(coordinator, request)).mission.id, mission.id, "the same requestID replays the same mission")
-  assert.match((requests[0] as { requestID: string }).requestID, /^prepare_/)
+  assert.equal((requests[0] as { requestID: string }).requestID, `prepare_${stableToken(`${source.id}\0${coordinator}\0pilot`, 24)}`)
   const read = await control.inspect(coordinator, { missionID: mission.id }, "read")
   assert.deepEqual([read.mission?.id, read.actor], [mission.id, null])
   assert.deepEqual((await control.listMissions(coordinator)).map(entry => [entry.missionID, entry.relation]),
@@ -164,13 +212,13 @@ test("prepare creates a paused hand-off through the backend; its coordinator may
   await assert.rejects(control.declare(coordinator, { missionID: mission.id, taskKey: "work", title: "Work", brief: "No", role: "specialist", blockedBy: [] }),
     /not visible/)
   f.sessions.set("ses_other", { id: "ses_other", projectID: "project-1", title: "Other", location: { directory: "/repo" } })
-  await assert.rejects(control.inspect("ses_other", { missionID: mission.id }, "other"), /not visible/)
+  assert.equal((await control.inspect("ses_other", { missionID: mission.id }, "other")).mission?.id, mission.id)
   const plain = fixture()
   await plain.start()
   await assert.rejects(plain.control.prepare(coordinator, request), /unavailable here/)
 })
 
-test("a prepare retry after a lost reply returns the saved hand-off without another backend call", async () => {
+for (const outside of [false, true]) test(`a prepare retry after a lost reply returns the saved hand-off without another backend call (outside: ${outside})`, async () => {
   let control!: MissionControl, calls = 0, reads = 0
   let preferences: unknown = [{ template: "all", profiles: { roles: { specialist: { agent: "worker" } } }, taskMode: "independent" }]
   const transport: Partial<MissionInputTransport> = {
@@ -184,7 +232,7 @@ test("a prepare retry after a lost reply returns the saved hand-off without anot
   } }
   const f = fixture({ transport })
   control = f.control
-  await f.start()
+  if (!outside) await f.start()
   const request = { requestID: "pilot", objective: "Run the pilot", template: "custom" as const }
   await assert.rejects(control.prepare(coordinator, request), (error: any) => error.code === "prepare-uncertain")
   const before = structuredClone([...f.storage.values])
@@ -204,6 +252,26 @@ test("a prepare retry after a lost reply returns the saved hand-off without anot
   await assert.rejects(control.prepare(coordinator, { ...request, taskMode: "independent" }), /already prepared a different mission/)
   assert.equal(calls, 1)
   assert.equal(reads, resolvedReads, "conflicting requests also leave preferences unread")
+})
+
+test("preparation replay keeps its original source after a reused root's passage marker is released", async () => {
+  let control!: MissionControl, sends = 0
+  const f = fixture({ transport: { prepare: async (id, input) => {
+    sends++
+    return control.create({ ...input, prepared: true, preparedBy: { coordinatorSessionID: id, missionID: input.missionID } })
+  } } })
+  control = f.control
+  f.sessions.get(coordinator)!.metadata = { "codenomad.mission": { missionID: "msn_passage", kind: "coordinator" } }
+  const request = { requestID: "released", objective: "Hand-off", template: "custom" as const }
+  const first = await control.prepare(coordinator, request)
+  delete f.sessions.get(coordinator)!.metadata
+  control = fixture({ transport: { prepare: async () => assert.fail("Replay never dispatches") },
+    storage: f.storage, sessions: f.sessions }).control
+  const replay = await control.prepare(coordinator, request)
+  assert.equal(replay.mission.id, first.mission.id)
+  assert.equal(replay.mission.preparedBy?.missionId, "msn_passage")
+  await assert.rejects(control.prepare(coordinator, { ...request, objective: "Changed" }), { code: "prepare-conflict" })
+  assert.equal(sends, 1)
 })
 
 test("a definite refusal releases its choice and the same request can use corrected preferences", async () => {
@@ -289,14 +357,180 @@ test("inspect Compare freezes the known coordinator model for an omitted judge a
   assert.equal(reads, 1)
 })
 
-test("prepare outside a mission points to the editor without resolving preferences or creating anything", async () => {
-  const f = fixture({ transport: {
-    resolveCreationDefaults: async () => assert.fail("No preference read outside a mission"),
-    prepare: async () => assert.fail("No preparation outside a mission"),
-  } })
-  await assert.rejects(f.control.prepare(coordinator, { requestID: "pilot", objective: "Pilot", template: "custom" }), /Missions editor.*do not create a mission only to prepare others/)
-  assert.equal(f.storage.values.size, 0)
+test("an ordinary root prepares once across concurrent calls and restart, remains outside, and reads project hand-offs", async () => {
+  let control!: MissionControl, calls = 0
+  const transport: Partial<MissionInputTransport> = {
+    resolveCreationDefaults: async (_id, input) => resolveMissionCreationDefaults({ ...input, preferences: [] }),
+    prepare: async (id, input) => {
+      calls++
+      assert.equal(input.missionID, undefined)
+      assert.equal(input.requestID, `prepare_${stableToken(`outside-mission\0${coordinator}\0pilot`, 24)}`)
+      return control.create({ ...input, prepared: true, preparedBy: { coordinatorSessionID: id } })
+    },
+  }
+  const f = fixture({ transport })
+  control = f.control
+  const original = structuredClone(f.sessions.get(coordinator))
+  const request = { requestID: "pilot", objective: "Pilot", title: "Separate pilot", notes: " \n ", template: "custom" as const }
+  const [first, second] = await Promise.all([control.prepare(coordinator, request), control.prepare(coordinator, request)])
+  assert.equal(calls, 1)
+  assert.equal(first.mission.id, second.mission.id)
+  assert.equal(first.mission.runState, "prepared")
+  assert.deepEqual(first.mission.preparedBy, { coordinatorSessionId: coordinator })
+  assert.notEqual(first.mission.coordinatorSessionId, coordinator)
+  assert.deepEqual(f.sessions.get(coordinator), original)
+  assert.equal((await control.inspect(coordinator, {}, "plain")).mission, null)
+  control = fixture({ transport, storage: f.storage, sessions: f.sessions }).control
+  assert.equal((await control.prepare(coordinator, request)).mission.id, first.mission.id)
+  assert.equal(calls, 1)
+  assert.deepEqual((await control.listMissions(coordinator)).map(entry => [entry.missionID, entry.relation]), [[first.mission.id, "prepared"]])
+  assert.equal((await control.inspect(coordinator, { missionID: first.mission.id }, "owned")).actor, null)
+  await assert.rejects(control.declare(coordinator, { missionID: first.mission.id, taskKey: "work", title: "Work", brief: "No", role: "specialist", blockedBy: [] }), /not visible/)
+  for (const changed of [{ objective: "Other" }, { title: "Other" }, { notes: "" }, { taskMode: "native" as const }]) {
+    await assert.rejects(control.prepare(coordinator, { ...request, ...changed }), (error: any) => error.code === "prepare-conflict")
+  }
+  f.sessions.set("ses_other", { ...original!, id: "ses_other" })
+  assert.deepEqual((await control.listMissions("ses_other")).map(entry => [entry.missionID, entry.relation]), [[first.mission.id, "project"]])
+  assert.equal((await control.inspect("ses_other", { missionID: first.mission.id }, "project")).mission?.id, first.mission.id)
+})
+
+test("a passage release during preparation cannot split concurrent retries into two source domains", async () => {
+  let f!: ReturnType<typeof fixture>, sends = 0
+  f = fixture({ transport: { prepare: async (id, input) => {
+    sends++
+    const result = await f.control.create({ ...input, prepared: true,
+      preparedBy: { coordinatorSessionID: id, missionID: input.missionID } })
+    delete f.sessions.get(coordinator)!.metadata
+    return result
+  } } })
+  f.sessions.get(coordinator)!.metadata = { "codenomad.mission": { missionID: "msn_passage" } }
+  const request = { requestID: "concurrent_release", objective: "Hand-off", template: "custom" as const }
+  const [first, second] = await Promise.all([f.control.prepare(coordinator, request), f.control.prepare(coordinator, request)])
+  assert.equal(first.mission.id, second.mission.id)
+  assert.equal(sends, 1)
+})
+
+test("multiple recorded source domains for one author/request refuse before another creation", async () => {
+  const f = fixture({ transport: { prepare: async () => assert.fail("Ambiguous original must not dispatch") } })
+  for (const source of [undefined, "msn_passage"]) {
+    const requestID = `prepare_${stableToken(`${source ?? "outside-mission"}\0${coordinator}\0ambiguous`, 24)}`
+    await f.control.create({ requestID, objective: "Hand-off", template: "custom", prepared: true,
+      preparedBy: { coordinatorSessionID: coordinator, ...(source ? { missionID: source } : {}) } })
+  }
+  await assert.rejects(f.control.prepare(coordinator, { requestID: "ambiguous", objective: "Hand-off", template: "custom" }),
+    { code: "prepare-conflict" })
+})
+
+test("author provenance is rechecked after creation preference/catalog reads before dispatch", async () => {
+  let f!: ReturnType<typeof fixture>
+  f = fixture({
+    validateProfiles: async () => {
+      f.sessions.get(coordinator)!.metadata = { "codenomad.mission": { missionID: "msn_changed", kind: "task" } }
+    },
+    transport: {
+      resolveCreationDefaults: async (_id, input) => resolveMissionCreationDefaults({ ...input, preferences: [] }),
+      prepare: async () => assert.fail("Changed author must not dispatch"),
+    },
+  })
+  await assert.rejects(f.control.prepare(coordinator, { requestID: "changed", objective: "No effects", template: "custom" }),
+    (error: any) => error.code === "prepare-refused")
+  assert.equal([...f.storage.values.values()].some(value => value && typeof value === "object" && "type" in value), false)
   assert.equal(f.sessions.size, 1)
+})
+
+test("preparation refuses foreign roots and malformed native provenance before preferences or effects", async () => {
+  const changes: Partial<NativeMissionSession>[] = [
+    { projectID: "foreign" },
+    { metadata: { "codenomad.mission": { kind: "task" } } },
+    { parentID: coordinator },
+  ]
+  for (const changed of changes) {
+    const f = fixture({ transport: {
+      resolveCreationDefaults: async () => assert.fail("Ineligible author cannot read preferences"),
+      prepare: async () => assert.fail("Ineligible author cannot dispatch"),
+    } })
+    f.sessions.set(coordinator, { ...f.sessions.get(coordinator)!, ...changed })
+    await assert.rejects(f.control.prepare(coordinator, { requestID: "pilot", objective: "Pilot", template: "custom" }),
+      (error: any) => ["prepare-refused", "child-session", "foreign-session"].includes(error.code))
+    assert.equal(f.storage.values.size, 0)
+    assert.equal(f.sessions.size, 1)
+  }
+})
+
+test("active and ended independent actors prepare separate missions without changing their source", async () => {
+  let control!: MissionControl, calls = 0
+  const f = fixture({ transport: { prepare: async (id, input) => {
+    calls++
+    return control.create({ ...input, prepared: true, preparedBy: { missionID: input.missionID, coordinatorSessionID: id } })
+  } } })
+  control = f.control
+  const source = await f.start("custom")
+  const { mission: dispatched } = await f.control.delegate(coordinator, { taskKey: "work", title: "Work", brief: "Work", role: "specialist", blockedBy: [],
+    delivery: "queue", executionMode: { kind: "independent", reason: "lifetime", explanation: "An independently owned root for this test" } })
+  const task = dispatched.tasks[0]
+  const activeSource = await f.current()
+  const request = { requestID: "pilot", objective: "Pilot", template: "custom" as const }
+  const first = (await control.prepare(task.actorSessionId!, request)).mission
+  assert.deepEqual(first.preparedBy, { coordinatorSessionId: task.actorSessionId, missionId: source.id })
+  assert.deepEqual(await f.current(), activeSource)
+  await f.control.report(task.actorSessionId!, { outcome: "completed", summary: "Done", evidence: [], next: [], final: false })
+  await f.control.report(coordinator, { missionID: source.id, outcome: "completed", summary: "Done", evidence: [], next: [], final: true })
+  f.sessions.get(task.actorSessionId!)!.metadata = undefined
+  const ended = await f.current()
+  assert.equal((await control.prepare(task.actorSessionId!, request)).mission.id, first.id)
+  const next = (await control.prepare(task.actorSessionId!, { ...request, requestID: "ended" })).mission
+  assert.deepEqual(next.preparedBy, first.preparedBy)
+  assert.equal(calls, 2)
+  assert.deepEqual(await f.current(), ended)
+  assert.equal((await control.inspect(task.actorSessionId!, { missionID: next.id }, "read")).actor, null)
+})
+
+test("descendants keep actual author provenance, read-only access and stable replay after their source finishes", async () => {
+  let control!: MissionControl, calls = 0
+  const f = fixture({ transport: { prepare: async (id, input) => {
+    calls++
+    return control.create({ ...input, prepared: true, preparedBy: { missionID: input.missionID, coordinatorSessionID: id } })
+  } } })
+  control = f.control
+  const source = await f.start("custom")
+  const child = "ses_descendant", parent = "ses_parent"
+  f.sessions.set(parent, { id: parent, parentID: coordinator, projectID: "project-1", location: { directory: "/repo" } })
+  f.sessions.set(child, { id: child, parentID: parent, projectID: "project-1", location: { directory: "/repo" } })
+  const before = structuredClone([...f.sessions]), sourceBefore = await f.current()
+  const request = { requestID: "pilot", objective: "Pilot", template: "custom" as const }
+  const [first, replay] = await Promise.all([control.prepare(child, request), control.prepare(child, request)])
+  assert.equal(first.mission.id, replay.mission.id)
+  assert.equal(calls, 1)
+  assert.deepEqual(first.mission.preparedBy, { coordinatorSessionId: child, missionId: source.id })
+  assert.deepEqual([...f.sessions].slice(0, before.length), before)
+  assert.deepEqual(await f.current(), sourceBefore)
+  assert.equal((await control.inspect(child, { missionID: first.mission.id }, "read")).actor, null)
+  assert.deepEqual((await control.listMissions(child)).map(entry => entry.missionID), [first.mission.id, source.id])
+  await assert.rejects(control.inspect(child, { start: { objective: "No adoption", template: "custom" } }, "start"),
+    (error: any) => error.code === "child-session")
+  await assert.rejects(control.declare(child, { missionID: source.id, taskKey: "no", title: "No", brief: "No", role: "specialist", blockedBy: [] }),
+    (error: any) => error.code === "child-session")
+  assert.equal((await control.inspect(parent, { missionID: first.mission.id }, "project")).mission?.id, first.mission.id)
+  await control.report(coordinator, { missionID: source.id, outcome: "completed", summary: "Done", evidence: [], next: [], final: true })
+  assert.equal((await control.prepare(child, request)).mission.id, first.mission.id)
+  assert.equal(calls, 1, "source completion preserves the author's replay identity")
+  const other = (await control.prepare(parent, request)).mission
+  assert.notEqual(other.id, first.mission.id, "the same requestID from another author is independent")
+  assert.equal(other.preparedBy!.coordinatorSessionId, parent)
+  assert.equal((await control.inspect(child, { missionID: other.id }, "project")).mission?.id, other.id)
+})
+
+test("persisted source-scoped coordinator preparations retain replay and conflict identities", async () => {
+  const f = fixture({ transport: { prepare: async () => assert.fail("An existing request must never dispatch again") } })
+  const source = await f.start("custom")
+  const request = { requestID: "pilot", objective: "Saved pilot", template: "custom" as const }
+  const requestID = `prepare_${stableToken(`${source.id}\0${coordinator}\0${request.requestID}`, 24)}`
+  const saved = (await f.control.create({ ...request, requestID, prepared: true,
+    preparedBy: { missionID: source.id, coordinatorSessionID: coordinator } })).mission
+  assert.equal((await f.control.prepare(coordinator, request)).mission.id, saved.id)
+  await assert.rejects(f.control.prepare(coordinator, { ...request, objective: "Changed" }), (error: any) => error.code === "prepare-conflict")
+  await f.control.report(coordinator, { missionID: source.id, outcome: "completed", summary: "Done", evidence: [], next: [], final: true })
+  assert.equal((await f.control.prepare(coordinator, request)).mission.id, saved.id)
 })
 
 test("128 definite preparation refusals leave capacity available for the next request", async () => {

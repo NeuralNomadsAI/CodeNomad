@@ -5,7 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { normalizeRestorableSession } from "./client-state-codec.ts"
 import { encodeClientSnapshotV2, decodeClientSnapshotV2 } from "./client-state-partitions.ts"
-import { refreshSessionRuntimeStatus, removeSessionRuntimeState } from "./session-api.ts"
+import { refreshSessionRuntimeStatus, removeSessionProjection, removeSessionRuntimeState } from "./session-api.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
@@ -116,7 +116,8 @@ describe("seen native interruptions", () => {
         setSessions(previous => new Map(previous).set(instanceId, new Map([[item.id, item]])))
         observeSessionInterruption(instanceId, item, 20)
         markSessionInterruptionSeen(instanceId, item)
-        removeSessionRuntimeState(instanceId, item.id, index % 2 === 0)
+        const remove = index % 2 === 0 ? removeSessionRuntimeState : removeSessionProjection
+        remove(instanceId, item.id)
         assert.equal(seenInterruptionsRevision().get(instanceId)?.size ?? 0, 0)
         // Reusing the ID at its native boundary detects a retained provisional event boundary.
         const reused = session({ id: item.id, instanceId })

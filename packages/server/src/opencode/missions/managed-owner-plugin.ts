@@ -26,13 +26,15 @@ export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeS
   const register: typeof ctx.rpc.register = (definition, handlers) => ctx.rpc.register(definition,
     definition.id === CODENOMAD_MISSIONS_RPC_ID
       ? { ...handlers, ...nativeMissionScheduleHandlers(ctx, artifacts),
-        documentCapabilities: () => acquireNativeMissionDocumentStore(ctx).pipe(Effect.as({ version: 1 as const }), Effect.orDie),
+        documentCapabilities: () => acquireNativeMissionDocumentStore(ctx).pipe(Effect.as({
+          version: 1 as const, automaticStart: true as const, agentSchedulePreparation: true as const, agentScheduleControl: true as const,
+        }), Effect.orDie),
         documentActivation: (input: unknown) => documentInvocation.capture(Effect.tryPromise({
           try: () => documentInvocation.check(run => run(Effect.gen(function* () {
             const store = yield* acquireNativeMissionDocumentStore(ctx, run)
             return yield* Effect.tryPromise({ try: () => applyMissionDocumentActivation(store, input, () => true, ctx.location.directory), catch: error => error })
           }))), catch: error => error,
-        })).pipe(Effect.orDie), recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx),
+        })).pipe(Effect.orDie), recurrenceSnapshot: (input: { scheduleID?: string }) => readNativeRecurrenceSnapshot(ctx, input),
         ...nativeRecurrenceHandlers(ctx), recurrencePassageRead: (input: unknown) => readNativeRecurrencePage(ctx, input),
         recurrenceCurrent: (input: unknown) => readNativeRecurrenceCurrent(ctx, input),
         recurrenceCurrentPage: (input: unknown) => readNativeRecurrenceCurrentPage(ctx, input),

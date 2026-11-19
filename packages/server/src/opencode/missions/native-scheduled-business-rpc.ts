@@ -150,7 +150,7 @@ export function createNativeScheduledBusinessBridge(ctx: Plugin.Context, invocat
       if (!selected.reply.selected || !selected.source) return undefined
       const captured = selected.source
       const control = Object.fromEntries(missionBusinessMethods.map(method => [method, (...args: unknown[]) => {
-        if (method === "interruptTask" || method === "prepare") return Promise.reject(new Error("Scheduled Mission backend actions unavailable"))
+        if (method === "interruptTask") return Promise.reject(new Error("Scheduled Mission backend actions unavailable"))
         return call(sessionID, "execute", { method, args }, captured).then(result => {
           if (!result.reply.selected) throw new Error("Scheduled business selection changed")
           return result.reply.value

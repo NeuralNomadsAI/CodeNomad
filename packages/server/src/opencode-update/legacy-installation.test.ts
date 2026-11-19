@@ -376,7 +376,7 @@ test("npm uninstall failures report whether OpenCode 1.x is still installed", as
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
-test("foreign version probes are asynchronous, bounded and kill the process tree on timeout", async () => {
+test("foreign version probes are asynchronous, bounded and kill the process tree on timeout", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "foreign-probe-"))
   try {
     const quick = path.join(home, windows ? "quick.cmd" : "quick")
@@ -399,11 +399,14 @@ test("foreign version probes are asynchronous, bounded and kill the process tree
     assert.ok(Date.now() - started < 5_000)
     assert.equal(cachedForeignProbe(hang), undefined)
     const pid = Number(await readFile(pidFile, "utf8"))
-    const deadline = Date.now() + 5_000
+    // Windows lists the tree through WMI and PowerShell, both slow to start on a cold host.
+    const stopping = Date.now()
+    const deadline = stopping + 30_000
     let alive = true
     while (alive && Date.now() < deadline) {
       try { process.kill(pid, 0); await new Promise(resolve => setTimeout(resolve, 100)) } catch { alive = false }
     }
+    t.diagnostic(`descendant stopped after ${Date.now() - stopping} ms`)
     assert.equal(alive, false, "the wrapper's descendant is killed")
   } finally { await rm(home, { recursive: true, force: true }) }
 })

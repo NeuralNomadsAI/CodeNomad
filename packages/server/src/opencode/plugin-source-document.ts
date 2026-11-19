@@ -1,8 +1,9 @@
 import { isDeepStrictEqual } from "node:util"
 import npa from "npm-package-arg"
-import { applyEdits, modify, parse, type ParseError } from "jsonc-parser"
+import { parse, type ParseError } from "jsonc-parser"
 import type { PluginSourceErrorCode } from "../plugin-source-types"
 import {
+  deletePluginEntries,
   inferPluginControlFormatting,
   PluginControlDocumentError,
   type PluginConfigEntry,
@@ -106,23 +107,27 @@ function gitRepositoryIdentity(fetchSpec: string | null | undefined): string | u
 
 /**
  * Deletes exactly `plugins[entryIndex]` (string or object entry) while it still declares
- * `target`; anything else is a conflict. The result must parse to the original document minus
- * that element, so comments, other entries, line endings and the BOM stay untouched.
+ * `target`, with the string activation rules at `rules.indexes`, which must still read one of `rules.expected`;
+ * anything else is a conflict. The result must parse to the original document minus those elements, so comments,
+ * other entries, line endings and the BOM stay untouched.
  */
-export function removePluginSourceEntry(document: PluginControlDocument, entryIndex: number, target: string): string {
+export function removePluginSourceEntry(document: PluginControlDocument, entryIndex: number, target: string,
+  rules: { indexes: readonly number[]; expected: ReadonlySet<string> } = { indexes: [], expected: new Set() }): string {
   const entry = document.plugins[entryIndex]
-  if (!Number.isSafeInteger(entryIndex) || entryIndex < 0 || entry === undefined || pluginEntryTarget(entry) !== target) {
+  if (!Number.isSafeInteger(entryIndex) || entryIndex < 0 || entry === undefined || pluginEntryTarget(entry) !== target
+    || rules.indexes.some(index => index === entryIndex || typeof document.plugins[index] !== "string" || !rules.expected.has(document.plugins[index] as string))) {
     throw new PluginControlDocumentError("OpenCode plugin entry changed since it was displayed", "conflict")
   }
+  const removed = [entryIndex, ...rules.indexes]
   const formatting = inferPluginControlFormatting(document.text)
   let updated: string
   try {
-    updated = applyEdits(document.text, modify(document.text, ["plugins", entryIndex], undefined, { formattingOptions: formatting }))
+    updated = deletePluginEntries(document.text, removed)
   } catch (error) {
     throw new PluginControlDocumentError("Unable to update OpenCode plugins without replacing the document", "invalid", { cause: error })
   }
   const original = parse(document.text, [], { allowTrailingComma: true }) as Record<string, unknown>
-  const expected = { ...original, plugins: (original.plugins as unknown[]).filter((_, at) => at !== entryIndex) }
+  const expected = { ...original, plugins: (original.plugins as unknown[]).filter((_, at) => !removed.includes(at)) }
   const errors: ParseError[] = []
   const result = parse(updated, errors, { allowTrailingComma: true })
   if (errors.length || !isDeepStrictEqual(result, expected)) {

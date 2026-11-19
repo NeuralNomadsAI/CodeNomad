@@ -42,6 +42,6 @@ npx @neuralnomads/codenomad --generate-token --launch
 
 ## 開発を支援する {#support-development}
 
-支援金の使い道は[CodeNomad を支援する](sponsor.md)のページで説明しています。
+支援が大切な理由とその扱いについては、[CodeNomad を支援する](sponsor.md)のページで説明しています。
 
 {{funding}}

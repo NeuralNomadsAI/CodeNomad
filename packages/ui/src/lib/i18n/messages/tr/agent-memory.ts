@@ -9,6 +9,7 @@ export const agentMemoryMessages = {
   "settings.memory.global": "Hakkınızda",
   "settings.memory.project": "Proje",
   "settings.memory.noProject": "Belleğini görmek için bir proje açın.",
+  "settings.memory.entries": "Kayıtlar",
   "settings.memory.count": "{count}/{limit}",
   "settings.memory.loading": "Yükleniyor…",
   "settings.memory.empty": "Henüz anı yok",

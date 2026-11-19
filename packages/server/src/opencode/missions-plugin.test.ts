@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import Ajv from "ajv"
 
-import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput, setupMissionsPlugin } from "./missions-plugin"
+import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput, setupMissionsPlugin, setupMissionsBusiness } from "./missions-plugin"
 import { buildAssignmentPrompt } from "../missions/recipes"
 import type { MissionJsonValue, MissionMap } from "../missions/model"
 import type { MissionsPluginContext } from "./missions-plugin"
@@ -50,7 +51,88 @@ test("validates the compact mission tool contracts", () => {
   assert.throws(() => parseReviseInput({ expectedRevision: 1, requestID: "bad", reason: "Missing contract", addTasks: [{ taskKey: "bad" }] }), /title/)
 })
 
-test("registers seven tools, typed snapshot RPC, and role context", async () => {
+test("inspect start accepts bounded titles and verbatim notes and refuses an existing mission selector", () => {
+  for (const notes of [undefined, "", "   ", "\n  Keep spacing \r\n"]) {
+    const start = parseInspectInput({ start: { objective: "Brief", title: "  Label  ", template: "custom", notes } }).start!
+    assert.equal(start.title, "Label")
+    assert.equal(start.notes, notes)
+  }
+  assert.equal(parseInspectInput({ start: { objective: "Brief", title: "x".repeat(60), template: "custom" } }).start!.title?.length, 60)
+  for (const title of ["", "  ", "x".repeat(61), "two\nlines", null, 42]) {
+    assert.throws(() => parseInspectInput({ start: { objective: "Brief", title, template: "custom" } }), /title/i)
+  }
+  assert.throws(() => parseInspectInput({ missionID: "msn_existing", start: { objective: "Brief", template: "custom" } }), /missionID/)
+  assert.deepEqual(parseInspectInput({ configurations: true }), { configurations: true })
+  assert.deepEqual(parseInspectInput({ configurations: "id" }), { configurations: "id" })
+  for (const extra of [{ start: {} }, { catalog: true }, { missionID: "msn_existing" }, { list: true }]) {
+    assert.throws(() => parseInspectInput({ configurations: true, ...extra }), /alone/)
+  }
+})
+
+test("schedule tools preserve the actual caller for roots, descendants, actors and passages", async t => {
+  const tools = new Map<string, any>(), calls: unknown[] = [], registration = { dispose: async () => {} }
+  let loseACK = false
+  const cleanup = await setupMissionsBusiness({
+    tool: { transform: async (configure: any) => {
+      configure({ namespace() {}, add: (tool: any) => tools.set(tool.name, tool) }); return registration
+    } },
+    session: { hook: async () => registration },
+  } as never, async (sessionID, name) => {
+    assert.equal(name, "schedule")
+    return { control: {} as never, readSessionID: sessionID, current() {}, beforeTool: async () => {} }
+  }, async (sessionID, input) => {
+    calls.push({ sessionID, input })
+    if (loseACK) throw new Error("Lost bridge ACK")
+    return { schedules: [] }
+  })
+  t.after(cleanup)
+  const schedule = tools.get("schedule")
+  const validate = new Ajv().compile(schedule.input)
+  assert.equal(validate({ action: "list" }), true)
+  assert.equal(validate({ action: "delete", missionID: "owned_schedule", requestID: "delete_once", expectedRevision: 5 }), true)
+  for (const sessionID of ["ses_root", "ses_descendant", "ses_actor", "ses_passage"]) {
+    assert.deepEqual(JSON.parse((await schedule.execute({ action: "list" }, { sessionID })).content), { schedules: [] })
+  }
+  assert.deepEqual(calls.map((call: any) => call.sessionID), ["ses_root", "ses_descendant", "ses_actor", "ses_passage"])
+  await assert.rejects(schedule.execute({ action: "delete", missionID: "owned_schedule" }, { sessionID: "ses_actor" }))
+  assert.equal(calls.length, 4)
+  loseACK = true
+  const input = { action: "pause", missionID: "owned_schedule", requestID: "lost_ack", expectedRevision: 4 }
+  const result = JSON.parse((await schedule.execute(input, { sessionID: "ses_actor" })).content)
+  assert.deepEqual(result, { status: 503, pending: true, missionID: input.missionID, requestID: input.requestID,
+    action: input.action, code: "schedule-unconfirmed" })
+  assert.equal(calls.length, 5, "lost ACK returns the original identity without retry")
+})
+
+test("project controls preserve each actual native caller and return the original identity after bridge ACK loss", async t => {
+  const tools = new Map<string, any>(), calls: any[] = [], registration = { dispose: async () => {} }
+  let loseACK = false
+  const cleanup = await setupMissionsBusiness({
+    tool: { transform: async (configure: any) => {
+      configure({ namespace() {}, add: (tool: any) => tools.set(tool.name, tool) }); return registration
+    } }, session: { hook: async () => registration },
+  } as never, async () => assert.fail("The backend owns project admission"), undefined, undefined, async (sessionID, command) => {
+    calls.push({ sessionID, command })
+    if (loseACK) throw new Error("Lost bridge ACK")
+    return { read: true }
+  })
+  t.after(cleanup)
+  for (const sessionID of ["ses_root", "ses_descendant", "ses_actor", "ses_passage"]) {
+    for (const name of ["control", "configure", "delete"]) {
+      assert.deepEqual(JSON.parse((await tools.get(name).execute({ action: "read", missionID: "owned_mission" }, { sessionID })).content), { read: true })
+      assert.equal(calls.at(-1).sessionID, sessionID)
+      assert.equal(calls.at(-1).command.tool, name)
+    }
+  }
+  loseACK = true
+  const input = { action: "play", missionID: "owned_mission", requestID: "original", expectedRevision: 1 }
+  const before = calls.length
+  assert.deepEqual(JSON.parse((await tools.get("control").execute(input, { sessionID: "ses_actor" })).content),
+    { uncertain: true, missionID: input.missionID, requestID: input.requestID })
+  assert.equal(calls.length, before + 1)
+})
+
+test("registers project tools, typed snapshot RPC, and role context", async () => {
   const values = new Map<string, unknown>()
   const tools: Array<{ name: string; execute(input: unknown, context: any): Promise<{ content: string }> }> = []
   let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
@@ -98,7 +180,7 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
     },
   } as never)
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare"])
+  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "settings", "control", "configure", "delete"])
   const description = (name: string) => (tools.find((tool) => tool.name === name) as unknown as { description: string }).description
   for (const name of ["report", "briefing"]) {
     assert.match(description(name), /plain language in the user's language[:,] 3-5 short sentences, outcome first/)
@@ -109,6 +191,26 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   assert.match(description("briefing"), /Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report/)
   assert.match(description("briefing"), /requestID "auto:<revision>" matching basedOnRevision; for an explicit UI request use its exact requestID/)
   const inspect = tools.find((tool) => tool.name === "inspect")!
+  assert.match(description("inspect"), /start attaches THIS root as a paused coordinator/)
+  assert.match(description("inspect"), /including human-created Missions, from any owned conversation/)
+  assert.match(description("prepare"), /this conversation stays unchanged/)
+  assert.match(description("prepare"), /new coordinator is the default/)
+  assert.match(description("prepare"), /Any owned project session may prepare/)
+  assert.match(description("prepare"), /coordinatorSessionID explicitly selects an eligible idle root for scheduling only/)
+  assert.match(description("prepare"), /mission.schedule controls project schedules/)
+  assert.match(description("schedule"), /including human-created schedules/)
+  assert.equal((inspect as any).input.properties.start.properties.title.maxLength, 60)
+  const validateInspect = new Ajv().compile((inspect as any).input)
+  const validatePrepare = new Ajv().compile((tools.find(tool => tool.name === "prepare") as any).input)
+  for (const field of ["autoStart", "startOnCreation", "launch", "schedule", "recurrence"]) {
+    assert.equal(validateInspect({ start: { objective: "Brief", template: "custom", [field]: true } }), false)
+    assert.equal(validatePrepare({ requestID: "reserved", objective: "Brief", template: "custom", [field]: true }), field === "startOnCreation")
+  }
+  const beforeInvalid = structuredClone([...values])
+  await assert.rejects(inspect.execute({ missionID: "msn_existing", start: { objective: "Invalid", template: "custom" } }, {
+    sessionID: "ses_coordinator", messageID: "msg_invalid", id: "call_invalid", progress: async () => assert.fail("Must refuse before progress"),
+  }), /missionID/)
+  assert.deepEqual([...values], beforeInvalid)
   assert.deepEqual((inspect as any).input.properties.start.properties.template.enum, ["custom", "debug", "wayfinder", "delivery", "compare"])
   assert.match((tools.find(tool => tool.name === "report") as any).input.properties.artifact.description, /Compare comparator.*version 1 comparison/)
   const started = JSON.parse((await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
@@ -129,8 +231,9 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   // Without a backend route the hand-off and stop actions are neither offered nor performed natively.
   assert.deepEqual([event.tools.mission_interrupt, event.tools.mission_prepare], [undefined, undefined])
   assert.doesNotMatch(event.system[0]?.text ?? "", /mission\.interrupt|mission\.prepare/)
-  await assert.rejects(tools.find(tool => tool.name === "prepare")!.execute({ requestID: "pilot", objective: "Pilot", template: "custom" }, {
-    sessionID: "ses_coordinator", messageID: "msg_p", id: "call_p", progress: async () => {} }), /unavailable here/)
+  assert.deepEqual(JSON.parse((await tools.find(tool => tool.name === "prepare")!.execute({ requestID: "pilot", objective: "Pilot", template: "custom" }, {
+    sessionID: "ses_coordinator", messageID: "msg_p", id: "call_p", progress: async () => {} })).content),
+    { outcome: "refused", phase: "creation", code: "prepare-unavailable" })
   assert.deepEqual(JSON.parse((await inspect.execute({ list: true }, { sessionID: "ses_coordinator", messageID: "msg_l", id: "call_l",
     progress: async () => {} })).content).missions.map((entry: { relation: string }) => entry.relation), ["member"])
   const call = (id: string) => ({ sessionID: "ses_coordinator", messageID: `msg_${id}`, id: `call_${id}`, progress: async () => {} })
@@ -251,9 +354,12 @@ test("inspect start and prepare return frozen profiles, task mode and origins wi
   const tools = new Map<string, { execute(input: unknown, context: any): Promise<{ content: string }> }>()
   let handlers: any, reads = 0, preparations = 0
   let preferences: unknown = [{ template: "all", profiles: { coordinator: { agent: "lead" }, roles: { specialist: { agent: "worker" } } }, taskMode: "independent" }]
+  const savedConfiguration = { version: 1, id: "00000000-0000-4000-8000-000000000001", name: "Saved title",
+    objective: "Coordinate", notes: " \n verbatim notes \r\n ", template: "custom", profiles: { coordinator: {} } }
   const transport: MissionInputTransport = {
     prompt: async () => assert.fail("Creation never prompts"), synthetic: async () => assert.fail("Creation never resumes"),
     resolveCreationDefaults: async (_sessionID, input) => { reads++; return resolveMissionCreationDefaults({ ...input, preferences }) },
+    readConfigurations: async () => [savedConfiguration],
     prepare: async (sessionID, input) => {
       preparations++
       return handlers.create({ ...input, prepared: true, preparedBy: { missionID: input.missionID, coordinatorSessionID: sessionID } })
@@ -281,24 +387,31 @@ test("inspect start and prepare return frozen profiles, task mode and origins wi
     sessionID: "ses_coordinator", messageID: `msg_${id}`, id: `call_${id}`, progress: async () => {},
   })).content)
   try {
-    const start = { objective: "Coordinate", template: "custom" as const, profiles: { coordinator: {} } }
+    assert.deepEqual((await call("inspect", { configurations: true })).configurations,
+      [{ id: savedConfiguration.id, name: savedConfiguration.name, template: "custom" }])
+    const { configuration } = await call("inspect", { configurations: savedConfiguration.id })
+    assert.equal(values.size, 0, "listing and reading configurations never creates a mission")
+    const { objective, title, notes, template, profiles } = configuration
+    const start = { objective, title, notes, template, profiles }
     const started = await call("inspect", { start }, "start")
+    assert.equal(started.mission.title, savedConfiguration.name)
+    assert.equal(started.mission.notes, savedConfiguration.notes)
     assert.deepEqual(started.selection, resolveMissionCreationDefaults({ ...start, preferences }))
     assert.equal("creationDefaults" in started.mission, false, "tool replies expose the selection without its private replay request")
     assert.deepEqual(started.selection.origins, { coordinator: "explicit", roles: { specialist: "preference" }, taskMode: "preference" })
     const request = { requestID: "pilot", objective: "Pilot", template: "custom" as const }
     const prepared = await call("prepare", request)
-    assert.deepEqual(prepared.selection, resolveMissionCreationDefaults({ ...request, preferences }))
-    assert.deepEqual(Object.keys(prepared).sort(), ["disposition", "missionID", "status", "runState", "revision", "selection"].sort())
-    assert.deepEqual([prepared.disposition, prepared.runState, prepared.selection.profiles.coordinator], ["prepared", "prepared", { agent: "lead" }])
+    assert.deepEqual(prepared.target.mission.selection, resolveMissionCreationDefaults({ ...request, preferences }))
+    assert.deepEqual(Object.keys(prepared).sort(), ["outcome", "acknowledgement", "target"].sort())
+    assert.deepEqual([prepared.outcome, prepared.target.mission.runState, prepared.target.mission.selection.profiles.coordinator], ["prepared", "prepared", { agent: "lead" }])
     const bytes = structuredClone([...values])
     preferences = { invalid: true }
     assert.deepEqual(await call("inspect", { start }, "start"), started)
-    assert.deepEqual(await call("prepare", request), prepared)
+    assert.deepEqual(await call("prepare", request), { ...prepared, acknowledgement: "recovered" })
     assert.equal(reads, 2)
     assert.equal(preparations, 1)
     assert.deepEqual([...values], bytes)
-    assert.deepEqual((await call("inspect", { missionID: prepared.missionID })).selection, prepared.selection)
+    assert.deepEqual((await call("inspect", { missionID: prepared.target.mission.missionID })).selection, prepared.target.mission.selection)
     assert.equal(reads, 2, "ordinary reads retain stored provenance")
   } finally { await cleanup() }
 })
@@ -363,7 +476,7 @@ for (const workspaceID of [undefined, "workspace-1"]) {
       assert.equal(stored.oneTime?.firstPlay, null)
       assert.deepEqual(JSON.parse(canonicalAuthority(stored)).oneTime.location, location)
       const beforeReplay = structuredClone([...values])
-      assert.deepEqual(await create!(input, context), first)
+      assert.deepEqual(await create!(input, context), { ...first, acknowledgement: "recovered" })
       assert.deepEqual([...values], beforeReplay)
       assert.equal(sessions.size, 1)
       assert.deepEqual(nativeMutations, { create: 1, prompt: 0, synthetic: 0 })

@@ -21,6 +21,16 @@ La exploración normal es jerárquica; los resultados de búsqueda/filtro son en
 
 Atrás/Adelante es un historial de visitas por pestaña de proyecto y ventana, no el orden de la lista. En cambio, **Sesión anterior** / **Siguiente sesión** en la paleta recorren cíclicamente la lista visible.
 
+## Guardar conversaciones en favoritos {#favorites}
+
+Pasa el puntero por una fila de sesión o enfócala para ver sus acciones. En pantallas táctiles están visibles directamente. Usa el botón de la estrella o, si falta espacio, abre **Más acciones** (⋯) y elige **Añadir a favoritos** o **Quitar de favoritos**.
+
+En el árbol van primero las solicitudes que esperan tu respuesta. Los favoritos solo suben entre sesiones del mismo nivel y con la misma sesión padre. Cada rama conserva su estado expandido o contraído. En la búsqueda, **Actividad** da prioridad a los favoritos que coinciden, incluidas las subsesiones que se muestran. **Nombre** y **Worktree** siguen su propio orden.
+
+En la búsqueda de sesiones, elige **Solo favoritas**. **Mostrar … resultados ocultos** habilita ambos tipos de sesión sin cambiar la búsqueda, el worktree ni los demás filtros. **Restablecer** recupera los filtros y el orden predeterminados.
+
+Las ventanas conectadas al mismo servidor CodeNomad que abren la misma carpeta comparten los favoritos. La limpieza conserva los favoritos y sus antecesores; eliminarlos explícitamente sigue siendo posible.
+
 ## Archivar y restaurar {#archive}
 
 Elige **Archivar sesión** en las acciones de una fila para conservar su historial y ocultar su rama inactiva de la navegación normal. La conversación seleccionada y las que tienen trabajo en curso o preguntas pendientes siguen accesibles. Archivar no detiene el trabajo, no elimina mensajes ni cambia el estado de archivo propio de las subsesiones.
@@ -108,7 +118,7 @@ Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones em
 ## Bifurcar, deshacer y recuperar una ejecución fallida {#fork-errors}
 
 1. En un mensaje, elige **Bifurcar después de este mensaje** para crear una conversación después de ese punto sin reemplazar la original.
-2. Para deshacer, revisa cuidadosamente **Deshacer cambios hasta aqui (elimina mensajes)**. La paleta ofrece **Deshacer último mensaje** y **Rehacer último mensaje** para la operación de deshacer preparada. Deshacer se desactiva si no hay un mensaje de usuario que se pueda deshacer; Rehacer se desactiva si no hay una operación de deshacer preparada.
+2. Para deshacer, revisa cuidadosamente **Deshacer cambios hasta aquí (elimina mensajes)**. La paleta ofrece **Deshacer último mensaje** y **Rehacer último mensaje** para la operación de deshacer preparada. Deshacer se desactiva si no hay un mensaje de usuario que se pueda deshacer; Rehacer se desactiva si no hay una operación de deshacer preparada.
 3. Si la ejecución falla, inspecciona **Error de sesión**, el error de la respuesta y los detalles de **Error al enviar** antes de volver a enviar.
 
 La bifurcación copia el contexto de la conversación hasta el punto seleccionado; no crea un worktree de Git ni aísla los archivos. Revertir no es simplemente navegar. Revisa los efectos sobre los archivos y el límite de lo que se deshace antes de continuar; usa una bifurcación cuando quieras una discusión alternativa sin reescribir el recorrido original.

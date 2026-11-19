@@ -1,7 +1,7 @@
 # Privacy policy
 
 CodeNomad is open-source software that runs on your own computer. It has no
-accounts, telemetry, analytics or advertising. The CodeNomad maintainers do not
+accounts, telemetry, analytics or advertising. The CodeNomad maintainer does not
 collect, receive, store or sell personal data from people who use it.
 
 ## Data on your computer

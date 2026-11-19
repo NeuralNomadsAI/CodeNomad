@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { stopWindowsProcessTree } from "../../../server/src/process-tree"
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url))
 const deadlineMs = 30_000
@@ -20,6 +21,7 @@ function run(args: string[]): Promise<{ code: number | null; signal: string | nu
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     })
+    const spawnedBy = new Date()
     let output = "", timedOut = false
     child.stdout.on("data", chunk => { output += chunk })
     child.stderr.on("data", chunk => { output += chunk })
@@ -27,7 +29,7 @@ function run(args: string[]): Promise<{ code: number | null; signal: string | nu
       timedOut = true
       if (!child.pid) return
       if (process.platform === "win32") {
-        spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" })
+        void stopWindowsProcessTree(child.pid, spawnedBy)
       } else {
         process.kill(-child.pid, "SIGKILL")
       }

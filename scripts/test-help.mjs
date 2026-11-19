@@ -71,8 +71,8 @@ const escapeHtml = (value) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;
 const CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; media-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">`
 const funding = JSON.parse(await readFile(resolve(root, "docs/help/funding.json"), "utf8"))
 const SPONSORSHIP = /github\.com\/sponsors|opencollective\.com|liberapay\.com|polar\.sh|thanks\.dev|paypal\.|patreon\.com|buymeacoffee\.com|ko-fi\.com/i
-// The {{funding}} block: one link per channel, in funding.json order, naming its recipient.
-const fundingBlock = (chrome, channels) => `<ul class="funding">${channels.map((entry) => `<li><a href="${escapeHtml(entry.url)}">${escapeHtml(chrome.funding.action).replace("{channel}", `<bdi>${escapeHtml(entry.name)}</bdi>`)}</a><span>${escapeHtml(chrome.funding.recipient).replace("{recipient}", `<bdi>${escapeHtml(entry.recipient)}</bdi>`)}</span></li>`).join("")}</ul>`
+// The {{funding}} block: one link per channel, in funding.json order.
+const fundingBlock = (chrome, channels) => `<ul class="funding">${channels.map((entry) => `<li><a href="${escapeHtml(entry.url)}">${escapeHtml(chrome.funding.action).replace("{channel}", `<bdi>${escapeHtml(entry.name)}</bdi>`)}</a></li>`).join("")}</ul>`
 
 // The one media element of the site: the home page's silent tour, whose source applies only to
 // wide screens without reduced motion, with the poster as the image everywhere else.
@@ -162,7 +162,7 @@ test("declared help pages have translations, stable heading ids, links, images a
     ["opencode", "providers", "integrations"], ["remote-control", "remote-access", "security", "mobile"],
     ["settings", "shortcuts", "voice"], ["extensions"], ["desktop", "browser-sidecars", "updates"], ["troubleshooting", "support", "sponsor"],
   ], "all approved pages must remain reachable in their eight groups")
-  assert.deepEqual(funding, [{ id: "github-sponsors", name: "GitHub Sponsors", url: "https://github.com/sponsors/pascalandr", recipient: "Pascal André" }], "the published funding channels")
+  assert.deepEqual(funding, [{ id: "github-sponsors", name: "GitHub Sponsors", url: "https://github.com/sponsors/pascalandr" }, { id: "ko-fi", name: "Ko-fi", url: "https://ko-fi.com/pascalandr" }], "the published funding channels")
   if (onlyLocale) assert.ok(site.locales.includes(onlyLocale), `unsupported locale: ${onlyLocale}`)
   const output = await temporary(ctx)
   const built = await buildHelp({ content, output })
@@ -184,7 +184,7 @@ test("declared help pages have translations, stable heading ids, links, images a
       assert.ok(!(await readFile(join(output, locale, `${page}.html`), "utf8")).includes('class="action"'), `${locale}/${page}: only the home page has a call to action`)
     }
     const block = fundingBlock(JSON.parse(await readFile(resolve(root, `docs/help/i18n/${locale}.json`), "utf8")), funding)
-    assert.ok((await readFile(join(output, locale, "sponsor.html"), "utf8")).split('<h2 id="channels">')[1]?.split(/<h2\b/)[0].includes(block), `${locale}: the sponsor page lists the channels under #channels`)
+    assert.ok((await readFile(join(output, locale, "sponsor.html"), "utf8")).split("<article")[1]?.split(/<h2\b/)[0].includes(block), `${locale}: the sponsor page lists the channels before its first section`)
     const support = (await readFile(join(output, locale, "download.html"), "utf8")).split('<h2 id="support-development">')[1]?.split("</article>")[0]
     assert.ok(support && !/<h2\b/.test(support), `${locale}: #support-development is the download page's last section`)
     assert.ok(support.includes(block) && support.includes('href="sponsor.html"'), `${locale}: the download page offers the channels and links to the sponsor page`)
@@ -577,7 +577,7 @@ async function fundingFixturePages(ctx) {
 
 test("funding channels render in order and escaped on the sponsor and download pages, with the header Sponsor link", async (ctx) => {
   const { source, output } = await fundingFixturePages(ctx)
-  const channels = [...funding, { id: "second", name: `Fund <b>&</b> "x"`, url: "https://github.com/sponsors/Shantur-R", recipient: "R & D <team>" }]
+  const channels = [...funding, { id: "second", name: `Fund <b>&</b> "x"`, url: "https://github.com/sponsors/Shantur-R" }]
   assert.deepEqual((await buildHelp({ content: source, output, funding: channels })).problems, [])
   for (const locale of LOCALES) {
     for (const page of ["sponsor", "download", "index"]) await checkHtml(output, locale, page, LOCALES, channels)
@@ -610,9 +610,9 @@ test("funding.json accepts only exact entries with allowlisted channel URLs", as
   const directory = await temporary(ctx)
   const entry = funding[0]
   const invalid = [
-    {}, null, "[]", [null], [[]], [{ ...entry, extra: 1 }], [{ id: entry.id, name: entry.name, url: entry.url }],
+    {}, null, "[]", [null], [[]], [{ ...entry, extra: 1 }], [{ id: entry.id, url: entry.url }],
     [entry, { ...entry }], [{ ...entry, id: "GitHub Sponsors" }], [{ ...entry, id: 1 }],
-    [{ ...entry, name: "" }], [{ ...entry, name: " " }], [{ ...entry, recipient: 1 }], [{ ...entry, recipient: null }],
+    [{ ...entry, name: "" }], [{ ...entry, name: " " }], [{ ...entry, name: 1 }], [{ ...entry, name: null }],
     ...[
       "http://github.com/sponsors/pascalandr", "https://GitHub.com/sponsors/pascalandr", "https://github.com.evil.example/sponsors/pascalandr",
       "https://evil.example/github.com/sponsors/pascalandr", "https://user:token@github.com/sponsors/pascalandr", "https://github.com:443/sponsors/pascalandr",
@@ -620,6 +620,10 @@ test("funding.json accepts only exact entries with allowlisted channel URLs", as
       "https://github.com/sponsors/pascalandr/dashboard", "https://github.com/sponsors/", "https://github.com/sponsors/-bad", "https://github.com/sponsors/bad-",
       "https://github.com/sponsors/a--b", `https://github.com/sponsors/${"a".repeat(40)}`, "https://github.com/pascalandr", "https://github.com/sponsors/../pascalandr",
       " https://github.com/sponsors/pascalandr", "https://opencollective.com/codenomad", "https://www.paypal.com/donate", "javascript:alert(1)", 42,
+      "http://ko-fi.com/pascalandr", "https://Ko-fi.com/pascalandr", "https://www.ko-fi.com/pascalandr", "https://ko-fi.com.evil.example/pascalandr",
+      "https://user:token@ko-fi.com/pascalandr", "https://ko-fi.com:443/pascalandr", "https://ko-fi.com/", "https://ko-fi.com/pascalandr/",
+      "https://ko-fi.com/pascalandr?ref=1", "https://ko-fi.com/pascalandr#tiers", "https://ko-fi.com/pascalandr/shop", "https://ko-fi.com/pascal-andr",
+      "https://ko-fi.com/pascal.andr", "https://ko-fi.com/../pascalandr", "https://ko-fi.com/pascal%20andr", `https://ko-fi.com/${"a".repeat(51)}`,
     ].map((url) => [{ ...entry, url }]),
   ]
   for (const channels of invalid) {
@@ -630,6 +634,9 @@ test("funding.json accepts only exact entries with allowlisted channel URLs", as
   await assert.rejects(buildHelp({ content, output: await temporary(ctx), funding: [{ ...entry, url: "https://example.com/" }] }), /funding\.json/, "injected channels are validated too")
   assert.deepEqual(validateFunding([]), [], "an empty list is valid until a page asks for {{funding}}")
   assert.deepEqual(validateFunding([{ ...entry, id: "second", url: `https://github.com/sponsors/${"a".repeat(39)}` }]).length, 1)
+  for (const url of ["https://ko-fi.com/pascalandr", "https://ko-fi.com/Pascal_Andre2", "https://ko-fi.com/a", `https://ko-fi.com/${"a".repeat(50)}`]) {
+    assert.deepEqual(validateFunding([entry, { id: "ko-fi", name: "Ko-fi", url }]).length, 2, url)
+  }
 })
 
 test("the page check rejects sponsorship URLs outside the funding block, blocks on other pages and a missing Sponsor link", async (ctx) => {

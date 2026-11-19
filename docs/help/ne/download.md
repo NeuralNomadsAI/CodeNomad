@@ -42,6 +42,6 @@ npx @neuralnomads/codenomad --generate-token --launch
 
 ## विकासलाई आर्थिक सहयोग गर्नुहोस् {#support-development}
 
-प्रायोजनले के खर्च बेहोर्छ भन्ने कुरा [CodeNomad लाई आर्थिक सहयोग गर्नुहोस्](sponsor.md) पृष्ठले बताउँछ।
+प्रायोजन किन महत्त्वपूर्ण छ र यसलाई कसरी सम्हालिन्छ भन्ने कुरा [CodeNomad लाई आर्थिक सहयोग गर्नुहोस्](sponsor.md) पृष्ठले बताउँछ।
 
 {{funding}}

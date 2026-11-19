@@ -1,14 +1,15 @@
-import { createSignal, Show } from "solid-js"
+import { createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import { Markdown } from "../../../src/components/markdown"
-import { SessionPreviewView } from "../../../src/components/session-preview-view"
+import { SessionPreviewHost, SessionPreviewSlot } from "../../../src/components/session-preview-view"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { backends, createBackendClient, localBackend, type BackendClient } from "../../../src/lib/backend-client"
 import { backendEvents } from "../../../src/lib/backend-events"
 import { addInstance } from "../../../src/stores/instances"
 import { getServerMeta } from "../../../src/lib/server-meta"
-import { getSessionPreview } from "../../../src/stores/session-previews"
+import { getSessionSurface } from "../../../src/stores/session-surface"
+import { publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
 import "../../../src/index.css"
 
 const calls: { owner: string; url: string; method: string; body?: any }[] = []
@@ -47,19 +48,22 @@ let detach = backendEvents.attach(remote.id, remote.events)
 const [remoteId, setRemoteId] = createSignal("preview_remote~same")
 for (const [id, backendId] of [["same", undefined], [remoteId(), remote.id]] as const) {
   addInstance({ id, backendId, folder: "/same", port: 0, pid: 0, proxyPath: "/workspaces/same/instance", status: "ready" } as any)
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId: id, backendId, folder: "/same", occurrence: 0 })
 }
 const [hostVersion, setHostVersion] = createSignal("")
+const [active, setActive] = createSignal("same")
 function Consumer(props: { id: string }) {
-  const preview = () => getSessionPreview("session", props.id)
-  return <>
+  return <div class="session-shell-frame" style={{ height: "100%", display: "flex", "flex-direction": "column" }} onClick={() => setActive(props.id)}>
     <Markdown instanceId={props.id} sessionId="session" disableHighlight part={{ id: "link", type: "text", text: "[App](http://localhost:3000/app?q=1#hash)" } as any} />
-    <Show when={preview()}>{value => <SessionPreviewView preview={value()} onInsertComment={() => {}} />}</Show>
-  </>
+    <SessionPreviewSlot instanceId={props.id} sessionId="session"
+      active={active() === props.id && getSessionSurface({ instanceId: props.id, sessionId: "session" }).kind === "web"} onInsertComment={() => {}} />
+  </div>
 }
 render(() => <ConfigProvider><I18nProvider>
   <output data-host-version>{hostVersion()}</output>
   <section data-owner="local" style={{ height: "500px", display: "flex", "flex-direction": "column" }}><Consumer id="same" /></section>
   <section data-owner="remote" style={{ height: "500px", display: "flex", "flex-direction": "column" }}><Consumer id={remoteId()} /></section>
+  <SessionPreviewHost />
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).previewRouting = {
   calls,

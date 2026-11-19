@@ -19,9 +19,8 @@ interface Binding extends MissionCreationOperation {
 interface HeldCreation { binding: Binding; state: "preparing" | "dispatched" | "uncertain"; releasePermit(): void; reconcile?: () => void }
 const CAPACITY = 128
 // Backend/fence-scoped, bounded retention, not an authority store or dispatcher.
-// Unknown writes have NO expiry, negative-GET release, new-generation adoption or
-// retry runner. Creation has no terminal mutation receipt; a separate fixed
-// human-answer consumer may settle only its exact original native receipt.
+// Unknown writes retain their original connection and physical scope until an
+// exact positive creation receipt or certified original refusal settles them.
 const held = new WeakMap<WorktreeDeletionFence, Map<string, HeldCreation>>()
 
 /** A later preflight refusal cannot settle this earlier native write. */
@@ -54,7 +53,7 @@ export function reconcileMissionCreationHold(fence: WorktreeDeletionFence, bindi
     throw new MissionCreationHoldError("creation-conflict")
   return () => {
     connection.assertCurrent()
-    if (held.get(fence)?.get(binding.key) !== record || record.state === "preparing" || !record.reconcile)
+    if (held.get(fence)?.get(binding.key) !== record || record.state !== "uncertain" || !record.reconcile)
       throw new MissionCreationHoldError("creation-uncertain")
     record.reconcile()
   }

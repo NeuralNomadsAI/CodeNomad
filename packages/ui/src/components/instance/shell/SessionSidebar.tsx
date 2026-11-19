@@ -95,7 +95,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => {
               size="small"
               color="inherit"
               aria-label={props.t("sessionList.filter.ariaLabel")}
-              title={props.t("sessionList.filter.ariaLabel")}
+              title={props.t("sessionList.filter.open")}
               aria-pressed={props.showSearch()}
               onClick={props.onToggleSearch}
             >

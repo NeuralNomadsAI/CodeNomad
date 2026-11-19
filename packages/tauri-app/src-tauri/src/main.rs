@@ -526,7 +526,8 @@ async fn browser_target_register(
     let controller = state.browser_controller.clone();
     tauri::async_runtime::spawn_blocking(move || controller.register(&window, payload))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|error| embedded_view::diagnostics::preview_error("dispatch registration", error))?
+        .map_err(|error| embedded_view::diagnostics::preview_error("register target", error))
 }
 
 #[tauri::command]
@@ -541,7 +542,8 @@ async fn browser_target_update(
     let owner = webview.label().to_string();
     tauri::async_runtime::spawn_blocking(move || controller.update(&app, &owner, payload))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|error| embedded_view::diagnostics::preview_error("dispatch update", error))?
+        .map_err(|error| embedded_view::diagnostics::preview_error("update target", error))
 }
 
 #[tauri::command]
@@ -555,7 +557,9 @@ async fn browser_target_action(
     let controller = state.browser_controller.clone();
     let owner = webview.label().to_string();
     tauri::async_runtime::spawn_blocking(move || controller.action(&app, &owner, payload))
-        .await.map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| embedded_view::diagnostics::preview_error("dispatch action", error))?
+        .map_err(|error| embedded_view::diagnostics::preview_error("target action", error))
 }
 
 #[tauri::command]
@@ -569,6 +573,7 @@ fn browser_target_unregister(
     state
         .browser_controller
         .unregister(&app, webview.label(), &registration_id)
+        .map_err(|error| embedded_view::diagnostics::preview_error("unregister target", error))
 }
 
 #[tauri::command]

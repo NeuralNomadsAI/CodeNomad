@@ -68,6 +68,30 @@ function fixture() {
     setPreferences: (value: unknown) => { preferences = value }, invalidate: () => { preferences = null }, restart: () => { control = new MissionControl(options) } }
 }
 
+test("read-only creation receipt validates immutable request/document evidence after edits and reload", async () => {
+  const f = fixture(), input = { prepared: true, requestID: "origin", objective: "Original", template: "custom" as const,
+    taskMode: "native" as const, expectedCoordinatorLocation: { directory: "/repo" }, watchedConversationIDs: ["ses_context"] }
+  const empty = await f.control.creationReceipt(input)
+  assert.equal(empty.mission, undefined)
+  assert.equal(f.created, 0)
+  const { mission } = await f.control.create(input)
+  await f.control.update({ missionID: mission.id, requestID: "edit", expectedRevision: mission.revision, objective: "Edited" })
+  f.restart()
+  const bytes = structuredClone([...f.values])
+  const receipt = await f.control.creationReceipt(input)
+  assert.equal(receipt.mission?.id, mission.id)
+  const ajv = new Ajv()
+  const validate = ajv.compile(CODENOMAD_MISSIONS_RPC.methods.creationReceipt.output)
+  assert.ok(validate(receipt), JSON.stringify(validate.errors))
+  for (const changed of [{ objective: "Changed" }, { expectedCoordinatorLocation: { directory: "/other" } },
+    { watchedConversationIDs: ["ses_other"] }]) {
+    try { assert.equal((await f.control.creationReceipt({ ...input, ...changed })).mission, undefined) }
+    catch (error) { assert.equal((error as any).code, "request-conflict") }
+  }
+  assert.deepEqual([...f.values], bytes, "receipt reads leave both journal and document untouched")
+  assert.equal(f.created, 1)
+})
+
 test("both agent creation paths store the editor's effective Compare judge and freeze the selected slot's origin", async () => {
   const model = { providerID: "p", id: "coordinator" }
   for (const method of ["prepare", "inspect"] as const) for (const origin of ["explicit", "preference"] as const) {
@@ -99,7 +123,7 @@ test("both agent creation paths store the editor's effective Compare judge and f
 })
 
 test("inspect start recovers frozen preferences from its document before a missing creation event", async () => {
-  const f = fixture(), start = { objective: "Frozen document", template: "custom" as const }
+  const f = fixture(), start = { objective: "Frozen document", title: "Frozen title", notes: " \n verbatim \r\n ", template: "custom" as const }
   f.fail()
   await assert.rejects(f.control.inspect(f.coordinator, { start }, "inspect-create"), /Journal write unavailable/)
   assert.equal(f.reads, 1)
@@ -107,12 +131,16 @@ test("inspect start recovers frozen preferences from its document before a missi
   await assert.rejects(f.control.inspect(f.coordinator, { start: { ...start, profiles: {} } }, "inspect-create"), /different mission/)
   const result = await f.control.inspect(f.coordinator, { start }, "inspect-create")
   assert.equal(result.mission?.runState, "prepared")
+  assert.equal(result.mission?.title, start.title)
+  assert.equal(result.mission?.notes, start.notes)
+  await assert.rejects(f.control.inspect(f.coordinator, { start: { ...start, title: "Changed" } }, "inspect-create"), /different mission/)
+  await assert.rejects(f.control.inspect(f.coordinator, { start: { ...start, notes: "" } }, "inspect-create"), /different mission/)
   assert.deepEqual(result.selection?.profiles.roles, { specialist: { agent: "worker" } })
   assert.equal(result.selection?.origins.roles.specialist, "preference")
   assert.equal(f.reads, 1, "even invalid current preferences are unread on recovery")
   const ajv = new Ajv({ allErrors: true })
   const validate = ajv.compile(CODENOMAD_MISSIONS_RPC.methods.create.output)
-  assert.ok(validate({ mission: result.mission }), JSON.stringify(validate.errors))
+  assert.ok(validate({ mission: result.mission, acknowledgement: "recovered" }), JSON.stringify(validate.errors))
   const document = await f.documents.read(result.mission!.id)
   assert.ok(document && !("deletedAt" in document))
   assert.equal("creationDefaults" in result.mission!, false, "inspection exposes only the documented selection")
@@ -187,6 +215,23 @@ test("prepare recovers its frozen document before journal publication without re
   assert.equal(result.mission.creationDefaults?.origins.coordinator, "preference")
   assert.equal(f.reads, 1)
   assert.equal(f.created, 1, "retry reuses the same unprompted root")
+})
+
+test("a historical source-scoped preparation without extended creation binding recovers by its journal inputs", async () => {
+  const f = fixture()
+  await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: f.coordinator })
+  const request = { requestID: "historical", objective: "Pilot", template: "custom" as const }
+  const first = await f.control.prepare(f.coordinator, request)
+  const entry = [...f.values].find(([, value]) => value && typeof value === "object" && "oneTime" in value && value.id === first.mission.id)!
+  const historical = structuredClone(entry[1]) as any
+  delete historical.creation
+  f.values.set(entry[0], historical)
+  f.invalidate(); f.restart()
+  const before = structuredClone([...f.values])
+  assert.equal((await f.control.prepare(f.coordinator, request)).mission.id, first.mission.id)
+  assert.deepEqual([...f.values], before)
+  await assert.rejects(f.control.prepare(f.coordinator, { ...request, objective: "Changed" }), { code: "prepare-conflict" })
+  await assert.rejects(f.control.prepare(f.coordinator, { ...request, watchedConversationIDs: ["ses_new"] }), { code: "prepare-conflict" })
 })
 
 test("the pre-dispatch creation intention survives a failure before the first document and reinstantiation", async () => {

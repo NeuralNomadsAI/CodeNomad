@@ -135,8 +135,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.time": "Введите корректное время.",
   "missions.scheduling.error.count": "Слишком много критериев: не более восьми расписаний (семи при отдельной проверке событий) и восьми событий.",
   "missions.scheduling.error.duplicate": "Удалите повторяющийся критерий.",
-  "missions.scheduling.immediateFollowed": "Контекст отслеживаемых разговоров читается и фиксируется при Play. Неполные источники или превышение ёмкости контекста блокируют запуск.",
-  "missions.scheduling.immediateCreationFollowed": "Создайте миссию с расписанием, чтобы сохранить отслеживаемые разговоры, затем до Play измените запуск на немедленный.",
   "missions.scheduling.once": "Один раз, немедленно",
   "missions.scheduling.frequency.at": "Один раз, в заданную дату",
   "missions.scheduling.frequency.in": "Один раз, с задержкой",

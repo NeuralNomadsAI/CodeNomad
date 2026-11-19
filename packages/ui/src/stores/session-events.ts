@@ -641,7 +641,7 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
   log.info(`[SSE] Session deleted: ${sessionId}`)
   nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
   dismissRetryToast(instanceId, sessionId)
-  removeSessionRuntimeState(instanceId, sessionId)
+  removeSessionRuntimeState(instanceId, sessionId, "observation")
 }
 
 /** Native provider backoff. The next attempt's step events clear it as ordinary work. */

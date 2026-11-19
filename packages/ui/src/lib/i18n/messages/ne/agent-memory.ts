@@ -9,6 +9,7 @@ export const agentMemoryMessages = {
   "settings.memory.global": "तपाईंको बारेमा",
   "settings.memory.project": "परियोजना",
   "settings.memory.noProject": "स्मृति हेर्न परियोजना खोल्नुहोस्।",
+  "settings.memory.entries": "प्रविष्टिहरू",
   "settings.memory.count": "{count}/{limit}",
   "settings.memory.loading": "लोड हुँदैछ…",
   "settings.memory.empty": "अहिलेसम्म कुनै स्मृति छैन",

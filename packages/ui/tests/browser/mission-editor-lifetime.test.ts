@@ -306,9 +306,8 @@ test("creation-uncertain retains original request/draft across close, remount an
     await page.locator("form.mission-editor textarea").first().fill("Uncertain create")
     await page.getByLabel("Notes", { exact: true }).fill("Original notes")
     await page.locator("form.mission-editor button[type=submit]").first().click()
-    const uncertain = page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" })
-    await uncertain.waitFor()
-    assert.ok(!(await uncertain.innerText()).includes("This mission changed"))
+    await page.waitForFunction(() => Boolean(window.missionEditorLifetime.held()))
+    assert.equal(await page.locator("form.mission-editor [role=alert]").count(), 0)
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), true)
     const original = await page.evaluate(() => window.missionEditorLifetime.held())
     assert.equal(original!.requestId, attempts[0].requestId)
@@ -323,16 +322,17 @@ test("creation-uncertain retains original request/draft across close, remount an
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), true)
     // Even a map observed later is not a terminal receipt for the held creation.
     list = [...list, { ...mission("late"), objective: "Late durable map" }]
-    // Discovery remains summary-only while the creation form hides the picker.
+    const before = reads
+    const refreshed = page.waitForResponse(response => response.url().includes("/missions/creation/"))
     await page.locator("form.mission-editor").getByRole("button", { name: "Refresh mission map", exact: true }).click()
-    await page.waitForFunction(() => (window.missionEditorLifetime.state("fixture") as { summaries?: Array<{ id: string }> }).summaries?.some(value => value.id === "late"))
+    await refreshed
+    assert.ok(reads > before, "Refresh reads the original request receipt")
     assert.equal(await page.locator(".mission-rows").isVisible(), false)
     await page.locator("form.mission-editor").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     assert.equal(attempts.length, 1)
     assert.deepEqual(await page.evaluate(() => window.missionEditorLifetime.held()), original)
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), true)
-    assert.match(await uncertain.innerText(), /Refresh only reads state/)
-    assert.match(await uncertain.innerText(), /restart recovery are not yet qualified/)
+    assert.equal(await page.locator("form.mission-editor [role=alert]").count(), 0)
     await page.getByRole("button", { name: "Cancel", exact: true }).click()
     assert.equal(await page.locator("form.mission-editor").count(), 0)
     assert.deepEqual(errors, [])

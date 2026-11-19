@@ -33,6 +33,7 @@ test("targets the inspected window independently of the visible conversation", a
   let runId = "run-1"
   let visibleSession = "session-1"
   let inspectedIdentity: unknown
+  const previewError = { level: "error", text: "browser preview: install navigation starting handler: Paramètre incorrect. (0x80070057)" }
   const inspectOptions: unknown[] = [], actions: Array<Record<string, unknown>> = []
   registerAutomationPluginRoute(app, {
     authManager: { isLoopbackRequest: () => true },
@@ -52,7 +53,7 @@ test("targets the inspected window independently of the visible conversation", a
             cdpUrl: "http://127.0.0.1:9222",
             windowId: "window-1",
           },
-          logs: [],
+          logs: [previewError],
         }
       },
     },
@@ -103,6 +104,7 @@ test("targets the inspected window independently of the visible conversation", a
     windowId: "window-1",
   })
   assert.equal(inspect.json().result.context.sessionId, "session-1")
+  assert.deepEqual(inspect.json().result.diagnostics, [previewError], "inspection exposes retained native preview errors")
 
   visibleSession = "session-2"
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "click", ref: "ax1" } })).statusCode, 200)
@@ -253,7 +255,7 @@ test("Mission preference and preparation claims remain available without browser
     const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
       headers: { "x-codenomad-automation-token": "secret" }, payload: { mode: "browser-claim", sessionID: "owned", purpose } })
     assert.equal(response.statusCode, 200, purpose)
-    assert.deepEqual(response.json(), { result: { available: true, missionCreationDefaults: true } })
+    assert.deepEqual(response.json(), { result: { available: true, missionCreationDefaults: true, missionPreparationStart: true } })
   }
   const browser = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
     headers: { "x-codenomad-automation-token": "secret" }, payload: { mode: "browser-claim", sessionID: "owned" } })

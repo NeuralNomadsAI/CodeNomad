@@ -33,6 +33,7 @@ test("native account dropdown activates by identity and preserves failed rename 
     assert.equal(await select.locator('option[value="env:PROVIDER_KEY"]').evaluate(option => (option as HTMLOptionElement).disabled), true)
     await select.selectOption("credential:two")
     await page.waitForFunction(() => document.querySelector<HTMLSelectElement>(".provider-accounts select")?.value === "credential:two")
+    await page.locator('[data-account-id="credential:two"]').waitFor()
     assert.equal(await page.locator('[data-account-id="credential:one"]').count(), 0)
     await select.selectOption("credential:one")
     const first = page.locator('[data-account-id="credential:one"]')

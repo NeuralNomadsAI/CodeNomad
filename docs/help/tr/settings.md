@@ -25,12 +25,15 @@ Seçilen sağ panel sekmesi ve Dosyalar modu her proje sekmesi için ayrı kayde
 
 1. **Genel** bölümünde **Dil** öğesini seçin: İngilizce, İspanyolca, Fransızca, Rusça, Japonca, Basitleştirilmiş Çince, İbranice, Almanca, Nepalce veya Türkçe.
 2. **Renk şeması** bölümünde **Mod** seçin: **Otomatik**, **Koyu** veya **Açık**. Otomatik işletim sistemini takip eder.
-3. Görüntülenen görünüm için bir palet seçin. Açık ve koyu seçimler bağımsız olarak kaydedilir; Otomatik eşleşeni kullanır.
-4. Özel renkler için renk örneklerini ve **Kaydet** öğesini kullanın; **Sıfırla** yerleşik bir paletin renklerini geri yükler. Ayrı bir paleti adlandırmak için **Yeni**, oluşturduğunuz bir paleti kaldırmak için **Sil** öğesini kullanın.
+3. **Mod** yanındaki **Kontrast** seçimini yapın: **Otomatik** (varsayılan) sistemin kontrast tercihini izler; **Açık** tüm paletlerde kontrastı artırır; **Kapalı** normal kontrastı kullanır.
+4. Görüntülenen görünüm için bir palet seçin. Açık ve koyu seçimler bağımsız olarak kaydedilir; Otomatik eşleşeni kullanır.
+5. Özel renkler için renk örneklerini ve **Kaydet** öğesini kullanın; **Sıfırla** yerleşik bir paletin renklerini geri yükler. Ayrı bir paleti adlandırmak için **Yeni**, oluşturduğunuz bir paleti kaldırmak için **Sil** öğesini kullanın.
+
+Kontrast, renkler için **Kaydet** işleminden bağımsız olarak hemen uygulanır ve kaydedilir. Seçili paleti, düzenlenebilir renkleri ve konuşma taslağını koruyarak görünümü uyarlar. **i**, Otomatik modunda geçerli kontrast durumunu gösterir.
 
 Kullanıcı arayüzü, bir konuşmayı yeniden başlatmadan güncellenir. İbranice sağdan sola düzeni kullanır; kod ve teknik değerler kendi yönlerinde okunabilir durumda kalır. Dil seçimi, mevcut mesajların veya aracı talimatlarının dilini değil, arayüz metnini değiştirir. Yerel masaüstü menüleri, bir CodeNomad penceresi yüklendikten sonra arayüz diline geçer.
 
-Renklerin okunması zorlaşırsa yerleşik bir palet seçin veya düzenlenen paleti sıfırlayın. Paletler arasında geçiş yapmak, kaydedilmemiş renk düzenlemelerini iptal etmenizi isteyebilir; bir konuşma taslağını atmaz.
+Renklerin okunması zorlaşırsa **Kontrast → Açık** seçin. Yerleşik bir palet seçebilir veya düzenlenen paleti sıfırlayabilirsiniz. Paletler arasında geçiş yapmak, kaydedilmemiş renk düzenlemelerini iptal etmenizi isteyebilir; konuşma taslağınız korunur.
 
 ## Bilgisayarı uyanık tutma {#keep-computer-awake}
 
@@ -47,7 +50,7 @@ CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de 
 - **Hakkınızda**: bu yapılandırmayı kullanan projeler arasında paylaşılan en fazla 60 kayıt.
 - **Proje**: en fazla 200 kayıt. Bu arayüz Tercihler’de seçilen projeyi, gömülü Ayarlar ise ana pencerenin etkin projesini kullanır. Sunucu depoyu normalleştirilmiş Git uzak adresiyle, bu yoksa yerel depo yoluyla tanımlar; worktree’ler bu belleği paylaşır. Bu kapsamı seçmek için bir proje açın.
 
-1. Kapsamı ve kaydı seçin. **Yeni** ve **Değiştirildi**, bu tarayıcı veya masaüstü görünümünde kapsamın son başarılı incelemesinden sonraki değişiklikleri gösterir; geçerli ziyaret boyunca görünür kalırlar.
+1. Kapsamı seçin, kayıt sayısını (örneğin **7/200**) açın ve bir kayıt seçin. **Yeni** ve **Değiştirildi**, bu tarayıcı veya masaüstü görünümünde kapsamın kayıtlarının son gösteriminden sonraki değişiklikleri gösterir; daraltılmış sayaç satırı da bunları gösterir ve geçerli ziyaret boyunca görünür kalırlar.
 2. **Başlık**, **Tür** (**Bilgi**, **Tercih** veya **Referans**) ve **Metin** alanlarını düzenleyip **Kaydet** seçeneğini kullanın. Başlık 60, metin 2.000 karakterle sınırlıdır. **İptal** kayıtlı içeriği geri getirir. Kayıt başka yerde değiştiyse **Yeniden yükle** ile inceleyip sonra kaydedin.
 3. Kaldırmak için kaydın işlem menüsünü açıp **Unut** işlemini onaylayın. Kayıt etkin bellekten çıkar; yerel Git eski metin dahil geçmişi korur. Unutmak ajanın kullanımını sonlandırır, güvenli veri silme değildir.
 4. Bellek doluysa yeniden denemeden önce kayıtları birleştirin veya unutun. Eşleşen başlıklar ya da büyük ölçüde örtüşen metinler mevcut bir kaydı değiştirir; Git önceki metni saklar.

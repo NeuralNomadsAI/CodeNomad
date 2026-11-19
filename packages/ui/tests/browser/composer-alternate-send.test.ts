@@ -54,6 +54,8 @@ test("the composer menu and Alt+Enter send with the other follow-up delivery whi
     await waitDisabledSteer(page)
     assert.equal(await menuItem(page, "Steer now").isDisabled(), true)
     await page.keyboard.press("Escape")
+    await page.getByRole("menu").waitFor({ state: "hidden" })
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "More actions")
     await page.evaluate(() => (window as any).fixture.setBusy(true))
     await input.fill("")
     await openMenu(page)

@@ -111,7 +111,7 @@ import { invalidateFilesystemCaches, queueFilesystemInvalidation } from "../lib/
 import { detachInstanceTabMembership, openInstanceTabIds, requestInstanceTabClose } from "./app-tab-membership"
 import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
-import { restoreClosedWorkspaceDrafts, retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
+import { retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
 import { remoteRestoreTabs } from "./remote-restore-tabs"
 import { clearInstanceSeenInterruptions } from "./session-interruption-seen"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
@@ -535,6 +535,9 @@ const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreW
 })
 const restoreCreationCommitGates = new RestoreWorkspaceCommitGates<RestoreWorkspaceDescriptor>()
 
+/** Bounded backoff for a failed reconnect reconciliation; a reconnect pulse
+ * (upstream recovery) keeps the browser stream open, so nothing else retries it. */
+const CONNECTION_RESYNC_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000]
 const connectionResyncs = new TrailingResyncCoordinator(
   async (instanceId, signal) => {
     await waitForSettledPrerequisite(initialHydrations.get(instanceId))
@@ -542,23 +545,26 @@ const connectionResyncs = new TrailingResyncCoordinator(
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
     const current = () => !signal.aborted && instances().get(instanceId)?.client === instance.client
-    let sessionError: unknown
-    try {
-      await fetchSessions(instanceId, { reset: true, signal })
-    } catch (error) {
-      sessionError = error
+    // Every read runs even when another fails: the transcript repair below is
+    // the only path for events this connection may have missed, and the first
+    // failure fails the pass so the coordinator retries it.
+    const failures: unknown[] = []
+    const settle = async (read: () => Promise<unknown>) => {
+      try {
+        await read()
+      } catch (error) {
+        failures.push(error)
+      }
     }
-    signal.throwIfAborted()
+    await settle(() => fetchSessions(instanceId, { reset: true, signal }))
     if (!current()) return
     await Promise.all([
-      reloadWorktrees(instanceId, false, signal),
-      syncPendingRequests(instanceId, undefined, undefined, signal),
-      refreshVolatileInstanceState(instanceId, undefined, signal),
-      syncLoadedSessionInboxes(instanceId, signal),
+      settle(() => reloadWorktrees(instanceId, false, signal)),
+      settle(() => syncPendingRequests(instanceId, undefined, undefined, signal)),
+      settle(() => refreshVolatileInstanceState(instanceId, undefined, signal)),
+      settle(() => syncLoadedSessionInboxes(instanceId, signal)),
     ])
-    signal.throwIfAborted()
     if (!current()) return
-    if (sessionError) throw sessionError
     const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
     for (const sessionId of loadedMessages) {
       signal.throwIfAborted()
@@ -566,16 +572,16 @@ const connectionResyncs = new TrailingResyncCoordinator(
       invalidateSessionMessageLoad(instanceId, sessionId)
     }
     const activeId = activeSessionId().get(instanceId)
-    signal.throwIfAborted()
     if (!current()) return
-    if (activeId && loadedMessages.has(activeId)) await loadMessages(instanceId, activeId, { force: true, signal })
-    signal.throwIfAborted()
+    if (activeId && loadedMessages.has(activeId)) await settle(() => loadMessages(instanceId, activeId, { force: true, signal }))
     if (!current()) return
     reconcilePendingSessionIndicators(instanceId)
+    if (failures.length) throw failures[0]
   },
   (instanceId, error) => {
     log.warn("Failed to resync sessions after instance connection", { instanceId, error })
   },
+  CONNECTION_RESYNC_RETRY_DELAYS_MS,
 )
 const connectionResyncGate = new ConnectionResyncGate()
 
@@ -1659,7 +1665,6 @@ function addInstance(instance: Instance) {
     occurrence,
     ...(instance.backendId ? { backendId: instance.backendId } : {}),
   })
-  restoreClosedWorkspaceDrafts(instance.id, instance.folder, () => waitForInstanceInitialSessionHydration(instance.id))
   syncHasInstancesFlag()
 }
 
@@ -1688,6 +1693,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard" } = {}) {
+  clearSessionListView(id)
   locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
   pendingCompactions.delete(id)
@@ -1709,6 +1715,7 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   }
   detachInstanceTabMembership(id)
   connectionResyncGate.clear(id)
+  connectionResyncs.cancel(id)
   let nextActiveId: string | null = null
 
   setInstances((prev) => {
@@ -2815,3 +2822,4 @@ export {
   handleInstanceInvalidation,
   clearReloadableInstanceState,
 }
+import { clearSessionListView } from "./session-list-view"

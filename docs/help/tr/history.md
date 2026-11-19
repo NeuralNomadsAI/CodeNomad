@@ -66,8 +66,9 @@ Oturum temizliği bütün oturum için atomik değildir. Sonraki mesaj çakış�
 
 1. Tam olarak hangi konuşmanın gitmesi gerektiğini bildiğinizde belirli bir satırın **Session'ı sil**'sini tercih edin.
 2. Daha kapsamlı bakım için **Session'ları Temizle** öğesini çalıştırın ve **Session'ları Derin Temizle** onayını okuyun.
-3. Yalnızca boş oturumların, tamamlanmış alt ajan oturumlarının ve kullanılmayan çatallanmaların kaldırılmasını kabul ediyorsanız onaylayın.
 
-Scrub, mevcut projenin bilinen oturum adayları üzerinde çalışır ve boş ana oturumlardan fazlasını kaldırabilir. Bu bir arşivleme işlemi değildir ve geri dönüşü yoktur. Bunu yalnızca meşgul bir kenar çubuğunu gizlemek için kullanmayın. Bağımsız **Boş session'ları otomatik temizle** tercihi daha dardır: yüklenmemiş bir konuşma dökümünü boş olarak değerlendirmek yerine bir oturumun gerçekten boş olup olmadığını kontrol eder.
+Her iki temizlik de yalnızca boş, etkin olmayan ve alt oturumu bulunmadığı doğrulanan oturumları siler. Favoriler ve üst oturumları başka bir klasörde işaretlenmiş olsa da korunur.
+
+Temizlik sırasında bir konuşma kaybolursa gönderilmemiş metni ve ekleri projenin yeni konuşma yazma alanında bulabilirsiniz. Geçerli taslağın üzerine yazmadan kayıtlı bir taslağı açmak için **Taslağı değiştir** seçeneğini kullanın. Projeyi yeniden açtığınızda da taslağı kurtarabilirsiniz.
 
 Silme konuşmaları kaldırır; Git commitlerini kaldırmaz ve dosya sistemi/harici etkileri geri almaz. Temizlik kısmen başarılı olursa silinmiş oturumlar silinmiş kalır. Yeniden denemeden önce kalan listeyi ve hataları inceleyin. Çatallama/geri alma için [Konuşmalar](conversations.md), geçici klasör veya çalışma ağacı silme için [Projeler](projects.md) sayfalarına bakın.

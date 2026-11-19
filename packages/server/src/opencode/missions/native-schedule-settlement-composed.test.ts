@@ -154,6 +154,25 @@ test("paused observation never authorizes new principal admission, even with a p
   assert.deepEqual(f.business, [])
 })
 
+test("a prepared run whose next native slot is overdue and refused at prompt entry is still consumed, unblocking that slot", async t => {
+  const f = await composed(t)
+  f.advance(900_001)
+  let doc = await f.read()
+  doc = await f.store.change(doc.id, doc.revision, f.current, value => changes.prepareWake(value, f.occurrence()))
+  f.acknowledge()
+  // Native retries run 2 while its due time stays past; prompt entry refuses it until run 1 is consumed.
+  f.advance(4 * 900_000)
+  const next = { scheduleID: f.principal.scheduleID, run: 2, messageID: `msg_${f.principal.scheduleID}_2`, dueAt: f.now + 1_800_000 }
+  assert.throws(() => changes.prepareWake(structuredClone(doc), next), /stale or gapped/)
+  const preflight = await f.engine.preflight({ missionID: doc.id, wake: f.incoming() })
+  assert.equal(preflight.messagePresent, true); assert.equal(preflight.ready, true)
+  assert.equal(await f.engine.wake({ missionID: doc.id, wake: f.incoming() }), "started")
+  doc = await f.read()
+  assert.equal(doc.calendars[1].highWater, 1); assert.equal(doc.calendars[1].wakePreparing, null)
+  assert.equal(doc.launchedCount, 1); assert.equal(f.admissions(), 1)
+  assert.doesNotThrow(() => changes.prepareWake(structuredClone(doc), next))
+})
+
 test("paused suppression preserves an in-flight preparation through missing ACK/message, then consumes only its exact positive proof", async t => {
   const f = await composed(t)
   f.advance(900_001)

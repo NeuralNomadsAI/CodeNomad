@@ -17,10 +17,12 @@ import type { NativeScheduleCalendarInfo, NativeScheduleCalendarService } from "
 import { nativeScheduleCalendarMatches as exact } from "./native-schedule-calendar-service"
 import type { NativeScheduleWake } from "./native-schedule-transport-contract"
 import type { NativeScheduleOwnerBindings } from "./native-schedule-owner-bindings"
+import type { PreparationAuthor } from "../../missions/preparation-input"
 
 export type NativeScheduleOwnerControl = { missionID: string; requestID: string; expectedRevision: number;
   action: "play" | "resume" | "pause" | "stop" | "check" | "configure" | "delete";
-  configuration?: MissionConfiguration; checkpoints?: MissionSourceCheckpoint[]; deleteManagedSessions?: boolean }
+  configuration?: MissionConfiguration; checkpoints?: MissionSourceCheckpoint[]; deleteManagedSessions?: boolean;
+  automaticStart?: { author: PreparationAuthor; creationRequestID: string; creationDigest: string } }
 export type NativeScheduleOwnerOptions = { store: NativeMissionDocumentStore; native: NativeScheduleCalendarService;
   bindings: NativeScheduleOwnerBindings; installation: NativeScheduleCarrierInstallation;
   profileSource: { profileID: string; executionHost: string; configYamlPath: string }; current(): true; now?: () => number;
@@ -32,8 +34,9 @@ export type NativeSchedulePendingResumeProof = { passageID: string; messageID: s
 /** Emitted only by serialized validation before this control's first write. */
 export class NativeScheduleControlRefusal extends Error {
   readonly refusal
-  constructor(input: NativeScheduleOwnerControl, reason: "revision-conflict" | "date-passed") {
-    super(reason === "revision-conflict" ? "Mission document revision conflict" : "Mission date has passed")
+  constructor(input: NativeScheduleOwnerControl, reason: "revision-conflict" | "control-conflict" | "date-passed") {
+    super(reason === "revision-conflict" ? "Mission document revision conflict"
+      : reason === "control-conflict" ? "Mission calendar request conflict" : "Mission date has passed")
     this.refusal = { missionID: input.missionID, requestID: input.requestID, expectedRevision: input.expectedRevision,
       action: input.action, payloadDigest: missionSchedulePayloadDigest(input), reason }
   }
@@ -124,13 +127,23 @@ export class NativeScheduleCalendarOwner {
   private applyControl(input: NativeScheduleOwnerControl, processAfterCommit: boolean): Promise<MissionDocument> {
     return this.options.store.withExclusion(async locked => {
       let doc = await this.required(locked, input.missionID)
+      const assertAutomaticStart = (value: MissionDocument) => {
+        if (!input.automaticStart) return
+        const creation = value.creation, start = creation?.automaticStart
+        if (input.action !== "play" || value.firstPlayedAt !== null || !creation?.author
+          || !same(creation.author, input.automaticStart.author) || creation.requestID !== input.automaticStart.creationRequestID
+          || creation.digest !== input.automaticStart.creationDigest || start?.requestID !== input.requestID || start.attempted
+          || creation.input?.startOnCreation !== true) throw new Error("Agent Mission first Play unavailable")
+      }
+      assertAutomaticStart(doc)
       if (doc.oneTime && !doc.dormantJournal || doc.preparation?.pending) throw new Error("Use immediate Mission preparation")
       const fingerprint = stableToken(canonicalAuthority({ action: input.action, configuration: input.configuration ?? null,
         deleteManagedSessions: input.deleteManagedSessions ?? false }), 64)
       const previous = doc.calendarOwner?.operation
       const replay = nativeScheduleOwnerControlReceipt(doc, input.requestID)
       if (replay) {
-        if (replay.expectedRevision !== input.expectedRevision || replay.fingerprint !== fingerprint) throw new Error("Mission calendar request conflict")
+        if (replay.expectedRevision !== input.expectedRevision || replay.fingerprint !== fingerprint)
+          throw new NativeScheduleControlRefusal(input, "control-conflict")
         if (doc.calendarOwner?.operation.requestID === input.requestID && doc.calendarOwner.operation.textEdit)
           doc = await this.finishTextEdit(locked, doc, true)
         return replay.pending && processAfterCommit ? this.process(locked, doc) : doc
@@ -215,6 +228,8 @@ export class NativeScheduleCalendarOwner {
         return processAfterCommit ? this.process(locked, doc) : doc
       }
       doc = await locked.change(doc.id, doc.revision, () => { locked.assertActive(); sources?.current(); if (resumeProof) assertSynchronousAuthorityGuard(resumeProof.current, "policy-unqualified"); return this.options.current() }, value => {
+        assertAutomaticStart(value)
+        if (input.automaticStart) value.creation!.automaticStart!.attempted = true
         const old = value.calendarOwner
         if (input.action === "play" && value.firstPlayedAt === null && missionLaunchModel(value.configuration.launch).schedules
           .some(item => item.kind === "at" && item.at <= now)) throw new NativeScheduleControlRefusal(input, "date-passed")
@@ -253,6 +268,8 @@ export class NativeScheduleCalendarOwner {
     return locked.change(doc.id, doc.revision, this.options.current, value => {
       // The original H9-validated edit changes only future text, even after archive.
       value.configuration.objective = intent.configuration.objective
+      if (intent.configuration.coordinatorSelectionAuthor) value.configuration.coordinatorSelectionAuthor = intent.configuration.coordinatorSelectionAuthor
+      else delete value.configuration.coordinatorSelectionAuthor
       if (intent.configuration.notes === undefined) delete value.configuration.notes
       else value.configuration.notes = intent.configuration.notes
       delete value.calendarOwner!.operation.textEdit

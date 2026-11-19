@@ -336,6 +336,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.title": "OpenCode Binary",
   "opencodeBinarySelector.customPath.placeholder": "Enter path to {name} binary…",
   "opencodeBinarySelector.actions.add": "Add",
+  "opencodeBinarySelector.actions.chooseOther": "Choose another binary…",
   "opencodeBinarySelector.actions.browse": "Browse for Binary…",
   "opencodeBinarySelector.actions.removeTitle": "Remove binary",
   "opencodeBinarySelector.status.checkingVersions": "Checking versions…",

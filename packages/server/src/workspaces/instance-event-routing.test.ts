@@ -239,3 +239,50 @@ test("rate-limited lag diagnostics distinguish upstream age without logging even
     assert.doesNotMatch(JSON.stringify(h.warnings), /private-content|"data"|\/repo/)
   } finally { h.bridge.shutdown() }
 })
+
+test("an unresolvable session location pulses its recipients instead of dropping the event silently", async () => {
+  let failures = 2
+  const pulses: string[] = []
+  const h = harness(async id => id === "fast", async () => {
+    if (failures > 0) { failures--; throw new Error("session lookup unavailable") }
+    return { directory: "/repo" }
+  })
+  h.bus.on("instance.eventStatus", value => { if (value.reason === "event routing failed") pulses.push(value.instanceId) })
+  try {
+    await until(() => h.streams.length === 1)
+    h.streams[0].send({ id: "step", created: Date.now(), type: "session.step.started", data: { sessionID: "s", assistantMessageID: "m" } } as OpenCodeEvent)
+    await until(() => pulses.length === 2)
+    assert.deepEqual(pulses.sort(), ["fast", "slow"], "no recipient is known yet, so every recipient reconciles")
+    assert.equal(h.received.length, 0, "an unresolvable event is never broadcast")
+    // The failed lookup stays cached for its short TTL, then resolves.
+    await new Promise(resolve => setTimeout(resolve, 2100))
+    h.streams[0].send(delta("after", "s"))
+    await until(() => h.received.length === 1)
+    assert.equal(h.received[0].instanceId, "fast")
+  } finally { h.bridge.shutdown() }
+})
+
+test("a recipient refused a session it received reconciles; a location it never owned stays silent", async () => {
+  let fastOwns = true
+  const pulses: string[] = []
+  const h = harness(async (id, loc) => loc.directory === "/repo" && id === "fast" && fastOwns)
+  h.bus.on("instance.eventStatus", value => { if (value.reason === "event routing failed") pulses.push(value.instanceId) })
+  try {
+    await until(() => h.streams.length === 1)
+    h.streams[0].send(delta("owned", "s", "/repo"))
+    h.streams[0].send(delta("foreign", "t", "/elsewhere"))
+    await until(() => h.received.length === 1)
+    await turn()
+    assert.deepEqual(pulses, [], "a definite foreign location never pulses")
+
+    // An ambiguous lookup now answers `false` for the checkout that owned it.
+    fastOwns = false
+    h.bus.publish({ type: "workspace.worktreesChanged", workspaceId: "fast" })
+    h.streams[0].send(delta("refused", "s", "/repo"))
+    h.streams[0].send(delta("foreign-again", "t", "/elsewhere"))
+    await until(() => pulses.length === 1)
+    await turn()
+    assert.deepEqual(pulses, ["fast"])
+    assert.deepEqual(h.received.map(x => "id" in x.event && x.event.id), ["owned"], "a refused event is never delivered")
+  } finally { h.bridge.shutdown() }
+})

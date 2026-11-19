@@ -1,29 +1,16 @@
 # CodeNomad unterstützen
 
-## Warum CodeNomad sponsern {#why}
-
-CodeNomad steht unter der [MIT-Lizenz](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) und ist kostenlos herunterzuladen und zu nutzen. Pascal André und Shantur Rathore pflegen es in ihrer Freizeit, mit Beiträgen aus der Community. OpenCode wird unabhängig aktualisiert, daher braucht CodeNomad schon für die Kompatibilität regelmäßige Arbeit, noch vor jeder neuen Funktion.
-
-## Was Sponsoring finanziert {#how-it-helps}
-
-- **Wartung**: gemeldete Fehler beheben und CodeNomad mit neuen OpenCode-Versionen kompatibel halten.
-- **Releases**: die Apps für Windows, macOS und Linux bauen, testen und veröffentlichen.
-- **Sprachen**: die Oberfläche und diese Hilfe in zehn Sprachen aktuell halten.
-- **Neue Funktionen**, etwa die Arbeit hinter [Missionen](missions.md), [Fernsteuerung](remote-control.md) und der [Verlaufssuche](history.md).
-
-## Finanzierungsgrundsätze {#policy}
-
-- Ein Sponsoring ist ein Beitrag, kein Kauf. Es erkauft keine Funktionen, keinen Einfluss auf die Roadmap, keine Support-Priorität und keine Lizenzrechte.
-- Sponsoren erhalten dasselbe CodeNomad wie alle anderen. Es gibt keine kostenpflichtige Edition und keinen Build nur für Sponsoren.
-- Fehlerberichte und Funktionswünsche werden nach ihrer Sache beurteilt, ob Sie sponsern oder nicht.
-- Sponsoring ist nie Voraussetzung, um CodeNomad herunterzuladen, zu nutzen oder zu aktualisieren.
-- Jeder Kanal nennt, wer das Geld erhält. Die Zahlung erfolgt auf der Website des jeweiligen Kanals; diese Hilfe sieht Ihre Zahlungsdaten nie.
-
-## Sponsern {#channels}
-
-Auf der Seite jedes Kanals wählen Sie den Betrag und wie oft Sie beitragen.
-
 {{funding}}
+
+Ich entwickle und pflege CodeNomad in Vollzeit. Es ist freie Open-Source-Software, und ich möchte ihm weiterhin die Aufmerksamkeit geben, die ein Werkzeug für echte Arbeit verdient.
+
+Ich komme aus 3D und visuellen Effekten: drei Jahrzehnte, in denen ich gestaltet, Produktionsprobleme gelöst und Software gemeinsam mit den Menschen entwickelt habe, die sie nutzen. Diese Erfahrung prägt meinen Blick auf CodeNomad: Ein Werkzeug muss über die erste Vorführung hinaus bestehen, in langen Sitzungen, komplexen Projekten und bei allem Unerwarteten im Alltag.
+
+Feedback, Fehlerberichte und Codebeiträge machen CodeNomad besser. Spenden finanzieren die Zeit, in der ich daraus etwas Verlässliches mache und es pflege, während sich OpenCode weiterentwickelt.
+
+Um weiter in Vollzeit daran zu arbeiten, brauche ich diese finanzielle Unterstützung. Wenn CodeNomad Teil Ihrer Arbeit geworden ist, hilft mir Ihr Sponsoring, davon zu leben, ein Werkzeug zu entwickeln und zu pflegen, das allen zur Verfügung steht.
+
+Pascal André
 
 ## Weitere Möglichkeiten zu helfen {#other-ways}
 

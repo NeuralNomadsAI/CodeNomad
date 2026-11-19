@@ -4,7 +4,7 @@ import { getSessionPreview, openSessionPreview, sessionPreviews } from "../../..
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { getTabViewState, seedTabViewState } from "../../../src/stores/tab-view-state"
 import { migrateLegacyTabPreviews } from "../../../src/stores/tab-view-state-migration"
-import { publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
+import { isInstanceOccurrenceOpen, publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
 import { addInstance, instances, removeInstance } from "../../../src/stores/instances"
 import { missionStore } from "../../../src/stores/missions"
 import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
@@ -16,16 +16,18 @@ import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/sh
 import { sseManager } from "../../../src/lib/sse-manager"
 import { sessions, activeSessionId } from "../../../src/stores/session-state"
 import { beginGesture } from "../../../src/stores/session-surface"
+import { savedSessionBrowser } from "../../../src/stores/session-browser-persistence"
 import { startNewSession } from "../../../src/stores/session-actions"
+import { showAlertDialog } from "../../../src/stores/alerts"
 
 // The production shell, session switching, preview store and native guests run
 // unchanged. Only server responses and the native registration IPC are fixtures.
 let nextToken = 0
 const deletedPreviews: string[] = []
-let delayedPreview: { url: string; requested: boolean; promise: Promise<void>; release: () => void; fail?: boolean } | undefined
+let delayedPreview: { url: string; requested: boolean; promise: Promise<void>; release: () => void; fail?: boolean; all?: boolean } | undefined
 serverApi.createPreview = async ({ sessionId, url }) => {
   const delay = delayedPreview
-  if (delay?.url === url && !delay.requested) {
+  if (delay?.url === url && (!delay.requested || delay.all)) {
     delay.requested = true
     await delay.promise
     delayedPreview = undefined
@@ -66,6 +68,7 @@ let eventTime = 1000
 let surfaceIntent: ReturnType<typeof beginGesture>
 let releaseNewSession: (() => void) | undefined
 Object.assign(shell, {
+  showPreviewDialog: () => { showAlertDialog("Preview overlay", { title: "Preview overlay" }) },
   delayNewSession: () => {
     instances().get(ids[0])!.client!.session.create = (() => new Promise(resolve => {
       releaseNewSession = () => {
@@ -87,8 +90,14 @@ Object.assign(shell, {
   surfaceIntentCurrent: () => surfaceIntent.current(),
   native: nativeFixture,
   openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),
-  preview: (sessionId: string, instanceId = ids[0]) => getSessionPreview(sessionId, instanceId),
-  savedPreview: (sessionId: string, instanceId = ids[0]) => getTabViewState(instanceId).previews?.[sessionId],
+  preview: (sessionId: string, instanceId = ids[0]) => {
+    if (!isInstanceOccurrenceOpen(instanceId)) return null
+    const preview = getSessionPreview(sessionId)
+    return preview && { ...preview, mode: getTabViewState(instanceId).previews?.[sessionId]?.mode ?? "chat" }
+  },
+  savedPreview: (sessionId: string, instanceId = ids[0]) => ({ ...savedSessionBrowser(sessionId), ...getTabViewState(instanceId).previews?.[sessionId] }),
+  previewModes: (instanceId: string) => getTabViewState(instanceId).previews,
+  createdPreviews: () => nextToken,
   readMission: async (instanceId: string, kind: "overview" | "report", itemId?: string) => {
     await missionStore.refresh(instanceId)
     showSessionChatFor("session", instanceId)
@@ -115,10 +124,10 @@ Object.assign(shell, {
   },
   status: (id: string) => sessions().get(id)?.get("session")?.status,
   deletedPreviews,
-  delayPreview: (url: string, fail = false) => {
+  delayPreview: (url: string, fail = false, all = false) => {
     let release!: () => void
     const promise = new Promise<void>(resolve => { release = resolve })
-    delayedPreview = { url, requested: false, promise, release, fail }
+    delayedPreview = { url, requested: false, promise, release, fail, all }
   },
   isPreviewDelayed: () => Boolean(delayedPreview?.requested),
   releasePreview: () => delayedPreview?.release(),

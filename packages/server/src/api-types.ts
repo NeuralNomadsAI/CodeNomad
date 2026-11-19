@@ -527,7 +527,7 @@ export interface SubagentDepthSnapshot {
 
 export type PluginRuntimeSource =
   | { type: "builtin" }
-  | { type: "package"; target: string; version?: string; outdated?: true; updating?: true }
+  | { type: "package"; target: string; version?: string; revision?: string; outdated?: true; updating?: true }
   | { type: "local"; path: string }
   | { type: "sdk" }
 
@@ -576,6 +576,9 @@ export interface PluginActivationControl {
   global: PluginScopeRuleState
   project: PluginScopeRuleState
   controllingRule?: PluginConfiguredRule
+  /** Only activation rules name this ID: no runtime entry, verified descriptor or declaration defines it, and every
+   * declaration has an exported or verified ID. Its exact rules select nothing and are removable. */
+  orphan?: true
 }
 
 export interface PluginControlTarget {
@@ -623,6 +626,13 @@ export interface WorkspaceFileResponse {
 }
 
 export type WorkspaceFileSearchResponse = FileSystemEntry[]
+
+export type SessionFavorites = Record<string, string[]>
+export interface SessionFavoritesSnapshot {
+  source: string
+  revision: number
+  records: SessionFavorites
+}
 
 export interface InstanceData {
   messageHistory: string[]

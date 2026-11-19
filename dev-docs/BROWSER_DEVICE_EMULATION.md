@@ -11,9 +11,9 @@ reloads the preview because applications can cache device detection at startup.
 Returning to any dimension preset clears all overrides and reloads again.
 
 Electron and Windows Tauri apply overrides to the owned native preview only.
-The selected template belongs to one project-tab occurrence and session. Its
-restorable preview envelope keeps that choice across reopening and restoration;
-duplicate occurrences can use different templates for the same native session.
+The selected template belongs to the session's shared browser. Its saved
+browser state keeps that choice across reopening and restoration; every
+duplicate occurrence displays that same template and document.
 Tauri macOS (WKWebView) and Linux (WebKitGTK) apply all six CSS viewports with native
 view geometry and per-view page zoom. Mobile presets use a generic WebKit mobile
 user agent, identical in HTTP and `navigator.userAgent`; dimension presets restore

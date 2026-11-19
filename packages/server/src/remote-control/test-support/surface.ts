@@ -4,6 +4,7 @@ import path from "node:path"
 import type { TestContext } from "node:test"
 import type { OpenRemoteTunnelOptions, RemoteTunnel } from "@codenomad/remote-tunnel"
 import { AuthManager } from "../../auth/manager"
+import { EventBus } from "../../events/bus"
 import { createLogger } from "../../logger"
 import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../../server/http-server"
@@ -104,7 +105,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     settings: (options.settings ?? (options.browse ? { getOwner: () => ({ recentFolders: [] }) } : stub)) as never,
     fileSystemBrowser: options.browse ? { browse: () => ({ entries: [{ name: "app", path: "/srv/app", type: "directory" }],
       metadata: { scope: "unrestricted", pathKind: "absolute", currentPath: "/srv", rootPath: "/", homePath: "/srv", displayPath: "/srv" } }) } as never : stub,
-    eventBus: stub,
+    eventBus: new EventBus(),
     serverMeta: serverMeta as never,
     instanceStore: stub,
     speechService: stub,

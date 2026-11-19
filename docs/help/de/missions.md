@@ -8,15 +8,25 @@ Ist Missions nicht verfügbar, öffnet **OpenCode-Einstellungen** die Dienstwied
 
 Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Verwenden Sie vorzugsweise HTTPS, um den Netzwerkverkehr zu schützen.
 
-**Mission erstellen** öffnet das Formular anstelle des Baums. Die Gruppen folgen dieser Reihenfolge.
+**Mission erstellen** öffnet das Formular anstelle des Baums. Eine bestätigte Erstellung wählt die Mission aus; bei einer abgelehnten Erstellung bleibt das Formular bearbeitbar.
+
+Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder geplanten Lauf, eine separate einmalige oder geplante Mission vorzubereiten. Seine Unterhaltung bleibt unverändert; standardmäßig wird eine neue Koordinator-Unterhaltung erstellt. Halten Sie das zuständige CodeNomad-Backend verfügbar. **Automatisch starten** erlaubt den ersten Start dieser neuen Mission; die Wiederherstellung liest das ursprüngliche Ergebnis. Agenten können außerdem alle Zeitpläne dieses Projekts auflisten, prüfen, starten, pausieren, stoppen, fortsetzen, sofort ausführen, bearbeiten und löschen, auch die im Editor erstellten. Dieselben Revisions- und Zulassungsprüfungen gelten; eine ausdrücklich deaktivierte Zeitplanung bleibt deaktiviert. Unbestätigte Aktionen behalten ihre ursprüngliche Anfrage zur schreibgeschützten Statusabfrage.
 
 ### Konfiguration {#saved-briefs}
 
+Agenten können aus jeder zugehörigen Unterhaltung alle Missionen des Projekts lesen, auch Ihre. Schreibgeschützte Ansichten zeigen Aufgaben, Ergebnisse, Bereinigung, geplante Durchläufe und Quellenauswahl; das Lesen startet oder wiederholt keine Arbeit.
+
+Agenten können die Zeitplanung prüfen, ihre Einstellungen unter Beibehaltung eines ausdrücklichen OFF vorbereiten, bestätigte Teiländerungen mit der ursprünglichen Anfrage fortsetzen und tägliche Zeitpläne erstellen oder steuern.
+
 **Konfiguration** lädt gespeichertes Ziel, Notizen, Playbook, Profile und Aufgabensitzungen. Der Name wird zum bearbeitbaren Titel. Prüfen Sie die Felder.
+
+Agenten können Konfigurationen lesen, speichern, ersetzen oder umbenennen, entfernen und reparieren sowie die Anweisungen einer bestehenden Mission speichern. Sie können globale oder Playbook-spezifische Profil- und Aufgabensitzungsstandards ändern, Vererbung wiederherstellen, ungültige Einstellungen zurücksetzen und die Einstellung zum Löschen von Aufgabenunterhaltungen ändern. Bibliothek und Einstellungen gelten für alle Projekte des CodeNomad-Profils. Die Unteragententiefe des Projekts unterstützt 1–10 oder **Erben**, einschließlich der Reparatur eines leeren Konfigurationsblocks. Jede Änderung prüft den zuletzt gelesenen Wert und bewahrt zwischenzeitliche menschliche Änderungen.
 
 **Konfiguration speichern** unten neben Abbrechen und Erstellen speichert eine wiederverwendbare Konfiguration, ohne eine Mission zu erstellen oder zu starten. Zeitplanung und automatischer Start werden separat gewählt. Das Zahnrad öffnet die Einstellungen und die Bibliothek; das Entfernen einer Konfiguration erhält Missionen und Unterhaltungen.
 
 ### Ziel, Titel und Notizen {#mission-instructions}
+
+Bei einmaligen Missions können Agenten starten, fortsetzen, sanft pausieren, sofort unterbrechen, stoppen, bearbeiten, löschen, die Koordination nach einem Fehler fortsetzen, einen fehlenden Bericht oder einen Zwischenstand anfordern. Das gilt auch für Ihre Missions, mit denselben Zulassungs- und Revisionsprüfungen wie im Panel. Beim Löschen gilt Ihre Einstellung für verwaltete Sitzungen, sofern Sie nichts anderes angeben. Unbestätigte Aktionen und Bereinigungen behalten ihre ursprüngliche Identität; vor dem ausdrücklichen Fortsetzen einer bestätigten Teilaktion lesen Agenten den gespeicherten Status.
 
 **Ziel** beschreibt das gewünschte Ergebnis und seine Prüfung. **Titel** benennt den Baumeintrag; bei einer leeren Mission folgt er dem ersten Satz des Ziels, bis 60 Zeichen, und bleibt bearbeitbar. **Notizen** enthalten optional Kontext, Einschränkungen oder zusätzliche Anweisungen für die Agenten.
 
@@ -80,7 +90,11 @@ Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die 
 
 Der ausgewählte Zeitplan zeigt Zustand, nächsten Termin beziehungsweise Prüfung, gestartete/erfolgreiche Durchläufe und frühere Ergebnisse. Der Verlauf hält 30 Ergebnisse; Gesamtzähler bleiben. Ein zugelassenes **Jetzt ausführen** zählt mit. Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
 
+Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, auch für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
+
 ### Bestehende tägliche Zeitpläne {#existing-daily-schedules}
+
+Agenten können diese Zeitpläne aus jeder Unterhaltung desselben Projekts finden und steuern, auch aus einem anderen Worktree.
 
 Diese Einträge behalten ihre Kontrollen und Zeitzone. Nach Dienstneustart benötigen unterbrochene tägliche Zeitpläne **Fortsetzen**. Sie holen den letzten zulässigen Tag nach, nicht alle versäumten Tage. Ergebnisse stehen beim ausgewählten Eintrag.
 

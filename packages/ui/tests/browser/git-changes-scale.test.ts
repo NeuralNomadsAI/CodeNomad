@@ -366,7 +366,7 @@ test("sticky rows stay after the selection moves, leave with their file and clea
     const most = pathAt(MOST_CHANGED)
     // A filesystem change while Changes is hidden discards the cached list; sticky rows survive the reread.
     const before = await page.evaluate(() => (window as any).gitScale.calls)
-    await page.getByRole("button", { name: "Workspace", exact: true }).click()
+    await page.getByRole("button", { name: "Espace de travail", exact: true }).click()
     await page.evaluate(() => (window as any).fixture.invalidate())
     await page.getByRole("button", { name: "Changements", exact: true }).click()
     await page.waitForFunction(before => (window as any).gitScale.calls > before, before)

@@ -191,6 +191,7 @@ test("a failed child refresh keeps the last display snapshot with an explicit re
   await page.getByRole("alert").filter({ hasText: "Deterministic read failure" }).waitFor()
   assert.equal(await tool.evaluate(element => element === (window as any).originalStep), true)
   assert.equal(await tool.locator(":scope > .tool-call-header > .tool-call-header-toggle").getAttribute("aria-expanded"), "true")
+  await page.evaluate(() => (window as any).fixture.recoverRead())
   await page.getByRole("alert").getByRole("button").click()
   await page.getByRole("alert").waitFor({ state: "detached" })
   assert.equal(await tool.evaluate(element => element === (window as any).originalStep), true)

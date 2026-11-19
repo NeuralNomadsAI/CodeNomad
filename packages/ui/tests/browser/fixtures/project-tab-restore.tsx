@@ -23,6 +23,7 @@ import { getTabViewState, updateTabViewState } from "../../../src/stores/tab-vie
 import { openSessionPreview, getSessionPreview, restoreSessionPreview } from "../../../src/stores/session-previews"
 import { updateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { moveAppTab } from "../../../src/stores/app-tabs"
+import { savedSessionBrowser } from "../../../src/stores/session-browser-persistence"
 
 ;(window as any).tabViews = {
   ids: () => appTabs().filter(tab => tab.kind === "instance").map(tab => tab.instance.id),
@@ -31,6 +32,7 @@ import { moveAppTab } from "../../../src/stores/app-tabs"
   mission: (id: string) => updateMissionProjectView(id, { selected: "mission-b", reader: { kind: "playbook", missionId: "debug" } }),
   reorder: (a: string, b: string) => moveAppTab(`instance:${a}`, `instance:${b}`, "before"),
   close: closeInstanceTab,
+  saved: savedSessionBrowser,
 }
 
 function GitPanel(props: { instanceId: string }) {

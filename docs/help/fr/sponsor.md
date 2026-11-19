@@ -1,29 +1,16 @@
 # Soutenir CodeNomad
 
-## Pourquoi parrainer CodeNomad {#why}
-
-CodeNomad est publié sous [licence MIT](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) et ne coûte rien à télécharger ni à utiliser. Pascal André et Shantur Rathore le maintiennent sur leur temps libre, avec des contributions de la communauté. OpenCode est mis à jour indépendamment : CodeNomad demande donc un travail régulier rien que pour rester compatible, avant toute nouvelle fonctionnalité.
-
-## Ce que finance le parrainage {#how-it-helps}
-
-- **Maintenance** : corriger les bugs signalés et garder CodeNomad compatible avec les nouvelles versions d’OpenCode.
-- **Versions** : compiler, tester et publier les applications Windows, macOS et Linux.
-- **Langues** : tenir à jour l’interface et ce site d’aide en dix langues.
-- **Nouvelles fonctionnalités**, comme le travail derrière les [Missions](missions.md), le [Contrôle à distance](remote-control.md) et la [recherche dans l’historique](history.md).
-
-## Politique de financement {#policy}
-
-- Un parrainage est une contribution, pas un achat. Il n’achète ni fonctionnalités, ni influence sur la feuille de route, ni priorité d’assistance, ni droits de licence.
-- Les personnes qui parrainent reçoivent le même CodeNomad que tout le monde. Il n’existe ni édition payante ni version réservée aux parrains.
-- Les signalements de bugs et demandes de fonctionnalités sont traités selon leur intérêt, que vous parrainiez ou non.
-- Le parrainage n’est jamais requis pour télécharger, utiliser ou mettre à jour CodeNomad.
-- Chaque canal indique qui reçoit l’argent. Le paiement a lieu sur le site du canal ; ce site d’aide ne voit jamais vos informations de paiement.
-
-## Parrainer {#channels}
-
-La page de chaque canal vous permet de choisir le montant et la fréquence de votre contribution.
-
 {{funding}}
+
+Je développe et maintiens CodeNomad à plein temps. Il est libre et open source, et je veux continuer à lui accorder l’attention que mérite un outil utilisé pour du vrai travail.
+
+Je viens de la 3D et des effets visuels : trois décennies passées à créer, à résoudre des problèmes de production et à développer des logiciels aux côtés de ceux qui les utilisent. Cette expérience guide ma façon d’aborder CodeNomad : un outil doit tenir au-delà de la première démonstration, sur de longues sessions, des projets complexes et face aux imprévus du quotidien.
+
+Les retours, les signalements de bugs et les contributions de code aident à améliorer CodeNomad. Les dons financent le temps que je passe à transformer ces retours en quelque chose de fiable, et à le maintenir au fil des évolutions d’OpenCode.
+
+Pour continuer à plein temps, j’ai besoin de ce soutien financier. Si CodeNomad fait désormais partie de votre travail, le parrainage m’aide à vivre du développement et de la maintenance d’un outil qui reste accessible à tous.
+
+Pascal André
 
 ## Autres façons d’aider {#other-ways}
 

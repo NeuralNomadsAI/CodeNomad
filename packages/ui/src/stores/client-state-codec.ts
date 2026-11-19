@@ -36,7 +36,6 @@ const MAX_TABS = 32, MAX_LAYOUT_ENTRIES = 64, MAX_DRAFTS = 24, MAX_SCROLLS_PER_T
 const MAX_IDLE_MARKERS = 256, MAX_RECOVERY = 256, MAX_EXPANDED = 256, MAX_KEY = 256, MAX_PATH = 4096, MAX_ID = 512
 const MAX_LAYOUT_VALUE = 4096, MAX_DRAFT = 32 * 1024, MAX_ANCHOR_KEY = 1024
 const MAX_STRINGS = 96 * 1024, MAX_SCROLLS = 256, MAX_NEWER_CURSORS = 32, MAX_WINDOW_CURSOR = 1024
-const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
 interface StringBudget { remaining: number; scrollSnapshotsRemaining: number; outlines: OutlineBudget; previews: { remaining: number } }
 
@@ -252,7 +251,9 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
   const activeParentSessionId = value.activeParentSessionId === undefined ? undefined
     : takeString(value.activeParentSessionId, MAX_ID, budget)
   const activeSessionId = value.activeSessionId === undefined ? undefined : takeString(value.activeSessionId, MAX_ID, budget)
-  const prioritySessionIds = [activeSessionId, NO_SESSION_DRAFT_SESSION_ID]
+  const recoveredIds = [...new Set([...Object.keys(value.drafts ?? {}), ...Object.keys(value.attachments ?? {})])]
+    .filter(isRecoveredDraftId).slice(0, MAX_DRAFTS - 2)
+  const prioritySessionIds = [activeSessionId, NO_SESSION_DRAFT_SESSION_ID, ...recoveredIds]
     .filter((id): id is string => Boolean(id))
   return {
     kind: "workspace", value, folder, ...(backendId ? { backendId } : {}), activeParentSessionId, activeSessionId,
@@ -354,3 +355,4 @@ export function decodeClientSnapshot(value: unknown): ClientSnapshotV1 | null {
 export function isFutureClientSnapshot(value: unknown): boolean {
   return isRecord(value) && typeof value.version === "number" && Number.isInteger(value.version) && value.version > 2
 }
+import { NO_SESSION_DRAFT_SESSION_ID, isRecoveredDraftId } from "./local-draft-ids"

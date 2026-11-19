@@ -9,6 +9,7 @@ export const agentMemoryMessages = {
   "settings.memory.global": "אודותיך",
   "settings.memory.project": "פרויקט",
   "settings.memory.noProject": "יש לפתוח פרויקט כדי לצפות בזיכרון שלו.",
+  "settings.memory.entries": "רשומות",
   "settings.memory.count": "{count}/{limit}",
   "settings.memory.loading": "בטעינה…",
   "settings.memory.empty": "אין זיכרונות עדיין",

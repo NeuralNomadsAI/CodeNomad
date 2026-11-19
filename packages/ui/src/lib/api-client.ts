@@ -95,7 +95,7 @@ import type { MissionPanelPageRequest } from "../../../server/src/missions/missi
 import type { MissionContentRequest } from "../../../server/src/missions/mission-content-wire"
 import { TASK_WINDOW_CHARACTERS } from "./mission-task-window-budget"
 import { validMissionContentSlice } from "./mission-content-slice"
-import { assertTaskReadLive, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
+import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 import { assertRemoteServerCredentials, remoteServerRequest, type RemoteServerConnectInput } from "./remote-server-request"
@@ -729,6 +729,17 @@ export function createServerApi(ctx: BackendHttp) {
     fetchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
       return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`)
     },
+    readSessionFavoritesInBackground(instanceId: string, signal: AbortSignal, reconcile: boolean): Promise<import("../../../server/src/api-types").SessionFavoritesSnapshot> {
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-favorites${reconcile ? "?reconcile=1" : ""}`, { signal }))
+    },
+    saveSessionFavorite(instanceId: string, sessionId: string, favorite: boolean): Promise<import("../../../server/src/api-types").SessionFavoritesSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-favorites/${encodeURIComponent(sessionId)}`, {
+        method: "PUT", body: JSON.stringify({ favorite }),
+      })
+    },
+    cleanupSession(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<{ deleted: boolean }> {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-cleanup/${encodeURIComponent(sessionId)}`, { method: "POST", signal })
+    },
     patchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
       return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`, {
         method: "PATCH",
@@ -976,9 +987,13 @@ export function createServerApi(ctx: BackendHttp) {
     }): Promise<{ schedule: { id: string; revision: number; state: "paused"; digest: string; projectID: string; projectCanonical: string } }> {
       return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
     },
-    createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
+    createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; watchedConversationIDs?: readonly string[]; directory?: string; requestId: string }): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
       const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions`
       return missionMutationRequest(ctx.url(path), "POST", input, ctx.fetch)
+    },
+    missionCreationReceipt(instanceId: string, requestId: string, signal?: AbortSignal): Promise<import("../../../server/src/missions/creation-receipt").MissionCreationReceipt> {
+      const live = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(TASK_READ_TIMEOUT_MS)])
+      return raceTaskRead(request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/creation/${encodeURIComponent(requestId)}`, { signal: live }), live)
     },
     editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
       const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}`

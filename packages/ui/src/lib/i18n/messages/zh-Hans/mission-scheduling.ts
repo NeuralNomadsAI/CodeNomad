@@ -135,8 +135,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.time": "请输入有效时间。",
   "missions.scheduling.error.count": "条件过多：最多八个计划（单独检查事件时为七个）和八个事件。",
   "missions.scheduling.error.duplicate": "请移除重复的条件。",
-  "missions.scheduling.immediateFollowed": "关注对话的上下文将在 Play 时读取并冻结。来源不完整或上下文超出容量时，将阻止启动。",
-  "missions.scheduling.immediateCreationFollowed": "请先使用计划策略创建以保留关注对话，然后在 Play 前编辑为立即启动。",
   "missions.scheduling.once": "一次，立即执行",
   "missions.scheduling.frequency.at": "一次，指定日期",
   "missions.scheduling.frequency.in": "一次，延迟执行",

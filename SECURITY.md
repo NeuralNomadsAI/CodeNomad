@@ -17,7 +17,7 @@ Report vulnerabilities privately through GitHub:
 1. Open the repository's [Security tab](https://github.com/NeuralNomadsAI/CodeNomad/security).
 2. Select **Report a vulnerability** and fill in the private advisory form.
 
-If the button is not available, contact a maintainer privately through the contact details on their GitHub profile, [@shantur](https://github.com/shantur) or [@pascalandr](https://github.com/pascalandr), and ask for a private channel before sending details.
+If the button is not available, contact the maintainer, [@pascalandr](https://github.com/pascalandr), privately through the contact details on that GitHub profile, and ask for a private channel before sending details.
 
 Include:
 
@@ -35,6 +35,6 @@ Do not include real passwords, tokens or private data; redact logs and screensho
 
 ## What happens next
 
-The maintainers review the report, investigate it and discuss a fix with you in the private advisory. Once a fix is released, the advisory can be published, crediting you unless you prefer otherwise. CodeNomad is maintained by volunteers, so response times vary.
+The maintainer reviews the report, investigates it and discusses a fix with you in the private advisory. Once a fix is released, the advisory can be published, crediting you unless you prefer otherwise.
 
 The [Authentication and security](docs/help/en/security.md) help page explains how CodeNomad's authentication works and how to expose a server safely.

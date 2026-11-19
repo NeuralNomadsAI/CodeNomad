@@ -73,7 +73,10 @@ that event only at the one-shot slot. An unmet condition consumes that slot, so 
 conditional one-shot can finish with zero launches. Adjacent `now` and cron criteria
 share their schedule group's **or** and conditions.
 
-Creation stays paused. Pause/Resume, exact Play replay, restarts and Run now preserve
+Creation stores a paused document. Explicit **Start automatically**, or the user's
+explicit request passed as `prepare.startOnCreation: true`, may continue its fresh
+acknowledgement through guarded first Play. Recovery only observes its original result.
+Pause/Resume, exact Play replay, restarts and Run now preserve
 the frozen one-shot instant and processed slot. A timing edit that keeps `now` retains
 that instant and its consumed-slot proof even when native calendars are replaced.
 Adding `now` to an armed mixed policy freezes a new one-shot at the edit plus one
@@ -185,7 +188,12 @@ Adoption applies the frozen agent/model through public native switches and merge
 the Missions metadata key. Existing transcript, title, permissions and unrelated metadata
 remain. The user's choice authorizes ordinary Mission controls over that conversation
 and its work, including Stop cancellation of existing queued user/synthetic inputs.
-Never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
+For human-authored choices, never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
+Agent-authored preparations and configurations restrict explicit adoption to an idle eligible root:
+the author, followed/event sources, active family work, queued inputs, durable claims,
+open requests and active or uncertain ownership by another Mission refuse adoption.
+Preparation, configuration and every authoritative adoption revalidate this boundary before native
+profile, metadata, environment or input effects; the current passage's own marker is allowed.
 A missing chosen root stays missing; attempted admission retains its original proof rules.
 
 Before adoption, one immutable `coordinatorBaseline` checkpoint captures the bounded
@@ -229,10 +237,18 @@ wake joins the exact existing service.
 
 The authenticated product seam is `POST /api/workspaces/:id/missions/scheduled`
 for paused creation, and `GET|POST /api/workspaces/:id/missions/:missionID/schedule`
-for status and explicit controls. Requests pin the native directory, human principal,
+for status and explicit controls. Requests pin the native directory, signed human or project-agent principal,
 profile source, request ID and document revision through the existing signed bridge.
 `scheduleRead({missionID,requestID})` reads an exact retained control receipt;
 missing or evicted proof stays unknown. Passive reads send no controls.
+Exact completed human or agent Play, Pause, Stop, Resume, Run now, configure and
+delete replays read their own retained receipt without a document write or revision
+change. Completion includes the actor-family control and original passage admission
+proofs. Check always reconciles under its original request identity. Its receipt
+read resolves the linked original control, or the latest retained actor control,
+and checks actor-family completion; an evicted actor binding stays uncertain while
+the passage is pending. Missing, evicted or partial proofs keep their original
+reconciliation path and uncertainty.
 
 Serialized calendar validation returns an identity/payload-bound refusal for an
 expired first-Play date or a revision conflict before its first write. The initial
@@ -259,6 +275,11 @@ to merge journal rows by Mission ID and retain their owning control path.
 List and detail projections include the full launch policy/configuration, frozen
 one-shot/end instants, admitted/settled/successful counts, structural/template locks,
 pending passage identity and the thirty retained passage receipts.
+
+Agent project inspection shares the pure panel and passage readers through
+`mission.inspect({ project })`, preserving the same bounded pages and native
+source identity. Any owned project conversation can inspect human-created documents,
+their controls and observations; every read revalidates project ownership.
 
 The panel publishes its loaded inventory and cursor independently of the selected
 document's point read. A partial selected receipt keeps uncertainty visible beside
@@ -445,6 +466,11 @@ Context hooks and tool execution use the fixed-method internal business bridge;
 its receiving RPC acquires fresh Session/Database/Location services. Each business
 mutation takes the document exclusion before the existing journal writer. Native
 permissions, original message identities and whole-family H11 settlement apply.
+With an owning CodeNomad backend present, passage coordinators, actors and descendants
+can prepare a separate one-time or calendar-backed Mission through `mission.prepare`. The actual caller
+owns its preparation and read-only target access in the ordinary project journal.
+An explicitly requested `startOnCreation` continues only fresh creation through the
+guarded first-Play contract in [Missions](MISSIONS.md#mission-profile-selection-and-creation-recovery).
 Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
 local title/compaction hooks and authoritative ordinary-input guards.
 Context classification and recovery follow the schedule transport's
@@ -524,7 +550,27 @@ that is still authorized; the bridge callback revalidates the same principal and
 never treats a device as a cookie. Any other principal is refused before a
 deletion permit or control hold exists, so a refusal is definitive, never uncertain.
 
-Never expose these controls as model tools. Validate project/Location ownership,
+Agents create unified schedules through `mission.prepare` and control project
+schedules through `mission.schedule`, including human-created documents. The
+`owner: "daily"` selector reads and creates paused daily documents and exposes
+their existing controls and exact original receipts through the same signed
+project-agent admission. Partial Pause/Stop retries keep their original identity.
+Its list/read actions expose project pages and exact receipts. Play, Pause, Stop,
+Resume, Run now, Check, configure and delete use the shared human business operations,
+physical holds and native admission. Every owned project session qualifies, including
+descendants, actors and scheduled passages. Signed project-agent principals bind the
+actual native caller and are revalidated through the private bridge and native fences.
+Project discovery scans at most 64 daily documents in sixteen-entry native storage
+pages and returns at most eight IDs with their saved owning directories per tool
+page. Target reads acquire and revalidate that owned Location before its exact
+snapshot, receipt or control. The snapshot filter and effect-origin guard retain
+the schedule's exact execution directory.
+The creation-scoped principal used by `prepare.startOnCreation` binds its author,
+original request and creation digest to fresh first Play. Recovered preparations read
+their original result. Public HTTP controls authenticate their human principal.
+Agent configuration uses the editor codec, explicit frozen profiles and idle-root
+adoption guards, retained in `coordinatorSelectionAuthor` for passage admission.
+Validate project/Location ownership,
 connection identity, inputs and frozen execution profiles at the existing boundary.
 Each control has `requestID` idempotency and `expectedRevision` CAS.
 A duplicate request must not start a second Job, passage or coordinator message.
@@ -599,7 +645,7 @@ Everything else (including an unprovable profile change) stays unknown.
 If a reply is lost, retain that request identity and reread its status.
 Refresh, reconnect, remount and status reads never automatically resend it.
 An uncertain control must not be replaced with a fresh request to evade the hold.
-Resume is only ever an explicit user action. Stopped schedules cannot be played, resumed or run now.
+Resume is an explicit human or agent control. Stopped schedules cannot be played, resumed or run now.
 
 A schedule document keeps at most 64 control records. Admitting a new control
 evicts the oldest completed record; unresolved records are never evicted, and an

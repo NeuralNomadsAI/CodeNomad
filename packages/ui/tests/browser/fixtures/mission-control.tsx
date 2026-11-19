@@ -45,6 +45,7 @@ function Fixture() {
     loaded: config.isUiConfigLoaded,
     text: t,
     connectCatalog: () => addInstance({ id: "fixture", folder: "fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: getRootClient("fixture") }),
+    replaceClient: () => updateInstance("fixture", { client: { ...getRootClient("fixture") } }),
     directory: (folder: string) => updateInstance("fixture", { folder }),
     selectedSession: () => activeSessionId().get("fixture"),
     settingsOpen,

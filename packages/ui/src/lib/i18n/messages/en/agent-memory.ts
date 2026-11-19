@@ -9,6 +9,7 @@ export const agentMemoryMessages = {
   "settings.memory.global": "About you",
   "settings.memory.project": "Project",
   "settings.memory.noProject": "Open a project to view its memory.",
+  "settings.memory.entries": "Entries",
   "settings.memory.count": "{count}/{limit}",
   "settings.memory.loading": "Loading…",
   "settings.memory.empty": "No memories yet",

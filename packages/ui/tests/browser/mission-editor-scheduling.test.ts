@@ -70,6 +70,8 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
     }
     if (request.method() !== "GET") {
       const body = request.postDataJSON(); posts.push(body); original = body
+      if (pathname.endsWith("/missions")) return lose ? route.abort("connectionreset")
+        : route.fulfill({ json: { mission: { ...journal, objective: body.objective, notes: body.notes, title: body.title } } })
       if (pathname.endsWith("/scheduled")) {
         doc = { ...doc, configuration: { ...doc.configuration, ...body.configuration }, revision: 0, state: "paused", firstPlayedAt: null, calendars: [] }
       } else doc = { ...doc, configuration: { ...doc.configuration, ...body.configuration }, revision: doc.revision + 1 }
@@ -108,6 +110,75 @@ const form = (page: Page) => page.locator("form.mission-editor")
 const scheduling = (page: Page) => form(page).locator("section.mission-scheduling")
 const addCriterion = (page: Page) => form(page).getByRole("button", { name: "Add a criterion", exact: true }).click()
 const ready = (page: Page) => page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+
+test("followed conversations can be added, corrected and removed before immediate creation; remount retains sources", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  const roots = ["ses_one", "ses_two"].map((id, index) => ({ id, title: `Context ${index + 1}`, projectID: "project", location: { directory: "/fixture" } }))
+  await page.route("**/workspaces/fixture/instance/api/location*", route => route.fulfill({ json: { directory: "/fixture", project: { id: "project" } } }))
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-1)
+    return route.fulfill({ json: id === "session" ? { data: roots, cursor: {} } : { data: roots.find(row => row.id === id) } })
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Use selected context")
+    await ready(page)
+    const add = form(page).getByRole("button", { name: "Add conversation", exact: true })
+    const source = form(page).getByRole("button", { name: "Followed conversation 1", exact: true })
+    await add.click()
+    assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
+    await source.click(); await page.getByRole("option", { name: "Context 1", exact: true }).click()
+    await ready(page)
+    await page.evaluate(() => window.schedulingEditor.mount(false))
+    await page.evaluate(() => window.schedulingEditor.mount(true))
+    await source.waitFor(); assert.equal(await source.getAttribute("data-source-id"), "ses_one")
+    await source.click(); await page.getByRole("option", { name: "Context 2", exact: true }).click()
+    await add.click()
+    const second = form(page).getByRole("button", { name: "Followed conversation 2", exact: true })
+    await second.click()
+    assert.equal(await page.getByRole("option", { name: "Context 2", exact: true }).count(), 0, "already followed sources are excluded")
+    await page.getByRole("option", { name: "Context 1", exact: true }).click()
+    await form(page).getByRole("button", { name: "Remove conversation 1", exact: true }).click()
+    await ready(page)
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.equal(f.posts.length, 1)
+    assert.deepEqual(f.posts[0].watchedConversationIDs, ["ses_one"])
+    assert.equal(f.posts[0].configuration, undefined, "uses immediate creation, without schedule conversion")
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("a lost immediate creation reply keeps followed IDs read-only across remount without a second write", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  const source = { id: "ses_context", title: "Original context", projectID: "project", location: { directory: "/fixture" } }
+  await page.route("**/workspaces/fixture/instance/api/location*", route => route.fulfill({ json: { directory: "/fixture", project: { id: "project" } } }))
+  await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json:
+    new URL(route.request().url()).pathname.endsWith("/session") ? { data: [source], cursor: {} } : { data: source } }))
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Keep the original context")
+    await form(page).getByRole("button", { name: "Add conversation", exact: true }).click()
+    const picker = form(page).getByRole("button", { name: "Followed conversation 1", exact: true })
+    await picker.click(); await page.getByRole("option", { name: source.title, exact: true }).click()
+    await ready(page); f.lose = true
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await page.waitForFunction(() => (document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled
+      && document.querySelector('form.mission-editor button[type=submit]')?.textContent === "Create")
+    assert.equal(await form(page).locator("[role=alert]").count(), 0)
+    await page.evaluate(() => window.schedulingEditor.mount(false))
+    await page.evaluate(() => window.schedulingEditor.mount(true))
+    await picker.waitFor()
+    assert.equal(await picker.getAttribute("data-source-id"), source.id)
+    assert.equal(await picker.isDisabled(), true)
+    assert.equal(await form(page).getByRole("button", { name: "Create", exact: true }).isDisabled(), true)
+    await form(page).getByRole("button", { name: "Refresh mission map", exact: true }).click()
+    const creations = f.posts.filter(body => body.requestId)
+    assert.equal(creations.length, 1, "read-only panel POSTs never create a second Mission")
+    assert.deepEqual(creations[0].watchedConversationIDs, [source.id])
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
 async function capture(page: Page, name: string) {
   const directory = process.env.CODENOMAD_MISSION_CAPTURE_DIR
   if (directory) { await mkdir(directory, { recursive: true }); await page.screenshot({ path: path.join(directory, name), fullPage: true }) }
@@ -782,12 +853,13 @@ test("source descendants follow mounted option identities across range, filter, 
   } finally { await page.close() }
 })
 
-test("editing instructions preserves stored context IDs without offering an unrelated global conversation control", async () => {
+test("editing instructions exposes retained context IDs for correction and preserves them on save", async () => {
   const page = await browser.newPage(), f = await setup(page)
   f.doc = { ...f.doc, configuration: { ...f.doc.configuration, watchedConversationIDs: ["ses_recorded"] } }
   await page.route("**/workspaces/fixture/instance/api/location**", route => route.fulfill({ json: { directory: "/fixture", project: { id: "project" } } }))
   try {
     await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
+    assert.equal(await form(page).getByRole("button", { name: "Followed conversation 1", exact: true }).getAttribute("data-source-id"), "ses_recorded")
     assert.equal(await form(page).locator(".mission-conversation-picker").count(), 0)
     await form(page).getByLabel("Notes", { exact: true }).fill("Keep stored sources intact")
     await form(page).getByRole("button", { name: "Save", exact: true }).click()
@@ -854,7 +926,11 @@ for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its
     }
     await ready(page); f.lose = true
     await form(page).locator('button[type="submit"]').click()
-    await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    if (kind === "create") {
+      // The hold is pending while its POST is in flight, then uncertain once the lost reply settles.
+      await page.waitForFunction(() => window.schedulingEditor.held()?.state === "uncertain")
+      assert.equal(await form(page).locator("[role=alert]").count(), 0)
+    } else await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     const held = await page.evaluate(() => window.schedulingEditor.held())
     assert.equal(JSON.parse(held!.payload).requestID, f.posts[0].requestID)
     await form(page).getByRole("button", { name: "Cancel", exact: true }).click()

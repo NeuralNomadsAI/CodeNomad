@@ -66,6 +66,12 @@ export function hasTranscriptProjectionGates(): boolean {
   return gates !== undefined
 }
 
+/** Whether a session's transcript is watched (active or a visible child);
+ * every session counts as watched without registered gates (unit contexts). */
+export function isTranscriptWatched(instanceId: string, sessionId: string): boolean {
+  return gates ? gates.isActiveSession(instanceId, sessionId) : true
+}
+
 function projectionKey(instanceId: string, sessionId: string): string {
   return `${instanceId}\u0000${sessionId}`
 }

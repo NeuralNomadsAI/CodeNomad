@@ -1,6 +1,9 @@
 import { executionSchema } from "./execution"
+import { projectControlProofWire } from "./project-control-proof"
 import { missionProfilesSchema } from "./playbook-profiles"
 import { missionCreationDefaultsWire } from "./creation-defaults"
+import { automaticStartWire } from "./automatic-start"
+import { missionPreparationOptionsWire } from "./preparation-input"
 import { missionTaskModeSchema } from "./task-execution-mode"
 import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
@@ -21,6 +24,8 @@ import { recurrenceNativeControlWire, recurrenceSnapshotOutput, recurrenceContro
 import { RECURRENCE_RUN_NOW_STATUS_INPUT, RECURRENCE_RUN_NOW_STATUS_REQUEST, RECURRENCE_RUN_NOW_OUTPUT } from "./recurrence-manual-rpc"
 import { missionDocumentSummaryWire, missionScheduleActivationWire } from "./mission-document-wire"
 import { missionScheduleRpcMethods } from "./mission-schedule-contract"
+import { schedulePrincipalWire } from "./recurrence-control-proof"
+import { recurrenceListWire } from "./recurrence-discovery"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -80,7 +85,7 @@ const mission = {
     projectCanonical: { type: "string" },
     title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
     preparedBy: { type: "object", properties: { missionId: { type: "string" }, coordinatorSessionId: { type: "string" } },
-      required: ["missionId", "coordinatorSessionId"], additionalProperties: false },
+      required: ["coordinatorSessionId"], additionalProperties: false },
     objective: { type: "string" },
     notes: { type: "string" },
     template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
@@ -257,6 +262,21 @@ const mutationMissionResult = {
 } as const
 
 const requestID = { type: "string", minLength: 1, maxLength: 128 } as const
+const creationInput = {
+  type: "object", properties: {
+    requestID, objective: { type: "string", minLength: 1, maxLength: 20_000 },
+    title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX }, notes: { type: "string", maxLength: 20_000 },
+    template: { type: "string", enum: ["custom", "wayfinder", "debug", "delivery", "compare"] },
+    coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
+    watchedConversationIDs: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 240 } },
+    expectedCoordinatorLocation: location, prepared: { type: "boolean" }, startOnCreation: { type: "boolean" },
+    preparationOptions: { type: "object", properties: missionPreparationOptionsWire, additionalProperties: false },
+    preparedBy: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
+      coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 } },
+      required: ["coordinatorSessionID"], additionalProperties: false },
+    profiles: missionProfilesSchema, creationDefaults: missionCreationDefaultsWire, taskMode: missionTaskModeSchema,
+  }, required: ["requestID", "objective", "template"], additionalProperties: false,
+} as const
 const contentSelector = {
   kind: { type: "string", enum: ["mission", "task", "report", "change"] }, field: { type: "string", minLength: 1, maxLength: 64 },
   taskKey: { type: "string", minLength: 2, maxLength: 64 }, reportId: { type: "string", minLength: 1, maxLength: 240 },
@@ -278,10 +298,16 @@ const snapshotProperties = {
 export const CODENOMAD_MISSIONS_RPC = {
   id: CODENOMAD_MISSIONS_RPC_ID,
   methods: {
+    projectControl: {
+      input: projectControlProofWire,
+      output: { type: "object", properties: { json: { type: "string", maxLength: 100_000 } }, required: ["json"], additionalProperties: false },
+      errors: missionMutationErrors,
+    },
     ...missionScheduleRpcMethods,
     documentCapabilities: {
       input: { type: "object", properties: {}, additionalProperties: false },
-      output: { type: "object", properties: { version: { type: "integer", const: 1 } }, required: ["version"], additionalProperties: false },
+      output: { type: "object", properties: { version: { type: "integer", const: 1 }, automaticStart: { const: true },
+        agentSchedulePreparation: { const: true }, agentScheduleControl: { const: true } }, required: ["version"], additionalProperties: false },
     },
     documentActivation: {
       input: { type: "object", properties: { missionID: { type: "string", minLength: 3, maxLength: 100 }, requestID,
@@ -292,7 +318,7 @@ export const CODENOMAD_MISSIONS_RPC = {
       output: { type: "object", properties: { document: missionDocumentSummaryWire }, required: ["document"], additionalProperties: false },
     },
     recurrenceControl: {
-      input: { type: "object", properties: { sessionID: { type: "string", minLength: 1, maxLength: 256 },
+      input: { type: "object", properties: { sessionID: { type: "string", minLength: 1, maxLength: 256 }, principal: schedulePrincipalWire,
         workspaceID: { type: "string", minLength: 1, maxLength: 200 }, requestID,
         location, digest: { type: "string", minLength: 64, maxLength: 64 },
         scheduleID: { type: "string", minLength: 3, maxLength: 100 },
@@ -301,7 +327,7 @@ export const CODENOMAD_MISSIONS_RPC = {
         profileSource: { type: "object", properties: { profileID: { type: "string" }, executionHost: { type: "string" },
           configYamlPath: { type: "string" } }, required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
         proof: { type: "string", minLength: 64, maxLength: 64 } },
-        required: ["sessionID", "workspaceID", "requestID", "location", "digest", "scheduleID", "expectedRevision", "action", "issuedAt", "profileSource", "proof"], additionalProperties: false },
+        required: ["workspaceID", "requestID", "location", "digest", "scheduleID", "expectedRevision", "action", "issuedAt", "profileSource", "proof"], additionalProperties: false },
       output: { type: "object", properties: { version: { type: "integer", const: 1 }, scheduleID: { type: "string" }, requestID,
         revision: { type: "integer" }, expectedRevision: { type: "integer" }, action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] },
         state: { type: "string", enum: ["running", "paused", "stopped"] }, targetsKnown: { type: "boolean" },
@@ -315,11 +341,11 @@ export const CODENOMAD_MISSIONS_RPC = {
     },
     recurrenceRunNow: {
       input: { type: "object", properties: { ...RECURRENCE_RUN_NOW_STATUS_INPUT.properties,
-        action: { type: "string", const: "run-now" }, sessionID: { type: "string" }, workspaceID: { type: "string" }, location,
+        action: { type: "string", const: "run-now" }, sessionID: { type: "string" }, principal: schedulePrincipalWire, workspaceID: { type: "string" }, location,
         profileSource: { type: "object", properties: { profileID: { type: "string" }, executionHost: { type: "string" }, configYamlPath: { type: "string" } },
           required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
         issuedAt: { type: "integer" }, digest: { type: "string" }, proof: { type: "string" } },
-        required: ["scheduleID", "requestID", "expectedRevision", "action", "sessionID", "workspaceID", "location", "profileSource", "issuedAt", "digest", "proof"], additionalProperties: false },
+         required: ["scheduleID", "requestID", "expectedRevision", "action", "workspaceID", "location", "profileSource", "issuedAt", "digest", "proof"], additionalProperties: false },
       output: RECURRENCE_RUN_NOW_OUTPUT,
     },
     recurrenceRunNowStatus: { input: RECURRENCE_RUN_NOW_STATUS_REQUEST, output: RECURRENCE_RUN_NOW_OUTPUT },
@@ -334,16 +360,17 @@ export const CODENOMAD_MISSIONS_RPC = {
     recurrenceCurrentPage: { input: { type: "object", properties: { source: missionCurrentSourceWire, selector: missionPanelPageInputSchema,
       body: { type: "object" } }, required: ["source", "selector"], additionalProperties: false }, output: missionPanelPageOutputSchema },
     recurrenceCurrentContent: recurrenceCurrentContentWire,
+    recurrenceList: recurrenceListWire,
     recurrenceSnapshot: {
-      input: { type: "object", properties: {}, additionalProperties: false },
+      input: { type: "object", properties: { scheduleID: { type: "string" } }, additionalProperties: false },
       output: recurrenceSnapshotOutput,
     },
     recurrenceRead: {
       input: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
       output: { type: "object", properties: { schedule: { type: ["object", "null"], properties: {
         id: { type: "string" }, revision: { type: "integer" }, state: { type: "string", enum: ["paused", "running", "stopped"] },
-        digest: { type: "string" }, projectID: { type: "string" }, projectCanonical: { type: "string" },
-      }, required: ["id", "revision", "state", "digest", "projectID", "projectCanonical"], additionalProperties: false } },
+        digest: { type: "string" }, projectID: { type: "string" }, projectCanonical: { type: "string" }, directory: { type: "string" },
+      }, required: ["id", "revision", "state", "digest", "projectID", "projectCanonical", "directory"], additionalProperties: false } },
       required: ["schedule"], additionalProperties: false },
     },
     recurrenceCreate: {
@@ -376,7 +403,8 @@ export const CODENOMAD_MISSIONS_RPC = {
       output: { type: "object", properties: { mission, admitted: { type: "boolean", const: true } }, required: ["mission", "admitted"], additionalProperties: false },
       errors: missionMutationErrors,
     },
-    lifecycle: { input: lifecycleInputSchema, output: mutationMissionResult, errors: missionMutationErrors },
+    lifecycle: { input: { ...lifecycleInputSchema, properties: { ...lifecycleInputSchema.properties, automaticStart: automaticStartWire } },
+      output: mutationMissionResult, errors: missionMutationErrors },
     cleanupTarget: {
       input: {
         type: "object", properties: {
@@ -452,24 +480,14 @@ export const CODENOMAD_MISSIONS_RPC = {
     },
     create: {
       errors: missionMutationErrors,
-      input: {
-        type: "object", properties: {
-          requestID, objective: { type: "string", minLength: 1, maxLength: 20_000 },
-          title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
-          notes: { type: "string", maxLength: 20_000 },
-          template: { type: "string", enum: ["custom", "wayfinder", "debug", "delivery", "compare"] },
-          coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
-          expectedCoordinatorLocation: location,
-          prepared: { type: "boolean" },
-          preparedBy: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
-            coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 } },
-            required: ["missionID", "coordinatorSessionID"], additionalProperties: false },
-          profiles: missionProfilesSchema,
-          creationDefaults: missionCreationDefaultsWire,
-          taskMode: missionTaskModeSchema,
-        }, required: ["requestID", "objective", "template"], additionalProperties: false,
-      },
-      output: mutationMissionResult,
+      input: creationInput,
+      output: { ...mutationMissionResult, properties: { ...mutationMissionResult.properties,
+        acknowledgement: { type: "string", enum: ["fresh", "recovered"] } }, required: ["mission", "acknowledgement"] },
+    },
+    creationReceipt: {
+      input: creationInput,
+      output: { type: "object", properties: { requestID, projectID: { type: "string" }, mission: compactMission },
+        required: ["requestID", "projectID"], additionalProperties: false },
     },
     update: {
       errors: missionMutationErrors,

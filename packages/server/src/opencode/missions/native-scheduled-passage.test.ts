@@ -30,9 +30,12 @@ import { missionSourceKey } from "../../missions/mission-document"
 import { scheduledPassageMarker } from "./native-scheduled-passage-business"
 import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 import { registerScheduledChildInput } from "./native-scheduled-child-input"
+import { assertAgentScheduledCoordinatorSelection, prepareAgentScheduledCoordinator } from "./native-scheduled-coordinator-adoption"
+import { MissionControl } from "../../missions/control"
+import type { MissionSessionAdapter } from "../../missions/control-types"
 
 const current = () => true as const, at = Date.parse("2026-10-01T00:00:00Z")
-async function fixture(existing = false) {
+async function fixture(existing = false, author?: string) {
   const values = new Map<string, MissionJsonValue>(), sessions = new Map<string, NativeMissionSession>()
   const messages = new Map<string, typeof SessionMessage.Info.Type>(), states = new Map<string, PassageSessionObservation>()
   let sends = 0, creates = 0, environments = 0, crash = false, requests = false, crashCreate = false, crashAttemptWrite = false
@@ -74,7 +77,8 @@ async function fixture(existing = false) {
     messages.set("msg_old", Schema.decodeUnknownSync(SessionMessage.Info)({ type: "synthetic", id: "msg_old", text: "Keep existing transcript",
       description: "Existing work", metadata: {}, time: { created: at - 1000 } }))
   }
-  let doc = await store.create("review", config, at, current)
+  let doc = await store.create("review", config, at, current, null, author ? { requestID: "agent_preparation", digest: "a".repeat(64),
+    author: { coordinatorSessionID: author }, input: { objective: config.objective, template: config.template, startOnCreation: false } } : undefined)
   doc = await store.change(doc.id, doc.revision, current, next => changes.play(next, "first_play", at, []))
   if (existing) doc = await store.change(doc.id, doc.revision, current, next => changes.synchronized(next, "first_play", [
     { role: "principal", slot: 0, scheduleID: "sch_principal", sessionID: "ses_principal", timeGeneration: next.timeGeneration,
@@ -123,18 +127,29 @@ async function fixture(existing = false) {
     switchModel: ({ sessionID, model }: { sessionID: string; model: NativeMissionSession["model"] }) => Effect.sync(() => { sessions.get(sessionID)!.model = model }),
     update: ({ sessionID, metadata }: { sessionID: string; metadata: NativeMissionSession["metadata"] }) => Effect.sync(() => { sessions.get(sessionID)!.metadata = metadata }),
   } } as unknown as Plugin.Context
-  const use = <T>(callback: (input: NativeScheduledPassageContext) => Promise<T>) => store.withExclusion(async locked => callback({
+  const use = <T>(callback: (input: NativeScheduledPassageContext) => Promise<T>) => store.withExclusion(async locked => {
+    const context: NativeScheduledPassageContext = {
     document: await read(), locked, storage, native, observation, authority: () => locked.assertActive(),
     profile: { profileID: "profile", executionHost: "local", configYamlPath: "unused-isolated-profile" },
     signal: new AbortController().signal, current, now: () => clock, environment: async () => ({ PASSAGE_UNIT: "fresh" }),
-    adoptCoordinator: async (metadata, guard) => adoptNativeScheduledCoordinator(publicSession, effect => Effect.runPromise(effect), native, await read(), metadata, guard, async () => {}, new AbortController().signal),
+    adoptCoordinator: async (metadata, guard) => adoptNativeScheduledCoordinator(publicSession, effect => Effect.runPromise(effect), native, await read(), metadata, guard, async () => {}, new AbortController().signal,
+      current, undefined, () => prepareAgentScheduledCoordinator({ ...context, fence: context.settlementFence!() })),
     settlementFence: () => {
-      const snapshot = () => JSON.stringify([[...states], [...sessions], [...messages]])
+      const snapshot = () => JSON.stringify([[...states], [...sessions], [...messages], requests])
       const original = snapshot()
+      const checks: (() => void)[] = []
       return { family: () => [...states.keys()].map(id => [id, -1, null, null, 0] as [string, number, null, null, number]),
-        current: (): true => { assert.equal(snapshot(), original, "Native state changed before archive"); return true } }
+        coordinator() {},
+        journal(prefix: string, except?: string) {
+          const rows = () => JSON.stringify([...values].filter(([key]) => key.startsWith(prefix) && key !== except))
+          const initial = rows()
+          checks.push(() => assert.equal(rows(), initial, "Owner state changed before effect"))
+        },
+        current: (): true => { assert.equal(snapshot(), original, "Native state changed before archive"); checks.forEach(check => check()); return true } }
     },
-  }))
+    }
+    return callback(context)
+  })
   const admit = async () => {
     const result = await use(admitNativeScheduledPassage)
     if (result.kind === "admitted") { const doc = await read(); await store.change(doc.id, doc.revision, current, next => changes.admitted(next, result.passageID, result.at)) }
@@ -145,6 +160,129 @@ async function fixture(existing = false) {
     set crashCreate(value: boolean) { crashCreate = value }, set crashAttemptWrite(value: boolean) { crashAttemptWrite = value },
     set now(value: number) { clock = value } }
 }
+
+test("agent coordinator prevalidation refuses its actual author and both conversation source kinds", async () => {
+  const f = await fixture(true, "ses_existing")
+  await assert.rejects(f.admit(), /coordinator-is-author/)
+  assert.equal((await f.read()).pending!.coordinatorBaseline, undefined)
+  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
+  const config = (await f.read()).configuration, author = { coordinatorSessionID: "ses_author" }
+  assert.throws(() => assertAgentScheduledCoordinatorSelection({ ...config, watchedConversationIDs: ["ses_existing"] }, author), /coordinator-is-source/)
+  assert.throws(() => assertAgentScheduledCoordinatorSelection({ ...config,
+    launch: { when: [{ kind: "conversation-message", conversationID: "ses_existing" }] } }, author), /coordinator-is-source/)
+})
+
+test("agent adoption refuses root/family activity, inbox, durable claims, tools and pending requests before mutations", async () => {
+  const cases = ["active", "child", "inbox", "claim", "tools", "requests"] as const
+  for (const kind of cases) {
+    const f = await fixture(true, "ses_author"), session = f.sessions.get("ses_existing")!
+    const before = structuredClone(session), root = f.states.get(session.id)!
+    root.active = kind === "active"
+    if (kind === "child") f.states.get("ses_old_child")!.active = true
+    if (kind === "inbox") root.inbox = 1
+    if (kind === "claim") root.suspended = true
+    if (kind === "tools") root.runningTools = 1
+    if (kind === "requests") f.requests = true
+    await assert.rejects(f.admit(), /coordinator-busy/, kind)
+    assert.deepEqual(session, before, kind)
+    assert.equal((await f.read()).pending!.coordinatorBaseline, undefined)
+    assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
+  }
+})
+
+test("a quiet agent-selected root admits once with its own adoption marker and preserves unrelated state", async () => {
+  const f = await fixture(true, "ses_author")
+  f.states.get("ses_existing")!.active = false
+  assert.equal((await f.admit()).kind, "admitted")
+  assert.equal(f.sessions.get("ses_existing")!.metadata!.unrelated, "keep")
+  assert.equal((await f.admit()).kind, "recorded")
+  assert.deepEqual(f.counts(), { sends: 1, creates: 0, environments: 1 })
+  await f.use(async input => { await nativeScheduledPassageBusiness(input).control.report("ses_existing",
+    { outcome: "completed", summary: "Delivered", final: true, evidence: [], next: [] }) })
+  const settled = await f.use(observeNativeScheduledPassage)
+  assert.equal(settled?.outcome, "completed")
+  let doc = await f.read()
+  doc = await f.store.change(doc.id, doc.revision, current, next => changes.settle(next, next.pending!.id, "completed", at + 2000, false, settled!.proof))
+  await f.store.change(doc.id, doc.revision, current, next => changes.reserve(next, { kind: "manual", requestID: "agent_next_passage" }, at + 3000, []))
+  f.now = at + 4000
+  assert.equal((await f.admit()).kind, "admitted", "the exact archived marker authorizes quiet reuse by a later passage")
+  assert.deepEqual(f.counts(), { sends: 2, creates: 0, environments: 2 })
+})
+
+test("agent adoption refuses uncertain ownership and another document's reserved coordinator", async () => {
+  const f = await fixture(true, "ses_author")
+  f.states.get("ses_existing")!.active = false
+  f.sessions.get("ses_existing")!.metadata!["codenomad.mission"] = { missionID: "unknown_owner" }
+  await assert.rejects(f.admit(), /coordinator-owned/)
+  delete f.sessions.get("ses_existing")!.metadata!["codenomad.mission"]
+  const doc = await f.read()
+  let other = await f.store.create("another", doc.configuration, at, current)
+  other = await f.store.change(other.id, other.revision, current, next => changes.play(next, "other_play", at, []))
+  other = await f.store.change(other.id, other.revision, current, next => changes.synchronized(next, "other_play", [
+    { role: "principal", slot: 0, scheduleID: "sch_other", sessionID: "ses_other", timeGeneration: next.timeGeneration, highWater: 0, pendingWake: null, wakePreparing: null },
+    { role: "reconciliation", slot: 0, scheduleID: "sch_other_aux", sessionID: "ses_other_aux", timeGeneration: next.timeGeneration, highWater: 0, pendingWake: null, wakePreparing: null },
+  ]))
+  await f.store.change(other.id, other.revision, current, next => changes.reserve(next, { kind: "manual", requestID: "other_run" }, at, []))
+  await assert.rejects(f.admit(), /coordinator-owned/)
+  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
+})
+
+test("agent adoption refuses an ordinary active mission even when its native marker is absent", async () => {
+  const f = await fixture(true, "ses_author")
+  f.states.get("ses_existing")!.active = false
+  const control = new MissionControl({ project: { id: "project", canonical: "/project", location: f.native.location },
+    storage: f.storage, sessions: f.native as unknown as MissionSessionAdapter })
+  await control.create({ requestID: "other_mission", objective: "Other work", template: "custom", coordinatorSessionID: "ses_existing" })
+  await assert.rejects(f.admit(), /coordinator-owned/)
+  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
+})
+
+test("agent adoption revalidates at each lazy native profile/metadata effect entry", async () => {
+  for (const blockedWrite of [1, 2, 3]) {
+    const f = await fixture(true, "ses_author")
+    f.states.get("ses_existing")!.active = false
+    let qualifications = 0, writes = 0
+    const ctx = { session: {
+      switchAgent: ({ agent }: { agent: string }) => Effect.sync(() => { writes++; f.sessions.get("ses_existing")!.agent = agent }),
+      switchModel: ({ model }: { model: NativeMissionSession["model"] }) => Effect.sync(() => { writes++; f.sessions.get("ses_existing")!.model = model }),
+      update: ({ metadata }: { metadata: NativeMissionSession["metadata"] }) => Effect.sync(() => { writes++; f.sessions.get("ses_existing")!.metadata = metadata }),
+    } } as unknown as Plugin.Context
+    await assert.rejects(f.use(input => {
+      const doc = input.document
+      return adoptNativeScheduledCoordinator(ctx, effect => Effect.runPromise(effect), f.native, doc,
+        { "codenomad.mission": { version: 1, missionID: doc.pending!.missionID, kind: "coordinator", role: "coordinator", document: scheduledPassageMarker(doc) } },
+        current, async () => { if (++qualifications === blockedWrite) f.states.get("ses_old_child")!.suspended = true },
+        input.signal, current, undefined, () => prepareAgentScheduledCoordinator({ ...input, fence: input.settlementFence!() }))
+    }), /Native state changed/)
+    assert.equal(writes, blockedWrite - 1)
+    assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
+  }
+})
+
+test("agent admission revalidates after environment preparation and at the write-ahead CAS/native boundary", async () => {
+  for (const phase of ["environment-read", "environment-effect", "cas"] as const) {
+    const f = await fixture(true, "ses_author")
+    f.states.get("ses_existing")!.active = false
+    if (phase === "environment-effect") {
+      const environment = f.native.environment
+      f.native.environment = async (...args) => { const result = await environment(...args); f.states.get("ses_existing")!.inbox = 1; return result }
+    }
+    await assert.rejects(f.use(async input => {
+      if (phase === "environment-read") input.environment = async () => { f.states.get("ses_existing")!.suspended = true; return {} }
+      if (phase === "cas") {
+        const change = input.locked.change.bind(input.locked)
+        input.locked.change = async (...args) => {
+          const result = await change(...args)
+          if (result.pending?.admissionAttempted) f.states.get("ses_existing")!.active = true
+          return result
+        }
+      }
+      return admitNativeScheduledPassage(input)
+    }), /coordinator-busy|Native state changed|policy-unqualified/, phase)
+    assert.equal(f.counts().sends, 0, phase)
+    assert.equal(f.counts().environments, phase === "environment-read" ? 0 : 1, phase)
+  }
+})
 
 test("explicit existing coordinator is adopted despite active work, preserves transcript, and is reused across isolated passages", async () => {
   const f = await fixture(true), first = (await f.read()).pending!

@@ -1,7 +1,7 @@
 import type { MissionControl } from "./control"
 import { missionMutationToolResult, type MissionMutationMethod, type MissionToolResult } from "./tool-result"
 import { z } from "zod"
-import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput } from "../opencode/missions-plugin"
+import { parseDelegateInput, parseInspectInput, parsePrepareInput, parseReportInput, parseReviseInput } from "../opencode/missions-plugin"
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "./task-declaration"
 import { parseMissionBriefingRequest } from "./briefing"
 
@@ -79,7 +79,12 @@ export function missionBusinessCall(method: MissionBusinessMethod, args: readonl
       const input = scope(parseMissionBriefingRequest(args[1]))
       return { tool: { name: "briefing" as const, input }, invoke: (control: MissionControl) => control.briefing(callerID, input) }
     }
-    case "interruptTask": case "prepare": throw new Error("Scheduled Mission backend actions unavailable")
+    case "prepare": {
+      arity(2); bound()
+      const input = parsePrepareInput(args[1])
+      return { tool: { name: "prepare" as const, input }, invoke: (control: MissionControl) => control.prepare(callerID, input) }
+    }
+    case "interruptTask": throw new Error("Scheduled Mission backend actions unavailable")
     default: throw new Error("Unsupported Mission business method")
   }
 }

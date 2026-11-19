@@ -44,7 +44,8 @@ impl BrowserController {
             .map_err(|e| e.to_string())?
             .emulation_profiles
             .insert(input.registration_id.clone(), preset.into());
-        webview.reload().map_err(|e| e.to_string())
+        webview.reload()
+            .map_err(|error| preview_error("reload after emulation", error))
     }
 }
 

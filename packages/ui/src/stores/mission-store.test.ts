@@ -32,6 +32,29 @@ const available = (objective: string): MissionListResponse => ({
   }],
 })
 
+test("a refresh publishes new objects only for the missions it changed", async () => {
+  const two = (): MissionListResponse => {
+    const base = available("a") as Extract<MissionListResponse, { available: true }>
+    const other = structuredClone(available("b") as Extract<MissionListResponse, { available: true }>)
+    return { ...base, missions: [...base.missions, ...other.missions], activity: { ...base.activity, missions: [...base.activity.missions, ...other.activity.missions] } }
+  }
+  const responses = [two(), two(), (() => { const changed = two() as Extract<MissionListResponse, { available: true }>; changed.missions[1] = { ...changed.missions[1]!, revision: 2 }; return changed })()]
+  const store = createMissionStore(async () => responses.shift()!)
+  await store.refresh("instance-1")
+  const first = store.state("instance-1")
+  await store.refresh("instance-1")
+  const same = store.state("instance-1")
+  assert.equal(same.missions, first.missions, "an identical read keeps the published maps")
+  assert.equal(same.activity, first.activity)
+  await store.refresh("instance-1")
+  const changed = store.state("instance-1")
+  assert.notEqual(changed.missions, first.missions)
+  assert.equal(changed.missions[0], first.missions[0], "the unchanged mission keeps its object")
+  assert.notEqual(changed.missions[1], first.missions[1])
+  assert.equal(changed.missions[1]!.revision, 2)
+  assert.equal(changed.activity, first.activity, "unchanged activity stays shared")
+})
+
 test("loads durable mission snapshots and represents optional unavailability", async () => {
   const responses: MissionListResponse[] = [
     available("first"),

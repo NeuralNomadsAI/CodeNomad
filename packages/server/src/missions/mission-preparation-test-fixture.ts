@@ -11,7 +11,7 @@ import type { MissionNativeAcknowledgement } from "./lifecycle-model"
 import { prepareNativeDocumentSources } from "../opencode/missions/native-scheduled-passage-sources"
 import type { MissionNativeService } from "../opencode/missions/native-service-adapter"
 
-export async function preparationFixture(directory = "/fixture", sources?: MissionDocumentSources) {
+export async function preparationFixture(directory = "/fixture", sources?: MissionDocumentSources, watchedConversationIDs?: string[]) {
   const values = new Map<string, MissionJsonValue>(), sessions = new Map<string, NativeMissionSession>()
   const occupied = new Set<string>(), admissions: Array<{ sessionID: string; text: string; profile: NativeMissionSession }> = []
   const acknowledged = new Map<string, MissionNativeAcknowledgement>()
@@ -73,7 +73,8 @@ export async function preparationFixture(directory = "/fixture", sources?: Missi
     const check = (): true => { if (occupied.has(session.id)) throw new Error("coordinator not empty"); return true }
     check(); return check
   } }
-  const creation = { requestID: "preparation_original", objective: "Original instructions", template: "custom" as const }
+  const creation = { requestID: "preparation_original", objective: "Original instructions", template: "custom" as const,
+    ...(watchedConversationIDs === undefined ? {} : { watchedConversationIDs }) }
   const mission = (await control.create(creation)).mission
   const read = async () => { const doc = await store.read(mission.id); assert.ok(doc && !("deletedAt" in doc)); return doc }
   const original = await read()
@@ -94,7 +95,7 @@ export function scheduledPreparation(f: Awaited<ReturnType<typeof preparationFix
 }
 
 /** Production source composition, with bounded native transport observations. */
-export async function followedPreparationFixture(directory = "/fixture") {
+export async function followedPreparationFixture(directory = "/fixture", direct = false) {
   const source: NativeMissionSession = { id: "ses_followed", projectID: "project", location: { directory } }
   const messages = [{ id: "msg_reference", type: "user", text: "Context present at Play", nativeDigest: "a".repeat(64) }]
   let reads = 0, available = true
@@ -110,6 +111,6 @@ export async function followedPreparationFixture(directory = "/fixture") {
     },
   } as unknown as MissionNativeService
   const f = await preparationFixture(directory, (doc, current) => prepareNativeDocumentSources(doc, service,
-    new AbortController().signal, current, undefined, undefined, true))
+    new AbortController().signal, current, undefined, undefined, true), direct ? [source.id] : undefined)
   return { ...f, source, messages, get reads() { return reads }, available: (value: boolean) => { available = value } }
 }

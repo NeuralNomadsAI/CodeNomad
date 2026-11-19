@@ -256,6 +256,8 @@ jobs:
           # with a native ref, duplicate and stale refusals, unload with cache kept.
           node --import tsx scripts/test-plugin-sources-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx scripts/test-plugin-git-version-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # OpenCode integration fixtures: fake package through the fake registry,
           # RPC outputs within the zod contract, marker mismatch, isolated Python
           # discovery advertising a fake host, no host secret in outputs or log.
@@ -511,6 +513,7 @@ jobs:
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-goal-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
+          packages/ui/src/stores/instance-reconnect-reconciliation.test.ts
           packages/ui/src/stores/session-outline-persistence.test.ts
           packages/ui/src/stores/session-pagination.test.ts
           packages/ui/src/stores/session-fork.test.ts
@@ -519,6 +522,7 @@ jobs:
           packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
           packages/ui/src/stores/backend-preview-routing.test.ts
+          packages/ui/src/stores/session-browser-persistence.test.ts
           packages/ui/src/stores/session-surface-passive.test.ts
           packages/ui/src/stores/session-deletion-reconciliation.test.ts
           packages/ui/src/components/instance/shell/right-panel/useGitChanges.test.ts
@@ -657,6 +661,8 @@ jobs:
           packages/ui/src/stores/opencode-data-reconnect.test.ts
           packages/ui/src/stores/opencode-data-trailing-read.test.ts
           packages/ui/src/stores/opencode-data-read-merge.test.ts
+          packages/ui/src/stores/opencode-data-delivery-repair.test.ts
+          packages/ui/src/stores/opencode-rotation-replay.test.ts
           packages/ui/src/stores/session-api-running-open.test.ts
           packages/ui/src/stores/session-child-transcript-watch.test.ts
           packages/ui/src/stores/opencode-inbox-rebinding.test.ts

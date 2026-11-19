@@ -9,11 +9,13 @@ import os from "node:os"
 import { fileURLToPath } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium } from "playwright"
+import { tsImport } from "tsx/esm/api"
 import { createServer } from "node:net"
 import { boundedFixtureOperation } from "./fixtures/wsl-fixture-bounds.mjs"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
 
 assert.equal(process.platform, "win32", "This fixture validates Windows desktop artifacts")
+const { stopWindowsProcessTree } = await tsImport("../packages/server/src/process-tree.ts", import.meta.url)
 const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const root = await mkdtemp(path.join(os.tmpdir(), "opencode", "codenomad-setup-desktop-"))
 console.log(`Evidence: ${root}`)
@@ -103,7 +105,7 @@ for (const [host, sourceExecutable] of Object.entries(artifacts)) {
   }
   record.sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace, encoding: "utf8", timeout: 10_000 }).trim()
   results.push(record)
-  let output = "", browser, page, cli, child, stopped, childError
+  let output = "", browser, page, cli, child, spawnedBy, stopped, childError
   const runCli = (binary, args, timeout = 30_000) => execFileSync(binary, args, { env, cwd: profile, encoding: "utf8", timeout, maxBuffer: 1024 * 1024 }).trim()
   const daemonInfo = async () => {
     const password = runCli(bootstrapCli, ["service", "get", "password"])
@@ -133,6 +135,7 @@ for (const [host, sourceExecutable] of Object.entries(artifacts)) {
       if (compatibleDaemon) record.before = await daemonInfo()
     }
     child = spawn(executable, resumeFolder ? ["--folder", project] : [], { cwd: profile, env, stdio: ["ignore", "pipe", "pipe"] })
+    spawnedBy = new Date()
     // Native-parent-started services may inherit a pipe after the desktop exits.
     // Observe process exit separately; the isolated service is stopped below.
     stopped = new Promise(resolve => child.once("exit", resolve))
@@ -262,10 +265,8 @@ for (const [host, sourceExecutable] of Object.entries(artifacts)) {
     if (browser?.isConnected()) await boundedFixtureOperation(() => browser.close(), Date.now() + 5_000, "CDP cleanup").catch(error => cleanupErrors.push(error.message))
     // Kill only the exact fixture PID and its descendants, never installed hosts.
     if (child?.pid && child.exitCode === null) {
-      try { execFileSync(path.join(process.env.SystemRoot, "System32/taskkill.exe"), ["/pid", String(child.pid), "/t", "/f"], { stdio: "pipe", timeout: 10_000 }) }
-      // taskkill can report a child that exited during its tree walk. The
-      // bounded exit check below determines whether our desktop actually exited.
-      catch (error) { record.taskkillNotice = error.message }
+      // The bounded exit check below determines whether our desktop actually exited.
+      await stopWindowsProcessTree(child.pid, spawnedBy)
       await stopFixtureChild(child, stopped).catch(error => cleanupErrors.push(error.message))
     }
     try { record.cleanup = runCli(cli ?? bootstrapCli, ["service", "stop"]) } catch (error) { cleanupErrors.push(error.message) }

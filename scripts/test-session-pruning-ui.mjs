@@ -42,6 +42,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
   const { rememberRuntime } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
   const { locationRequestOptions } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
   const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
+  const { sessionMessages } = await tsImport("../packages/ui/src/lib/i18n/messages/en/session.ts", import.meta.url)
   const endpoint = connection?.endpoint ?? { url: baseUrl, auth: { type: "basic", username: "opencode", password: "isolated-pruning-fixture" } }
   console.log("Native pruning UI: creating isolated broker")
   if (!connection) rememberRuntime(endpoint, { ...await client.server.info(), discovery: "info" })
@@ -143,7 +144,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
       await row.getByRole("button", { name: "Delete", exact: true }).focus()
       await row.getByRole("button", { name: "Delete", exact: true }).click()
       await page.getByRole("dialog").waitFor()
-      assert.match(await page.getByRole("dialog").textContent(), /storage is busy/)
+      await page.getByRole("dialog").getByText(sessionMessages["session.pruning.maintenance_required"], { exact: true }).waitFor()
       assert.deepEqual((await client.session.message.get({ sessionID: session.id, messageID: selected.id })).content, selected.content)
       await page.screenshot({ path: path.join(root, "ui-busy.png") })
       await page.getByRole("dialog").getByRole("button", { name: "OK", exact: true }).click()

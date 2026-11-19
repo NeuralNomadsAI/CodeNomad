@@ -89,17 +89,15 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
           : data().state === "ready" ? "settings.opencode.setup.disconnected" : `settings.opencode.setup.${data().state}`))}</p></Show>
         <div class="settings-info-grid">
           <div class="settings-info-row"><span>{t("settings.opencode.update.installed")}</span><span>{data().currentVersion ?? "—"}</span></div>
-          <div class="settings-info-row"><span>{t("settings.opencode.setup.daemon")}</span><span>{data().daemonVersion ?? "—"}</span></div>
+          <Show when={!data().daemonVersion || data().daemonVersion !== data().currentVersion}>
+            <div class="settings-info-row"><span>{t("settings.opencode.setup.daemon")}</span><span>{data().daemonVersion ?? "—"}</span></div>
+          </Show>
         </div>
-        <p class="settings-toggle-caption break-all">{data().binaryPath}</p>
-        <Show when={data().installationSource}>
-          {source => <p class="settings-toggle-caption">{t(`settings.opencode.setup.source.${source()}`)}</p>}
+        <Show when={data().installationSource === "managed"}>
+          <p class="settings-toggle-caption">{t("settings.opencode.setup.source.managed")}</p>
         </Show>
         <Show when={!busy() && data().updateAvailable && data().latestVersion}>
           <p role="status">{t("settings.opencode.update.available", { version: data().latestVersion ?? "" })}</p>
-        </Show>
-        <Show when={!busy() && data().updateAvailable === false && data().latestVersion && !data().checkError}>
-          <p role="status">{t("settings.opencode.update.upToDate")}</p>
         </Show>
         <Show when={data().target === "wsl"}><p class="settings-toggle-caption">{t("settings.opencode.setup.wsl")}</p></Show>
         <Show when={data().serviceState === "restart_required" || data().serviceState === "restart_available"}>
@@ -141,7 +139,9 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
           <summary>{t("settings.opencode.setup.diagnostics")}</summary>
           <div class="settings-info-grid">
             <div class="settings-info-row"><span>{t("settings.opencode.setup.minimum")}</span><span>{data().minimumVersion}</span></div>
-            <div class="settings-info-row"><span>{t("settings.opencode.setup.recommended")}</span><span>{data().recommendedVersion}</span></div>
+            <Show when={data().recommendedVersion !== data().minimumVersion}>
+              <div class="settings-info-row"><span>{t("settings.opencode.setup.recommended")}</span><span>{data().recommendedVersion}</span></div>
+            </Show>
           </div>
           <Show when={data().incompatibilityReason && data().incompatibilityReason !== "native_contract"}>
             <p role="alert">{t(`settings.opencode.setup.${data().incompatibilityReason}`)}</p>
@@ -149,7 +149,6 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
         </details>
         <details class="settings-disclosure">
           <summary>{t("settings.opencode.setup.troubleshooting")}</summary>
-          <p class="settings-toggle-caption">{t("settings.opencode.setup.restartDescription")}</p>
           <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={actionPending() || openCodeSetupCheckError() || !data().canRestart} onClick={() => void restartForTroubleshooting()}>{t("settings.opencode.setup.restartTroubleshooting")}</button></div>
           <Show when={data().canReload}>
             <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void reload()}>{t("settings.opencode.setup.reload")}</button></div>

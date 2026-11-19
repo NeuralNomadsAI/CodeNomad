@@ -111,7 +111,7 @@ export class PluginSourcesStore {
     this.added[1](previous => previous.filter(item => item !== attempt))
   }
 
-  async remove(instanceId: string, location: PluginControlLocation, source: PluginConfiguredSource & { scope: PluginControlScope }): Promise<void> {
+  async remove(instanceId: string, location: PluginControlLocation, source: PluginRemoval): Promise<void> {
     const signal = this.signalForInstance?.(instanceId)
     signal?.throwIfAborted()
     if (!source.expectedRevision) throw new Error("Plugin source confirmation is unavailable")
@@ -122,10 +122,9 @@ export class PluginSourcesStore {
     this.removing[1](previous => new Map(previous).set(identity, attempt))
     try {
       signal?.throwIfAborted()
-      const response = await this.api.removePluginSource(instanceId, {
-        location: { directory: location.directory }, scope: source.scope, target: source.target, entryIndex: source.entryIndex,
-        expectedRevision: source.expectedRevision,
-      })
+      const common = { location: { directory: location.directory }, scope: source.scope, expectedRevision: source.expectedRevision }
+      const response = await this.api.removePluginSource(instanceId, source.entryIndex === undefined
+        ? { ...common, pluginId: source.target } : { ...common, target: source.target, entryIndex: source.entryIndex })
       if (signal?.aborted) return
       if (response?.scope !== source.scope || response.spec !== source.target || response.reloadPending !== true) throw new Error("Plugin source removal could not be confirmed")
     } finally {
@@ -141,7 +140,7 @@ export class PluginSourcesStore {
     }
   }
 
-  isRemoving(instanceId: string, location: PluginControlLocation, source: PluginConfiguredSource): boolean {
+  isRemoving(instanceId: string, location: PluginControlLocation, source: PluginRemoval): boolean {
     const pending = this.removing[0]().get(removalKey(instanceId, location, source))
     return Boolean(pending && pending.signal === this.signalForInstance?.(instanceId) && !pending.signal?.aborted)
   }
@@ -179,8 +178,18 @@ export class PluginSourcesStore {
   }
 }
 
-function removalKey(instanceId: string, location: PluginControlLocation, source: PluginConfiguredSource): string {
-  return JSON.stringify([instanceId, location.directory, source.scope, source.target, source.entryIndex])
+function removalKey(instanceId: string, location: PluginControlLocation, source: PluginRemoval): string {
+  return JSON.stringify([instanceId, location.directory, source.scope, source.target, source.entryIndex ?? null])
+}
+
+/** One removal from a scope's own document: a source declaration (`entryIndex`, removed with its plugin's exact
+ * rules), or without `entryIndex` every exact rule of the orphan plugin ID `target`. */
+export interface PluginRemoval {
+  scope: PluginControlScope
+  target: string
+  entryIndex?: number
+  path?: string
+  expectedRevision?: string
 }
 
 /** Declarations the shared document primitive can remove: those in the scope's own write target. */
@@ -190,6 +199,14 @@ export function removableSources(snapshot: PluginControlsSnapshot | undefined, m
     (source.scope === "global" || source.scope === "project") && matches(source)
     && snapshot.targets.some(target => target.scope === source.scope && Boolean(source.path) && samePath(target.path, source.path!))
   )).map(source => ({ ...source, expectedRevision: snapshot.targets.find(target => target.scope === source.scope)?.expectedRevision }))
+}
+
+/** For an orphan plugin ID, each scope whose own write target holds exact rules for it. */
+export function removableRules(snapshot: PluginControlsSnapshot | undefined, pluginId: string): PluginRemoval[] {
+  if (!snapshot?.controls.some(control => control.id === pluginId && control.orphan)) return []
+  return snapshot.targets.filter(target => snapshot.configured.rules.some(rule => rule.selector === pluginId && rule.scope === target.scope
+    && Boolean(rule.path) && samePath(target.path, rule.path!)))
+    .map(target => ({ scope: target.scope, target: pluginId, path: target.path, expectedRevision: target.expectedRevision }))
 }
 
 function samePath(left: string, right: string): boolean {

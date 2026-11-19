@@ -44,11 +44,13 @@ for (const paused of [false, true]) for (const archiveBeforeReplay of [false, tr
   }
   const owner = f.makeOwner(f.store, textEdit)
   const input = { missionID: doc.id, expectedRevision: doc.revision, requestID: "edit_passage", action: "configure" as const,
-    configuration: { ...doc.configuration, objective: "Updated contract", notes: "Updated notes" } }
+    configuration: { ...doc.configuration, objective: "Updated contract", notes: "Updated notes",
+      coordinatorSelectionAuthor: { coordinatorSessionID: "ses_agent_editor" } } }
   doc = await owner.control(input)
   const after = (await passage.journal.snapshot()).missions[0]
   assert.equal(doc.calendarOwner!.operation.pending, false)
   assert.equal(doc.configuration.objective, input.configuration.objective); assert.equal(doc.configuration.notes, input.configuration.notes)
+  assert.deepEqual(doc.configuration.coordinatorSelectionAuthor, input.configuration.coordinatorSelectionAuthor)
   assert.deepEqual(doc.pending, pending)
   assert.equal(after.objective, input.configuration.objective); assert.equal(after.notes, input.configuration.notes)
   assert.deepEqual(after.tasks, before.tasks); assert.deepEqual(after.actors, before.actors); assert.deepEqual(after.profiles, before.profiles)

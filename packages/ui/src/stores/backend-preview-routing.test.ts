@@ -201,7 +201,7 @@ test("explicit reopen after chat starts a fresh restore without joining or clear
   assert.equal(restored?.token, "preview_reopen-3")
   assert.equal(restored?.targetUrl, "https://example.com/saved")
   assert.equal(getSessionPreview("s", id)?.token, restored?.token)
-  showSessionPreview(restored!.storageKey)
+  showSessionPreview("s", id)
   assert.equal(getSessionPreview("s", id)?.mode, "preview")
   await closeSessionPreview(restored!.storageKey)
 })

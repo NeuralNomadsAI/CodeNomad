@@ -12,15 +12,21 @@ import type { NativeMissionSession } from "../../missions/control-types"
 import { abortableNativeEffect } from "./native-invocation"
 import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
 import { NATIVE_SCHEDULE_CARRIER_MARKER } from "./native-schedule-carrier-binding"
+import { assertAgentScheduledCoordinatorSelection, acquireAgentScheduledCoordinatorValidation } from "./native-scheduled-coordinator-adoption"
 
 /** Explicit coordinator adoption keeps the conversation and all unrelated metadata.
  * State-setting calls reconcile by readback; only admission sends the original input. */
 export async function adoptNativeScheduledCoordinator(ctx: Plugin.Context, run: MissionNativeRunner,
   native: MissionNativeService, doc: MissionDocument, metadata: Record<string, unknown>, current: () => true,
   qualify: () => Promise<void>, signal: AbortSignal, observeCurrent: () => true = current,
-  pin?: (session: NativeMissionSession) => (() => true)) {
+  pin?: (session: NativeMissionSession) => (() => true),
+  validate?: () => Promise<() => true>) {
   const pending = doc.pending!, selected = pending.configuration.profiles?.coordinator
   if (!pending.coordinatorReused || !selected?.agent || !selected.model) throw new Error("Existing coordinator selection unavailable")
+  assertAgentScheduledCoordinatorSelection(pending.configuration, doc.creation?.author)
+  const agentValidation = doc.creation?.author ? validate
+    ?? (() => run(acquireAgentScheduledCoordinatorValidation(ctx, run, doc, observeCurrent, signal))) : undefined
+  await agentValidation?.()
   const read = async () => {
     observeCurrent()
     signal.throwIfAborted()
@@ -36,8 +42,9 @@ export async function adoptNativeScheduledCoordinator(ctx: Plugin.Context, run: 
     const fresh = await read(), prepared = operation(fresh)
     if (!Effect.isEffect(prepared)) throw new Error("Existing coordinator mutation unavailable")
     const placement = pin?.(fresh)
+    const agentCurrent = await agentValidation?.()
     await qualify()
-    try { await run(abortableNativeEffect(Effect.suspend(() => { current(); placement?.(); return prepared }), signal)) }
+    try { await run(abortableNativeEffect(Effect.suspend(() => { current(); placement?.(); agentCurrent?.(); return prepared }), signal)) }
     catch (error) { if (!await accepted()) throw error }
     observeCurrent()
     if (!await accepted()) throw new Error("Existing coordinator update unconfirmed")

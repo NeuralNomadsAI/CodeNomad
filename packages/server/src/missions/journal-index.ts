@@ -6,6 +6,8 @@ import { missionSummary, missionInventorySummary, type MissionSummary, type Miss
 import { activityActorWindow, missionActivityContext, MISSION_MARK_ACTORS, MISSION_MARK_MISSIONS,
   type MissionActivityContext } from "./mission-activity-context"
 import { contentDigest } from "./content-digest"
+import { missionListEntry } from "./coordinator-actions"
+type ToolSummary = Omit<ReturnType<typeof missionListEntry>, "summary">
 
 /** How a mission's events name a session: its creation's coordinator or hand-off
  * author, or a task actor (independent dispatch or native binding). */
@@ -51,6 +53,7 @@ export interface MissionIndexHints {
   cleanups(allPending?: boolean): MissionCleanup[]
   /** One panel row per live map, in snapshot order. */
   summaries(): MissionSummary[]
+  toolSummaries(sessionID: string): ToolSummary[]
   inventorySummaries(): MissionInventorySummary[]
   /** Lightweight mark contexts, up to 16 missions and 10 actors each; no range rereads. */
   activity(offset: number): { contexts: MissionActivityContext[]; order: string; offset: number; end: number; total: number }
@@ -68,6 +71,7 @@ interface Entry {
   /** Live (non-deleted) map only. */
   updatedAt?: number
   summary?: MissionSummary
+  toolSummary?: ToolSummary
   activity?: MissionActivityContext
   open: boolean
   discardedEvents: number
@@ -240,7 +244,10 @@ function entryOf(view: MissionView): Entry | undefined {
   }
   return {
     missionID: view.missionID, refs, ...(first ? { first: { createdAt: first.createdAt, id: first.id } } : {}),
-    ...(mission ? { updatedAt: mission.updatedAt, summary: missionSummary(mission) } : {}),
+    ...(mission ? { updatedAt: mission.updatedAt, summary: missionSummary(mission), toolSummary: (() => {
+      const { summary: _body, ...row } = missionListEntry(mission, "project")
+      return row
+    })() } : {}),
     ...(mission ? { activity: missionActivityContext(mission, { discardedEvents: view.discardedEvents,
       controlUnavailable: Boolean(view.controlUnavailable), notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }) } : {}),
     open: missionWorkRemains({ ...view, missions: mission ? [mission] : [] }),
@@ -306,6 +313,14 @@ function hints(state: State, live: () => void): MissionIndexHints {
       live()
       return entries().filter(entry => entry.summary).sort(compareEntries)
         .map(({ summary }) => ({ ...summary!, actorSessionIds: [...summary!.actorSessionIds] }))
+    },
+    toolSummaries: sessionID => {
+      live()
+      return entries().filter(entry => entry.toolSummary).map(entry => {
+        const kinds = entry.refs.get(sessionID)
+        return { ...entry.toolSummary!, relation: kinds?.some(kind => kind !== "prepared-by") ? "member" as const
+          : kinds?.includes("prepared-by") ? "prepared" as const : "project" as const }
+      }).sort((a, b) => b.createdAt - a.createdAt)
     },
     inventorySummaries: () => {
       live()

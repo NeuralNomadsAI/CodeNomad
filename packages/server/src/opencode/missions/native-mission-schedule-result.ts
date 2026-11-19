@@ -10,6 +10,16 @@ import { nativeMissionScheduleObservation } from "./native-mission-schedule-disp
 export const nativeImmediatePlayPassage = (doc: MissionDocument, requestID: string) =>
   [doc.pending, ...doc.history].find(item => item?.origin.kind === "immediate" && item.origin.requestID === requestID)
 
+/** Check keeps its public receipt identity while reconciling the original actor control. */
+export function nativeMissionScheduleActorControl(doc: MissionDocument, requestID?: string) {
+  const owner = doc.calendarOwner
+  const control = requestID ? nativeScheduleOwnerControlReceipt(doc, requestID) : owner?.receipts.at(-1) ?? owner?.operation
+  if (control?.action !== "check") return control
+  const original = owner?.checks.find(item => item.requestID === control.requestID)?.originalRequestID
+  return original ? nativeScheduleOwnerControlReceipt(doc, original)
+    : [...owner?.receipts ?? []].reverse().find(item => ["pause", "stop", "resume", "play"].includes(item.action))
+}
+
 /** Status joins the two durable control ledgers. Calendar completion alone never
  * releases an actor-family control whose receipt is still absent or partial. */
 export async function nativeMissionScheduleResult(ctx: Plugin.Context, doc: MissionDocument | MissionDocumentTombstone | undefined,
@@ -31,9 +41,11 @@ export async function nativeMissionScheduleResult(ctx: Plugin.Context, doc: Miss
   const originalUnconfirmed = doc.pending?.origin.kind === "immediate" && doc.pending.admittedAt === null
   const unresolved = !!doc.deletion || originalUnconfirmed || initialUnconfirmed || (requestID ? !controlView || controlView.pending : result.pending)
   if (!doc.pending) return { ...view, pending: unresolved || forcePending }
-  let actorPending = false
-  if (control && (["pause", "stop", "resume", "delete"].includes(control.action)
-    || control.action === "play" && !initial && doc.pending.createdAt < control.startedAt)) {
+  const actorControl = nativeMissionScheduleActorControl(doc, requestID)
+  const actorInitial = actorControl?.action === "play" ? nativeImmediatePlayPassage(doc, actorControl.requestID) : undefined
+  let actorPending = control?.action === "check" && !actorControl
+  if (actorControl && (["pause", "stop", "resume", "delete"].includes(actorControl.action)
+    || actorControl.action === "play" && !actorInitial && doc.pending.createdAt < actorControl.startedAt)) {
     try {
       const storage: MissionStorage = { get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
         set: async () => { throw new Error("schedule-status-read-only") } }
@@ -41,7 +53,7 @@ export async function nativeMissionScheduleResult(ctx: Plugin.Context, doc: Miss
       const journal = snapshot.missions[0]
       actorPending = !!(snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable)
         || snapshot.missions.length > 1 || (!journal ? doc.pending.admittedAt !== null || !!doc.pending.admissionAttempted
-          : journal.control?.requestID !== control.requestID || !!journal.control.pending.length)
+          : journal.control?.requestID !== actorControl.requestID || !!journal.control.pending.length)
     } catch { actorPending = true }
   }
   return { ...view, pending: unresolved || actorPending || forcePending }

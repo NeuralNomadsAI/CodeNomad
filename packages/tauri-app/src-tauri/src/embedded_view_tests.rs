@@ -126,7 +126,10 @@ fn native_creation_installs_protections_before_return_and_rolls_back_failure() {
             Err("mandatory protection failed".into())
         },
     );
-    assert_eq!(result.err().unwrap(), "mandatory protection failed");
+    assert_eq!(
+        result.err().unwrap(),
+        "browser preview: install protections: mandatory protection failed"
+    );
     assert!(views.owned(OWNER, "browser-failed").is_err());
     assert!(app.get_webview("browser-failed").is_none());
     let child = views

@@ -38,7 +38,7 @@ function created(body: Record<string, unknown>): MissionMap {
     history: [], historyTruncated: false, frontier: [], claims: [], actors: [], tasks: [], reports: [] }
 }
 
-async function setup(page: Page) {
+async function setup(page: Page, acknowledgement: "fresh" | "recovered" | null = "fresh") {
   const errors: string[] = [], creates: Array<Record<string, unknown>> = [], controls: string[] = [], activations: Record<string, any>[] = []
   let list: MissionMap[] = []
   let scheduled: Awaited<ReturnType<typeof pausedMissionScheduleReceipt>> | undefined
@@ -77,7 +77,7 @@ async function setup(page: Page) {
     if (path.endsWith("/missions")) {
       const body = request.postDataJSON(); creates.push(body)
       list = [created(body)]
-      return route.fulfill({ json: { mission: list[0] } })
+      return route.fulfill({ json: { mission: list[0], ...(acknowledgement ? { acknowledgement } : {}) } })
     }
     return route.fulfill({ json: {} })
   })
@@ -177,6 +177,23 @@ test("an opted-in one-time Create retains its draft choice across remount and se
   } finally { await page.close() }
 })
 
+for (const acknowledgement of ["recovered", null] as const) test(`opted-in one-time creation with ${acknowledgement ?? "missing"} acknowledgement leaves Play explicit`, async () => {
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, acknowledgement)
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    const form = page.locator("form.mission-editor")
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Keep recovered preparation paused")
+    await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
+    await submitReady(page)
+    await form.getByRole("button", { name: "Create", exact: true }).click()
+    await form.waitFor({ state: "detached" })
+    assert.equal(fixture.creates.length, 1)
+    assert.deepEqual(fixture.controls, [])
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
 for (const loss of ["lost fetch", "undecodable acknowledgement"] as const) {
   test(`${loss} holds the exact original creation across edit, close/remount and project changes without a second create`, async () => {
     const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
@@ -191,7 +208,8 @@ for (const loss of ["lost fetch", "undecodable acknowledgement"] as const) {
       await submitReady(page)
       await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
       await form.getByRole("button", { name: "Create", exact: true }).click()
-      await page.getByRole("alert").filter({ hasText: UNCONFIRMED }).waitFor()
+      await page.waitForFunction(() => Boolean(window.missionEditorLifetime.held()))
+      assert.equal(await form.locator("[role=alert]").count(), 0)
       assert.equal(await objective.isDisabled(), true, "the unknown contract cannot be edited into a new request")
       assert.equal(await form.locator('button[type="submit"]').isDisabled(), true)
       const original = await page.evaluate(() => window.missionEditorLifetime.held())

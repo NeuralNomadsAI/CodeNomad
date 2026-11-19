@@ -219,6 +219,8 @@ An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mut
 | Agent memory | UI clients use exact POST `/api/memory` and GET/PUT `/api/memory/settings`; remote browser admission requires the strict host flag and channel provenance. Relayed memory requires its current proof. The explicit server-device catalog retains its authenticated direct transport and ingress boundary. Project-directory ownership and strict schemas apply at the destination. |
 | Native workspace API | `/workspaces/:id/instance/api/…` under the existing `isAllowedInstanceApiRoute()` allowlist and workspace/location ownership checks in `http-server.ts`. |
 
+The Mission creation receipt uses `GET /api/workspaces/:id/missions/creation/:requestId` on the original backend. The destination reads the original request in its captured project/Location; an uncertain receipt retains the hold without resending creation.
+
 Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership or a verified direct HTTPS origin.
 
 ### Host and device-local boundaries

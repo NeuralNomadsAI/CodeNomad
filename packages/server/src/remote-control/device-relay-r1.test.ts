@@ -120,6 +120,7 @@ for (const ingress of [false, true]) {
       ...["window", "outline", "outlinePreview", "query", "ranked", "prune"].map(path => ["POST", `/api/workspaces/w/session-history/${path}`] as [string, string]),
       ["POST", "/api/workspaces/w/session-pruning/prune"], ["GET", "/api/missions/playbooks"],
       ["POST", "/api/workspaces/w/missions"], ["POST", "/api/workspaces/w/missions/panel-page"],
+      ["GET", "/api/workspaces/w/missions/creation/r"],
       ["PATCH", "/api/workspaces/w/missions/m"], ["DELETE", "/api/workspaces/w/missions/m"],
       ...["content", "tasks", "admission"].map(path => ["GET", `/api/workspaces/w/missions/m/${path}`] as [string, string]),
       ...["control", "recover", "schedule", "schedule-settings"].map(path => ["POST", `/api/workspaces/w/missions/m/${path}`] as [string, string]),

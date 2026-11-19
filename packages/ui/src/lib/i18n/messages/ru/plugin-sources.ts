@@ -25,6 +25,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.remove": "Удалить ({scope})",
   "instanceServiceStatus.plugins.sources.actions": "Действия для {name}",
   "instanceServiceStatus.plugins.sources.version": "Версия {version}",
+  "instanceServiceStatus.plugins.sources.commit": "Коммит {commit}",
   "instanceServiceStatus.plugins.sources.outdated": "Доступно обновление",
   "instanceServiceStatus.plugins.sources.failureRef": "Ссылка на ошибку в журнале OpenCode: {ref}",
   "instanceServiceStatus.plugins.sources.guiGlobalOnly": "У этого пакета есть части для настольного приложения, которые загружаются только из глобальной конфигурации.",

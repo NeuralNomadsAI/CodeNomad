@@ -118,15 +118,15 @@ async function fixture(t: TestContext) {
     fs.rmSync(directory, { recursive: true, force: true })
   })
   await page.goto(new URL(new URL(borrowed.url).pathname, origin).href)
-  await page.locator('[data-owner="a"] iframe').waitFor()
-  await page.locator('[data-owner="b"] iframe').waitFor()
+  await section(page, "a").locator("iframe").waitFor()
   return { page, origin, apps, manager, profiles, errors }
 }
 
-const section = (page: Page, id: string) => page.locator(`[data-owner="${id}"]`)
-const appFrame = (page: Page, id: string) => page.frameLocator(`[data-owner="${id}"] iframe`)
+const section = (page: Page, id: string) => page.locator(`[data-preview-instance="${id}~same-workspace"]`)
+const appFrame = (page: Page, id: string) => section(page, id).locator("iframe").contentFrame()
 async function ready(page: Page) {
-  for (const [id, label] of [["a", "A"], ["b", "B"]]) {
+  for (const [id, label] of [["b", "B"], ["a", "A"]]) {
+    await page.evaluate(id => (window as any).remotePreviews.select(id), id)
     await appFrame(page, id!).locator("#asset").filter({ hasText: `asset-${label}` }).waitFor()
     await appFrame(page, id!).locator("#fetch").filter({ hasText: `fetch-${label}` }).waitFor()
     await appFrame(page, id!).locator("#ws").filter({ hasText: `${label}:hmr` }).waitFor()
@@ -145,11 +145,11 @@ test("two real remote apps load HTML/assets/fetch/WS and retain only logical add
   assert.match(initial!, /\.preview\.localhost:\d+\/previews\//)
   assert.equal(await section(f.page, "a").locator("input").inputValue(), `${f.apps[0]!.origin}/start`)
   await appFrame(f.page, "a").locator("a").click()
-  await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/next?q=1#part"))
+  await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-preview-instance="a~same-workspace"] input')?.value.endsWith("/next?q=1#part"))
   await section(f.page, "a").getByRole("button", { name: "Back", exact: true }).click()
-  await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/start"))
+  await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-preview-instance="a~same-workspace"] input')?.value.endsWith("/start"))
   await section(f.page, "a").getByRole("button", { name: "Forward", exact: true }).click()
-  await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/next?q=1#part"))
+  await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-preview-instance="a~same-workspace"] input')?.value.endsWith("/next?q=1#part"))
   const documentId = await appFrame(f.page, "a").locator("h1").getAttribute("data-page")
   await section(f.page, "a").getByRole("button", { name: "Refresh", exact: true }).click()
   await appFrame(f.page, "a").locator(`h1:not([data-page="${documentId}"])`).waitFor()
@@ -230,7 +230,7 @@ for (const action of ["close", "tab", "detach", "remove", "retarget", "shutdown"
     if (action === "remove") { f.profiles.splice(0, 1); f.manager.reconcile(); await f.page.evaluate(() => (window as any).remotePreviews.detach("a")) }
     if (action === "retarget") { f.profiles[0]!.baseUrl = f.profiles[1]!.baseUrl; f.manager.reconcile(); await f.page.evaluate(() => (window as any).remotePreviews.detach("a")) }
     if (action === "shutdown") await f.page.goto("about:blank")
-    else await section(f.page, "a").locator("iframe").waitFor({ state: "detached" })
+    else await f.page.waitForFunction(() => !(window as any).remotePreviews.source("a"))
     await until(() => !f.apps[0]!.streams.size && !f.apps[0]!.upgrades.size)
     if (action === "close") {
       await f.page.evaluate(() => (window as any).remotePreviews.open("a"))

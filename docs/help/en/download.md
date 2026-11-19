@@ -42,6 +42,6 @@ Download only from this page or the [official releases](https://github.com/Neura
 
 ## Support development {#support-development}
 
-The [Support CodeNomad](sponsor.md) page explains what sponsorship pays for.
+The [Support CodeNomad](sponsor.md) page explains why sponsorship matters and how it is handled.
 
 {{funding}}

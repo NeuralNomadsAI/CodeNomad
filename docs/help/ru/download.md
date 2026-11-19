@@ -42,6 +42,6 @@ npx @neuralnomads/codenomad --generate-token --launch
 
 ## Поддержать разработку {#support-development}
 
-На странице [Поддержать CodeNomad](sponsor.md) объясняется, на что идёт спонсорство.
+На странице [Поддержать CodeNomad](sponsor.md) объясняется, почему спонсорство важно и как оно устроено.
 
 {{funding}}

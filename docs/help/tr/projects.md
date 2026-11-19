@@ -40,7 +40,7 @@ Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de k
 
 Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını kapatmaz; normal başlangıç geri yüklemesi yine uygulanır. Yürütmenin bittiğini doğrulamak istiyorsanız ilgili çalıştırmaları açıkça durdurun. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz; paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
 
-Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, Görev seçimini ve okuyucusunu, kayıtlı tarayıcı URL'sini ve geçmişini geri yükler. Kaydedilen tarayıcı sayfaları açıkça yeniden açıldığında yüklenir. Bir örneği kapatmak yalnızca o örneğin kayıtlı görünümünü kaldırır; klasörü yeniden açmak yeni bir örnek oluşturur.
+Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, Görev seçimini ve okuyucusunu, sohbet veya web önizlemesi seçimini geri yükler. Tarayıcı URL'leri ve geçmişi oturum başına paylaşılır; kayıtlı sayfalar yalnızca web önizlemesi açıkça yeniden açıldığında yüklenir. Bir örneği kapatmak yalnızca o örneğin kayıtlı görünümünü kaldırır; klasörü yeniden açmak yeni bir örnek oluşturur.
 
 ## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
 

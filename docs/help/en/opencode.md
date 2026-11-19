@@ -3,7 +3,7 @@
 ## Select or install the CLI {#select-cli}
 
 1. Open **Settings → OpenCode** and use the **OpenCode Binary** card, below **OpenCode version**, to select the executable.
-2. Leave the automatic entry selected to prefer the server's PATH, unless it holds an older OpenCode, then its user npm OpenCode 2 installation; or use **Browse for Binary…** or enter a path and choose **Add**.
+2. Leave the automatic entry selected, or expand **Choose another binary…** to use **Browse for Binary…** or enter a path and choose **Add**.
 3. Use **Check status and updates**. If OpenCode is missing, choose **Install and start OpenCode**; review the host and installation scope first.
 4. If setup offers **Connect and continue**, use it after resolving the reported problem.
 
@@ -11,7 +11,7 @@
 
 When an older OpenCode comes first on PATH, the offered action depends on how it was installed. For OpenCode 1.x installed with npm, **Replace OpenCode {version} with OpenCode 2** asks for confirmation, removes that npm package and installs OpenCode 2 in the same npm folder; the OpenCode data folder is kept, and OpenCode 2 imports 1.x conversations itself. An older or unusable OpenCode installed another way (winget, Homebrew, manual) is never modified: **Install OpenCode 2 for CodeNomad** installs OpenCode 2 in the user npm folder beside it, and CodeNomad then uses that copy. If that older command itself sits in the user npm folder (for example a link in `~/.local/bin`), or that folder cannot be written, setup explains why instead of offering the action: move or rename the command, or fix the folder's permissions, then choose **Check status and updates**. A terminal's `opencode` command may still start the older version. An explicitly selected custom executable is never replaced.
 
-The installed executable and the running service can have different versions. Compare **Installed version** with **Running service** in the **OpenCode version** card rather than assuming that selecting another executable has replaced the live daemon; **Version details** lists the minimum and recommended versions.
+The **OpenCode version** card shows **Running service** separately when it differs from **Installed version** or is unknown. **Version details** shows the minimum version and, when different, the recommended version.
 
 ## Required, recommended and unverified versions {#versions}
 
@@ -57,7 +57,7 @@ Use **Reload OpenCode configuration**, under **Troubleshooting** when the runnin
 ## Session environment {#session-environment}
 
 1. Open **Settings → Advanced** and expand **Environment Variables**.
-2. Add, change or remove the profile's overrides; each change is saved immediately.
+2. Add overrides, edit their values or remove them; saved names are read-only and each change is saved immediately.
 3. Send the next prompt, custom command or session shell request through CodeNomad to apply the current environment to that conversation.
 
 This is a configuration-profile setting. Merely opening/reading a conversation or saving settings does not alter a native session. Removing an override restores the execution host's inherited value, or removes it if absent there.

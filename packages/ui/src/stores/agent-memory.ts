@@ -14,8 +14,8 @@ const dirty = (draft?: Draft) => !!draft && (draft.title !== draft.entry.title |
 const failure = (error: unknown) => error instanceof AgentMemoryError ? error : new AgentMemoryError("unavailable")
 const consultationKey = (scopeKey: string) => `codenomad.memory.seen.${scopeKey}`
 
-/** Visit-local baselines stay frozen; only a successful read advances the persisted frontier. */
-export function createAgentMemoryReview(context: () => MemoryContext | undefined, enabled: () => boolean, api: () => typeof agentMemoryApi = () => agentMemoryApi, backendId: () => string = () => "local") {
+/** Visit-local baselines stay frozen; a successful read advances the persisted frontier once the list is shown. */
+export function createAgentMemoryReview(context: () => MemoryContext | undefined, enabled: () => boolean, api: () => typeof agentMemoryApi = () => agentMemoryApi, backendId: () => string = () => "local", listed: () => boolean = () => true) {
   const { t } = useI18n()
   const [scope, setScope] = createSignal<Scope>(context() ? "project" : "global")
   let scopeChosen = false
@@ -27,6 +27,15 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
   const [hasSnapshot, setHasSnapshot] = createSignal(false)
   const [cleanupWritable, setCleanupWritable] = createSignal(false)
   const [baseline, setBaseline] = createSignal(0)
+  const [observed, setObserved] = createSignal<{ scopeKey: string; at: number }>()
+  createEffect(() => {
+    const seen = observed()
+    if (!seen || !listed()) return
+    try {
+      const stored = Number(localStorage.getItem(consultationKey(seen.scopeKey))) || 0
+      localStorage.setItem(consultationKey(seen.scopeKey), String(Math.max(stored, seen.at)))
+    } catch { /* Badges remain visit-local if storage is unavailable. */ }
+  })
   const [loading, setLoading] = createSignal(false), [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal<AgentMemoryError>()
   let generation = 0, disposed = false, pendingRead: { generation: number; promise: Promise<void> } | undefined, trailing = false
@@ -67,10 +76,7 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
           if (fresh) remember({ ...opened, entry: { ...opened.entry, flagged: fresh.flagged, warning: fresh.warning } })
         }
       }
-      try {
-        const stored = Number(localStorage.getItem(consultationKey(scopeKey))) || 0
-        localStorage.setItem(consultationKey(scopeKey), String(Math.max(stored, Date.parse(result.observedAt))))
-      } catch { /* Badges remain visit-local if storage is unavailable. */ }
+      setObserved({ scopeKey, at: Date.parse(result.observedAt) })
     } catch (cause) { if (!disposed && current === generation) setError(failure(cause)) }
   }
   const load = (): Promise<void> => {
@@ -90,7 +96,7 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
   createEffect(() => {
     owner(); enabled(); api()
     generation++; consent.abort(); consent = new AbortController(); pendingRead = undefined; trailing = false
-    setEntries([]); setHasSnapshot(false); setCleanupWritable(false); setError(undefined); setLoading(false); setBusy(false); setDraft(drafts.get(owner()))
+    setEntries([]); setHasSnapshot(false); setObserved(undefined); setCleanupWritable(false); setError(undefined); setLoading(false); setBusy(false); setDraft(drafts.get(owner()))
     untrack(() => { void load() })
   })
   const open = async (entry: MemoryUIEntry) => {

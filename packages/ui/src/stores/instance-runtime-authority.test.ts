@@ -94,13 +94,13 @@ describe("instance runtime authority", () => {
     { label: "direct definitive session removal", remove: removeSessionRuntimeState },
     { label: "session.deleted event", remove: (id: string, sessionId: string) => handleSessionDeleted(id,
       { type: "session.deleted", data: { sessionID: sessionId } }) },
-  ]) it(`removes attachment authority on ${test.label}`, () => {
+  ]) it(`clears attachment bytes but keeps authority against replay on ${test.label}`, () => {
     const id = `authority-${test.label}`, sessionId = "deleted-session"
     addAttachment(id, sessionId, createTextAttachment("pasted", "pasted #1", "paste.txt"))
     setSessionDraftPrompt(id, sessionId, "[pasted #1]")
     test.remove(id, sessionId)
     assert.deepEqual(getAttachments(id, sessionId), [])
-    assert.equal(getAuthoritativeAttachmentSessionIdsForInstance(id).has(sessionId), false)
+    assert.equal(getAuthoritativeAttachmentSessionIdsForInstance(id).has(sessionId), true)
     assert.equal(getSessionDraftPromptsForInstance(id)[sessionId], undefined)
     assert.equal(getAuthoritativelyDeletedSessionIdsForInstance(id).has(sessionId), true)
     clearSessionState(id)
