@@ -9,9 +9,10 @@ import type {
 } from "../api-types"
 import type { Logger } from "../logger"
 import { deviceNameFromUserAgent, pairingFromCode, type RemoteDeviceRegistry } from "./devices"
-import { admitRemoteUpgrade, type RemoteGateDeps } from "./gate"
+import { admitRemoteUpgrade, admitRemoteVoiceUpgrade, type RemoteGateDeps } from "./gate"
 import { RemoteIngress } from "./ingress"
 import type { RemoteControlOwnerLease } from "./owner-lease"
+import { isLiveVoiceRoute, refuseVoiceUpgrade } from "../speech/live-voice-gateway"
 
 type OpenTunnel = (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
 
@@ -21,6 +22,7 @@ interface ManagerOptions {
   router: () => ((request: IncomingMessage, response: ServerResponse) => void) | null
   /** Proxies an admitted web preview WebSocket upgrade; false when no preview path matched. */
   previewUpgrade?: () => ((request: IncomingMessage, socket: Socket, head: Buffer) => boolean) | null
+  voiceUpgrade?: () => ((request: IncomingMessage, socket: Socket, head: Buffer, deviceId: string) => void) | null
   /** Whether a web preview capability token is live. */
   hasPreview?: (token: string) => boolean
   logger: Logger
@@ -52,8 +54,16 @@ export class RemoteControlManager {
       if (route) route(request, response)
       else response.writeHead(503).end()
     }, (request, socket, head) => {
+      if (isLiveVoiceRoute(request.url)) {
+        const device = admitRemoteVoiceUpgrade(request, this.gate())
+        const upgrade = options.voiceUpgrade?.()
+        if (!device) refuseVoiceUpgrade(socket, "403 Forbidden")
+        else if (!upgrade) refuseVoiceUpgrade(socket, "404 Not Found")
+        else upgrade(request, socket, head, device.id)
+        return "voice"
+      }
       const upgrade = admitRemoteUpgrade(request, this.gate()) ? options.previewUpgrade?.() : null
-      return upgrade ? upgrade(request, socket, head) : false
+      return upgrade?.(request, socket, head) ? "preview" : false
     })
   }
 
@@ -153,7 +163,7 @@ export class RemoteControlManager {
   /** The host's choice; turning previews off also closes their live WebSockets. */
   setPreviewsAllowed(allowed: boolean): RemoteControlStatus {
     this.options.registry.setPreviewsAllowed(allowed)
-    if (!allowed) this.ingress.disconnectUpgrades()
+    if (!allowed) this.ingress.disconnectPreviews()
     return this.status()
   }
 

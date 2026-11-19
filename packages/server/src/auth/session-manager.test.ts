@@ -44,3 +44,22 @@ test("session defaults expire at 24 idle hours or seven absolute days; configura
     assert.throws(() => sessionTimeoutMs(value, "TIMEOUT"))
   }
 })
+
+test("watchers are scoped to the login and unsubscribe before or after revocation", () => {
+  let now = 0
+  const sessions = new SessionManager({ idleMs: 1000, now: () => now })
+  const { id } = sessions.createSession("alice")
+  const other = sessions.createSession("bob").id
+  const stopped: string[] = []
+  const unsubscribe = sessions.watch(id, () => stopped.push("closed-early"))
+  sessions.watch(id, () => stopped.push("alice"))
+  const otherStop = sessions.watch(other, () => stopped.push("bob"))
+  unsubscribe()
+  sessions.revokeUser("alice")
+  sessions.revoke(id)
+  assert.deepEqual(stopped, ["alice"])
+  now = 1000
+  assert.equal(sessions.getSession(other), undefined, "an open socket does not renew the login")
+  assert.deepEqual(stopped, ["alice", "bob"])
+  otherStop()
+})

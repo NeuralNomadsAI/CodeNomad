@@ -1,0 +1,382 @@
+import assert from "node:assert/strict"
+import { once } from "node:events"
+import fs from "node:fs"
+import net from "node:net"
+import os from "node:os"
+import path from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
+import test, { type TestContext } from "node:test"
+import pino from "pino"
+import { Agent, fetch } from "undici"
+import WebSocket, { WebSocketServer } from "ws"
+import { DEVICE_COOKIE_NAME } from "../remote-control/gate"
+import { FAKE_TUNNEL_HOST, startRemoteSurface } from "../remote-control/test-support/surface"
+import { RemoteProxySessionManager } from "../server/remote-proxy"
+import { resolveHttpsOptions } from "../server/tls"
+import {
+  LIVE_VOICE_CLIENT_BYTES, LIVE_VOICE_PROVIDER_BYTES, liveVoiceTarget, type LiveVoiceEngine,
+} from "./live-voice-contract"
+import { LiveVoiceGateway } from "./live-voice-gateway"
+import type { VoiceConversationProviderSettings } from "./voice-conversation-config"
+
+const KEY = "voice-secret-sentinel-not-a-real-key"
+const PCM = Buffer.from([14, 21, 1, 0]).toString("base64")
+const gemini = liveVoiceTarget("gemini-live")
+const openai = liveVoiceTarget("openai-realtime")
+
+function logger() {
+  const logs: string[] = []
+  return { logs, log: pino({ level: "trace" }, { write: line => { logs.push(line) } }) }
+}
+
+function wire(ws: WebSocket) {
+  const messages: string[] = []
+  const closed = new Promise<[number, string]>(resolve => ws.once("close", (code, reason) => resolve([code, reason.toString()])))
+  ws.on("error", () => {})
+  ws.on("message", data => messages.push(data.toString()))
+  return {
+    ws, messages, closed,
+    next: async () => {
+      if (!messages.length) await once(ws, "message")
+      return JSON.parse(messages.shift()!)
+    },
+    send: (value: object, binary = false) => ws.send(JSON.stringify(value), { binary }),
+  }
+}
+
+async function provider(t: TestContext, options: ConstructorParameters<typeof LiveVoiceGateway>[1] = {}) {
+  const connections: Array<{ url: URL; headers?: Record<string, string> }> = []
+  const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 })
+  const peers: ReturnType<typeof wire>[] = []
+  wss.on("connection", ws => peers.push(wire(ws)))
+  await once(wss, "listening")
+  const { port } = wss.address() as net.AddressInfo
+  t.after(() => {
+    for (const ws of wss.clients) ws.terminate()
+    return new Promise<void>(resolve => wss.close(() => resolve()))
+  })
+  const settings = (engine: string): VoiceConversationProviderSettings | undefined => {
+    if (engine === "gemini-live") return { provider: "geminiLive", apiKey: KEY, model: "server-gemini", voice: "Kore" }
+    if (engine === "openai-realtime") return { provider: "openaiRealtime", apiKey: KEY, model: "server-openai", voice: "marin" }
+  }
+  const gateway = new LiveVoiceGateway({ getVoiceConversationProvider: settings }, {
+    ...options,
+    connect: (url, opts) => {
+      connections.push({ url, headers: opts.headers })
+      assert.equal(opts.followRedirects, false)
+      assert.equal(opts.rejectUnauthorized, true)
+      return new WebSocket(`ws://127.0.0.1:${port}${url.pathname}${url.search}`, opts)
+    },
+  })
+  const next = async () => {
+    if (!peers.length) await once(wss, "connection")
+    return peers.shift()!
+  }
+  return { gateway, next, connections }
+}
+
+function connect(t: TestContext, host: string, target: string, headers: Record<string, string>, secure = false) {
+  const ws = new WebSocket(`${secure ? "wss" : "ws"}://${host}${target}`, { headers, rejectUnauthorized: false })
+  t.after(() => ws.terminate())
+  return wire(ws)
+}
+
+async function denied(host: string, target: string, headers: Record<string, string>, status: number, secure = false) {
+  const ws = new WebSocket(`${secure ? "wss" : "ws"}://${host}${target}`, { headers, rejectUnauthorized: false })
+  ws.on("error", () => {})
+  const received = await new Promise<number>((resolve, reject) => {
+    ws.once("unexpected-response", (_request, response) => { response.resume(); ws.terminate(); resolve(response.statusCode!) })
+    ws.once("open", () => { ws.terminate(); reject(new Error("Unexpected voice upgrade")) })
+    ws.once("error", reject)
+  })
+  assert.equal(received, status)
+}
+
+async function setupGemini(client: ReturnType<typeof wire>, fake: Awaited<ReturnType<typeof provider>>) {
+  const upstream = await fake.next()
+  const { setup } = await upstream.next()
+  assert.equal(setup.model, "models/server-gemini")
+  assert.equal(setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, "Kore")
+  assert.deepEqual(setup.tools[0].functionDeclarations.map((tool: { name: string }) => tool.name), ["send_to_agent", "read_session"])
+  upstream.send({ setupComplete: {} }, true)
+  assert.deepEqual(await client.next(), { type: "ready", inputRate: 16000, outputRate: 24000 })
+  return upstream
+}
+
+test("direct admission, Gemini binary messages, fixed tools, cancellation and password logout", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { log, logs } = logger()
+  const { local, authManager } = await startRemoteSurface(t, {
+    liveVoice: fake.gateway, logger: log, allowedOrigins: ["https://preview-id.preview.localhost"],
+  })
+  const origin = `http://${local}`
+  const cookie = `${authManager.getCookieName()}=${authManager.createSession("codenomad").id}`
+  await denied(local, gemini, { origin }, 401)
+  for (const invalid of ["null", "https://other.test", "https://preview-id.preview.localhost", `${origin}/`]) {
+    await denied(local, gemini, { origin: invalid, cookie }, 403)
+  }
+  await denied(local, gemini, { cookie }, 403)
+  await denied(local, gemini, { origin, cookie, host: "04b00c64-b56e-4a73-bc88-8058f0f70b85.preview.localhost" }, 403)
+  await denied(local, `${gemini}&model=arbitrary`, { origin, cookie }, 404)
+  assert.equal(fake.connections.length, 0)
+
+  const client = connect(t, local, gemini, { origin, cookie })
+  const upstream = await setupGemini(client, fake)
+  assert.equal(fake.connections[0].url.hostname, "generativelanguage.googleapis.com")
+  assert.equal(fake.connections[0].url.search, "")
+  assert.deepEqual(fake.connections[0].headers, { "x-goog-api-key": KEY })
+  const secondLogin = `${authManager.getCookieName()}=${authManager.createSession("codenomad").id}`
+  await denied(local, openai, { origin, cookie: secondLogin }, 429)
+  client.send({ type: "audio", pcm: PCM })
+  assert.deepEqual(await upstream.next(), { realtimeInput: { audio: { data: PCM, mimeType: "audio/pcm;rate=16000" } } })
+  upstream.send({ serverContent: { modelTurn: { parts: [{ inlineData: { data: PCM, mimeType: "audio/pcm;rate=24000" } }] } } }, true)
+  assert.deepEqual(await client.next(), { type: "audio", pcm: PCM })
+  upstream.send({ toolCall: { functionCalls: [{ id: "call1", name: "send_to_agent", args: { text: "Draft a plan" } }] } }, true)
+  assert.deepEqual(await client.next(), { type: "tool-call", id: "call1", name: "send_to_agent", arguments: { text: "Draft a plan" } })
+  client.send({ type: "tool-result", id: "call1", output: "Submitted" })
+  assert.deepEqual(await upstream.next(), { toolResponse: { functionResponses: [{ name: "send_to_agent", id: "call1", response: { output: "Submitted" } }] } })
+
+  upstream.send({ toolCall: { functionCalls: [{ id: "call2", name: "read_session" }] } })
+  assert.deepEqual(await client.next(), { type: "tool-call", id: "call2", name: "read_session", arguments: {} })
+  upstream.send({ toolCallCancellation: { ids: ["call2"] } }, true)
+  upstream.send({ serverContent: { interrupted: true, turnComplete: true } })
+  assert.deepEqual(await client.next(), { type: "tool-cancel", id: "call2" })
+  assert.deepEqual(await client.next(), { type: "interrupted" })
+  assert.deepEqual(await client.next(), { type: "turn-complete" })
+  client.send({ type: "tool-result", id: "call2", output: "Too late" })
+  client.send({ type: "audio", pcm: PCM })
+  assert.deepEqual(await upstream.next(), { realtimeInput: { audio: { data: PCM, mimeType: "audio/pcm;rate=16000" } } })
+  const quit = await fetch(`${origin}/api/auth/logout`, { method: "POST", headers: { origin, cookie } })
+  await quit.text()
+  assert.equal(quit.status, 200)
+  assert.deepEqual(await client.closed, [4000, "revoked"])
+  await upstream.closed
+  assert(!logs.join("").includes(KEY))
+})
+
+test("Remote Control needs its device credential even without local auth; OpenAI GA goes through the narrower gateway", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { manager, target, code } = await startRemoteSurface(t, { skipAuth: true, liveVoice: fake.gateway })
+  const origin = `https://${FAKE_TUNNEL_HOST}`
+  const paired = manager.exchangePairing(code, undefined)!
+  const cookie = `${DEVICE_COOKIE_NAME}=${paired.token}`
+  const headers = { host: FAKE_TUNNEL_HOST, origin, cookie }
+  await denied(target(), openai, { ...headers, cookie: "codenomad_session=auth-disabled" }, 403)
+  await denied(target(), openai, { ...headers, origin: "null" }, 403)
+  await denied(target(), openai, { ...headers, host: "localhost" }, 403)
+  await denied(target(), `${openai}&key=untrusted`, headers, 404)
+  assert.equal(fake.connections.length, 0)
+
+  const client = connect(t, target(), openai, headers)
+  const upstream = await fake.next()
+  assert.equal(fake.connections[0].url.href, "wss://api.openai.com/v1/realtime?model=server-openai")
+  assert.deepEqual(fake.connections[0].headers, { Authorization: `Bearer ${KEY}` })
+  upstream.send({ type: "session.created", session: { id: "session-1", arbitrary: KEY } })
+  const update = await upstream.next()
+  assert.equal(update.type, "session.update")
+  assert.equal(update.session.audio.input.format.rate, 24000)
+  assert.equal(update.session.audio.output.voice, "marin")
+  assert.equal(update.session.audio.input.turn_detection.interrupt_response, true)
+  upstream.send({ type: "session.updated", session: { id: "session-1", arbitrary: KEY } })
+  assert.deepEqual(await client.next(), { type: "ready", inputRate: 24000, outputRate: 24000 })
+  client.send({ type: "audio", pcm: PCM })
+  assert.deepEqual(await upstream.next(), { type: "input_audio_buffer.append", audio: PCM })
+  upstream.send({ type: "response.output_audio.delta", response_id: "response-1", item_id: "item-1", content_index: 0, delta: PCM })
+  assert.deepEqual(await client.next(), { type: "audio", pcm: PCM, itemId: "item-1", contentIndex: 0 })
+  upstream.send({ type: "input_audio_buffer.speech_started" })
+  assert.deepEqual(await client.next(), { type: "interrupted" })
+  client.send({ type: "truncate", itemId: "item-1", contentIndex: 0, audioEndMs: 0 })
+  assert.deepEqual(await upstream.next(), { type: "conversation.item.truncate", item_id: "item-1", content_index: 0, audio_end_ms: 0 })
+  upstream.send({ type: "response.done", response: {
+    id: "response-2", status: "completed", output: [{ type: "function_call", status: "completed", call_id: "call-1", name: "read_session", arguments: "{}" }],
+  } })
+  assert.deepEqual(await client.next(), { type: "tool-call", name: "read_session", id: "call-1", arguments: {} })
+  assert.deepEqual(await client.next(), { type: "turn-complete" })
+  client.send({ type: "tool-result", id: "call-1", output: "Working" })
+  assert.deepEqual(await upstream.next(), { type: "conversation.item.create", item: { type: "function_call_output", call_id: "call-1", output: "Working" } })
+  assert.deepEqual(await upstream.next(), { type: "response.create" })
+  manager.setPreviewsAllowed(false)
+  assert.equal(client.ws.readyState, WebSocket.OPEN)
+  manager.revokeDevice(paired.device.id)
+  assert.equal((await client.closed)[0], 1006)
+  await upstream.closed
+})
+
+test("Tauri TLS-exception window requires bootstrap and upstream login, and revokes both streams on disposal", { timeout: 15000 }, async t => {
+  const { log, logs } = logger()
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-voice-window-"))
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }))
+  const tls = resolveHttpsOptions({ enabled: true, host: "127.0.0.1", configDir: base, logger: log })!.httpsOptions
+  const fake = await provider(t)
+  // Separate installations in production have separate listener registries. A test TCP hop
+  // presents the fixture as a distinct advertised address without weakening the proxy guard.
+  let backendPort = 0
+  const forward = net.createServer(socket => {
+    const upstream = net.connect(backendPort, "127.0.0.1")
+    socket.on("error", () => upstream.destroy())
+    upstream.on("error", () => socket.destroy())
+    socket.on("close", () => upstream.destroy())
+    upstream.on("close", () => socket.destroy())
+    socket.pipe(upstream).pipe(socket)
+  })
+  forward.listen(0, "127.0.0.1")
+  await once(forward, "listening")
+  t.after(() => { forward.close() })
+  const target = `https://127.0.0.1:${(forward.address() as net.AddressInfo).port}`
+  const { local, authManager } = await startRemoteSurface(t, { liveVoice: fake.gateway, httpsOptions: tls, allowedOrigins: [target], logger: log })
+  backendPort = Number(local.split(":")[1])
+  const manager = new RemoteProxySessionManager({ authManager, logger: log, httpsOptions: tls })
+  t.after(() => manager.shutdown())
+  const { sessionId, windowUrl } = await manager.createSession(target, true)
+  const location = new URL(windowUrl)
+  const options = { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }) }
+  t.after(() => options.dispatcher.destroy())
+  const post = await fetch(`${location.origin}/__codenomad/api/auth/token`, {
+    ...options, method: "POST", headers: { origin: location.origin, "content-type": "application/json" },
+    body: JSON.stringify({ token: decodeURIComponent(location.hash.slice(1)) }),
+  })
+  await post.text()
+  assert.equal(post.status, 200)
+  const voiceCookie = post.headers.getSetCookie()[0].split(";", 1)[0]
+  await denied(location.host, gemini, { origin: location.origin, cookie: "codenomad_session=fake" }, 403, true)
+  await denied(location.host, gemini, { origin: "null", cookie: voiceCookie }, 403, true)
+  await denied(location.host, gemini, { origin: location.origin, cookie: voiceCookie }, 403, true)
+  assert.equal(fake.connections.length, 0)
+  const login = await fetch(`${location.origin}/api/auth/login`, {
+    ...options, method: "POST", headers: { origin: location.origin, "content-type": "application/json" },
+    body: JSON.stringify({ username: "codenomad", password: "local-password" }),
+  })
+  await login.text()
+  assert.equal(login.status, 200)
+  const loginCookie = login.headers.getSetCookie()[0].split(";", 1)[0]
+  const headers = { origin: location.origin, cookie: `${voiceCookie}; ${loginCookie}` }
+  const client = connect(t, location.host, gemini, headers, true)
+  const upstream = await setupGemini(client, fake)
+  await denied(location.host, gemini, headers, 429, true)
+  await denied(location.host, "/elsewhere", headers, 404, true)
+  assert(await manager.deleteSession(sessionId))
+  assert.equal((await client.closed)[0], 1006)
+  await upstream.closed
+  assert(!logs.join("").includes(KEY))
+})
+
+test("fixed deadlines, message limits and provider errors never relay raw content", { timeout: 10000 }, async t => {
+  const fake = await provider(t, { establishMs: 300, idleMs: 130, absoluteMs: 430 })
+  const { log, logs } = logger()
+  const { local } = await startRemoteSurface(t, { skipAuth: true, liveVoice: fake.gateway, logger: log })
+  const headers = { origin: `http://${local}` }
+  const start = (engine: LiveVoiceEngine = "gemini-live") => connect(t, local, liveVoiceTarget(engine), headers)
+  const setupTimeout = start()
+  const waiting = await fake.next()
+  await waiting.next()
+  assert.deepEqual(await setupTimeout.closed, [4000, "setup-timeout"])
+  await waiting.closed
+
+  const idle = start()
+  const silent = await setupGemini(idle, fake)
+  const heartbeats = setInterval(() => {
+    idle.ws.ping()
+    idle.send({ type: "audio", pcm: "AAAAAA==" })
+    silent.send({ serverContent: { outputTranscription: { text: "Model output" } } })
+  }, 25)
+  try { assert.deepEqual(await idle.closed, [4000, "idle"]) } finally { clearInterval(heartbeats) }
+  await silent.closed
+
+  const limit = start()
+  const active = await setupGemini(limit, fake)
+  const activity = setInterval(() => active.send({ voiceActivity: { type: "ACTIVITY_START" } }), 35)
+  try { assert.deepEqual(await limit.closed, [4000, "duration"]) } finally { clearInterval(activity) }
+  await active.closed
+
+  const invalid = start()
+  const noRelay = await setupGemini(invalid, fake)
+  invalid.send({ type: "session.update", session: { instructions: "untrusted", tools: [] } })
+  assert.deepEqual(await invalid.closed, [4000, "invalid-message"])
+  assert.deepEqual(noRelay.messages, [])
+  await noRelay.closed
+
+  const browserOversize = start()
+  const browserOversizePeer = await setupGemini(browserOversize, fake)
+  browserOversize.ws.send("x".repeat(LIVE_VOICE_CLIENT_BYTES + 1))
+  assert([1006, 1009].includes((await browserOversize.closed)[0]))
+  await browserOversizePeer.closed
+
+  const upstreamOversize = start()
+  const oversizedPeer = await setupGemini(upstreamOversize, fake)
+  oversizedPeer.ws.send("x".repeat(LIVE_VOICE_PROVIDER_BYTES + 1))
+  assert.deepEqual(await upstreamOversize.closed, [4000, "provider-error"])
+  await oversizedPeer.closed
+
+  const bad = start()
+  const traceback = await setupGemini(bad, fake)
+  traceback.send({ error: { message: `API key: ${KEY}` } })
+  assert.deepEqual(await bad.closed, [4000, "provider-error"])
+  assert.deepEqual(bad.messages, [])
+  await traceback.closed
+  const echo = start()
+  const echoPeer = await setupGemini(echo, fake)
+  echoPeer.send({ serverContent: { outputTranscription: { text: KEY } } })
+  assert.deepEqual(await echo.closed, [4000, "provider-error"])
+  assert.deepEqual(echo.messages, [])
+  await echoPeer.closed
+  assert(!logs.join("").includes(KEY))
+
+  const away = start()
+  const awayPeer = await setupGemini(away, fake)
+  awayPeer.send({ goAway: { timeLeft: "5s" } })
+  assert.deepEqual(await away.closed, [4000, "provider-disconnected"])
+  await awayPeer.closed
+  await delay(15)
+  assert.equal(fake.connections.length, 9, "provider failure never reconnects")
+})
+
+test("direct and tunneled identities share four slots; a client disconnect releases its provider", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { local, manager, target, authManager } = await startRemoteSurface(t, { liveVoice: fake.gateway })
+  const origin = `http://${local}`
+  const cookie = `${authManager.getCookieName()}=${authManager.createSession("codenomad").id}`
+  const localClient = connect(t, local, gemini, { origin, cookie })
+  const localProvider = await setupGemini(localClient, fake)
+  function device() {
+    const pairing = manager.createPairing()
+    const token = manager.exchangePairing(new URL(pairing.url).hash.slice(1), undefined)!.token
+    return { host: FAKE_TUNNEL_HOST, origin: `https://${FAKE_TUNNEL_HOST}`, cookie: `${DEVICE_COOKIE_NAME}=${token}` }
+  }
+  for (let i = 0; i < 3; i++) await setupGemini(connect(t, target(), gemini, device()), fake)
+  const fifth = device()
+  await denied(target(), gemini, fifth, 429)
+  assert.equal(fake.connections.length, 4)
+  localClient.send({ type: "stop" })
+  assert.deepEqual(await localClient.closed, [1000, "stopped"])
+  await localProvider.closed
+  const reopened = connect(t, target(), gemini, fifth)
+  const remote = await setupGemini(reopened, fake)
+  reopened.ws.terminate()
+  await remote.closed
+  assert.equal(fake.connections.length, 5)
+})
+
+test("unexpected tools, odd-length audio, and faster-than-realtime streams terminate the voice socket", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })
+  const start = () => connect(t, local, gemini, { origin: `http://${local}` })
+  const badTool = start()
+  const toolPeer = await setupGemini(badTool, fake)
+  toolPeer.send({ toolCall: { functionCalls: [{ id: "outside", name: "read_file", args: { path: "sample" } }] } })
+  assert.deepEqual(await badTool.closed, [4000, "provider-error"])
+  assert.deepEqual(badTool.messages, [])
+  await toolPeer.closed
+
+  const badAudio = start()
+  const oddPeer = await setupGemini(badAudio, fake)
+  badAudio.send({ type: "audio", pcm: "AA==" })
+  assert.deepEqual(await badAudio.closed, [4000, "invalid-message"])
+  assert.deepEqual(oddPeer.messages, [])
+  await oddPeer.closed
+
+  const rapidAudio = start()
+  const rapidPeer = await setupGemini(rapidAudio, fake)
+  for (let i = 0; i < 3; i++) rapidAudio.send({ type: "audio", pcm: "A".repeat(28 * 1024) })
+  assert.deepEqual(await rapidAudio.closed, [4000, "limit"])
+  await rapidPeer.closed
+})

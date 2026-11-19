@@ -11,6 +11,8 @@ import { createHttpServer } from "../../server/http-server"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
 import { RemoteDeviceRegistry } from "../devices"
 import { RemoteControlManager } from "../manager"
+import type { LiveVoiceGateway } from "../../speech/live-voice-gateway"
+import type { Logger } from "../../logger"
 
 export const FAKE_TUNNEL_HOST = "codenomad-test.device.tunnel.test"
 // Each logger pipes to stdout, so fixtures share one.
@@ -25,6 +27,9 @@ export async function startRemoteSurface(t: TestContext, options: {
   skipAuth?: boolean
   bindHost?: string
   allowedOrigins?: string[]
+  liveVoice?: LiveVoiceGateway
+  httpsOptions?: Parameters<typeof createHttpServer>[0]["httpsOptions"]
+  logger?: Logger
   /** Settings service in place of the stub, such as one that reads the host's SideCar opt-in. */
   settings?: unknown
   sidecarManager?: unknown
@@ -35,6 +40,7 @@ export async function startRemoteSurface(t: TestContext, options: {
   /** Declares extra test routes on the application before it starts. */
   routes?: (app: ReturnType<typeof createHttpServer>["instance"]) => void
 } = {}) {
+  const serverLogger = options.logger ?? logger
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-surface-"))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   const uiDir = path.join(directory, "ui")
@@ -47,19 +53,21 @@ export async function startRemoteSurface(t: TestContext, options: {
     password: "local-password",
     generateToken: true,
     dangerouslySkipAuth: options.skipAuth,
-  }, logger)
+  }, serverLogger)
 
   let target = ""
   let stopTunnel: (error?: string) => void = () => undefined
   let app: ReturnType<typeof createHttpServer>["instance"] | undefined
   let previewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
+  let voiceUpgrade: ReturnType<typeof createHttpServer>["remoteVoiceUpgrade"] | null = null
   const previewManager = new PreviewManager()
   const manager = new RemoteControlManager({
     registry: new RemoteDeviceRegistry(path.join(directory, "remote-control-devices.json")),
     router: () => (app ? (request, response) => app!.routing(request, response) : null),
     previewUpgrade: () => previewUpgrade,
+    voiceUpgrade: () => voiceUpgrade,
     hasPreview: (token) => previewManager.get(token) !== undefined,
-    logger,
+    logger: serverLogger,
     openTunnel: async (tunnelOptions) => {
       target = tunnelOptions.target
       if (options.openTunnel) return options.openTunnel(tunnelOptions)
@@ -82,7 +90,8 @@ export async function startRemoteSurface(t: TestContext, options: {
     allowedOrigins: options.allowedOrigins,
     bindPort: 0,
     defaultPort: 0,
-    protocol: "http",
+    protocol: options.httpsOptions ? "https" : "http",
+    httpsOptions: options.httpsOptions,
     workspaceManager: (options.panelExtensions?.workspaceManager ?? stub) as never,
     panelExtensions: options.panelExtensions?.store,
     settings: (options.settings ?? stub) as never,
@@ -91,6 +100,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub,
     speechService: stub,
+    liveVoice: options.liveVoice,
     sidecarManager: (options.sidecarManager ?? stub) as never,
     previewManager,
     remoteControlManager: manager,
@@ -99,12 +109,13 @@ export async function startRemoteSurface(t: TestContext, options: {
     remoteProxySessionManager: stub,
     yoloManager: stub,
     uiStaticDir: uiDir,
-    logger,
+    logger: serverLogger,
     nativeParent: stub,
     automationBridgeToken: "bridge-token",
   })
   app = server.instance
   previewUpgrade = server.previewUpgrade
+  voiceUpgrade = server.remoteVoiceUpgrade
   app.get("/api/test/echo", async (request) => ({
     loopbackPrivileges: authManager.isLoopbackRequest(request),
     forwardedFor: request.headers["x-forwarded-for"] ?? null,

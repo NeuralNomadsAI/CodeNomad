@@ -139,6 +139,10 @@ export class AuthManager {
     return { username: session.username, sessionId: session.id }
   }
 
+  watchSessionRevocation(sessionId: string, close: () => void): () => void {
+    return this.authEnabled ? this.sessionManager.watch(sessionId, close) : () => {}
+  }
+
   setSessionCookie(reply: FastifyReply, sessionId: string) {
     reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId))
   }

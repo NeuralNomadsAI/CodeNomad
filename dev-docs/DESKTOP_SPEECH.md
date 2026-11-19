@@ -19,6 +19,31 @@
 
 `composer-dictation.test.ts` and `remote-dictation-window.test.ts` exercise the renderer, draft and network boundaries with simulated native replies. The Electron and Tauri relay tests exercise host authorization and cancellation without requesting microphone access.
 
+## Live voice conversation
+
+`packages/server/src/speech/live-voice-contract.ts` is the shared wire contract.
+The user selects an engine; the server fixes the provider destination, model, voice and
+tool declarations. Local, tunneled and TLS-exception window connections use
+the dedicated [voice upgrade](REMOTE_CONTROL.md#live-voice-upgrades). Provider
+keys stay on the target backend: Gemini uses `x-goog-api-key` and OpenAI uses
+the bearer `Authorization` header on their provider WebSockets.
+
+- The gateway translates event envelopes; PCM samples remain unchanged.
+  [Gemini Live](https://ai.google.dev/api/live) uses `BidiGenerateContent`,
+  16 kHz PCM input and 24 kHz PCM output. [OpenAI Realtime](https://developers.openai.com/api/docs/guides/realtime-conversations/)
+  uses `/v1/realtime` and 24 kHz in both directions. The renderer stops queued
+  playback at interruption and reports OpenAI's played duration for truncation.
+- Only `send_to_agent` and `read_session` can reach the renderer. Replies must
+  match an outstanding call; Gemini cancellation retires the call. The gateway
+  has no OpenCode or filesystem tool access. Provider failure and disconnect
+  produce a fixed close reason, with no reconnect or engine fallback.
+- Each backend admits one live conversation per identity and four in total.
+  Setup has 10 seconds, inactivity two minutes, and the conversation eight
+  minutes. Only provider-detected user speech or Gemini input transcription
+  renews inactivity. PCM silence, pings and assistant output do not. Client
+  messages are capped at 32 KiB, provider messages at 256 KiB; rate, fragment
+  and queue limits apply before forwarding. Closing either side closes its peer.
+
 ## Driver contract
 
 - Read-only capabilities return actual availability and the current Hex plan. A plan token binds the named components, remaining download sizes and candidate file identities. `prepare` rechecks the token at admission. Verified Hex can be selected without invoking preparation. A zero-byte preparation may still need verification; the driver maintains byte limits, integrity, retained partials and readiness. Only verified success persists Hex.
