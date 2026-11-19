@@ -189,10 +189,12 @@ the Missions metadata key. Existing transcript, title, permissions and unrelated
 remain. The user's choice authorizes ordinary Mission controls over that conversation
 and its work, including Stop cancellation of existing queued user/synthetic inputs.
 For human-authored choices, never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
-An agent can explicitly select its own eligible root when saving a schedule. Saving
-allows that root's current turn; passage admission requires it to be idle.
-Followed/event sources, other active family work, queued inputs, durable claims,
-open requests and active or uncertain ownership by another Mission refuse agent adoption.
+An agent can explicitly select its own eligible root when saving a schedule.
+Selection checks placement, source and ownership while the conversation is active.
+Another root must be idle at selection. Every agent-authored passage requires an
+idle family, including its inbox, claims, tools and pending requests, at adoption.
+Deterministic coordinator selection refusals before a write return an exact
+request-bound refusal; incomplete or ambiguous writes retain their recovery hold.
 Preparation, configuration and every authoritative adoption revalidate this boundary before native
 profile, metadata, environment or input effects; the current passage's own marker is allowed.
 A missing chosen root stays missing; attempted admission retains its original proof rules.
@@ -397,7 +399,7 @@ explicit unavailable response. UI reads use the shared secondary HTTP budget.
 
 Explicit events share the native source preparation boundary:
 another schedule's successful passage, a completed one-time Mission, commits on
-a local branch, stable new messages in a followed conversation, and an explicit
+a local or remote branch, stable new messages in a followed conversation, and an explicit
 file set; repository pull/merge request creation and merging, issue creation, GitHub account
 notifications and Dependabot alerts.
 One reader call per event key (`native-mission-condition-reader.ts`)
@@ -425,6 +427,11 @@ event-specific fields stay in that card. `mission-editor-repository.ts` demands 
 owned `repository-source` read only while such a card is shown. Detection never rewrites
 a draft: selecting a forge event pins its provider, authority and repository path.
 Stored GitHub and branch criteria keep their exact policy and source keys on unchanged saves.
+`remote-branch-commits` pins the detected forge repository and exact `refs/heads/`
+reference. The branch reader uses the forge's direct branch endpoint and the
+existing account and repository checks. A changed remote tip triggers one
+passage per observation, including force-updates. A missing branch blocks the
+read. The tip is checked again before publishing a pending passage.
 
 `mission-repository-source.ts` reads `repository-activity` through Contribute's
 `ForgeWorkItems.openRepository`: shared remote selection, CLI discovery, anonymous

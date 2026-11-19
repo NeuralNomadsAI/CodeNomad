@@ -102,6 +102,8 @@ Une politique enregistrée que l’éditeur ne sait pas représenter reste sous 
 
 Dans **Conversations suivies**, utilisez **Ajouter une conversation** puis choisissez une conversation, y compris pour une Mission immédiate. Avant Play, changez une sélection ou utilisez son bouton × pour la retirer.
 
+Choisissez **Nouveaux commits sur une branche locale** pour suivre une référence Git locale, ou **Nouveaux commits sur une branche distante** et saisissez le nom de la branche (par exemple `dev`). La vérification interroge directement le dépôt distant détecté, sans `git fetch` local. Plusieurs commits entre deux vérifications déclenchent un seul passage.
+
 ### Programmations quotidiennes existantes {#existing-daily-schedules}
 
 Les agents peuvent trouver et contrôler ces programmations depuis toute conversation appartenant au même projet, y compris dans un autre worktree.

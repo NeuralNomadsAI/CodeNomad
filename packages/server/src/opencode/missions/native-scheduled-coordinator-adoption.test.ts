@@ -72,7 +72,7 @@ test("creation Effect prevalidation is read-only, guards native state and foreig
   const human = await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined }))
   assert.equal(human(), true, "explicit human adoption remains allowed while busy")
   const self = { coordinatorSessionID: "ses_root" }
-  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: self })), /coordinator-busy/)
+  assert.equal((await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: self })))(), true)
   db.exec("DELETE FROM session_inbox")
   authorActive = true
   db.exec("UPDATE session_v2 SET time_suspended=1 WHERE id='ses_root'")
@@ -83,8 +83,6 @@ test("creation Effect prevalidation is read-only, guards native state and foreig
   assert.equal((await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined,
     configuration: { ...configuration, coordinatorSelectionAuthor: self } })))(), true, "the author can set its own root on an existing schedule")
   authorActive = false
-  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: self })), /coordinator-busy/,
-    "an inactive claim is not the author's running turn")
   db.exec("DELETE FROM session_message WHERE id='msg_tool'; UPDATE session_v2 SET time_suspended=NULL WHERE id='ses_root'")
   const creation = await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, input))
   const prefix = `${MISSION_DOCUMENT_PREFIX}/project/${stableToken("project\0/project", 24)}/missions/`

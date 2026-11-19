@@ -102,6 +102,8 @@ A saved policy that the editor cannot represent stays under **Stored scheduling 
 
 In **Followed conversations**, use **Add conversation** and choose a conversation, including for an immediate Mission. Before Play, change a selection or use its × button to remove it.
 
+Choose **New commits on a local branch** to watch a local Git ref, or **New commits on a remote branch** and enter the branch name (for example `dev`). The remote check reads the detected repository directly, without a local fetch. Several commits between checks produce one passage.
+
 ### Existing daily schedules {#existing-daily-schedules}
 
 Agents can find and control these schedules from any conversation belonging to the same project, including another worktree.

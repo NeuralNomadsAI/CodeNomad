@@ -92,6 +92,8 @@ Seçilen program durumunu, sonraki uyanma/kontrolü, başlatılmış/başarılı
 
 **Takip edilen konuşmalar** altında **Konuşma ekle** ile bir konuşma seçin; anında Görev için de kullanılabilir. Başlatmadan önce seçimi değiştirin veya × düğmesiyle kaldırın.
 
+Yerel Git başvurusunu izlemek için **Yerel dalda yeni commit'ler** seçeneğini kullanın. Uzak dal için **Uzak dalda yeni commit'ler** seçeneğini ve `dev` gibi bir dal adı girin. Kontrol, yerel fetch olmadan algılanan depoyu doğrudan okur. İki kontrol arasındaki birden fazla commit tek geçiş başlatır.
+
 ### Mevcut günlük programlar {#existing-daily-schedules}
 
 Aracılar bu programları, başka bir çalışma ağacı da dahil olmak üzere aynı projeye ait herhangi bir konuşmadan bulabilir ve kontrol edebilir.

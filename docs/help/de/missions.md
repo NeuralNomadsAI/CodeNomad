@@ -94,6 +94,8 @@ Der ausgewählte Zeitplan zeigt Zustand, nächsten Termin beziehungsweise Prüfu
 
 Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, auch für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
 
+Wählen Sie **Neue Commits auf einem lokalen Branch**, um eine lokale Git-Referenz zu beobachten, oder **Neue Commits auf einem Remote-Branch** und geben Sie den Branch-Namen ein (z. B. `dev`). Die Prüfung liest das erkannte Repository direkt, ohne lokalen Fetch. Mehrere Commits zwischen Prüfungen ergeben einen Durchlauf.
+
 ### Bestehende tägliche Zeitpläne {#existing-daily-schedules}
 
 Agenten können diese Zeitpläne aus jeder Unterhaltung desselben Projekts finden und steuern, auch aus einem anderen Worktree.

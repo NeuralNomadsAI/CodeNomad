@@ -92,6 +92,8 @@ La programación seleccionada muestra estado, próximo despertar o comprobación
 
 En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, también para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
 
+Elige **Nuevos commits en una rama local** para seguir una referencia Git local o **Nuevos commits en una rama remota** e introduce el nombre de la rama (por ejemplo, `dev`). La comprobación consulta directamente el repositorio detectado, sin un fetch local. Varios commits entre comprobaciones generan un solo pase.
+
 ### Programaciones diarias existentes {#existing-daily-schedules}
 
 Los agentes pueden encontrar y controlar estas programaciones desde cualquier conversación del mismo proyecto, incluso en otro worktree.
