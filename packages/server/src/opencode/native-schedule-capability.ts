@@ -12,7 +12,7 @@ const object = (value: unknown): ObjectValue => value && typeof value === "objec
 export function nativeScheduleCapability(document: ObjectValue): { available: true } | {
   available: false; reason: "missing-api" | "incompatible-contract"
 } {
-  const base = "/api/experimental/schedule", item = `${base}/{scheduleID}`
+  const base = "/api/experimental/automation", item = `${base}/{automationID}`
   const routes = [[base, "post", "create"], [base, "get", "list"], [item, "get", "get"],
     [item, "delete", "delete"], [`${item}/pause`, "post", "pause"], [`${item}/resume`, "post", "resume"]]
   if (routes.some(([path, method]) => !object(document.paths?.[path])[method]))
@@ -26,34 +26,41 @@ export function nativeScheduleCapability(document: ObjectValue): { available: tr
   const type = (schema: unknown, expected: string) => resolve(schema).type === expected
   const includes = (values: unknown, value: string) => Array.isArray(values) && values.includes(value)
   const required = (schema: unknown, keys: string[]) => keys.every(key => includes(resolve(schema).required, key))
-  const when = (schema: unknown, tagged: boolean) => ["in", "at", "every", "cron"].every(trigger => {
+  const when = (schema: unknown) => ["at", "every", "cron"].every(trigger => {
     const branches = resolve(schema).anyOf
-    return Array.isArray(branches) && branches.some((branch: unknown) => type(branch, "object") && required(branch, tagged ? ["type", trigger] : [trigger])
-      && type(fields(branch)[trigger], "string") && (tagged ? type(fields(branch).type, "string")
-        && includes(resolve(fields(branch).type).enum, trigger) : type(fields(branch).tz, "string")))
+    return Array.isArray(branches) && branches.some((branch: unknown) => type(branch, "object") && required(branch, ["type", trigger])
+      && type(fields(branch)[trigger], "string") && type(fields(branch).tz, "string")
+      && includes(resolve(fields(branch).type).enum, trigger))
   })
+  const prompt = (schema: unknown, withTarget: boolean) => {
+    const actions = resolve(schema).anyOf
+    return Array.isArray(actions) && actions.some((branch: unknown) => type(branch, "object") && required(branch, ["type", "prompt"])
+      && includes(resolve(fields(branch).type).enum, "prompt") && type(fields(branch).prompt, "string")
+      && (!withTarget || required(branch, ["to"]) && Array.isArray(resolve(fields(branch).to).anyOf)
+        && resolve(fields(branch).to).anyOf.some((target: unknown) => required(target, ["session"]) && type(fields(target).session, "string"))))
+  }
   const info = (schema: unknown) => {
-    const properties = fields(schema), actions = resolve(properties.action).anyOf
-    return type(schema, "object") && required(schema, ["id", "when", "tz", "action", "status", "runCount", "time"])
-      && type(properties.id, "string") && type(properties.sessionID, "string") && type(properties.tz, "string")
+    const properties = fields(schema)
+    return type(schema, "object") && required(schema, ["id", "name", "projectID", "directory", "trigger", "tz", "action", "status", "runCount", "time"])
+      && ["id", "name", "projectID", "directory", "sessionID", "tz"].every(key => type(properties[key], "string"))
       && type(properties.runCount, "integer") && resolve(properties.runCount).minimum === 0
-      && type(properties.nextDueAt, "number") && type(properties.endsAt, "number")
+      && type(properties.nextDueAt, "number") && type(properties.expires, "number")
       && type(properties.status, "string") && ["active", "paused", "done"].every(status => includes(resolve(properties.status).enum, status))
       && type(properties.time, "object") && ["created", "updated"].every(key => type(fields(properties.time)[key], "number"))
-      && when(properties.when, true) && Array.isArray(actions) && actions.some((branch: unknown) => type(branch, "object") && required(branch, ["type", "prompt"])
-        && type(fields(branch).type, "string") && includes(resolve(fields(branch).type).enum, "prompt") && type(fields(branch).prompt, "string"))
+      && when(properties.trigger) && prompt(properties.action, true)
   }
   const inputs = (schema: unknown) => {
     const properties = fields(schema)
-    return type(schema, "object") && required(schema, ["sessionID", "prompt"]) && type(properties.sessionID, "string") && type(properties.prompt, "string")
-      && type(properties.ends, "object") && type(fields(properties.ends).at, "string") && when(properties.when, false)
+    return type(schema, "object") && required(schema, ["name", "trigger", "action"])
+      && type(properties.sessionID, "string") && type(properties.name, "string") && type(properties.expires, "string")
+      && when(properties.trigger) && prompt(properties.action, false)
   }
-  let valid = type(fields(fields(document.components?.schemas?.["Config.InfoEncoded"]).experimental).schedules, "boolean")
+  let valid = type(fields(fields(document.components?.schemas?.["Config.InfoEncoded"]).experimental).automations, "boolean")
   for (const [path, method, name] of routes) {
     const operation = document.paths[path][method]
-    valid &&= operation.operationId === `experimental.schedule.${name}`
+    valid &&= operation.operationId === `experimental.automation.${name}`
     if (path !== base) valid &&= Array.isArray(operation.parameters) && operation.parameters.some((parameter: ObjectValue) =>
-      parameter && parameter.name === "scheduleID" && parameter.in === "path" && parameter.required === true && type(parameter.schema, "string"))
+      parameter && parameter.name === "automationID" && parameter.in === "path" && parameter.required === true && type(parameter.schema, "string"))
     if (name === "delete") { valid &&= Boolean(operation.responses?.["204"]); continue }
     const response = operation.responses?.["200"]?.content?.["application/json"]?.schema
     valid &&= type(response, "object") && required(response, ["data"])
@@ -61,7 +68,8 @@ export function nativeScheduleCapability(document: ObjectValue): { available: tr
     valid &&= name === "list" ? type(data, "array") && info(resolve(data).items) : info(data)
     if (name === "create") valid &&= inputs(operation.requestBody?.content?.["application/json"]?.schema)
     if (name === "list") valid &&= Array.isArray(operation.parameters) && operation.parameters.some((parameter: ObjectValue) =>
-      parameter && parameter.name === "sessionID" && parameter.in === "query" && parameter.required === true && type(parameter.schema, "string"))
+      parameter && parameter.name === "sessionID" && parameter.in === "query"
+      && (type(parameter.schema, "string") || (Array.isArray(resolve(parameter.schema).anyOf) && resolve(parameter.schema).anyOf.some((member: unknown) => type(member, "string")))))
   }
   return valid ? { available: true } : { available: false, reason: "incompatible-contract" }
 }

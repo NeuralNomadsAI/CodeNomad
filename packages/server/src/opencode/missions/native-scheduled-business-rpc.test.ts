@@ -77,7 +77,7 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   }) }) } } }
   const partial = Context.add(Context.make(tag("@opencode/Location"), location), tag("@opencode/storage/Database"), db)
   const withSession = Context.add(partial, tag("@opencode/Session"), { native: true })
-  const full = scheduled ? Context.add(withSession, tag("@opencode/Schedule"), { native: true }) : withSession
+  const full = scheduled ? Context.add(withSession, tag("@opencode/Automation"), { native: true }) : withSession
   const invocation = nativeInvocation(), scope = await Effect.runPromise(Scope.make())
   t.after(() => Effect.runPromise(Scope.close(scope, { _tag: "Success", value: undefined } as never)))
   const mission = { id: pending.missionID, title: "Mission", objective: "Work", template: "custom", revision: 2, status: "active", runState: "running",
@@ -125,7 +125,7 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   } as unknown as Parameters<typeof executeNativeScheduledBusiness>[0]
   const acquire = () => Effect.gen(function* () {
     assert.ok(Option.isSome(yield* Effect.serviceOption(tag("@opencode/Session"))))
-    assert.equal(Option.isSome(yield* Effect.serviceOption(tag("@opencode/Schedule"))), scheduled)
+    assert.equal(Option.isSome(yield* Effect.serviceOption(tag("@opencode/Automation"))), scheduled)
     calls.acquired++; return runtime
   })
   const bridge = await Effect.runPromiseWith(Context.add(partial, Scope.Scope, scope))(registerNativeScheduledBusinessRpc(ctx, artifacts, invocation, acquire))

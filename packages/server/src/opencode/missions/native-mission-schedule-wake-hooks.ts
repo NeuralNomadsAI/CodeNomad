@@ -5,6 +5,7 @@ import { readNativeScheduleCarrierOwnership, NATIVE_SCHEDULE_CARRIER_SIGNAL, typ
 import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-schedule-carrier-identity"
 import { nativeMissionScheduleWakeContext } from "./native-mission-schedule-wake-context"
 import { nativeMissionSchedulePreparePrompt } from "./native-mission-schedule-wake-prepare"
+import { missionWakeMetadata, sameMissionAutomation } from "./native-mission-automation"
 
 /** Maintenance hooks use broad exact ownership, including retiring and attempted
  * descriptors. Only the context/RPC path decides whether a wake may advance. */
@@ -24,13 +25,11 @@ export const registerNativeMissionScheduleCarrierHooks = Effect.fn("missions.reg
   yield* ctx.session.hook("prompt", event => Effect.gen(function* () {
     const ownership = yield* owns(event.sessionID)
     if (!ownership) return
-    const value = event.metadata?.schedule as { id?: unknown; run?: unknown; dueAt?: unknown; late?: unknown } | undefined
-    if (typeof value?.id !== "string" || !Number.isSafeInteger(value.run) || Number(value.run) < 1 || !Number.isSafeInteger(value.dueAt)
-      || Number(value.dueAt) < 0 || typeof value.late !== "boolean" || event.messageID !== `msg_${value.id}_${value.run}`
-      || event.prompt.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL) throw new Error("schedule-carrier-prompt")
+    const value = missionWakeMetadata(event.metadata, event.messageID)
+    if (!value || event.prompt.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL) throw new Error("schedule-carrier-prompt")
     const owner = ownership.document!.calendarOwner
     const slots = [...owner?.slots ?? [], ...owner?.retired.map(item => item.descriptor) ?? []]
-    if (!slots.some(slot => slot.sessionID === event.sessionID && (slot.scheduleID === value.id || slot.creation === "attempted" && slot.scheduleID === null)))
+    if (!slots.some(slot => slot.sessionID === event.sessionID && (slot.scheduleID === null ? slot.creation === "attempted" : sameMissionAutomation(slot.scheduleID, value.id))))
       throw new Error("schedule-carrier-prompt-mapping")
     if (ownership.reference.role === "principal") yield* nativeMissionSchedulePreparePrompt(ctx, event)
   }))

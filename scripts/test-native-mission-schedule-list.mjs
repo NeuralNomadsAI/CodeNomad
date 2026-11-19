@@ -53,13 +53,13 @@ await withProductRuntime(cli, async ({ root }) => {
     }
     assert.ok(row.edit.structural)
   }
-  await client.experimental.schedule.pause({ scheduleID: seed.principalID })
+  await client.experimental.automation.pause({ automationID: seed.principalID })
   const paused = await rpc.scheduleRead({ missionID: seed.armed }, options)
   assert.equal(paused.document.state, "running", "Desired state is preserved by a display read")
   assert.equal(paused.document.revision, detail.document.revision)
   assert.equal(paused.document.observation.nativeStatus, "paused")
   assert.equal(paused.document.observation.nextDueAt, null)
-  await client.experimental.schedule.delete({ scheduleID: seed.principalID })
+  await client.experimental.automation.delete({ automationID: seed.principalID })
   const missing = await rpc.scheduleRead({ missionID: seed.armed }, options)
   assert.equal(missing.document.revision, detail.document.revision)
   assert.equal(missing.document.observation.state, "unknown", "A missing native row is never rearmed by a read")

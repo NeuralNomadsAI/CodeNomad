@@ -21,7 +21,7 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
-Minimum and recommended runtime **2.3.0** (`runtime-support.ts`), with **2.3.0**
+Minimum and recommended runtime **2.3.2** (`runtime-support.ts`), with **2.3.2**
 client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
 qualifies only the 2.3 subagent contract: every subagent call returns at once
 (`metadata.status: "running"`) and the child reports to its parent through
@@ -46,8 +46,8 @@ undergo authenticated contract recognition; missing canonical APIs, session
 environment or the replay shape give a concrete reason. OpenCode reads older
 stored data.
 
-Missions schedules qualify the consumed Schedule API, effective
-`experimental.schedules` flag and retained plugin/provider bundle independently
+Missions schedules qualify the consumed Automation API, effective
+`experimental.automations` flag and retained plugin/provider bundle independently
 of general runtime admission: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
 and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
 consumed capabilities, including on future versions. Schedule delivery qualification
@@ -55,6 +55,10 @@ uses the minimum/latest CI matrix, including cold scheduled passage admission wi
 the retained product bundle and CodeNomad backend closed; keep results in PR/CI evidence.
 Context hooks retain native message IDs; Missions consumes the transport's
 [native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
+
+GPT-6.2 on Responses routes uses OpenCode's cacheable developer-message prefix
+for both ordinary steps and provider compaction. CodeNomad leaves prompt
+assembly and token caching to OpenCode.
 
 ### Native Codex subscription usage
 

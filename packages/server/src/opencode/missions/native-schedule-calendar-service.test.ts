@@ -3,27 +3,30 @@ import path from "node:path"
 import test from "node:test"
 import { Context, Effect, Exit, Schema, Scope } from "effect"
 import { Location } from "@opencode/schema/location"
-import { Schedule } from "@opencode/schema/schedule"
+import { Automation } from "@opencode/schema/automation"
 import { SessionMessage } from "@opencode/schema/session-message"
 import type { Plugin } from "@opencode/plugin/effect"
 import { acquireNativeScheduleCalendarService } from "./native-schedule-calendar-service"
 import type { NativeScheduleCalendarTarget } from "./native-schedule-calendar-service"
 import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
+import { matchMissionAutomation } from "./native-mission-automation"
 
 async function facade(t: test.TestContext, availability: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void>) {
-  const state: { enabled: boolean; closed: boolean; row?: string; runCount?: number; condition?: Partial<Pick<Schedule.Info, "if" | "until">> } = { enabled: true, closed: false }, created: any[] = []
+  const state: { enabled: boolean; closed: boolean; row?: string; runCount?: number; action?: Automation.Info["action"] } = { enabled: true, closed: false }, created: any[] = []
   const directory = path.resolve("native-calendar-scope-unit-only")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory, project: { id: "project", directory, canonical: directory } })
   const selected: NativeScheduleCalendarTarget = { missionID: "calendar_scope", descriptor: { role: "principal", slot: 0, timeGeneration: 1,
     sessionID: `ses_cn_schedule_${"a".repeat(40)}`, name: "cm_scope", when: { type: "every", every: "900000 millis", tz: "UTC" }, endsAt: null,
     creation: "attempted", scheduleID: null, ambiguous: [], anchorAt: 1 } }
-  const info = (input: any) => Schema.decodeUnknownSync(Schedule.Info)({ id: "sch_scope", sessionID: input.sessionID, name: input.name,
-    when: input.when, tz: "UTC", action: input.action, status: "active", runCount: input.runCount ?? 0, time: { created: 1, updated: 1 }, ...state.condition })
+  const info = (input: any) => Schema.decodeUnknownSync(Automation.Info)({ id: "aut_scope", sessionID: input.sessionID, name: input.name,
+    directory, projectID: "project", trigger: input.trigger ?? input.when, tz: "UTC",
+    action: state.action ?? { ...input.action, to: { session: input.sessionID } },
+    status: "active", runCount: input.runCount ?? 0, time: { created: 1, updated: 1 } })
   const schedules = { create: (input: unknown) => Effect.sync(() => { created.push(structuredClone(input)); return info(input) }),
     list: () => Effect.succeed(state.runCount === undefined ? [] : [info({ sessionID: selected.descriptor.sessionID, name: selected.descriptor.name,
       when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })]),
-    get: () => state.runCount === undefined ? Effect.fail({ _tag: "Schedule.NotFoundError" }) : Effect.succeed(info({
+    get: () => state.runCount === undefined ? Effect.fail({ _tag: "Automation.NotFoundError" }) : Effect.succeed(info({
       sessionID: selected.descriptor.sessionID, name: selected.descriptor.name, when: selected.descriptor.when,
       action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })), pause: () => Effect.die("unexpected pause"),
     resume: () => Effect.die("unexpected resume"), remove: () => Effect.void, enabled: () => Effect.succeed(state.enabled) }
@@ -34,13 +37,13 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
   const scope = await Effect.runPromise(Scope.make())
   t.after(() => Effect.runPromise(Scope.close(scope, Exit.void)))
   const native = await Effect.runPromise(acquireNativeScheduleCalendarService(ctx, "build", () => true, undefined, () => availability(state)).pipe(
-    Effect.provideService(Context.Service<never, unknown>("@opencode/Schedule"), schedules),
+    Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"), schedules),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Location"), location),
     Effect.provideService(Context.Service<never, unknown>("@opencode/LocationLifecycle"), { isClosed: () => state.closed }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Config"), { entries: () => Effect.succeed([{ type: "document", info: { experimental: { schedules: state.enabled } } }]) }),
-    Effect.provideService(Context.Service<never, unknown>("@opencode/Flag"), { resolve: () => ({ schedules: { enabled: state.enabled, source: "config" } }) }),
+    Effect.provideService(Context.Service<never, unknown>("@opencode/Flag"), { resolve: () => ({ automations: { enabled: state.enabled, source: "config" } }) }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), { remove: () => Effect.void, active: Effect.succeed(new Set()) }),
-    Effect.provideService(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: { unsafe: () => ({ withoutTransform: Effect.sync(() => state.row === undefined ? [] : [{ data: state.row }]) }) } } }),
+    Effect.provideService(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: { unsafe: () => ({ withoutTransform: Effect.sync(() => state.row === undefined ? [] : [{ id: JSON.parse(state.row).id, data: state.row }]) }) } } }),
     Effect.provideService(Scope.Scope, scope)))
   return { native, selected, state, created, scope }
 }
@@ -54,7 +57,7 @@ test("native facade pins caller descriptors across asynchronous provider checks 
   f.selected.descriptor.sessionID = "ses_foreign"; f.selected.descriptor.when = { type: "every", every: "1800000 millis", tz: "UTC" }
   release(); await result
   assert.equal(f.created[0].sessionID, original.descriptor.sessionID)
-  assert.deepEqual(f.created[0].when, original.descriptor.when)
+  assert.deepEqual(f.created[0].trigger, original.descriptor.when)
   await Effect.runPromise(Scope.close(f.scope, Exit.void))
   await assert.rejects(f.native.create(original, () => true), /Location retired/)
   assert.equal(f.created.length, 1)
@@ -78,6 +81,9 @@ test("prepared wake ACK decodes encoded native SQL timestamps and keeps partial 
   const encoded = Schema.encodeSync(SessionMessage.User)(native)
   f.state.row = JSON.stringify(encoded)
   assert.equal(await f.native.wakeAcknowledged(f.selected, wake, () => true), true)
+  f.state.row = JSON.stringify({ ...encoded, id: "msg_aut_scope_1",
+    metadata: { automation: { id: "aut_scope", run: 1, dueAt: 1, late: false } } })
+  assert.equal(await f.native.wakeAcknowledged(f.selected, wake, () => true), true)
   f.state.row = JSON.stringify({ ...encoded, metadata: { schedule: { id: wake.scheduleID, run: 1, dueAt: 1 } } })
   assert.equal(await f.native.wakeAcknowledged(f.selected, wake, () => true), false)
   f.state.row = JSON.stringify(encoded); f.state.runCount = 0
@@ -86,13 +92,29 @@ test("prepared wake ACK decodes encoded native SQL timestamps and keeps partial 
   assert.equal(await f.native.wakeAcknowledged(f.selected, wake, () => true), false)
 })
 
-for (const mode of ["if", "until"] as const) for (const condition of [{ type: "code" as const, code: "return true" }, { type: "shell" as const, run: "echo true" }])
-  test(`native ${mode}/${condition.type} conditions reject an otherwise exact calendar before adoption or effects`, async t => {
+test("migrated calendars accept only the equivalent Windows directory spelling", async t => {
+  const { selected } = await facade(t, () => Effect.void)
+  const slot = { ...selected.descriptor, creation: "adopted" as const, scheduleID: "sch_scope" }
+  const info = Schema.decodeUnknownSync(Automation.Info)({ id: "aut_scope", sessionID: slot.sessionID,
+    name: slot.name, projectID: "project", directory: "D:/work/demo", trigger: slot.when, tz: "UTC",
+    action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: slot.sessionID } },
+    status: "active", runCount: 1, time: { created: 1, updated: 1 } })
+  const match = (directory: string, projectID = "project") =>
+    matchMissionAutomation(info, slot, { directory, projectID }, NATIVE_SCHEDULE_CARRIER_SIGNAL)
+  assert.equal(match("D:\\work\\demo"), true)
+  assert.equal(match("D:\\work\\different"), false)
+  assert.equal(match("D:\\work\\demo", "other"), false)
+  assert.equal(matchMissionAutomation({ ...info, directory: "/work/one\\two" }, slot,
+    { directory: "/work/one/two", projectID: "project" }, NATIVE_SCHEDULE_CARRIER_SIGNAL), false)
+})
+
+for (const action of [{ type: "code", code: "return true" }, { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: "ses_foreign" } }])
+  test(`native ${action.type} action for a different target is refused before adoption or effects`, async t => {
     const f = await facade(t, () => Effect.void), current = () => true as const
     f.state.runCount = 0
     assert.equal((await f.native.list(f.selected, current)).length, 1)
     assert.equal((await f.native.get(f.selected, "sch_scope", current))!.id, "sch_scope")
-    f.state.condition = { [mode]: condition }
+    f.state.action = Schema.decodeUnknownSync(Automation.Action)(action)
     await assert.rejects(f.native.list(f.selected, current), /Info differs/)
     await assert.rejects(f.native.get(f.selected, "sch_scope", current), /Info differs/)
     for (const action of ["pause", "resume", "remove"] as const)

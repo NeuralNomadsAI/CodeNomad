@@ -9,8 +9,8 @@ Unified documents store a launch policy (`missions/launch-policy.ts`): one order
 list `{ when }` of criteria, each a schedule (`{ kind: "now" }` once at Play, or
 one cron with its IANA zone) or one of the events below. A sole `now` criterion
 and an empty list use one-time journal admission at Play, with native-default profiles
-available. Mixed lists use native calendars and their frozen explicit profiles. Native
-schedule rows own future dates and civil-time behavior; Missions owns admission,
+available. Mixed lists use native calendars and their frozen explicit profiles. OpenCode
+Automation rows own future dates and civil-time behavior; Missions owns admission,
 non-overlap, frozen inputs, launch counts and settlement.
 
 ### Launch criteria
@@ -228,6 +228,12 @@ desired running wakes its owning Location with CodeNomad UI/backend closed and
 without prior project access or human Resume. At rest it returns to calendar work;
 with pending work it reconciles the original passage/session/message identities.
 The durable auxiliary reconciliation calendar remains until that passage settles.
+
+A Mission whose calendar OpenCode migrated keeps its durable calendar and wake IDs.
+The native adapter resolves that calendar to the matching `aut_` row, checks the
+exact owned session, project, timing and fixed action, and verifies each pending
+wake against its unique durable native message. An absent or conflicting row
+does not authorize a new calendar, wake or passage.
 
 Explicit Pause, terminal Stop, proven failure and a proven end without a report
 retain their admission barriers and human recovery controls. Incomplete native

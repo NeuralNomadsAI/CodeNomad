@@ -173,13 +173,13 @@ async function journey(kind) {
     const sessions = db.prepare("SELECT id,parent_id,metadata,time_suspended FROM session_v2 WHERE json_extract(metadata,'$.\"codenomad.mission\".document.missionID')=? LIMIT 16").all(id)
     const schedules = (doc.calendarOwner?.slots ?? []).filter(slot => slot.scheduleID).map(slot => {
       const schedule = { role: slot.role,
-        ...db.prepare('SELECT id,session_id,status,next_due_at,run_count,time_created,"when" AS native_when FROM schedule WHERE id=?').get(slot.scheduleID) }
+        ...db.prepare("SELECT id,session_id,status,next_due_at,run_count,time_created,trigger AS native_when FROM automation WHERE id=?").get(slot.scheduleID) }
       if (failureDetails) {
-        Object.assign(schedule, db.prepare("SELECT last_outcome,retry_at,time_updated,last_message_id FROM schedule WHERE id=?").get(slot.scheduleID))
+        Object.assign(schedule, db.prepare("SELECT last_outcome,retry_at,time_updated,last_message_id FROM automation WHERE id=?").get(slot.scheduleID))
         const proof = row => {
           if (!row) return null
           const { body, ...status } = row, data = body === null ? null : JSON.parse(body), text = data?.text
-          return { ...status, bodyOmitted: body === null, schedule: data?.metadata?.schedule ?? null,
+          return { ...status, bodyOmitted: body === null, schedule: data?.metadata?.automation ?? null,
             textBytes: typeof text === "string" ? Buffer.byteLength(text) : null, textSHA256: typeof text === "string" ? hash(text) : null }
         }
         schedule.carrier = { sessionID: slot.sessionID,
@@ -202,7 +202,7 @@ async function journey(kind) {
     const session = db.prepare("SELECT time_suspended FROM session_v2 WHERE id=?").get(item.sessionID)
     return { ...item, sessionPresent: !!session, nativeClaim: session?.time_suspended,
       inboxCount: db.prepare("SELECT count(*) AS count FROM session_inbox WHERE session_id=?").get(item.sessionID).count,
-      schedulePresent: !!db.prepare("SELECT 1 FROM schedule WHERE id=?").get(item.scheduleID), reverseIndexPresent: !!db.prepare("SELECT 1 FROM kv WHERE key=?").get(item.lookupKey) }
+      schedulePresent: !!db.prepare("SELECT 1 FROM automation WHERE id=?").get(item.scheduleID), reverseIndexPresent: !!db.prepare("SELECT 1 FROM kv WHERE key=?").get(item.lookupKey) }
   }))
   const learnTechnical = state => {
     const location = { project: { id: state.document.projectID, canonical: state.document.projectCanonical } }
@@ -381,7 +381,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
    const target=raw,session=yield*ctx.session.get({sessionID:target.sessionID}),marker=session.metadata?.["codenomad.schedule-carrier"];
    const url=new URL(target.url);if(url.protocol!=="http:"||url.hostname!=="127.0.0.1"||url.pathname!=="/hold-preparing"||url.port==="28894"||url.username||url.password||url.search||url.hash||marker?.missionID!==target.missionID||marker.role!=="principal")throw Error("fixture-preparing-target");
    let used=false;yield*ctx.session.hook("prompt",event=>Effect.gen(function*(){
-    if(used||event.sessionID!==target.sessionID)return;used=true;const schedule=event.metadata?.schedule;
+    if(used||event.sessionID!==target.sessionID)return;used=true;const schedule=event.metadata?.automation;
     if(typeof schedule?.id!=="string"||event.messageID!=="msg_"+schedule.id+"_"+schedule.run)throw Error("fixture-preparing-wake");
     yield*Effect.tryPromise({try:async signal=>{const response=await Reflect.apply(state.original,globalThis,[url.href,{method:"POST",headers:{"content-type":"application/json","x-fixture-barrier":target.token},body:JSON.stringify({sessionID:event.sessionID,messageID:event.messageID,schedule}),signal:AbortSignal.any([signal,AbortSignal.timeout(6500)])}]);if(!response.ok)throw Error("fixture-preparing-refused");await response.json()},catch:()=>Error("fixture-preparing-aborted")}).pipe(Effect.orDie);
    })).pipe(Effect.provideService(Scope.Scope,ownerScope));return{armed:true,sessionID:target.sessionID};
@@ -406,7 +406,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       await build({ ...nativePluginBuild, entryPoints: [fileURLToPath(new URL("../packages/server/src/opencode/missions/native-schedule-carrier-clock-fixture.ts", import.meta.url))], outfile: path.join(clock, "index.mjs") })
       await writeFile(path.join(clock, "package.json"), JSON.stringify({ name: "codenomad-product-clock-qualification", type: "module", exports: { ".": "./index.mjs" } })); extraPlugins.push(clock)
     }
-    const configuration = { update: "disable", snapshots: false, experimental: { schedules: true }, permissions: [{ action: "*", resource: "*", effect: "allow" }],
+    const configuration = { update: "disable", snapshots: false, experimental: { automations: true }, permissions: [{ action: "*", resource: "*", effect: "allow" }],
       plugins: extraPlugins, model: "fixture/fixture", agents: { "fixture-worker": { mode: "all", description: "Owned native product coordinator" }, title: { model: "fixture/fixture" }, compaction: { model: "fixture/fixture" } },
        providers: { fixture: { activation: "enabled", package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: { limit: { context: 128000, output: 4096 } } } } } }
     assert(!("codenomad-missions-local" in configuration.providers))
@@ -436,7 +436,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
           const target = view.documents.find(item => item.scope === "global"), relative = target && path.relative(root, target.document.writePath)
           assert(target && relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
           return [{ scope: "global", path: target.path, expectation: experimentalEditor.nativeSettingExpectation(target.document),
-            updated: experimentalEditor.editMissionExperimental(target.document, "schedules", request.body.enabled,
+            updated: experimentalEditor.editMissionExperimental(target.document, "automations", request.body.enabled,
               experimentalEditor.inheritedMissionExperimental(view.entries, target.path, view.location.directory), "global") }]
         }, { beforeWrite: async () => {}, afterWrite: async () => {} })
         return { enabled: request.body.enabled }
@@ -460,7 +460,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
         nativeFlag: async enabled => {
           const response = await fetch(`${baseURL}/fixture/native-schedules`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }), signal: AbortSignal.timeout(15000) })
           assert.equal(response.status, 200, "Owned fixture config API failed")
-          await until(async () => experimentalEditor.effectiveMissionExperimental(await client.config.get({ location: { directory: project } })).schedules === enabled)
+          await until(async () => experimentalEditor.effectiveMissionExperimental(await client.config.get({ location: { directory: project } })).automations === enabled)
         } })
       result.calls = calls; result.status = values["diagnose-stop"] || controlTrace ? "diagnostic-only" : "passed"; result.stage = "completed"; return result
     }

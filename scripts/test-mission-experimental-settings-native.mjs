@@ -15,9 +15,9 @@ import { resolveDesktopPluginPaths } from "../packages/server/src/opencode/deskt
 import { CODENOMAD_MISSIONS_RPC } from "../packages/server/src/missions/rpc.ts"
 
 await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
-  await writeFile(path.join(configDirectory, "opencode.jsonc"), '{"experimental":{"subagent_depth":2,"schedules":true}}\n')
+  await writeFile(path.join(configDirectory, "opencode.jsonc"), '{"experimental":{"subagent_depth":2,"automations":true}}\n')
 }, async ({ root, connection, requests }) => {
-  assert.equal((await connection.client.server.info()).version, "2.3.0")
+  assert.equal((await connection.client.server.info()).version, "2.3.2")
   const plugin = new DesktopPluginLifecycle("missions")
   const paths = await resolveDesktopPluginPaths(connection, { kind: "host", platform: process.platform, binary: process.argv[2] })
   assert.ok(paths.config.startsWith(root))
@@ -50,12 +50,12 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
   assert.deepEqual((await schedules.read("fixture", location)).api, { available: true })
   await depths.update("fixture", location, 8, initial.project.expectation)
   const file = initial.project.path
-  assert.deepEqual(parse(await readFile(file, "utf8")).experimental, { schedules: true, subagent_depth: 8 })
+  assert.deepEqual(parse(await readFile(file, "utf8")).experimental, { automations: true, subagent_depth: 8 })
   await until(async () => (await schedules.read("fixture", location)).enabled && (await depths.read("fixture", location)).effectiveDepth === 8, "inherited schedules + depth 8")
   assert.equal((await schedules.read("fixture", location)).origin, file)
   await depths.update("fixture", location, 0, (await depths.read("fixture", location)).project.expectation)
   await depths.update("fixture", location, null, (await depths.read("fixture", location)).project.expectation)
-  assert.deepEqual(parse(await readFile(file, "utf8")).experimental, { schedules: true })
+  assert.deepEqual(parse(await readFile(file, "utf8")).experimental, { automations: true })
   await until(async () => (await depths.read("fixture", location)).effectiveDepth === null && (await schedules.read("fixture", location)).enabled, "depth removal preserving schedules")
   // Depth-only project created before activation; prepare expectation before editing.
   await writeFile(file, '\uFEFF{\r\n\t// keep\r\n\t"experimental":{"subagent_depth":8,"todo":true}\r\n}\r\n')
@@ -65,31 +65,31 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
   const expected = nativeSettingExpectation(project.document)
   await controls.editConfigDocument("fixture", location, "project", (document, current) => {
     assert.equal(nativeSettingExpectation(document), expected)
-    return editMissionExperimental(document, "schedules", true,
+    return editMissionExperimental(document, "automations", true,
       inheritedMissionExperimental(current.entries, current.path, current.location.directory))
   })
   const saved = await readFile(file, "utf8")
   assert.match(saved, /^\uFEFF/); assert.match(saved, /\r\n\t\/\/ keep/)
-  assert.deepEqual(parse(saved.slice(1)).experimental, { subagent_depth: 8, todo: true, schedules: true })
+  assert.deepEqual(parse(saved.slice(1)).experimental, { subagent_depth: 8, todo: true, automations: true })
   await until(async () => (await schedules.read("fixture", location)).enabled, "project activation")
-  await writeFile(file, '{"experimental":{"schedules":false,"subagent_depth":0}}')
+  await writeFile(file, '{"experimental":{"automations":false,"subagent_depth":0}}')
   await assert.rejects(controls.editConfigDocument("fixture", location, "project", document =>
-    editMissionExperimental(document, "schedules", true, {})), /explicitly disabled/)
+    editMissionExperimental(document, "automations", true, {})), /explicitly disabled/)
   const competing = path.join(path.dirname(file), "opencode.json")
   await writeFile(competing, "{}")
   await assert.rejects(depths.read("fixture", location), /JSON and JSONC/)
   await rm(competing)
   const globalFile = (await controls.readConfigDocuments("fixture", location)).documents.find(item => item.scope === "global").path
-  await writeFile(globalFile, '{"experimental":{"schedules":false,"subagent_depth":2}}\n')
+  await writeFile(globalFile, '{"experimental":{"automations":false,"subagent_depth":2}}\n')
   await writeFile(file, '{"experimental":{"subagent_depth":8}}\n')
   await until(async () => (await connection.client.config.get({ location })).some(entry =>
-    entry.type === "document" && entry.path === globalFile && entry.info.experimental?.schedules === false), "global OFF before activation")
+    entry.type === "document" && entry.path === globalFile && entry.info.experimental?.automations === false), "global OFF before activation")
   const activate = () => new NativeScheduleSettingsActivation(controls, manager)
   await assert.rejects(activate().prepare("fixture", location), error =>
     error.code === "schedule-activation-refused" && error.refusal.path === globalFile)
   await writeFile(globalFile, '{"experimental":{"subagent_depth":2}}\n')
   await until(async () => (await connection.client.config.get({ location })).some(entry =>
-    entry.type === "document" && entry.path === globalFile && entry.info.experimental?.schedules === undefined), "global OFF cleared")
+    entry.type === "document" && entry.path === globalFile && entry.info.experimental?.automations === undefined), "global OFF cleared")
   const globalBefore = await readFile(globalFile, "utf8")
   const plan = await activate().prepare("fixture", location)
   assert.deepEqual(plan.targets.map(item => item.scope), ["project"])
@@ -110,7 +110,7 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
   await assert.rejects(activate().apply("fixture", location, structuredClone(intent), journal), /lost activation ACK/)
   assert.equal(ready, false)
   assert.equal(await readFile(globalFile, "utf8"), globalBefore)
-  assert.equal(parse(await readFile(file, "utf8")).experimental.schedules, true)
+  assert.equal(parse(await readFile(file, "utf8")).experimental.automations, true)
   await activate().apply("fixture", location, JSON.parse(await readFile(intentFile, "utf8")), journal)
   assert.equal(ready, true)
   assert.ok(intent.targets.every(target => target.acknowledged))
@@ -122,16 +122,16 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
     && (await depths.read("fixture", location)).effectiveDepth === null, "existing project block before schedule activation")
   const depthBefore = (await depths.read("fixture", location)).effectiveDepth
   await controls.editConfigDocument("fixture", location, "project", (document, current) =>
-    editMissionExperimental(document, "schedules", true,
+    editMissionExperimental(document, "automations", true,
       inheritedMissionExperimental(current.entries, current.path, current.location.directory)))
-  assert.deepEqual(parse(await readFile(file, "utf8")).experimental, { todo: true, schedules: true })
+  assert.deepEqual(parse(await readFile(file, "utf8")).experimental, { todo: true, automations: true })
   await until(async () => (await schedules.read("fixture", location)).enabled, "schedule activation preserving existing depth default")
   assert.equal((await depths.read("fixture", location)).effectiveDepth, depthBefore)
   assert.equal(requests.length, 0)
   const enabledPlan = await activate().prepare("fixture", location)
   assert.deepEqual(enabledPlan.targets, [])
   assert.equal(await readFile(globalFile, "utf8"), globalBefore)
-  console.log("PASS native 2.3.0 Flag RPC, whole-block precedence, both writer orders, depth 0/removal, effective watcher read, explicit global/project OFF, BOM/EOL/comments, ambiguous JSON/JSONC; zero provider HTTP")
+  console.log("PASS native 2.3.2 Flag RPC, whole-block precedence, both writer orders, depth 0/removal, effective watcher read, explicit global/project OFF, BOM/EOL/comments, ambiguous JSON/JSONC; zero provider HTTP")
   console.log("PASS project-only activation, durable intent/attempts, lost project ACK observation, positive native acknowledgement and zero-target already-ON plan")
   console.log("PASS schedule activation preserves the effective native depth of an existing project experimental block")
   } finally { await plugin.stop() }
@@ -139,9 +139,9 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
 
 // Each case owns a fresh daemon: its environment is independent of the backend's.
 for (const scenario of [
-  { name: "environment OFF over configured ON", flags: "fixture,-schedules", global: { schedules: true },
+  { name: "environment OFF over configured ON", flags: "fixture,-automations", global: { automations: true },
     enabled: false, provenance: "environment", refused: true },
-  { name: "environment ON", flags: "fixture,schedules", global: {},
+  { name: "environment ON", flags: "fixture,automations", global: {},
     enabled: true, provenance: "environment" },
   { name: "all-flags below a project block", global: { all_flags: true }, project: { todo: true },
     enabled: true, provenance: "all-flags" },

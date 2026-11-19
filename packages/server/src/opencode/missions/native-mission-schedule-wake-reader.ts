@@ -7,6 +7,7 @@ import type { NativeMissionDocumentRunner } from "./native-mission-document-stor
 import type { NativeScheduleWake } from "./native-schedule-transport-contract"
 import { assertNativeScheduleWake } from "./native-schedule-transport-contract"
 import { NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
+import { missionWakeMetadata, missionWakeReadIDs, sameMissionAutomation } from "./native-mission-automation"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -32,7 +33,7 @@ export const acquireNativeMissionScheduleWakeReader = Effect.fn("missions.acquir
   }
   // Context classification cannot spend the nine deterministic recovery reads.
   // SQL applies both byte ceilings before returning any native message body.
-  const classification = { reads: 0, bytes: 0, limit: 128 }, recovery = { reads: 0, bytes: 0, limit: 9 }
+  const classification = { reads: 0, bytes: 0, limit: 128 }, recovery = { reads: 0, bytes: 0, limit: 18 }
   const resolved = new Map<string, unknown>()
   const key = (sessionID: string, messageID: string) => JSON.stringify([sessionID, messageID])
   const read = async (sessionID: string, messageID: string, budget = recovery) => {
@@ -51,13 +52,19 @@ export const acquireNativeMissionScheduleWakeReader = Effect.fn("missions.acquir
   const message = async (wake: NativeScheduleWake) => {
     assertNativeScheduleWake(wake)
     current()
-    const data = resolved.get(key(wake.sessionID, wake.messageID)) ?? await read(wake.sessionID, wake.messageID)
+    let data: unknown
+    for (const id of missionWakeReadIDs(wake.scheduleID, wake.run)) {
+      const row = resolved.get(key(wake.sessionID, id)) ?? await read(wake.sessionID, id)
+      if (!row) continue
+      if (data) throw new Error("schedule-wake-reader-coverage")
+      data = row
+    }
     if (!data || (data as { type?: unknown }).type !== "user") return undefined
     const user = Schema.decodeUnknownSync(SessionMessage.User)(data)
-    const metadata = user.metadata?.schedule as { id?: unknown; run?: unknown; dueAt?: unknown; late?: unknown } | undefined
-    if (user.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL || metadata?.id !== wake.scheduleID || metadata.run !== wake.run
-      || !Number.isSafeInteger(metadata.dueAt) || Number(metadata.dueAt) < 0 || typeof metadata.late !== "boolean") return undefined
-    return { scheduleID: wake.scheduleID, run: wake.run, messageID: wake.messageID, dueAt: Number(metadata.dueAt) }
+    const metadata = missionWakeMetadata(user.metadata, user.id)
+    if (user.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL || !metadata || !sameMissionAutomation(metadata.id, wake.scheduleID)
+      || metadata.run !== wake.run) return undefined
+    return { scheduleID: wake.scheduleID, run: wake.run, messageID: wake.messageID, dueAt: metadata.dueAt }
   }
   // The LLM projection supplies IDs only. Resolve every user-role entry against
   // its native row, including wakes; projected metadata and prose carry no proof.
