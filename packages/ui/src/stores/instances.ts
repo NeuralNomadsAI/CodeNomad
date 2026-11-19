@@ -36,7 +36,7 @@ import { getRootClient } from "./opencode-client"
 import { refreshSessionRuntimeStatus } from "./session-api"
 import { clearPendingSessionMove } from "./session-events"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
-import { backgroundReads } from "../lib/background-read-queue"
+import { BackgroundReadQueue, backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { capturePendingRecoveryNotices, claimPendingRecoveryNotice } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
@@ -285,6 +285,8 @@ const pendingRequestSyncs = new Map<string, {
 }>()
 const pendingRequestLiveness = new Map<string, Promise<void>>()
 const pendingRequestControllers = new Map<string, Set<AbortController>>()
+const pendingRecoveryNoticeChecks = new Map<string, AbortController>()
+const pendingRecoveryNoticeReads = new BackgroundReadQueue(1)
 const [incompletePendingRecovery, setIncompletePendingRecovery] = createSignal<ReadonlySet<string>>(new Set())
 export { incompletePendingRecovery }
 const notifiedPendingRecovery = new Set<string>()
@@ -403,20 +405,22 @@ function observePendingCompaction(instanceId: string, event: Parameters<NonNulla
   } else resumePendingDiscovery()
 }
 
-async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true, timeoutMs = 10_000, shouldDefer = () => deferPendingDiscovery(instanceId)): Promise<T> {
+async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true, timeoutMs = 10_000, parentSignal?: AbortSignal): Promise<T> {
   const controller = new AbortController()
+  const signal = parentSignal ? AbortSignal.any([parentSignal, controller.signal]) : controller.signal
   const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
   controllers.add(controller)
   pendingRequestControllers.set(instanceId, controllers)
   try {
     const timed = async () => {
       // Check after background queue admission, immediately before dispatch.
-      if (background && shouldDefer()) throw pendingDiscoveryDeferred
+      signal.throwIfAborted()
+      if (background && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
       const timeout = setTimeout(() => controller.abort(), timeoutMs)
-      try { return await run(controller.signal) }
+      try { return await run(signal) }
       finally { clearTimeout(timeout) }
     }
-    return await (background ? backgroundReads.run(controller.signal, timed) : timed())
+    return await (background ? backgroundReads.run(signal, timed) : timed())
   } finally {
     controllers.delete(controller)
     if (!controllers.size && pendingRequestControllers.get(instanceId) === controllers) {
@@ -454,6 +458,7 @@ function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
 }
 
 function invalidatePendingRequestSync(instanceId: string): void {
+  pendingRecoveryNoticeChecks.get(instanceId)?.abort()
   if (instances().has(instanceId)) markPendingRecovery(instanceId, true)
   bumpEpoch(pendingRequestSyncEpochs, instanceId)
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
@@ -808,9 +813,9 @@ function pendingSnapshotResults<T>(
 
 async function readPendingRequestSnapshot(
   instanceId: string, isCurrent: () => boolean,
-  { reconcileInventory = true, onlyDirectories, noticeOnly = false }: { reconcileInventory?: boolean; onlyDirectories?: string[]; noticeOnly?: boolean } = {},
+  { reconcileInventory = true, onlyDirectories, noticeSignal }: { reconcileInventory?: boolean; onlyDirectories?: string[]; noticeSignal?: AbortSignal } = {},
 ): Promise<RecoverySnapshot> {
-  const shouldDefer = () => noticeOnly ? isPendingDiscoveryCompacting() : deferPendingDiscovery(instanceId)
+  const shouldDefer = () => noticeSignal ? isPendingDiscoveryCompacting() : deferPendingDiscovery(instanceId)
   const requiredDirectories = () => new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false)
     .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
   const required = requiredDirectories()
@@ -856,7 +861,7 @@ async function readPendingRequestSnapshot(
       const next = await withPendingRequestTimeout(instanceId, (signal) => {
         if (!isCurrent()) throw pendingRequestSyncSuperseded
         return serverApi.getPendingRequests(instanceId, batch, signal, optional)
-      }, true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000, shouldDefer)
+      }, !noticeSignal, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000, noticeSignal)
       if (next.supported === false) return next
       if (next.supported !== true) throw new Error("Invalid pending request snapshot")
       addBatch(next.directories)
@@ -1094,16 +1099,21 @@ async function runPendingRequestSync(
           if (missing.length) {
             // Only proven exclusions can account for folders outside the scan.
             // This probe does not publish queue data or change the scan outcome.
-            const probeCurrent = () => isCurrent() && notices.current()
             return () => {
-              if (!probeCurrent()) return
-              void readPendingRequestSnapshot(instanceId, probeCurrent, {
-                reconcileInventory: false, onlyDirectories: missing, noticeOnly: true,
-              }).then(proof => {
+              if (!isCurrent() || !notices.current()) return
+              const controller = new AbortController()
+              pendingRecoveryNoticeChecks.set(instanceId, controller)
+              const probeCurrent = () => !controller.signal.aborted && isCurrent() && notices.current()
+              void pendingRecoveryNoticeReads.run(controller.signal, async () => {
+                const proof = await readPendingRequestSnapshot(instanceId, probeCurrent, {
+                  reconcileInventory: false, onlyDirectories: missing, noticeSignal: controller.signal,
+                })
                 if (probeCurrent() && proof.supported) {
                   notices.release([...covered, ...proof.directories.filter(entry => entry.status === "excluded").map(entry => entry.directory)])
                 }
-              }, () => {})
+              }).catch(() => {}).finally(() => {
+                if (pendingRecoveryNoticeChecks.get(instanceId) === controller) pendingRecoveryNoticeChecks.delete(instanceId)
+              })
             }
           }
         }
@@ -1145,6 +1155,7 @@ function syncPendingRequests(
     return existing.promise
   }
   const token = { cancelled: false }
+  pendingRecoveryNoticeChecks.get(instanceId)?.abort()
   if (!targetLocations) deferredPendingDiscovery.delete(instanceId)
   const promise = runPendingRequestSync(instanceId, generation, token, targetLocations).finally(() => {
     if (pendingRequestSyncs.get(instanceId)?.promise === promise) pendingRequestSyncs.delete(instanceId)
