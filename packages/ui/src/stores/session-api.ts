@@ -625,9 +625,11 @@ async function hydrateRestoredSessionChainAttempt(
               // Publish the matching proof before the row notifies sidebar readers.
               if (needsPlacementEvidence && getPendingSessionMove(instanceId, sessionId) === move && matchesSessionPlacement(merged, placement)) {
                 const away = getMovedAwaySessions(instanceId)
-                const returned = !move && capturedAway !== undefined && away.get(sessionId) === capturedAway
-                  && listWorktreeSlug !== undefined && getWorktrees(instanceId).some(worktree => worktree.slug === listWorktreeSlug)
-                if (!away.has(sessionId) || returned) confirmSessionPlacement(instanceId, sessionId, placement)
+                const returning = !move && capturedAway !== undefined && away.get(sessionId) === capturedAway && listWorktreeSlug !== undefined
+                const returned = returning && getWorktrees(instanceId).some(worktree => worktree.slug === listWorktreeSlug)
+                if (!away.has(sessionId) || returning) {
+                  confirmSessionPlacement(instanceId, sessionId, placement, returning && !returned ? capturedAway : undefined)
+                }
                 if (returned) forgetSessionMovedAway(instanceId, sessionId)
               }
               instanceSessions.set(sessionId, merged)

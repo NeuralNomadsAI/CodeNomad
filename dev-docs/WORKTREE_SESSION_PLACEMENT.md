@@ -84,8 +84,10 @@ Implementation:
   of the scope (below) and makes a later published inventory serving the destination
   list it again. A current placement read confirming a registered checkout
   also clears the prior departure, including for a favorite reopened through
-  an alias. A session refresh at a served directory, deletion, another move,
-  or closing the instance releases the record.
+  an alias. If the inventory is still catching up, that confirmation stays
+  pending until the registered checkout is listed, fenced by the client
+  generation and the observed departure. A session refresh at a served
+  directory, deletion, another move, or closing the instance releases the record.
   Each instance settles moves from its own ordered relay stream, using a per-session
   generation to fence inventory reads and probes overtaken by a later move.
   The relay checks the payload destination independently of the envelope. Without

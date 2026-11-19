@@ -11,7 +11,7 @@ import { addInstance, removeInstance } from "./instances"
 import { setInstanceMetadata } from "./instance-metadata"
 import { fetchSessions, hydrateRestoredSessionChain, refreshSessionRuntimeStatus, removeSessionRuntimeState } from "./session-api"
 import { hydrateRestoredWorkspaceState, seedRestoredWorkspaceState } from "./app-session-workspace-hydration"
-import { ensureWorktreesLoaded, getWorktreeSlugForParentSession } from "./worktrees"
+import { ensureWorktreesLoaded, getWorktreeSlugForParentSession, reloadWorktrees } from "./worktrees"
 import { captureSessionCatalog } from "./session-catalog-persistence"
 import { activeParentSessionId, activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, getInstanceSessionIndicatorStatusCached, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, setActiveParentSession, setActiveSessionFromList, setSessionDraftPrompt, setSessionPendingPermission, setSessionStatus, sessions, setSessions, withSession } from "./session-state"
 import { messageStoreBus } from "./message-v2/bus"
@@ -399,15 +399,16 @@ for (const directory of ["/linked-alias", "/repo/linked-alias"]) test(`cold rest
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees; f.cleanup() }
 })
 
-for (const mode of ["return", "new departure", "unregistered"] as const) test(`favorite placement reconciles a previous departure (${mode})`, async () => {
+for (const mode of ["return", "late inventory", "late inventory after departure", "new departure", "unregistered"] as const) test(`favorite placement reconciles a previous departure (${mode})`, async () => {
   const id = `favorite-return-${mode.replaceAll(" ", "-")}`, f = fixture(id)
   const originalWorktrees = serverApi.fetchWorktrees
   const started = deferred<void>(), read = deferred<any>()
   const alias = { ...row("root"), parentID: undefined, location: { directory: "/repo/linked-alias" },
     listWorktreeSlug: mode === "unregistered" ? undefined : "linked" }
+  let hasLinked = !mode.startsWith("late inventory")
   serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
     { slug: "root", directory: "/repo", kind: "root" },
-    { slug: "linked", directory: "/repo-linked", kind: "worktree" },
+    ...(hasLinked ? [{ slug: "linked", directory: "/repo-linked", kind: "worktree" } as const] : []),
   ] })
   f.client.session.get = async () => { started.resolve(); return read.promise }
   f.client.session.list = async (input: any) => ({ data: input.project ? [alias] : [], cursor: {} })
@@ -422,12 +423,20 @@ for (const mode of ["return", "new departure", "unregistered"] as const) test(`f
     if (mode === "new departure") markSessionMovedAway(id, "root", "/newer-project")
     read.resolve(alias)
     await restoring
+    if (!hasLinked) {
+      assert.equal(getMovedAwaySessions(id).get("root"), "/other-project")
+      assert.equal(getSessionThreads(id).some(thread => thread.session.id === "root"), false)
+      if (mode === "late inventory after departure") markSessionMovedAway(id, "root", "/newer-project")
+      hasLinked = true
+      await reloadWorktrees(id, true)
+    }
     await fetchSessions(id, { strictStatus: true })
-    assert.equal(getMovedAwaySessions(id).get("root"), mode === "return" ? undefined
-      : mode === "new departure" ? "/newer-project" : "/other-project")
-    assert.equal(getSessionThreads(id).some(thread => thread.session.id === "root"), mode === "return")
+    const returned = mode === "return" || mode === "late inventory"
+    assert.equal(getMovedAwaySessions(id).get("root"), returned ? undefined
+      : mode === "new departure" || mode === "late inventory after departure" ? "/newer-project" : "/other-project")
+    assert.equal(getSessionThreads(id).some(thread => thread.session.id === "root"), returned)
     assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
-    if (mode === "return") assert.equal(sessions().get(id)?.get("root")?.location.directory, alias.location.directory)
+    if (returned) assert.equal(sessions().get(id)?.get("root")?.location.directory, alias.location.directory)
   } finally {
     read.resolve(alias)
     await restoring

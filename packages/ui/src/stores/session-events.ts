@@ -88,7 +88,7 @@ const pendingSessionMoves = new Map<string, Map<string, SessionMove>>()
 const latestSessionMoves = new Map<string, Map<string, SessionMove>>()
 type SessionPlacement = Pick<Session, "location" | "projectID" | "subpath"> & { listWorktreeSlug?: string }
 type SessionPlacementRead = SessionInfo & { listWorktreeSlug?: string }
-type PlacementEvidence = { placement: SessionPlacement; generation: number; client: ReturnType<typeof getRootClient> }
+type PlacementEvidence = { placement: SessionPlacement; generation: number; client: ReturnType<typeof getRootClient>; returnFrom?: string | null }
 const confirmedPlacements = new Map<string, Map<string, PlacementEvidence>>()
 const LOCATED_ELSEWHERE = Symbol("session located elsewhere")
 const SESSION_MISSING = Symbol("session not found")
@@ -103,11 +103,11 @@ export function matchesSessionPlacement(placement: SessionPlacement | undefined,
     && placement.projectID === expected.projectID && placement.subpath === expected.subpath
 }
 
-export function confirmSessionPlacement(instanceId: string, sessionId: string, { location, projectID, subpath, listWorktreeSlug }: SessionPlacement): void {
+export function confirmSessionPlacement(instanceId: string, sessionId: string, { location, projectID, subpath, listWorktreeSlug }: SessionPlacement, returnFrom?: string | null): void {
   const client = instances().get(instanceId)?.client
   if (!client) return
   const placements = confirmedPlacements.get(instanceId) ?? new Map<string, PlacementEvidence>()
-  placements.set(sessionId, { placement: { location, projectID, subpath, listWorktreeSlug }, client, generation: getOpenCodeInstanceGeneration(instanceId) })
+  placements.set(sessionId, { placement: { location, projectID, subpath, listWorktreeSlug }, client, generation: getOpenCodeInstanceGeneration(instanceId), returnFrom })
   confirmedPlacements.set(instanceId, placements)
 }
 
@@ -115,7 +115,8 @@ export function confirmSessionPlacement(instanceId: string, sessionId: string, {
 export function confirmedSessionWorktree(instanceId: string, sessionId: string, placement: SessionPlacement) {
   const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
   const slug = confirmed?.placement.listWorktreeSlug
-  if (slug && confirmed.client === instances().get(instanceId)?.client && matchesSessionPlacement(placement, confirmed.placement)) {
+  if (slug && confirmed.returnFrom === undefined && confirmed.client === instances().get(instanceId)?.client
+    && matchesSessionPlacement(placement, confirmed.placement)) {
     return getWorktrees(instanceId).find(worktree => worktree.slug === slug)
   }
 }
@@ -513,7 +514,19 @@ export function isSessionMovePending(instanceId: string, sessionId: string): boo
 
 /** A later inventory that serves a moved-away session's destination lists it again. */
 function relistReturnedSessions(instanceId: string): void {
-  const returned = [...getMovedAwaySessions(instanceId)].filter(([, directory]) => directory !== null && servesSessionDirectory(instanceId, directory)).map(([id]) => id)
+  const returned = [...getMovedAwaySessions(instanceId)].filter(([id, directory]) => {
+    const evidence = confirmedPlacements.get(instanceId)?.get(id)
+    if (evidence?.returnFrom !== undefined) {
+      const slug = evidence.placement.listWorktreeSlug
+      if (evidence.returnFrom !== directory || evidence.client !== instances().get(instanceId)?.client
+        || evidence.generation !== getOpenCodeInstanceGeneration(instanceId) || isSessionMovePending(instanceId, id)
+        || !matchesSessionPlacement(sessions().get(instanceId)?.get(id), evidence.placement)
+        || !getWorktrees(instanceId).some(worktree => worktree.slug === slug)) return false
+      confirmSessionPlacement(instanceId, id, evidence.placement)
+      return true
+    }
+    return directory !== null && servesSessionDirectory(instanceId, directory)
+  }).map(([id]) => id)
   if (!returned.length) return
   for (const id of returned) forgetSessionMovedAway(instanceId, id)
   void fetchSessions(instanceId, { reset: true }).catch((error) => {
