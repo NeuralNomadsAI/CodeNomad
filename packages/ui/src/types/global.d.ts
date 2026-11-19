@@ -65,6 +65,9 @@ declare global {
     getZoomFactor?: () => number
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
+    deviceSpeech?: (request: import("../../../desktop-speech/contract").DeviceSpeechRequest) => Promise<unknown>
+    remoteDictation?: (request: import("../../../desktop-speech/remote-contract").RemoteDictationRequest) => Promise<unknown>
+    settleRemoteDictation?: (request: import("../../../desktop-speech/remote-contract").SettleRemoteDictation) => Promise<unknown>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
     setNotificationBadge?: (count: number) => Promise<unknown>
     claimClientStateAccess?: (accessToken: string) => Promise<boolean>

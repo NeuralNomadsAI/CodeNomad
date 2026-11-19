@@ -1,0 +1,26 @@
+import { Show } from "solid-js"
+import { useI18n } from "../../lib/i18n"
+
+export default function DictationNotice(props: {
+  recordingLimitReached: boolean
+  onTranscribe: () => void
+  onCancelRecording: () => void
+  transcript?: string
+  onInsertTranscript: () => void
+  onDiscardTranscript: () => void
+}) {
+  const { t } = useI18n()
+  return <>
+    <Show when={props.recordingLimitReached}><div class="composer-notice">
+      <div class="composer-notice-text" role="status">{t("promptInput.voiceInput.limitReached")}</div>
+      <button type="button" class="window-action composer-notice-action" onClick={props.onTranscribe}>{t("promptInput.voiceInput.transcribe")}</button>
+      <button type="button" class="window-action composer-notice-action" onClick={props.onCancelRecording}>{t("alertDialog.actions.cancel")}</button>
+    </div></Show>
+    <Show when={props.transcript}>{text => <div class="composer-notice">
+      <div class="composer-notice-text" role="status" aria-live="polite">{t("promptInput.voiceInput.recovery.saved")}</div>
+      <div class="composer-notice-text text-xs" dir="auto">{text().slice(0, 200)}</div>
+      <button type="button" class="window-action composer-notice-action" onClick={props.onInsertTranscript}>{t("promptInput.voiceInput.recovery.insert")}</button>
+      <button type="button" class="window-action composer-notice-action" onClick={props.onDiscardTranscript}>{t("promptInput.voiceInput.recovery.discard")}</button>
+    </div>}</Show>
+  </>
+}

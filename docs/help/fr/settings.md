@@ -10,7 +10,8 @@ La plupart des choix s’appliquent immédiatement, y compris les préférences 
 
 | État | Ce qu’il contrôle |
 | --- | --- |
-| Configuration CodeNomad | Préférences d’interface, voix, SideCars et paramètres serveur pour les clients de cette configuration. Les préférences sans badge ne sont pas non plus enregistrées par appareil ; **Paramètre serveur** signale une configuration côté serveur comme la voix, les SideCars, le Contrôle à distance et les variables d’environnement. |
+| Configuration CodeNomad | Préférences d’interface partagées et commandes signalées par **Paramètre serveur**, dont l’API vocale, les SideCars, le Contrôle à distance et les variables d’environnement. |
+| Dictée sur cet appareil | Le [moteur de dictée de l’application de bureau](voice.md#desktop-dictation) se choisit dans les préférences Voix locales et vaut pour tous les projets sur cet appareil. |
 | Disposition de fenêtre/d’onglet de projet | Panneaux ouverts, onglets sélectionnés, état du lecteur et brouillons/disposition restaurables. Ce n’est pas de la configuration OpenCode. |
 | Paramètres OpenCode Global/Projet | Changements de plugins/configuration natifs à la portée affichée. Les commandes Projet nécessitent un projet/une Location actif. |
 | Profil de données de bureau | Fenêtres natives, état de restauration et stockage navigateur, indépendamment du fichier de configuration et du service OpenCode partagé. Voir [Fenêtres de bureau et données](desktop.md). |

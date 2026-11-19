@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { SpeechService } from "../../speech/service"
+import { requestAdmission } from "../request-admission"
 
 interface RouteDeps {
   speechService: SpeechService
@@ -37,13 +38,20 @@ export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/speech/capabilities", async () => deps.speechService.getCapabilities())
 
   app.post("/api/speech/transcribe", async (request, reply) => {
+    const admission = requestAdmission(request, reply)
     try {
       const body = TranscribeBodySchema.parse(request.body ?? {})
-      return await deps.speechService.transcribe(body)
+      admission.signal.throwIfAborted()
+      const result = await deps.speechService.transcribe(body, admission.signal)
+      admission.signal.throwIfAborted()
+      return result
     } catch (error) {
+      if (admission.signal.aborted) return
       request.log.error({ err: error }, "Failed to transcribe audio")
       reply.code(getSpeechErrorStatus(error))
       return { error: getSpeechErrorMessage(error, "Failed to transcribe audio") }
+    } finally {
+      admission.dispose()
     }
   })
 

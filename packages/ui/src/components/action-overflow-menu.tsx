@@ -10,6 +10,8 @@ export interface ActionOverflowMenuItem {
   icon?: JSXElement
   disabled?: boolean
   checked?: boolean
+  /** Use for actions that need the current user gesture rather than menu focus restoration. */
+  selectBeforeClose?: boolean
   onSelect: () => void | Promise<void>
   onMouseEnter?: () => void
   onMouseLeave?: () => void
@@ -92,9 +94,10 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
                   onKeyDown={() => { pointerType = undefined }}
                   onSelect={() => {
                     clearHoveredItem()
-                    selectedAction = item.onSelect
                     if (pointerType && pointerType !== "mouse") suppressCompatibilityClick()
                     pointerType = undefined
+                    if (item.selectBeforeClose) void item.onSelect()
+                    else selectedAction = item.onSelect
                   }}
                 >
                   <Show when={item.icon} fallback={<span class="action-overflow-item-icon" aria-hidden="true" />}>

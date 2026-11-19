@@ -294,31 +294,36 @@ export const SpeechSettingsCard: Component = () => {
           <div class="settings-toolbar-inline">
             <span class="settings-inline-note">{capabilityLabel()}</span>
             <Show when={saveStatus() === "error"}><span class="settings-inline-note" role="alert">{t("settings.speech.save.error")}</span></Show>
-            <button
-              type="button"
-              class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
-              onClick={() => void testTranscription.toggle()}
-              disabled={(isSaving() && testTranscription.state() !== "recording") || testTranscription.state() === "requesting" || testTranscription.state() === "transcribing" || (testTranscription.state() === "idle" && !testTranscription.canUseTranscription())}
-              title={testTranscription.buttonTitle()}
-              aria-label={testTranscription.buttonTitle()}
-            >
-              <Show
-                when={testTranscription.isTranscribing() || testTranscription.state() === "requesting"}
-                fallback={
-                  <Show
-                    when={testTranscription.isRecording()}
-                    fallback={<Mic class="w-3.5 h-3.5" aria-hidden="true" />}
-                  >
-                    <Square class="w-3.5 h-3.5" aria-hidden="true" />
-                  </Show>
-                }
+            <Show when={testTranscription.state() === "limitReached"} fallback={
+              <button
+                type="button"
+                class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
+                onClick={() => void testTranscription.toggle()}
+                disabled={(isSaving() && !testTranscription.isRecording()) || testTranscription.state() === "starting" || testTranscription.isTranscribing() || (testTranscription.state() === "idle" && !testTranscription.canUseTranscription())}
+                title={testTranscription.buttonTitle()}
+                aria-label={testTranscription.buttonTitle()}
               >
-                <Loader2 class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
-              </Show>
-              <span>
-                {testTranscription.buttonTitle()}
-              </span>
-            </button>
+                <Show
+                  when={testTranscription.isTranscribing() || testTranscription.state() === "starting"}
+                  fallback={
+                    <Show when={testTranscription.isRecording()} fallback={<Mic class="w-3.5 h-3.5" aria-hidden="true" />}>
+                      <Square class="w-3.5 h-3.5" aria-hidden="true" />
+                    </Show>
+                  }
+                >
+                  <Loader2 class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                </Show>
+                <span>{testTranscription.buttonTitle()}</span>
+              </button>
+            }>
+              <span class="settings-inline-note" role="status">{t("promptInput.voiceInput.limitReached")}</span>
+              <button type="button" class="selector-button selector-button-secondary w-auto" disabled={isSaving()} onClick={testTranscription.confirmTranscription}>
+                {t("promptInput.voiceInput.transcribe")}
+              </button>
+              <button type="button" class="selector-button selector-button-secondary w-auto" onClick={testTranscription.cancelRecording}>
+                {t("alertDialog.actions.cancel")}
+              </button>
+            </Show>
             <Show when={testTranscription.result()}>
               {(text) => (
                 <span class="settings-inline-note" title={text()}>

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-device-speech-request"
+description = "Enables the device_speech_request command without any pre-configured scope."
+commands.allow = ["device_speech_request"]
+
+[[permission]]
+identifier = "deny-device-speech-request"
+description = "Denies the device_speech_request command without any pre-configured scope."
+commands.deny = ["device_speech_request"]

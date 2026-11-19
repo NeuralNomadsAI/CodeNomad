@@ -8,7 +8,7 @@ import { shouldTypeIntoComposer } from "./prompt-input/type-to-focus"
 import { hotkeyLabel, withHotkey } from "../lib/hotkeys"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { PROMPT_CLEAR_EVENT } from "../lib/session-sidebar-events"
-import { getActiveInstance } from "../stores/instances"
+import { getActiveInstance, instances } from "../stores/instances"
 import { agents, executeCustomCommand, sessions } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
@@ -17,6 +17,8 @@ import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { createAttachmentPlaceholderRegex, getAttachmentPlaceholder } from "../lib/attachment-placeholders"
 import { preferences } from "../stores/preferences"
+import { openSettings } from "../stores/settings-screen"
+import DictationNotice from "./prompt-input/DictationNotice"
 import type { PromptDelivery, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
 import { usePromptState } from "./prompt-input/usePromptState"
@@ -112,7 +114,7 @@ export default function PromptInput(props: PromptInputProps) {
   let fieldContainerRef: HTMLDivElement | undefined
   const viewport = usePromptViewport(() => wrapperRef)
   let resizeDragState: ResizeDragState | undefined
-  let submissionsInFlight = 0
+  const [submissionsInFlight, setSubmissionsInFlight] = createSignal(0)
   let restoredQueuedPayload: Parameters<PromptInputApi["restoreQueuedPrompt"]>[1] | undefined
 
   const getPlaceholder = () => {
@@ -458,7 +460,7 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   const promptDelivery = (alternate = false) => resolvePromptDelivery(
-    Boolean(props.isSessionBusy || submissionsInFlight > 0),
+    Boolean(props.isSessionBusy || submissionsInFlight() > 0),
     preferences().followUpBehavior,
     alternate,
   )
@@ -467,7 +469,7 @@ export default function PromptInput(props: PromptInputProps) {
     const draftText = prompt()
     const text = draftText.trim()
     const currentAttachments = attachments()
-    if (props.disabled || props.sendBlocked || isReadingFiles() || submissionsInFlight > 0 || (!text && currentAttachments.length === 0)) return
+    if (props.disabled || props.sendBlocked || isReadingFiles() || submissionsInFlight() > 0 || (!text && currentAttachments.length === 0)) return
     const resolvedDelivery = delivery ?? promptDelivery()
     const restoredPayload = restoredQueuedPayload
 
@@ -552,7 +554,7 @@ export default function PromptInput(props: PromptInputProps) {
       focusConversationStream(wrapperRef?.closest(".session-view"))
     }
 
-    submissionsInFlight += 1
+    setSubmissionsInFlight(count => count + 1)
     try {
       if (isShellMode) {
         if (props.onRunShell) {
@@ -591,7 +593,7 @@ export default function PromptInput(props: PromptInputProps) {
       }
       return
     } finally {
-      submissionsInFlight -= 1
+      setSubmissionsInFlight(count => count - 1)
     }
   }
 
@@ -755,16 +757,32 @@ export default function PromptInput(props: PromptInputProps) {
     || (prompt().length === 0 && (attachments().length > 0 || mode() === "shell"))
   const voiceInput = usePromptVoiceInput({
     prompt,
-    setPrompt,
+    draftRevision: promptState.draftRevision,
+    setPrompt: value => {
+      restoredQueuedPayload = undefined
+      resetHistoryNavigation()
+      setPrompt(value)
+    },
     getTextarea: () => textareaRef ?? null,
-    enabled: () => preferences().showPromptVoiceInput,
-    disabled: () => Boolean(props.disabled),
+    instanceId: () => props.instanceId,
+    sessionId: () => props.sessionId,
+    directory: () => props.instanceFolder,
+    captureOwner: () => {
+      const id = props.instanceId
+      const source = instances().get(id)
+      const folder = source?.folder
+      const proxyPath = source?.proxyPath
+      return () => {
+        const current = instances().get(id)
+        return Boolean(source && current && folder === current.folder && proxyPath === current.proxyPath)
+      }
+    },
+    enabled: () => props.isActive !== false && preferences().showPromptVoiceInput,
+    disabled: () => Boolean(props.disabled) || props.isActive === false || mode() !== "normal" || submissionsInFlight() > 0,
   })
-  const showVoiceInput = () =>
-    preferences().showPromptVoiceInput &&
-    (voiceInput.canUseVoiceInput() || voiceInput.isRecording() || voiceInput.isTranscribing())
+  const showVoiceInput = () => voiceInput.canUseVoiceInput() || voiceInput.state() !== "idle"
   const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
-  const showConversationToggle = () => showVoiceInput() || conversationModeEnabled()
+  const showConversationToggle = () => canUseConversationMode() || conversationModeEnabled()
   const canToggleConversationMode = () => canUseConversationMode()
   const conversationModeButtonTitle = () =>
     conversationModeEnabled()
@@ -773,34 +791,10 @@ export default function PromptInput(props: PromptInputProps) {
 
   const instance = () => getActiveInstance()
 
-  let voiceButtonPressed = false
-
-  const beginVoicePress = (event?: PointerEvent | KeyboardEvent) => {
-    if (voiceButtonPressed || props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput()) return
-    voiceButtonPressed = true
-    // Treat a mic press as barge-in: stop any active assistant speech before listening.
+  const beginVoiceInput = () => {
+    if (!voiceInput.canStartRecording()) return
     clearConversationPlaybackForInstance(props.instanceId)
-
-    if (event instanceof PointerEvent) {
-      const target = event.currentTarget
-      if (target instanceof HTMLElement) {
-        try {
-          target.setPointerCapture(event.pointerId)
-        } catch {
-          // no-op
-        }
-      }
-    }
-
-    void voiceInput.startRecording().then(() => {
-      if (!voiceInput.isRecording()) voiceButtonPressed = false
-    })
-  }
-
-  const endVoicePress = () => {
-    if (!voiceButtonPressed) return
-    voiceButtonPressed = false
-    voiceInput.stopRecording()
+    void voiceInput.startRecording()
   }
 
   const buildPromptActionMenuItems = (): ActionOverflowMenuItem[] => {
@@ -819,15 +813,29 @@ export default function PromptInput(props: PromptInputProps) {
       // The shortcut's own resolution: an idle session always sends normally.
       onSelect: () => void handleSend(promptDelivery(true)),
     })
-    if (showVoiceInput()) {
+    const needsVoiceSettings = voiceInput.canOpenVoiceSettings()
+    if ((showVoiceInput() || needsVoiceSettings) && voiceInput.state() !== "starting" && voiceInput.state() !== "limitReached") {
       items.push({
         key: "voice",
-        label: voiceInput.buttonTitle(),
+        label: needsVoiceSettings
+          ? t("promptInput.voiceInput.dictateSetup", { section: t("settings.nav.voice") })
+          : voiceInput.buttonTitle(),
         icon: voiceInput.isTranscribing()
           ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
           : <Mic class="h-4 w-4" aria-hidden="true" />,
-        disabled: !voiceInput.isRecording() && (Boolean(props.disabled) || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput()),
-        onSelect: () => voiceInput.isRecording() ? endVoicePress() : beginVoicePress(),
+        disabled: !needsVoiceSettings && !voiceInput.isRecording() && !voiceInput.canStartRecording(),
+        selectBeforeClose: !needsVoiceSettings,
+        onSelect: needsVoiceSettings ? () => openSettings("speech")
+          : voiceInput.isRecording() ? voiceInput.stopRecording : beginVoiceInput,
+      })
+    }
+    if (voiceInput.state() !== "idle" && voiceInput.state() !== "limitReached") {
+      items.push({
+        key: "voice-cancel",
+        label: t("promptInput.voiceInput.cancel"),
+        icon: <X class="h-4 w-4" aria-hidden="true" />,
+        selectBeforeClose: true,
+        onSelect: voiceInput.cancelRecording,
       })
     }
     if (showConversationToggle()) {
@@ -894,6 +902,12 @@ export default function PromptInput(props: PromptInputProps) {
 
   return (
     <div class="prompt-input-container">
+      <DictationNotice
+        recordingLimitReached={voiceInput.state() === "limitReached"}
+        onTranscribe={voiceInput.confirmTranscription} onCancelRecording={voiceInput.cancelRecording}
+        transcript={voiceInput.savedTranscript()}
+        onInsertTranscript={voiceInput.restoreTranscript} onDiscardTranscript={voiceInput.discardTranscript}
+      />
       <div
         ref={wrapperRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
@@ -956,6 +970,7 @@ export default function PromptInput(props: PromptInputProps) {
               <textarea
                 ref={(element) => {
                   textareaRef = element
+                  element.addEventListener("selectionchange", voiceInput.selectionChanged)
                   // The Clear shortcut and palette command run this composer's own Clear action.
                   element.addEventListener(PROMPT_CLEAR_EVENT, handleClearPrompt)
                 }}
@@ -965,6 +980,9 @@ export default function PromptInput(props: PromptInputProps) {
                 aria-describedby={shouldShowOverlay() ? helpId : undefined}
                 value={prompt()}
                 onInput={handleInput}
+                onSelect={voiceInput.selectionChanged}
+                onCompositionStart={() => voiceInput.setComposing(true)}
+                onCompositionEnd={() => voiceInput.setComposing(false)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 onFocus={() => setIsFocused(true)}

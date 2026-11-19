@@ -194,6 +194,10 @@ password change revokes every session for that user, including the caller.
 A failed password change preserves the existing sessions. Remote Control device
 credentials follow their separate registry lifetime and revocation rules.
 
+- Desktop remote windows delegate [device-engine dictation](DESKTOP_SPEECH.md#remote-server-windows)
+  to the client without sending capture audio through the tunnel. Paired
+  browsers can use the configured API path.
+
 ## Validation
 
 - `remote-surface.test.ts` drives the real `createHttpServer` through the

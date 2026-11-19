@@ -10,7 +10,8 @@ Most choices apply immediately, including Mission preferences, which save each c
 
 | State | What it controls |
 | --- | --- |
-| CodeNomad configuration | UI preferences, speech, SideCars and server settings for clients using that configuration. Preferences without a badge are not stored per device either; **Server setting** marks server-side configuration such as Speech, SideCars, Remote Control and Environment Variables. |
+| CodeNomad configuration | Shared UI preferences and **Server setting** controls, including the Speech API, SideCars, Remote Control and Environment Variables. |
+| Device dictation | The [desktop dictation engine](voice.md#desktop-dictation) is chosen in local Voice preferences and applies across projects on this device. |
 | Window/project-tab layout | Open panels, selected tabs, reader state and restorable drafts/layout. These are not OpenCode configuration. |
 | Global/Project OpenCode settings | Native plugin/configuration changes at their displayed scope. Project controls require an active project/Location. |
 | Desktop data profile | Native windows, restore state and browser storage, independently of the configuration file and shared OpenCode service. See [Desktop windows and data](desktop.md). |

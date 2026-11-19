@@ -593,6 +593,7 @@ pub(crate) fn request_update(
 }
 
 fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>, timeout: Duration) {
+    crate::remote_dictation::revoke(&app, None);
     for (label, generation) in &requests {
         if !emit_flush(&app, label, *generation) {
             app.state::<ShutdownCoordinator>()
@@ -646,6 +647,9 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         .begin_cleanup(deadline_reached)
     {
         return;
+    }
+    if let Some(speech) = app.try_state::<crate::device_speech::DeviceSpeech>() {
+        speech.revoke(None);
     }
     std::thread::spawn(move || {
         client_state::capture_and_flush_all_windows(&app);
@@ -792,6 +796,7 @@ fn prepare_windows_session_end(app: &AppHandle) -> (u64, Instant) {
     let preparation = app
         .state::<ShutdownCoordinator>()
         .begin_windows_session_end(labels);
+    crate::remote_dictation::revoke(app, None);
     let generation = preparation.generation;
     let deadline = preparation.deadline;
     let Some(requests) = preparation.requests else {

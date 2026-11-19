@@ -10,7 +10,8 @@ La mayoría de las elecciones se aplican inmediatamente, incluidas las preferenc
 
 | Estado | Qué controla |
 | --- | --- |
-| Configuración de CodeNomad | Preferencias de interfaz, voz, SideCars y ajustes de servidor para los clientes que usan esa configuración. Las preferencias sin etiqueta tampoco se guardan por dispositivo; **Configuración del servidor** marca la configuración del lado del servidor, como Voz, SideCars, Control remoto y Variables de entorno. |
+| Configuración de CodeNomad | Preferencias de interfaz compartidas y opciones marcadas como **Configuración del servidor**, como la API de voz, SideCars, Control remoto y Variables de entorno. |
+| Dictado en este dispositivo | El [motor de dictado de escritorio](voice.md#desktop-dictation) se elige en las preferencias locales de Voz y se aplica a todos los proyectos del dispositivo. |
 | Disposición de ventana/pestaña de proyecto | Paneles abiertos, pestañas seleccionadas, estado del lector y borradores/disposición restaurables. No son configuración de OpenCode. |
 | Ajustes Global/Proyecto de OpenCode | Cambios nativos de plugins/configuración en el ámbito mostrado. Los controles de Proyecto requieren un proyecto/Location activo. |
 | Perfil de datos de escritorio | Ventanas nativas, estado de restauración y almacenamiento del navegador, independientemente del archivo de configuración y del servicio compartido de OpenCode. Consulta [Ventanas y datos de escritorio](desktop.md). |

@@ -1,0 +1,72 @@
+import assert from "node:assert/strict"
+import { once } from "node:events"
+import { createServer, type RequestListener } from "node:http"
+import type { AddressInfo } from "node:net"
+import { test, type TestContext } from "node:test"
+import Fastify from "fastify"
+import type { Logger } from "../../logger"
+import type { SettingsService } from "../../settings/service"
+import { SpeechService } from "../../speech/service"
+import { registerSpeechRoutes } from "./speech"
+
+async function fixture(t: TestContext, respond: RequestListener) {
+  const upstream = createServer(respond)
+  upstream.listen(0, "127.0.0.1")
+  t.after(() => { upstream.closeAllConnections(); upstream.close() })
+  await once(upstream, "listening")
+  const { port } = upstream.address() as AddressInfo
+  const app = Fastify()
+  t.after(() => app.close())
+  const settings = { getOwner: () => ({ speech: {
+    apiKey: "test-only-key", baseUrl: `http://127.0.0.1:${port}/v1`, sttModel: "test-transcriber",
+  } }) } as unknown as SettingsService
+  const log = { child: () => log, info() {} } as unknown as Logger
+  registerSpeechRoutes(app, { speechService: new SpeechService(settings, log) })
+  const url = await app.listen({ port: 0, host: "127.0.0.1" })
+  return (signal?: AbortSignal) => fetch(`${url}/api/speech/transcribe`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, signal,
+    body: JSON.stringify({ audioBase64: "YXVkaW8=", mimeType: "audio/mp4" }),
+  })
+}
+
+test("disconnecting the dictation caller closes the provider upload without retry or fallback", { timeout: 8000 }, async t => {
+  let started!: () => void, closed!: () => void, calls = 0
+  const providerStarted = new Promise<void>(resolve => { started = resolve })
+  const providerClosed = new Promise<void>(resolve => { closed = resolve })
+  const send = await fixture(t, (request, response) => {
+    calls++
+    request.resume()
+    request.once("end", started)
+    response.once("close", closed)
+  })
+  const controller = new AbortController()
+  const result = assert.rejects(send(controller.signal), { name: "AbortError" })
+  await providerStarted
+  controller.abort()
+  await result
+  await providerClosed
+  assert.equal(calls, 1)
+})
+
+test("a format rejection keeps the API default-format path, but transient failures are sent only once", { timeout: 8000 }, async t => {
+  const bodies: string[] = []
+  const send = await fixture(t, async (request, response) => {
+    assert.equal(request.url, "/v1/audio/transcriptions")
+    let body = ""
+    for await (const chunk of request) body += chunk.toString()
+    bodies.push(body)
+    const status = [400, 200, 503, 400][bodies.length - 1] ?? 503
+    response.writeHead(status, { "Content-Type": "application/json" })
+    const message = bodies.length === 1 ? "Unsupported response format" : "Provider rejected the request"
+    response.end(JSON.stringify(status === 200 ? { text: "transcript" } : { error: { message } }))
+  })
+  const response = await send()
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).text, "transcript")
+  assert.match(bodies[0]!, /verbose_json/)
+  assert.doesNotMatch(bodies[1]!, /response_format/)
+  for (const body of bodies) assert.match(body, /filename="prompt-input.m4a"\r\nContent-Type: audio\/mp4/)
+  assert.equal((await send()).status, 502)
+  assert.equal((await send()).status, 502)
+  assert.equal(bodies.length, 4)
+})

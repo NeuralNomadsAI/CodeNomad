@@ -2,6 +2,10 @@
 
 ## Agent conventions
 
+- Dictation captures the active occurrence, workspace proxy and session directory, draft revision and textarea selection before requesting microphone access. The end result replaces only that unchanged range in one synchronous edit without moving focus or sending. After typing or selection changes, the active view offers the transcript for explicit insertion at the current caret or discard. A hidden, rebound or retired composer cancels capture and drops its view-local transcript. `VoiceInputEngine` supplies one controller per capture: stop finalizes, cancel closes capture and inference without emitting a result. On the API path cancellation releases microphone tracks, prevents pending encoding from dispatching, and propagates HTTP closure to the provider request. The configured provider may continue processing audio it already received.
+- Remote desktop dictation uses the [trusted local hand-off](DESKTOP_SPEECH.md#remote-server-windows); only the confirmed text re-enters the same composer controller and draft checks.
+- The composer's Dictate action starts the selected available engine or opens Voice settings. Preparation and engine changes belong to local Preferences; browser and mobile use the manual API path. Classic conversation needs a configured playback provider and a supported format. It can read the `spoken` block of an answer to a typed prompt.
+
 - Default model resolution retains configured agent models, saved agent choices and recent choices while the instance's provider catalog is absent. Catalog absence is loading state; native creation and prompt dispatch keep the explicit model identity. Once published, the catalog supplies the existing availability checks. Regression: `stores/session-default-model.test.ts`.
 
 - `hydrateWorkspacePromptState` owns draft and attachment hydration for existing sessions, the new-conversation composer and its saved draft slots. Draft/attachment authority preserves local edits, clears and sends. Startup restoration and the closed-tab drafts of [Projects](PROJECTS.md) both go through it.

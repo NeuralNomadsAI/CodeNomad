@@ -31,7 +31,8 @@ export class OpenAICompatibleSpeechProvider {
     }
   }
 
-  async transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse> {
+  async transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
+    signal?.throwIfAborted()
     const client = this.createClient()
     const startedAt = Date.now()
     const extension = extensionForMime(input.mimeType)
@@ -48,7 +49,8 @@ export class OpenAICompatibleSpeechProvider {
       "speech.transcribe",
     )
 
-    const response = await this.requestTranscription(client, buffer, filename, input)
+    const response = await this.requestTranscription(client, buffer, filename, input, signal)
+    signal?.throwIfAborted()
 
     return {
       text: typeof response?.text === "string" ? response.text : "",
@@ -71,6 +73,7 @@ export class OpenAICompatibleSpeechProvider {
     buffer: Buffer,
     filename: string,
     input: TranscribeAudioInput,
+    signal?: AbortSignal,
   ): Promise<any> {
     const baseRequest = {
       model: this.options.settings.sttModel,
@@ -78,20 +81,23 @@ export class OpenAICompatibleSpeechProvider {
       ...(input.prompt ? { prompt: input.prompt } : {}),
     }
 
+    const requestOptions = { signal, maxRetries: 0 }
+    const file = await toFile(buffer, filename, { type: input.mimeType })
+    signal?.throwIfAborted()
     try {
-      const file = await toFile(buffer, filename, { type: input.mimeType })
       return (await client.audio.transcriptions.create({
         ...baseRequest,
         file,
         response_format: "verbose_json" as any,
-      } as any)) as any
+      } as any, requestOptions)) as any
     } catch (error) {
-      this.options.logger.warn({ err: error }, "speech.transcribe verbose_json failed; retrying default format")
-      const retryFile = await toFile(buffer, filename, { type: input.mimeType })
+      signal?.throwIfAborted()
+      if (!(error instanceof OpenAI.APIError) || (error.status !== 400 && error.status !== 422)
+        || (error.param !== "response_format" && !/response[ _-]format|verbose_json/i.test(error.message))) throw error
       return (await client.audio.transcriptions.create({
         ...baseRequest,
-        file: retryFile,
-      } as any)) as any
+        file,
+      } as any, requestOptions)) as any
     }
   }
 

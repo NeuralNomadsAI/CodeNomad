@@ -1,8 +1,8 @@
 # Voice input and playback
 
-## Configure speech {#configure}
+## Configure the speech API {#configure}
 
-1. Open **Settings → Speech** to configure an OpenAI-compatible speech provider separately from your conversation's model provider.
+1. Open **Settings → Voice**. The **Speech** card uses an OpenAI-compatible server-side adapter, independently of your conversation's model provider.
 2. Enter **API key**, optionally **Base URL**, **Transcription model**, **Speech model** and **Default voice**.
 3. If input and output need different services, enable **Separate providers for input and output**, then fill the input/output key, base URL and model fields.
 4. Choose **Playback mode** and **Output format**, then **Save** (available while changes are unsaved). Check the status beside the test buttons, **Configured**, **Partially configured** or **Missing API key**, before testing; a failed save shows **Save failed**.
@@ -33,27 +33,39 @@ The playback test uses the selected playback mode/format immediately, but endpoi
 
 ## Dictate a prompt {#dictate}
 
-1. Keep **Prompt voice input** enabled in **Speech** (it is on by default).
-2. In the composer, open **More actions**, choose **Start voice input** and allow microphone access on this device.
-3. When you finish speaking, choose **Stop recording and transcribe** in the same menu; **Transcribing audio** shows while it is processed.
-4. Review and edit the inserted text before sending the prompt normally.
+1. Keep **Prompt voice input** enabled in **Voice** (it is on by default).
+2. In the composer's **More actions** menu, choose **Dictate** and allow microphone access. If you see **Dictate: open Voice settings**, choose or configure the engine there, then come back to the draft.
+3. Choose **Stop recording and transcribe** to get text or **Cancel dictation** to discard the recording. Switching conversations or closing the composer also cancels dictation.
+4. Review the text. It replaces the original selection only if the draft and selection are unchanged; otherwise choose **Insert transcript** or **Discard transcript**. Dictation never sends the prompt.
 
-Transcription inserts text at the current selection; it does not automatically submit it to OpenCode. The menu entry appears only when STT is configured and the client supports recording. Recording uses the client device's microphone, even when CodeNomad runs on a remote server.
+If the API uses WAV fallback on Linux Tauri, **Dictate** and **Test input** stop recording at 24 seconds. The clip stays on this device until you choose **Transcribe** to send it to the speech provider or **Cancel** to discard it.
 
-Remote browser recording needs a secure context, normally trusted HTTPS; see [Mobile access](mobile.md) and [Direct remote access](remote-access.md). Switching away or closing the composer ends its recording lifecycle; do not rely on unsent audio being recoverable.
+### Choose a desktop engine {#desktop-dictation}
+
+In local desktop **Preferences → Voice**, set **Dictation engine on this device**. This choice applies across projects on the device; the manual **Speech** card still configures the connected server's API. Browser and mobile clients use the configured API provider and need a secure context for microphone access.
+
+- **On-device system recognition** works inside CodeNomad without opening the OS dictation panel. It requires an installed local recognizer for the app language on Windows or macOS. On Linux, or if the recognizer or language is missing, try Hex if offered.
+- Voice lists what Hex still needs and the download size for each component and in total. One click on **Activate Hex** verifies and reuses compatible files, downloads what is missing, and selects Hex when ready. Follow the progress in Voice; use **Cancel Hex activation** to stop and **Resume Hex activation** when offered to continue with the remaining download. Failure or cancellation keeps your previous engine. Opening Preferences, selecting ready **Hex (local)** or dictating with it starts no download.
+- Hex is offered on eligible Windows x64/arm64, Apple silicon with macOS 15+, and Linux x64/arm64 with glibc 2.36+ and the libraries required by Hex. Intel Macs and Linux systems with older glibc or musl are ineligible. The engine and models are separate from the CodeNomad installer; no terminal or API key is needed.
+
+Ubuntu 24.04 meets the glibc requirement; Ubuntu 22.04 does not. Hex detects the spoken language from [Parakeet’s supported languages](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), which include English and French. This list is independent of the app language.
+
+Local recognition uses this device's microphone and works offline, including with WSL projects opened in the local app. For a compatible remote-server window, **Dictate** opens a separate local **Dictate on this device** window. Check the destination shown there, choose **Start voice input**, then **Stop recording and transcribe** and **Insert transcript** to return only the text to the draft. A remote project still needs its server connection.
+
+In a remote Tauri window on Linux, **Test input** checks the server’s speech API without changing the dictation engine. For each API recording, check the server address in the native microphone prompt before confirming. Capture uses PulseAudio or PipeWire’s PulseAudio service and always has the 24-second WAV limit described above.
 
 ## Read messages aloud {#playback}
 
 1. Use **Speak message** on a message, or the same action on a tool call, when TTS is available.
 2. Use **Stop playback** on the same control to end it; starting another reading stops the current one.
-3. Change the saved voice, model, mode or format in **Speech** for subsequent requests.
+3. Change the saved voice, model, mode or format on the **Speech** card in **Voice** for subsequent requests.
 
 Playback uses CodeNomad's text projection, not a narrated screenshot: binary/image bytes and permission receipts are not speech content. It does not run a prompt or change the selected OpenCode model.
 
-For automatic conversation speech, use **Enable conversation mode** in the composer's **More actions** menu; it applies to that project tab and is not kept after a reload. While it is on, CodeNomad asks the agent, with each prompt you send, to begin its reply with a short fenced `spoken` summary. Only that completed block is read, in the active main session; it is not an automatic reading of every reply or subagent. **Disable conversation mode** stops its queue and no longer asks for the summary. Starting microphone input also stops active conversation speech. The toggle appears with voice input, or while conversation mode is already enabled, and requires working TTS to enable.
+For automatic conversation speech, use **Enable conversation mode** in the composer's **More actions** menu; it applies to that project tab and is not kept after a reload. While it is on, CodeNomad asks the agent, with each prompt you send, to begin its reply with a short fenced `spoken` summary. Only that completed block is read, in the active main session; it is not an automatic reading of every reply or subagent. **Disable conversation mode** stops its queue and no longer asks for the summary. Starting microphone input also stops active conversation speech. Conversation mode requires configured playback in a supported format.
 
 ## Data flow and privacy {#privacy}
 
-Microphone audio travels from your client to the CodeNomad backend, then to the configured STT endpoint. Text selected for synthesis travels through that backend to the configured TTS endpoint; returned audio plays on the client. API keys stay server-side and are not returned as saved values to the settings form.
+Local dictation keeps audio on this device and never falls back to the API. With **API provider**, microphone audio travels through the CodeNomad server to the configured transcription endpoint. Text selected for synthesis travels through that backend to the configured TTS endpoint; returned audio plays on the client. API keys stay server-side and are not returned as saved values to the settings form.
 
-Use an endpoint you trust with the material being dictated or read. This is not an offline transcription guarantee, and OpenCode credentials do not authorize speech automatically. Stop recording/playback when finished; changing a key or endpoint affects future requests, not data already sent to a provider. See [Security](security.md) before exposing a server to other users.
+Use an endpoint you trust with the material being dictated or read. OpenCode credentials do not authorize speech automatically. Changing a key or endpoint affects future requests, not data already sent to a provider. See [Security](security.md) before exposing a server to other users.

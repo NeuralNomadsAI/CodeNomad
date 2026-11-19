@@ -18,6 +18,11 @@ import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
 import { abandonLaunchWindow, acknowledgeLaunchConnection, CONNECT_LAUNCH_TIMEOUT_MS, type ConnectLaunchHost } from "./connect-launch"
 import { setupCliIPC } from "./ipc"
+import { DeviceSpeech, DeviceSpeechPreference } from "./device-speech"
+import { createHexSpeechDriver } from "./device-speech-hex"
+import { createSystemSpeechDriver } from "./device-speech-system"
+import { setupDeviceSpeechIPC } from "./device-speech-ipc"
+import { setupRemoteDictationIPC } from "./remote-dictation-ipc"
 import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
 import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-registry"
 import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnabled } from "./menu"
@@ -218,7 +223,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   lifecycle = new MultiwindowLifecycle({
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
-    isSupportWindow: (window) => preferencesWindows.current() === window || isBrowserAuxiliaryWindow(window),
+    isSupportWindow: (window) => preferencesWindows.current() === window || remoteDictation.window() === window || isBrowserAuxiliaryWindow(window),
     isLaunchWindow: (window) => launchWindows.has(window),
     flushSupportWindows: async () => {
       const window = preferencesWindows.current()
@@ -416,8 +421,43 @@ function runPrimary(firstIntent: LaunchIntent) {
   const firstLaunch = intentQueue.enqueue(firstIntent)
   void firstLaunch.catch(() => {})
 
+  const speechPreference = new DeviceSpeechPreference(join(baseUserDataPath, "device-speech", "choice.json"))
+  const deviceSpeech = new DeviceSpeech(
+    speechPreference,
+    createSystemSpeechDriver(app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "electron", "resources")),
+    createHexSpeechDriver(join(
+      process.platform === "win32" && process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "CodeNomad") : baseUserDataPath,
+      "device-speech",
+    )),
+  )
+  const remoteDictation = setupRemoteDictationIPC(ipcMain, {
+    resolveRemote: sender => remoteWindows.resolve(sender),
+    localUrl: () => backendTargetUrl === backendUrl ? backendTargetUrl : null,
+    readChoice: () => speechPreference.read().engine,
+    createDialog: opener => new BrowserWindow({
+      width: 560, height: 420, parent: opener, modal: true, show: false, minimizable: false, maximizable: false,
+      autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(), title: "CodeNomad",
+      webPreferences: {
+        session: session.defaultSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false,
+        sandbox: true, additionalArguments: ["--codenomad-window-context=dictation"],
+      },
+    }),
+    revokeSpeech: (owner, documentGone) => deviceSpeech.revoke(owner, documentGone),
+    rendererMicrophone: deviceSpeech,
+    openSpeechPreferences: () => openPreferences({ section: "speech" }),
+    isShuttingDown: () => navigationLifecycle.stopped,
+  })
+  app.on("before-quit", () => { remoteDictation.revoke(); deviceSpeech.revokeAll() })
+  setupDeviceSpeechIPC(ipcMain, deviceSpeech, {
+    resolveLocal: (sender) => registry.resolve(sender)?.window,
+    resolvePreferences: (sender) => preferencesWindows.resolve(sender),
+    resolveDictation: remoteDictation.requireDialog,
+    getAllowedOrigins,
+    isShuttingDown: () => navigationLifecycle.stopped,
+  })
   setupCliIPC(cli, {
     resolveLocal: (sender) => registry.resolve(sender), resolvePreferences: (sender) => preferencesWindows.resolve(sender), getAllowedOrigins,
+    resolveRemote: (sender) => remoteWindows.resolve(sender), resolveDictation: remoteDictation.requireDialog,
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
     // Only the unavailable-server document the host loaded may ask for these: the server's own pages never can.
     resolveRemoteRecovery: (event, token) => remoteWindows.resolve(event.sender) ? remoteRecovery.authorize(event, token) : undefined,
@@ -507,6 +547,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     registry.fanout("cli:status", status)
     preferencesWindows.current()?.webContents.send("cli:status", status)
     if (status.state !== "ready") {
+      remoteDictation.revoke()
       bootstrap.reset()
       backendUrl = null
       backendTargetUrl = null
@@ -527,7 +568,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     try { app.setAppUserModelId("ai.neuralnomads.codenomad.client") } catch {}
     if (isMac) {
       session.defaultSession.setSpellCheckerEnabled(false)
-      configureMediaPermissionHandlers(getAllowedOrigins)
+      configureMediaPermissionHandlers(getAllowedOrigins, session.defaultSession, remoteDictation.mediaOrigins)
       if (app.dock) { const icon = nativeImage.createFromPath(getIconPath()); if (!icon.isEmpty()) app.dock.setIcon(icon) }
     }
     createApplicationMenu({
@@ -570,7 +611,13 @@ function runPrimary(firstIntent: LaunchIntent) {
       if (existing) {
         const allowedOrigins = new Set([base.origin, target.origin])
         existing.setTitle(title)
-        await navigateRemoteWindow(existing, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
+        const restoreDictationTarget = remoteDictation.setRemoteTarget(existing, target, base)
+        try {
+          await navigateRemoteWindow(existing, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
+        } catch (error) {
+          restoreDictationTarget()
+          throw error
+        }
         return
       }
       const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
@@ -587,6 +634,8 @@ function runPrimary(firstIntent: LaunchIntent) {
       installWindowSizeConstraints(window, () => screen.getDisplayMatching(window.getBounds()).workArea)
       installWindowZoomInput(window, (level) => setWindowZoomLevel(window, level))
       remoteWindows.register(payload.id, window, payload.proxySessionId)
+      remoteDictation.observeRemote(window)
+      remoteDictation.setRemoteTarget(window, target, base)
       bindNotificationBadge(window)
       if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
         .filter((candidate) => candidate.webContents.session === remoteSession)
@@ -595,6 +644,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
       setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
       lifecycle.attachSupportWindow(window)
+      window.once("session-end", remoteDictation.revoke)
       window.on("closed", () => { remoteOrigins.delete(nativeWindowId); insecureOrigins.delete(webContentsId) })
       const navigate = () => navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
       const showUnavailable = () => showRemoteUnavailable(remoteRecovery, window, loadingTarget(), navigate)

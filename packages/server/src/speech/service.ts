@@ -57,7 +57,7 @@ export interface SpeechProvider {
     SpeechCapabilitiesResponse,
     "separateProviders" | "sttConfigured" | "ttsConfigured" | "sttBaseUrl" | "ttsBaseUrl"
   >
-  transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse>
+  transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse>
   synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse>
   synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse>
 }
@@ -113,8 +113,8 @@ export class SpeechService {
     }
   }
 
-  async transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse> {
-    return this.createSttProvider().transcribe(input)
+  async transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
+    return this.createSttProvider().transcribe(input, signal)
   }
 
   async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {

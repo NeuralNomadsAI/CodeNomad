@@ -10,7 +10,8 @@ Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçi
 
 | Durum | Neyi yönetir |
 | --- | --- |
-| CodeNomad yapılandırması | Bu yapılandırmayı kullanan istemcilerin arayüz tercihleri, ses, SideCars ve sunucu ayarları. Rozeti olmayan tercihler de cihaz başına saklanmaz; **Sunucu ayarı**, Ses, SideCars, Uzaktan Kontrol ve Ortam Değişkenleri gibi sunucu tarafı yapılandırmayı işaretler. |
+| CodeNomad yapılandırması | Paylaşılan arayüz tercihleri ve ses API’si, SideCars, Uzaktan Kontrol ve Ortam Değişkenleri gibi **Sunucu ayarı** olarak işaretlenen seçenekler. |
+| Bu cihazda dikte | [Masaüstü dikte motoru](voice.md#desktop-dictation) yerel Ses ayarlarından seçilir ve cihazdaki tüm projeler için geçerlidir. |
 | Pencere/proje sekmesi düzeni | Açık paneller, seçilen sekmeler, okuyucu durumu ve geri yüklenebilir taslaklar/düzen. Bunlar OpenCode yapılandırması değildir. |
 | Genel/Proje OpenCode ayarları | Görüntülenen kapsamda yerel eklenti/yapılandırma değişiklikleri. Proje kontrolleri etkin bir proje/Location gerektirir. |
 | Masaüstü veri profili | Yerel pencereler, yapılandırma dosyasından ve paylaşılan OpenCode hizmetinden bağımsız olarak geri yükleme durumu ve tarayıcı depolaması. Bkz. [Masaüstü pencereleri ve veriler](desktop.md). |

@@ -1,4 +1,4 @@
-import { dialog, session, systemPreferences, type Session } from "electron"
+import { dialog, session, systemPreferences, type Session, type WebContents } from "electron"
 import { isAllowedRendererOrigin } from "./renderer-origin"
 import { browserPermissionDecision, permissionOrigin, permissionResource } from "./browser-permission-policy"
 import { nativeMenuLabels } from "./view-menu"
@@ -10,7 +10,11 @@ export { isAllowedRendererOrigin } from "./renderer-origin"
 
 const isMac = process.platform === "darwin"
 
-export function configureMediaPermissionHandlers(getAllowedOrigins: () => string[], targetSession: Session = session.defaultSession) {
+export function configureMediaPermissionHandlers(
+  getAllowedOrigins: () => string[],
+  targetSession: Session = session.defaultSession,
+  dictationOrigins?: (sender: WebContents | null, mainFrame: boolean, audioOnly: boolean) => string[] | undefined,
+) {
   const isAudioMediaRequest = (permission: string, details?: unknown) => {
     if (permission !== "media") {
       return false
@@ -20,12 +24,13 @@ export function configureMediaPermissionHandlers(getAllowedOrigins: () => string
     return mediaTypes.length === 0 || mediaTypes.includes("audio")
   }
 
-  targetSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+  targetSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     if (!isAudioMediaRequest(permission, details)) {
       return false
     }
 
-    return isAllowedRendererOrigin(requestingOrigin, getAllowedOrigins())
+    return isAllowedRendererOrigin(requestingOrigin,
+      dictationOrigins?.(webContents, details.isMainFrame, details.mediaType === "audio") ?? getAllowedOrigins())
   })
 
   targetSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
@@ -35,7 +40,9 @@ export function configureMediaPermissionHandlers(getAllowedOrigins: () => string
     }
 
     const requestingOrigin = (details as { requestingOrigin?: string } | undefined)?.requestingOrigin || webContents.getURL()
-    callback(isAllowedRendererOrigin(requestingOrigin, getAllowedOrigins()))
+    const audioOnly = "mediaTypes" in details && details.mediaTypes?.length === 1 && details.mediaTypes[0] === "audio"
+    callback(isAllowedRendererOrigin(requestingOrigin,
+      dictationOrigins?.(webContents, details.isMainFrame, audioOnly) ?? getAllowedOrigins()))
   })
 }
 

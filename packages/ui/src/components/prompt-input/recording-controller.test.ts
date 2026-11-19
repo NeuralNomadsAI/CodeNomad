@@ -37,7 +37,6 @@ function createHarness(options?: {
   const callbacks = {
     ...cbState,
     onStateChange: (s: string) => cbState.states.push(s),
-    onElapsedChange: () => {},
     onTranscript: (text: string) => cbState.transcripts.push(text),
     onError: (key: string, detail?: string) => cbState.errors.push({ key, detail }),
   }
@@ -66,8 +65,6 @@ function createHarness(options?: {
     },
     blobToBase64: async () => "base64data",
     transcribe: options?.transcribe ?? (async () => ({ text: "hello world" })),
-    setInterval: () => 0,
-    clearInterval: () => {},
   }
 
   return { deps, callbacks, recorder }
@@ -87,17 +84,17 @@ describe("recording controller", () => {
     const c = createRecordingController(h.deps, h.callbacks)
 
     const p = c.startRecording()
-    assert.equal(c.getState(), "idle")
+    assert.equal(c.getState(), "starting")
 
     resolveGum(createMockStream())
     await p
 
     assert.equal(c.getState(), "recording")
     assert.equal(h.recorder.startCalled, true)
-    assert.deepEqual(h.callbacks.states, ["recording"])
+    assert.deepEqual(h.callbacks.states, ["starting", "recording"])
   })
 
-  it("cancels pending acquisition when stopped before getUserMedia resolves", async () => {
+  it("cancels pending acquisition before getUserMedia resolves", async () => {
     let resolveGum!: (s: StreamHandle) => void
     const h = createHarness({
       getUserMedia: () => new Promise((r) => { resolveGum = r }),
@@ -106,7 +103,7 @@ describe("recording controller", () => {
     const c = createRecordingController(h.deps, h.callbacks)
 
     const p = c.startRecording()
-    c.stopRecording()
+    c.cancelRecording()
     resolveGum(createMockStream())
     await p
     await flushPromises()
@@ -123,7 +120,7 @@ describe("recording controller", () => {
 
     const c = createRecordingController(h.deps, h.callbacks)
     const p = c.startRecording()
-    c.stopRecording()
+    c.cancelRecording()
 
     const stream = createMockStream()
     resolveGum(stream)
@@ -134,16 +131,25 @@ describe("recording controller", () => {
   })
 
   it("transcribes and reports transcript on normal stop", async () => {
-    const h = createHarness()
+    const stream = createMockStream()
+    let attempts = 0
+    const h = createHarness({ getUserMedia: async () => stream, transcribe: async (input, signal) => {
+      attempts++
+      assert.equal(input.mimeType, "audio/webm;codecs=opus")
+      assert.equal(signal.aborted, false)
+      return { text: "hello world" }
+    } })
     const c = createRecordingController(h.deps, h.callbacks)
 
     await c.startRecording()
     assert.equal(c.getState(), "recording")
 
     c.stopRecording()
+    assert.equal(stream.tracksStopped, true)
     await flushPromises()
 
     assert.deepEqual(h.callbacks.transcripts, ["hello world"])
+    assert.equal(attempts, 1)
     assert.equal(c.getState(), "idle")
   })
 
@@ -180,7 +186,7 @@ describe("recording controller", () => {
 
     const c = createRecordingController(h.deps, h.callbacks)
     const p = c.startRecording()
-    c.stopRecording()
+    c.cancelRecording()
 
     resolveGum1(createMockStream())
     await p
@@ -233,28 +239,30 @@ describe("recording controller", () => {
     assert.equal(c.getState(), "idle")
   })
 
-  it("increments generation on cleanup, invalidating pending requests", async () => {
-    let resolveGum!: (s: StreamHandle) => void
-    const h = createHarness({
-      getUserMedia: () => new Promise((r) => { resolveGum = r }),
-    })
-
+  it("does not open the mic if native permission resolves after cancellation", async () => {
+    const h = createHarness({ getUserMedia: async () => { assert.fail("permission resolved too late") } })
+    let resolvePermission!: (result: { granted: boolean }) => void
+    h.deps.isElectron = () => true
+    h.deps.requestMicAccess = () => new Promise(r => { resolvePermission = r })
     const c = createRecordingController(h.deps, h.callbacks)
-
     const p = c.startRecording()
-    c.cleanup(false)
-    resolveGum(createMockStream())
+    c.cancelRecording()
+    resolvePermission({ granted: true })
     await p
-    await flushPromises()
 
     assert.equal(h.recorder.startCalled, false)
+    assert.deepEqual(h.callbacks.errors, [])
     assert.equal(c.getState(), "idle")
   })
 
-  it("skips transcript for stale generation after cleanup during transcription", async () => {
+  it("aborts the request and ignores a late result during cancellation", async () => {
     let resolveTranscribe!: () => void
+    let requestSignal: AbortSignal | undefined
     const h = createHarness({
-      transcribe: () => new Promise((r) => { resolveTranscribe = () => r({ text: "stale" }) }),
+      transcribe: (_, signal) => new Promise((r) => {
+        requestSignal = signal
+        resolveTranscribe = () => r({ text: "stale" })
+      }),
     })
 
     const c = createRecordingController(h.deps, h.callbacks)
@@ -265,11 +273,85 @@ describe("recording controller", () => {
 
     assert.equal(c.getState(), "transcribing")
 
-    c.cleanup(true)
+    c.cancelRecording()
+    assert.equal(requestSignal?.aborted, true)
     resolveTranscribe()
     await flushPromises()
 
     assert.deepEqual(h.callbacks.transcripts, [])
+    assert.deepEqual(h.callbacks.errors, [])
     assert.equal(c.getState(), "idle")
+  })
+
+  it("cancels during encoding without making a request", async () => {
+    const h = createHarness({ transcribe: async () => { assert.fail("cancelled audio was sent") } })
+    let finishEncoding!: (base64: string) => void
+    h.deps.blobToBase64 = () => new Promise(resolve => { finishEncoding = resolve })
+    const c = createRecordingController(h.deps, h.callbacks)
+    await c.startRecording()
+    c.stopRecording()
+    await flushPromises()
+    c.cancelRecording()
+    finishEncoding("base64data")
+    await flushPromises()
+    assert.deepEqual(h.callbacks.transcripts, [])
+    assert.deepEqual(h.callbacks.errors, [])
+  })
+
+  it("releases the mic and discards the recorder's final chunk on cancellation", async () => {
+    const stream = createMockStream()
+    const h = createHarness({ getUserMedia: async () => stream, transcribe: async () => { assert.fail("cancelled audio was sent") } })
+    const c = createRecordingController(h.deps, h.callbacks)
+    await c.startRecording()
+    c.cancelRecording()
+    assert.equal(stream.tracksStopped, true)
+    assert.equal(h.recorder.stopCalled, true)
+    await flushPromises()
+    assert.deepEqual(h.callbacks.transcripts, [])
+    assert.deepEqual(h.callbacks.errors, [])
+    assert.deepEqual(h.callbacks.states, ["starting", "recording", "idle"])
+  })
+
+  it("ends a lost input stream without uploading the audio", async () => {
+    const stream = createMockStream()
+    let ended!: () => void
+    const h = createHarness({
+      getUserMedia: async () => stream,
+      setupRecorder: (_stream, handlers) => {
+        ended = handlers.onStop
+        return { start: () => handlers.onDataAvailable(new Blob(["audio"])), stop: ended, mimeType: "audio/webm" }
+      },
+      transcribe: async () => { assert.fail("audio sent without an explicit stop") },
+    })
+    const c = createRecordingController(h.deps, h.callbacks)
+    await c.startRecording()
+    ended()
+    await flushPromises()
+    assert.equal(stream.tracksStopped, true)
+    assert.deepEqual(h.callbacks.states, ["starting", "recording", "idle"])
+    assert.deepEqual(h.callbacks.transcripts, [])
+  })
+
+  it("keeps an early WAV limit distinct from a normal stop and accepts confirmation only once", async () => {
+    let endedAtLimit!: () => void
+    let attempts = 0
+    const h = createHarness({ transcribe: async () => { attempts++; return { text: "confirmed" } } })
+    h.deps.capturePcm = async (_signal, _ended, limit) => {
+      endedAtLimit = limit
+      limit()
+      return { finish: async () => new Blob(["audio"], { type: "audio/wav" }), release() {} }
+    }
+    const c = createRecordingController(h.deps, h.callbacks)
+    await c.startRecording()
+    c.stopRecording()
+    assert.equal(c.getState(), "limitReached")
+    assert.equal(attempts, 0)
+    c.confirmTranscription()
+    c.confirmTranscription()
+    endedAtLimit()
+    await flushPromises()
+    assert.equal(attempts, 1)
+    assert.deepEqual(h.callbacks.states, ["starting", "limitReached", "transcribing", "idle"])
+    assert.deepEqual(h.callbacks.transcripts, ["confirmed"])
   })
 })

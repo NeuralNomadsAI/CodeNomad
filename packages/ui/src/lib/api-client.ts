@@ -731,10 +731,11 @@ export const serverApi = {
     filename?: string
     language?: string
     prompt?: string
-  }): Promise<SpeechTranscriptionResponse> {
+  }, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
     return request<SpeechTranscriptionResponse>("/api/speech/transcribe", {
       method: "POST",
       body: JSON.stringify(payload),
+      signal,
     })
   },
   synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }): Promise<SpeechSynthesisResponse> {

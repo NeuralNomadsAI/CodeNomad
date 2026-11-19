@@ -525,7 +525,7 @@ impl SelectionLock {
 
     /// Takes the lock unless a live holder has it; a first attempt that takes over a stale lock
     /// only moves it aside, so a second one follows.
-    fn acquire(directory: &Path, now: SystemTime) -> Result<Option<Self>, String> {
+    pub(crate) fn acquire(directory: &Path, now: SystemTime) -> Result<Option<Self>, String> {
         match Self::try_acquire(directory, now)? {
             None => Self::try_acquire(directory, now),
             lock => Ok(lock),

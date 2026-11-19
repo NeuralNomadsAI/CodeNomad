@@ -2,7 +2,7 @@ import { getLogger } from "./logger"
 
 export type HostRuntime = "electron" | "tauri" | "web"
 export type PlatformKind = "desktop" | "mobile"
-export type WindowContextKind = "local" | "remote" | "preferences"
+export type WindowContextKind = "local" | "remote" | "preferences" | "dictation"
 
 export interface RuntimeEnvironment {
   host: HostRuntime
@@ -17,6 +17,7 @@ declare global {
 
   interface Window {
     __CODENOMAD_WINDOW_CONTEXT__?: WindowContextKind
+    __CODENOMAD_REMOTE_DICTATION__?: boolean
     electronAPI?: ElectronAPI
     __TAURI__?: {
       core?: TauriCoreModule
@@ -39,6 +40,9 @@ function detectWindowContext(): WindowContextKind {
 
   if (window.__CODENOMAD_WINDOW_CONTEXT__ === "preferences") {
     return "preferences"
+  }
+  if (window.__CODENOMAD_WINDOW_CONTEXT__ === "dictation") {
+    return "dictation"
   }
 
   const win = window as Window & { electronAPI?: unknown }
@@ -129,9 +133,10 @@ export const isMobilePlatform = () => detectPlatform() === "mobile"
 export const isLocalWindow = () => detectWindowContext() === "local"
 export const isRemoteWindow = () => detectWindowContext() === "remote"
 export const isPreferencesWindow = () => detectWindowContext() === "preferences"
+export const isDictationWindow = () => detectWindowContext() === "dictation"
 export const usesClientState = (
   environment: Pick<RuntimeEnvironment, "windowContext"> = detectRuntimeEnvironment(),
-) => environment.windowContext !== "preferences"
+) => environment.windowContext !== "preferences" && environment.windowContext !== "dictation"
 export const isNativeApplicationWindow = () => isLocalWindow() || isPreferencesWindow()
 export const canUseNativeDialogs = () => isDesktopHost() && isNativeApplicationWindow()
 export const canOpenRemoteWindows = () => isDesktopHost() && isNativeApplicationWindow()

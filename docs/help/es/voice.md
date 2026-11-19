@@ -1,8 +1,8 @@
 # Entrada y reproducción de voz
 
-## Configurar la voz {#configure}
+## Configurar la API de voz {#configure}
 
-1. Abre **Configuración → Voz** para configurar un proveedor de voz compatible con OpenAI por separado del proveedor de modelos de tu conversación.
+1. Abre **Configuración → Voz**. La tarjeta **Voz** usa un adaptador del servidor compatible con OpenAI, independiente del proveedor de modelos de tu conversación.
 2. Introduce **Clave API**, opcionalmente **URL base**, **Modelo de transcripción**, **Modelo de voz** y **Voz predeterminada**.
 3. Si entrada y salida necesitan servicios distintos, activa **Proveedores separados para entrada y salida** y rellena los campos de clave, URL base y modelo de entrada/salida.
 4. Elige **Modo de reproducción** y **Formato de salida** y después **Guardar** (disponible mientras haya cambios sin guardar). Comprueba el estado junto a los botones de prueba, **Configurado**, **Parcialmente configurado** o **Falta la clave API**, antes de probar; un guardado fallido muestra **Error al guardar**.
@@ -34,13 +34,25 @@ La prueba de reproducción usa inmediatamente el modo/formato de reproducción s
 ## Dictar un mensaje {#dictate}
 
 1. Mantén activada **Entrada de voz del prompt** en **Voz** (está activada por defecto).
-2. En el editor, abre **Más acciones**, elige **Iniciar entrada de voz** y permite el acceso al micrófono de este dispositivo.
-3. Cuando termines de hablar, elige **Detener grabación y transcribir** en el mismo menú; **Transcribiendo audio** se muestra mientras se procesa.
-4. Revisa y edita el texto insertado antes de enviar el mensaje normalmente.
+2. En el editor, abre **Más acciones → Dictar** y permite el acceso al micrófono. Si aparece **Dictar: abrir los ajustes de Voz**, elige o configura allí el motor y vuelve al borrador.
+3. Elige **Detener grabación y transcribir** para obtener el texto o **Cancelar el dictado** para descartar la grabación. Cambiar de conversación o cerrar el editor también cancela el dictado.
+4. Revisa el texto. Solo sustituye la selección original si el borrador y la selección no han cambiado. Si han cambiado, elige **Insertar la transcripción** o **Descartar la transcripción**. El dictado nunca envía el mensaje.
 
-La transcripción inserta texto en la selección actual; no lo envía automáticamente a OpenCode. La entrada del menú aparece solo cuando STT está configurado y el cliente admite grabación. La grabación usa el micrófono del dispositivo cliente, incluso si CodeNomad se ejecuta en un servidor remoto.
+Si la API recurre a WAV en Tauri para Linux, el dictado y la prueba de entrada detienen la grabación a los 24 segundos. El fragmento queda en este dispositivo hasta que elijas **Transcribir** para enviarlo al proveedor de voz o **Cancelar** para descartarlo.
 
-La grabación en navegador remoto necesita un contexto seguro, normalmente HTTPS de confianza; consulta [Acceso móvil](mobile.md) y [Acceso remoto directo](remote-access.md). Cambiar de vista o cerrar el editor termina su ciclo de grabación; no confíes en poder recuperar audio sin enviar.
+### Elegir un motor en el escritorio {#desktop-dictation}
+
+En **Preferencias → Voz** de la aplicación de escritorio local, elige el **Motor de dictado en este dispositivo**. La elección se aplica a todos los proyectos del dispositivo; la tarjeta **Voz** sigue configurando la API del servidor conectado. El navegador y el móvil usan el proveedor de API configurado y necesitan un contexto seguro para acceder al micrófono.
+
+- El **Reconocimiento local del sistema** funciona dentro de CodeNomad sin abrir el panel de dictado del sistema. Requiere un motor local instalado para el idioma de la aplicación en Windows o macOS. En Linux, o si falta el motor o el idioma, prueba Hex si está disponible.
+- Voz muestra qué componentes faltan y el tamaño de descarga de cada uno y del total. Un clic en **Activar Hex** verifica y reutiliza los archivos compatibles, descarga lo que falta y selecciona Hex cuando está listo. Sigue el progreso en Voz. Puedes usar **Cancelar la activación de Hex** y, cuando aparezca, **Reanudar la activación de Hex**. Si falla o se cancela, se mantiene el motor anterior. Abrir Preferencias, seleccionar **Hex (local)** cuando ya está listo o dictar con él no inicia otra descarga.
+- Hex se ofrece en equipos compatibles: Windows x64/arm64, Apple Silicon con macOS 15 o posterior y Linux x64/arm64 con glibc 2.36 o posterior y las bibliotecas que requiere Hex. Los Mac Intel y los sistemas Linux con una glibc anterior o con musl no son compatibles. El motor y los modelos se obtienen aparte del instalador de CodeNomad; no hace falta usar la terminal ni una clave de API.
+
+Ubuntu 24.04 cumple el requisito de glibc, mientras que Ubuntu 22.04 no. Hex detecta el idioma hablado entre los [idiomas admitidos por Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), entre ellos el inglés y el francés. Esta lista es independiente del idioma de la aplicación.
+
+El reconocimiento local usa el micrófono de este dispositivo y funciona sin conexión, también en proyectos WSL abiertos en la aplicación local. Desde una ventana remota compatible, **Dictar** abre la ventana local **Dictar en este dispositivo**. Comprueba el destino y elige **Iniciar entrada de voz**, **Detener grabación y transcribir** e **Insertar la transcripción** para devolver solo el texto al borrador. El proyecto remoto sigue necesitando conexión con su servidor.
+
+En una ventana remota de Tauri en Linux, **Probar entrada** comprueba la API de voz del servidor sin cambiar el motor de dictado. Comprueba la dirección del servidor en el cuadro de diálogo nativo del micrófono antes de confirmar cada grabación para la API. La captura usa PulseAudio o el servicio PulseAudio de PipeWire y siempre se aplica el límite de WAV de 24 segundos descrito arriba.
 
 ## Leer mensajes en voz alta {#playback}
 
@@ -50,10 +62,10 @@ La grabación en navegador remoto necesita un contexto seguro, normalmente HTTPS
 
 La reproducción usa la proyección de texto de CodeNomad, no una captura narrada: los bytes binarios/de imágenes y los comprobantes de permisos no son contenido de voz. No ejecuta un mensaje ni cambia el modelo OpenCode seleccionado.
 
-Para voz automática de conversación, usa **Activar modo conversación** en el menú **Más acciones** del editor; se aplica a esa pestaña de proyecto y no se conserva tras recargar. Mientras está activado, CodeNomad pide al agente, con cada mensaje que envías, que empiece su respuesta con un breve resumen delimitado `spoken`. Solo se lee ese bloque completado, en la sesión principal activa; no lee automáticamente todas las respuestas ni subagentes. **Desactivar modo conversación** detiene su cola y deja de pedir el resumen. Iniciar la entrada de micrófono también detiene la voz de conversación activa. El interruptor aparece con la entrada de voz o mientras el modo conversación ya está activado y requiere TTS operativo para activarse.
+Para voz automática de conversación, usa **Activar modo conversacion** en el menú **Más acciones** del editor; se aplica a esa pestaña de proyecto y no se conserva tras recargar. Mientras está activado, CodeNomad pide al agente, con cada mensaje que envías, que empiece su respuesta con un breve resumen delimitado `spoken`. Solo se lee ese bloque completado, en la sesión principal activa; no lee automáticamente todas las respuestas ni subagentes. **Desactivar modo conversacion** detiene su cola y deja de pedir el resumen. Iniciar la entrada de micrófono también detiene la voz de conversación activa. El modo de conversación requiere que la reproducción esté configurada en un formato compatible.
 
 ## Flujo de datos y privacidad {#privacy}
 
-El audio del micrófono viaja del cliente al backend de CodeNomad y después al endpoint STT configurado. El texto seleccionado para síntesis viaja por ese backend al endpoint TTS configurado; el audio devuelto se reproduce en el cliente. Las claves API permanecen en el servidor y no se devuelven como valores guardados al formulario de configuración.
+El dictado local conserva el audio en el dispositivo y no cambia al proveedor de API. Con **Proveedor de API**, el audio del micrófono pasa por el servidor de CodeNomad al endpoint de transcripción configurado. El texto seleccionado para síntesis viaja por ese servidor al endpoint TTS configurado; el audio devuelto se reproduce en el cliente. Las claves API permanecen en el servidor.
 
-Usa un endpoint al que confíes el material dictado o leído. Esto no garantiza transcripción sin conexión, y las credenciales OpenCode no autorizan la voz automáticamente. Detén la grabación/reproducción al terminar; cambiar una clave o endpoint afecta a solicitudes futuras, no a datos ya enviados a un proveedor. Consulta [Seguridad](security.md) antes de exponer un servidor a otros usuarios.
+Usa un endpoint al que confíes el material dictado o leído. Las credenciales OpenCode no autorizan la voz automáticamente. Cambiar una clave o endpoint afecta a solicitudes futuras, no a datos ya enviados. Consulta [Seguridad](security.md) antes de exponer un servidor a otros usuarios.

@@ -4,6 +4,8 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>CodeNomad needs microphone access for speech-to-text prompt input.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>CodeNomad recognizes speech on this device to dictate into the draft.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>CodeNomad needs local network access to connect to locally hosted AI and speech services.</string>
 </dict>

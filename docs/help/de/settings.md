@@ -10,7 +10,8 @@ Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderu
 
 | Zustand | Was er steuert |
 | --- | --- |
-| CodeNomad-Konfiguration | UI-Einstellungen, Sprache, SideCars und Servereinstellungen für Clients dieser Konfiguration. Einstellungen ohne Abzeichen werden ebenfalls nicht pro Gerät gespeichert; **Server-Einstellung** kennzeichnet serverseitige Konfiguration wie Sprache, SideCars, Fernsteuerung und Umgebungsvariablen. |
+| CodeNomad-Konfiguration | Gemeinsame UI-Einstellungen und als **Server-Einstellung** gekennzeichnete Optionen, darunter die Sprach-API, SideCars, Fernsteuerung und Umgebungsvariablen. |
+| Diktat auf diesem Gerät | Die [Diktier-Engine der Desktop-App](voice.md#desktop-dictation) wird in den lokalen Spracheinstellungen gewählt und gilt für alle Projekte auf diesem Gerät. |
 | Fenster-/Projekt-Tab-Layout | Offene Panels, ausgewählte Tabs, Lesezustand und wiederherstellbare Entwürfe/Layout. Dies ist keine OpenCode-Konfiguration. |
 | Globale/projektbezogene OpenCode-Einstellungen | Native Plugin-/Konfigurationsänderungen im angezeigten Umfang. Projektsteuerung benötigt ein aktives Projekt/eine Location. |
 | Desktop-Datenprofil | Native Fenster, Wiederherstellungszustand und Browserspeicher, unabhängig von Konfigurationsdatei und gemeinsamem OpenCode-Dienst. Siehe [Desktop-Fenster und Daten](desktop.md). |
