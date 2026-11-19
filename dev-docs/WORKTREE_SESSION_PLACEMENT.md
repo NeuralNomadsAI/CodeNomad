@@ -64,8 +64,9 @@ Implementation:
   workspace-scoped session read for any remaining miss. The proxy resolves aliases such as symlinks
   and junctions. An opted-in move read returns a registered worktree slug only
   when the ownership resolver matches its exact list directory. Live admission
-  and catalogue filtering use that slug against the workspace inventory while
-  execution keeps the native directory. Nested independent repositories follow
+  and catalogue filtering use that slug against the workspace inventory, as does
+  the worktree selector for its current option. Execution keeps the native
+  directory. Nested independent repositories follow
   the same list rules as their canonical directories. Move and restore reads
   confirm the exact placement across catalogue refreshes for the current client
   generation. A complete catalogue rechecks expired placement evidence through

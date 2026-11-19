@@ -105,13 +105,17 @@ export function confirmSessionPlacement(instanceId: string, sessionId: string, {
   confirmedPlacements.set(instanceId, placements)
 }
 
-/** List identity only; execution keeps the native directory. */
-export function confirmedSessionListDirectory(instanceId: string, sessionId: string, placement: SessionPlacement): string | undefined {
+/** Registered checkout identity; execution keeps the native directory. */
+export function confirmedSessionWorktree(instanceId: string, sessionId: string, placement: SessionPlacement) {
   const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
   const slug = confirmed?.placement.listWorktreeSlug
   if (slug && confirmed.client === instances().get(instanceId)?.client && matchesSessionPlacement(placement, confirmed.placement)) {
-    return getWorktrees(instanceId).find(worktree => worktree.slug === slug)?.directory
+    return getWorktrees(instanceId).find(worktree => worktree.slug === slug)
   }
+}
+
+export function confirmedSessionListDirectory(instanceId: string, sessionId: string, placement: SessionPlacement): string | undefined {
+  return confirmedSessionWorktree(instanceId, sessionId, placement)?.directory
 }
 
 /** A matching expired proof retains the row until a current probe can settle it. */

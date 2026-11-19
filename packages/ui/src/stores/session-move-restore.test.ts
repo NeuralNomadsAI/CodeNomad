@@ -18,7 +18,7 @@ const getMovedAwaySessionIds = (instanceId: string): Iterable<string> =>
   (sessionState as { getMovedAwaySessionIds?: (id: string) => Iterable<string> }).getMovedAwaySessionIds?.(instanceId) ?? ["<no record getter>"]
 import * as sessionState from "./session-state.ts"
 import { activeSessionId, getSessionDraftPrompt, getSessionListError, getSessionListIds, getSessionThreads, prependSessionListId, sessions, setActiveSession, setSessionDraftPrompt, setSessions } from "./session-state.ts"
-import { ensureWorktreesLoaded, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees.ts"
+import { ensureWorktreesLoaded, getWorktreeSlugForParentSession, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
@@ -416,6 +416,14 @@ for (const alias of ["/checkout-alias", "/repo/checkout-alias"]) it(`lists a sta
     await new Promise<void>(resolve => setImmediate(resolve))
     assert.deepEqual(listedIds(id), ["incoming", "restored"])
     assert.equal(sessions().get(id)?.get("incoming")?.location.directory, alias)
+    assert.equal(getWorktreeSlugForParentSession(id, "incoming"), newWorktree.slug)
+    const moves: string[] = []
+    const moveOptions = {
+      moveFamily: async (_id: string, _sessionId: string, slug: string) => { moves.push(slug) },
+      refreshSessions: async () => {},
+    }
+    await setWorktreeSlugForParentSession(id, "incoming", newWorktree.slug, moveOptions)
+    assert.deepEqual(moves, [], "selecting the current aliased worktree is a no-op")
     assert.equal(sessions().get(id)?.has("nested"), false, "proxy eligibility alone does not admit a nested repository")
     assert.equal(activeSessionId().get(id), "restored")
 
@@ -423,6 +431,8 @@ for (const alias of ["/checkout-alias", "/repo/checkout-alias"]) it(`lists a sta
     await fetchSessions(id, { strictStatus: true })
     assert.deepEqual(listedIds(id), ["incoming", "restored"])
     assert.equal(sessions().get(id)?.get("incoming")?.title, listed.title)
+    await setWorktreeSlugForParentSession(id, "incoming", localRoot.slug, moveOptions)
+    assert.deepEqual(moves, ["root"], "selecting the main checkout is a real move")
     setSessionDraftPrompt(id, "incoming", "keep draft")
     departed = true
     handleNativeSessionEvent(id, moved("leave", "incoming", "/another-project", 2))
