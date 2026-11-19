@@ -83,6 +83,7 @@ Implementation:
   directory, it is deleted or moved again, or the instance closes.
   Each instance settles moves from its own ordered relay stream, using a per-session
   generation to fence inventory reads and probes overtaken by a later move.
+  The relay checks destination ownership even when the old-location check fails.
   Family members left behind stay sessions of their own location
   (`stores/session-move-restore.test.ts`, `tests/browser/session-external-move.test.ts`).
   The workspace proxy's 403 for a session located outside the workspace carries

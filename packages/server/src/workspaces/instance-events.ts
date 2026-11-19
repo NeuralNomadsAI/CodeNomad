@@ -283,18 +283,24 @@ export class InstanceEventBridge {
         if (!current()) return
         const lookupStarted = Date.now()
         const heldSession = Boolean(destination && sessionId && this.sessionRecipients.get(sessionId)?.has(instanceId))
-        let allowed = !location
+        let allowed: boolean
+        let lookupFailed: boolean
         let revision: number
-        try {
-          do {
-            revision = this.ownershipRevision
-            if (location) allowed = heldSession || await this.resolveLocationOwner(instanceId, location, current, route.signal)
-            if (!allowed && destination) allowed = await this.resolveLocationOwner(instanceId, destination, current, route.signal)
-            if (!current()) return
-          } while (revision !== this.ownershipRevision)
-        } catch {
-          // The event may belong to this recipient: make it reconcile instead of losing it silently.
-          if (current()) this.requestRoutingResync(instanceId)
+        const owns = (candidate: LocationRef) => this.resolveLocationOwner(instanceId, candidate, current, route.signal).catch(() => {
+          lookupFailed = true
+          return false
+        })
+        do {
+          revision = this.ownershipRevision
+          lookupFailed = false
+          allowed = !location || heldSession || await owns(location)
+          // An unreadable source does not settle ownership of the destination.
+          if (!current()) return
+          if (!allowed && destination) allowed = await owns(destination)
+          if (!current()) return
+        } while (revision !== this.ownershipRevision)
+        if (!allowed && lookupFailed) {
+          this.requestRoutingResync(instanceId)
           return
         }
         // Stopped recipients and work from an earlier connection never publish.
