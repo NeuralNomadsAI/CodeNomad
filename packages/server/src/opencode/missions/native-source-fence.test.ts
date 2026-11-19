@@ -84,6 +84,22 @@ test("source projections use the document transaction graph and reject changed m
   const journal = factory(); journal.journal("journal/")
   db.prepare("INSERT INTO kv VALUES(?,?)").run(nativeKey("journal/event"), '{"id":"added"}')
   assert.throws(journal.current, /changed during preparation/)
+  const insert = db.prepare("INSERT INTO kv VALUES(?,?)"), ordinary = "codenomad-missions/v2/project-token"
+  for (let n = 0; n < 2050; n++) insert.run(nativeKey(`${ordinary}/msn_neighbor/evt_${n}`), '{"n":1}')
+  insert.run(nativeKey(`${ordinary}/msn_target/evt_1`), '{"n":2}')
+  assert.throws(() => factory().journal(`${ordinary}/`), /journal capacity/)
+  const all = factory(), target = factory()
+  all.journal(ordinary, undefined, true)
+  target.journal(`${ordinary}/msn_target/`, undefined, true)
+  requireTransaction = true
+  const inTransaction = <A>(use: () => A) => withNativeSourceTransaction(Context.add(graph, transaction, true), use)
+  assert.equal(inTransaction(all.current), true)
+  db.prepare("UPDATE kv SET value=? WHERE key=?").run('{"n":3}', nativeKey(`${ordinary}/msn_neighbor/evt_2049`))
+  assert.throws(() => inTransaction(all.current), /changed during preparation/)
+  assert.equal(inTransaction(target.current), true)
+  db.prepare("UPDATE kv SET value=? WHERE key=?").run('{"n":4}', nativeKey(`${ordinary}/msn_target/evt_1`))
+  assert.throws(() => inTransaction(target.current), /changed during preparation/)
+  requireTransaction = false
   db.exec("UPDATE session_v2 SET revert='{}' WHERE id='source'")
   assert.throws(() => factory().conversation("source"), /placement unavailable/)
 })

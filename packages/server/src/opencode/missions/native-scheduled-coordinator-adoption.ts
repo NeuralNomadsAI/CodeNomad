@@ -15,6 +15,7 @@ import { Effect } from "effect"
 import { acquireMissionNativeService, type MissionNativeRunner } from "./native-service-adapter"
 import { acquireNativePassageObservation } from "./native-passage-observation"
 import { acquireNativeSourceFence } from "./native-source-fence"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 
 type Author = NonNullable<NonNullable<MissionDocument["creation"]>["author"]>
 
@@ -30,7 +31,7 @@ export function assertAgentScheduledCoordinatorSelection(configuration: MissionC
 type AdoptionDocument = Pick<MissionDocument, "id" | "projectID" | "projectCanonical" | "configuration" | "pending">
   & { creation?: Pick<NonNullable<MissionDocument["creation"]>, "author"> }
 type Validation = Pick<NativeScheduledPassageContext, "native" | "observation" | "signal" | "current">
-  & { document: AdoptionDocument; storage: Pick<MissionStorage, "get" | "scan">; fence: Pick<NativeSourceFence, "family" | "current">
+  & { document: AdoptionDocument; storage: Pick<MissionStorage, "get" | "scan" | "range">; fence: Pick<NativeSourceFence, "family" | "current">
     & Partial<Pick<NativeSourceFence, "journal" | "coordinator">> }
 
 export const acquireAgentScheduledCoordinatorValidation = Effect.fn("missions.validateAgentScheduledCoordinator")(function* (
@@ -43,8 +44,9 @@ export const acquireAgentScheduledCoordinatorValidation = Effect.fn("missions.va
   const native = yield* acquireMissionNativeService(current, run).pipe(Effect.scoped)
   const observation = yield* acquireNativePassageObservation(undefined, run)
   const fences = yield* acquireNativeSourceFence(current)
+  const range = yield* optionalOrdinaryJournalRange(ctx, run)
   return yield* Effect.tryPromise({ try: () => prepareAgentScheduledCoordinator({ document, native, observation, current, signal, fence: fences(),
-    storage: { get: key => run(ctx.storage.get(key)) as ReturnType<MissionStorage["get"]>,
+    storage: { range, get: key => run(ctx.storage.get(key)) as ReturnType<MissionStorage["get"]>,
       scan: value => run(ctx.storage.scan(value)) as ReturnType<MissionStorage["scan"]> } }), catch: error => error })
 })
 
@@ -71,7 +73,7 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
   if (!fence.journal || !fence.coordinator) throw new Error("Agent coordinator validation unavailable")
   const token = stableToken(`${doc.projectID}\0${doc.projectCanonical}`, 24)
   const documents = `${MISSION_DOCUMENT_PREFIX}/project/${token}/missions/`
-  fence.journal(`${MISSION_JOURNAL_STORAGE_PREFIX}/${token}/`)
+  fence.journal(`${MISSION_JOURNAL_STORAGE_PREFIX}/${token}${storage.range ? "" : "/"}`, undefined, !!storage.range)
   fence.journal(documents, `${documents}${doc.id}`)
   fence.family(id, undefined, true)
   fence.coordinator(id)

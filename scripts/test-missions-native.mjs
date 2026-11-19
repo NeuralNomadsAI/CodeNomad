@@ -992,9 +992,7 @@ try {
     assert.equal(finished.mission.status, "completed")
     history.push(finished.mission)
   }
-  // The journal bound is per mission: the finished missions' own ranges, seeded in
-  // the isolated KV table as an earlier activation left them, take the project past
-  // one mission's 2,000-entry bound while each mission stays far below it.
+  // Include one long range alongside short ranges in this fixture's private database.
   const { DatabaseSync } = await import("node:sqlite")
   const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const journalEntries = (database, range) => database.prepare("SELECT COUNT(*) AS count FROM kv WHERE substr(key, 1, ?) = ?").get(range.length, range).count
@@ -1011,14 +1009,15 @@ try {
     // One transaction: thousands of autocommits would idle the client's keep-alive connection past the daemon's timeout.
     seeding.exec("BEGIN IMMEDIATE")
     for (const mission of history) {
-      for (let index = 0; index < 22; index++) {
-        const id = `evt_seeded_${String(index).padStart(2, "0")}`
+      const extra = mission.id === history[0].id ? 10_020 : 22
+      for (let index = 0; index < extra; index++) {
+        const id = `evt_seeded_${String(index).padStart(5, "0")}`
         insert.run(`${journalRange}${mission.id}/${id}`, JSON.stringify({ version: 1, id, type: "mission.updated", missionID: mission.id, projectID: mission.projectID,
           createdAt: mission.createdAt + 1 + index, requestID: `seeded-${index}`, expectedRevision: 1, notesSpecified: false, objective: `Seeded ${index}` }), Date.now(), Date.now())
       }
     }
     seeding.exec("COMMIT")
-    assert.ok(journalEntries(seeding, journalRange) > 2_000, "The project holds more than one mission's bound")
+    assert.ok(journalEntries(seeding, `${journalRange}${history[0].id}/`) > 10_000, "One native mission exceeds 10,000 events")
   } finally {
     seeding.close()
     Object.assign(reloadDiagnostics.seed, { finishedAt: new Date().toISOString(), durationMs: performance.now() - seedStarted })
@@ -1038,7 +1037,8 @@ try {
   assert.equal((await invoke("report", { missionID: live.id, taskKey: liveTask.taskKey, outcome: "completed", summary: "History unaffected" },
     liveCoordinator, "history-readout")).disposition, "reported")
   const beforeDelete = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-  assert.equal(beforeDelete.missions.find(mission => mission.id === history[0].id).revision, history[0].revision + 22, "Seeded entries read as the mission's own events")
+  assert.equal(beforeDelete.missions.find(mission => mission.id === history[0].id).revision, history[0].revision + 10_020,
+    "The real plugin reloads one long range and admits work on its neighbour")
   // The deletion's retention purge pushes the oldest settled deletion past the history, through native storage.remove.
   const settled = beforeDelete.cleanups.filter(item => item.pending === 0)
   assert.equal(settled.length, 20)

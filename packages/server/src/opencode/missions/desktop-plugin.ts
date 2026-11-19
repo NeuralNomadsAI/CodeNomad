@@ -12,6 +12,7 @@ import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 import type { MissionDocumentAccess } from "../../missions/mission-document-one-time"
 import { boundedMissionList } from "../../missions/inspect-view"
 import type { MissionControl } from "../../missions/control"
+import type { NativeJournalRange } from "./native-journal-range"
 
 export interface NativeDocumentBusiness {
   select(sessionID: string): Promise<MissionBusinessRoute | undefined>
@@ -21,13 +22,14 @@ export interface NativeDocumentBusiness {
 /** One-time Missions only: the `codenomad-missions/v2` journal. Setup never
  * reads, creates or repairs the retired `authority-v2` namespace. */
 export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate, documents?: MissionDocumentAccess,
-  documentBusiness?: NativeDocumentBusiness): Plugin.Plugin {
+  documentBusiness?: NativeDocumentBusiness, range?: NativeJournalRange | (() => NativeJournalRange | undefined)): Plugin.Plugin {
   return {
     id: "codenomad.missions",
     setup: async ctx => {
       // One per activation, never module-global: a reloaded revision may reuse this module.
       const index = new MissionJournalIndex()
-      const journal = new MissionJournal(ctx.storage, ctx.location.project.id, ctx.location.project.canonical, undefined, index)
+      const storage = range ? { ...ctx.storage, get range() { return typeof range === "function" ? range() : range } } : ctx.storage
+      const journal = new MissionJournal(storage, ctx.location.project.id, ctx.location.project.canonical, undefined, index)
       let ordinary: MissionBusinessRoute | undefined
       const disposeBusiness = await setupMissionsBusiness(ctx, async (sessionID, name, raw) => {
         const author = ordinary && { ...ordinary, readSessionID: sessionID }
@@ -61,7 +63,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
       let disposePresence: (() => Promise<void>) | undefined
       try { disposePresence = await followPresence(presenceDirectory, async () => {
         try {
-          const dispose = await setupMissionsPlugin(ctx, {
+          const dispose = await setupMissionsPlugin({ ...ctx, storage }, {
           prompt: (coordinatorID, input) => sendMissionInput(coordinatorID, "prompt", input),
           synthetic: (coordinatorID, input) => sendMissionInput(coordinatorID, "synthetic", input),
           lifecycle: (coordinatorID, input) => sendMissionInput(coordinatorID, "lifecycle", input),

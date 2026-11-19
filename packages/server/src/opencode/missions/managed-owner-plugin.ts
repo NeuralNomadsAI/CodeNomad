@@ -20,6 +20,8 @@ import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import { nativeMissionScheduleHandlers } from "./native-mission-schedule-rpc"
 import { registerNativeMissionScheduleRuntime } from "./native-mission-schedule-runtime"
 import { useNativeMissionDocuments } from "./native-mission-document-access"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
+import type { NativeJournalRange } from "./native-journal-range"
 
 export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeScheduleArtifacts): Plugin.Context["rpc"] {
   const documentInvocation = nativeInvocation()
@@ -58,7 +60,25 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], art
     const graph = yield* Effect.context<Scope.Scope>()
     const scope = yield* Scope.make()
     const run = Effect.runPromiseWith(Context.add(graph, Scope.Scope, scope))
+    // Presence and outbox reads also run outside tool/RPC invocations. The
+    // range uses only the activation's database service and owned scope.
     const invocation = nativeInvocation()
+    const setupRange = yield* optionalOrdinaryJournalRange(ctx, run)
+    const readRange = <A>(use: (range: NativeJournalRange) => Promise<A>): Promise<A> => {
+      return invocation.check(async run => {
+        const range = await run(optionalOrdinaryJournalRange(ctx, run))
+        if (!range) throw new Error("Native Mission journal database unavailable")
+        return use(range)
+      })
+    }
+    const journalRange: NativeJournalRange = {
+      listRanges: () => readRange(range => range.listRanges()),
+      readOrdered: (...args) => readRange(range => range.readOrdered(...args)),
+      readEvent: (...args) => readRange(range => range.readEvent(...args)),
+    }
+    // On a cold daemon the setup graph can lack the database even though the
+    // request graph has it. Background work keeps its setup-owned capability.
+    const currentJournalRange = () => invocation.active() ? journalRange : setupRange
     const documents: MissionDocumentAccess = use => invocation.check(run => run(useNativeMissionDocuments(ctx, run, use)))
     const humanGate = nativeHumanAnswerGate(use => invocation.check(run => run(Effect.gen(function* () {
       const answers = yield* acquireNativeHumanAnswers(ctx, run)
@@ -104,7 +124,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], art
       verify: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.verify(input)) }).pipe(Effect.orDie),
     }).pipe(Effect.orDie)
     yield* Effect.acquireRelease(Effect.promise(async () => {
-        try { await run(fromPromise(promisePlugin(presenceDirectory, humanGate, documents, documentBusiness)).effect(nativeCtx)) }
+         try { await run(fromPromise(promisePlugin(presenceDirectory, humanGate, documents, documentBusiness, currentJournalRange)).effect(nativeCtx)) }
         catch (error) { await Effect.runPromise(Scope.close(scope, Exit.void)); throw error }
         return scope
     }), owned => Scope.close(owned, Exit.void))

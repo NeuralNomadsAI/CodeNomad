@@ -1,4 +1,5 @@
 import { Context, Effect, Option, Predicate, Schema } from "effect"
+import { createHash } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Shell } from "@opencode/schema/shell"
@@ -51,6 +52,26 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
     if (!Array.isArray(result)) throw new Error("Mission source projection unavailable")
     return result as Record<string, unknown>[]
   }
+  // Match the ordinary range reader's boundaries, including stray project keys.
+  // Rehash inside the existing synchronous transaction fence, including malformed
+  // values and original JSON spelling; timestamps and event counts are not proof.
+  const journalDigest = (prefix: string) => {
+    const start = nativeKey(prefix)
+    const end = start.slice(0, -1) + String.fromCharCode(start.charCodeAt(start.length - 1) + 1)
+    const hash = createHash("sha256")
+    let after = start, inclusive = true
+    for (;;) {
+      const page = read(`SELECT key,value FROM kv WHERE key${inclusive ? ">=" : ">"}? AND key<? ORDER BY key LIMIT 32`, [after, end])
+      for (const { key, value } of page) {
+        if (typeof key !== "string" || typeof value !== "string" || !key.startsWith(start) || key === after && !inclusive)
+          throw new Error("Mission source journal projection unavailable")
+        hash.update(`${key.length}:${key}${value.length}:`, "utf16le").update(value, "utf16le")
+        after = key
+        inclusive = false
+      }
+      if (page.length < 32) return hash.digest("base64url")
+    }
+  }
   return () => {
     const proofs: { sql: string; args: readonly unknown[]; digest: string }[] = []
     const checks: Array<() => void> = []
@@ -91,7 +112,12 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           throw new Error("Prepared coordinator is not empty or its selection changed")
       },
       document: (key: string) => { pin("SELECT value FROM kv WHERE key=? AND length(value)<=262144", [nativeKey(key)]) },
-      journal: (prefix: string, exceptKey?: string) => {
+      journal: (prefix: string, exceptKey?: string, ordinary = false) => {
+        if (ordinary && exceptKey === undefined) {
+          const digest = journalDigest(prefix)
+          checks.push(() => { if (journalDigest(prefix) !== digest) throw new Error("Mission source changed during preparation") })
+          return
+        }
         const start = nativeKey(prefix), end = `${start}\uffff`
         const args = [start, end, exceptKey === undefined ? "" : nativeKey(exceptKey)]
         const size = read("SELECT count(*) AS count,coalesce(sum(length(value)),0) AS size FROM kv WHERE key>=? AND key<? AND key<>?", args)[0]
