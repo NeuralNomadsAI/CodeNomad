@@ -29,7 +29,16 @@ export function VoiceDictationCard(props: {
     const choice = remoteChoice()
     return choice ? t(`settings.speech.device.${choice}`) : t("settings.voice.unavailable")
   }
-  const test = useTranscriptionTest()
+  let testButton: HTMLButtonElement | undefined
+  let transcribeButton: HTMLButtonElement | undefined
+  const test = useTranscriptionTest(next => {
+    if (next !== "limitReached" || !test.isRecording() || document.activeElement !== testButton) return
+    queueMicrotask(() => {
+      if (document.activeElement === document.body || document.activeElement === testButton) {
+        transcribeButton?.focus({ preventScroll: true })
+      }
+    })
+  })
   const status = () => {
     if (!config.preferences().showPromptVoiceInput) return t("settings.voice.dictation.off")
     if (device?.readFailed()) return t("settings.voice.unavailable")
@@ -70,6 +79,7 @@ export function VoiceDictationCard(props: {
         </button>
         <Show when={test.state() === "limitReached"} fallback={
           <button
+            ref={testButton}
             type="button"
             class="selector-button selector-button-secondary w-auto inline-flex items-center gap-2"
             onClick={() => void test.toggle()}
@@ -86,7 +96,7 @@ export function VoiceDictationCard(props: {
           </button>
         }>
           <span class="settings-inline-note" role="status">{t("promptInput.voiceInput.limitReached")}</span>
-          <button type="button" class="selector-button selector-button-secondary w-auto" onClick={test.confirmTranscription}>
+          <button ref={transcribeButton} type="button" class="selector-button selector-button-secondary w-auto" onClick={test.confirmTranscription}>
             {t("promptInput.voiceInput.transcribe")}
           </button>
           <button type="button" class="selector-button selector-button-secondary w-auto" onClick={test.cancelRecording}>

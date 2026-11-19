@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import type { Page } from "playwright"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { startProductFixture } from "./fixtures/product-fixture-server"
 
 let fixture: Awaited<ReturnType<typeof startProductFixture>>
@@ -12,6 +13,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
   })
+  armFixtureNavigationBudget(context)
   const page = await context.newPage()
   page.setDefaultTimeout(6000)
   const errors: Error[] = []
@@ -149,7 +151,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
     if (pcm) target.searchParams.set("pcm", "1")
     if (locale !== "en") target.searchParams.set("locale", locale)
     if (options.history) target.searchParams.set("history", "")
-    await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await page.goto(target.toString(), { waitUntil: "domcontentloaded" })
     await page.waitForFunction(() => Boolean((window as any).fixture)).catch(error => {
       if (errors.length) throw new AggregateError(errors, errors.map(value => value.message).join("; "))
       throw error
@@ -532,7 +534,7 @@ test("permission granted after the composer closes releases the new stream witho
     const target = new URL(fixture.url)
     target.searchParams.set("alerts", "1")
     second.setDefaultTimeout(6000)
-    await second.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await second.goto(target.toString(), { waitUntil: "domcontentloaded" })
     await second.waitForFunction(() => Boolean((window as any).fixture))
     await second.evaluate(() => (window as any).fixture.setNativeSettings(true))
     const testInput = second.getByRole("button", { name: "Test API input", exact: true })
@@ -855,10 +857,13 @@ for (const surface of ["composer", "Voice settings"] as const) {
       const before = await page.evaluate(() => (window as any).capture.samples)
       await startCapture()
       await page.waitForFunction(previous => (window as any).capture.samples > previous, before)
-      await other.focus()
+      const movesFocus = !inComposer && decision === "transcribe"
+      const beforeLimit = movesFocus ? page.getByRole("button", { name: "Stop recording", exact: true }) : other
+      await beforeLimit.focus()
+      assert.equal(await beforeLimit.evaluate(el => el === document.activeElement), true)
       await page.clock.fastForward(24_000)
       await status.waitFor()
-      assert.equal(await other.evaluate(el => el === document.activeElement), true)
+      assert.equal(await (movesFocus ? transcribe : other).evaluate(el => el === document.activeElement), true)
       assert.equal(await field(page).inputValue(), draft)
       assert.deepEqual(await field(page).evaluate(el => [el.selectionStart, el.selectionEnd]), [7, 14])
       assert.deepEqual(await page.evaluate(() => {

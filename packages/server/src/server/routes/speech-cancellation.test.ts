@@ -24,9 +24,9 @@ async function fixture(t: TestContext, respond: RequestListener, apiKey = "test-
   const log = { child: () => log, info() {} } as unknown as Logger
   registerSpeechRoutes(app, { speechService: new SpeechService(settings, log) })
   const url = await app.listen({ port: 0, host: "127.0.0.1" })
-  return (signal?: AbortSignal) => fetch(`${url}/api/speech/transcribe`, {
+  return (signal?: AbortSignal, mode = "transcribe") => fetch(`${url}/api/speech/${mode}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, signal,
-    body: JSON.stringify({ audioBase64: "YXVkaW8=", mimeType: "audio/mp4" }),
+    body: JSON.stringify(mode === "transcribe" ? { audioBase64: "YXVkaW8=", mimeType: "audio/mp4" } : { text: "Classic summary" }),
   })
 }
 
@@ -70,6 +70,45 @@ test("disconnecting the dictation caller closes the provider upload without retr
   await providerClosed
   assert.equal(calls, 1)
 })
+
+for (const [mode, partial] of [
+  ["synthesize", false],
+  ["synthesize/stream", false],
+  ["synthesize/stream", true],
+] as const) {
+  test(`disconnecting ${mode} ${partial ? "after the first audio chunk" : "before headers"} closes the provider request`, { timeout: 8000 }, async t => {
+    let started!: () => void, closed!: () => void
+    const providerStarted = new Promise<void>(resolve => { started = resolve })
+    const providerClosed = new Promise<void>(resolve => { closed = resolve })
+    const send = await fixture(t, (request, response) => {
+      assert.equal(request.url, "/v1/audio/speech")
+      response.once("close", closed)
+      request.resume()
+      request.once("end", () => {
+        if (partial) {
+          response.writeHead(200, { "Content-Type": "audio/mpeg" })
+          response.write("audio")
+        }
+        started()
+      })
+    })
+    const controller = new AbortController()
+    const pending = send(controller.signal, mode)
+    if (partial) {
+      const reader = (await pending).body!.getReader()
+      assert.equal(Buffer.from((await reader.read()).value!).toString(), "audio")
+      const cancelled = assert.rejects(reader.read(), { name: "AbortError" })
+      controller.abort()
+      await cancelled
+    } else {
+      const cancelled = assert.rejects(pending, { name: "AbortError" })
+      await providerStarted
+      controller.abort()
+      await cancelled
+    }
+    await providerClosed
+  })
+}
 
 test("a format rejection keeps the API default-format path, but transient failures are sent only once", { timeout: 8000 }, async t => {
   const bodies: string[] = []

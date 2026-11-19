@@ -105,7 +105,7 @@ export class OpenAICompatibleSpeechProvider {
     }
   }
 
-  async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
+  async synthesize(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
     const format = input.format ?? this.options.settings.ttsFormat
 
     this.options.logger.info(
@@ -117,7 +117,7 @@ export class OpenAICompatibleSpeechProvider {
       "speech.synthesize",
     )
 
-    const response = await this.requestSpeechAudio(input.text, format)
+    const response = await this.requestSpeechAudio(input.text, format, signal)
     const mimeType = response.headers.get("content-type") || mimeTypeForFormat(format)
 
     const audioBuffer = Buffer.from(await response.arrayBuffer())
@@ -127,7 +127,7 @@ export class OpenAICompatibleSpeechProvider {
     }
   }
 
-  async synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
+  async synthesizeStream(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisStreamResponse> {
     const format = input.format ?? this.options.settings.ttsFormat
 
     this.options.logger.info(
@@ -139,7 +139,7 @@ export class OpenAICompatibleSpeechProvider {
       "speech.synthesize.stream",
     )
 
-    const response = await this.requestSpeechAudio(input.text, format)
+    const response = await this.requestSpeechAudio(input.text, format, signal)
     if (!response.body) {
       throw new Error("Speech provider did not return a stream.")
     }
@@ -150,7 +150,7 @@ export class OpenAICompatibleSpeechProvider {
     }
   }
 
-  private async requestSpeechAudio(text: string, format: "mp3" | "wav" | "opus" | "aac"): Promise<Response> {
+  private async requestSpeechAudio(text: string, format: "mp3" | "wav" | "opus" | "aac", signal?: AbortSignal): Promise<Response> {
     const { settings } = this.options
     if (!settings.apiKey) {
       throw new SpeechNotConfiguredError()
@@ -159,6 +159,7 @@ export class OpenAICompatibleSpeechProvider {
     const endpoint = new URL("audio/speech", ensureTrailingSlash(settings.baseUrl ?? "https://api.openai.com/v1"))
     const response = await fetch(endpoint, {
       method: "POST",
+      signal,
       headers: {
         Authorization: `Bearer ${settings.apiKey}`,
         "Content-Type": "application/json",

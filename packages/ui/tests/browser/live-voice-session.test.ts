@@ -21,6 +21,7 @@ after(async () => { await browser?.close() })
 
 async function fixture(engine: "gemini" | "openai" = "gemini", interactive = false, hebrew = false, title?: string) {
   const context = await browser.newContext(interactive ? { viewport: { width: hebrew ? 320 : 400, height: 600 } } : {})
+  armFixtureNavigationBudget(context)
   const page = await context.newPage()
   page.setDefaultTimeout(8_000)
   const errors: string[] = []
@@ -73,7 +74,7 @@ async function fixture(engine: "gemini" | "openai" = "gemini", interactive = fal
   if (interactive) destination.searchParams.set("ui", "")
   if (hebrew) destination.searchParams.set("he", "")
   if (title) destination.searchParams.set("title", title)
-  await page.goto(destination.href, { waitUntil: "domcontentloaded", timeout: 30_000 })
+  await page.goto(destination.href, { waitUntil: "domcontentloaded" })
   const snapshot = () => page.evaluate(() => {
     const f = (window as any).fixture
     return { info: f.info, state: f.state(), transcript: f.transcript(), draft: f.draft(), userTexts: f.userTexts() }
@@ -432,6 +433,63 @@ test("starting dictation aborts a pending Classic summary and suppresses its lat
   } finally { await context.close() }
 })
 
+for (const input of ["dictation", "API input test"] as const) {
+  test(`Classic holds new summaries until ${input} releases the microphone`, async () => {
+    const { page, context } = await fixture("gemini", true)
+    try {
+      const recording = input === "dictation" ? page : await context.newPage()
+      if (recording !== page) {
+        await recording.addInitScript(() => {
+          window.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
+          Object.assign(window, { electronAPI: { deviceSpeech: async ({ action }: { action: string }) => ({
+            ok: true, value: action === "claimMicrophone" ? { busy: null } : { engine: "api" },
+          }) } })
+        })
+        await recording.goto(page.url(), { waitUntil: "domcontentloaded" })
+        await recording.waitForFunction(() => Boolean((window as any).fixture?.openVoiceSettings))
+        await recording.evaluate(() => (window as any).fixture.openVoiceSettings())
+      }
+
+      await page.waitForFunction(() => Boolean((window as any).fixture?.holdClassicSummary))
+      await page.evaluate(() => (window as any).fixture.holdClassicSummary())
+      const more = page.locator(".prompt-actions-menu-trigger")
+      await more.click()
+      await page.getByRole("menuitemcheckbox", { name: "Enable conversation mode" }).click()
+
+      if (input === "dictation") {
+        await more.click()
+        await page.getByRole("menuitem", { name: "Dictate", exact: true }).click()
+        await more.click()
+        await page.getByRole("menuitem", { name: "Stop recording and transcribe", exact: true }).waitFor()
+        await page.keyboard.press("Escape")
+      } else {
+        await recording.getByRole("button", { name: "Test API input", exact: true }).click()
+        await recording.getByRole("button", { name: "Stop recording", exact: true }).waitFor()
+      }
+
+      const probe = await page.evaluate(async () => {
+        const { classic } = window as any
+        classic.emitSummary()
+        await new Promise(requestAnimationFrame)
+        return { requested: classic.probe.requested, played: classic.probe.played }
+      })
+      assert.deepEqual(probe, { requested: false, played: 0 })
+      assert.equal(await recording.evaluate(() => (window as any).fixture.info.released), 0)
+
+      if (input === "dictation") {
+        await more.click()
+        await page.getByRole("menuitem", { name: "Cancel dictation", exact: true }).click()
+      } else {
+        await recording.getByRole("button", { name: "Stop recording", exact: true }).click()
+      }
+      await recording.waitForFunction(() => (window as any).fixture.info.released === 1)
+      await page.waitForFunction(() => (window as any).classic.probe.requested)
+      await page.evaluate(() => (window as any).classic.probe.release())
+      await page.waitForFunction(() => (window as any).classic.probe.played === 1)
+    } finally { await context.close() }
+  })
+}
+
 test("OpenAI final text replaces deltas; unknown tools fail closed", async () => {
   const { page, context, start, closed, snapshot, waitForSent } = await fixture("openai")
   try {
@@ -524,7 +582,7 @@ test("the composer opens consent, retains stopped turns, and keeps native input 
     const second = await context.newPage()
     try {
       const unavailable = second.getByRole("menuitem", { name: "Dictate — Live conversation is using the microphone." })
-      await second.goto(page.url(), { waitUntil: "domcontentloaded", timeout: 30_000 })
+      await second.goto(page.url(), { waitUntil: "domcontentloaded" })
       await second.getByRole("button", { name: "More actions", exact: true }).click()
       await unavailable.click()
       await second.waitForFunction(() => document.activeElement?.id === "voice-dictation")

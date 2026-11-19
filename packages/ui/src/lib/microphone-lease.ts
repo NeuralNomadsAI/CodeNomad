@@ -100,7 +100,7 @@ let readVersion = 0
 /** Display hint only: only a claim grants capture. A stale storage value is not
  * sufficient to report a held lock after another document has been closed. */
 export async function refreshMicrophoneUse() {
-  if (usesNativeLease() || typeof navigator.locks?.query !== "function" || localPurpose()) return
+  if (typeof navigator === "undefined" || typeof navigator.locks?.query !== "function" || localPurpose()) return
   const version = ++readVersion
   try {
     const { held } = await navigator.locks.query()
@@ -112,23 +112,35 @@ export async function refreshMicrophoneUse() {
   }
 }
 
-if (typeof window !== "undefined") window.addEventListener("storage", event => {
-  if (event.key !== purposeKey && event.key !== null) return
-  if (event.newValue) void refreshMicrophoneUse()
-  else {
-    readVersion++
-    setBrowserPurpose(undefined)
-  }
-})
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", event => {
+    if (event.key !== purposeKey && event.key !== null) return
+    if (event.newValue) void refreshMicrophoneUse()
+    else {
+      readVersion++
+      setBrowserPurpose(undefined)
+    }
+  })
+  void refreshMicrophoneUse()
+}
 
 export const microphoneUse = () => localPurpose() ?? browserPurpose()
 
 /** Retain the lease through permission and close audio capture before releasing it. */
 export const claimMicrophone = createMicrophoneLeases(
-  (id, purpose) => usesNativeLease() ? admitDesktop(id, purpose) : admitBrowser(id, purpose),
+  async (id, purpose) => {
+    if (!usesNativeLease()) return admitBrowser(id, purpose)
+    const release = await admitDesktop(id, purpose)
+    if (purpose === "conversation") return release
+    // Native admission stays authoritative; mirror it for same-origin windows such as Preferences.
+    const unmirror = await admitBrowser(id, purpose).catch(() => undefined)
+    return async () => {
+      try { await release() } finally { await unmirror?.() }
+    }
+  },
   purpose => {
     readVersion++
-    setBrowserPurpose(undefined)
     setLocalPurpose(purpose)
+    if (!purpose) void refreshMicrophoneUse()
   },
 )

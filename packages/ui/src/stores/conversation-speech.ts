@@ -1,8 +1,9 @@
-import { createSignal } from "solid-js"
+import { createEffect, createRoot, createSignal, on } from "solid-js"
 import { tGlobal } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
 import { serverApi } from "../lib/api-client"
 import { getLogger } from "../lib/logger"
+import { microphoneUse } from "../lib/microphone-lease"
 import { formatToMimeType, getSpeechPlaybackSupport } from "../lib/speech-playback-support"
 import { createObjectUrlFromBase64, streamToMediaSource } from "../lib/audio-utils"
 import { serverSettings } from "./preferences"
@@ -40,6 +41,16 @@ let currentPlayback:
   | null = null
 let queueRunner: Promise<void> | null = null
 let playbackErrorShown = false
+
+const microphoneBlocksPlayback = () => {
+  const purpose = microphoneUse()
+  return purpose === "dictation" || purpose === "test"
+}
+
+createRoot(() => createEffect(on(microphoneBlocksPlayback, blocked => {
+  if (blocked) currentPlayback?.controller.abort()
+  else void runConversationQueue()
+})))
 
 function getEntryKey(instanceId: string, sessionId: string, messageId: string, partId: string): string {
   return `${instanceId}:${sessionId}:${messageId}:${partId}`
@@ -205,13 +216,10 @@ export function handleConversationAssistantPartUpdated(instanceId: string, part:
 }
 
 async function runConversationQueue(): Promise<void> {
-  if (queueRunner) {
-    await queueRunner
-    return
-  }
+  if (queueRunner || !queue.length || microphoneBlocksPlayback()) return
 
   queueRunner = (async () => {
-    while (queue.length > 0) {
+    while (queue.length > 0 && !microphoneBlocksPlayback()) {
       const entry = queue.shift()!
       queuedKeys.delete(entry.key)
 
@@ -261,7 +269,7 @@ async function runConversationQueue(): Promise<void> {
     queueRunner = null
     if (queue.length === 0) {
       playbackErrorShown = false
-    }
+    } else void runConversationQueue()
   }
 }
 

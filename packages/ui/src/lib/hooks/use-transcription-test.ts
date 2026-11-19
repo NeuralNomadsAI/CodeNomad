@@ -5,13 +5,16 @@ import { showAlertDialog } from "../../stores/alerts"
 import { speechCapabilities } from "../../stores/speech"
 import { useI18n } from "../i18n"
 
-export function useTranscriptionTest() {
+export function useTranscriptionTest(beforeStateChange: (next: RecordingState) => void) {
   const { t } = useI18n()
   const [state, setState] = createSignal<RecordingState>("idle")
   const [result, setResult] = createSignal<string | null>(null)
 
   const capture = createApiRecordingController({
-    onStateChange: setState,
+    onStateChange: next => {
+      beforeStateChange(next)
+      setState(next)
+    },
     onTranscript: text => setResult(text || t("settings.speech.testInput.empty")),
     onError: (key, detail) => showAlertDialog(t(key), {
       title: t("promptInput.voiceInput.error.title"), detail, variant: "error",

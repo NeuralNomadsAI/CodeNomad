@@ -345,6 +345,34 @@ describe("recording controller", () => {
     assert.equal(attempts, 1)
   })
 
+  it("keeps the final chunk delivered after a recorder error without uploading until confirmed", async () => {
+    let handlers!: Parameters<RecordingControllerDeps["setupRecorder"]>[1]
+    let uploads = 0
+    const h = createHarness({
+      setupRecorder: (_stream, callbacks) => {
+        handlers = callbacks
+        return { start() {}, stop() {}, mimeType: "audio/webm" }
+      },
+      transcribe: async () => { uploads++; return { text: "kept transcript" } },
+    })
+    h.deps.blobToBase64 = async blob => {
+      assert.equal(await blob.text(), "recorded final")
+      return "base64data"
+    }
+    const c = createRecordingController(h.deps, h.callbacks)
+    await c.startRecording()
+    handlers.onDataAvailable(new Blob(["recorded "]))
+    handlers.onError()
+    handlers.onDataAvailable(new Blob(["final"]))
+    handlers.onStop()
+    assert.equal(c.getState(), "limitReached")
+    assert.equal(uploads, 0)
+    c.confirmTranscription()
+    await flushPromises()
+    assert.deepEqual(h.callbacks.transcripts, ["kept transcript"])
+    assert.equal(uploads, 1)
+  })
+
   it("keeps an early WAV limit distinct from a normal stop and accepts confirmation only once", async () => {
     let endedAtLimit!: () => void
     let attempts = 0

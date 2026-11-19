@@ -181,6 +181,7 @@ export function createRecordingController(
       }
 
       mediaStream = stream
+      let recorderFailed = false
       const rec = deps.setupRecorder(stream, {
         onDataAvailable: (chunk) => {
           if (signal.aborted || recordingTrimmed || !chunk.size) return
@@ -196,22 +197,22 @@ export function createRecordingController(
             recordedChunks.push(chunk)
             recordedBytes += chunk.size
           }
-          if (state === "recording" && (exceeds || recordedBytes >= RECORDING_STOP_BYTES)) stopRecorder("limitReached")
+          if (!recorderFailed && state === "recording" && (exceeds || recordedBytes >= RECORDING_STOP_BYTES)) stopRecorder("limitReached")
           else if (state === "transcribing" && exceeds) setState("limitReached")
         },
         onStop: () => {
           if (signal.aborted || !recorder) return
           recorderStopped = true
-          if (state === "transcribing") void finalizeRecording(operation)
-          else if (state === "recording" && recordedBytes > 0) {
-            // MediaRecorder can stop on device loss without an explicit stop action.
+          if (state === "transcribing" && !recorderFailed) void finalizeRecording(operation)
+          else if ((state === "recording" || recorderFailed) && recordedBytes > 0) {
             deps.stopTracks(mediaStream)
             mediaStream = null
             releaseMicrophone()
             setState("limitReached")
           } else if (state !== "limitReached") cancelRecording()
         },
-        onError: cancelCurrent,
+        // MediaRecorder follows its error event with a final chunk and stop.
+        onError: () => { recorderFailed = true },
       })
       recorder = rec
 

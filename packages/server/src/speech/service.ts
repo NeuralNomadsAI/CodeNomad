@@ -61,8 +61,8 @@ export interface SpeechProvider {
     "separateProviders" | "sttConfigured" | "ttsConfigured" | "sttBaseUrl" | "ttsBaseUrl" | "voiceConversation" | "desktopVoiceConversationEngine"
   >
   transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse>
-  synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse>
-  synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse>
+  synthesize(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisResponse>
+  synthesizeStream(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisStreamResponse>
 }
 
 export interface NormalizedSpeechSettings {
@@ -166,12 +166,12 @@ export class SpeechService {
     return this.createSttProvider().transcribe(input, signal)
   }
 
-  async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
-    return this.createTtsProvider().synthesize(input)
+  async synthesize(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
+    return this.createTtsProvider().synthesize(input, signal)
   }
 
-  async synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
-    return this.createTtsProvider().synthesizeStream(input)
+  async synthesizeStream(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisStreamResponse> {
+    return this.createTtsProvider().synthesizeStream(input, signal)
   }
 
   private parseConfig() {
