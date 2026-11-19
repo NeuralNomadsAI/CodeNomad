@@ -12,6 +12,7 @@ const authority = { instanceId: z.string().min(1).max(256), digest: z.string().r
 const idSchema = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,39}\.[a-z][a-z0-9-]{1,39}$/) }).strict()
 const listSchema = z.object({ ...authority, kind, query: z.string().max(200), page: z.number().int().min(1).max(FORGE_MAX_PAGE), fresh: z.boolean() }).strict()
 const urlSchema = z.object({ ...authority, kind, number: z.number().int().min(1).max(999_999_999) }).strict()
+const branchSchema = urlSchema.extend({ fromSlug: z.string().min(1).max(200).optional() }).strict()
 
 /**
  * `repository.workItems.read` (API 3, and API 4 alongside the worktree permissions below): bounded issue and pull request pages of
@@ -20,10 +21,10 @@ const urlSchema = z.object({ ...authority, kind, number: z.number().int().min(1)
  * or number. Consent is checked before and after each read.
  */
 export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps: {
-  store: PanelExtensionStore; workspaceManager: Pick<WorkspaceManager, "get">; forge: ForgeWorkItems
+  store: PanelExtensionStore; workspaceManager: Pick<WorkspaceManager, "get" | "getWorktrees">; forge: ForgeWorkItems
 }) {
   const route = <T extends z.ZodType<{ instanceId: string; digest: string }>>(method: string, permission: PanelExtensionPermission, schema: T,
-    read: (directory: string, input: z.infer<T>, signal: AbortSignal) => Promise<unknown>) => {
+    read: (directory: string, input: z.infer<T>, signal: AbortSignal, current: () => Promise<void>) => Promise<unknown>) => {
     app.post(`/api/panel-extensions/:id/${method}`, { bodyLimit: 4096 }, async (request, reply) => {
       reply.header("Cache-Control", "no-store")
       // A caller that goes away (unmounted panel, lost transport) abandons its read.
@@ -35,10 +36,13 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
         await deps.store.authorize(id, input.digest, permission)
         const workspace = deps.workspaceManager.get(input.instanceId)
         if (!workspace) throw new PanelExtensionError("missing")
-        const result = await read(workspace.path, input, abandoned.signal)
-        // Revocation, replacement or closing the project during the read fences its result.
-        await deps.store.authorize(id, input.digest, permission)
-        if (deps.workspaceManager.get(input.instanceId)?.path !== workspace.path) throw new PanelExtensionError("unavailable")
+        // Revocation, replacement or closing the project during the read fences its result (and a write, before it writes).
+        const current = async () => {
+          await deps.store.authorize(id, input.digest, permission)
+          if (deps.workspaceManager.get(input.instanceId)?.path !== workspace.path) throw new PanelExtensionError("unavailable")
+        }
+        const result = await read(workspace.path, input, abandoned.signal, current)
+        await current()
         return result
       } catch (error) {
         const code = error instanceof z.ZodError ? 400 : error instanceof PanelExtensionError
@@ -59,8 +63,13 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
     const source = await deps.forge.branchSource(directory, signal)
     return source ? { status: "ok", branches: await readWorkItemBranches(directory, source) } : { status: "unavailable" }
   })
-  route("workItemBranch", "repository.worktrees.write", urlSchema, async (directory, input, signal) => {
+  // `fromSlug` is the host's displayed worktree, whose HEAD a new issue branch starts from.
+  route("workItemBranch", "repository.worktrees.write", branchSchema, async (directory, input, signal, current) => {
     const source = await deps.forge.branchSource(directory, signal)
-    return source ? createWorkItemBranch(directory, source, input.kind, input.number) : { status: "unavailable" }
+    if (!source) return { status: "unavailable" }
+    const base = input.fromSlug === undefined ? undefined : (await deps.workspaceManager.getWorktrees(input.instanceId, "cached"))
+      .worktrees.find(worktree => worktree.slug === input.fromSlug && !worktree.nestedFolderMissing)?.directory
+    if (input.fromSlug !== undefined && !base) return { status: "unavailable" }
+    return createWorkItemBranch(directory, source, input.kind, input.number, { base, check: current, signal })
   })
 }

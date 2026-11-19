@@ -39,8 +39,8 @@ export const panelExtensionsApi4 = {
     api4<{ status: PanelPreferencesSetStatus }>(id, "preferencesSet", { ...authority, value }, signal),
   workItemBranches: ({ id, ...authority }: Authority, signal: AbortSignal) =>
     api4<{ status: "ok"; branches: WorkItemBranch[] } | { status: "unavailable" }>(id, "workItemBranches", authority, signal),
-  workItemBranch: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, signal: AbortSignal) =>
-    api4<WorkItemBranchResult>(id, "workItemBranch", { ...authority, kind, number }, signal),
+  workItemBranch: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, fromSlug: string, signal: AbortSignal) =>
+    api4<WorkItemBranchResult>(id, "workItemBranch", { ...authority, kind, number, fromSlug }, signal),
 }
 export const panelExtensionsApi = {
   assets: (instanceId: string, id: string, digest: string, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>

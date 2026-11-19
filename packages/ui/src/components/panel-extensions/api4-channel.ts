@@ -9,7 +9,7 @@ import { tGlobal } from "../../lib/i18n"
 import { showToastNotification, type ToastHandle } from "../../lib/notifications"
 import { HttpResponseError } from "../../lib/retryable-file-search"
 import { alertDialogState, showConfirmDialog } from "../../stores/alerts"
-import { createWorktree, ensureWorktreesLoaded, getParentSessionId, getWorktreeForSession, getWorktrees, reloadWorktrees,
+import { createWorktree, ensureWorktreesLoaded, getParentSessionId, getWorktreeForSession, getWorktreeSlugForParentSession, getWorktrees, reloadWorktrees,
   setWorktreeSlugForParentSession } from "../../stores/worktrees"
 import { getActiveCatalogLocation } from "../../stores/session-api"
 import { requestComposerFocus } from "../../stores/composer-focus"
@@ -228,7 +228,9 @@ export function useApi4Channel(props: {
       if (destination === undefined) {
         progress = showToastNotification({ category: "files", variant: "info", transient: true, duration: 60_000,
           message: tGlobal("panelExtensions.worktrees.creating", { item }) })
-        const branch = await panelExtensionsApi4.workItemBranch(authority, kind, number, lifetime.signal)
+        // A new issue branch starts from the family's own checkout, as the worktree selector does.
+        const fromSlug = getWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session))
+        const branch = await panelExtensionsApi4.workItemBranch(authority, kind, number, fromSlug, lifetime.signal)
         if (branch.status !== "ok") throw new Refusal(tGlobal(`panelExtensions.worktrees.${branch.status}`, { item, branch: "branch" in branch ? branch.branch : "" }))
         destination = (await createWorktree(props.instanceId, branch.branch)).slug
         await reloadWorktrees(props.instanceId)

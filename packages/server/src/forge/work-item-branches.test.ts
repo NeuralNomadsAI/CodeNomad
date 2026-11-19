@@ -1,68 +1,119 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
-import { mkdtempSync, rmSync } from "node:fs"
+import { execFile, execFileSync } from "node:child_process"
+import { promisify } from "node:util"
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { createServer, type Server } from "node:http"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { after, describe, it } from "node:test"
+import { after, before, describe, it } from "node:test"
 import { createWorkItemBranch, readWorkItemBranches, type WorkItemBranchSource } from "./work-item-branches"
 
 const roots: string[] = []
-after(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }) })
 const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" }).trim()
+const commit = (directory: string, message: string) => git(directory, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", message)
 
-/** A clone whose `origin` publishes `refs/pull/7/head` and `refs/merge-requests/8/head` off every branch. */
-function project() {
+// Remotes are served over Git's dumb HTTP protocol, so URLs parse as forge repositories.
+let server: Server, origin = ""
+before(async () => {
+  server = createServer((request, response) => {
+    const [, root, repository, ...rest] = decodeURIComponent(new URL(request.url!, "http://x").pathname).split("/")
+    try { response.end(readFileSync(path.join(tmpdir(), root!, repository!, ...rest))) } catch { response.statusCode = 404; response.end() }
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+  origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+})
+after(() => { server.close(); for (const root of roots) rmSync(root, { recursive: true, force: true }) })
+
+/** A clone of `<root>/app.git`, which publishes `refs/pull/7/head` and `refs/merge-requests/8/head` off every branch. */
+async function project() {
   const root = mkdtempSync(path.join(tmpdir(), "codenomad-item-branches-"))
   roots.push(root)
-  const remote = path.join(root, "remote"), clone = path.join(root, "clone")
-  git(root, "init", "-q", "-b", "main", remote)
-  for (const [name, value] of [["user.name", "T"], ["user.email", "t@example.com"]]) git(remote, "config", name, value)
-  git(remote, "commit", "-q", "--allow-empty", "-m", "base")
-  const base = git(remote, "rev-parse", "HEAD")
-  git(remote, "commit", "-q", "--allow-empty", "-m", "contribution")
-  const head = git(remote, "rev-parse", "HEAD")
-  git(remote, "update-ref", "refs/pull/7/head", head)
-  git(remote, "update-ref", "refs/merge-requests/8/head", head)
-  git(remote, "reset", "-q", "--hard", base)
-  git(root, "clone", "-q", remote, clone)
-  return { clone, base, head }
+  const work = path.join(root, "work"), bare = path.join(root, "app.git"), clone = path.join(root, "clone")
+  git(root, "init", "-q", "-b", "main", work)
+  commit(work, "base")
+  const base = git(work, "rev-parse", "HEAD")
+  commit(work, "contribution")
+  const head = git(work, "rev-parse", "HEAD")
+  git(work, "reset", "-q", "--hard", base)
+  git(root, "clone", "-q", "--bare", work, bare)
+  git(bare, "update-ref", "refs/pull/7/head", head)
+  git(bare, "update-ref", "refs/merge-requests/8/head", head)
+  git(bare, "update-server-info")
+  const url = `${origin}/${path.basename(root)}/app.git`
+  // Asynchronous: the server answering it runs on this event loop.
+  await promisify(execFile)("git", ["clone", "-q", url, clone])
+  const source: WorkItemBranchSource = { provider: "github", host: new URL(origin).host, path: `${path.basename(root)}/app`, name: "origin" }
+  return { root, clone, base, head, source }
 }
 
-const github: WorkItemBranchSource = { provider: "github", host: "github.com", path: "Team/App", name: "origin" }
-
 describe("work item branches", () => {
-  it("creates an issue branch from HEAD once, linked to that item of this repository only", async () => {
-    const { clone, base } = project()
-    assert.deepEqual(await createWorkItemBranch(clone, github, "issue", 3), { status: "ok", branch: "issue-3", created: true })
-    assert.equal(git(clone, "rev-parse", "issue-3"), base)
-    assert.deepEqual(await createWorkItemBranch(clone, github, "issue", 3), { status: "ok", branch: "issue-3", created: false })
-    assert.deepEqual(await readWorkItemBranches(clone, { host: "github.com", path: "team/app" }), [{ kind: "issue", number: 3, branch: "issue-3" }])
-    assert.deepEqual(await readWorkItemBranches(clone, { host: "github.com", path: "team/other" }), [])
+  it("creates an issue branch from the base checkout's HEAD once, linked to that item of this repository only", async () => {
+    const { clone, base, source } = await project()
+    const displayed = path.join(clone, "..", "displayed")
+    git(clone, "worktree", "add", "-q", "-b", "displayed", displayed, "origin/main")
+    commit(displayed, "displayed tip")
+    assert.deepEqual(await createWorkItemBranch(clone, source, "issue", 3, { base: displayed }), { status: "ok", branch: "issue-3", created: true })
+    assert.equal(git(clone, "rev-parse", "issue-3"), git(displayed, "rev-parse", "HEAD"), "from the displayed checkout, not the project folder")
+    assert.deepEqual(await createWorkItemBranch(clone, source, "issue", 3), { status: "ok", branch: "issue-3", created: false })
+    assert.deepEqual(await createWorkItemBranch(clone, source, "issue", 4), { status: "ok", branch: "issue-4", created: true })
+    assert.equal(git(clone, "rev-parse", "issue-4"), base)
+    assert.deepEqual(await readWorkItemBranches(clone, { host: source.host, path: source.path.toUpperCase() }),
+      [{ kind: "issue", number: 3, branch: "issue-3" }, { kind: "issue", number: 4, branch: "issue-4" }])
+    assert.deepEqual(await readWorkItemBranches(clone, { host: source.host, path: "team/other" }), [])
   })
 
   it("fetches a pull or merge request head as the repository publishes it, leaving no scratch ref", async () => {
-    const { clone, head } = project()
-    assert.deepEqual(await createWorkItemBranch(clone, github, "pullRequest", 7), { status: "ok", branch: "pr-7", created: true })
+    const { clone, head, source } = await project()
+    assert.deepEqual(await createWorkItemBranch(clone, source, "pullRequest", 7), { status: "ok", branch: "pr-7", created: true })
     assert.equal(git(clone, "rev-parse", "pr-7"), head)
-    assert.deepEqual(await createWorkItemBranch(clone, { ...github, provider: "gitlab" }, "pullRequest", 8), { status: "ok", branch: "pr-8", created: true })
+    assert.deepEqual(await createWorkItemBranch(clone, { ...source, provider: "gitlab" }, "pullRequest", 8), { status: "ok", branch: "pr-8", created: true })
     assert.equal(git(clone, "rev-parse", "pr-8"), head)
     assert.equal(git(clone, "for-each-ref", "refs/codenomad/"), "")
-    assert.deepEqual((await readWorkItemBranches(clone, github)).map(link => link.branch).sort(), ["pr-7", "pr-8"])
+    assert.deepEqual((await readWorkItemBranches(clone, source)).map(link => link.branch).sort(), ["pr-7", "pr-8"])
+  })
+
+  it("never moves another branch through the remote's configured refspecs", async () => {
+    const { clone, base, source } = await project()
+    git(clone, "branch", "keep", base)
+    git(clone, "config", "--add", "remote.origin.fetch", "+refs/pull/7/head:refs/heads/keep")
+    assert.equal((await createWorkItemBranch(clone, source, "pullRequest", 7)).status, "ok")
+    assert.equal(git(clone, "rev-parse", "keep"), base)
+  })
+
+  it("refuses a remote that no longer names the confirmed repository", async () => {
+    const { clone, source } = await project()
+    const other = await project()
+    git(clone, "remote", "set-url", "origin", git(other.clone, "remote", "get-url", "origin"))
+    assert.deepEqual(await createWorkItemBranch(clone, source, "pullRequest", 7), { status: "unavailable" })
+    assert.equal(git(clone, "for-each-ref", "refs/heads/pr-7"), "")
+  })
+
+  it("writes nothing once the guard refuses, even after the fetch", async () => {
+    const { clone, source } = await project()
+    let checks = 0
+    const refused = () => { if (++checks === 2) throw new Error("revoked") }
+    await assert.rejects(createWorkItemBranch(clone, source, "pullRequest", 7, { check: async () => refused() }), /revoked/)
+    await assert.rejects(createWorkItemBranch(clone, source, "issue", 3, { check: async () => { throw new Error("revoked") } }), /revoked/)
+    assert.equal(git(clone, "for-each-ref", "refs/heads/pr-7", "refs/heads/issue-3", "refs/codenomad/"), "")
   })
 
   it("never takes over an unlinked branch of the same name, and reports a missing head", async () => {
-    const { clone, base } = project()
+    const { clone, base, source } = await project()
     git(clone, "branch", "pr-7", base)
-    assert.deepEqual(await createWorkItemBranch(clone, github, "pullRequest", 7), { status: "conflict", branch: "pr-7" })
+    assert.deepEqual(await createWorkItemBranch(clone, source, "pullRequest", 7), { status: "conflict", branch: "pr-7" })
     assert.equal(git(clone, "rev-parse", "pr-7"), base)
-    assert.deepEqual(await createWorkItemBranch(clone, github, "pullRequest", 9), { status: "unavailable" })
+    assert.deepEqual(await createWorkItemBranch(clone, source, "pullRequest", 9), { status: "unavailable" })
     assert.equal(git(clone, "for-each-ref", "refs/heads/pr-9", "refs/codenomad/"), "")
   })
 
-  it("forgets a link whose branch is gone, even when Git kept its config", async () => {
-    const { clone } = project()
-    await createWorkItemBranch(clone, github, "issue", 4)
-    git(clone, "update-ref", "-d", "refs/heads/issue-4")
-    assert.deepEqual(await readWorkItemBranches(clone, github), [])
+  it("finds the item's link however many others exist, and forgets links whose branch is gone", async () => {
+    const { clone, base, source } = await project()
+    execFileSync("git", ["-C", clone, "update-ref", "--stdin"], { input: Array.from({ length: 250 }, (_, i) => `create refs/heads/old-${i} ${base}\n`).join("") })
+    appendFileSync(path.join(clone, ".git", "config"), Array.from({ length: 250 }, (_, i) => `[branch "old-${i}"]\n\tcodenomad-work-item = github.com/o/old#issue/${i + 1}\n`).join(""))
+    assert.equal((await createWorkItemBranch(clone, source, "issue", 201)).status, "ok")
+    assert.deepEqual(await readWorkItemBranches(clone, source), [{ kind: "issue", number: 201, branch: "issue-201" }])
+    assert.deepEqual(await createWorkItemBranch(clone, source, "issue", 201), { status: "ok", branch: "issue-201", created: false })
+    git(clone, "update-ref", "-d", "refs/heads/issue-201")
+    assert.deepEqual(await readWorkItemBranches(clone, source), [])
   })
 })

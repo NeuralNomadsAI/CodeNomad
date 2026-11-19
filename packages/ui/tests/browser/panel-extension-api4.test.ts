@@ -15,7 +15,10 @@ import { registerPanelExtensionApi4Routes } from "../../../server/src/server/rou
 import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
 import { registerPanelExtensionWorkItemRoutes } from "../../../server/src/server/routes/panel-extension-work-items"
 import type { ForgeWorkItems } from "../../../server/src/forge/work-items"
-import { execFileSync } from "node:child_process"
+import { execFile, execFileSync } from "node:child_process"
+import { readFileSync } from "node:fs"
+import { createServer, type Server } from "node:http"
+import { promisify } from "node:util"
 
 // The real host routes, store, bridge, channels and composer; only OpenCode is a fake.
 const instanceId = "api4-instance"
@@ -25,7 +28,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>, root: string, stor
 const app = Fastify()
 const rpc = { calls: [] as Array<{ method: string; input: any }>, hold: undefined as undefined | ((method: string) => Promise<void>),
   references: [] as unknown[], conversation: "ses_images", image: { status: "asset", mime: "image/png", uri: "" } as Record<string, unknown> }
-let installed: PanelExtensionPackage | undefined, realPng = "", repository = ""
+let installed: PanelExtensionPackage | undefined, realPng = "", repository = "", remoteServer: Server
 const transit = { hold: undefined as undefined | (() => Promise<void>) }
 
 const png = (width: number, height: number) => {
@@ -66,16 +69,27 @@ before(async () => {
       ownsLocation: async (id: string, location: { directory: string }) => id === instanceId && location.directory === "/fixture",
       desktopPluginsReady: async () => {}, getWorktreeIdentityForPath: async () => "/fixture", getServiceWslDistro: () => undefined,
       getHostPathForServicePath: async (_id: string, value: string) => value } })
-  // Work item branches are real Git: a clone whose origin publishes pull request 7's head.
+  // Work item branches are real Git: a clone whose origin, served over Git's dumb HTTP
+  // protocol so its URL names a repository, publishes pull request 7's head.
   const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" }).trim()
-  const remote = path.join(root, "remote")
+  const work = path.join(root, "work"), bare = path.join(root, "app.git")
   repository = path.join(root, "clone")
-  git(root, "init", "-q", "-b", "main", remote)
-  git(remote, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "base")
-  git(remote, "update-ref", "refs/pull/7/head", "HEAD")
-  git(root, "clone", "-q", remote, repository)
-  const forge = { branchSource: async () => ({ provider: "github", host: "github.com", path: "o/r", name: "origin" }) } as unknown as ForgeWorkItems
-  registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: (id: string) => id === instanceId ? { id, path: repository } as any : undefined } })
+  git(root, "init", "-q", "-b", "main", work)
+  git(work, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "base")
+  git(root, "clone", "-q", "--bare", work, bare)
+  git(bare, "update-ref", "refs/pull/7/head", "HEAD")
+  git(bare, "update-server-info")
+  remoteServer = createServer((request, response) => {
+    try { response.end(readFileSync(path.join(bare, decodeURIComponent(new URL(request.url!, "http://x").pathname).replace(/^\/team\/app\.git\//, "")))) }
+    catch { response.statusCode = 404; response.end() }
+  })
+  await new Promise<void>(resolve => remoteServer.listen(0, "127.0.0.1", resolve))
+  const host = `127.0.0.1:${(remoteServer.address() as { port: number }).port}`
+  // Asynchronous: the server answering it runs on this event loop.
+  await promisify(execFile)("git", ["clone", "-q", `http://${host}/team/app.git`, repository])
+  const forge = { branchSource: async () => ({ provider: "github", host, path: "team/app", name: "origin" }) } as unknown as ForgeWorkItems
+  registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: (id: string) => id === instanceId ? { id, path: repository } as any : undefined,
+    getWorktrees: async () => ({ worktrees: [{ slug: "root", directory: repository }] }) as any } })
   fixture = await startProductFixture("panel-extension-api4")
   const canvas = await fixture.browser.newPage()
   realPng = await canvas.evaluate(() => { const element = document.createElement("canvas"); element.width = 400; element.height = 300; return element.toDataURL("image/png") })
@@ -87,7 +101,7 @@ afterEach(async () => {
   if (installed) await store.remove(installed.manifest.id, installed.digest).catch(() => {})
   installed = undefined
 })
-after(async () => { await fixture?.close(); await app.close(); await rm(root, { recursive: true, force: true }) })
+after(async () => { await fixture?.close(); await app.close(); remoteServer?.close(); await rm(root, { recursive: true, force: true }) })
 
 // Author code: exposes each bridge call to the test, never reaching the host otherwise.
 const panel = `<p id="ctx"></p><script>

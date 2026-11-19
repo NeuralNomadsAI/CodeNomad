@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import Fastify from "fastify"
+import { execFileSync } from "node:child_process"
 import { PanelExtensionStore } from "../../panel-extensions/store"
 import { readPanelExtensionArchive } from "../../panel-extensions/archive"
 import { fixtureArchive } from "../../panel-extensions/archive-fixture"
@@ -78,6 +79,35 @@ test("API 4 reads work items with their own permission; item branches each need 
     assert.deepEqual(await Promise.all([post(writer, "workItemBranches"), post(writer, "workItemBranch", item)]), [200, 200])
     assert.equal(await post(writer, "workItemBranch", { kind: "pullRequest", number: 0 }), 400)
     assert.equal(await post(writer, "workItemBranch", { ...item, branch: "main" }), 400, "addons never name the branch")
+  } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("a branch write starts from the displayed worktree and writes nothing once consent is revoked during discovery", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-item-branch-write-")), app = Fastify(), store = new PanelExtensionStore(path.join(directory, "store"))
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim()
+  const project = path.join(directory, "project"), displayed = path.join(directory, "displayed")
+  git(directory, "init", "-q", "-b", "main", project)
+  git(project, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "base")
+  git(project, "worktree", "add", "-q", "-b", "feature", displayed)
+  git(displayed, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "displayed")
+  const writer = await readPanelExtensionArchive(fixtureArchive("<p>Write</p>", { apiVersion: 4,
+    permissions: ["session.context", "repository.workItems.read", "repository.worktrees.read", "repository.worktrees.write"] }))
+  let discovery: (() => Promise<void>) | undefined
+  const forge = { branchSource: async () => { await discovery?.(); return { provider: "github", host: "github.com", path: "o/r", name: "origin" } } } as unknown as ForgeWorkItems
+  registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: () => ({ id: "i", path: project }),
+    getWorktrees: async () => ({ worktrees: [{ slug: "root", directory: project }, { slug: "feature", directory: displayed }] }) } as any })
+  const write = (extra = {}) => app.inject({ method: "POST", url: `/api/panel-extensions/${writer.manifest.id}/workItemBranch`,
+    payload: { instanceId: "i", digest: writer.digest, kind: "issue", ...extra } })
+  try {
+    await store.install(writer); await store.activate(writer.manifest.id, writer.digest, true)
+    discovery = () => store.activate(writer.manifest.id, writer.digest, false)
+    assert.equal((await write({ number: 3 })).statusCode, 403)
+    assert.equal(git(project, "branch", "--list", "issue-3"), "", "revocation during discovery prevents the write")
+    discovery = undefined
+    await store.activate(writer.manifest.id, writer.digest, true)
+    assert.equal((await write({ number: 4, fromSlug: "missing" })).json().status, "unavailable")
+    assert.deepEqual((await write({ number: 4, fromSlug: "feature" })).json(), { status: "ok", branch: "issue-4", created: true })
+    assert.equal(git(project, "rev-parse", "issue-4"), git(displayed, "rev-parse", "HEAD"))
   } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
