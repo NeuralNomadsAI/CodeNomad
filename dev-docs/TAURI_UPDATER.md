@@ -61,9 +61,10 @@ renderers generally.
 
 The plugin verifies the complete download before shutdown admission. A prepared
 installer and restart intent enter the shutdown coordinator under one lock.
+The update gives windows up to ten seconds to acknowledge saving their state.
 Every renderer must flush and the owned CodeNomad backend must stop, with
 containment confirmed and both output readers successfully drained to EOF within
-the shared shutdown deadline, before installation. A timeout or cleanup failure discards the pending installer; a
+the backend shutdown deadline, before installation. A timeout or cleanup failure discards the pending installer; a
 late acknowledgement or later ordinary quit cannot replay it. Windows logout
 discards a waiting update. Installation never stops the shared OpenCode daemon.
 
