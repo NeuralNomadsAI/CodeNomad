@@ -87,7 +87,7 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
   for (let index = 0; index < family.length; index++) {
     input.signal.throwIfAborted(); input.current()
     const state = await observation.session(family[index])
-    if (state.inbox || state.suspended || (!(savingSelf && index === 0) && (state.active || state.runningTools)))
+    if (state.inbox || (!(savingSelf && index === 0 && state.active) && (state.active || state.suspended || state.runningTools)))
       throw new Error("coordinator-busy")
     for (const child of await observation.children(family[index])) {
       if (seen.has(child) || seen.size >= MAX_CONTROL_FAMILY_SESSIONS) throw new Error("Coordinator family coverage unavailable")

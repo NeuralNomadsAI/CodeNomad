@@ -133,8 +133,8 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
             WHERE m.session_id=s.id AND m.type='assistant' AND json_extract(p.value,'$.type')='tool'
             AND json_extract(p.value,'$.state.status') IN ('running','streaming')) AS tools
           FROM session_v2 s JOIN family f ON s.id=f.id ORDER BY s.id`, [id])
-        if (!members.length || members.length > 4096 || members.some(row => row.time_suspended != null || row.inbox !== 0
-          || (row.tools !== 0 && !(allowRootTurn && row.id === id))))
+        if (!members.length || members.length > 4096 || members.some(row => row.inbox !== 0
+          || ((row.time_suspended != null || row.tools !== 0) && !(allowRootTurn && row.id === id))))
           throw new Error("coordinator-busy")
         const ids = new Set(members.map(row => String(row.id)))
         const list = (name: string, codec: Schema.Codec<unknown, unknown>) => {
@@ -155,7 +155,9 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           const requests = [...list("@opencode/Form", Schema.Array(Schema.toType(Form.Info))),
             ...list("@opencode/Permission", Schema.Array(Schema.toType(Permission.Request)))]
           const shells = list("@opencode/Shell", Schema.Array(Schema.toType(Shell.Info)))
-          if ([...active].some(member => ids.has(String(member)) && !(allowRootTurn && member === id))
+          const ownTurn = allowRootTurn && active.has(id)
+          if ((!ownTurn && members.some(row => row.id === id && (row.time_suspended != null || row.tools !== 0)))
+            || [...active].some(member => ids.has(String(member)) && !(ownTurn && member === id))
             || requests.some(item => item.sessionID == null || ids.has(String(item.sessionID)))
             || shells.some(item => nativeShellBlocksFamily(item, ids))) throw new Error("coordinator-busy")
         })
