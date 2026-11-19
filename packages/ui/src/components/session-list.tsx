@@ -129,9 +129,9 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [listViewportAttached, setListViewportAttached] = createSignal(false)
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
   const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
-  const [favoriteFocusSessionId, setFavoriteFocusSessionId] = createSignal<string>()
-  let cancelFavoriteFocus: (() => void) | undefined
-  onCleanup(() => cancelFavoriteFocus?.())
+  const [actionFocusSessionId, setActionFocusSessionId] = createSignal<string>()
+  let actionFocus: ReturnType<typeof claimActionFocus>
+  onCleanup(() => actionFocus?.release())
   const [menuSessionId, setMenuSessionId] = createSignal<string>()
   const [expanderMenuSessionId, setExpanderMenuSessionId] = createSignal<string>()
   let attachmentFrame: number | undefined
@@ -320,7 +320,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
   const keptMountedIndexes = createMemo(() => {
     const indexes = new Set<number>()
-    for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId(), favoriteFocusSessionId()]) {
+    for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId(), actionFocusSessionId()]) {
       const index = sessionId ? visibleProjection().indexById.get(sessionId) : undefined
       if (index !== undefined) indexes.add(index)
     }
@@ -637,63 +637,101 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
   }
 
-  const toggleFavorite = async (sessionId: string, rowElement: () => HTMLElement | undefined) => {
+  function claimActionFocus(sessionId: string): {
+    sessionId: string
+    release: () => void
+    restore: (releaseAfter: boolean, fallback?: HTMLElement) => void
+  } | undefined {
+    const list = listEl()
+    const instanceId = props.instanceId
+    const rowSelector = `.session-item-base[data-session-id="${CSS.escape(sessionId)}"]`
+    const overflowTrigger = ".action-overflow-trigger"
+    const favoriteButton = ".session-item-inline-actions [data-action-key='favorite']"
+    const isAction = (target: EventTarget | null) => target instanceof Element
+      && !!target.closest(`${overflowTrigger}, ${favoriteButton}`)?.closest(rowSelector)
+      && Boolean(list?.contains(target))
+    if (!list || !isAction(document.activeElement)) return
+    actionFocus?.release()
+
+    const controller = new AbortController()
+    let frame = 0
+    const release = () => {
+      controller.abort()
+      cancelAnimationFrame(frame)
+      if (actionFocus?.release === release) {
+        actionFocus = undefined
+        setActionFocusSessionId(undefined)
+      }
+    }
+    const options = { capture: true, signal: controller.signal }
+    document.addEventListener("focusin", event => {
+      if (event.target !== document.body && !isAction(event.target)) release()
+    }, options)
+    window.addEventListener("blur", release, { signal: controller.signal })
+    document.addEventListener("keydown", event => { if (event.key === "Tab") release() }, options)
+    document.addEventListener("pointerdown", event => {
+      // A resize drag prevents pointerdown's focus change.
+      queueMicrotask(() => {
+        if (!controller.signal.aborted && !event.defaultPrevented && !isAction(event.target)) release()
+      })
+    }, options)
+
+    const restore = (releaseAfter: boolean, fallback?: HTMLElement) => {
+      cancelAnimationFrame(frame)
+      const done = () => { if (releaseAfter) release() }
+      // Keep the row mounted by ID while Virtua applies its new index and geometry.
+      let framesLeft = 12
+      const settle = () => {
+        if (controller.signal.aborted || props.instanceId !== instanceId || listEl() !== list || !list.isConnected
+          || !document.hasFocus() || (document.activeElement !== document.body && !isAction(document.activeElement))) {
+          release()
+          return
+        }
+        if (!visibleProjection().indexById.has(sessionId)) {
+          fallback?.focus({ preventScroll: true })
+          done()
+          return
+        }
+        const row = list.querySelector<HTMLElement>(rowSelector)
+        const button = row?.querySelector<HTMLButtonElement>(
+          row.dataset.compactActions === "true" ? overflowTrigger : favoriteButton,
+        )
+        if (row && button && !button.closest("[inert]") && button.checkVisibility({ checkVisibilityCSS: true })) {
+          const bounds = row.getBoundingClientRect(), top = list.getBoundingClientRect().top + list.clientTop
+          const bottom = top + list.clientHeight
+          const delta = bounds.top < top - 0.5 ? bounds.top - top
+            : bounds.bottom > bottom + 0.5 ? bounds.bottom - bottom : 0
+          if (delta) list.scrollTop += delta
+          else {
+            button.focus({ preventScroll: true })
+            if (document.activeElement === button) { done(); return }
+          }
+        }
+        // Bound retries if the panel becomes hidden or its controls disappear.
+        if (--framesLeft) frame = requestAnimationFrame(settle)
+        else done()
+      }
+      frame = requestAnimationFrame(settle)
+    }
+    const claimed = { sessionId, release, restore }
+    actionFocus = claimed
+    setActionFocusSessionId(sessionId)
+    return claimed
+  }
+
+  const toggleFavorite = async (sessionId: string) => {
     const instanceId = props.instanceId
     if (!favoriteStore.ready() || favoriteStore.pending().has(sessionId)
       || !isSessionInWorkspaceScope(instanceId, sessionId)) return
     const remove = favorites().has(sessionId)
-    const list = listEl()
-    const isFavoriteControl = (target: EventTarget | null) => {
-      const row = rowElement()
-      return !!row && target instanceof Element && row.contains(target)
-        && !!target.closest(".action-overflow-trigger, .session-item-inline-actions [data-action-key='favorite']")
-    }
-    const focus = new AbortController()
-    const releaseFocus = () => {
-      focus.abort()
-      if (cancelFavoriteFocus === releaseFocus) {
-        cancelFavoriteFocus = undefined
-        setFavoriteFocusSessionId(undefined)
-      }
-    }
-    const ownsFocus = isFavoriteControl(document.activeElement)
-    if (ownsFocus) {
-      cancelFavoriteFocus?.()
-      cancelFavoriteFocus = releaseFocus
-      setFavoriteFocusSessionId(sessionId)
-      const options = { capture: true, signal: focus.signal }
-      document.addEventListener("focusin", event => {
-        if (event.target !== document.body && !isFavoriteControl(event.target)) releaseFocus()
-      }, options)
-      document.addEventListener("keydown", event => { if (event.key === "Tab") releaseFocus() }, options)
-      document.addEventListener("pointerdown", event => {
-        // A resize drag prevents pointerdown's focus change.
-        queueMicrotask(() => {
-          if (!focus.signal.aborted && !event.defaultPrevented && !isFavoriteControl(event.target)) releaseFocus()
-        })
-      }, options)
-    }
-    const indexBefore = visibleProjection().indexById.get(sessionId)
+    const focus = claimActionFocus(sessionId)
     try {
       await favoriteStore.save(sessionId, !remove)
-      if (!ownsFocus || focus.signal.aborted || props.instanceId !== instanceId || !list?.isConnected || listEl() !== list || !document.hasFocus()
-        || (document.activeElement !== document.body && !isFavoriteControl(document.activeElement))) return
-      const index = visibleProjection().indexById.get(sessionId)
-      if (index === undefined && remove && !favorites().has(sessionId) && props.enableFilterBar && favoritesOnly()) {
-        favoritesFilter?.focus({ preventScroll: true })
-      } else if (index !== undefined) {
-        const row = rowElement()
-        if (row?.isConnected) {
-          const selector = row.dataset.compactActions === "true" ? ".action-overflow-trigger"
-            : ".session-item-inline-actions [data-action-key='favorite']"
-          row.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
-        }
-        if (index !== indexBefore) virtualizerHandle()?.scrollToIndex(index, { align: "nearest" })
-      }
+      if (focus && actionFocus === focus) focus.restore(true,
+        remove && !favorites().has(sessionId) && props.enableFilterBar && favoritesOnly() ? favoritesFilter : undefined)
     } catch {
+      focus?.release()
       showToastNotification({ category: "sessions", variant: "error", message: t("sessionList.favorite.error") })
-    } finally {
-      if (ownsFocus) releaseFocus()
     }
   }
 
@@ -868,12 +906,11 @@ const SessionList: Component<SessionListProps> = (props) => {
     const compactActions = () => overflow() || menuOpen()
     const releaseMenu = () => {
       if (!menuOpen()) return
-      const row = rowElement()
-      const transfer = row?.querySelector(".action-overflow-trigger") === document.activeElement
+      const resizeHandoff = !overflow()
+      const pending = actionFocus?.sessionId === sessionId() ? actionFocus : undefined
+      const focus = resizeHandoff ? pending ?? claimActionFocus(sessionId()) : undefined
       setMenuSessionId(undefined)
-      if (transfer && row?.isConnected && !compactActions()) {
-        row.querySelector<HTMLElement>(".session-item-inline-actions button")?.focus({ preventScroll: true })
-      }
+      focus?.restore(!pending)
     }
     const favorite = () => favorites().has(sessionId())
     const favoriteLabel = () => t(favorite() ? "sessionList.favorite.remove" : "sessionList.favorite.add")
@@ -883,7 +920,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         get label() { return favoriteLabel() },
         get icon() { return <Star class="w-3.5 h-3.5" fill={favorite() ? "currentColor" : "none"} /> },
         get disabled() { return !favoriteStore.ready() || favoriteStore.pending().has(sessionId()) || !isSessionInWorkspaceScope(props.instanceId, sessionId()) },
-        onSelect: () => toggleFavorite(sessionId(), rowElement),
+        onSelect: () => toggleFavorite(sessionId()),
       },
       {
         key: "rename",

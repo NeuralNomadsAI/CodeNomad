@@ -27,6 +27,14 @@ const resizeSidebar = (page: Page, width: number) => page.locator("aside").evalu
 }, width)
 const menu = (page: Page) => page.getByRole("menu")
 const first = (page: Page) => page.locator(".session-item-base").first()
+const focusedInView = (page: Page, id: string, selector: string) => page.waitForFunction(({ id, selector }) => {
+  const focused = document.activeElement
+  if (!focused?.matches(`[data-session-id="ses_${id}"] ${selector}`)) return false
+  const bounds = focused.closest(".session-item-base")!.getBoundingClientRect()
+  const list = focused.closest(".session-list")!.getBoundingClientRect()
+  return bounds.top >= list.top && bounds.bottom <= list.bottom
+}, { id, selector }, { timeout: 5_000 })
+const star = ".session-item-inline-actions [data-action-key='favorite']"
 const filters = (page: Page) => page.getByRole("button", { name: "Rechercher des sessions", exact: true })
 const search = (page: Page) => page.getByRole("textbox", { name: "Rechercher des sessions", exact: true })
 const hidden = (page: Page) => page.getByRole("button", { name: "Afficher 1 résultat masqué", exact: true })
@@ -165,16 +173,17 @@ test("favorites persist, keep requests first and synchronize over the real route
     await actions(page, "dossier_56").waitFor()
     await wideRow.locator(".session-item-favorite").waitFor()
     await page.waitForFunction(() => document.activeElement?.matches('[data-session-id="ses_dossier_56"] .action-overflow-trigger'))
-    await page.keyboard.press("Enter")
-    await menu(page).getByRole("menuitem", { name: "Retirer des favoris" }).waitFor()
-    await resizeSidebar(page, 520)
-    await menu(page).getByRole("menuitem", { name: "Retirer des favoris" }).waitFor()
-    await page.waitForFunction(() => !!document.activeElement?.closest('[role="menu"]'))
-    // Let the row's ResizeObserver and its measurement frame run while the menu is open.
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-    await page.keyboard.press("Escape")
-    await menu(page).waitFor({ state: "detached" })
-    await page.waitForFunction(() => document.activeElement?.matches('[data-session-id="ses_dossier_56"] [data-action-key="favorite"]'))
+    for (let run = 0; run < 6; run++) {
+      await resizeSidebar(page, 200)
+      await actions(page, "dossier_56").press("Enter")
+      await menu(page).getByRole("menuitem", { name: "Retirer des favoris" }).waitFor()
+      await page.waitForFunction(() => !!document.activeElement?.closest('[role="menu"]'))
+      await resizeSidebar(page, 520)
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      await page.keyboard.press("Escape")
+      await menu(page).waitFor({ state: "detached" })
+      await focusedInView(page, "dossier_56", star)
+    }
     assert.deepEqual(page.viewportSize(), viewport)
     await resizeSidebar(page, 200)
     await page.evaluate(() => (window as any).favoriteFixture.navigate("session-next", "ses_validation"))
@@ -192,24 +201,23 @@ test("favorites persist, keep requests first and synchronize over the real route
     events.send({ type: "storage.stateChanged", owner: "sessionFavorites", value: {} })
     await refreshed
     await page.locator("aside").evaluate(panel => { panel.style.height = "180px" })
-    const resizeDuringFavorite = async (add: boolean, moveFocus = false) => {
+    const resizeDuringFavorite = async (id: string, add: boolean, moveFocus = false) => {
       const putReceived = Promise.withResolvers<string>(), releasePut = Promise.withResolvers<void>()
       holdFavorite = async pathname => {
         putReceived.resolve(pathname)
         await releasePut.promise
       }
-      const direct = inlineFavorite(page, "dossier_56"), compact = actions(page, "dossier_56")
+      const direct = inlineFavorite(page, id), compact = actions(page, id)
       const start = add ? direct : compact, end = add ? compact : direct
-      const selector = add ? ".action-overflow-trigger" : ".session-item-inline-actions [data-action-key='favorite']"
+      const selector = add ? ".action-overflow-trigger" : star
       try {
         if (add) await direct.press("Enter")
-        else await chooseFavoriteWithKeyboard(page, "dossier_56", false)
-        assert.equal(await putReceived.promise, `${owner}/ses_dossier_56`)
+        else await chooseFavoriteWithKeyboard(page, id, false)
+        assert.equal(await putReceived.promise, `${owner}/ses_${id}`)
         assert.equal(await start.evaluate(el => el === document.activeElement), true)
         await resizeSidebar(page, add ? 200 : 520)
         await end.waitFor()
-        await page.waitForFunction(selector => document.activeElement?.matches(`[data-session-id="ses_dossier_56"] ${selector}`),
-          selector, { timeout: 2_000 })
+        await focusedInView(page, id, selector)
         if (moveFocus) {
           const outside = page.getByRole("button", { name: "Bureau", exact: true })
           await outside.focus()
@@ -219,21 +227,22 @@ test("favorites persist, keep requests first and synchronize over the real route
         holdFavorite = undefined
         releasePut.resolve()
       }
-      await favoriteRow(page, "dossier_56").waitFor({ state: add ? "visible" : "detached" })
+      await favoriteRow(page, id).waitFor({ state: add ? "visible" : "detached" })
       if (moveFocus) {
         assert.equal(await page.evaluate(() => document.activeElement?.tagName), "BODY")
         return
       }
-      await page.waitForFunction(selector => {
-        const focused = document.activeElement
-        if (!focused?.matches(`[data-session-id="ses_dossier_56"] ${selector}`)) return false
-        const bounds = focused.getBoundingClientRect(), list = focused.closest(".session-list")!.getBoundingClientRect()
-        return bounds.top >= list.top && bounds.bottom <= list.bottom
-      }, selector, { timeout: 5_000 })
+      await focusedInView(page, id, selector)
     }
-    await resizeDuringFavorite(false)
-    await resizeDuringFavorite(true)
-    await resizeDuringFavorite(false, true)
+    await resizeDuringFavorite("dossier_56", false)
+    await resizeSidebar(page, 200)
+    assert.equal((await app.inject({ method: "PUT", url: `${owner}/ses_dossier_04`, payload: { favorite: true } })).statusCode, 200)
+    await favoriteRow(page, "dossier_04").waitFor()
+    for (let run = 0; run < 4; run++) {
+      await resizeDuringFavorite("dossier_04", false)
+      await resizeDuringFavorite("dossier_04", true)
+    }
+    await resizeDuringFavorite("dossier_04", false, true)
     await page.locator("aside").evaluate(panel => { panel.style.height = "" })
     await resizeSidebar(page, 200)
     await filters(page).click()

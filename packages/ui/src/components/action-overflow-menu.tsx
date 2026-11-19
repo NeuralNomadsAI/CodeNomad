@@ -61,8 +61,8 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
             const action = selectedAction
             selectedAction = undefined
             if (action || props.onFocusRestored) queueMicrotask(() => {
-              props.onFocusRestored?.()
               void action?.()
+              props.onFocusRestored?.()
             })
           }}>
             <For each={props.items}>
