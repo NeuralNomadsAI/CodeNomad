@@ -10,7 +10,7 @@ import { historyWindowCursor, historyWindowTarget, readHistoryWindow, MissingHis
 import { captureWorktreeMoveReconciliation, ensureWorktreesLoaded, getDirectoryOnlyWorktree, getGitRepoStatus, getWorktrees } from "./worktrees"
 import { isWorkspaceServedDirectory } from "./workspace-served-directory"
 import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
-import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
+import { isWorkspaceSessionDirectory, selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import { isSessionNotFoundError, type LocationRef, type SessionInfo as SDKSession, type SessionMessagesResponse } from "@opencode/client"
 
 import { activeInstanceId, instances, reconcilePendingSessionIndicators, waitForInstanceReady } from "./instances"
@@ -522,7 +522,8 @@ async function hydrateRestoredSessionChain(
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
-  { verifyDrafts = false, reconcileDeparture = false }: { verifyDrafts?: boolean; reconcileDeparture?: boolean } = {},
+  { verifyDrafts = false, reconcileDeparture = false, resolveListPlacement = false }:
+    { verifyDrafts?: boolean; reconcileDeparture?: boolean; resolveListPlacement?: boolean } = {},
 ): Promise<ReadonlyMap<string, () => boolean>> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -530,7 +531,7 @@ async function hydrateRestoredSessionChain(
     const absent = new Map<string, () => boolean>()
     try {
       await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, releaseReads, signal, () => isCurrent() && generationCurrent(),
-        reconcileDeparture, verifyDrafts ? absent : undefined)
+        reconcileDeparture || resolveListPlacement, verifyDrafts ? absent : undefined, resolveListPlacement)
     } finally {
       for (const release of releaseReads) release()
     }
@@ -549,6 +550,7 @@ async function hydrateRestoredSessionChainAttempt(
   isCurrent: () => boolean = () => true,
   reconcileInitialDeparture = false,
   absentDrafts?: Map<string, () => boolean>,
+  resolveListPlacement = false,
 ): Promise<void> {
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -574,7 +576,10 @@ async function hydrateRestoredSessionChainAttempt(
 
       let session = sessions().get(instanceId)?.get(sessionId)
       const verify = absentDrafts !== undefined && requestedIds.includes(sessionId)
-      if (!session || session.catalogSnapshot) {
+      const needsListPlacement = resolveListPlacement && session && requestedIds.includes(sessionId)
+        && !isWorkspaceSessionDirectory(session.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId))
+        && !confirmedSessionListDirectory(instanceId, sessionId, session)
+      if (!session || session.catalogSnapshot || needsListPlacement) {
         const captured = session
         const move = getPendingSessionMove(instanceId, sessionId)
         const evidenceCurrent = captureSessionPlacementEvidence(instanceId, sessionId)
@@ -601,6 +606,11 @@ async function hydrateRestoredSessionChainAttempt(
           const apiSession = await prioritizedRead(foreground, signal ?? new AbortController().signal, read)
           signal?.throwIfAborted()
           if (!apiSession || !isRequestCurrent() || (placementReadCurrent && (!placementReadCurrent() || !evidenceCurrent()))) return null
+          const listWorktreeSlug = "listWorktreeSlug" in apiSession && typeof apiSession.listWorktreeSlug === "string" ? apiSession.listWorktreeSlug : undefined
+          const placement = { location: apiSession.location, projectID: apiSession.projectID, subpath: apiSession.subpath, listWorktreeSlug }
+          const needsPlacementEvidence = Boolean(readOptions.headers)
+            && (listWorktreeSlug !== undefined
+              || !isWorkspaceServedDirectory(apiSession.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId)))
           setSessions((prev) => {
             if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
             const next = new Map(prev)
@@ -609,7 +619,14 @@ async function hydrateRestoredSessionChainAttempt(
             // A concurrent event or selection owns fields changed since this
             // read began, including when replacing a restored display row.
             const merged = mergeFetchedSessionRuntimeState(toClientSessionV2(instanceId, apiSession, captured), captured, latest)
-            if (merged) instanceSessions.set(sessionId, merged)
+            if (merged) {
+              // Publish the matching proof before the row notifies sidebar readers.
+              if (needsPlacementEvidence && getPendingSessionMove(instanceId, sessionId) === move
+                && !getMovedAwaySessions(instanceId).has(sessionId) && matchesSessionPlacement(merged, placement)) {
+                confirmSessionPlacement(instanceId, sessionId, placement)
+              }
+              instanceSessions.set(sessionId, merged)
+            }
             next.set(instanceId, instanceSessions)
             return next
           })
@@ -618,13 +635,8 @@ async function hydrateRestoredSessionChainAttempt(
             && getPendingSessionMove(instanceId, sessionId) === move
             && !getMovedAwaySessions(instanceId).has(sessionId)
             && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
-            && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), apiSession)
+            && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), placement)
           ownedReads.set(sessionId, ownsPlacement)
-          if (readOptions.headers && ownsPlacement()
-            && (("listWorktreeSlug" in apiSession && typeof apiSession.listWorktreeSlug === "string")
-              || !isWorkspaceServedDirectory(apiSession.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId)))) {
-            confirmSessionPlacement(instanceId, sessionId, apiSession)
-          }
         } catch (error) {
           if (signal?.aborted) throw error
           if (!isRequestCurrent()) return null

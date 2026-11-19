@@ -107,7 +107,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       if (!client || !ids.size) return
       const controller = new AbortController()
       onCleanup(() => controller.abort())
-      void hydrateRestoredSessionChain(id, [...ids], controller.signal).catch(error => {
+      void hydrateRestoredSessionChain(id, [...ids], controller.signal, undefined, { resolveListPlacement: true }).catch(error => {
         if (!controller.signal.aborted) log.warn("Could not load favorite sessions", error)
       })
     }))
