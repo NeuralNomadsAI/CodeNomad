@@ -467,7 +467,7 @@ for (const mode of ["return", "late inventory", "late inventory after reconnect"
   }
 })
 
-for (const mode of ["listed parent", "unrelated", "direct with parent", "direct child first", "direct unrelated"] as const) test(`favorite return to a subfolder follows family scope (${mode})`, async () => {
+for (const mode of ["listed parent", "unrelated", "direct with parent", "direct child first", "direct parent read fails", "direct unrelated"] as const) test(`favorite return to a subfolder follows family scope (${mode})`, async () => {
   const direct = mode.startsWith("direct")
   const hasLocalParent = mode !== "unrelated" && mode !== "direct unrelated"
   const id = `favorite-subfolder-${mode.replaceAll(" ", "-")}`, f = fixture(id)
@@ -476,10 +476,14 @@ for (const mode of ["listed parent", "unrelated", "direct with parent", "direct 
   const alias = { ...row("child", hasLocalParent ? "root" : null), parentID: hasLocalParent ? "root" : undefined,
     location: { directory: "/repo/linked-alias" }, listWorktreeSlug: "linked" as string | undefined }
   const subfolder = { ...alias, location: { directory: "/feature-junction/pkg" }, listWorktreeSlug: undefined }
-  let native = direct ? subfolder : alias, reads = 0
+  let native = direct ? subfolder : alias, reads = 0, parentReads = 0
   serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
   f.client.session.get = async ({ sessionID }: { sessionID: string }) => {
-    if (sessionID === "root") return parent
+    if (sessionID === "root") {
+      parentReads++
+      if (mode === "direct parent read fails") throw new Error("Unexpected status 503")
+      return parent
+    }
     reads++
     return native
   }
@@ -487,18 +491,23 @@ for (const mode of ["listed parent", "unrelated", "direct with parent", "direct 
   setInstanceMetadata(id, { project: { id: "project" } as any })
   try {
     await ensureWorktreesLoaded(id)
-    if (direct && mode !== "direct child first") await hydrateRestoredSessionChain(id, ["root"])
+    if (mode === "direct with parent" || mode === "direct unrelated") await hydrateRestoredSessionChain(id, ["root"])
     markSessionMovedAway(id, "child", "/other-project")
     setSessionDraftPrompt(id, "child", "keep draft")
-    await hydrateRestoredSessionChain(id, ["child"], undefined, undefined, { resolveListPlacement: true })
-    if (direct) assert.equal(getMovedAwaySessions(id).get("child"), hasLocalParent ? undefined : "/other-project")
-    else {
+    const restore = hydrateRestoredSessionChain(id, ["child"], undefined, undefined, { resolveListPlacement: true })
+    if (mode === "direct parent read fails") {
+      await assert.rejects(restore, /503/)
+      assert.equal(getMovedAwaySessions(id).get("child"), "/other-project")
+    } else await restore
+    if (direct && mode !== "direct parent read fails") assert.equal(getMovedAwaySessions(id).get("child"), hasLocalParent ? undefined : "/other-project")
+    if (!direct) {
       assert.equal(getMovedAwaySessions(id).get("child"), "/other-project")
       native = subfolder
       applyOpenCodeDataEvent(id, "/repo", { id: "connected", type: "server.connected", created: 1, data: {} } as any)
     }
     await fetchSessions(id, { strictStatus: true })
     assert.equal(reads, direct ? 1 : 2)
+    if (mode === "direct parent read fails") assert.equal(parentReads, 1, "the catalogue supplies the parent without another point read")
     assert.equal(getMovedAwaySessions(id).get("child"), hasLocalParent ? undefined : "/other-project")
     assert.equal(getSessionThreads(id).some(thread => thread.session.id === "child" || thread.children.some(child => child.session.id === "child")), hasLocalParent)
     assert.equal(getSessionDraftPrompt(id, "child"), "keep draft")

@@ -140,7 +140,10 @@ export function retainConfirmedSessionPlacement(
   const pendingReturn = confirmed.returnFrom !== undefined
     && getMovedAwaySessions(instanceId).get(sessionId) === confirmed.returnFrom
   if (!matching && !pendingReturn) return false
-  if (matching && confirmed.client === instances().get(instanceId)?.client && confirmed.generation === getOpenCodeInstanceGeneration(instanceId)) return true
+  if (matching && confirmed.client === instances().get(instanceId)?.client && confirmed.generation === getOpenCodeInstanceGeneration(instanceId)) {
+    if (pendingReturn && isCurrent() && !signal?.aborted) settleListedReturn(instanceId, sessionId)
+    return true
+  }
   const capturedPlacement = { ...placement }
   revalidations.set(sessionId, async () => {
     const current = () => isCurrent() && !signal?.aborted && !isSessionMovePending(instanceId, sessionId)
