@@ -66,8 +66,9 @@ Das Löschen einer übergeordneten Sitzung löscht auch deren nachgeordnete Unte
 
 1. Bevorzugen Sie **Sitzung löschen** in einer bestimmten Zeile, wenn Sie genau wissen, welche Unterhaltung entfernt werden soll.
 2. Führen Sie für umfassendere Wartung **Sitzungen bereinigen** aus und lesen Sie die Bestätigung **Tiefenbereinigung der Sitzungen**.
-3. Bestätigen Sie nur, wenn leere Sitzungen, abgeschlossene Subagenten-Sitzungen und ungenutzte Forks entfernt werden dürfen.
 
-Die Bereinigung arbeitet mit den bekannten Sitzungskandidaten des aktuellen Projekts und kann mehr als leere Hauptsitzungen entfernen. Sie ist keine Archivierung und nicht rückgängig zu machen. Verwenden Sie sie nicht bloß, um eine volle Seitenleiste aufzuräumen. Die unabhängige Einstellung **Automatische Bereinigung leerer Sitzungen** ist enger gefasst: Sie prüft echte Leere, statt einen ungeladenen Verlauf als leer zu behandeln.
+Beide Bereinigungen löschen nur nachweislich leere, inaktive Sitzungen ohne Untersitzungen. Favoriten und ihre übergeordneten Sitzungen bleiben ordnerübergreifend erhalten.
+
+Wenn eine Unterhaltung beim Bereinigen verschwindet, finden Sie ihren Entwurf und ihre Anhänge im Eingabefeld für eine neue Unterhaltung im Projekt. Mit **Entwurf wechseln** öffnen Sie einen gespeicherten Entwurf, ohne den aktuellen zu überschreiben. Das gilt auch beim erneuten Öffnen des Projekts.
 
 Löschen entfernt Unterhaltungen, keine Git-Commits, und macht keine Dateisystem-/externen Auswirkungen rückgängig. Bei teilweise erfolgreicher Bereinigung bleiben bereits gelöschte Sitzungen gelöscht. Prüfen Sie vor dem Wiederholen die verbleibende Liste und Fehler. Siehe [Unterhaltungen](conversations.md) zu Forks/Rücknahme und [Projekte](projects.md) zum Löschen temporärer Ordner oder Worktrees.

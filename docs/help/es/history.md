@@ -66,8 +66,9 @@ Eliminar una sesión padre también elimina sus subsesiones descendientes y su h
 
 1. Prefiere **Eliminar sesión** en una fila específica cuando sepas exactamente qué conversación debe desaparecer.
 2. Para un mantenimiento más amplio, ejecuta **Depurar sesiones** y lee la confirmación **Limpieza profunda de sesiones**.
-3. Confirma solo si se pueden eliminar las sesiones vacías, las sesiones de subagentes completadas y las bifurcaciones sin usar.
 
-La depuración actúa sobre las sesiones candidatas conocidas del proyecto actual y puede eliminar más que sesiones principales vacías. No es una operación de archivado y no se puede deshacer. No la uses solo para ocultar una barra lateral ocupada. La preferencia independiente **Limpieza automática de sesiones en blanco** es más limitada: comprueba que una sesión esté realmente vacía en lugar de considerar vacía una transcripción no cargada.
+Ambas limpiezas solo eliminan sesiones verificadas como vacías, inactivas y sin subsesiones. Los favoritos y sus antecesores se conservan incluso si están marcados en otra carpeta.
+
+Si una conversación desaparece durante la limpieza, encontrarás el texto sin enviar y sus adjuntos en el cuadro de nueva conversación del proyecto. Usa **Cambiar de borrador** para abrir un borrador guardado sin sobrescribir el actual. También puedes recuperarlos al volver a abrir el proyecto.
 
 La eliminación borra conversaciones, no commits de Git, y no revierte efectos sobre el sistema de archivos o sistemas externos. Si la limpieza solo tiene éxito parcial, las sesiones ya eliminadas siguen eliminadas. Revisa la lista restante y los errores antes de reintentar. Consulta [Conversaciones](conversations.md) para bifurcaciones/deshacer y [Proyectos](projects.md) para eliminar carpetas temporales o worktrees.

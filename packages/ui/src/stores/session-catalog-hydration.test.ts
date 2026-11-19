@@ -1,14 +1,20 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import toast from "solid-toast"
 import { sdkManager } from "../lib/sdk-manager"
 import { serverApi } from "../lib/api-client"
+import { createFileAttachment } from "../types/attachment"
+import { addAttachment, getAttachments } from "./attachments"
 import { addInstance, removeInstance } from "./instances"
 import { setInstanceMetadata } from "./instance-metadata"
 import { fetchSessions, hydrateRestoredSessionChain, removeSessionRuntimeState } from "./session-api"
 import { hydrateRestoredWorkspaceState, seedRestoredWorkspaceState } from "./app-session-workspace-hydration"
 import { ensureWorktreesLoaded } from "./worktrees"
 import { captureSessionCatalog } from "./session-catalog-persistence"
-import { activeSessionId, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, sessions, setSessions } from "./session-state"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, sessions, setSessionDraftPrompt, setSessions } from "./session-state"
+import { NO_SESSION_DRAFT_SESSION_ID } from "./local-draft-ids"
+import { recoveredDraftIds } from "./session-draft-recovery"
+import { handleSessionDeleted } from "./session-events"
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import type { Session } from "../types/session"
 
@@ -97,6 +103,75 @@ test("partial, unavailable and failed inventories preserve saved families; compl
     seedRestoredWorkspaceState(id, f.saved)
     assert.deepEqual([...sessions().get(id)!.keys()], ["root"], "final-inventory evictions survive repeated hydration")
   } finally { serverApi.fetchWorktrees = original; f.cleanup() }
+})
+
+test("catalog eviction preserves the session draft until native deletion", async () => {
+  const id = "catalog-scope-draft", f = fixture(id), sessionID = "moving"
+  const composer = NO_SESSION_DRAFT_SESSION_ID
+  const originalWorktrees = serverApi.fetchWorktrees, originalToast = toast.custom
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  toast.custom = () => "recovered"
+  let inScope = true
+  const reads: string[] = []
+  const nativeRow = { ...row(sessionID), location: { directory: "/repo" }, model: { providerID: "p", id: "m" } }
+  f.client.session.list = async () => ({ data: inScope ? [nativeRow] : [], cursor: {} })
+  f.client.session.get = async ({ sessionID }: { sessionID: string }) => {
+    reads.push(sessionID)
+    if (!inScope) throw Object.assign(new Error("Session does not belong to workspace"), { status: 403 })
+    return nativeRow
+  }
+  const refresh = () => fetchSessions(id, { strictStatus: true })
+  const writeDraft = (key: string, text: string, bytes: number[]) => {
+    setSessionDraftPrompt(id, key, text)
+    addAttachment(id, key, createFileAttachment(`${key}.bin`, `${key}.bin`, "application/octet-stream", new Uint8Array(bytes)))
+  }
+  const checkDraft = (key: string, text: string, bytes: number[]) => {
+    assert.equal(getSessionDraftPrompt(id, key), text)
+    assert.deepEqual(getAttachments(id, key).map(({ source }) =>
+      source.type === "file" && Array.from(source.data ?? [])), [bytes])
+  }
+  try {
+    setInstanceMetadata(id, { project: { id: "project" } as any })
+    await refresh()
+    assert.deepEqual(getSessionListIds(id), [sessionID])
+    writeDraft(sessionID, "session draft", [65, 0, 253])
+    writeDraft(composer, "independent draft", [66])
+
+    inScope = false
+    await refresh()
+    assert.deepEqual(getSessionListIds(id), [])
+    assert.equal(sessions().get(id)?.has(sessionID) ?? false, false)
+    assert.deepEqual(reads, [], "inventory eviction must not probe missing rows")
+    assert.deepEqual(recoveredDraftIds(id), [], "scope eviction must not transfer a draft")
+    checkDraft(sessionID, "session draft", [65, 0, 253])
+    checkDraft(composer, "independent draft", [66])
+    const proofs = await hydrateRestoredSessionChain(id, [sessionID], undefined, undefined, true)
+    assert.deepEqual(reads, [sessionID])
+    assert.equal(proofs.size, 0, "a native ownership refusal is not an absence proof")
+    assert.equal(getAuthoritativelyDeletedSessionIdsForInstance(id).has(sessionID), false)
+
+    inScope = true
+    await refresh()
+    assert.deepEqual(getSessionListIds(id), [sessionID])
+    checkDraft(sessionID, "session draft", [65, 0, 253])
+    checkDraft(composer, "independent draft", [66])
+    assert.deepEqual(recoveredDraftIds(id), [])
+
+    handleSessionDeleted(id, { type: "session.deleted", data: { sessionID } })
+    assert.deepEqual(getSessionListIds(id), [])
+    assert.equal(getAuthoritativelyDeletedSessionIdsForInstance(id).has(sessionID), true)
+    assert.equal(getSessionDraftPrompt(id, sessionID), "")
+    assert.deepEqual(getAttachments(id, sessionID), [])
+    const recovered = recoveredDraftIds(id)
+    assert.equal(recovered.length, 1)
+    checkDraft(recovered[0], "session draft", [65, 0, 253])
+    checkDraft(composer, "independent draft", [66])
+    assert.deepEqual(reads, [sessionID], "return and native deletion need no additional point reads")
+  } finally {
+    toast.custom = originalToast
+    serverApi.fetchWorktrees = originalWorktrees
+    f.cleanup()
+  }
 })
 
 test("a concurrent rename survives selected-row revalidation and a concurrent root survives complete reconciliation", async () => {
@@ -192,6 +267,29 @@ test("directory-only seeding indexes an already loaded row without replacing its
     assert.deepEqual(getSessionListIds(id), ["local"])
     assert.equal(getSessionThreads(id)[0].session.title, "Newer live title")
     assert.equal(sessions().get(id)?.get("local"), live)
+  } finally { serverApi.fetchWorktrees = original; f.cleanup() }
+})
+
+test("favorite hydration indexes an off-page directory-only display root without querying its external parent", async () => {
+  const id = "catalog-directory-favorite", f = fixture(id), original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ gitAvailable: false, worktrees: [
+    { slug: "root", directory: "/repo", kind: "root", directoryOnly: true },
+  ] })
+  try {
+    await ensureWorktreesLoaded(id)
+    const gets: string[] = []
+    f.client.session.get = async ({ sessionID }: { sessionID: string }) => {
+      gets.push(sessionID)
+      assert.equal(sessionID, "local")
+      return { id: "local", parentID: "foreign", projectID: "project", location: { directory: "/repo" },
+        title: "favorite child", time: { created: 1, updated: 1 } }
+    }
+    assert.deepEqual(getSessionListIds(id), [])
+    await hydrateRestoredSessionChain(id, ["local"])
+    assert.deepEqual(gets, ["local"])
+    assert.deepEqual(getSessionListIds(id), ["local"])
+    assert.equal(getSessionThreads(id)[0].session.parentId, "foreign")
+    assert.equal(sessions().get(id)?.has("foreign"), false)
   } finally { serverApi.fetchWorktrees = original; f.cleanup() }
 })
 

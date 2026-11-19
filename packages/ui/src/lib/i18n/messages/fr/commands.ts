@@ -51,7 +51,7 @@ export const commandMessages = {
   "commands.closeSession.keywords": "fermer, arrêter",
 
   "commands.scrubSessions.label": "Nettoyer les sessions",
-  "commands.scrubSessions.description": "Supprimer les sessions vides, les sessions de sous-agent ayant terminé leur tâche principale, ainsi que les sessions forkées inutiles.",
+  "commands.scrubSessions.description": "Supprimer les sessions vérifiées comme vides et inactives.",
   "commands.scrubSessions.keywords": "nettoyage, vide, sessions, supprimer, effacer",
 
   "commands.instanceInfo.label": "Infos de l'instance",

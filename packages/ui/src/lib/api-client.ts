@@ -675,6 +675,17 @@ export const serverApi = {
   fetchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
     return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`)
   },
+  readSessionFavoritesInBackground(instanceId: string, signal: AbortSignal, reconcile: boolean): Promise<import("../../../server/src/api-types").SessionFavoritesSnapshot> {
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-favorites${reconcile ? "?reconcile=1" : ""}`, { signal }))
+  },
+  saveSessionFavorite(instanceId: string, sessionId: string, favorite: boolean): Promise<import("../../../server/src/api-types").SessionFavoritesSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-favorites/${encodeURIComponent(sessionId)}`, {
+      method: "PUT", body: JSON.stringify({ favorite }),
+    })
+  },
+  cleanupSession(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<{ deleted: boolean }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-cleanup/${encodeURIComponent(sessionId)}`, { method: "POST", signal })
+  },
   patchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
     return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`, {
       method: "PATCH",

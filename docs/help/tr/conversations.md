@@ -21,6 +21,16 @@ Normal gezinme hiyerarşiktir; arama/filtre sonuçları her konuşmanın kendi k
 
 Geri/İleri, liste sırası değil, proje sekmesi başına, pencere başına ziyaret geçmişidir. Paletin **Önceki Session** / **Sonraki Session**'si bunun yerine görünür listeyi döndürür.
 
+## Konuşmaları favorilerde tutun {#favorites}
+
+Eylemleri görmek için işaretçiyi oturum satırının üzerine getirin veya satıra odaklanın. Dokunmatik ekranda eylemler doğrudan görünür. Yıldız düğmesini kullanın veya yer darsa **Diğer eylemler** (⋯) menüsünden **Favorilere ekle** ya da **Favorilerden çıkar** seçeneğini seçin.
+
+Oturum ağacında önce yanıtınızı bekleyen istekler gelir. Favoriler yalnızca aynı üst oturuma bağlı, aynı düzeydeki oturumlar arasında öne çıkar. Dallar açık veya kapalı kalır. Aramada **Etkinlik**, gösterilen alt oturumlar dâhil eşleşen favorilere öncelik verir. **Ad** ve **Çalışma ağacı** kendi sıralamalarını kullanır.
+
+Oturum aramasında **Yalnızca favoriler** seçeneğini kullanın. Gizli eşleşmeleri gösterme düğmesi aramayı, çalışma ağacını ve diğer filtreleri değiştirmeden her iki oturum türünü açar. **Sıfırla**, varsayılan filtre ve sıralamayı geri yükler.
+
+Aynı CodeNomad sunucusunda aynı klasörü açan pencereler favorileri paylaşır. Oturum temizliği favorileri ve üst oturumlarını korur; açıkça silmek yine mümkündür.
+
 ## Arşivleme ve geri yükleme {#archive}
 
 Geçmişi koruyup etkin olmayan dalı normal listeden gizlemek için satır eylemlerinden **Oturumu arşivle** seçeneğini kullanın. Seçili konuşma, çalışan işler ve yanıt bekleyen soruları olan konuşmalar erişilebilir kalır. Arşivleme işi durdurmaz, mesajları silmez ve alt oturumların kendi arşiv durumlarını değiştirmez.
