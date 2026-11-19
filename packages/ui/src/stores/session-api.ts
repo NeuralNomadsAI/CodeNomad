@@ -95,7 +95,7 @@ const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import {
   captureSessionPlacementEvidence, clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending,
-  hasPendingSessionReturn, matchesSessionPlacement, retainConfirmedSessionPlacement,
+  hasPendingSessionReturn, matchesSessionPlacement, retainConfirmedSessionPlacement, settleListedReturn,
 } from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
@@ -611,32 +611,33 @@ async function hydrateRestoredSessionChainAttempt(
           const listWorktreeSlug = "listWorktreeSlug" in apiSession && typeof apiSession.listWorktreeSlug === "string" ? apiSession.listWorktreeSlug : undefined
           const placement = { location: apiSession.location, projectID: apiSession.projectID, subpath: apiSession.subpath, listWorktreeSlug }
           const needsPlacementEvidence = Boolean(readOptions.headers)
-            && (listWorktreeSlug !== undefined
+            && (capturedAway !== undefined || listWorktreeSlug !== undefined
               || !isWorkspaceServedDirectory(apiSession.location.directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId)))
-          batch(() => setSessions((prev) => {
-            if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
+          batch(() => {
+            if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return
+            const prev = sessions()
             const next = new Map(prev)
             const instanceSessions = new Map(next.get(instanceId) ?? new Map())
             const latest = instanceSessions.get(sessionId)
             // A concurrent event or selection owns fields changed since this
             // read began, including when replacing a restored display row.
             const merged = mergeFetchedSessionRuntimeState(toClientSessionV2(instanceId, apiSession, captured), captured, latest)
+            let returning = false
             if (merged) {
               // Publish the matching proof before the row notifies sidebar readers.
               if (needsPlacementEvidence && getPendingSessionMove(instanceId, sessionId) === move && matchesSessionPlacement(merged, placement)) {
                 const away = getMovedAwaySessions(instanceId)
-                const returning = !move && capturedAway !== undefined && away.get(sessionId) === capturedAway && listWorktreeSlug !== undefined
-                const returned = returning && getWorktrees(instanceId).some(worktree => worktree.slug === listWorktreeSlug)
+                returning = !move && capturedAway !== undefined && away.get(sessionId) === capturedAway
                 if (!away.has(sessionId) || returning) {
-                  confirmSessionPlacement(instanceId, sessionId, placement, returning && !returned ? capturedAway : undefined)
+                  confirmSessionPlacement(instanceId, sessionId, placement, returning ? capturedAway : undefined)
                 }
-                if (returned) forgetSessionMovedAway(instanceId, sessionId)
               }
               instanceSessions.set(sessionId, merged)
             }
             next.set(instanceId, instanceSessions)
-            return next
-          }))
+            setSessions(next)
+            if (returning) settleListedReturn(instanceId, sessionId)
+          })
           session = sessions().get(instanceId)?.get(sessionId)
           const ownsPlacement = () => isRequestCurrent() && !signal?.aborted
             && getPendingSessionMove(instanceId, sessionId) === move

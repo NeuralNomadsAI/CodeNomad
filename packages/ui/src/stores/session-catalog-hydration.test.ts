@@ -467,13 +467,16 @@ for (const mode of ["return", "late inventory", "late inventory after reconnect"
   }
 })
 
-for (const hasLocalParent of [true, false]) test(`favorite return to a subfolder follows family scope (${hasLocalParent ? "listed parent" : "unrelated"})`, async () => {
-  const id = `favorite-subfolder-${hasLocalParent}`, f = fixture(id)
+for (const mode of ["listed parent", "unrelated", "direct with parent", "direct unrelated"] as const) test(`favorite return to a subfolder follows family scope (${mode})`, async () => {
+  const direct = mode.startsWith("direct")
+  const hasLocalParent = mode === "listed parent" || mode === "direct with parent"
+  const id = `favorite-subfolder-${mode.replaceAll(" ", "-")}`, f = fixture(id)
   const originalWorktrees = serverApi.fetchWorktrees
   const parent = { ...row("root"), location: { directory: "/repo" } }
   const alias = { ...row("child", hasLocalParent ? "root" : null), parentID: hasLocalParent ? "root" : undefined,
     location: { directory: "/repo/linked-alias" }, listWorktreeSlug: "linked" as string | undefined }
-  let native = alias, reads = 0
+  const subfolder = { ...alias, location: { directory: "/feature-junction/pkg" }, listWorktreeSlug: undefined }
+  let native = direct ? subfolder : alias, reads = 0
   serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
   f.client.session.get = async ({ sessionID }: { sessionID: string }) => {
     if (sessionID === "root") return parent
@@ -484,14 +487,18 @@ for (const hasLocalParent of [true, false]) test(`favorite return to a subfolder
   setInstanceMetadata(id, { project: { id: "project" } as any })
   try {
     await ensureWorktreesLoaded(id)
+    if (direct) await hydrateRestoredSessionChain(id, ["root"])
     markSessionMovedAway(id, "child", "/other-project")
     setSessionDraftPrompt(id, "child", "keep draft")
     await hydrateRestoredSessionChain(id, ["child"], undefined, undefined, { resolveListPlacement: true })
-    assert.equal(getMovedAwaySessions(id).get("child"), "/other-project")
-    native = { ...alias, location: { directory: "/repo/pkg" }, listWorktreeSlug: undefined }
-    applyOpenCodeDataEvent(id, "/repo", { id: "connected", type: "server.connected", created: 1, data: {} } as any)
+    if (direct) assert.equal(getMovedAwaySessions(id).get("child"), hasLocalParent ? undefined : "/other-project")
+    else {
+      assert.equal(getMovedAwaySessions(id).get("child"), "/other-project")
+      native = subfolder
+      applyOpenCodeDataEvent(id, "/repo", { id: "connected", type: "server.connected", created: 1, data: {} } as any)
+    }
     await fetchSessions(id, { strictStatus: true })
-    assert.equal(reads, 2)
+    assert.equal(reads, direct ? 1 : 2)
     assert.equal(getMovedAwaySessions(id).get("child"), hasLocalParent ? undefined : "/other-project")
     assert.equal(getSessionThreads(id).some(thread => thread.session.id === "child" || thread.children.some(child => child.session.id === "child")), hasLocalParent)
     assert.equal(getSessionDraftPrompt(id, "child"), "keep draft")
