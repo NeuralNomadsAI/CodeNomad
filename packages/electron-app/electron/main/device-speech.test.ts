@@ -113,7 +113,8 @@ test("one owner prepares the exact current plan; cancellation waits for the driv
   prepared = true
   pending[1].finish()
   await tick()
-  assert.deepEqual(device.request(2, { action: "status", id: retry.value.id }), { ok: true, value: { state: "prepared" } })
+  assert.deepEqual(device.request(2, { action: "cancel", id: retry.value.id }), { ok: true, value: { state: "prepared" } })
+  assert.deepEqual(device.request(2, { action: "status", id: retry.value.id }), notOwned)
   assert.equal(preference.read().engine, "hex")
   assert.ok(device.request(2, { action: "prepare", planId: ready.id }).ok)
   await tick()

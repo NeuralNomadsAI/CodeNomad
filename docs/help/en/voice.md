@@ -27,10 +27,10 @@ These are requests to the configured service, not a guarantee that every compati
 ## Test input and output {#test}
 
 1. Save endpoint, key, model and voice changes first.
-2. Choose **Test input**, grant microphone permission, speak, then **Stop recording**. Check the returned transcription.
+2. Choose **Test API input**, grant microphone permission, speak, then **Stop recording**. Check the returned transcription.
 3. Choose **Test playback** to hear the sample; **Stop sample** ends it.
 
-The playback test uses the selected playback mode/format immediately, but endpoint, key, model and voice come from saved settings. Test input does not send a conversation prompt. Tests still send audio/text to the configured speech provider and can incur its charges.
+The playback test uses the selected playback mode/format immediately, but endpoint, key, model and voice come from saved settings. **Test API input** sends audio to the configured API provider, even when Hex or system recognition is selected. It does not send a conversation prompt. The provider may charge for these tests.
 
 ## Dictate a prompt {#dictate}
 
@@ -39,7 +39,7 @@ The playback test uses the selected playback mode/format immediately, but endpoi
 3. Choose **Stop recording and transcribe** to get text or **Cancel dictation** to discard the recording. Switching conversations or closing the composer also cancels dictation.
 4. Review the text. It replaces the original selection only if the draft and selection are unchanged; otherwise choose **Insert transcript** or **Discard transcript**. Dictation never sends the prompt.
 
-If the API uses WAV fallback on Linux Tauri, **Dictate** and **Test input** stop recording at 24 seconds. The clip stays on this device until you choose **Transcribe** to send it to the speech provider or **Cancel** to discard it.
+If the API uses WAV fallback on Linux Tauri, **Dictate** and **Test API input** stop recording at 24 seconds. The clip stays on this device until you choose **Transcribe** to send it to the speech provider or **Cancel** to discard it.
 
 ### Choose a desktop engine {#desktop-dictation}
 
@@ -53,7 +53,7 @@ Ubuntu 24.04 meets the glibc requirement; Ubuntu 22.04 does not. Hex detects the
 
 Local recognition uses this device's microphone and works offline, including with WSL projects opened in the local app. For a compatible remote-server window, **Dictate** opens a separate local **Dictate on this device** window. Check the destination shown there, choose **Start voice input**, then **Stop recording and transcribe** and **Insert transcript** to return only the text to the draft. A remote project still needs its server connection.
 
-In a remote Tauri window on Linux, **Test input** checks the server’s speech API without changing the dictation engine. For each API recording, check the server address in the native microphone prompt before confirming. Capture uses PulseAudio or PipeWire’s PulseAudio service and always has the 24-second WAV limit described above.
+In a remote Tauri window on Linux, **Test API input** checks the server’s speech API without changing the dictation engine. For each API recording, check the server address in the native microphone prompt before confirming. Capture uses PulseAudio or PipeWire’s PulseAudio service and always has the 24-second WAV limit described above.
 
 Gemini Live and OpenAI Realtime are unavailable in remote Tauri windows on Linux: these windows use the native recorder for dictation and input tests, and WebKit blocks direct microphone access.
 
@@ -75,6 +75,8 @@ In **Conversation**, choose a **Conversation engine**:
 The live voice model can read the fixed session's status, latest visible reply and recent errors. It has no file access. When you ask it to send a request to the agent, it sends it directly as a user message, without on-screen confirmation. The usual agent permissions, questions and Yolo setting still apply.
 
 The server allows one live conversation at a time per signed-in user, or per paired device with Remote Control. Use **Stop** to end audio and keep the transcript open. CodeNomad keeps the live transcript in memory until its window closes; requests sent to the agent remain ordinary session messages. Live voice also ends after two minutes without speech, after eight minutes total, when the target changes, when you close the window or if the connection drops. There is no automatic reconnection or provider fallback.
+
+With OpenAI Realtime, **Interrupt reply** stops playback and requests cancellation of the current reply. With Gemini Live, **Stop playback** only silences the reply on this device; Gemini can continue generating it and send requests to the agent.
 
 ## Data flow and privacy {#privacy}
 

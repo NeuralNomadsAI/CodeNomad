@@ -27,10 +27,10 @@ Dies sind Anfragen an den konfigurierten Dienst, keine Garantie, dass jeder komp
 ## Ein- und Ausgabe testen {#test}
 
 1. Speichern Sie zuerst Änderungen an Endpunkt, Schlüssel, Modell und Stimme.
-2. Wählen Sie **Eingabe testen**, erlauben Sie Mikrofonzugriff, sprechen Sie und wählen Sie **Aufnahme stoppen**. Prüfen Sie die zurückgegebene Transkription.
+2. Wählen Sie **API-Eingabe testen**, erlauben Sie Mikrofonzugriff, sprechen Sie und wählen Sie **Aufnahme stoppen**. Prüfen Sie die zurückgegebene Transkription.
 3. Wählen Sie **Wiedergabe testen**, um das Beispiel zu hören; **Beispiel stoppen** beendet es.
 
-Der Wiedergabetest verwendet gewählten Modus/Format sofort, aber Endpunkt, Schlüssel, Modell und Stimme aus gespeicherten Einstellungen. Eingabetests senden keinen Unterhaltungsprompt. Tests senden dennoch Audio/Text an den konfigurierten Sprachanbieter und können Kosten verursachen.
+Der Wiedergabetest verwendet den gewählten Modus und das Format sofort, aber Endpunkt, Schlüssel, Modell und Stimme aus den gespeicherten Einstellungen. **API-Eingabe testen** sendet Audio an den konfigurierten API-Anbieter, auch wenn Hex oder die Systemerkennung ausgewählt ist. Dabei wird kein Unterhaltungsprompt gesendet. Der Anbieter kann die Tests berechnen.
 
 ## Prompt diktieren {#dictate}
 
@@ -53,7 +53,7 @@ Ubuntu 24.04 erfüllt die glibc-Anforderung, Ubuntu 22.04 hingegen nicht. Hex er
 
 Die lokale Erkennung nutzt das Mikrofon dieses Geräts und funktioniert offline, auch für WSL-Projekte in der lokalen App. In einem kompatiblen Remote-Fenster öffnet **Diktieren** das lokale Fenster **Auf diesem Gerät diktieren**. Prüfen Sie das angezeigte Ziel und wählen Sie **Spracheingabe starten**, **Aufnahme stoppen und transkribieren** und **Transkription einfügen**. Nur der Text kehrt in den Entwurf zurück. Das Remote-Projekt braucht weiterhin seine Serververbindung.
 
-In einem Tauri-Fenster für einen entfernten Server unter Linux prüft **Eingabe testen** die Sprach-API des Servers, ohne die Diktat-Engine zu ändern. Prüfen Sie vor jeder API-Aufnahme die Serveradresse im nativen Mikrofondialog und bestätigen Sie die Aufnahme. Die Aufnahme nutzt PulseAudio oder den PulseAudio-Dienst von PipeWire und hat immer das oben beschriebene WAV-Limit von 24 Sekunden.
+In einem Tauri-Fenster für einen entfernten Server unter Linux prüft **API-Eingabe testen** die Sprach-API des Servers, ohne die Diktat-Engine zu ändern. Prüfen Sie vor jeder API-Aufnahme die Serveradresse im nativen Mikrofondialog und bestätigen Sie die Aufnahme. Die Aufnahme nutzt PulseAudio oder den PulseAudio-Dienst von PipeWire und hat immer das oben beschriebene WAV-Limit von 24 Sekunden.
 
 Gemini Live und OpenAI Realtime sind in entfernten Tauri-Fenstern unter Linux nicht verfügbar: Diese Fenster nutzen für Diktat und Eingabetests die native Aufnahme, und WebKit blockiert den direkten Mikrofonzugriff.
 
@@ -75,6 +75,8 @@ Wählen Sie in **Gespräch** eine **Gesprächs-Engine**:
 Das Sprachmodell kann den Status der beim Start festgelegten Sitzung, die letzte sichtbare Antwort und aktuelle Fehler lesen. Es hat keinen Dateizugriff. Wenn Sie es bitten, eine Anfrage an den Agenten zu senden, sendet es sie direkt als Nutzernachricht, ohne Bildschirmbestätigung. Berechtigungen, Rückfragen und die Yolo-Einstellung gelten wie gewohnt.
 
 Der Server erlaubt gleichzeitig ein Live-Gespräch pro angemeldetem Nutzer oder bei Fernsteuerung pro gekoppeltem Gerät. **Stoppen** beendet die Audioübertragung und lässt die Abschrift offen. Sie bleibt bis zum Schließen des Fensters im Arbeitsspeicher; gesendete Anfragen bleiben in der Sitzung. Das Gespräch endet auch nach zwei Minuten ohne Sprache, nach insgesamt acht Minuten, beim Wechsel der Zielsitzung, beim Schließen des Fensters oder bei Verbindungsabbruch. Weder Wiederverbindung noch Anbieterwechsel erfolgen automatisch.
+
+Bei OpenAI Realtime stoppt **Antwort unterbrechen** die Wiedergabe und fordert den Abbruch der aktuellen Antwort an. Bei Gemini Live stoppt **Wiedergabe stoppen** nur den Ton auf diesem Gerät. Gemini kann weiter antworten und Anfragen an den Agenten senden.
 
 ## Datenfluss und Datenschutz {#privacy}
 

@@ -188,6 +188,7 @@ export class OpenAICompatibleSpeechProvider {
     return new OpenAI({
       apiKey: settings.apiKey,
       baseURL: settings.baseUrl,
+      logLevel: "off",
     })
   }
 }

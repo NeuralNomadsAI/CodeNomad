@@ -121,8 +121,8 @@ export class RemoteDeviceRegistry {
     const now = this.now()
     device.lastSeenAt = new Date(now).toISOString()
     if (now - (this.persistedLastSeen.get(device.id) ?? 0) >= LAST_SEEN_PERSIST_MS) {
-      this.persistedLastSeen.set(device.id, now)
       this.persist()
+      this.persistedLastSeen.set(device.id, now)
     }
     return publicDevice(device)
   }

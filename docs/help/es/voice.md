@@ -27,10 +27,10 @@ Son solicitudes al servicio configurado, no una garantía de que todos los endpo
 ## Probar entrada y salida {#test}
 
 1. Guarda primero los cambios de endpoint, clave, modelo y voz.
-2. Elige **Probar entrada**, concede permiso de micrófono, habla y después **Detener grabación**. Comprueba la transcripción devuelta.
+2. Elige **Probar entrada por API**, concede permiso de micrófono, habla y después **Detener grabación**. Comprueba la transcripción devuelta.
 3. Elige **Probar reproducción** para escuchar la muestra; **Detener muestra** la finaliza.
 
-La prueba de reproducción usa inmediatamente el modo/formato de reproducción seleccionado, pero endpoint, clave, modelo y voz proceden de los ajustes guardados. Probar entrada no envía un mensaje de conversación. Las pruebas sí envían audio/texto al proveedor de voz configurado y pueden generar cargos.
+La prueba de reproducción usa inmediatamente el modo y el formato seleccionados, pero el endpoint, la clave, el modelo y la voz proceden de los ajustes guardados. **Probar entrada por API** envía el audio al proveedor de API configurado aunque hayas seleccionado Hex o el reconocimiento del sistema. No envía un mensaje de conversación. El proveedor puede cobrar por estas pruebas.
 
 ## Dictar un mensaje {#dictate}
 
@@ -53,7 +53,7 @@ Ubuntu 24.04 cumple el requisito de glibc, mientras que Ubuntu 22.04 no. Hex det
 
 El reconocimiento local usa el micrófono de este dispositivo y funciona sin conexión, también en proyectos WSL abiertos en la aplicación local. Desde una ventana remota compatible, **Dictar** abre la ventana local **Dictar en este dispositivo**. Comprueba el destino y elige **Iniciar entrada de voz**, **Detener grabación y transcribir** e **Insertar la transcripción** para devolver solo el texto al borrador. El proyecto remoto sigue necesitando conexión con su servidor.
 
-En una ventana remota de Tauri en Linux, **Probar entrada** comprueba la API de voz del servidor sin cambiar el motor de dictado. Comprueba la dirección del servidor en el cuadro de diálogo nativo del micrófono antes de confirmar cada grabación para la API. La captura usa PulseAudio o el servicio PulseAudio de PipeWire y siempre se aplica el límite de WAV de 24 segundos descrito arriba.
+En una ventana remota de Tauri en Linux, **Probar entrada por API** comprueba la API de voz del servidor sin cambiar el motor de dictado. Comprueba la dirección del servidor en el cuadro de diálogo nativo del micrófono antes de confirmar cada grabación para la API. La captura usa PulseAudio o el servicio PulseAudio de PipeWire y siempre se aplica el límite de WAV de 24 segundos descrito arriba.
 
 Gemini Live y OpenAI Realtime no están disponibles en las ventanas remotas de Tauri en Linux: esas ventanas usan la grabadora nativa para el dictado y las pruebas de entrada, y WebKit bloquea el acceso directo al micrófono.
 
@@ -75,6 +75,8 @@ En **Conversación**, elige el **Motor de conversación**:
 El modelo de voz puede leer el estado de la sesión fijada al inicio, la última respuesta visible y los errores recientes. No tiene acceso a archivos. Si le pides que envíe una solicitud al agente, la envía directamente como mensaje tuyo, sin confirmación en pantalla. Se mantienen los permisos y las preguntas del agente, así como el ajuste Yolo.
 
 El servidor admite una conversación en directo a la vez por usuario autenticado o por dispositivo emparejado con Control remoto. **Detener** finaliza el audio y deja abierta la transcripción. Esta se conserva en memoria hasta que se cierra la ventana; las solicitudes enviadas al agente quedan como mensajes de la sesión. La conversación también termina tras dos minutos sin hablar, a los ocho minutos en total, al cambiar de sesión de destino, al cerrar la ventana o al perder la conexión. No hay reconexión automática ni cambio de proveedor.
+
+En OpenAI Realtime, **Interrumpir la respuesta** detiene la reproducción y solicita cancelar la respuesta en curso. En Gemini Live, **Detener reproducción** solo silencia la respuesta en este dispositivo: Gemini puede seguir generándola y enviar solicitudes al agente.
 
 ## Flujo de datos y privacidad {#privacy}
 

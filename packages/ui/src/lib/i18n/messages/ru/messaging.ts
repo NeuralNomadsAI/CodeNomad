@@ -362,6 +362,7 @@ export const messagingMessages = {
   "voice.live.target": "Сессия",
   "voice.live.mute": "Выключить микрофон",
   "voice.live.interrupt": "Прервать ответ",
+  "voice.live.stopPlayback": "Остановить воспроизведение",
   "voice.live.settings": "Настройки голоса",
   "voice.live.consent.title": "Начать с {provider}?",
   "voice.live.consent.audio": "CodeNomad передаёт звук с микрофона в {provider} ({company}) в реальном времени.",

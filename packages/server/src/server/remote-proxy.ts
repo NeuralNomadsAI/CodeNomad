@@ -97,26 +97,31 @@ export class RemoteProxySessionManager {
     let voiceSocketOpen = false
 
     app.server.on("upgrade", (request, socket: Socket, head) => {
-      if (!isLiveVoiceRoute(request.url)) return refuseVoiceUpgrade(socket, "404 Not Found")
-      const current = session
-      const cookies = parseCookies(request.headers.cookie)
-      if (!current?.activated || current.abortController.signal.aborted || !isLocalRequest({ raw: request })
-        || request.headers.host !== current.localBaseUrl.host || request.headers.origin !== current.localBaseUrl.origin
-        || !current.voiceWindowToken || cookies[voiceWindowCookie(current.id)] !== current.voiceWindowToken) {
-        return refuseVoiceUpgrade(socket, "403 Forbidden")
-      }
-      if (voiceSocketOpen) return refuseVoiceUpgrade(socket, "429 Too Many Requests")
-      voiceSocketOpen = true
-      // Release even if the request fails the WebSocket parser's handshake checks.
-      socket.once("close", () => { voiceSocketOpen = false })
-      current.lastAccessAt = Date.now()
-      proxyRemoteVoice({
-        request, socket, head, skipTlsVerify,
-        target: new URL(buildUpstreamUrl(current.targetBaseUrl, request.url!)),
-        origin: current.targetBaseUrl.origin,
-        cookie: rewriteRequestCookieHeader(request.headers.cookie ?? "", current.cookiePrefix),
-        lifetime: current.abortController.signal,
-      })
+      try {
+        if (!isLiveVoiceRoute(request.url)) return refuseVoiceUpgrade(socket, "404 Not Found")
+        const current = session
+        const cookies = parseCookies(request.headers.cookie)
+        if (!current?.activated || current.abortController.signal.aborted || !isLocalRequest({ raw: request })
+          || request.headers.host !== current.localBaseUrl.host || request.headers.origin !== current.localBaseUrl.origin
+          || !current.voiceWindowToken || cookies?.[voiceWindowCookie(current.id)] !== current.voiceWindowToken) {
+          return refuseVoiceUpgrade(socket, "403 Forbidden")
+        }
+        proxyRemoteVoice({
+          request, socket, head, skipTlsVerify,
+          target: new URL(buildUpstreamUrl(current.targetBaseUrl, request.url!)),
+          origin: current.targetBaseUrl.origin,
+          cookie: rewriteRequestCookieHeader(request.headers.cookie ?? "", current.cookiePrefix),
+          lifetime: current.abortController.signal,
+          claim: () => {
+            if (voiceSocketOpen) return false
+            voiceSocketOpen = true
+            // Release even if the request fails the WebSocket parser's handshake checks.
+            socket.once("close", () => { voiceSocketOpen = false })
+            current.lastAccessAt = Date.now()
+            return true
+          },
+        })
+      } catch { socket.destroy() }
     })
 
     app.get(BOOTSTRAP_PAGE_PATH, async (request, reply) => {

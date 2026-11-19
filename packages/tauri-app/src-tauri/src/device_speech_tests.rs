@@ -333,8 +333,12 @@ fn cancellation_retains_previous_choice_until_verified_retry() {
     release.send(Resolution::Prepare(true)).unwrap();
     assert_eq!(settle(&control), Operation::Prepared);
     assert_eq!(
-        device.request("prefs", status(&next)),
+        device.request("prefs", Request::Cancel { id: next.clone() }),
         Ok(json!({ "state": "prepared" }))
+    );
+    assert_eq!(
+        device.request("prefs", status(&next)),
+        Err(SpeechError::NotOwned)
     );
     assert_eq!(device.store.read().unwrap().engine, Engine::Hex);
     let next = operation(&device, "prefs", prepare("ready"));

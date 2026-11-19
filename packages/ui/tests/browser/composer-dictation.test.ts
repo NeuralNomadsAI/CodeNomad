@@ -24,6 +24,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
           opened: [] as string[], engine: "system", state: "needsPreparation", token: "plan-initial",
           remaining: 5_500_000, phase: { state: "downloading", downloadedBytes: 1_250_000, error: "failed" },
           defer: false, readFails: false, acknowledge: () => {},
+          holdRead: false, releaseRead: () => {}, holdCancelReceipt: false, releaseCancelReceipt: () => {},
         }
         const tauriApi = kind === "tauri-api" || kind === "tauri-preferences" || kind === "tauri-remote-api"
         const bridge = { requests, choice: kind === "remote-api" || tauriApi ? "api" : "hex", operation: "recording",
@@ -63,16 +64,24 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
                 ] } },
               })
               switch (request.action) {
-                case "read": return settings.readFails ? { ok: false, error: "failed" } : { ok: true, value: snapshot() }
+                case "read":
+                  if (settings.holdRead) await new Promise<void>(resolve => { settings.releaseRead = resolve })
+                  return settings.readFails ? { ok: false, error: "failed" } : { ok: true, value: snapshot() }
                 case "select": settings.engine = request.engine as string; return { ok: true, value: snapshot() }
                 case "prepare":
                   if (request.planId !== settings.token) return { ok: false, error: "planChanged" }
                   if (settings.defer) await new Promise<void>(resolve => { settings.acknowledge = resolve })
                   return { ok: true, value: { id: "00000000-0000-4000-8000-000000000001" } }
                 case "start": return { ok: false, error: "permissionDenied" }
-                case "status": return { ok: true, value: settings.phase }
+                case "status": return settings.phase.state === "forgotten"
+                  ? { ok: false, error: "notOwned" } : { ok: true, value: settings.phase }
                 case "cancel":
-                  if (settings.phase.state !== "prepared" && settings.phase.state !== "error") {
+                  if (settings.phase.state === "prepared") {
+                    settings.phase.state = "forgotten"
+                    if (settings.holdCancelReceipt) await new Promise<void>(resolve => { settings.releaseCancelReceipt = resolve })
+                    return { ok: true, value: { state: "prepared" } }
+                  }
+                  if (settings.phase.state !== "error") {
                     settings.phase.state = "cancelled"
                     settings.token = "plan-resumable"
                     settings.remaining = 4_250_000
@@ -251,7 +260,7 @@ test("permission granted after the composer closes releases the new stream witho
     await second.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 })
     await second.waitForFunction(() => Boolean((window as any).fixture))
     await second.evaluate(() => (window as any).fixture.setNativeSettings(true))
-    const testInput = second.getByRole("button", { name: "Test input", exact: true })
+    const testInput = second.getByRole("button", { name: "Test API input", exact: true })
     await testInput.click()
     const denied = second.getByRole("dialog").filter({ hasText: "Dictation is using the microphone." })
     await denied.waitFor()
@@ -428,7 +437,7 @@ for (const choice of ["hex", "system"] as const) {
       window.dispatchEvent(new Event("focus"))
       fixture.setNativeSettings(true)
     }, choice)
-    const testInput = page.getByRole("button", { name: "Test input", exact: true })
+    const testInput = page.getByRole("button", { name: "Test API input", exact: true })
     await testInput.click()
     await page.waitForFunction(() => (window as any).native.requests.some(({ action }: any) => action === "revokeApiMicrophone"))
     const attempts = () => page.evaluate(() => (window as any).native.requests.filter(({ action }: any) =>
@@ -523,7 +532,7 @@ test("Linux Tauri revokes a late API microphone authorization without starting c
 
 test("Linux Tauri Voice preferences tests the manual API with scoped microphone access", () => withComposer(async page => {
   await page.evaluate(() => (window as any).fixture.setNativeSettings(true))
-  await page.getByRole("button", { name: "Test input", exact: true }).click()
+  await page.getByRole("button", { name: "Test API input", exact: true }).click()
   await page.waitForFunction(() => (window as any).capture.samples > 0)
   await page.getByRole("button", { name: "Stop recording", exact: true }).click()
   await page.waitForFunction(() => (window as any).capture.requests.length === 1)
@@ -560,7 +569,7 @@ for (const surface of ["composer", "Voice settings"] as const) {
     if (!inComposer) await page.evaluate(() => (window as any).fixture.setNativeSettings(true))
 
     const startCapture = inComposer ? () => start(page)
-      : () => page.getByRole("button", { name: "Test input", exact: true }).click()
+      : () => page.getByRole("button", { name: "Test API input", exact: true }).click()
     const status = page.getByRole("status").filter({ hasText: "24-second recording limit reached" })
     const transcribe = page.getByRole("button", { name: "Transcribe", exact: true })
     const cancel = page.getByRole("button", { name: "Cancel", exact: true })
@@ -714,6 +723,35 @@ test("Hex activation leaves focus where the user moves it while waiting", () => 
   assert.equal(await other.evaluate(node => node === document.activeElement), true)
 }, false, "hex-setup"))
 
+test("cancelling after Hex has been selected uses the completed receipt even after a not-owned poll", () => withComposer(async page => {
+  await page.clock.install()
+  await page.evaluate(() => (window as any).fixture.setNativeSettings(true))
+  await page.getByRole("button", { name: "Activate Hex" }).click()
+  await page.getByRole("progressbar").waitFor()
+  await page.locator("button").filter({ hasText: "Cancel Hex activation" }).evaluate((button: HTMLButtonElement) => {
+    const settings = (window as any).speechSettings
+    settings.holdRead = settings.holdCancelReceipt = true
+    settings.phase.state = "prepared"
+    settings.state = "ready"
+    settings.engine = "hex"
+    button.click()
+  })
+  await page.clock.fastForward(350)
+  const commands = () => page.evaluate(() => (window as any).native.requests.map(({ action }: any) => action))
+  assert.deepEqual((await commands()).slice(-2), ["cancel", "status"])
+  await page.evaluate(() => (window as any).speechSettings.releaseCancelReceipt())
+  await page.getByRole("button", { name: "Activate Hex", exact: true }).waitFor()
+  assert.equal(await page.getByRole("button", { name: "Resume Hex activation" }).count(), 0)
+  await page.evaluate(() => {
+    const settings = (window as any).speechSettings
+    settings.holdRead = false
+    settings.releaseRead()
+  })
+  const engine = page.getByRole("combobox", { name: "Dictation engine on this device" })
+  await page.waitForFunction(() => document.querySelector("select")?.value === "hex")
+  assert.equal(await engine.isEnabled(), true)
+}, false, "hex-setup"))
+
 test("Hebrew Hex progress lays out the transferred amount before the total in RTL reading order", () => withComposer(async page => {
   await page.setViewportSize({ width: 440, height: 850 })
   await page.evaluate(() => { (window as any).fixture.setNativeSettings(true) })
@@ -750,6 +788,25 @@ test("selecting an already prepared Hex engine makes a device choice without pre
   assert.equal(await page.getByRole("button", { name: "Activate Hex" }).count(), 0)
   assert.deepEqual(await page.evaluate(() => (window as any).native.requests.filter((event: any) => event.action !== "read")),
     [{ action: "select", engine: "hex" }])
+}, false, "hex-setup"))
+
+test("the local Hex selection keeps the transcription test explicitly labelled as API input", () => withComposer(async page => {
+  await page.evaluate(() => {
+    const { fixture, speechSettings } = window as any
+    Object.assign(speechSettings, { engine: "hex", state: "ready" })
+    fixture.setNativeSettings(true)
+  })
+  const engine = page.getByRole("combobox", { name: "Dictation engine on this device" })
+  await engine.waitFor()
+  assert.equal(await engine.inputValue(), "hex")
+  await page.getByRole("button", { name: "Test API input", exact: true }).click()
+  await page.getByRole("button", { name: "Stop recording", exact: true }).click()
+  await page.waitForFunction(() => (window as any).capture.requests.length === 1)
+  await finish(page, "API test only")
+  await page.getByText("API test only", { exact: true }).waitFor()
+  assert.equal(await engine.inputValue(), "hex")
+  assert.equal(await page.evaluate(() => (window as any).native.requests.some(({ action }: any) =>
+    action === "start" || action === "select")), false)
 }, false, "hex-setup"))
 
 test("a zero-byte plan still requires consent and a failed activation leaves the choice intact", () => withComposer(async page => {

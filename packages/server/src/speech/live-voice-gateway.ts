@@ -27,8 +27,16 @@ export function voiceSource(origin: string | undefined): URL | undefined {
   } catch { /* invalid or opaque */ }
 }
 
-export function refuseVoiceUpgrade(socket: Socket, status: "401 Unauthorized" | "403 Forbidden" | "404 Not Found" | "429 Too Many Requests") {
+export function refuseVoiceUpgrade(socket: Socket, status: "401 Unauthorized" | "403 Forbidden" | "404 Not Found") {
   if (!socket.destroyed && socket.writable) socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+}
+
+// Browsers cannot read the HTTP status of a rejected WebSocket handshake.
+export function closeBusyVoiceUpgrade(server: WebSocketServer, request: IncomingMessage, socket: Socket, head: Buffer) {
+  server.handleUpgrade(request, socket, head, client => {
+    client.on("error", () => client.terminate())
+    client.close(4000, "busy")
+  })
 }
 
 export interface LiveVoicePrincipal {
@@ -74,7 +82,7 @@ export class LiveVoiceGateway {
       return
     }
     if (this.identities.has(principal.identity) || this.identities.size >= MAX_SESSIONS) {
-      refuseVoiceUpgrade(socket, "429 Too Many Requests")
+      closeBusyVoiceUpgrade(this.server, request, socket, head)
       return
     }
     this.server.handleUpgrade(request, socket, head, client => {

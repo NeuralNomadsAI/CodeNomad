@@ -49,13 +49,17 @@ export function liveVoiceContext({ instance, session }: Target): LiveVoiceContex
   }
 }
 
-export function liveVoiceAgent({ instance, session }: Target, options: {
+export function liveVoiceAgent({ instance, session, key }: Target, options: {
   followUp: () => FollowUpBehavior
   canSend: () => boolean
   composerSending?: () => boolean
 }) {
   const instanceId = instance.id
   const sessionId = session.id
+  const targetCurrent = () => {
+    const current = liveVoiceTargetSession(instanceId, sessionId)
+    return current?.key === key && current.instance.client === instance.client
+  }
   const lifecycle = () => nativeSessionLifecycleGeneration(instanceId, sessionId)
   const currentSession = () => sessions().get(instanceId)?.get(sessionId)
   const idleBoundary = () => currentSession()?.time.idle ?? 0
@@ -121,7 +125,8 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
             const generation = lifecycle(), idle = idleBoundary()
             const admission = currentSession()?.generationAdmissionEpoch
             return () => {
-              if (admission !== undefined && current() && generation === lifecycle() && idleBoundary() <= idle) {
+              // Provider cancellation stops tool delivery, not a native send already on the wire.
+              if (admission !== undefined && targetCurrent() && generation === lifecycle() && idleBoundary() <= idle) {
                 awaitingExecution = { generation, idle, admission, expires: performance.now() + EXECUTION_START_GRACE_MS }
               }
             }

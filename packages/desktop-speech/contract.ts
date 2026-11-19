@@ -55,7 +55,7 @@ export type DeviceSpeechResponses = {
   releaseMicrophone: null
   status: DeviceSpeechOperation
   finish: null
-  cancel: null
+  cancel: { state: "prepared" } | null
 }
 export type DeviceSpeechAction = keyof DeviceSpeechRequests
 export type DeviceSpeechRequest = {

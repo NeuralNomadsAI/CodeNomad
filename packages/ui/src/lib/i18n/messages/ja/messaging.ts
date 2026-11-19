@@ -362,6 +362,7 @@ export const messagingMessages = {
   "voice.live.target": "セッション",
   "voice.live.mute": "マイクをミュート",
   "voice.live.interrupt": "応答を中断",
+  "voice.live.stopPlayback": "再生を停止",
   "voice.live.settings": "音声設定",
   "voice.live.consent.title": "{provider} で開始しますか？",
   "voice.live.consent.audio": "CodeNomad はマイクの音声を {provider}（{company}）にリアルタイムで送信します。",

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { inspect } from "node:util"
 import { once } from "node:events"
 import { createServer, type RequestListener } from "node:http"
 import type { AddressInfo } from "node:net"
@@ -9,7 +10,7 @@ import type { SettingsService } from "../../settings/service"
 import { SpeechService } from "../../speech/service"
 import { registerSpeechRoutes } from "./speech"
 
-async function fixture(t: TestContext, respond: RequestListener) {
+async function fixture(t: TestContext, respond: RequestListener, apiKey = "test-only-key") {
   const upstream = createServer(respond)
   upstream.listen(0, "127.0.0.1")
   t.after(() => { upstream.closeAllConnections(); upstream.close() })
@@ -18,7 +19,7 @@ async function fixture(t: TestContext, respond: RequestListener) {
   const app = Fastify()
   t.after(() => app.close())
   const settings = { getOwner: () => ({ speech: {
-    apiKey: "test-only-key", baseUrl: `http://127.0.0.1:${port}/v1`, sttModel: "test-transcriber",
+    apiKey, baseUrl: `http://127.0.0.1:${port}/v1`, sttModel: "test-transcriber",
   } }) } as unknown as SettingsService
   const log = { child: () => log, info() {} } as unknown as Logger
   registerSpeechRoutes(app, { speechService: new SpeechService(settings, log) })
@@ -28,6 +29,28 @@ async function fixture(t: TestContext, respond: RequestListener) {
     body: JSON.stringify({ audioBase64: "YXVkaW8=", mimeType: "audio/mp4" }),
   })
 }
+
+test("the OpenAI SDK never logs a speech credential, even with debug enabled", { timeout: 8000 }, async t => {
+  const key = "speech-credential-sentinel-not-a-real-key"
+  const oldLevel = process.env.OPENAI_LOG
+  process.env.OPENAI_LOG = "debug"
+  t.after(() => { if (oldLevel === undefined) delete process.env.OPENAI_LOG; else process.env.OPENAI_LOG = oldLevel })
+  const logs: string[] = []
+  for (const method of ["debug", "info", "warn", "error", "log"] as const) {
+    t.mock.method(console, method, (...args: unknown[]) => { logs.push(inspect(args)) })
+  }
+  let received: string | undefined
+  const send = await fixture(t, (request, response) => {
+    received = request.headers.authorization
+    request.resume()
+    response.writeHead(403, { "Content-Type": "text/plain" })
+    response.end(`Invalid credentials: ${received}`)
+  }, key)
+  const response = await send()
+  assert.equal(response.status, 502)
+  assert.equal(received, `Bearer ${key}`)
+  assert.ok(!logs.join("\n").includes(key), "captured SDK output included the credential")
+})
 
 test("disconnecting the dictation caller closes the provider upload without retry or fallback", { timeout: 8000 }, async t => {
   let started!: () => void, closed!: () => void, calls = 0

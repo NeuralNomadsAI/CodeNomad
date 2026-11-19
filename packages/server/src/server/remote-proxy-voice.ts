@@ -4,7 +4,7 @@ import WebSocket, { WebSocketServer } from "ws"
 import {
   LIVE_VOICE_CLIENT_BYTES, LIVE_VOICE_PROVIDER_BYTES, liveVoiceEngine, type LiveVoiceEndReason,
 } from "../speech/live-voice-contract"
-import { LIVE_VOICE_ESTABLISH_MS, VOICE_WS_OPTIONS, rawBytes, refuseVoiceUpgrade } from "../speech/live-voice-gateway"
+import { LIVE_VOICE_ESTABLISH_MS, VOICE_WS_OPTIONS, closeBusyVoiceUpgrade, rawBytes, refuseVoiceUpgrade } from "../speech/live-voice-gateway"
 import { readClientMessage, readObject } from "../speech/live-voice-messages"
 import { proxyDestination } from "./proxy-destination"
 
@@ -28,8 +28,9 @@ export function proxyRemoteVoice(args: {
   cookie: string
   skipTlsVerify: boolean
   lifetime: AbortSignal
+  claim: () => boolean
 }) {
-  const { request, socket, head, target, origin, cookie, skipTlsVerify, lifetime } = args
+  const { request, socket, head, target, origin, cookie, skipTlsVerify, lifetime, claim } = args
   if (!liveVoiceEngine(request.url) || request.method !== "GET" || request.headers["sec-websocket-protocol"] !== undefined) {
     refuseVoiceUpgrade(socket, "404 Not Found")
     return
@@ -38,6 +39,7 @@ export function proxyRemoteVoice(args: {
     refuseVoiceUpgrade(socket, "403 Forbidden")
     return
   }
+  if (!claim()) return closeBusyVoiceUpgrade(server, request, socket, head)
   server.handleUpgrade(request, socket, head, window => {
     let upstream: WebSocket | undefined
     let initial: WebSocket.RawData | undefined

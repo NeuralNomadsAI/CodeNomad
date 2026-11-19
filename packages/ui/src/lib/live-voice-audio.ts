@@ -1,4 +1,4 @@
-import { LIVE_VOICE_PROVIDER_BYTES, type LiveVoiceClientMessage, type LiveVoiceServerMessage } from "../../../server/src/speech/live-voice-contract"
+import { LIVE_VOICE_PROVIDER_BYTES, liveVoiceInputRate, type LiveVoiceClientMessage, type LiveVoiceEngine, type LiveVoiceServerMessage } from "../../../server/src/speech/live-voice-contract"
 import workletURL from "./live-voice-worklet.js?url&no-inline"
 import { LIVE_VOICE_PLAYBACK_CAPACITY, LiveVoicePlayback, type TruncateMessage } from "./live-voice-playback"
 import { getMicrophone, stopTracks } from "./microphone"
@@ -40,13 +40,15 @@ async function loadAudioGraph(context: AudioContext, resume: Promise<void>, sign
 /** Start from the user's gesture so playback and local WebKit can be authorized. */
 export async function startLiveVoiceAudio(options: {
   signal: AbortSignal
-  inputRate: Ready["inputRate"]
+  engine: LiveVoiceEngine
   outputRate: Ready["outputRate"]
   onInput: (audio: Input) => void
   onPlaybackChange: (playing: boolean) => void
   onError: (error: unknown) => void
 }) {
-  const { signal, inputRate, outputRate, onInput, onPlaybackChange, onError } = options
+  const { signal, engine, outputRate, onInput, onPlaybackChange, onError } = options
+  const inputRate = liveVoiceInputRate(engine)
+  const silence = engine === "openai-realtime" ? btoa("\0".repeat(inputRate * 2 / 50)) : undefined
   if (liveVoiceAudioUnavailable()) throw new MicrophoneUnavailable("unavailable")
   signal.throwIfAborted()
   const lifetime = new AbortController()
@@ -154,7 +156,9 @@ export async function startLiveVoiceAudio(options: {
       if (data === "overrun") return fail(new Error("Capture overrun"))
       try {
         // 20 ms of PCM16 is at most 960 bytes, well below the websocket budget.
-        if (!muted) onInput({ type: "audio", pcm: btoa(String.fromCharCode(...new Uint8Array(data))) })
+        // OpenAI's VAD still needs silence to finish the turn when muted.
+        const pcm = muted ? silence : btoa(String.fromCharCode(...new Uint8Array(data)))
+        if (pcm) onInput({ type: "audio", pcm })
         recorder.port.postMessage(null)
       } catch (error) { fail(error) }
     }

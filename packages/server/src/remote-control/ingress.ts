@@ -36,12 +36,14 @@ export class RemoteIngress {
       socket.once("close", () => this.sockets.delete(socket))
     })
     server.on("upgrade", (request, socket: Socket, head: Buffer) => {
-      const surface = this.upgrade(request, socket, head)
-      if (surface === "preview") {
-        this.previewSockets.add(socket)
-        socket.once("close", () => this.previewSockets.delete(socket))
-      }
-      if (!surface) socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+      try {
+        const surface = this.upgrade(request, socket, head)
+        if (surface === "preview") {
+          this.previewSockets.add(socket)
+          socket.once("close", () => this.previewSockets.delete(socket))
+        }
+        if (!surface) socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+      } catch { socket.destroy() }
     })
     server.on("clientError", (_error, socket: Socket) => socket.destroy())
     await new Promise<void>((resolve, reject) => {

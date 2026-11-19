@@ -91,6 +91,30 @@ test("muting withholds captured frames while playback runs and resumes the same 
   } finally { await page.close() }
 })
 
+test("muting OpenAI keeps the audio clock running with zero PCM instead of microphone samples", async () => {
+  const page = await browser.newPage()
+  try {
+    await start(page, "?openai")
+    await page.waitForFunction(() => (window as any).fixture.info.input.some((pcm: string) => /[^\0]/.test(atob(pcm))))
+    const from = await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.mute(true)
+      return fixture.info.input.length
+    })
+    await page.waitForFunction(from => (window as any).fixture.info.input.length >= from + 5, from)
+    const { frames, unmutedAt } = await page.evaluate(from => {
+      const fixture = (window as any).fixture
+      const frames = fixture.info.input.slice(from)
+      fixture.mute(false)
+      return { frames, unmutedAt: from + frames.length }
+    }, from)
+    for (const pcm of frames) assert.deepEqual(Buffer.from(pcm, "base64"), Buffer.alloc(960))
+    await page.waitForFunction(from => (window as any).fixture.info.input.slice(from)
+      .some((pcm: string) => /[^\0]/.test(atob(pcm))), unmutedAt)
+    assert.equal(await page.evaluate(() => (window as any).fixture.info.requests), 1)
+  } finally { await page.close() }
+})
+
 test("stopping while permission is pending keeps the lease until the late stream is stopped", async () => {
   const page = await browser.newPage()
   try {

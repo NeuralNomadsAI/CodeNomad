@@ -626,7 +626,7 @@ export const settingsMessages = {
   "settings.speech.testPlayback.stop": "Beispiel stoppen",
   "settings.speech.testPlayback.sample": "Dies ist ein CodeNomad-Sprachtest.",
   "settings.speech.testPlayback.note": "Modus und Format gelten sofort; speichern Sie Änderungen an Schlüssel, Basis-URL, Modell und Stimme vor dem Test.",
-  "settings.speech.testInput.action": "Eingabe testen",
+  "settings.speech.testInput.action": "API-Eingabe testen",
   "settings.speech.testInput.stop": "Aufnahme stoppen",
   "settings.speech.testInput.transcribing": "Transkribierung",
   "settings.speech.testInput.requesting": "Starten…",

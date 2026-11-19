@@ -625,7 +625,7 @@ export const settingsMessages = {
   "settings.speech.testPlayback.stop": "Остановить пример",
   "settings.speech.testPlayback.sample": "Это проверка речи CodeNomad.",
   "settings.speech.testPlayback.note": "Режим и формат применяются сразу; изменения ключа, базового URL, модели и голоса сохраните перед проверкой.",
-  "settings.speech.testInput.action": "Проверить ввод",
+  "settings.speech.testInput.action": "Проверить ввод через API",
   "settings.speech.testInput.stop": "Остановить запись",
   "settings.speech.testInput.transcribing": "Транскрибация",
   "settings.speech.testInput.requesting": "Запуск…",

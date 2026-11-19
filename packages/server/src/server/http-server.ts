@@ -278,18 +278,20 @@ export function createHttpServer(deps: HttpServerDeps) {
   const liveVoice = deps.liveVoice ?? new LiveVoiceGateway(deps.speechService)
   app.server.on("upgrade", (request, socket: Socket, head) => {
     if (!isLiveVoiceRoute(request.url) || socket.destroyed) return
-    const raw = { raw: request, headers: request.headers }
-    const origin = voiceSource(request.headers.origin)
-    if (isRemoteRequest(raw) || parsePreviewCapabilityHost(request.headers.host) || !origin || !allowsDirectSource(raw)
-      || (!deps.authManager.isAuthEnabled() && (!isLocalRequest(raw) || !isLoopbackHost(origin.hostname)))) {
-      return refuseVoiceUpgrade(socket, "403 Forbidden")
-    }
-    const session = deps.authManager.getSessionFromHeaders(request.headers)
-    if (!session) return refuseVoiceUpgrade(socket, "401 Unauthorized")
-    liveVoice.upgrade(request, socket, head, {
-      identity: `direct:${session.username}`,
-      watchRevocation: stop => deps.authManager.watchSessionRevocation(session.sessionId, stop),
-    })
+    try {
+      const raw = { raw: request, headers: request.headers }
+      const origin = voiceSource(request.headers.origin)
+      if (isRemoteRequest(raw) || parsePreviewCapabilityHost(request.headers.host) || !origin || !allowsDirectSource(raw)
+        || (!deps.authManager.isAuthEnabled() && (!isLocalRequest(raw) || !isLoopbackHost(origin.hostname)))) {
+        return refuseVoiceUpgrade(socket, "403 Forbidden")
+      }
+      const session = deps.authManager.getSessionFromHeaders(request.headers)
+      if (!session) return refuseVoiceUpgrade(socket, "401 Unauthorized")
+      liveVoice.upgrade(request, socket, head, {
+        identity: `direct:${session.username}`,
+        watchRevocation: stop => deps.authManager.watchSessionRevocation(session.sessionId, stop),
+      })
+    } catch { socket.destroy() }
   })
   const remoteVoiceUpgrade = (request: import("http").IncomingMessage, socket: Socket, head: Buffer, deviceId: string) => {
     if (!trackUpgrade(socket)) return

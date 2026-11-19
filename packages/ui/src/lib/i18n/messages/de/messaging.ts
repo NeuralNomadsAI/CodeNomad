@@ -359,6 +359,7 @@ export const messagingMessages = {
   "voice.live.target": "Sitzung",
   "voice.live.mute": "Mikrofon stummschalten",
   "voice.live.interrupt": "Antwort unterbrechen",
+  "voice.live.stopPlayback": "Wiedergabe stoppen",
   "voice.live.settings": "Spracheinstellungen",
   "voice.live.consent.title": "Mit {provider} starten?",
   "voice.live.consent.audio": "CodeNomad überträgt den Mikrofonton live an {provider} ({company}).",

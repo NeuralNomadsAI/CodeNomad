@@ -359,6 +359,7 @@ export const messagingMessages = {
   "voice.live.target": "सत्र",
   "voice.live.mute": "माइक्रोफोन म्युट गर्नुहोस्",
   "voice.live.interrupt": "जवाफ रोक्नुहोस्",
+  "voice.live.stopPlayback": "प्लेब्याक रोक्नुहोस्",
   "voice.live.settings": "ध्वनि सेटिङ",
   "voice.live.consent.title": "{provider} सँग सुरु गर्ने?",
   "voice.live.consent.audio": "CodeNomad ले माइक्रोफोनको अडियो {provider} ({company}) मा प्रत्यक्ष पठाउँछ।",

@@ -332,6 +332,7 @@ export const messagingMessages = {
   "voice.live.target": "Oturum",
   "voice.live.mute": "Mikrofonu sessize al",
   "voice.live.interrupt": "Yanıtı kes",
+  "voice.live.stopPlayback": "Oynatmayı durdur",
   "voice.live.settings": "Ses ayarları",
   "voice.live.consent.title": "{provider} ile başlamak ister misiniz?",
   "voice.live.consent.audio": "CodeNomad, mikrofon sesini {provider} ({company}) hizmetine canlı olarak aktarır.",

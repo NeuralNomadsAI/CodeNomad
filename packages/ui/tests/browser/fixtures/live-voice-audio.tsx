@@ -49,7 +49,7 @@ const button = document.body.appendChild(document.createElement("button"))
 button.textContent = "Start"
 button.onclick = () => {
   void startLiveVoiceAudio({
-    signal: abort.signal, inputRate: 16_000, outputRate: 24_000,
+    signal: abort.signal, engine: location.search === "?openai" ? "openai-realtime" : "gemini-live", outputRate: 24_000,
     onInput: message => info.input.push(message.pcm), onError: error => { info.error = String(error) },
     onPlaybackChange: value => { info.playing = value },
   }).then(result => {

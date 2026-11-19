@@ -625,7 +625,7 @@ export const settingsMessages = {
   "settings.speech.testPlayback.stop": "停止示例",
   "settings.speech.testPlayback.sample": "这是 CodeNomad 语音测试。",
   "settings.speech.testPlayback.note": "模式和格式立即生效；测试前请先保存密钥、基础 URL、模型和音色更改。",
-  "settings.speech.testInput.action": "测试输入",
+  "settings.speech.testInput.action": "测试 API 输入",
   "settings.speech.testInput.stop": "停止录音",
   "settings.speech.testInput.transcribing": "转录中",
   "settings.speech.testInput.requesting": "启动中…",

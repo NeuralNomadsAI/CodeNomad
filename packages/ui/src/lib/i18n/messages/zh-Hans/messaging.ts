@@ -361,6 +361,7 @@ export const messagingMessages = {
   "voice.live.target": "会话",
   "voice.live.mute": "将麦克风静音",
   "voice.live.interrupt": "打断回复",
+  "voice.live.stopPlayback": "停止播放",
   "voice.live.settings": "语音设置",
   "voice.live.consent.title": "使用 {provider} 开始对话？",
   "voice.live.consent.audio": "CodeNomad 会将麦克风音频实时发送给 {provider}（{company}）。",

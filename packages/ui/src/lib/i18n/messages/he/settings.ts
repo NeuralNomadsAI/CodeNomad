@@ -625,7 +625,7 @@ export const settingsMessages = {
   "settings.speech.testPlayback.stop": "עצור דוגמה",
   "settings.speech.testPlayback.sample": "זוהי בדיקת קול של CodeNomad.",
   "settings.speech.testPlayback.note": "המצב והפורמט חלים מיד; שמור שינויי מפתח, כתובת בסיס, מודל וקול לפני הבדיקה.",
-  "settings.speech.testInput.action": "בדיקת קלט",
+  "settings.speech.testInput.action": "בדיקת קלט דרך API",
   "settings.speech.testInput.stop": "עצור הקלטה",
   "settings.speech.testInput.transcribing": "מתמלל",
   "settings.speech.testInput.requesting": "מתחיל…",

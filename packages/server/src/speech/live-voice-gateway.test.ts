@@ -107,6 +107,33 @@ async function setupGemini(client: ReturnType<typeof wire>, fake: Awaited<Return
   return upstream
 }
 
+test("malformed cookie headers refuse direct and tunnel admission without affecting the next upgrade", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { local, manager, target, code, authManager } = await startRemoteSurface(t, { liveVoice: fake.gateway })
+  const origin = `http://${local}`
+  const cookie = `${authManager.getCookieName()}=${authManager.createSession("codenomad").id}`
+  const paired = manager.exchangePairing(code, undefined)!
+  const remote = { host: FAKE_TUNNEL_HOST, origin: `https://${FAKE_TUNNEL_HOST}`, cookie: `${DEVICE_COOKIE_NAME}=${paired.token}` }
+  await denied(local, gemini, { origin, cookie: `${cookie}; malformed=%` }, 401)
+  await denied(target(), gemini, { ...remote, cookie: `${remote.cookie}; malformed=%` }, 403)
+  assert.equal(fake.connections.length, 0)
+  await setupGemini(connect(t, local, gemini, { origin, cookie }), fake)
+  await setupGemini(connect(t, target(), gemini, remote), fake)
+})
+
+test("an unwritable paired-device registry closes only the affected voice upgrade", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { manager, target, code, registryPath } = await startRemoteSurface(t, { liveVoice: fake.gateway })
+  const paired = manager.exchangePairing(code, undefined)!
+  const headers = { host: FAKE_TUNNEL_HOST, origin: `https://${FAKE_TUNNEL_HOST}`, cookie: `${DEVICE_COOKIE_NAME}=${paired.token}` }
+  const tempPath = `${registryPath}.${process.pid}.tmp`
+  fs.mkdirSync(tempPath) // A directory at the atomic-write path fails on every platform.
+  assert.deepEqual(await connect(t, target(), gemini, headers).closed, [1006, ""])
+  assert.equal(fake.connections.length, 0)
+  fs.rmdirSync(tempPath)
+  await setupGemini(connect(t, target(), gemini, headers), fake)
+})
+
 test("direct admission, Gemini binary messages, fixed tools, cancellation and password logout", { timeout: 10000 }, async t => {
   const fake = await provider(t)
   const { log, logs } = logger()
@@ -130,7 +157,8 @@ test("direct admission, Gemini binary messages, fixed tools, cancellation and pa
   assert.equal(fake.connections[0].url.search, "")
   assert.deepEqual(fake.connections[0].headers, { "x-goog-api-key": KEY })
   const secondLogin = `${authManager.getCookieName()}=${authManager.createSession("codenomad").id}`
-  await denied(local, openai, { origin, cookie: secondLogin }, 429)
+  assert.deepEqual(await connect(t, local, openai, { origin, cookie: secondLogin }).closed, [4000, "busy"])
+  assert.equal(fake.connections.length, 1, "a second login for the same user never reaches a provider")
   client.send({ type: "audio", pcm: PCM })
   assert.deepEqual(await upstream.next(), { realtimeInput: { audio: { data: PCM, mimeType: "audio/pcm;rate=16000" } } })
   client.send({ type: "audio-end" })
@@ -275,9 +303,11 @@ test("Tauri TLS-exception window requires bootstrap and upstream login, and revo
   assert.equal(login.status, 200)
   const loginCookie = login.headers.getSetCookie()[0].split(";", 1)[0]
   const headers = { origin: location.origin, cookie: `${voiceCookie}; ${loginCookie}` }
+  await denied(location.host, gemini, { ...headers, cookie: `${headers.cookie}; malformed=%` }, 403, true)
   const client = connect(t, location.host, gemini, headers, true)
   const upstream = await setupGemini(client, fake)
-  await denied(location.host, gemini, headers, 429, true)
+  assert.deepEqual(await connect(t, location.host, gemini, headers, true).closed, [4000, "busy"])
+  assert.equal(fake.connections.length, 1)
   await denied(location.host, "/elsewhere", headers, 404, true)
   assert(await manager.deleteSession(sessionId))
   assert.equal((await client.closed)[0], 1006)
@@ -369,7 +399,7 @@ test("direct and tunneled identities share four slots; a client disconnect relea
   }
   for (let i = 0; i < 3; i++) await setupGemini(connect(t, target(), gemini, device()), fake)
   const fifth = device()
-  await denied(target(), gemini, fifth, 429)
+  assert.deepEqual(await connect(t, target(), gemini, fifth).closed, [4000, "busy"])
   assert.equal(fake.connections.length, 4)
   localClient.send({ type: "stop" })
   assert.deepEqual(await localClient.closed, [1000, "stopped"])

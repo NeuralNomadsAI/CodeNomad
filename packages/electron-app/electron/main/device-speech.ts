@@ -164,8 +164,10 @@ export class DeviceSpeech {
             return ok(slot.state)
           }
           if (input.action === "cancel") {
+            const receipt = slot.state.state === "prepared" ? slot.state : null
             if (terminal(slot.state.state)) this.clear(slot)
             else this.abort(slot)
+            return ok(receipt)
           } else {
             if (slot.operation !== "start" || slot.abort.signal.aborted || terminal(slot.state.state)) return error("unavailable")
             if (slot.finish.signal.aborted) return error("busy")

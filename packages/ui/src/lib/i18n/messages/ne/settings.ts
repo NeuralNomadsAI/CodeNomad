@@ -626,7 +626,7 @@ export const settingsMessages = {
   "settings.speech.testPlayback.stop": "नमूना रोक्नुहोस्",
   "settings.speech.testPlayback.sample": "यो CodeNomad को वाचन परीक्षण हो।",
   "settings.speech.testPlayback.note": "मोड र ढाँचा तुरुन्त लागू हुन्छन्; परीक्षणअघि कुञ्जी, आधार URL, मोडेल र आवाजका परिवर्तन बचत गर्नुहोस्।",
-  "settings.speech.testInput.action": "इनपुट परीक्षण",
+  "settings.speech.testInput.action": "API इनपुट परीक्षण",
   "settings.speech.testInput.stop": "रेकर्डिङ रोक्नुहोस्",
   "settings.speech.testInput.transcribing": "ट्रान्सक्राइब गर्दै",
   "settings.speech.testInput.requesting": "सुरु गर्दै…",

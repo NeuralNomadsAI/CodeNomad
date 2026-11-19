@@ -5,7 +5,7 @@ import {
 import { TrailingResyncCoordinator } from "../../lib/trailing-resync"
 
 type Preparation = { state: "starting" | "verifying" | "stopping" } | { state: "downloading"; downloadedBytes: number }
-type Run = { id?: string; stopping: boolean; cancelSent?: boolean }
+type Run = { id?: string; stopping: boolean; cancelling?: Promise<void> }
 
 export function useDeviceSpeechSettings() {
   const [snapshot, setSnapshot] = createSignal<DeviceSpeechSnapshot>()
@@ -50,11 +50,13 @@ export function useDeviceSpeechSettings() {
     }
   }
 
-  async function cancelOwned(current: Run) {
-    if (!current.id || current.cancelSent) return
-    current.cancelSent = true
-    const result = await requestDeviceSpeech("cancel", { id: current.id })
-    if (!disposed && run === current && !result.ok && result.error !== "notOwned") setError(result.error)
+  function cancelOwned(current: Run): Promise<void> | undefined {
+    if (!current.id) return
+    return current.cancelling ??= requestDeviceSpeech("cancel", { id: current.id }).then(result => {
+      if (disposed || run !== current) return
+      if (result.ok && result.value?.state === "prepared") return settle(current, "prepared")
+      if (!result.ok && result.error !== "notOwned") setError(result.error)
+    })
   }
 
   function cancel() {
@@ -65,9 +67,10 @@ export function useDeviceSpeechSettings() {
   }
 
   async function settle(current: Run, result: "prepared" | "cancelled" | DeviceSpeechError) {
+    if (disposed || run !== current) return
     // Remove terminal receipts and stop work on a failed status read as well.
     void cancelOwned(current)
-    if (disposed || run !== current) return
+    window.clearTimeout(timer)
     run = undefined
     setResume(result !== "prepared")
     setError(result === "prepared" || result === "cancelled" ? undefined : result)
@@ -78,8 +81,14 @@ export function useDeviceSpeechSettings() {
   async function observe(current: Run, id: string) {
     const result = await requestDeviceSpeech("status", { id })
     if (disposed || run !== current) return
-    // Cancelling after native completion can discard the receipt first.
-    if (!result.ok) return settle(current, current.stopping && result.error === "notOwned" ? "cancelled" : result.error)
+    if (!result.ok) {
+      if (current.stopping && result.error === "notOwned") {
+        // Cancel may have consumed a completed receipt before this status read.
+        await current.cancelling
+        return settle(current, "cancelled")
+      }
+      return settle(current, result.error)
+    }
     switch (result.value.state) {
       case "prepared":
       case "cancelled": return settle(current, result.value.state)

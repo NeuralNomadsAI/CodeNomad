@@ -252,6 +252,25 @@ for (const recovery of ["reconnect", "expiry"] as const) {
   })
 }
 
+test("Gemini cancellation while awaiting a native ack still queues the next voice send", async () => {
+  const { page, context, start, snapshot, sent, waitForSent } = await fixture()
+  try {
+    const send = await start()
+    await page.evaluate(() => (window as any).fixture.setFirstPrompt("holdAck"))
+    const call = (id: string) => ({ type: "tool-call", id, name: "send_to_agent", arguments: { text: id } })
+    send(call("first"))
+    await page.waitForFunction(() => (window as any).fixture.waitingAck())
+    send({ type: "tool-cancel", id: "first" })
+    send({ type: "tool-call", id: "status", name: "get_session_status", arguments: {} })
+    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "status")).output), { title: "Conversation", status: "idle" })
+    send(call("second"))
+    await page.evaluate(() => (window as any).fixture.releaseAck())
+    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "second")).output), { delivery: "queued" })
+    assert.deepEqual((await snapshot()).info.prompts.map((item: any) => [item.text, item.delivery]), [["first", "steer"], ["second", "queue"]])
+    assert.equal(sent.some(item => item.type === "tool-result" && item.id === "first"), false)
+  } finally { await context.close() }
+})
+
 test("OpenAI final text replaces deltas; unknown tools fail closed", async () => {
   const { page, context, start, closed, snapshot, waitForSent } = await fixture("openai")
   try {
@@ -348,7 +367,7 @@ test("the composer opens consent, retains stopped turns, and keeps native input 
       await second.getByRole("button", { name: "More actions", exact: true }).click()
       await unavailable.click()
       await second.waitForFunction(() => document.activeElement?.id === "voice-dictation")
-      await second.getByRole("button", { name: "Test input", exact: true }).click()
+      await second.getByRole("button", { name: "Test API input", exact: true }).click()
       await second.getByRole("dialog").getByText("Live conversation is using the microphone.", { exact: true }).waitFor()
       assert.equal(await second.evaluate(() => (window as any).fixture.info.capture), 0)
     } finally { await second.close() }
@@ -450,6 +469,52 @@ test("the duration limit transfers focus from the microphone to Close", async ()
   } finally { await context.close() }
 })
 
+test("a dropped connection moves focus to Close only if the microphone held focus", async () => {
+  for (const focusMic of [true, false]) {
+    const { page, context, live, openConsent, acceptConsent, socket } = await fixture("gemini", true)
+    try {
+      await openConsent()
+      await acceptConsent()
+      const target = focusMic ? live.getByRole("button", { name: "Mute microphone" }) : page.getByRole("textbox").first()
+      await target.focus()
+      assert.ok(await target.evaluate(el => document.activeElement === el))
+      await (await socket).close({ code: 1011 })
+      await live.getByText("Couldn't connect to the provider", { exact: true }).waitFor()
+      const expected = focusMic ? live.getByRole("button", { name: "Close", exact: true }) : target
+      assert.ok(await expected.evaluate(el => document.activeElement === el))
+    } finally { await context.close() }
+  }
+})
+
+test("the live window displays the conversation limit if the gateway closes as busy before ready", async () => {
+  const { context, live, consent, openConsent, socket } = await fixture("gemini", true)
+  try {
+    await openConsent()
+    await consent.locator(".button-primary").click()
+    await (await socket).close({ code: 4000, reason: "busy" })
+    await live.getByRole("status").getByText("Voice is already in use", { exact: true }).waitFor()
+  } finally { await context.close() }
+})
+
+test("the live reply control identifies local-only Gemini playback and OpenAI interruption", async () => {
+  for (const engine of ["gemini", "openai"] as const) {
+    const { context, live, openConsent, acceptConsent, sent, waitForSent } = await fixture(engine, true)
+    try {
+      await openConsent()
+      const send = await acceptConsent()
+      send(engine === "gemini" ? { type: "thinking" } : { type: "thinking", responseId: "reply" })
+      await live.getByRole("button", { name: engine === "gemini" ? "Stop playback" : "Interrupt reply", exact: true }).click()
+      if (engine === "openai") {
+        assert.deepEqual(await waitForSent(item => item.type === "interrupt"), { type: "interrupt", responseId: "reply" })
+      } else {
+        send({ type: "tool-call", id: "send", name: "send_to_agent", arguments: { text: "Still a live request" } })
+        assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "send")).output), { delivery: "submitted" })
+        assert.equal(sent.some(item => item.type === "interrupt" || item.type === "truncate"), false)
+      }
+    } finally { await context.close() }
+  }
+})
+
 test("the live log adds one receipt and one interruption, not partial speech", async () => {
   const { context, live, openConsent, acceptConsent, waitForSent } = await fixture("gemini", true)
   try {
@@ -547,7 +612,7 @@ test("Voice settings keep one shared credentials editor and switching engines do
     await page.waitForFunction(() => document.activeElement?.id === "voice-playback")
     assert.deepEqual(await page.locator(".settings-section-stack > section h3").allTextContents(), ["Dictation", "Playback", "Conversation"])
     await playback.getByRole("button", { name: "Test playback", exact: true }).waitFor()
-    await dictation.getByRole("button", { name: "Test input", exact: true }).waitFor()
+    await dictation.getByRole("button", { name: "Test API input", exact: true }).waitFor()
     assert.equal(await page.locator("details").filter({ has: page.getByText("API credentials", { exact: true }) }).count(), 1)
     const engine = conversation.getByRole("combobox", { name: "Conversation engine" })
     await engine.selectOption("openai-realtime")

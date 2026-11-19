@@ -625,7 +625,7 @@ export const settingsMessages = {
   "settings.speech.testPlayback.stop": "Arrêter l'extrait",
   "settings.speech.testPlayback.sample": "Ceci est un test vocal de CodeNomad.",
   "settings.speech.testPlayback.note": "Le mode et le format s’appliquent immédiatement ; enregistrez les changements de clé, d’URL de base, de modèle et de voix avant le test.",
-  "settings.speech.testInput.action": "Tester l'entrée",
+  "settings.speech.testInput.action": "Tester l'entrée API",
   "settings.speech.testInput.stop": "Arrêter l'enregistrement",
   "settings.speech.testInput.transcribing": "Transcription",
   "settings.speech.testInput.requesting": "Démarrage…",

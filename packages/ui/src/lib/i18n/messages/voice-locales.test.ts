@@ -12,7 +12,7 @@ import { trMessages } from "./tr"
 import { zhHansMessages } from "./zh-Hans"
 
 const voiceKeys = (messages: Record<string, string>) => Object.keys(messages)
-  .filter(key => key.startsWith("settings.voice.") || key.startsWith("voice.")).sort()
+  .filter(key => key.startsWith("settings.voice.") || key.startsWith("voice.") || key === "settings.speech.testInput.action").sort()
 const placeholders = (text: string) => (text.match(/\{\w+\}/g) ?? []).sort()
 
 test("all ten locales translate voice settings, consent, states and commands", () => {

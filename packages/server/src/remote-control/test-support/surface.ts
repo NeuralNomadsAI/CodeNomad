@@ -61,8 +61,9 @@ export async function startRemoteSurface(t: TestContext, options: {
   let previewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
   let voiceUpgrade: ReturnType<typeof createHttpServer>["remoteVoiceUpgrade"] | null = null
   const previewManager = new PreviewManager()
+  const registryPath = path.join(directory, "remote-control-devices.json")
   const manager = new RemoteControlManager({
-    registry: new RemoteDeviceRegistry(path.join(directory, "remote-control-devices.json")),
+    registry: new RemoteDeviceRegistry(registryPath),
     router: () => (app ? (request, response) => app!.routing(request, response) : null),
     previewUpgrade: () => previewUpgrade,
     voiceUpgrade: () => voiceUpgrade,
@@ -140,6 +141,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     authManager,
     manager,
     previewManager,
+    registryPath,
     pairing,
     code: new URL(pairing.url).hash.slice(1),
     target: () => target,

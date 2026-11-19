@@ -27,10 +27,10 @@ Bunlar yapılandırılmış hizmete yönelik isteklerdir; her uyumlu uç noktan�
 ## Giriş ve çıkışı test edin {#test}
 
 1. Önce uç nokta, anahtar, model ve ses değişikliklerini kaydedin.
-2. **Girdiyi test et** öğesini seçin, mikrofon izni verin, konuşun ve ardından **Kaydı durdur** öğesini seçin. Döndürülen transkripsiyonu kontrol edin.
+2. **API girdisini test et** öğesini seçin, mikrofon izni verin, konuşun ve ardından **Kaydı durdur** öğesini seçin. Döndürülen transkripsiyonu kontrol edin.
 3. Örneği dinlemek için **Oynatmayı test et** öğesini seçin; **Örneği durdur** bunu bitirir.
 
-Oynatma testi seçilen oynatma modunu/formatını hemen kullanır, ancak uç nokta, anahtar, model ve ses kayıtlı ayarlardan gelir. Test girişi bir konuşma istemi göndermiyor. Testler yine de yapılandırılmış konuşma sağlayıcısına ses/metin göndermeye devam eder ve ücretlendirilebilir.
+Oynatma testi seçilen modu ve biçimi hemen kullanır, ancak uç nokta, anahtar, model ve ses kayıtlı ayarlardan gelir. Hex veya sistem tanıma seçili olsa bile **API girdisini test et**, sesi yapılandırılmış API sağlayıcısına gönderir. Sohbete bir istem göndermez. Sağlayıcı bu testleri ücretlendirebilir.
 
 ## Bir istemi dikte edin {#dictate}
 
@@ -53,7 +53,7 @@ Ubuntu 24.04 glibc gereksinimini karşılar, Ubuntu 22.04 karşılamaz. Hex, kon
 
 Yerel tanıma bu cihazın mikrofonunu kullanır ve yerel uygulamada açılan WSL projelerinde de çevrimdışı çalışır. Uyumlu bir uzak pencerede **Dikte et**, ayrı **Bu cihazda dikte et** penceresini açar. Gösterilen hedefi doğrulayıp **Ses girişini başlat**, **Kaydı durdur ve metne dönüştür** ve **Dikte metnini ekle** seçeneklerini kullanın; taslağa yalnızca metin döner. Uzak proje için sunucu bağlantısı yine gerekir.
 
-Linux’ta uzak bir Tauri penceresinde **Girdiyi test et**, dikte motorunu değiştirmeden sunucunun ses API’sini sınar. API için her kaydı onaylamadan önce yerel mikrofon iletişim kutusundaki sunucu adresini kontrol edin. Kayıt, PulseAudio veya PipeWire’ın PulseAudio hizmetini kullanır ve yukarıda açıklanan 24 saniyelik WAV sınırı her zaman geçerlidir.
+Linux’ta uzak bir Tauri penceresinde **API girdisini test et**, dikte motorunu değiştirmeden sunucunun ses API’sini sınar. API için her kaydı onaylamadan önce yerel mikrofon iletişim kutusundaki sunucu adresini kontrol edin. Kayıt, PulseAudio veya PipeWire’ın PulseAudio hizmetini kullanır ve yukarıda açıklanan 24 saniyelik WAV sınırı her zaman geçerlidir.
 
 Gemini Live ve OpenAI Realtime, Linux’taki uzak Tauri pencerelerinde kullanılamaz: bu pencereler dikte ve girdi sınaması için yerel kayıt aracını kullanır, WebKit ise mikrofona doğrudan erişimi engeller.
 
@@ -75,6 +75,8 @@ Oynatma, anlatımlı bir ekran görüntüsünü değil, CodeNomad'in metin proje
 Ses modeli başta sabitlenen oturumun durumunu, görünür son yanıtı ve yakın tarihli hataları okuyabilir. Dosyalara erişemez. Ajana bir istek göndermesini istediğinizde, ekranda onay almadan doğrudan sizin mesajınız olarak gönderir. Ajan izinleri, soruları ve Yolo ayarı geçerliliğini korur.
 
 Sunucu, oturum açmış kullanıcı başına veya Uzaktan Kontrol’de eşleştirilmiş cihaz başına aynı anda bir canlı sohbete izin verir. **Durdur**, sesi kapatır ve sohbet dökümünü açık bırakır. Döküm, pencere kapanana kadar bellekte kalır; ajana gönderilen istekler oturum mesajı olarak kalır. İki dakika konuşulmadığında, toplam sekiz dakika dolduğunda, hedef değiştiğinde, pencere kapandığında veya bağlantı kesildiğinde sohbet sona erer. Otomatik yeniden bağlantı veya sağlayıcı değişimi yapılmaz.
+
+OpenAI Realtime’da **Yanıtı kes** oynatmayı durdurur ve mevcut yanıtın iptal edilmesini ister. Gemini Live’da **Oynatmayı durdur** yalnızca bu cihazdaki sesi keser; Gemini yanıt üretmeye ve ajana istek göndermeye devam edebilir.
 
 ## Veri akışı ve gizlilik {#privacy}
 

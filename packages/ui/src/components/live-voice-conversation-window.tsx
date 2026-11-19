@@ -52,6 +52,7 @@ export default function LiveVoiceConversationWindow(props: {
   const provider = () => isolate(t(gemini() ? "voice.live.provider.gemini" : "voice.live.provider.openai"))
   const company = () => isolate(gemini() ? "Google" : "OpenAI")
   const title = () => t("voice.live.title", { provider: provider() })
+  const interruptLabel = () => t(gemini() ? "voice.live.stopPlayback" : "voice.live.interrupt")
   const active = () => state().phase === "starting" || state().phase === "live"
   const statusKey = createMemo(() => {
     const current = state()
@@ -69,8 +70,7 @@ export default function LiveVoiceConversationWindow(props: {
   let microphone: HTMLButtonElement | undefined
   createRenderEffect(() => {
     const current = state()
-    if (current.phase === "ended" && (current.reason === "idle" || current.reason === "duration") &&
-      document.activeElement === microphone) {
+    if (current.phase === "ended" && document.activeElement === microphone) {
       untrack(() => close?.focus({ preventScroll: true }))
     }
   })
@@ -113,7 +113,7 @@ export default function LiveVoiceConversationWindow(props: {
             </Show>
           </button>
           <button type="button" class="window-icon-button"
-            aria-label={t("voice.live.interrupt")} title={t("voice.live.interrupt")}
+            aria-label={interruptLabel()} title={interruptLabel()}
             aria-disabled={!props.controller.canInterrupt()}
             onClick={() => { if (props.controller.canInterrupt()) props.controller.interrupt() }}>
             <VolumeX aria-hidden="true" />

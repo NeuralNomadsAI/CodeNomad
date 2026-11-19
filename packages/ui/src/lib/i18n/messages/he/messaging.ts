@@ -359,6 +359,7 @@ export const messagingMessages = {
   "voice.live.target": "סשן",
   "voice.live.mute": "השתקת המיקרופון",
   "voice.live.interrupt": "קטיעת התשובה",
+  "voice.live.stopPlayback": "עצור ניגון",
   "voice.live.settings": "הגדרות קול",
   "voice.live.consent.title": "להתחיל עם {provider}?",
   "voice.live.consent.audio": "CodeNomad משדר את שמע המיקרופון בשידור חי אל {provider} ({company}).",

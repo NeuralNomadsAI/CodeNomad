@@ -642,6 +642,11 @@ impl DeviceSpeech {
                             Ok(Value::Null)
                         }
                         Request::Cancel { .. } => {
+                            let receipt = if matches!(slot.state, Operation::Prepared) {
+                                json!(slot.state)
+                            } else {
+                                Value::Null
+                            };
                             if slot.state.terminal() {
                                 slot.forget();
                                 control.0 .1.notify_all();
@@ -651,7 +656,7 @@ impl DeviceSpeech {
                                 slot.cancel(None);
                                 control.0 .1.notify_all();
                             }
-                            Ok(Value::Null)
+                            Ok(receipt)
                         }
                         _ => Err(SpeechError::Unavailable),
                     };

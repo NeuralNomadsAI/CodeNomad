@@ -27,10 +27,10 @@ Ce sont des demandes au service configuré, pas une garantie que chaque point d�
 ## Tester l’entrée et la sortie {#test}
 
 1. Enregistrez d’abord les changements de point d’accès, clé, modèle et voix.
-2. Choisissez **Tester l'entrée**, accordez l’accès au microphone, parlez, puis **Arrêter l'enregistrement**. Vérifiez la transcription reçue.
+2. Choisissez **Tester l'entrée API**, accordez l’accès au microphone, parlez, puis **Arrêter l'enregistrement**. Vérifiez la transcription reçue.
 3. Choisissez **Tester la lecture** pour entendre l’extrait ; **Arrêter l'extrait** l’arrête.
 
-Le test de lecture utilise immédiatement le mode/format sélectionné, mais le point d’accès, la clé, le modèle et la voix viennent des paramètres enregistrés. Tester l’entrée n’envoie pas de prompt de conversation. Les tests envoient malgré tout de l’audio/du texte au fournisseur vocal configuré et peuvent être facturés.
+Le test de lecture utilise immédiatement le mode et le format sélectionnés, mais le point d’accès, la clé, le modèle et la voix viennent des paramètres enregistrés. **Tester l'entrée API** envoie l’audio au fournisseur API configuré, même si Hex ou la reconnaissance système est sélectionné. Aucun prompt de conversation n’est envoyé. Le fournisseur peut facturer ces tests.
 
 ## Dicter un prompt {#dictate}
 
@@ -39,7 +39,7 @@ Le test de lecture utilise immédiatement le mode/format sélectionné, mais le 
 3. Choisissez **Arrêter l'enregistrement et transcrire** pour obtenir le texte ou **Annuler la dictée** pour abandonner l’enregistrement. Changer de conversation ou fermer la zone de saisie annule aussi la dictée.
 4. Relisez le texte. Il remplace la sélection d’origine si le brouillon et la sélection n’ont pas changé ; sinon, choisissez **Insérer la transcription** ou **Ignorer la transcription**. La dictée n’envoie jamais le brouillon.
 
-Si l’API utilise le mode WAV de secours sur Tauri sous Linux, **Dicter** et **Tester l’entrée** arrêtent l’enregistrement au bout de 24 secondes. L’extrait reste sur cet appareil jusqu’à ce que vous choisissiez **Transcrire** pour l’envoyer au fournisseur vocal ou **Annuler** pour le supprimer.
+Si l’API utilise le mode WAV de secours sur Tauri sous Linux, **Dicter** et **Tester l'entrée API** arrêtent l’enregistrement au bout de 24 secondes. L’extrait reste sur cet appareil jusqu’à ce que vous choisissiez **Transcrire** pour l’envoyer au fournisseur vocal ou **Annuler** pour le supprimer.
 
 ### Choisir un moteur sur ordinateur {#desktop-dictation}
 
@@ -53,7 +53,7 @@ Ubuntu 24.04 satisfait au prérequis glibc, contrairement à Ubuntu 22.04. Hex d
 
 La reconnaissance locale utilise le microphone de cet appareil et fonctionne hors ligne, y compris pour les projets WSL ouverts dans l’application locale. Dans une fenêtre distante compatible, **Dicter** ouvre la fenêtre locale **Dicter sur cet appareil**. Vérifiez la destination affichée, puis choisissez **Démarrer la saisie vocale**, **Arrêter l'enregistrement et transcrire** et **Insérer la transcription** pour renvoyer uniquement le texte au brouillon. Le projet distant doit rester connecté à son serveur.
 
-Dans une fenêtre Tauri distante sous Linux, **Tester l'entrée** vérifie l’API vocale du serveur sans changer le moteur de dictée. Vérifiez l’adresse du serveur dans la boîte de dialogue native du microphone avant de confirmer chaque enregistrement pour l’API. La capture utilise PulseAudio ou le service PulseAudio de PipeWire et applique toujours la limite WAV de 24 secondes décrite ci-dessus.
+Dans une fenêtre Tauri distante sous Linux, **Tester l'entrée API** vérifie l’API vocale du serveur sans changer le moteur de dictée. Vérifiez l’adresse du serveur dans la boîte de dialogue native du microphone avant de confirmer chaque enregistrement pour l’API. La capture utilise PulseAudio ou le service PulseAudio de PipeWire et applique toujours la limite WAV de 24 secondes décrite ci-dessus.
 
 Gemini Live et OpenAI Realtime sont indisponibles dans les fenêtres Tauri distantes sous Linux : ces fenêtres utilisent l’enregistreur natif pour la dictée et les tests d’entrée, et WebKit bloque l’accès direct au microphone.
 
@@ -75,6 +75,8 @@ Dans **Conversation**, choisissez un **Moteur de conversation** :
 Le modèle vocal peut lire l’état de la session fixée au démarrage, la dernière réponse visible et les erreurs récentes. Il n’a pas accès aux fichiers. Quand vous lui demandez de transmettre une demande à l’agent, il l’envoie directement comme un message de votre part, sans confirmation à l’écran. Les autorisations et questions de l’agent et le réglage Yolo s’appliquent toujours.
 
 Le serveur autorise une seule conversation en direct à la fois par utilisateur connecté, ou par appareil appairé avec le Contrôle à distance. **Arrêter** coupe l’audio en laissant la transcription ouverte. Celle-ci reste en mémoire jusqu’à la fermeture de la fenêtre ; les demandes envoyées à l’agent restent dans la session. La conversation s’arrête aussi après deux minutes sans parole, au bout de huit minutes au total, si la session cible change, si vous fermez la fenêtre ou si la connexion est perdue. Il n’y a ni reconnexion automatique ni bascule vers un autre fournisseur.
+
+Avec OpenAI Realtime, **Interrompre la réponse** coupe la lecture et demande l’annulation de la réponse en cours. Avec Gemini Live, **Arrêter la lecture** coupe seulement le son sur cet appareil : Gemini peut poursuivre sa réponse et envoyer des demandes à l’agent.
 
 ## Flux de données et confidentialité {#privacy}
 

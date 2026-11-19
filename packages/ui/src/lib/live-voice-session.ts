@@ -321,7 +321,7 @@ export function openLiveVoiceSession(options: {
   async function start() {
     try {
       const media = await options.startAudio({
-        signal, inputRate, outputRate,
+        signal, engine: options.engine, outputRate,
         onInput: input => { if (ready) send(input) },
         onPlaybackChange: playbackChanged,
         onError: error => stop(audioFailure(error)),

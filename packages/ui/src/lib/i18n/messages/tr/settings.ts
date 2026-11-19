@@ -608,7 +608,7 @@ export const settingsMessages = {
   "settings.speech.testPlayback.stop": "Örneği durdur",
   "settings.speech.testPlayback.sample": "Bu bir CodeNomad konuşma testidir.",
   "settings.speech.testPlayback.note": "Mod ve format hemen uygulanır; anahtar, temel URL, model ve ses değişikliklerini testten önce kaydedin.",
-  "settings.speech.testInput.action": "Girdiyi test et",
+  "settings.speech.testInput.action": "API girdisini test et",
   "settings.speech.testInput.stop": "Kaydı durdur",
   "settings.speech.testInput.transcribing": "Transkribe ediliyor",
   "settings.speech.testInput.requesting": "Başlatılıyor…",
