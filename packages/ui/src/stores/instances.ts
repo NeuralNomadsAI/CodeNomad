@@ -38,7 +38,7 @@ import { clearPendingSessionMove } from "./session-events"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
-import { claimPendingRecoveryNotice, releasePendingRecoveryNotices } from "./pending-recovery-notices"
+import { capturePendingRecoveryNotices, claimPendingRecoveryNotice } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
@@ -403,7 +403,7 @@ function observePendingCompaction(instanceId: string, event: Parameters<NonNulla
   } else resumePendingDiscovery()
 }
 
-async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true, timeoutMs = 10_000): Promise<T> {
+async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true, timeoutMs = 10_000, shouldDefer = () => deferPendingDiscovery(instanceId)): Promise<T> {
   const controller = new AbortController()
   const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
   controllers.add(controller)
@@ -411,7 +411,7 @@ async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: Ab
   try {
     const timed = async () => {
       // Check after background queue admission, immediately before dispatch.
-      if (background && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
+      if (background && shouldDefer()) throw pendingDiscoveryDeferred
       const timeout = setTimeout(() => controller.abort(), timeoutMs)
       try { return await run(controller.signal) }
       finally { clearTimeout(timeout) }
@@ -806,18 +806,22 @@ function pendingSnapshotResults<T>(
   })
 }
 
-async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => boolean, reconcileInventory = true, retryDirectories?: string[]): Promise<RecoverySnapshot> {
+async function readPendingRequestSnapshot(
+  instanceId: string, isCurrent: () => boolean,
+  { reconcileInventory = true, onlyDirectories, noticeOnly = false }: { reconcileInventory?: boolean; onlyDirectories?: string[]; noticeOnly?: boolean } = {},
+): Promise<RecoverySnapshot> {
+  const shouldDefer = () => noticeOnly ? isPendingDiscoveryCompacting() : deferPendingDiscovery(instanceId)
   const requiredDirectories = () => new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false)
     .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
   const required = requiredDirectories()
   const liveRequired = new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false, false)
     .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
-  const directories = retryDirectories ?? [...new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder)
+  const directories = onlyDirectories ?? [...new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder)
     .flatMap((location) => location.directory ? [location.directory] : []))]
   const snapshot: Extract<RecoverySnapshot, { supported: true }> = { supported: true, directories: [] }
   for (let offset = 0; offset < directories.length;) {
     if (!isCurrent()) throw pendingRequestSyncSuperseded
-    if (deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
+    if (shouldDefer()) throw pendingDiscoveryDeferred
     let end = offset, queryBytes = 0
     // ponytail: eight directories bound Git-heavy batches; tune only with native recovery proof.
     while (end < directories.length && end - offset < 8) {
@@ -849,7 +853,10 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
     try {
       // Directory/Git authorization has a longer broker budget than native queue
       // reads. Let it finish, with a small transport margin, before aborting.
-      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal, optional), true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
+      const next = await withPendingRequestTimeout(instanceId, (signal) => {
+        if (!isCurrent()) throw pendingRequestSyncSuperseded
+        return serverApi.getPendingRequests(instanceId, batch, signal, optional)
+      }, true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000, shouldDefer)
       if (next.supported === false) return next
       if (next.supported !== true) throw new Error("Invalid pending request snapshot")
       addBatch(next.directories)
@@ -884,7 +891,7 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
     const currentRequired = requiredDirectories()
     const retryDirectories = staleInventory.filter(entry => !currentRequired.has(normalizeWorkspacePath(entry.directory))).map(entry => entry.directory)
     if (retryDirectories.length) {
-      const retry = await readPendingRequestSnapshot(instanceId, isCurrent, false, retryDirectories)
+      const retry = await readPendingRequestSnapshot(instanceId, isCurrent, { reconcileInventory: false, onlyDirectories: retryDirectories })
       if (retry.supported) snapshot.directories = [...snapshot.directories.filter(entry => !retryDirectories.includes(entry.directory)), ...retry.directories]
     }
   }
@@ -1069,6 +1076,7 @@ async function runPendingRequestSync(
       // Unavailable loaded-only recovery is non-authoritative, never permission
       // to construct every historical/worktree Location. Only settlement targets
       // use ordinary lists; SSE and later snapshots still recover global Forms.
+      const notices = targetLocations ? undefined : capturePendingRecoveryNotices(pendingRecoveryProject(instanceId))
       const snapshot = targetLocations ? undefined : readPendingRequestSnapshot(instanceId, isCurrent)
       const results = await Promise.allSettled([
         syncPendingPermissions(instanceId, true, isCurrent, snapshot, targetLocations),
@@ -1078,8 +1086,23 @@ async function runPendingRequestSync(
       const coverage = await snapshot
       if (!targetLocations && isCurrent()) {
         successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
-        if (coverage?.supported) releasePendingRecoveryNotices(pendingRecoveryProject(instanceId), coverage.directories.map(entry => entry.directory))
         markPendingRecovery(instanceId, false)
+        if (notices && coverage?.supported) {
+          const covered = coverage.directories.map(entry => entry.directory)
+          notices.release(covered)
+          const missing = notices.missing(covered)
+          if (missing.length) {
+            // Only proven exclusions can account for folders outside the scan.
+            // This probe does not publish queue data or change the scan outcome.
+            const probeCurrent = () => isCurrent() && notices.current()
+            const proof = await readPendingRequestSnapshot(instanceId, probeCurrent, {
+              reconcileInventory: false, onlyDirectories: missing, noticeOnly: true,
+            }).catch(() => undefined)
+            if (probeCurrent() && proof?.supported) {
+              notices.release([...covered, ...proof.directories.filter(entry => entry.status === "excluded").map(entry => entry.directory)])
+            }
+          }
+        }
       }
       return
     } catch (error) {

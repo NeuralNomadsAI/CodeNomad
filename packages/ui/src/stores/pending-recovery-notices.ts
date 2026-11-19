@@ -38,20 +38,30 @@ function persist(): void {
 export function claimPendingRecoveryNotice(project: string, cause: PendingRecoveryCause): boolean {
   const key = cause.kind === "unsupported" ? UNSUPPORTED : projectKey(project)
   if (shown.has(key)) return false
-  const directories = cause.kind === "directories" ? [...new Set(cause.directories.map(({ directory }) => normalizeWorkspacePath(directory)))] : []
+  const directories = cause.kind === "directories" ? [...new Set(cause.directories.map(({ directory }) => directory))] : []
   shown.set(key, directories)
   persist()
   return true
 }
 
-/** A complete scan re-arms the project warning if it accounted for its failed directories. */
-export function releasePendingRecoveryNotices(project: string, directories: readonly string[]): void {
-  let changed = shown.delete(UNSUPPORTED)
+/** Only coverage collected after a notice was claimed can re-arm it. */
+export function capturePendingRecoveryNotices(project: string) {
   const key = projectKey(project)
   const failed = shown.get(key)
-  if (failed) {
+  const plugin = shown.get(UNSUPPORTED)
+  const current = () => failed !== undefined && shown.get(key) === failed
+  const missing = (directories: readonly string[]) => {
+    if (!current() || !failed) return []
     const covered = new Set(directories.map(normalizeWorkspacePath))
-    if (failed.every(directory => covered.has(directory))) changed = shown.delete(key) || changed
+    return failed.filter(directory => !covered.has(normalizeWorkspacePath(directory)))
   }
-  if (changed) persist()
+  return {
+    current,
+    missing,
+    release(directories: readonly string[]) {
+      let changed = plugin !== undefined && shown.get(UNSUPPORTED) === plugin && shown.delete(UNSUPPORTED)
+      if (current() && !missing(directories).length) changed = shown.delete(key) || changed
+      if (changed) persist()
+    },
+  }
 }

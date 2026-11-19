@@ -15,19 +15,19 @@ test("saved warning claims keep failed coverage without retaining diagnostic tex
     },
   } })
   try {
-    const { claimPendingRecoveryNotice, releasePendingRecoveryNotices } = await import("./pending-recovery-notices")
+    const { claimPendingRecoveryNotice, capturePendingRecoveryNotices } = await import("./pending-recovery-notices")
     const cause = { kind: "request", detail: "test" } as const
     assert.equal(claimPendingRecoveryNotice("/project", cause), false)
     assert.equal(claimPendingRecoveryNotice("/other", { kind: "unsupported" }), false)
     assert.equal(claimPendingRecoveryNotice("/other", cause), true)
     assert.doesNotMatch([...storage.values()].join(), /checkout/)
-    releasePendingRecoveryNotices("/other", ["/other"])
+    capturePendingRecoveryNotices("/other").release(["/other"])
     assert.equal(claimPendingRecoveryNotice("/project", cause), false)
-    releasePendingRecoveryNotices("/project", ["/project"])
+    capturePendingRecoveryNotices("/project").release(["/project"])
     assert.equal(claimPendingRecoveryNotice("/project", cause), true)
-    releasePendingRecoveryNotices("/scoped", ["/scoped"])
+    capturePendingRecoveryNotices("/scoped").release(["/scoped"])
     assert.equal(claimPendingRecoveryNotice("/scoped", cause), false)
-    releasePendingRecoveryNotices("/scoped", ["/scoped", "/scoped/worktree"])
+    capturePendingRecoveryNotices("/scoped").release(["/scoped", "/scoped/worktree"])
     assert.equal(claimPendingRecoveryNotice("/scoped", cause), true)
   } finally {
     Reflect.deleteProperty(globalThis, "window")

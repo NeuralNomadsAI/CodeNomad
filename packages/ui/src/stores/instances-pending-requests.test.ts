@@ -301,7 +301,7 @@ for (const unsupported of [false, true]) test(`a failed inventory-only retry pre
 
 for (const provenance of ["selected", "working", "permission", "form"] as const) {
   test(`missing inventoried ${provenance} locations remain required without inventory-driven exclusion`, async () => {
-    const h = harness(), original = serverApi.fetchWorktrees
+    const h = harness(`/pending-required-${provenance}`), original = serverApi.fetchWorktrees
     const deleted = `${h.directory}/required-worktree`
     try {
       serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "deleted", directory: deleted, kind: "worktree" }] })
@@ -382,7 +382,7 @@ test("a settled move clears selector busy state without releasing unreconciled d
 
 for (const disposition of ["native-deleted", "authoritative-remove", "outside-project", "stale-resident"] as const) {
   test(`complete post-move scope reconciles an absent ${disposition} family member`, async () => {
-    const h = harness(), original = serverApi.fetchWorktrees, originalClient = sdkManager.createClient
+    const h = harness(`/pending-move-${disposition}`), original = serverApi.fetchWorktrees, originalClient = sdkManager.createClient
     const target = `${h.directory}/removed-target`
     try {
       serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "target", directory: target, kind: "worktree" }] })
@@ -649,6 +649,100 @@ test("a project's repeated recovery warnings are deduplicated as failed batches 
   } finally { reopened.cleanup() }
 })
 
+test("a scan started before a project warning cannot rearm it", async () => {
+  const directory = "/pending-stale-coverage"
+  const older = harness(directory), failing = harness(directory)
+  const tailStarted = deferred<string[]>(), tail = deferred<WorkspacePendingRequestsResponse>()
+  const worktree = `${directory}/failed`
+  const ok = (directories: string[]): WorkspacePendingRequestsResponse => ({
+    supported: true, directories: directories.map(directory => ({ directory, status: "ok", locations: [emptyLocation(directory)] })),
+  })
+  const place = (h: ReturnType<typeof harness>, directories: string[]) => {
+    setSessions(previous => new Map(previous).set(h.id, new Map(directories.map((directory, index) => {
+      const session = createClientSession({ id: `session-${index}`, title: directory, location: { directory }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, "working")
+      return [session.id, session]
+    }))))
+  }
+  let scan: Promise<void> | undefined
+  try {
+    place(older, [worktree, ...Array.from({ length: 7 }, (_, i) => `${directory}/other-${i}`)])
+    place(failing, [worktree])
+    let reads = 0
+    serverApi.getPendingRequests = async (id, directories) => {
+      if (id !== older.id) throw new HttpResponseError("Unavailable", 503, null)
+      if (++reads === 1) {
+        assert.ok(directories.includes(worktree))
+        return ok(directories)
+      }
+      tailStarted.resolve(directories)
+      return tail.promise
+    }
+    scan = syncPendingRequests(older.id)
+    const lastBatch = await Promise.race([tailStarted.promise, scan.then(() => assert.fail("scan must wait for its second batch"))])
+    await assert.rejects(syncPendingRequests(failing.id))
+    await assert.rejects(syncPendingRequests(failing.id))
+    tail.resolve(ok(lastBatch))
+    await scan
+  } finally {
+    tail.resolve(ok([]))
+    await scan?.catch(() => {})
+    failing.cleanup()
+    older.cleanup()
+  }
+  const reopened = harness(directory)
+  try {
+    place(reopened, [worktree])
+    serverApi.getPendingRequests = async () => { throw new HttpResponseError("Unavailable", 503, null) }
+    await assert.rejects(syncPendingRequests(reopened.id))
+    await assert.rejects(syncPendingRequests(reopened.id))
+    assert.equal(recoveryWarnings("pending-stale-coverage").length, 1)
+  } finally { reopened.cleanup() }
+})
+
+test("a verified exclusion of a removed checkout lets a later failure warn", async () => {
+  const h = harness("/pending-removed-coverage")
+  const removed = `${h.directory}/removed-checkout`
+  const worktrees = serverApi.fetchWorktrees
+  try {
+    serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "removed", directory: removed, kind: "worktree" }] })
+    await reloadWorktrees(h.id)
+    serverApi.getPendingRequests = async (_id, directories) => ({
+      supported: true, directories: directories.map(directory => directory === removed
+        ? { directory, status: "error", reason: "unverified" }
+        : { directory, status: "ok", locations: [emptyLocation(directory)] }),
+    })
+    await assert.rejects(syncPendingRequests(h.id))
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(recoveryWarnings("pending-removed-coverage").length, 1)
+    serverApi.fetchWorktrees = async () => ({ worktrees: [] })
+    await reloadWorktrees(h.id, true)
+
+    let exclusions = 0
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      if (directories.includes(removed)) {
+        assert.ok(optional?.includes(removed))
+        exclusions++
+      }
+      return { supported: true, directories: directories.map(directory => directory === removed
+        ? { directory, status: "excluded" }
+        : { directory, status: "ok", locations: [emptyLocation(directory)] }) }
+    }
+    await syncPendingRequests(h.id)
+    const next = `${h.directory}/next-checkout`
+    serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "next", directory: next, kind: "worktree" }] })
+    await reloadWorktrees(h.id, true)
+    serverApi.getPendingRequests = async (_id, directories) => ({
+      supported: true, directories: directories.map(directory => directory === next
+        ? { directory, status: "error", reason: "unverified" }
+        : { directory, status: "ok", locations: [emptyLocation(directory)] }),
+    })
+    await assert.rejects(syncPendingRequests(h.id))
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(recoveryWarnings("pending-removed-coverage").length, 2)
+    assert.equal(exclusions, 1)
+  } finally { serverApi.fetchWorktrees = worktrees; h.cleanup() }
+})
+
 test("an unavailable recovery plugin is one notice across reconnects and projects until recovery succeeds", async () => {
   const unsupportedNotices = () => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryUnsupported.title"))
   const before = unsupportedNotices().length
@@ -678,7 +772,7 @@ test("an unavailable recovery plugin is one notice across reconnects and project
 })
 
 test("history transport failures remain errors and a late known request fences historical exclusion", async () => {
-  const h = harness()
+  const h = harness("/pending-historical-coverage")
   try {
     const directory = "/historical-directory"
     const session = createClientSession({ id: "history", title: "History", location: { directory }, time: { created: 1, updated: 1 } } as any, h.id)
