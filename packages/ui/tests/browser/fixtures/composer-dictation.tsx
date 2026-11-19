@@ -98,6 +98,8 @@ const [open, setOpen] = createSignal(true)
 const [session, setSession] = createSignal("ses_a")
 const [nativeSettings, setNativeSettings] = createSignal(false)
 const sends: string[] = []
+let holdNextSend = false
+let releaseSend: (() => void) | undefined
 await applyUiSettings({ locale: new URL(location.href).searchParams.get("locale") === "he" ? "he" : "en", showPromptVoiceInput: true })
 if (new URLSearchParams(location.search).has("history")) await addToHistory(folder, "Previously sent")
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
@@ -105,7 +107,10 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <button id="elsewhere" type="button">Other control</button>
   <Show when={open()}>
     <PromptInput instanceId={instanceId} instanceFolder={folder} sessionId={session()} isActive
-      onSend={async prompt => { sends.push(prompt) }} />
+      onSend={async prompt => {
+        sends.push(prompt)
+        if (holdNextSend) await new Promise<void>(resolve => { releaseSend = resolve })
+      }} />
   </Show>
   <Show when={nativeSettings() || (settingsOpen() && activeSettingsSection() === "speech")}>
     <SpeechSettingsSection />
@@ -113,6 +118,9 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 Object.assign(window, { fixture: {
   sends, setOpen, setSession, closeSettings, setVoiceConversationEngine, voiceConversationEngineLoaded,
+  holdSend: () => { holdNextSend = true },
+  sendHeld: () => Boolean(releaseSend),
+  releaseSend: () => { releaseSend?.(); releaseSend = undefined },
   setNativeSettings(open: boolean) {
     if (open) adoptSettingsRowHint("speech")
     setNativeSettings(open)

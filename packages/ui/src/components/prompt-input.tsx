@@ -780,6 +780,7 @@ export default function PromptInput(props: PromptInputProps) {
         return Boolean(source && current && folder === current.folder && proxyPath === current.proxyPath)
       }
     },
+    active: () => props.isActive !== false,
     enabled: () => props.isActive !== false && preferences().showPromptVoiceInput,
     disabled: () => Boolean(props.disabled) || props.isActive === false || mode() !== "normal" || submissionsInFlight() > 0,
   })

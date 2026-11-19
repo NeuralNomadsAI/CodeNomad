@@ -27,18 +27,17 @@ export function useDeviceDictation(locale: () => string, active: Accessor<boolea
   const system = engine("system"), hex = engine("hex")
   return {
     snapshot,
+    readFailed: device.readFailed,
     languageMissing: () => {
       const current = snapshot()
       return current?.engine === "system" && current.system === "ready" &&
         !resolveSystemSpeechLocale(current.systemLocales ?? [], locale())
     },
     async authorizeApi() {
-      const fresh = await device.readFresh()
-      if (fresh?.engine === "api") return true
-      device.refresh()
-      return false
+      return (await device.readFresh())?.engine === "api"
     },
     route: (api: VoiceInputEngine) => {
+      if (device.readFailed()) return
       const choice = snapshot()?.engine
       return choice === "api" ? api : choice === "system" ? system : choice === "hex" ? hex : undefined
     },

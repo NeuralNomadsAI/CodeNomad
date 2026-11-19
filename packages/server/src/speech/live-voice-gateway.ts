@@ -28,7 +28,11 @@ export function voiceSource(origin: string | undefined): URL | undefined {
 }
 
 export function refuseVoiceUpgrade(socket: Socket, status: "401 Unauthorized" | "403 Forbidden" | "404 Not Found") {
-  if (!socket.destroyed && socket.writable) socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+  if (socket.destroyed) return
+  if (!socket.writable) { socket.destroy(); return }
+  const close = () => socket.destroy()
+  socket.once("error", close)
+  socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, close)
 }
 
 // Browsers cannot read the HTTP status of a rejected WebSocket handshake.

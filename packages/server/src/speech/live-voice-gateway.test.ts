@@ -108,6 +108,26 @@ async function setupGemini(client: ReturnType<typeof wire>, fake: Awaited<Return
   return upstream
 }
 
+test("a refused voice upgrade destroys the server socket even while the peer keeps writing open", { timeout: 5000 }, async t => {
+  let serverClosed!: () => void
+  const closed = new Promise<void>(resolve => { serverClosed = resolve })
+  const { local } = await startRemoteSurface(t, {
+    configureApp: app => {
+      app.server.on("upgrade", (_request, socket) => socket.once("close", serverClosed))
+    },
+  })
+  const socket = net.connect({ port: Number(local.split(":").at(-1)), host: "127.0.0.1", allowHalfOpen: true })
+  t.after(() => { socket.destroy() })
+  await once(socket, "connect")
+  let response = ""
+  socket.on("data", data => { response += data.toString() })
+  socket.write(`GET ${gemini} HTTP/1.1\r\nHost: ${local}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n`)
+  await once(socket, "end")
+  assert.match(response, /^HTTP\/1\.1 403 Forbidden\r\n/)
+  assert.equal(socket.writableEnded, false)
+  await closed
+})
+
 test("malformed cookie headers refuse direct and tunnel admission without affecting the next upgrade", { timeout: 10000 }, async t => {
   const fake = await provider(t)
   const { local, manager, target, code, authManager } = await startRemoteSurface(t, { liveVoice: fake.gateway })

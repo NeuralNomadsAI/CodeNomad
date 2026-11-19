@@ -601,6 +601,29 @@ test("the live reply control identifies local-only Gemini playback and OpenAI in
   }
 })
 
+test("OpenAI can interrupt a completed audio-free reply while its send awaits native admission", async () => {
+  const { page, context, live, openConsent, acceptConsent, sent, waitForSent } = await fixture("openai", true)
+  try {
+    await openConsent()
+    const send = await acceptConsent()
+    await page.evaluate(() => (window as any).fixture.holdAdmission())
+    send({ type: "thinking", responseId: "reply" })
+    send({ type: "tool-call", responseId: "reply", id: "held", name: "send_to_agent", arguments: { text: "Do not send" } })
+    send({ type: "turn-complete" })
+    await page.waitForFunction(() => (window as any).fixture.waitingAdmission())
+    send({ type: "tool-call", responseId: "reply", id: "receipt", name: "get_session_status", arguments: {} })
+    await waitForSent(item => item.id === "receipt") // Confirms the browser has processed turn-complete.
+    await live.getByText("Thinking", { exact: true }).waitFor()
+    await live.getByRole("button", { name: "Interrupt reply", exact: true }).click({ timeout: 3000 })
+    assert.deepEqual(await waitForSent(item => item.type === "interrupt"), { type: "interrupt", responseId: "reply" })
+    await page.evaluate(() => (window as any).fixture.releaseAdmission())
+    await page.waitForFunction(() => (window as any).fixture.info.admissionResumed)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.info.prompts), [])
+    assert.equal(sent.some(item => item.type === "tool-result" && item.id === "held"), false)
+    await live.getByText("Listening", { exact: true }).waitFor()
+  } finally { await context.close() }
+})
+
 test("playback overflow interrupts only the reply and truncates OpenAI at the rendered position", async () => {
   for (const engine of ["gemini", "openai"] as const) {
     const { page, context, live, openConsent, acceptConsent, sent, waitForSent } = await fixture(engine, true)
@@ -655,6 +678,27 @@ test("an overflowing OpenAI reply leaves the preceding reply queued and truncate
     // Render A's entire two seconds without sending any more PCM.
     await page.waitForFunction(() => (window as any).fixture.playback.rendered === 48_000)
     assert.deepEqual(sent.filter(item => item.type === "truncate").map(item => item.itemId), ["item-B"])
+  } finally { await context.close() }
+})
+
+test("barge-in after an OpenAI overflow stops the earlier reply still playing", async () => {
+  const { page, context, live, openConsent, acceptConsent, waitForSent } = await fixture("openai", true)
+  try {
+    await openConsent()
+    const send = await acceptConsent()
+    const audio = (itemId: string) => ({ type: "audio", pcm, itemId, contentIndex: 0 })
+    send({ type: "thinking", responseId: "A" })
+    for (let i = 0; i < 8; i++) send(audio("item-A"))
+    await page.waitForFunction(() => (window as any).fixture.playback.rendered > 0)
+    send({ type: "turn-complete" })
+    send({ type: "thinking", responseId: "B" })
+    for (let i = 0; i < 32; i++) send(audio("item-B"))
+    await waitForSent(item => item.type === "truncate" && item.itemId === "item-B")
+    send({ type: "interrupted" }) // B's turn-complete has not arrived.
+    const cut = await waitForSent(item => item.type === "truncate" && item.itemId === "item-A")
+    assert.ok(cut.audioEndMs > 0 && cut.audioEndMs < 4000, "barge-in drops the remaining samples of A")
+    await live.getByText("Listening", { exact: true }).waitFor()
+    assert.equal(await live.getByRole("list").getByText("Response interrupted", { exact: true }).count(), 1)
   } finally { await context.close() }
 })
 

@@ -56,7 +56,7 @@ export function openLiveVoiceSession(options: {
   const signal = lifetime.signal
   const inputRate = liveVoiceInputRate(options.engine)
   const outputRate = LIVE_VOICE_OUTPUT_RATE
-  const calls = new Map<string, "started" | "cancelled" | "finished">()
+  const calls = new Map<string, { state: "started" | "cancelled" | "finished"; responseId?: string }>()
   const interruptedResponses = new Set<string>()
   const rows = new Map<number, LiveVoiceTranscriptRow>()
   const keys = new Map<string, number>()
@@ -73,7 +73,6 @@ export function openLiveVoiceSession(options: {
   let responseSpoken = false
   let responseId: string | undefined
   let discardResponse = false
-  let pendingTools = 0
   let idle: ReturnType<typeof setTimeout> | undefined
   let setup: ReturnType<typeof setTimeout> | undefined
   const absolute = setTimeout(() => stop("duration"), LIVE_VOICE_ABSOLUTE_MS)
@@ -116,10 +115,15 @@ export function openLiveVoiceSession(options: {
 
   function publish() { options.onTranscript([...rows.values()]) }
 
+  function pendingTool() {
+    for (const call of calls.values()) if (call.state === "started") return call
+  }
+
   function updateActivity() {
     if (!ready || signal.aborted) return
-    const canInterrupt = !discardResponse && (responseOpen || playing)
-    options.onActivity(playing || responseSpoken ? "speaking" : canInterrupt || pendingTools > 0 ? "thinking" : "listening", canInterrupt)
+    const pending = pendingTool()
+    const canInterrupt = playing || (!discardResponse && (responseOpen || Boolean(pending?.responseId)))
+    options.onActivity(playing || responseSpoken ? "speaking" : canInterrupt || pending ? "thinking" : "listening", canInterrupt)
   }
 
   function saveRow(row: LiveVoiceTranscriptRow) {
@@ -169,25 +173,39 @@ export function openLiveVoiceSession(options: {
     // User rows close on their own transcription's final event, independently of model turns.
   }
 
-  function interrupt(manual: boolean, overflow = false) {
-    if (!ready || !audio || !current() || discardResponse) return
-    const active = responseOpen || playing
-    // OpenAI reports speech start as an interruption hint, including when idle.
-    if (!active && (manual || options.engine === "openai-realtime")) return
-    discardResponse = responseOpen || (!manual && options.engine === "gemini-live")
-    if (responseId) {
-      if (interruptedResponses.size >= LIVE_VOICE_MAX_CALLS) return stop("limit")
-      interruptedResponses.add(responseId)
-    }
-    responseOpen = responseSpoken = false
+  function flushPlayback(overflow: boolean) {
     if (!overflow) awaitingPlayback.clear()
     // Resolve the flush at the hardware playback position, not bytes queued.
-    void audio.interrupt(overflow).then(truncations => {
+    void audio?.interrupt(overflow).then(truncations => {
       if (options.engine === "openai-realtime") for (const item of truncations) {
         if (item.contentIndex === 0) send(item)
       }
     }, () => stop("device"))
-    if (manual && responseId) send({ type: "interrupt", responseId })
+  }
+
+  function interrupt(manual: boolean, overflow = false) {
+    if (!ready || !audio || !current()) return
+    if (discardResponse) {
+      // An overflow dropped only the current reply; barge-in also stops older playback.
+      if (!overflow && playing) flushPlayback(false)
+      return
+    }
+    const pending = pendingTool()?.responseId
+    const active = responseOpen || playing || pending
+    // OpenAI reports speech start as an interruption hint, including when idle.
+    if (!active && (manual || options.engine === "openai-realtime")) return
+    const interrupted = responseOpen ? responseId : pending ?? responseId
+    discardResponse = responseOpen || (!manual && options.engine === "gemini-live")
+    if (interrupted && !interruptedResponses.has(interrupted)) {
+      if (interruptedResponses.size >= LIVE_VOICE_MAX_CALLS) return stop("limit")
+      interruptedResponses.add(interrupted)
+      for (const call of calls.values()) if (call.responseId === interrupted && call.state === "started") {
+        call.state = "cancelled"
+      }
+    }
+    responseOpen = responseSpoken = false
+    flushPlayback(overflow)
+    if (manual && interrupted) send({ type: "interrupt", responseId: interrupted })
     responseId = undefined
     if (signal.aborted) return
     finishTurn(true)
@@ -212,11 +230,10 @@ export function openLiveVoiceSession(options: {
     publish()
   }
 
-  async function execute(id: string, tool: LiveVoiceTool, ownerResponse?: string) {
-    const admitted = () => current() && socket?.readyState === OPEN && calls.get(id) === "started"
-      && !(ownerResponse && interruptedResponses.has(ownerResponse))
+  async function execute(id: string, tool: LiveVoiceTool) {
+    const call = calls.get(id)!
+    const admitted = () => current() && socket?.readyState === OPEN && call.state === "started"
     if (!admitted()) return
-    pendingTools++
     updateActivity()
     let output: string
     try {
@@ -232,8 +249,7 @@ export function openLiveVoiceSession(options: {
       output = JSON.stringify({ error: "Result unconfirmed. Do not repeat this request." })
     }
     if (admitted()) {
-      calls.set(id, "finished")
-      pendingTools--
+      call.state = "finished"
       updateActivity()
       send({ type: "tool-result", id, output })
     }
@@ -291,8 +307,9 @@ export function openLiveVoiceSession(options: {
       case "tool-cancel":
         if (!liveVoiceIdentifier(value.id)) return stop("invalid-message")
         if (!calls.has(value.id) && calls.size >= LIVE_VOICE_MAX_CALLS) return stop("limit")
-        if (calls.get(value.id) === "started") pendingTools--
-        calls.set(value.id, "cancelled")
+        const call = calls.get(value.id)
+        if (call) call.state = "cancelled"
+        else calls.set(value.id, { state: "cancelled" })
         updateActivity()
         break
       case "tool-call": {
@@ -308,11 +325,11 @@ export function openLiveVoiceSession(options: {
         if (calls.size >= LIVE_VOICE_MAX_CALLS) return stop("limit")
         // The gateway settles calls from this response when it receives interrupt.
         if (typeof ownerResponse === "string" && interruptedResponses.has(ownerResponse)) {
-          calls.set(id, "cancelled")
+          calls.set(id, { state: "cancelled" })
           break
         }
-        calls.set(id, "started")
-        void execute(id, tool, ownerResponse as string | undefined)
+        calls.set(id, { state: "started", responseId: ownerResponse as string | undefined })
+        void execute(id, tool)
         break
       }
       default: stop("invalid-message")

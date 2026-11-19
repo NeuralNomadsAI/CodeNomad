@@ -27,7 +27,7 @@ const params = new URLSearchParams(location.search)
 const interactive = params.has("ui")
 const title = params.get("title") ?? (interactive ? "Feature ABC — משימה 42" : "Conversation")
 const path = "/voice-fixture"
-const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false, historyReads: 0 }
+const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false, admissionResumed: false, historyReads: 0 }
 const playback = { rendered: 0, flushed: -1 }
 window.AudioWorkletNode = class extends AudioWorkletNode {
   constructor(...args: ConstructorParameters<typeof AudioWorkletNode>) {
@@ -59,7 +59,11 @@ const client: any = {
     switchModel: async () => {},
     instructions: { entry: {
       remove: async () => {},
-      put: async () => { if (info.admissionHeld) await new Promise<void>(resolve => { releaseAdmission = resolve }) },
+      put: async () => {
+        if (!info.admissionHeld) return
+        await new Promise<void>(resolve => { releaseAdmission = resolve })
+        info.admissionResumed = true
+      },
     } },
     prompt: async (input: { id: string; text: string }) => {
       info.prompts.push(input)
@@ -190,6 +194,9 @@ function Interactive() {
     info, switchSession: () => setActiveSession(instanceId, "other"), setVoiceConversationEngine,
     openVoiceSettings: () => openSettingsRow("speech", "voice-dictation"),
     playback,
+    holdAdmission: () => { info.admissionHeld = true },
+    waitingAdmission: () => Boolean(releaseAdmission),
+    releaseAdmission: () => { info.admissionHeld = false; releaseAdmission?.() },
     removeProviderKey: () => { geminiConfigured = false; return loadSpeechCapabilities(true) },
     microphoneEnabled: () => microphone?.enabled,
   } })

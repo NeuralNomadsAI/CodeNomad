@@ -7,7 +7,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>
 before(async () => { fixture = await startProductFixture("composer-dictation") })
 after(async () => { await fixture?.close() })
 
-async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number> } = {}) {
+async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[] } = {}) {
   const context = await fixture.browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
@@ -157,7 +157,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
       if (errors.length) throw new AggregateError(errors, errors.map(value => value.message).join("; "), { cause: error })
       throw error
     }
-    assert.deepEqual(await page.evaluate(() => (window as any).fixture.sends), [])
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.sends), options.expectedSends ?? [])
     assert.deepEqual(errors, [])
   } finally { await context.close() }
 }
@@ -312,6 +312,39 @@ test("Dictate waits for the previous transcription to be inserted or discarded",
   await start(page)
   await page.waitForFunction(() => (window as any).capture.starts === 2)
 }))
+
+test("a pending transcription survives sending the draft and still inserts in the same session", () => withComposer(async page => {
+  await field(page).fill("original")
+  await start(page)
+  await stop(page)
+  await field(page).fill("send this draft")
+  await finish(page, "saved")
+  const insert = page.getByRole("button", { name: "Insert transcript", exact: true })
+  await insert.waitFor()
+  await page.evaluate(() => (window as any).fixture.holdSend())
+  await field(page).press("Enter")
+  await page.waitForFunction(() => (window as any).fixture.sendHeld())
+  assert.equal(await field(page).inputValue(), "")
+  await insert.waitFor()
+  await page.evaluate(() => (window as any).fixture.releaseSend())
+  await insert.click()
+  assert.equal(await field(page).inputValue(), "saved ")
+}, false, undefined, false, "en", false, false, { expectedSends: ["send this draft"] }))
+
+test("an Electron engine read failure replaces cached API dictation with the Dictation settings action", () => withComposer(async page => {
+  await page.evaluate(() => { (window as any).speechSettings.engine = "api"; window.dispatchEvent(new Event("focus")) })
+  await page.getByRole("button", { name: "More actions", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
+  // The fresh read fails at admission while the menu still shows the remembered choice.
+  await page.evaluate(() => { (window as any).speechSettings.readFails = true })
+  await page.getByRole("menuitem", { name: "Dictate", exact: true }).click()
+  await page.getByRole("menu").waitFor({ state: "hidden" })
+  await page.getByRole("button", { name: "More actions", exact: true }).click()
+  await page.getByRole("menuitem", { name: /Dictate.*Could not check the dictation engine/ }).click()
+  await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
+  await page.getByText("Could not check the dictation engine. Check again.", { exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+}, false, "hex-setup"))
 
 test("moving the selection invalidates insertion even if it returns to the original range", () => withComposer(async page => {
   await field(page).fill("one two")

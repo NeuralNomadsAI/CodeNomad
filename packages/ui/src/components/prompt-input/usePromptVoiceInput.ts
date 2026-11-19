@@ -18,6 +18,7 @@ interface UsePromptVoiceInputOptions {
   sessionId: Accessor<string>
   directory: Accessor<string>
   captureOwner: () => () => boolean
+  active: Accessor<boolean>
   enabled: Accessor<boolean>
   disabled: Accessor<boolean>
   engine?: (api: VoiceInputEngine) => VoiceInputEngine | undefined
@@ -91,6 +92,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     if (state() === "limitReached") return "promptInput.voiceInput.limitReached"
     if (transcript()?.current()) return "voice.command.pendingTranscription"
     if (options.disabled()) return "voice.command.composerUnavailable"
+    if (deviceDictation?.readFailed()) return "settings.speech.device.readFailed"
     const purpose = microphoneUse()
     if (purpose) return `voice.microphone.${purpose}`
     if (engine()?.canStart()) return
@@ -117,9 +119,9 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     const selectedEngine = engine()
     if (!selectedEngine) return
     const revision = options.draftRevision(), range = selection(textarea)
-    const current = () => owner() && instanceId === options.instanceId() && sessionId === options.sessionId()
-      && directory === options.directory() && options.enabled() && !options.disabled()
-      && selectedEngine === engine() && textarea === options.getTextarea() && textarea.isConnected
+    const contextCurrent = () => owner() && instanceId === options.instanceId() && sessionId === options.sessionId()
+      && directory === options.directory() && options.active() && textarea === options.getTextarea() && textarea.isConnected
+    const current = () => contextCurrent() && options.enabled() && !options.disabled() && selectedEngine === engine()
     if (!current()) return
     let moved = false
     let delivered = false
@@ -135,7 +137,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
         if (!held() || delivered || !text) return
         delivered = true
         if (composing || moved || revision !== options.draftRevision() || !sameSelection(textarea, range) || textarea.value !== options.prompt()) {
-          setTranscript({ text, current })
+          setTranscript({ text, current: contextCurrent })
           return
         }
         insertTranscript(textarea, text, range.selectionStart, range.selectionEnd)
