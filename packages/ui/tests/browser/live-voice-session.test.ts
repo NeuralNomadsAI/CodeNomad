@@ -356,6 +356,23 @@ test("get_last_reply reads the latest answer without replacing the displayed his
   } finally { await context.close() }
 })
 
+test("get_recent_errors reads the latest failures without replacing the displayed history", async () => {
+  const { page, context, start, waitForSent } = await fixture()
+  try {
+    const send = await start()
+    const failure = "Agent provider rate limit reached"
+    await page.evaluate(message => (window as any).fixture.openHistory(message), failure)
+    const history = () => page.evaluate(() => (window as any).fixture.history())
+    const before = await history()
+    assert.equal(before.kind, "history")
+    send({ type: "tool-call", name: "get_recent_errors", id: "errors", arguments: {} })
+    await page.waitForFunction(() => (window as any).fixture.info.historyReads === 1)
+    await page.evaluate(() => (window as any).fixture.releaseHistory())
+    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "errors")).output), { errors: [failure] })
+    assert.deepEqual(await history(), before)
+  } finally { await context.close() }
+})
+
 test("voice sends from an older page await the latest window and recheck the target", async () => {
   for (const switchTarget of [false, true]) {
     const { page, context, start, closed, snapshot, waitForSent } = await fixture()
@@ -387,6 +404,32 @@ test("voice sends from an older page await the latest window and recheck the tar
       }
     } finally { await context.close() }
   }
+})
+
+test("starting dictation aborts a pending Classic summary and suppresses its late playback", async () => {
+  const { page, context } = await fixture("gemini", true)
+  try {
+    await page.waitForFunction(() => Boolean((window as any).fixture?.holdClassicSummary))
+    await page.evaluate(() => (window as any).fixture.holdClassicSummary())
+    const more = page.locator(".prompt-actions-menu-trigger")
+    await more.click()
+    await page.getByRole("menuitemcheckbox", { name: "Enable conversation mode" }).click()
+    await more.click()
+    await page.getByRole("menuitemcheckbox", { name: "Disable conversation mode" }).waitFor()
+    await page.keyboard.press("Escape")
+    await page.evaluate(() => (window as any).classic.emitSummary())
+    await page.waitForFunction(() => (window as any).classic.probe.requested)
+    await more.click()
+    await page.getByRole("menuitem", { name: "Dictate", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.info.capture === 1)
+    const result = await page.evaluate(async () => {
+      const probe = (window as any).classic.probe
+      probe.release()
+      await new Promise(requestAnimationFrame)
+      return { aborted: probe.aborted, played: probe.played }
+    })
+    assert.deepEqual(result, { aborted: true, played: 0 })
+  } finally { await context.close() }
 })
 
 test("OpenAI final text replaces deltas; unknown tools fail closed", async () => {

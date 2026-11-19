@@ -67,7 +67,8 @@ the bearer `Authorization` header on their provider WebSockets.
   admission. An acknowledged steering prompt counts as busy for both voice and
   typed follow-ups in that native session for up to 15 seconds, until native
   execution, settlement or a fresh idle observation. While browsing history,
-  `get_last_reply` reads a bounded recent page without moving the transcript.
+  `get_last_reply` and `get_recent_errors` read a bounded recent page without
+  moving the transcript.
   Normal permission, question and Yolo handling apply. A call ID is
   admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.

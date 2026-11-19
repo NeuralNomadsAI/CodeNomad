@@ -45,12 +45,14 @@ export async function startPcmCapture(
   let atLimit = false
   let flushed: (() => void) | undefined
   let permission: PermissionStatus | undefined
+  let onTrackEnded = ended
+  const trackEnded = () => onTrackEnded()
   const permissionChanged = () => { if (permission?.state === "denied") ended() }
   const stopMic = () => {
     if (micStopped) return
     micStopped = true
     permission?.removeEventListener("change", permissionChanged)
-    for (const track of stream.getAudioTracks()) track.removeEventListener("ended", ended)
+    for (const track of stream.getAudioTracks()) track.removeEventListener("ended", trackEnded)
     stopTracks(stream)
   }
   const release = () => {
@@ -70,7 +72,7 @@ export async function startPcmCapture(
     signal.throwIfAborted()
     for (const track of stream.getAudioTracks()) {
       if (track.readyState !== "live") throw new DOMException("Microphone ended", "NotAllowedError")
-      track.addEventListener("ended", ended)
+      track.addEventListener("ended", trackEnded)
     }
     const audio = context = new AudioContext()
     const max = Math.min(audio.sampleRate, 192_000) * maxSeconds
@@ -95,6 +97,7 @@ export async function startPcmCapture(
       if (engine === "api") void drain() // Keep the bounded samples, not the capture graph.
       limit()
     }
+    if (engine === "api") onTrackEnded = () => { if (count) onLimit(); else ended() }
     capture.port.onmessage = (event: MessageEvent<Float32Array | null>) => {
       if (event.data === null) { flushed?.(); return }
       const chunk = event.data.subarray(0, max - count)

@@ -4,7 +4,7 @@ import { getInstanceLabel } from "../lib/instance-label"
 import { partHasRenderableText } from "../types/message"
 import { activeInstanceId, instances } from "./instances"
 import { messageStoreBus } from "./message-v2/bus"
-import { isLatestWindow, MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
+import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import type { FollowUpBehavior } from "./preferences"
 import { locationAuthorityKey } from "./request-locations"
 import { sendMessage } from "./session-actions"
@@ -62,14 +62,28 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
 }) {
   const instanceId = instance.id
   const sessionId = session.id
-  function recentAssistant() {
+  async function recentAssistant(current: () => boolean) {
+    if (!isLatestMessageWindow(instanceId, sessionId)) {
+      const latest = await getRootClient(instanceId).message.list({
+        sessionID: sessionId, limit: MESSAGE_WINDOW_PAGE_SIZE, order: "desc",
+      })
+      if (!current()) return
+      const boundary = sessions().get(instanceId)?.get(sessionId)?.revert?.messageID
+      return latest.data.flatMap(raw => {
+        if (boundary && raw.id >= boundary) return []
+        const { message, info } = normalizeSessionMessage(sessionId, raw)
+        return info.role === "assistant" && info.nativeType !== "system" ? [{ parts: message.parts, info }] : []
+      })
+    }
     const store = messageStoreBus.getInstance(instanceId)
-    if (!store || !isLatestWindow(store.getMessageWindow(sessionId))) return []
+    if (!store) return []
     const ids = store.getSessionMessageIds(sessionId).slice(-MESSAGE_WINDOW_PAGE_SIZE).reverse()
     return ids.flatMap(id => {
       const row = store.getMessage(id)
       const info = store.getMessageInfo(id)
-      if (row?.role === "assistant" && !row.isEphemeral && info?.nativeType !== "system") return [{ row, info }]
+      if (row?.role === "assistant" && !row.isEphemeral && info?.nativeType !== "system") {
+        return [{ parts: row.partIds.map(partId => row.parts[partId]?.data), info }]
+      }
       return []
     })
   }
@@ -79,21 +93,11 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
       case "get_session_status":
         return sessionStatus(instanceId, sessionId)
       case "get_last_reply": {
-        const stored = isLatestMessageWindow(instanceId, sessionId)
-        const latest = stored ? undefined : await getRootClient(instanceId).message.list({
-          sessionID: sessionId, limit: MESSAGE_WINDOW_PAGE_SIZE, order: "desc",
-        })
-        if (!current()) return { error: "The conversation has changed." }
-        const boundary = sessions().get(instanceId)?.get(sessionId)?.revert?.messageID
-        const parts = !latest ? recentAssistant().map(({ row }) => row.partIds.map(id => row.parts[id]?.data))
-          : latest.data.flatMap(raw => {
-            if (boundary && raw.id >= boundary) return []
-            const { message, info } = normalizeSessionMessage(sessionId, raw)
-            return info.role === "assistant" && info.nativeType !== "system" ? [message.parts] : []
-          })
-        for (const row of parts) {
+        const recent = await recentAssistant(current)
+        if (!recent || !current()) return { error: "The conversation has changed." }
+        for (const { parts } of recent) {
           let text = ""
-          for (const part of row) {
+          for (const part of parts) {
             if (part?.type !== "text" || !partHasRenderableText(part)) continue
             const remaining = 2000 - text.length
             text += `${text ? "\n\n" : ""}${part.text.slice(0, remaining)}`.slice(0, remaining)
@@ -104,8 +108,10 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
         return { text: "" }
       }
       case "get_recent_errors": {
+        const recent = await recentAssistant(current)
+        if (!recent || !current()) return { error: "The conversation has changed." }
         const retry = sessions().get(instanceId)?.get(sessionId)?.retry?.message
-        const errors = [retry, ...recentAssistant().map(({ info }) => info?.error?.data?.message ?? info?.error?.message)]
+        const errors = [retry, ...recent.map(({ info }) => info?.error?.data?.message ?? info?.error?.message)]
         return { errors: [...new Set(errors.filter((error): error is string => typeof error === "string" && error.trim().length > 0))]
           .slice(0, 3).map(error => error.slice(0, 500)) }
       }

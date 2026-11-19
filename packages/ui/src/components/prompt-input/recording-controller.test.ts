@@ -312,24 +312,37 @@ describe("recording controller", () => {
     assert.deepEqual(h.callbacks.states, ["starting", "recording", "idle"])
   })
 
-  it("ends a lost input stream without uploading the audio", async () => {
+  it("keeps the excerpt after device loss and releases the microphone without uploading until confirmed", async () => {
     const stream = createMockStream()
     let ended!: () => void
+    let attempts = 0
+    let releases = 0
     const h = createHarness({
       getUserMedia: async () => stream,
       setupRecorder: (_stream, handlers) => {
         ended = handlers.onStop
         return { start: () => handlers.onDataAvailable(new Blob(["audio"])), stop: ended, mimeType: "audio/webm" }
       },
-      transcribe: async () => { assert.fail("audio sent without an explicit stop") },
+      transcribe: async () => { attempts++; return { text: "kept transcript" } },
     })
+    h.deps.claimMicrophone = async () => ({ id: "lease", release: async () => { releases++ } })
+    h.deps.blobToBase64 = async blob => {
+      assert.equal(await blob.text(), "audio")
+      return "base64data"
+    }
     const c = createRecordingController(h.deps, h.callbacks)
     await c.startRecording()
     ended()
     await flushPromises()
     assert.equal(stream.tracksStopped, true)
-    assert.deepEqual(h.callbacks.states, ["starting", "recording", "idle"])
+    assert.deepEqual(h.callbacks.states, ["starting", "recording", "limitReached"])
     assert.deepEqual(h.callbacks.transcripts, [])
+    assert.equal(releases, 1)
+    assert.equal(attempts, 0)
+    c.confirmTranscription()
+    await flushPromises()
+    assert.deepEqual(h.callbacks.transcripts, ["kept transcript"])
+    assert.equal(attempts, 1)
   })
 
   it("keeps an early WAV limit distinct from a normal stop and accepts confirmation only once", async () => {

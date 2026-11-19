@@ -18,6 +18,7 @@ import { MESSAGE_WINDOW_PAGE_SIZE } from "../../../src/stores/message-v2/message
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { activeSettingsSection, openSettingsRow, settingsOpen } from "../../../src/stores/settings-screen"
 import { loadSpeechCapabilities } from "../../../src/stores/speech"
+import { handleConversationAssistantPartUpdated } from "../../../src/stores/conversation-speech"
 import { activeSessionId, getSessionDraftPrompt, sessions, setActiveSession, setSessionDraftPrompt, setSessions, setSessionStatus } from "../../../src/stores/session-state"
 import { loadVoiceConversationEngine, setVoiceConversationEngine } from "../../../src/stores/voice-conversation-engine"
 import { applyUiSettings } from "./ui-settings"
@@ -44,6 +45,7 @@ window.AudioWorkletNode = class extends AudioWorkletNode {
 let firstPrompt: "start" | "delay" | "fail" | "holdAck" = "start"
 let releaseAck: (() => void) | undefined
 let latestPage: Promise<void> | undefined
+let latestError: string | undefined
 let releaseHistory: (() => void) | undefined
 let microphone: MediaStreamTrack | undefined
 let eventId = 0
@@ -90,7 +92,8 @@ const client: any = {
     info.historyReads++
     await latestPage
     return { data: [{ id: "latest-assistant", type: "assistant", agent: "build",
-      model: { providerID: "fixture", id: "fixture" }, time: { created: 10 }, content: [
+      model: { providerID: "fixture", id: "fixture" }, time: { created: 10 },
+      ...(latestError ? { error: { type: "ProviderError", message: latestError, status: 429 } } : {}), content: [
         { type: "text", text: "Newest answer" }, { type: "reasoning", text: "Private reasoning" },
       ] }], cursor: {} }
   } },
@@ -156,12 +159,13 @@ function Fixture() {
     waitingAck: () => Boolean(releaseAck),
     releaseAck: () => releaseAck?.(),
     acknowledgementSettled: () => sessions().get(instanceId)?.get(sessionId)?.generationAdmissionToken === undefined,
-    openHistory: () => {
+    openHistory: (error?: string) => {
       for (let index = 0; index < MESSAGE_WINDOW_PAGE_SIZE - 1; index++) {
         store.upsertMessage({ id: `older-${index}`, sessionId, role: "assistant",
           status: "complete", parts: [], createdAt: index + 2, updatedAt: index + 2 })
       }
       store.setMessageWindow(sessionId, { kind: "history", resumeCursor: "older", newerCursors: [null] })
+      latestError = error
       latestPage = new Promise(resolve => { releaseHistory = resolve })
     },
     releaseHistory: () => releaseHistory?.(),
@@ -203,6 +207,33 @@ function Interactive() {
     releaseAdmission: () => { info.admissionHeld = false; releaseAdmission?.() },
     removeProviderKey: () => { geminiConfigured = false; return loadSpeechCapabilities(true) },
     microphoneEnabled: () => microphone?.enabled,
+    async holdClassicSummary() {
+      const probe = { requested: false, aborted: false, played: 0, release: () => {} }
+      const AudioConstructor = window.Audio
+      window.Audio = class extends AudioConstructor {
+        async play() { probe.played++ }
+        pause() {}
+        load() {}
+      }
+      serverApi.synthesizeSpeech = (_input, signal) => {
+        probe.requested = true
+        signal?.addEventListener("abort", () => { probe.aborted = true }, { once: true })
+        // Deliberately return a late successful response despite cancellation.
+        return new Promise(resolve => { probe.release = () => resolve({ audioBase64: "AQI=", mimeType: "audio/mpeg" }) })
+      }
+      serverApi.fetchSpeechCapabilities = async () => ({
+        available: true, supportsTts: true, ttsConfigured: true, supportsStt: true, sttConfigured: true,
+      } as any)
+      await loadSpeechCapabilities(true)
+      await setVoiceConversationEngine("classic")
+      Object.assign(window, { classic: {
+        probe,
+        emitSummary: () => handleConversationAssistantPartUpdated(instanceId, {
+          id: "summary-text", type: "text", sessionID: sessionId, messageID: "summary",
+          text: "```spoken\nPending Classic summary.\n```",
+        }, { role: "assistant" } as any),
+      } })
+    },
   } })
   return <main style={{ display: "flex", "min-height": "100dvh", "flex-direction": "column", "justify-content": "flex-end" }}>
     <AlertDialog />

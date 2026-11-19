@@ -747,10 +747,11 @@ export const serverApi = {
       signal,
     })
   },
-  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }): Promise<SpeechSynthesisResponse> {
+  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
     return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
       method: "POST",
       body: JSON.stringify(payload),
+      signal,
     })
   },
   synthesizeSpeechStream(

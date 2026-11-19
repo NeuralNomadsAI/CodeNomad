@@ -203,7 +203,13 @@ export function createRecordingController(
           if (signal.aborted || !recorder) return
           recorderStopped = true
           if (state === "transcribing") void finalizeRecording(operation)
-          else if (state !== "limitReached") cancelRecording()
+          else if (state === "recording" && recordedBytes > 0) {
+            // MediaRecorder can stop on device loss without an explicit stop action.
+            deps.stopTracks(mediaStream)
+            mediaStream = null
+            releaseMicrophone()
+            setState("limitReached")
+          } else if (state !== "limitReached") cancelRecording()
         },
         onError: cancelCurrent,
       })

@@ -25,11 +25,6 @@ interface ConversationQueueEntry {
   text: string
 }
 
-interface PlaybackHandle {
-  stop: () => void
-  done: Promise<void>
-}
-
 const log = getLogger("actions")
 const [conversationModeInstances, setConversationModeInstances] = createSignal<Map<string, boolean>>(new Map())
 const LEADING_SPOKEN_BLOCK_REGEX = /^\s*```spoken[ \t]*\r?\n([\s\S]*?)\r?\n```(?:\r?\n|$)/i
@@ -40,7 +35,7 @@ let queue: ConversationQueueEntry[] = []
 let currentPlayback:
   | {
       entry: ConversationQueueEntry
-      handle: PlaybackHandle
+      controller: AbortController
     }
   | null = null
 let queueRunner: Promise<void> | null = null
@@ -146,8 +141,7 @@ export function clearConversationPlaybackForSession(instanceId: string, sessionI
   })
 
   if (currentPlayback && `${currentPlayback.entry.instanceId}:${currentPlayback.entry.sessionId}` === sessionKey) {
-    currentPlayback.handle.stop()
-    currentPlayback = null
+    currentPlayback.controller.abort()
   }
 }
 
@@ -161,8 +155,7 @@ export function clearConversationPlaybackForInstance(instanceId: string): void {
   })
 
   if (currentPlayback?.entry.instanceId === instanceId) {
-    currentPlayback.handle.stop()
-    currentPlayback = null
+    currentPlayback.controller.abort()
   }
 }
 
@@ -232,11 +225,12 @@ async function runConversationQueue(): Promise<void> {
       const spokenKeys = getSpokenKeySet(entry.instanceId, entry.sessionId)
       spokenKeys.add(entry.key)
 
+      const controller = new AbortController()
+      currentPlayback = { entry, controller }
       try {
-        const handle = await createPlaybackHandle(entry.text)
-        currentPlayback = { entry, handle }
-        await handle.done
+        await playSummary(entry.text, controller.signal)
       } catch (error) {
+        if (controller.signal.aborted) continue
         spokenKeys.delete(entry.key)
         clearConversationPlaybackForInstance(entry.instanceId)
         if (!playbackErrorShown) {
@@ -253,7 +247,8 @@ async function runConversationQueue(): Promise<void> {
         log.error("Conversation playback failed", error)
         break
       } finally {
-        if (currentPlayback?.entry.key === entry.key) {
+        controller.abort()
+        if (currentPlayback?.controller === controller) {
           currentPlayback = null
         }
       }
@@ -270,8 +265,9 @@ async function runConversationQueue(): Promise<void> {
   }
 }
 
-async function createPlaybackHandle(text: string): Promise<PlaybackHandle> {
+async function playSummary(text: string, signal: AbortSignal): Promise<void> {
   const capabilities = (await loadSpeechCapabilities()) ?? speechCapabilities()
+  signal.throwIfAborted()
   const settings = serverSettings().speech
 
   if (!capabilities?.available || !capabilities.ttsConfigured || !capabilities.supportsTts) {
@@ -294,61 +290,24 @@ async function createPlaybackHandle(text: string): Promise<PlaybackHandle> {
   }
 
   return settings.playbackMode === "streaming"
-    ? createStreamingPlaybackHandle(text, settings.ttsFormat)
-    : createBufferedPlaybackHandle(text, settings.ttsFormat)
+    ? playStreamingSummary(text, settings.ttsFormat, signal)
+    : playBufferedSummary(text, settings.ttsFormat, signal)
 }
 
-async function createBufferedPlaybackHandle(text: string, format: SpeechTtsFormat): Promise<PlaybackHandle> {
-  const response = await serverApi.synthesizeSpeech({ text, format })
-  const objectUrl = createObjectUrlFromBase64(response.audioBase64, response.mimeType)
-  const audio = new Audio(objectUrl)
-
-  let settled = false
-  let resolveDone!: () => void
-  let rejectDone!: (error: unknown) => void
-
-  const cleanup = () => {
-    audio.pause()
-    audio.src = ""
-    audio.load()
-    URL.revokeObjectURL(objectUrl)
-  }
-
-  const done = new Promise<void>((resolve, reject) => {
-    resolveDone = () => {
-      if (settled) return
-      settled = true
-      cleanup()
-      resolve()
-    }
-    rejectDone = (error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(error)
-    }
-  })
-
-  audio.addEventListener("ended", () => resolveDone(), { once: true })
-  audio.addEventListener("error", () => rejectDone(new Error(tGlobal("messageItem.actions.speak.error.generate"))), {
-    once: true,
-  })
-
-  await audio.play()
-
-  return {
-    stop: () => resolveDone(),
-    done,
-  }
+async function playBufferedSummary(text: string, format: SpeechTtsFormat, signal: AbortSignal): Promise<void> {
+  const response = await serverApi.synthesizeSpeech({ text, format }, signal)
+  signal.throwIfAborted()
+  return playAudio(createObjectUrlFromBase64(response.audioBase64, response.mimeType), signal,
+    (audio, reject) => { void audio.play().catch(reject) })
 }
 
-async function createStreamingPlaybackHandle(text: string, format: SpeechTtsFormat): Promise<PlaybackHandle> {
+async function playStreamingSummary(text: string, format: SpeechTtsFormat, signal: AbortSignal): Promise<void> {
   if (typeof MediaSource === "undefined") {
     throw new Error(tGlobal("messageItem.actions.speak.error.unsupported"))
   }
 
-  const abortController = new AbortController()
-  const response = await serverApi.synthesizeSpeechStream({ text, format }, abortController.signal)
+  const response = await serverApi.synthesizeSpeechStream({ text, format }, signal)
+  signal.throwIfAborted()
   const mimeType = response.headers.get("content-type") || formatToMimeType(format)
   const stream = response.body
   if (!stream) {
@@ -360,71 +319,41 @@ async function createStreamingPlaybackHandle(text: string, format: SpeechTtsForm
   }
 
   const mediaSource = new MediaSource()
-  const objectUrl = URL.createObjectURL(mediaSource)
+  return playAudio(URL.createObjectURL(mediaSource), signal, (audio, reject) => {
+    mediaSource.addEventListener("sourceopen", () => {
+      if (signal.aborted) return
+      void streamToMediaSource({
+        mediaSource, stream, mimeType,
+        appendErrorMessage: () => tGlobal("messageItem.actions.speak.error.generate"),
+        onPlayable: async () => { if (!signal.aborted) await audio.play() },
+        onError: reject,
+      })
+    }, { once: true, signal })
+  })
+}
+
+async function playAudio(objectUrl: string, signal: AbortSignal, start: (audio: HTMLAudioElement, reject: (error: unknown) => void) => void) {
   const audio = new Audio(objectUrl)
-
-  let settled = false
-  let startedPlayback = false
-  let resolveDone!: () => void
-  let rejectDone!: (error: unknown) => void
-
-  const cleanup = () => {
-    abortController.abort()
+  let stop!: () => void
+  const audioError = () => new Error(tGlobal("messageItem.actions.speak.error.generate"))
+  let failed!: () => void
+  try {
+    await new Promise<void>((resolve, reject) => {
+      stop = () => resolve()
+      failed = () => reject(audioError())
+      signal.addEventListener("abort", stop, { once: true })
+      audio.addEventListener("ended", stop, { once: true })
+      audio.addEventListener("error", failed, { once: true })
+      start(audio, reject)
+    })
+  } finally {
+    signal.removeEventListener("abort", stop)
+    audio.removeEventListener("ended", stop)
+    audio.removeEventListener("error", failed)
     audio.pause()
     audio.src = ""
     audio.load()
     URL.revokeObjectURL(objectUrl)
-  }
-
-  const done = new Promise<void>((resolve, reject) => {
-    resolveDone = () => {
-      if (settled) return
-      settled = true
-      cleanup()
-      resolve()
-    }
-    rejectDone = (error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(error)
-    }
-  })
-
-  audio.addEventListener("ended", () => resolveDone(), { once: true })
-  audio.addEventListener("error", () => rejectDone(new Error(tGlobal("messageItem.actions.speak.error.generate"))), {
-    once: true,
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    mediaSource.addEventListener(
-      "sourceopen",
-      () => {
-        void streamToMediaSource({
-          mediaSource,
-          stream,
-          mimeType,
-          appendErrorMessage: () => tGlobal("messageItem.actions.speak.error.generate"),
-          onPlayable: async () => {
-            if (startedPlayback) return
-            startedPlayback = true
-            try {
-              await audio.play()
-              resolve()
-            } catch (error) {
-              reject(error)
-            }
-          },
-          onError: reject,
-        })
-      },
-      { once: true },
-    )
-  })
-
-  return {
-    stop: () => resolveDone(),
-    done,
   }
 }
 
