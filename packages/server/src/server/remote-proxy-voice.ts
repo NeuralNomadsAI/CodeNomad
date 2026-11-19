@@ -5,6 +5,7 @@ import {
   LIVE_VOICE_CLIENT_BYTES, LIVE_VOICE_PROVIDER_BYTES, liveVoiceEngine, type LiveVoiceEndReason,
 } from "../speech/live-voice-contract"
 import { LIVE_VOICE_ESTABLISH_MS, VOICE_WS_OPTIONS, rawBytes, refuseVoiceUpgrade } from "../speech/live-voice-gateway"
+import { readClientMessage, readObject } from "../speech/live-voice-messages"
 import { proxyDestination } from "./proxy-destination"
 
 // Project gateways validate content and own provider quotas. The window proxy admits
@@ -39,10 +40,12 @@ export function proxyRemoteVoice(args: {
   }
   server.handleUpgrade(request, socket, head, window => {
     let upstream: WebSocket | undefined
+    let initial: WebSocket.RawData | undefined
     let stopped = false
     const stop = (reason: LiveVoiceEndReason, hard = false) => {
       if (stopped) return
       stopped = true
+      initial = undefined
       lifetime.removeEventListener("abort", revoke)
       clearTimeout(timer)
       upstream?.terminate()
@@ -60,7 +63,14 @@ export function proxyRemoteVoice(args: {
     }
     window.once("close", () => stop("stopped"))
     window.on("error", () => stop("invalid-message", true))
-    window.on("message", (data, binary) => relay(upstream, data, binary))
+    window.on("message", (data, binary) => {
+      if (upstream?.readyState === WebSocket.OPEN) return relay(upstream, data, binary)
+      // The window sends its bounded context as soon as its local upgrade
+      // completes. No audio can arrive before the far gateway is ready.
+      const value = !initial && !binary && readObject(data)
+      if (!value || readClientMessage(value)?.type !== "start") return stop("invalid-message")
+      initial = data
+    })
     lifetime.addEventListener("abort", revoke, { once: true })
     if (lifetime.aborted) return revoke()
     void (async () => {
@@ -76,7 +86,11 @@ export function proxyRemoteVoice(args: {
           handshakeTimeout: LIVE_VOICE_ESTABLISH_MS,
           followRedirects: false,
         })
-        upstream.once("open", () => clearTimeout(timer))
+        upstream.once("open", () => {
+          clearTimeout(timer)
+          if (initial) relay(upstream, initial, false)
+          initial = undefined
+        })
         upstream.on("error", () => stop("connection"))
         upstream.once("close", (code, message) => {
           const reason = message.toString() as LiveVoiceEndReason

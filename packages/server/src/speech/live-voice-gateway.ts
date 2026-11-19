@@ -4,15 +4,14 @@ import { performance } from "node:perf_hooks"
 import WebSocket, { WebSocketServer } from "ws"
 import { isLoopbackHost } from "../server/network-host"
 import {
-  LIVE_VOICE_CLIENT_BYTES, LIVE_VOICE_PATH, LIVE_VOICE_PROVIDER_BYTES, liveVoiceEngine, type LiveVoiceEndReason,
+  LIVE_VOICE_ABSOLUTE_MS, LIVE_VOICE_CLIENT_BYTES, LIVE_VOICE_ESTABLISH_MS, LIVE_VOICE_IDLE_MS, LIVE_VOICE_PATH,
+  LIVE_VOICE_PROVIDER_BYTES, liveVoiceEngine, liveVoiceInputRate, type LiveVoiceContext, type LiveVoiceEndReason,
 } from "./live-voice-contract"
 import { pcmBytes, readClientMessage, readObject, type JsonObject } from "./live-voice-messages"
 import { voiceProviderConnection, voiceProviderProtocol } from "./live-voice-provider"
 import type { SpeechService } from "./service"
 
-export const LIVE_VOICE_ESTABLISH_MS = 10_000
-const ABSOLUTE_MS = 8 * 60_000
-const IDLE_MS = 2 * 60_000
+export { LIVE_VOICE_ESTABLISH_MS } from "./live-voice-contract"
 const MAX_SESSIONS = 4
 const MAX_QUEUE = 2 * LIVE_VOICE_PROVIDER_BYTES
 export const VOICE_WS_OPTIONS = { perMessageDeflate: false, maxFragments: 256, maxBufferedChunks: 1024, closeTimeout: 1000 }
@@ -81,13 +80,14 @@ export class LiveVoiceGateway {
     this.server.handleUpgrade(request, socket, head, client => {
       this.identities.add(principal.identity)
       client.once("close", () => this.identities.delete(principal.identity))
-      let settings
-      try { settings = this.speech.getVoiceConversationProvider(engine) } catch { /* no configuration details on this wire */ }
-      if (!settings || settings.provider !== (engine === "gemini-live" ? "geminiLive" : "openaiRealtime")) {
+      let configured
+      try { configured = this.speech.getVoiceConversationProvider(engine) } catch { /* no configuration details on this wire */ }
+      if (!configured || configured.provider !== (engine === "gemini-live" ? "geminiLive" : "openaiRealtime")) {
         client.on("error", () => client.terminate())
         client.close(4000, "unconfigured")
         return
       }
+      const settings = configured
       const encodedKey = JSON.stringify(settings.apiKey).slice(1, -1)
       const uriKey = new URLSearchParams({ key: settings.apiKey }).toString().slice(4)
       let upstream: WebSocket | undefined
@@ -96,7 +96,7 @@ export class LiveVoiceGateway {
       let stopped = false
       const timeout = (fn: () => void, ms: number) => setTimeout(fn, ms).unref()
       const establishMs = this.options.establishMs ?? LIVE_VOICE_ESTABLISH_MS
-      const idleMs = this.options.idleMs ?? IDLE_MS
+      const idleMs = this.options.idleMs ?? LIVE_VOICE_IDLE_MS
       const stop = (reason: LiveVoiceEndReason, hard = false) => {
         if (stopped) return
         stopped = true
@@ -109,8 +109,8 @@ export class LiveVoiceGateway {
         else if (client.readyState === WebSocket.OPEN) client.close(reason === "stopped" ? 1000 : 4000, reason)
       }
       const setupTimer = timeout(() => stop("setup-timeout"), establishMs)
-      const absoluteTimer = timeout(() => stop("duration"), this.options.absoluteMs ?? ABSOLUTE_MS)
-      const speech = () => {
+      const absoluteTimer = timeout(() => stop("duration"), this.options.absoluteMs ?? LIVE_VOICE_ABSOLUTE_MS)
+      const resetIdle = () => {
         if (stopped) return
         clearTimeout(idleTimer)
         idleTimer = timeout(() => stop("idle"), idleMs)
@@ -125,17 +125,20 @@ export class LiveVoiceGateway {
         if (target === client && (message.includes(encodedKey) || message.includes(uriKey))) return stop("provider-error")
         target.send(message, error => { if (error) stop("connection", true) })
       }
-      const protocol = voiceProviderProtocol(settings, {
-        send: event => send(upstream, event, LIVE_VOICE_CLIENT_BYTES + 1024),
-        emit: event => {
-          if (event.type === "ready") { clearTimeout(setupTimer); speech() }
-          send(client, event, LIVE_VOICE_PROVIDER_BYTES)
-        },
-        speech,
-        stop,
-      })
+      let protocol: ReturnType<typeof voiceProviderProtocol> | undefined
+      function createProtocol(context: LiveVoiceContext) {
+        return voiceProviderProtocol(settings, context, {
+          send: event => send(upstream, event, LIVE_VOICE_CLIENT_BYTES + 1024),
+          emit: event => {
+            if (event.type === "ready") { clearTimeout(setupTimer); resetIdle() }
+            send(client, event, LIVE_VOICE_PROVIDER_BYTES)
+          },
+          speech: () => { resetIdle(); send(client, { type: "activity" }, LIVE_VOICE_PROVIDER_BYTES) },
+          stop,
+        })
+      }
       const clientMessages = budget(120, 120)
-      const audioBytesPerSecond = protocol.inputRate * 2
+      const audioBytesPerSecond = liveVoiceInputRate(engine) * 2
       const audioRate = budget(audioBytesPerSecond, audioBytesPerSecond * 1.1)
       const clientData = budget(128 * 1024, 128 * 1024)
       const providerMessages = budget(512, 256)
@@ -150,6 +153,12 @@ export class LiveVoiceGateway {
         const value = decoded && readClientMessage(decoded)
         if (!value) return stop("invalid-message")
         if (value.type === "stop") return stop("stopped")
+        if (value.type === "start") {
+          if (protocol) return stop("invalid-message")
+          startProvider(value.context)
+          return
+        }
+        if (!protocol) return stop("invalid-message")
         if (value.type === "audio" && !audioRate(pcmBytes(value.pcm))) return stop("limit")
         protocol.client(value)
       })
@@ -157,23 +166,26 @@ export class LiveVoiceGateway {
       client.once("close", () => stop("stopped"))
       stopWatching = principal.watchRevocation?.(() => stop("revoked"))
       if (stopped) { stopWatching?.(); return }
-      const connection = voiceProviderConnection(settings)
-      try {
-        upstream = this.connect(connection.url, { ...VOICE_WS_OPTIONS,
-          headers: connection.headers, maxPayload: LIVE_VOICE_PROVIDER_BYTES, handshakeTimeout: establishMs,
-          followRedirects: false, rejectUnauthorized: true,
-        })
-        upstream.once("open", () => { if (!stopped) protocol.opened() })
-        upstream.on("error", () => stop("provider-error"))
-        upstream.once("close", () => stop("provider-disconnected"))
-        upstream.on("message", (data, binary) => {
-          if (stopped) return
-          if (!providerMessages(1) || !providerData(rawBytes(data))) return stop("limit")
-          const decoded = (settings.provider === "geminiLive" || !binary) && readObject(data)
-          if (!decoded) return stop("provider-error")
-          protocol.receive(decoded)
-        })
-      } catch { stop("provider-error") }
+      const startProvider = (context: LiveVoiceContext) => {
+        const active = protocol = createProtocol(context)
+        const connection = voiceProviderConnection(settings)
+        try {
+          upstream = this.connect(connection.url, { ...VOICE_WS_OPTIONS,
+            headers: connection.headers, maxPayload: LIVE_VOICE_PROVIDER_BYTES, handshakeTimeout: establishMs,
+            followRedirects: false, rejectUnauthorized: true,
+          })
+          upstream.once("open", () => { if (!stopped) active.opened() })
+          upstream.on("error", () => stop("provider-error"))
+          upstream.once("close", () => stop("provider-disconnected"))
+          upstream.on("message", (data, binary) => {
+            if (stopped) return
+            if (!providerMessages(1) || !providerData(rawBytes(data))) return stop("limit")
+            const decoded = (settings.provider === "geminiLive" || !binary) && readObject(data)
+            if (!decoded) return stop("provider-error")
+            active.receive(decoded)
+          })
+        } catch { stop("provider-error") }
+      }
     })
   }
 }

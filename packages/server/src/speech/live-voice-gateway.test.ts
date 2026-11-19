@@ -14,7 +14,7 @@ import { FAKE_TUNNEL_HOST, startRemoteSurface } from "../remote-control/test-sup
 import { RemoteProxySessionManager } from "../server/remote-proxy"
 import { resolveHttpsOptions } from "../server/tls"
 import {
-  LIVE_VOICE_CLIENT_BYTES, LIVE_VOICE_PROVIDER_BYTES, liveVoiceTarget, type LiveVoiceEngine,
+  LIVE_VOICE_CLIENT_BYTES, LIVE_VOICE_PROVIDER_BYTES, LIVE_VOICE_TOOL_NAMES, liveVoiceTarget, type LiveVoiceEngine,
 } from "./live-voice-contract"
 import { LiveVoiceGateway } from "./live-voice-gateway"
 import type { VoiceConversationProviderSettings } from "./voice-conversation-config"
@@ -23,6 +23,7 @@ const KEY = "voice-secret-sentinel-not-a-real-key"
 const PCM = Buffer.from([14, 21, 1, 0]).toString("base64")
 const gemini = liveVoiceTarget("gemini-live")
 const openai = liveVoiceTarget("openai-realtime")
+const context = { project: "Voice fixture", branch: "dev", worktree: "root", title: "Voice", status: "idle" }
 
 function logger() {
   const logs: string[] = []
@@ -78,7 +79,9 @@ async function provider(t: TestContext, options: ConstructorParameters<typeof Li
 function connect(t: TestContext, host: string, target: string, headers: Record<string, string>, secure = false) {
   const ws = new WebSocket(`${secure ? "wss" : "ws"}://${host}${target}`, { headers, rejectUnauthorized: false })
   t.after(() => ws.terminate())
-  return wire(ws)
+  const client = wire(ws)
+  ws.once("open", () => client.send({ type: "start", context }))
+  return client
 }
 
 async function denied(host: string, target: string, headers: Record<string, string>, status: number, secure = false) {
@@ -97,7 +100,8 @@ async function setupGemini(client: ReturnType<typeof wire>, fake: Awaited<Return
   const { setup } = await upstream.next()
   assert.equal(setup.model, "models/server-gemini")
   assert.equal(setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, "Kore")
-  assert.deepEqual(setup.tools[0].functionDeclarations.map((tool: { name: string }) => tool.name), ["send_to_agent", "read_session"])
+  assert.deepEqual(setup.tools[0].functionDeclarations.map((tool: { name: string }) => tool.name), LIVE_VOICE_TOOL_NAMES)
+  assert.ok(setup.systemInstruction.parts[0].text.endsWith(JSON.stringify(context)))
   upstream.send({ setupComplete: {} }, true)
   assert.deepEqual(await client.next(), { type: "ready", inputRate: 16000, outputRate: 24000 })
   return upstream
@@ -132,12 +136,13 @@ test("direct admission, Gemini binary messages, fixed tools, cancellation and pa
   upstream.send({ serverContent: { modelTurn: { parts: [{ inlineData: { data: PCM, mimeType: "audio/pcm;rate=24000" } }] } } }, true)
   assert.deepEqual(await client.next(), { type: "audio", pcm: PCM })
   upstream.send({ toolCall: { functionCalls: [{ id: "call1", name: "send_to_agent", args: { text: "Draft a plan" } }] } }, true)
+  upstream.send({ toolCall: { functionCalls: [{ id: "call1", name: "send_to_agent", args: { text: "Duplicate" } }] } }, true)
   assert.deepEqual(await client.next(), { type: "tool-call", id: "call1", name: "send_to_agent", arguments: { text: "Draft a plan" } })
   client.send({ type: "tool-result", id: "call1", output: "Submitted" })
   assert.deepEqual(await upstream.next(), { toolResponse: { functionResponses: [{ name: "send_to_agent", id: "call1", response: { output: "Submitted" } }] } })
 
-  upstream.send({ toolCall: { functionCalls: [{ id: "call2", name: "read_session" }] } })
-  assert.deepEqual(await client.next(), { type: "tool-call", id: "call2", name: "read_session", arguments: {} })
+  upstream.send({ toolCall: { functionCalls: [{ id: "call2", name: "get_session_status" }] } })
+  assert.deepEqual(await client.next(), { type: "tool-call", id: "call2", name: "get_session_status", arguments: {} })
   upstream.send({ toolCallCancellation: { ids: ["call2"] } }, true)
   upstream.send({ serverContent: { interrupted: true, turnComplete: true } })
   assert.deepEqual(await client.next(), { type: "tool-cancel", id: "call2" })
@@ -177,6 +182,8 @@ test("Remote Control needs its device credential even without local auth; OpenAI
   assert.equal(update.session.audio.input.format.rate, 24000)
   assert.equal(update.session.audio.output.voice, "marin")
   assert.equal(update.session.audio.input.turn_detection.interrupt_response, true)
+  assert.deepEqual(update.session.tools.map((tool: { name: string }) => tool.name), LIVE_VOICE_TOOL_NAMES)
+  assert.ok(update.session.instructions.endsWith(JSON.stringify(context)))
   upstream.send({ type: "session.updated", session: { id: "session-1", arbitrary: KEY } })
   assert.deepEqual(await client.next(), { type: "ready", inputRate: 24000, outputRate: 24000 })
   client.send({ type: "audio", pcm: PCM })
@@ -184,13 +191,14 @@ test("Remote Control needs its device credential even without local auth; OpenAI
   upstream.send({ type: "response.output_audio.delta", response_id: "response-1", item_id: "item-1", content_index: 0, delta: PCM })
   assert.deepEqual(await client.next(), { type: "audio", pcm: PCM, itemId: "item-1", contentIndex: 0 })
   upstream.send({ type: "input_audio_buffer.speech_started" })
+  assert.deepEqual(await client.next(), { type: "activity" })
   assert.deepEqual(await client.next(), { type: "interrupted" })
   client.send({ type: "truncate", itemId: "item-1", contentIndex: 0, audioEndMs: 0 })
   assert.deepEqual(await upstream.next(), { type: "conversation.item.truncate", item_id: "item-1", content_index: 0, audio_end_ms: 0 })
   upstream.send({ type: "response.done", response: {
-    id: "response-2", status: "completed", output: [{ type: "function_call", status: "completed", call_id: "call-1", name: "read_session", arguments: "{}" }],
+    id: "response-2", status: "completed", output: [{ type: "function_call", status: "completed", call_id: "call-1", name: "get_last_reply", arguments: "{}" }],
   } })
-  assert.deepEqual(await client.next(), { type: "tool-call", name: "read_session", id: "call-1", arguments: {} })
+  assert.deepEqual(await client.next(), { type: "tool-call", name: "get_last_reply", id: "call-1", arguments: {} })
   assert.deepEqual(await client.next(), { type: "turn-complete" })
   client.send({ type: "tool-result", id: "call-1", output: "Working" })
   assert.deepEqual(await upstream.next(), { type: "conversation.item.create", item: { type: "function_call_output", call_id: "call-1", output: "Working" } })
@@ -366,6 +374,13 @@ test("unexpected tools, odd-length audio, and faster-than-realtime streams termi
   assert.deepEqual(await badTool.closed, [4000, "provider-error"])
   assert.deepEqual(badTool.messages, [])
   await toolPeer.closed
+
+  const invalidArgs = start()
+  const invalidArgsPeer = await setupGemini(invalidArgs, fake)
+  invalidArgsPeer.send({ toolCall: { functionCalls: [{ id: "unexpected", name: "get_recent_errors", args: { sessionId: "other" } }] } })
+  assert.deepEqual(await invalidArgs.closed, [4000, "provider-error"])
+  assert.deepEqual(invalidArgs.messages, [])
+  await invalidArgsPeer.closed
 
   const badAudio = start()
   const oddPeer = await setupGemini(badAudio, fake)

@@ -162,6 +162,13 @@ export class SettingsService {
       { throwOnPersistError: true })
   }
 
+  desktopLiveVoiceConsentStore(engine: "gemini-live" | "openai-realtime"): YamlDocStore | undefined {
+    if (!process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY) return undefined
+    const { key } = this.getProfileScope()
+    return new YamlDocStore(path.join(this.location.baseDir, "voice", key, `consent-${engine}.yaml`), this.logger,
+      { throwOnPersistError: true })
+  }
+
   /**
    * Config writes start from the document as it is on disk now (`reloadAuthoritative`), so a
    * stale cache is never written back; an unreadable or invalid document refuses the write

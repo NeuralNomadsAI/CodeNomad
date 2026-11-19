@@ -777,6 +777,7 @@ export interface SpeechCapabilitiesResponse {
   ttsBaseUrl?: string
   voiceConversation?: VoiceConversationCapabilities
   desktopVoiceConversationEngine?: boolean
+  desktopLiveVoiceConsent?: Partial<Record<Exclude<VoiceConversationEngine, "classic">, number>>
 }
 
 export interface SpeechTranscriptionResponse {

@@ -1,21 +1,16 @@
 import type { RawData } from "ws"
-import type { LiveVoiceClientMessage, LiveVoiceTool } from "./live-voice-contract"
+import {
+  liveVoiceIdentifier as identifier, liveVoiceKeys as keys, liveVoiceObject as object, type LiveVoiceClientMessage,
+} from "./live-voice-contract"
+export { identifier, object }
 
 export type JsonObject = Record<string, unknown>
-
-export function object(value: unknown): JsonObject | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : undefined
-}
 
 export function readObject(data: RawData): JsonObject | undefined {
   try {
     const bytes = Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data)
     return object(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)))
   } catch { return undefined }
-}
-
-export function identifier(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value)
 }
 
 function boundedText(value: unknown, bytes: number): value is string {
@@ -35,12 +30,19 @@ export function pcmBytes(value: unknown): number {
   return bytes % 2 === 0 ? bytes : 0
 }
 
-function keys(value: JsonObject, ...expected: string[]): boolean {
-  return Object.keys(value).length === expected.length && expected.every(key => Object.hasOwn(value, key))
-}
-
 export function readClientMessage(value: JsonObject): LiveVoiceClientMessage | undefined {
   switch (value.type) {
+    case "start": {
+      const context = object(value.context)
+      if (!keys(value, "type", "context") || !context || !keys(context, "project", "branch", "worktree", "title", "status")) break
+      const { project, branch, worktree, title, status } = context
+      const label = (candidate: unknown): candidate is string => typeof candidate === "string" && candidate.length <= 256
+      if (label(project) && label(branch) && label(worktree) && label(title)
+        && (status === "running" || status === "idle" || status === "waiting_permission" || status === "waiting_question")) {
+        return { type: "start", context: { project, branch, worktree, title, status } }
+      }
+      break
+    }
     case "stop":
       if (keys(value, "type")) return { type: "stop" }
       break
@@ -60,14 +62,5 @@ export function readClientMessage(value: JsonObject): LiveVoiceClientMessage | u
       if (keys(value, "type", "id", "output") && identifier(value.id) && boundedText(value.output, 16 * 1024)) {
         return { type: "tool-result", id: value.id, output: value.output }
       }
-  }
-}
-
-export function readTool(name: unknown, args: unknown): LiveVoiceTool | undefined {
-  const value = object(args)
-  if (!value) return
-  if (name === "read_session" && keys(value)) return { name, arguments: {} }
-  if (name === "send_to_agent" && keys(value, "text") && boundedText(value.text, 4096)) {
-    return { name, arguments: { text: value.text } }
   }
 }

@@ -44,14 +44,28 @@ the bearer `Authorization` header on their provider WebSockets.
   Linux Tauri supports API dictation and input testing through the native WAV
   recorder; the live engines require browser microphone access and are unavailable
   in that window.
-- Only `send_to_agent` and `read_session` can reach the renderer. Replies must
-  match an outstanding call; Gemini cancellation retires the call. The gateway
-  has no OpenCode or filesystem tool access. Provider failure and disconnect
-  produce a fixed close reason, with no reconnect or engine fallback.
+- `use-live-voice-conversation.ts` checks the provider notice before opening
+  capture or the socket. Acceptance is scoped to the server, provider and notice
+  version in the browser profile or the local backend's desktop profile.
+  Remote macOS Tauri windows keep acceptance in the document, since their
+  WebKit store is keyed by remote registration across desktop profiles.
+  The first frame contains bounded project, branch/worktree, session title and
+  status; the gateway validates it before opening the provider socket.
+- The renderer fixes the active project's proxy, session and native location
+  for the conversation. These four tools are the full provider interface:
+  `get_session_status`, `get_last_reply`, `get_recent_errors`, `send_to_agent`.
+  Reads return bounded text from the open session. The prompt goes through
+  native `sendMessage` using the composer's delivery rules and no attachments;
+  normal permission, question and Yolo handling apply. A call ID is admitted
+  once across the voice session. Cancellation and target changes fence queued
+  admission and late results; an unconfirmed send stays unconfirmed.
+- The two voices are transcribed in memory until the window is dismissed.
+  A stop, target change, closed document, provider failure or disconnect
+  releases capture and sockets, with no reconnect or engine fallback.
 - Each backend admits one live conversation per identity and four in total.
   Setup has 10 seconds, inactivity two minutes, and the conversation eight
   minutes. Only provider-detected user speech or Gemini input transcription
-  renews inactivity. PCM silence, pings and assistant output do not. Client
+  renews the client and server inactivity timers. Client
   messages are capped at 32 KiB, provider messages at 256 KiB; rate, fragment
   and queue limits apply before forwarding. Closing either side closes its peer.
 
@@ -90,5 +104,8 @@ Run `node --test packages/desktop-speech/hex.test.mjs` for simulated downloads, 
 
 `live-voice-worklet.test.ts` checks sample-rate conversion, bounds and interruption;
 `live-voice-audio.test.ts` exercises the renderer lifecycle with a synthetic stream.
+`live-voice-session.test.ts` combines synthetic capture, both simulated providers
+and the native prompt and interruption paths. `live-voice-gateway.test.ts`
+checks the provider wire envelopes using loopback WebSocket peers.
 `packages/tauri-app/tests/webkit-live-audio.c` loads the same processors in WebKitGTK
 with a simulated capture device.

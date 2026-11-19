@@ -4,6 +4,7 @@ import type { SpeechService } from "../../speech/service"
 import { SpeechNotConfiguredError } from "../../speech/providers/openai-compatible"
 import { requestAdmission } from "../request-admission"
 import { isLocalRequest } from "../../remote-control/request-origin"
+import { LIVE_VOICE_CONSENT_PATH, LIVE_VOICE_NOTICE_VERSION } from "../../speech/live-voice-contract"
 
 interface RouteDeps {
   speechService: SpeechService
@@ -43,9 +44,14 @@ function respondSpeechError(error: unknown, fallback: string, request: FastifyRe
 export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/speech/capabilities", async (request, reply) => {
     try {
+      const capabilities = deps.speechService.getCapabilities()
+      if (!isLocalRequest(request)) return { ...capabilities, desktopVoiceConversationEngine: false }
       return {
-        ...deps.speechService.getCapabilities(),
-        ...(!isLocalRequest(request) ? { desktopVoiceConversationEngine: false } : {}),
+        ...capabilities,
+        ...(capabilities.desktopVoiceConversationEngine ? { desktopLiveVoiceConsent: {
+          "gemini-live": deps.speechService.desktopLiveVoiceConsent("gemini-live"),
+          "openai-realtime": deps.speechService.desktopLiveVoiceConsent("openai-realtime"),
+        } } : {}),
       }
     } catch { return reply.code(503).send({ error: "Speech capabilities unavailable" }) }
   })
@@ -65,6 +71,16 @@ export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
       const engine = deps.speechService.desktopVoiceConversationEngine(parsed.data.engine)
       return engine ? { engine } : reply.code(404).send()
     } catch { return reply.code(503).send({ error: "Conversation engine could not be saved" }) }
+  })
+  const consentBody = z.object({ engine: z.enum(["gemini-live", "openai-realtime"]), version: z.literal(LIVE_VOICE_NOTICE_VERSION) }).strict()
+  app.put(LIVE_VOICE_CONSENT_PATH, async (request, reply) => {
+    if (!isLocalRequest(request)) return reply.code(404).send()
+    const parsed = consentBody.safeParse(request.body)
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid voice notice" })
+    try {
+      const version = deps.speechService.desktopLiveVoiceConsent(parsed.data.engine, true)
+      return reply.code(version === undefined ? 404 : 204).send()
+    } catch { return reply.code(503).send({ error: "Voice consent could not be saved" }) }
   })
 
   app.post("/api/speech/transcribe", async (request, reply) => {

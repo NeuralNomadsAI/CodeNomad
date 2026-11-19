@@ -284,3 +284,29 @@ test("desktop engine choice defaults to Classic and persists separately for each
   assert.deepEqual((await app.inject(url)).json(), { engine: "gemini-live" })
   assert.throws(() => readFileSync(file), { code: "ENOENT" })
 })
+
+test("desktop live notice acceptance is versioned and isolated by profile and provider", async t => {
+  const { app, settings, capabilities } = fixture(t)
+  const identity = process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY
+  const channel = process.env.CODENOMAD_UPDATE_CHANNEL
+  t.after(() => {
+    if (identity === undefined) delete process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY
+    else process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY = identity
+    if (channel === undefined) delete process.env.CODENOMAD_UPDATE_CHANNEL
+    else process.env.CODENOMAD_UPDATE_CHANNEL = channel
+  })
+  process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY = settings.getProfileScope().configIdentity
+  process.env.CODENOMAD_UPDATE_CHANNEL = "voice-one"
+  const accept = (version: number, remoteAddress = "127.0.0.1") => app.inject({
+    method: "PUT", url: "/api/speech/conversation/consent", remoteAddress, payload: { engine: "gemini-live", version },
+  })
+  assert.equal((await accept(0)).statusCode, 400)
+  assert.equal((await accept(1, "192.0.2.80")).statusCode, 404)
+  assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, {})
+  assert.equal((await accept(1)).statusCode, 204)
+  assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, { "gemini-live": 1 })
+  process.env.CODENOMAD_UPDATE_CHANNEL = "voice-two"
+  assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, {})
+  process.env.CODENOMAD_UPDATE_CHANNEL = "voice-one"
+  assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, { "gemini-live": 1 })
+})

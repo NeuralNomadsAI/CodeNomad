@@ -6,6 +6,7 @@ import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscr
 import { SettingsReadError } from "../settings/yaml-doc-store"
 import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
 import { resolveVoiceConversationProvider, voiceConversationCapabilities, type VoiceConversationProviderSettings } from "./voice-conversation-config"
+import { LIVE_VOICE_NOTICE_VERSION, type LiveVoiceEngine } from "./live-voice-contract"
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -145,6 +146,20 @@ export class SpeechService {
     if (selected === undefined) return "classic"
     if (selected === "classic" || selected === "gemini-live" || selected === "openai-realtime") return selected
     throw new SettingsReadError()
+  }
+
+  desktopLiveVoiceConsent(engine: LiveVoiceEngine, accept = false): number | undefined {
+    const store = this.settings.desktopLiveVoiceConsentStore(engine)
+    if (!store) return
+    if (accept) {
+      store.replace({ notice: { version: LIVE_VOICE_NOTICE_VERSION } })
+      return LIVE_VOICE_NOTICE_VERSION
+    }
+    try {
+      if (store.getAuthoritativeOwner("notice").version === LIVE_VOICE_NOTICE_VERSION) return LIVE_VOICE_NOTICE_VERSION
+    } catch (error) {
+      if (!(error instanceof SettingsReadError)) throw error
+    }
   }
 
   async transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
