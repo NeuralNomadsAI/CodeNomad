@@ -237,19 +237,21 @@ capability is deliberately never probed during an observed compaction.
 
 Candidate traversal constructs no cold Locations; native HTTP middleware may
 warm or rebuild the single bootstrap root, and root eviction or a config rebuild
-constructs it again. Snapshots can go stale after leases release, so per-kind
+constructs it again. Pending recovery waits for catalogue activation at that
+owned root, then rechecks ownership and compaction admission and dispatches once.
+The authenticated, validated snapshot itself establishes coverage. Snapshots
+can go stale after leases release, so per-kind
 mutation fences and settlement tombstones stay essential.
 
 ### Fixed pruning broker admission
 
 The session-pruning, session-history, ranked-history, navigation, Images
-conversation, extension assets, API 4 session reads and pending bootstrap brokers
+conversation, extension assets and API 4 session reads
 use targeted Location preparation. Workspace-record and root-Location identities,
 the captured connection and monotone display/deletion fences span the wait. Session
 descriptors establish session ownership before any activation-capable catalogue
 read. History prepares the selected page directory; ranked history prepares each
-queried directory, including continuations. Pending prepares only its established
-owned bootstrap and retains loaded-only candidates.
+queried directory, including continuations.
 
 Each broker revalidates ownership after preparation, checks the same connection
 and signal beside dispatch and fences publication after IO. Extension grants are

@@ -71,11 +71,12 @@ its entered deletion fence through the settlement of admitted IO and uses one
 connection throughout Location resolution, preparation, dispatch and Git exclusion.
 API 4 passes its captured outer connection and current grant into that resolver.
 
-Pending recovery prepares only its established, authorized execution-host bootstrap.
-Candidate ownership is admitted before preparation and revalidated afterward; the
-fixed snapshot keeps its loaded-only candidate semantics. Root identity, compaction
-admission, cancellation and connection are checked beside its single HTTP dispatch.
-The route preserves per-directory non-authoritative errors and retained queues.
+Pending recovery sends a single loaded-only snapshot request at its established,
+authorized execution-host root after the root's catalogue reports the plugin active.
+Candidate ownership is checked before dispatch and before publication.
+Root identity, compaction admission, cancellation and
+connection are checked beside dispatch. The validated response provides coverage;
+per-directory failures retain existing queues.
 
 The UI offers individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique
