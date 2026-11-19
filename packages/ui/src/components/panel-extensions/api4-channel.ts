@@ -1,10 +1,16 @@
 import { z } from "zod"
-import { onCleanup } from "solid-js"
+import { createEffect, createMemo, on, onCleanup } from "solid-js"
 import { assetTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-contract"
 import { generationTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-gallery-contract"
-import { PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/contract"
+import { PANEL_EXTENSION_LIMITS, type ForgeWorkItemKind, type PanelWorkItemWorktree } from "../../../../server/src/panel-extensions/contract"
 import { panelExtensionsApi4 } from "../../lib/panel-extensions-api"
 import { serverEvents } from "../../lib/server-events"
+import { tGlobal } from "../../lib/i18n"
+import { showToastNotification, type ToastHandle } from "../../lib/notifications"
+import { HttpResponseError } from "../../lib/retryable-file-search"
+import { alertDialogState, showConfirmDialog } from "../../stores/alerts"
+import { createWorktree, ensureWorktreesLoaded, getParentSessionId, getWorktreeForSession, getWorktrees, reloadWorktrees,
+  setWorktreeSlugForParentSession } from "../../stores/worktrees"
 import { getActiveCatalogLocation } from "../../stores/session-api"
 import { requestComposerFocus } from "../../stores/composer-focus"
 import { resolveImagesConversation, showImagesConversation } from "../../stores/images-conversation"
@@ -16,14 +22,17 @@ import { composePrefill, prefillMarkers, PREFILL_LIMITS } from "./composer-prefi
 
 /** Frame deadline is 20 s; the host answers first and cancels its own work. */
 export const API4_HOST_DEADLINE_MS = 19_500
-const MAX_PENDING = 4, PREFILL_INTERVAL_MS = 1_000, CHANGE_DELAY_MS = 300
+const MAX_PENDING = 4, PREFILL_INTERVAL_MS = 1_000, CHANGE_DELAY_MS = 300, REFUSED_QUIET_MS = 10_000
 
 const requestSchema = z.object({ type: z.literal("api4:request"), id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  capability: z.enum(["images", "composer", "conversation", "preferences"]), method: z.string().max(32), input: z.unknown() }).strict()
-const grants = { images: "session.images.read", composer: "composer.prefill", conversation: "images.conversation", preferences: "panel.preferences" } as const
+  capability: z.enum(["images", "composer", "conversation", "preferences", "worktrees"]), method: z.string().max(32), input: z.unknown() }).strict()
+const grants = { images: "session.images.read", composer: "composer.prefill", conversation: "images.conversation", preferences: "panel.preferences",
+  worktrees: "repository.worktrees.read" } as const
 const empty = z.object({}).strict()
 const listSchema = z.object({ cursor: z.string().max(4096).optional() }).strict()
 const readSchema = z.object({ target: assetTargetSchema, thumbnail: z.boolean() }).strict()
+const itemSchema = z.object({ kind: z.enum(["issue", "pullRequest"]), number: z.number().int().min(1).max(999_999_999) }).strict()
+class Refusal extends Error {}
 const prefillSchema = z.object({ text: z.string().max(64 * 1024), refs: z.array(z.union([assetTargetSchema, generationTargetSchema])).max(PREFILL_LIMITS.refs).optional() }).strict()
 
 // Displayed-session transcript changes restart the gallery; catalogue, configuration,
@@ -54,13 +63,16 @@ type Answer = { result: unknown; after?: () => void }
  * 19.5 s, and nothing is delivered after unmount or a session change.
  */
 export function useApi4Channel(props: {
-  instanceId: string; id: string; digest: string; permissions: readonly string[]; sessionId: string | null
+  instanceId: string; id: string; digest: string; name: string; permissions: readonly string[]; sessionId: string | null
   send: (value: unknown) => void; host: Api4Host
 }) {
-  const pending = new Set<AbortController>()
+  const pending = new Set<AbortController>(), lifetime = new AbortController()
+  let confirming = false, quietUntil = 0
   const authority = { instanceId: props.instanceId, id: props.id, digest: props.digest }
   const session = props.sessionId && props.sessionId !== "info" ? props.sessionId : null
   const granted = (permission: string) => props.permissions.includes(permission)
+  // The family's worktree as the inventory matches it, never the "root" fallback of a miss.
+  const familyWorktree = () => session ? getWorktreeForSession(props.instanceId, getParentSessionId(props.instanceId, session)) : undefined
   let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined
   let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false }
   const current = () => !disposed && connected && nativeConnected && (props.host.activeSessionId() ?? null) === props.sessionId
@@ -95,7 +107,13 @@ export function useApi4Channel(props: {
     if (!connected) abort()
     else invalidate(true, true)
   }))
-  onCleanup(() => { disposed = true; clearTimeout(timer); abort(); pending.clear() })
+  onCleanup(() => { disposed = true; clearTimeout(timer); abort(); pending.clear(); lifetime.abort() })
+  if (granted("repository.worktrees.read")) {
+    // Worktrees, their branches, or the family's worktree changed: the frame lists again.
+    const worktrees = createMemo(() => JSON.stringify([getWorktrees(props.instanceId).map(worktree => [worktree.slug, worktree.branch ?? null]),
+      familyWorktree()?.slug ?? null]))
+    createEffect(on(worktrees, () => { if (!disposed && connected && nativeConnected) props.send({ type: "worktrees:changed" }) }, { defer: true }))
+  }
 
   const location = () => getActiveCatalogLocation(props.instanceId).directory
   // Frame-supplied names select only these own entries (Maps, never property lookups on objects).
@@ -149,7 +167,85 @@ export function useApi4Channel(props: {
         return { result: (await panelExtensionsApi4.preferencesSet(authority, value, signal)).status }
       },
     }),
+    worktrees: table({
+      list: async (input, signal) => {
+        empty.parse(input)
+        const linked = await itemWorktrees(signal)
+        return { result: linked ?? "unavailable" }
+      },
+      open: (input, signal) => openWorktree(input, signal),
+    }),
   }) as Array<[keyof typeof grants, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>]>)
+
+  /** Linked item branches joined to the worktrees that check them out; null when the repository is unavailable. */
+  async function linkedWorktrees(signal: AbortSignal) {
+    const [answer] = await Promise.all([panelExtensionsApi4.workItemBranches(authority, signal), ensureWorktreesLoaded(props.instanceId)])
+    if (answer.status !== "ok") return null
+    const worktrees = getWorktrees(props.instanceId).filter(worktree => !worktree.nestedFolderMissing), current = familyWorktree()?.slug
+    return answer.branches.map(link => {
+      const slug = worktrees.find(worktree => worktree.branch === link.branch)?.slug
+      return { ...link, slug, current: slug !== undefined && slug === current }
+    })
+  }
+
+  async function itemWorktrees(signal: AbortSignal): Promise<PanelWorkItemWorktree[] | null> {
+    return (await linkedWorktrees(signal))?.map(({ slug, ...link }) => ({ ...link, worktree: slug !== undefined })) ?? null
+  }
+
+  async function itemWorktree(kind: ForgeWorkItemKind, number: number, signal: AbortSignal) {
+    const links = (await linkedWorktrees(signal))?.filter(link => link.kind === kind && link.number === number)
+    return links && { slug: links.find(link => link.current)?.slug ?? links.find(link => link.slug)?.slug, current: links.some(link => link.current) }
+  }
+
+  // The frame only asks; the host's own dialog decides, then creates and moves.
+  async function openWorktree(value: unknown, signal: AbortSignal): Promise<Answer> {
+    if (!granted("repository.worktrees.write")) throw new Error("Unavailable")
+    const { kind, number } = itemSchema.parse(value)
+    if (!session) return { result: "no-session" }
+    if (confirming || alertDialogState() || Date.now() < quietUntil) return { result: "busy" }
+    const target = await itemWorktree(kind, number, signal)
+    if (!target) return { result: "unavailable" }
+    if (target.current) return { result: "current" }
+    return { result: "confirming", after: () => { void confirmWorktree(session, kind, number, target.slug) } }
+  }
+
+  async function confirmWorktree(session: string, kind: ForgeWorkItemKind, number: number, slug: string | undefined) {
+    // One dialog at a time, never over another host dialog, and none for a while after a refusal,
+    // so a panel cannot keep the modal up while the user reaches its checkbox.
+    if (confirming || alertDialogState() || disposed || Date.now() < quietUntil) return
+    confirming = true
+    const item = tGlobal(`panelExtensions.worktrees.${kind}`, { number })
+    let progress: ToastHandle | undefined
+    try {
+      const accepted = await showConfirmDialog(tGlobal(slug ? "panelExtensions.worktrees.confirmMove" : "panelExtensions.worktrees.confirmCreate", { item, worktree: slug }), {
+        title: props.name, confirmLabel: tGlobal(slug ? "panelExtensions.worktrees.move" : "panelExtensions.worktrees.create") }, lifetime.signal)
+      if (!accepted) quietUntil = Date.now() + REFUSED_QUIET_MS
+      if (!accepted || disposed) return
+      // Consent is read again, and the confirmed worktree must still be the item's.
+      const target = await itemWorktree(kind, number, lifetime.signal)
+      if (!target || (slug !== undefined && target.slug !== slug)) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
+      let destination = target.slug
+      if (destination === undefined) {
+        progress = showToastNotification({ category: "files", variant: "info", transient: true, duration: 60_000,
+          message: tGlobal("panelExtensions.worktrees.creating", { item }) })
+        const branch = await panelExtensionsApi4.workItemBranch(authority, kind, number, lifetime.signal)
+        if (branch.status !== "ok") throw new Refusal(tGlobal(`panelExtensions.worktrees.${branch.status}`, { item, branch: "branch" in branch ? branch.branch : "" }))
+        destination = (await createWorktree(props.instanceId, branch.branch)).slug
+        await reloadWorktrees(props.instanceId)
+      }
+      if (disposed) return
+      // The family move reports its own failure.
+      await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination).catch(() => {})
+    } catch (error) {
+      if (lifetime.signal.aborted) return
+      showToastNotification({ category: "files", variant: "error", message: error instanceof Refusal ? error.message
+        : error instanceof HttpResponseError && error.code === "nested_folder_unavailable" ? tGlobal("instanceShell.worktree.create.nestedFolderUnavailable")
+          : tGlobal("panelExtensions.worktrees.error", { item }) })
+    } finally {
+      progress?.dismiss()
+      confirming = false
+    }
+  }
 
   async function conversation(mode: "open" | "new", signal: AbortSignal): Promise<Answer> {
     const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.sessionId ?? null })

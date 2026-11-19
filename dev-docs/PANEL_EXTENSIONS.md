@@ -63,8 +63,8 @@ HTML, 32 installed extensions, 16 MiB persisted installed-extension store.
   version. This host supports APIs 1 to 4. API 2 requires exactly
   `["session.context", "session.assets.read"]` and API 3 exactly
   `["session.context", "repository.workItems.read"]`; API 4 takes
-  `session.context` plus a non-empty subset of its six permissions, each at most
-  once, in any order. An unsupported major API or unknown permission is
+  `session.context` plus a non-empty subset of its nine permissions, each at most
+  once, in any order, each dependent one only with the one it extends. An unsupported major API or unknown permission is
   rejected, without executing author code, and the catalogue shows it incompatible.
 - Author, name, license and repository are mandatory. Repository must be an HTTPS
   GitHub repository URL, without credentials/query/fragment. Use a real
@@ -240,6 +240,9 @@ exact package before and after IO. Never add a permission registry, generic RPC 
 | `images.conversation` | `conversation.status()`, `conversation.open()`, `conversation.startNew()` | the displayed conversation's Location (else the instance's), `images-conversation.ts` |
 | `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
 | `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
+| `repository.workItems.read` | API 3's `workItems.list(options)`, `workItems.open(kind, number)`, same messages and routes | as API 3 |
+| `repository.worktrees.read` (requires the above) | `worktrees.list()`, `worktrees.onChanged(listener)` | the repository's linked branches (`forge/work-item-branches.ts`) joined to the worktree inventory |
+| `repository.worktrees.write` (requires the above) | `worktrees.open(kind, number)` | a host dialog, then `workItemBranch`, `createWorktree` and the family move |
 
 ```js
 const status = await codenomad.images.status()
@@ -256,6 +259,9 @@ await codenomad.conversation.status()
 await codenomad.conversation.open() // { opened, created }; codenomad.conversation.startNew() → { opened }
 await codenomad.preferences.get() // object, or "unavailable"
 await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" | "invalid" | "unavailable"
+await codenomad.worktrees.list() // [{ kind, number, branch, worktree, current }], or "unavailable"
+await codenomad.worktrees.open("pullRequest", 7) // "confirming" | "current" | "busy" | "no-session" | "unavailable"
+codenomad.worktrees.onChanged(() => { /* list again */ })
 ```
 
 - **Status** reads the session's Location (without a displayed conversation, the
@@ -308,6 +314,22 @@ await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" |
   store, another digest or a missing package answers `unavailable`, never rewriting the
   file. An invalid stored entry alone reads `{}`. Panels keep only their own display
   settings there; never treat preferences as a security boundary.
+- **Worktrees**: an item's link is host-owned data, `branch.<name>.codenomad-work-item`
+  (`<host>/<path>#<kind>/<number>`) in the repository's config, so Git drops it with the
+  branch; a branch name alone is never proof, and links of another repository identity or
+  whose ref is gone are ignored. `list` joins the links to the worktree inventory;
+  `current` is the inventory's match for the displayed family, never the `root` fallback of
+  a miss. `onChanged` fires when the inventory, a branch or the family's worktree changes.
+  `open` answers `confirming` and then shows the host's own confirmation (title: the
+  extension's name), one at a time and never over another host dialog, aborted on unmount;
+  after a refusal the mounting answers `busy` for 10 s, so a panel cannot hold the modal up.
+  On acceptance the host reads the links again (consent rechecked) and refuses a changed
+  target; without a worktree, `workItemBranch` returns the linked branch or creates one
+  under a per-repository lock, never forced: `issue-N` at HEAD, or `pr-N` fetched from the
+  selected remote's `refs/pull/N/head` (GitHub, Gitea) or `refs/merge-requests/N/head`
+  (GitLab) into a scratch ref, then `git branch` (an unlinked branch of that name is a
+  `conflict`). Then `createWorktree` reuses that branch and `setWorktreeSlugForParentSession`
+  moves the family, reporting its own failure; the created worktree stays.
 - **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
   and method names select only own entries of `Map`s; never index an object with frame
   data (inherited names such as `constructor` would run). Inputs are validated per
@@ -408,7 +430,7 @@ node scripts/test-panel-extension-native.mjs --api2
 node scripts/test-panel-extension-native.mjs --api3
 node scripts/test-panel-extension-native.mjs --api4
 node scripts/test-panel-extension-electron.mjs # real preload, createWindow webPreferences; Linux may add --no-sandbox
-node --import tsx --test packages/server/src/forge/forge.test.ts packages/server/src/server/routes/panel-extension-work-items.test.ts
+node --import tsx --test packages/server/src/forge/forge.test.ts packages/server/src/forge/work-item-branches.test.ts packages/server/src/server/routes/panel-extension-work-items.test.ts
 node --conditions=browser --import tsx --test packages/ui/src/components/panel-extensions/work-items-channel.test.ts
 node --import tsx --test packages/ui/src/components/panel-extensions/image-bounds.test.ts
 node --import tsx --test packages/server/src/panel-extensions/api4.test.ts packages/server/src/server/routes/panel-extension-api4.test.ts packages/server/src/remote-control/panel-extension-remote.test.ts
@@ -464,5 +486,6 @@ host, OS version and each summary's `real` line in the review.
 - Right-panel customization keeps Extensions below a separator in a native disclosure, collapsed on each popup opening. Expanding mounts one compact searchable list combining installed and online addons, deduplicated by ID; collapse, dismissal and inactive/instance changes dispose its requests and confirmations; never add separate list modes or a floating extension window. The per-addon checkbox above the disclosure is the sole activation control, including for disabled installed addons; never add a manager switch or a per-window visibility gate. Reset changes built-in layout only, never addon consent. Keep metadata on hover/focus and technical consent details folded; retain explicit trust and digest-bound replacement/removal. Installation and activation are profile-wide. Legacy folder grants never become general consent.
 - External panel extensions use `components/panel-extensions/` and `styles/panels/panel-extensions.css`. The official online catalogue is in `NeuralNomadsAI/CodeNomad-Extensions`; metadata discovery never downloads author code. Inspect/install revalidate the exact index/manifest/digest and use bounded credential-free HTTPS GitHub release downloads, never client-provided URLs. Never import author JavaScript into the main renderer or expose native/OpenCode bridges. ZIPs contain only a manifest and a self-contained HTML panel; install/replacement revokes activation. API versions cover only the public `window.codenomad` contract; never make internal Solid modules or import paths part of it.
 - Extension API 3 requires explicit `repository.workItems.read` consent. `work-items-channel.ts` takes only kind/query/page/number from addons; the project folder, remote, provider and credentials stay host-side in `server/src/forge/` (CLI sign-ins or anonymous REST on the public forges only, never stored tokens, never `--paginate`, never addon text inside forge query syntax, never anonymous requests to other hosts). Opening uses the server-built forge page through `openExternalUrl`, rate-limited; never open addon-supplied URLs. Each API version carries exactly its own capability.
+- API 4 worktree writes happen only after the host's own dialog; addons never name a branch, remote, revision or worktree.
 - Extension API 4 is a finite permission set (`PANEL_EXTENSION_API4_PERMISSIONS` in `panel-extensions/contract.ts`): one permission = one capability, fixed methods, one install sentence in every locale and its own server-side check. Adding a permission means a new contract entry, schema case, bridge object, route and sentence together; never a registry, a pass-through method or an author-chosen session/Location. `api4-channel.ts` owns the 19.5 s deadline, four-request cap and mount/session fencing for every API 4 method; keep APIs 1 to 3 on their exact tuples and channels.
 - Extension API 1 stays context-only; API 2 requires explicit `session.assets.read` consent. `assets-channel.ts` derives session authority from the current mounted host, never author selectors, and exposes only bounded asset pages/exact digest-bound embedded reads. Use the presence-owned history bundle's fixed `assets`/`assetRead` methods, never transcript stores, generic RPC, remote downloads or filesystem fallbacks. Recheck consent and Location ownership after IO; revoke old-port/session/reconnect results. Gallery HTML belongs in the independent catalogue repository; never add it to the application renderer.

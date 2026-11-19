@@ -6,10 +6,11 @@ export const PANEL_EXTENSION_LIMITS = { archiveBytes: 2 * 1024 * 1024, htmlBytes
 /**
  * API 4's finite permission set: `session.context` plus a non-empty subset of
  * these, each one capability with fixed methods (dev-docs/PANEL_EXTENSIONS.md#api-4).
- * `session.images.prompts` requires `session.images.read`.
+ * `session.images.prompts` requires `session.images.read`; `repository.worktrees.read`
+ * requires `repository.workItems.read`, and `repository.worktrees.write` requires `repository.worktrees.read`.
  */
 export const PANEL_EXTENSION_API4_PERMISSIONS = ["session.images.read", "session.images.prompts", "composer.prefill", "images.conversation",
-  "opencode.designAgent", "panel.preferences"] as const
+  "opencode.designAgent", "panel.preferences", "repository.workItems.read", "repository.worktrees.read", "repository.worktrees.write"] as const
 export type PanelExtensionApi4Permission = typeof PANEL_EXTENSION_API4_PERMISSIONS[number]
 
 export type PanelExtensionManifest = {
@@ -92,6 +93,19 @@ export interface ForgeWorkItem {
 }
 
 export type ForgeUnavailableReason = "no_remote" | "unsupported_host" | "sign_in" | "rate_limited"
+
+/** API 4 `worktrees.list()` entry: a local branch the host created for an item of the project's repository. */
+export interface PanelWorkItemWorktree {
+  kind: ForgeWorkItemKind
+  number: number
+  branch: string
+  /** Checked out in one of the project's worktrees. */
+  worktree: boolean
+  /** That worktree holds the displayed conversation's family. */
+  current: boolean
+}
+
+export type PanelWorktreeOpenStatus = "confirming" | "current" | "busy" | "no-session" | "unavailable"
 
 export type ForgeWorkItemsResult =
   | { status: "ok"; repository: ForgeRepository; items: ForgeWorkItem[]; page: number; hasMore: boolean; total?: number }

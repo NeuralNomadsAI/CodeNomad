@@ -388,6 +388,7 @@ export {
   getDefaultWorktreeSlug,
   getParentSessionId,
   getWorktreeForDirectory,
+  getWorktreeForSession,
   getWorktreeSlugForParentSession,
   getWorktreeSlugForSession,
   setWorktreeSlugForParentSession,

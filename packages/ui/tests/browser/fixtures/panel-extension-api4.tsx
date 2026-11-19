@@ -16,6 +16,9 @@ import { getAttachments } from "../../../src/stores/attachments"
 import { fetchAgents, fetchSessions, hydrateRestoredSessionChain } from "../../../src/stores/session-api"
 import { updateSessionAgent } from "../../../src/stores/session-actions"
 import { applyUiSettings } from "./ui-settings"
+import { serverApi } from "../../../src/lib/api-client"
+import AlertDialog from "../../../src/components/alert-dialog"
+import { Toaster } from "solid-toast"
 import "../../../src/index.css"
 
 // The real composer beside the real right panel, so API 4 frames act through the
@@ -58,6 +61,22 @@ const client: any = {
   model: { default: async () => ({ data: { providerID: "fixture", id: "chosen" } }) },
   message: { list: async () => ({ data: [], cursor: {} }) },
 }
+// The project's worktrees; creating one and moving a family are recorded, and moves can be refused.
+const worktrees: any[] = [{ slug: "root", label: "main", directory: "/fixture", kind: "root", branch: "main" }]
+const worktreeCalls: unknown[] = [], refusal = { move: false }
+serverApi.fetchWorktrees = async () => ({ isGitRepo: true, defaultDirectory: "/fixture/.codenomad/worktrees", worktrees: [...worktrees] })
+serverApi.createWorktree = async (_id, input) => {
+  worktreeCalls.push({ create: input.slug })
+  const entry = { slug: input.slug, label: input.slug, directory: `/fixture/.codenomad/worktrees/${input.slug}`, kind: "worktree", branch: input.slug }
+  worktrees.push(entry)
+  return entry
+}
+serverApi.moveSessionFamily = async (_id, sessionId, input) => {
+  worktreeCalls.push({ move: [sessionId, input.worktreeSlug] })
+  if (refusal.move) throw new Error("Fixture move refused")
+  infos[sessionId]!.location = { directory: worktrees.find(entry => entry.slug === input.worktreeSlug)!.directory }
+  return { rootSessionId: sessionId, sessionIds: [sessionId], worktreeSlug: input.worktreeSlug } as any
+}
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 addInstance({ id: instanceId, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client })
 setActiveInstanceId(instanceId)
@@ -94,7 +113,7 @@ function Fixture() {
     </Show>
   </div>
 }
-render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /><AlertDialog /><Toaster position="top-right" /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 
 // Frames report answers that outlive them (navigation, closing) to the host page.
 const frameMessages: unknown[] = []
@@ -111,6 +130,9 @@ window.addEventListener("message", event => { if (event.data?.fixtureAnswer) fra
   hydrationWaiting: () => waiting.length,
   releaseHydration: () => { held = undefined; for (const resolve of waiting.splice(0)) resolve() },
   openPanel: () => setPanelOpen(true),
+  worktreeCalls: () => worktreeCalls.splice(0),
+  refuseMoves: (value: boolean) => { refusal.move = value },
+  location: (id: string) => infos[id]?.location?.directory ?? "/fixture",
   changed: () => (serverEvents as any).dispatchBatch([{ type: "storage.stateChanged", owner: "panelExtensions", value: {} }]),
   event: (event: unknown) => (serverEvents as any).dispatchBatch([event]),
   snapshot: () => ({ ...state, active: active(), panelOpen: panelOpen(),

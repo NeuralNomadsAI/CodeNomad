@@ -7,6 +7,7 @@ import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
+import type { WorkItemBranch, WorkItemBranchResult } from "../../../server/src/forge/work-item-branches"
 
 async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(`${CODENOMAD_API_BASE ?? ""}/api/panel-extensions${suffix}`, {
@@ -36,6 +37,10 @@ export const panelExtensionsApi4 = {
     api4<{ status: "ok"; value: Record<string, unknown> } | { status: "unavailable" }>(id, "preferencesGet", authority, signal),
   preferencesSet: ({ id, ...authority }: Authority, value: unknown, signal: AbortSignal) =>
     api4<{ status: PanelPreferencesSetStatus }>(id, "preferencesSet", { ...authority, value }, signal),
+  workItemBranches: ({ id, ...authority }: Authority, signal: AbortSignal) =>
+    api4<{ status: "ok"; branches: WorkItemBranch[] } | { status: "unavailable" }>(id, "workItemBranches", authority, signal),
+  workItemBranch: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, signal: AbortSignal) =>
+    api4<WorkItemBranchResult>(id, "workItemBranch", { ...authority, kind, number }, signal),
 }
 export const panelExtensionsApi = {
   assets: (instanceId: string, id: string, digest: string, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>

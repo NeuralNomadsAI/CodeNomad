@@ -59,6 +59,28 @@ test("work item routes require explicit API 3 consent and the exact digest, read
   } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
+test("API 4 reads work items with their own permission; item branches each need their worktree permission", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-item-branches-route-")), app = Fastify(), store = new PanelExtensionStore(directory)
+  const items = await readPanelExtensionArchive(fixtureArchive("<p>Items</p>", { apiVersion: 4, permissions: ["session.context", "repository.workItems.read"] }))
+  const reader = await readPanelExtensionArchive(fixtureArchive("<p>Read</p>", { id: "example.reader", apiVersion: 4,
+    permissions: ["session.context", "repository.workItems.read", "repository.worktrees.read"] }))
+  const writer = await readPanelExtensionArchive(fixtureArchive("<p>Write</p>", { id: "example.writer", apiVersion: 4,
+    permissions: ["session.context", "repository.workItems.read", "repository.worktrees.read", "repository.worktrees.write"] }))
+  const forge = { list: async () => ({ status: "unavailable", reason: "no_remote" }), branchSource: async () => undefined } as unknown as ForgeWorkItems
+  registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: () => ({ id: "i", path: "/projects/app" }) } as any })
+  const post = (pkg: typeof items, method: string, extra = {}) => app.inject({ method: "POST", url: `/api/panel-extensions/${pkg.manifest.id}/${method}`,
+    payload: { instanceId: "i", digest: pkg.digest, ...extra } }).then(response => response.statusCode)
+  const page = { kind: "issue", query: "", page: 1, fresh: false }, item = { kind: "pullRequest", number: 7 }
+  try {
+    for (const pkg of [items, reader, writer]) { await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true) }
+    assert.deepEqual(await Promise.all([post(items, "workItems", page), post(items, "workItemBranches"), post(items, "workItemBranch", item)]), [200, 403, 403])
+    assert.deepEqual(await Promise.all([post(reader, "workItemBranches"), post(reader, "workItemBranch", item)]), [200, 403])
+    assert.deepEqual(await Promise.all([post(writer, "workItemBranches"), post(writer, "workItemBranch", item)]), [200, 200])
+    assert.equal(await post(writer, "workItemBranch", { kind: "pullRequest", number: 0 }), 400)
+    assert.equal(await post(writer, "workItemBranch", { ...item, branch: "main" }), 400, "addons never name the branch")
+  } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
 test("a caller that goes away cancels its host read", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-work-items-abort-")), app = Fastify(), store = new PanelExtensionStore(directory)
   const pkg = await readPanelExtensionArchive(fixtureArchive("<p>Contribute</p>", API3))

@@ -13,6 +13,9 @@ import { PANEL_EXTENSION_API4_PERMISSIONS } from "../../../server/src/panel-exte
 import { registerPanelExtensionRoutes } from "../../../server/src/server/routes/panel-extensions"
 import { registerPanelExtensionApi4Routes } from "../../../server/src/server/routes/panel-extension-api4"
 import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
+import { registerPanelExtensionWorkItemRoutes } from "../../../server/src/server/routes/panel-extension-work-items"
+import type { ForgeWorkItems } from "../../../server/src/forge/work-items"
+import { execFileSync } from "node:child_process"
 
 // The real host routes, store, bridge, channels and composer; only OpenCode is a fake.
 const instanceId = "api4-instance"
@@ -22,7 +25,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>, root: string, stor
 const app = Fastify()
 const rpc = { calls: [] as Array<{ method: string; input: any }>, hold: undefined as undefined | ((method: string) => Promise<void>),
   references: [] as unknown[], conversation: "ses_images", image: { status: "asset", mime: "image/png", uri: "" } as Record<string, unknown> }
-let installed: PanelExtensionPackage | undefined, realPng = ""
+let installed: PanelExtensionPackage | undefined, realPng = "", repository = ""
 const transit = { hold: undefined as undefined | (() => Promise<void>) }
 
 const png = (width: number, height: number) => {
@@ -63,6 +66,16 @@ before(async () => {
       ownsLocation: async (id: string, location: { directory: string }) => id === instanceId && location.directory === "/fixture",
       desktopPluginsReady: async () => {}, getWorktreeIdentityForPath: async () => "/fixture", getServiceWslDistro: () => undefined,
       getHostPathForServicePath: async (_id: string, value: string) => value } })
+  // Work item branches are real Git: a clone whose origin publishes pull request 7's head.
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" }).trim()
+  const remote = path.join(root, "remote")
+  repository = path.join(root, "clone")
+  git(root, "init", "-q", "-b", "main", remote)
+  git(remote, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "base")
+  git(remote, "update-ref", "refs/pull/7/head", "HEAD")
+  git(root, "clone", "-q", remote, repository)
+  const forge = { branchSource: async () => ({ provider: "github", host: "github.com", path: "o/r", name: "origin" }) } as unknown as ForgeWorkItems
+  registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: (id: string) => id === instanceId ? { id, path: repository } as any : undefined } })
   fixture = await startProductFixture("panel-extension-api4")
   const canvas = await fixture.browser.newPage()
   realPng = await canvas.evaluate(() => { const element = document.createElement("canvas"); element.width = 400; element.height = 300; return element.toDataURL("image/png") })
@@ -82,8 +95,10 @@ const panel = `<p id="ctx"></p><script>
   window.call = (path, ...args) => { const [object, method] = path.split('.');
     return Promise.resolve().then(() => codenomad[object][method](...args)).then(ok => ({ ok }), error => ({ error: error.message })); };
   window.report = (path, ...args) => { void window.call(path, ...args).then(answer => parent.postMessage({ fixtureAnswer: answer }, '*')); };
-  window.objects = () => ['images', 'composer', 'conversation', 'preferences', 'assets', 'workItems'].filter(name => codenomad[name]);
+  window.objects = () => ['images', 'composer', 'conversation', 'preferences', 'assets', 'workItems', 'worktrees'].filter(name => codenomad[name]);
+  window.worktreeChanges = 0;
   if (codenomad.images) codenomad.images.onChanged(detail => window.changes.push(detail));
+  if (codenomad.worktrees) codenomad.worktrees.onChanged(() => window.worktreeChanges++);
   codenomad.onContext(context => { document.querySelector('#ctx').textContent = String(context.sessionId) + ':' + context.apiVersion; });
 </script>`
 
@@ -392,7 +407,7 @@ const hostile = (type: string, capabilities: string[]) => {
 
 test("raw port: inherited method names never dispatch and frame data never becomes a host action", async () => {
   for (const [apiVersion, permissions, type, capabilities] of [
-    [4, ALL, "api4:request", ["images", "composer", "conversation", "preferences"]],
+    [4, ALL, "api4:request", ["images", "composer", "conversation", "preferences", "worktrees"]],
     [2, ["session.context", "session.assets.read"], "assets:request", [""]],
     [3, ["session.context", "repository.workItems.read"], "workItems:request", [""]],
   ] as const) {
@@ -472,5 +487,79 @@ test("preferences: saved through the real store, kept across mountings, bounded 
     await show(page, "ses_other"); await showPanel(page, "ses_other")
     assert.deepEqual(await call(page, "preferences.get"), { ok: { imagesPerTurn: 2 } })
     assert.deepEqual(await store.preferences(installed!.manifest.id, installed!.digest), { imagesPerTurn: 2 })
+  } finally { await page.close() }
+})
+
+const branches = () => execFileSync("git", ["-C", repository, "for-each-ref", "--format=%(refname:short)", "refs/heads/"], { encoding: "utf8" }).split(/\r?\n/).filter(Boolean)
+const worktreeCalls = (page: Page) => page.evaluate(() => (window as any).fixture.worktreeCalls())
+async function listed(page: Page, check: (entries: any[]) => boolean) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const answer = await call(page, "worktrees.list")
+    if (Array.isArray(answer.ok) && check(answer.ok)) return answer.ok
+    await page.waitForTimeout(100)
+  }
+  throw new Error("worktrees.list never matched")
+}
+
+test("worktrees: nothing happens before the host's own dialog is accepted; then the item's branch, worktree and family move", async () => {
+  await install()
+  const { page, errors } = await open()
+  try {
+    await showPanel(page)
+    assert.deepEqual(await call(page, "worktrees.list"), { ok: [] })
+    assert.deepEqual(await call(page, "worktrees.open", "pullRequest", 7), { ok: "confirming" })
+    await page.getByText("Create a worktree for pull request #7 and move this conversation there?").waitFor()
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 3), { ok: "busy" }, "one dialog at a time")
+    await page.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.waitForTimeout(300)
+    assert.deepEqual([branches(), await worktreeCalls(page)], [["main"], []], "a cancelled dialog creates nothing")
+    assert.deepEqual(await call(page, "worktrees.open", "pullRequest", 7), { ok: "busy" }, "a refused panel cannot reopen the dialog at once")
+
+    await show(page, "ses_other"); await showPanel(page, "ses_other")
+    await show(page, "ses_work"); await showPanel(page)
+    assert.deepEqual(await call(page, "worktrees.open", "pullRequest", 7), { ok: "confirming" })
+    await page.getByRole("button", { name: "Create and move", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.location("ses_work") === "/fixture/.codenomad/worktrees/pr-7")
+    assert.deepEqual(await worktreeCalls(page), [{ create: "pr-7" }, { move: ["ses_work", "pr-7"] }])
+    assert.equal(execFileSync("git", ["-C", repository, "rev-parse", "pr-7"], { encoding: "utf8" }), execFileSync("git", ["-C", repository, "rev-parse", "origin/main"], { encoding: "utf8" }))
+    await listed(page, entries => entries.length === 1 && entries[0].current)
+    assert.deepEqual(await call(page, "worktrees.list"), { ok: [{ kind: "pullRequest", number: 7, branch: "pr-7", worktree: true, current: true }] })
+    assert.ok(await frameOf(page).locator("body").evaluate(() => (window as any).worktreeChanges) > 0, "the frame hears worktree changes")
+    assert.deepEqual(await call(page, "worktrees.open", "pullRequest", 7), { ok: "current" })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("worktrees: a created worktree survives a refused move; an extension revoked during the dialog moves nothing", async () => {
+  await install()
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    await page.evaluate(() => (window as any).fixture.refuseMoves(true))
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 3), { ok: "confirming" })
+    await page.getByRole("button", { name: "Create and move", exact: true }).click()
+    await page.getByText("Unable to move session family").first().waitFor()
+    assert.deepEqual(await worktreeCalls(page), [{ create: "issue-3" }, { move: ["ses_work", "issue-3"] }])
+    assert.deepEqual((await listed(page, entries => entries.some(entry => entry.kind === "issue"))).filter(entry => entry.kind === "issue"),
+      [{ kind: "issue", number: 3, branch: "issue-3", worktree: true, current: false }])
+
+    await page.evaluate(() => (window as any).fixture.refuseMoves(false))
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 3), { ok: "confirming" })
+    await page.getByText("Move this conversation to issue-3, the worktree for issue #3?").waitFor()
+    await store.activate(installed!.manifest.id, installed!.digest, false)
+    await page.getByRole("button", { name: "Move", exact: true }).click()
+    await page.waitForTimeout(500)
+    assert.deepEqual([await worktreeCalls(page), await page.evaluate(() => (window as any).fixture.location("ses_work"))], [[], "/fixture"])
+  } finally { await page.close() }
+})
+
+test("worktrees: read-only consent lists links but has no way to open one", async () => {
+  await install(["session.context", "repository.workItems.read", "repository.worktrees.read"])
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    assert.deepEqual(await frameOf(page).locator("body").evaluate(() => (window as any).objects()), ["workItems", "worktrees"])
+    assert.ok(Array.isArray((await call(page, "worktrees.list")).ok))
+    assert.ok((await call(page, "worktrees.open", "issue", 3)).error)
   } finally { await page.close() }
 })

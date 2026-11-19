@@ -53,12 +53,17 @@ customization को **रिसेट गर्नुहोस्** ले buil
 | `images.conversation` | यस परियोजनाको छविहरू कुराकानी खोल्ने वा सुरु गर्ने। |
 | `opencode.designAgent` | यो विस्तार सक्षम रहेसम्म CodeNomad को Design agent र यसका छवि skill हरू OpenCode मा थप्छ। |
 | `panel.preferences` | यस प्यानलका आफ्नै सेटिङहरू सम्झने। |
+| `repository.workItems.read` | यो प्रोजेक्टको repository नाम र GitHub, GitLab वा Gitea/Forgejo मा यसका issues र pull requests पढ्ने (तपाईंको साइन इन गरिएको gh, glab वा tea मार्फत, वा सार्वजनिक repository का लागि अज्ञात रूपमा) र ब्राउजरमा खोल्ने। |
+| `repository.worktrees.read` (`repository.workItems.read` चाहिन्छ) | कुन issues र pull requests सँग CodeNomad ले बनाएको स्थानीय branch छ, र कुनै worktree ले त्यसलाई प्रयोग गर्छ कि गर्दैन हेर्ने। |
+| `repository.worktrees.write` (`repository.worktrees.read` चाहिन्छ) | issue वा pull request का लागि branch र worktree बनाउन (pull request repository बाट ल्याइन्छ) र देखाइएको कुराकानी त्यहाँ सार्न अनुरोध गर्ने। CodeNomad ले हरेक पटक तपाईंलाई सोध्छ। |
 
 asset पहुँच हाल mount भएको host/session अनुसार हुन्छ, लेखकले छानेको session अनुसार होइन। सत्र बदल्दा, disconnect वा consent खारेज गर्दा पुरानो पहुँच अमान्य हुन्छ।
 
 `session.images.prompts` भएको extension ले तपाईं वा agent ले छविहरू कुराकानीमा छविका लागि लेखेका prompt पढ्न सक्छ, र sandbox भए पनि तिनलाई अरूलाई दिन सक्छ, त्यसैले ती सुम्पन भरोसा गर्ने लेखकलाई मात्र यो अनुमति दिनुहोस्। `composer.prefill` ले थपेको पाठ तपाईंले सम्पादन नगरेसम्म वा **सन्देश पठाउनुहोस्** नरोजेसम्म कम्पोजरमा रहन्छ; यो कहिल्यै आदेशबाट सुरु हुँदैन, कहिल्यै खुला `@` उल्लेखमा अन्त्य हुँदैन, र छवि path सादा पाठका रूपमा उल्लेख गर्छ। कम्पोजरमा Ctrl+Z (macOS मा Cmd+Z) ले undo गर्दा यो हट्दैन। सुरक्षित प्यानल सेटिङ यस CodeNomad प्रोफाइलका हुन्, प्रति extension बढीमा 4 KiB; extension अक्षम गर्दा ती रहिरहन्छन्।
 
 वस्तुहरू परियोजना फोल्डरको `upstream` remote बाट, नभए `origin` बाट आउँछन्। CodeNomad ले तिनलाई तपाईंले पहिले नै साइन इन गरेको GitHub, GitLab वा Gitea CLI (`gh`, `glab`, `tea`) मार्फत, वा सार्वजनिक repository का लागि अज्ञात रूपमा पढ्छ र कुनै टोकन भण्डारण गर्दैन; एक्सटेन्सनले repository को नाम र वस्तुहरू मात्र देख्छ। अज्ञात पठन github.com, gitlab.com, codeberg.org र gitea.com मा मात्र हुन्छ; स्व-होस्ट गरिएको forge त्यसमा साइन इन गरिएको CLI मार्फत मात्र पढिन्छ। वस्तु खोल्दा CodeNomad ले त्यही forge मा त्यसको पृष्ठ तपाईंको ब्राउजरमा खोल्छ, बढीमा प्रति सेकेन्ड एक पटक; एक्सटेन्सनले अन्य ठेगानाहरू खोल्न सक्दैन।
+
+जोडिएको branch भनेको CodeNomad ले कुनै वस्तुका लागि बनाएको branch हो: हालको commit बाट `issue-N`, वा उही remote बाट ल्याइएको pull request को head मा `pr-N` (fork सहित)। Git ले लिङ्कलाई branch सँगै राख्छ र branch मेटाउँदा त्यसलाई पनि हटाउँछ; CodeNomad ले नबनाएको उही नामको branch कहिल्यै पुन: प्रयोग हुँदैन। extension ले अनुरोध मात्र गर्न सक्छ: CodeNomad ले वस्तुको नाम सहित आफ्नै संवाद देखाउँछ, त्यसपछि आवश्यक भए branch र worktree बनाउँछ र देखाइएको कुराकानी र यसका subagent कुराकानीहरू त्यहाँ सार्छ। `pr-N` branch को upstream हुँदैन; आफ्नो सामान्य Git आदेशले push गर्नुहोस्।
 
 लेखक code सीमित iframe मा चल्छ, trusted application renderer मा होइन। native/OpenCode bridge, credential पहुँच, general RPC, form, popup वा download पाउँदैन; network API र बाह्य स्रोत प्रतिबन्धित छन्। विस्तार UI addon हुन्, [OpenCode plugin](integrations.md) होइनन्।
 

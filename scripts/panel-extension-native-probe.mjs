@@ -19,11 +19,14 @@ const API4_FRAME_METHODS = {
   "images.conversation": { conversation: ["status", "open", "startNew"] },
   "opencode.designAgent": {},
   "panel.preferences": { preferences: ["get", "set"] },
+  "repository.workItems.read": { workItems: ["list", "open"] },
+  "repository.worktrees.read": { worktrees: ["list"] },
+  "repository.worktrees.write": { worktrees: ["open"] },
 }
 const LEGACY_FRAME_METHODS = { 1: {}, 2: { assets: ["list", "read"] }, 3: { workItems: ["list", "open"] } }
-const LISTENERS = { 2: { assets: ["onChanged"] }, 4: { images: ["onChanged"] } }
+const LISTENERS = { 2: { assets: ["onChanged"] }, 4: { images: ["onChanged"], worktrees: ["onChanged"] } }
 const ARGS = {
-  "assets.read": ["probe-target", { thumbnail: true }], "workItems.list": [{ kind: "issue" }], "workItems.open": ["issue", 1],
+  "assets.read": ["probe-target", { thumbnail: true }], "workItems.list": [{ kind: "issue" }], "workItems.open": ["issue", 1], "worktrees.open": ["issue", 1],
   "images.read": ["probe-target", { thumbnail: true }], "composer.prefill": [{ text: "probe" }], "preferences.set": [{ probe: true }],
 }
 

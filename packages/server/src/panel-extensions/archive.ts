@@ -4,11 +4,13 @@ import { z } from "zod"
 import { PANEL_EXTENSION_API4_PERMISSIONS, PANEL_EXTENSION_LIMITS, type PanelExtensionManifest } from "./contract"
 
 // `session.context` plus a non-empty subset of the finite API 4 set, each once;
-// prompts only with the gallery they annotate. Order is free.
+// each dependent permission only with the one it extends. Order is free.
+const API4_REQUIRES = [["session.images.prompts", "session.images.read"], ["repository.worktrees.read", "repository.workItems.read"],
+  ["repository.worktrees.write", "repository.worktrees.read"]] as const
 const Api4Permissions = z.array(z.enum(["session.context", ...PANEL_EXTENSION_API4_PERMISSIONS]))
   .min(2).max(PANEL_EXTENSION_API4_PERMISSIONS.length + 1)
   .refine(permissions => new Set(permissions).size === permissions.length && permissions.includes("session.context")
-    && (!permissions.includes("session.images.prompts") || permissions.includes("session.images.read")))
+    && API4_REQUIRES.every(([permission, required]) => !permissions.includes(permission) || permissions.includes(required)))
 
 export const ManifestFields = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{1,39}\.[a-z][a-z0-9-]{1,39}$/),

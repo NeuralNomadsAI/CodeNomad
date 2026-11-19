@@ -15,10 +15,11 @@ const design = ["session.context", ...PANEL_EXTENSION_API4_PERMISSIONS]
 
 test("API 4 manifests: session.context plus a non-empty subset of the finite set, in any order", async () => {
   assert.deepEqual((await api4(design)).manifest.permissions, design)
-  for (const permission of PANEL_EXTENSION_API4_PERMISSIONS.filter(value => value !== "session.images.prompts")) {
+  for (const permission of PANEL_EXTENSION_API4_PERMISSIONS.filter(value => value !== "session.images.prompts" && !value.startsWith("repository.worktrees."))) {
     assert.deepEqual((await api4(["session.context", permission])).manifest.permissions, ["session.context", permission])
   }
   assert.deepEqual((await api4(["composer.prefill", "session.images.prompts", "session.images.read", "session.context"])).manifest.apiVersion, 4)
+  assert.equal((await api4(["repository.worktrees.write", "repository.worktrees.read", "repository.workItems.read", "session.context"])).manifest.apiVersion, 4)
   for (const permissions of [
     ["session.context"], // empty subset
     ["session.images.read"], // no session.context
@@ -28,7 +29,8 @@ test("API 4 manifests: session.context plus a non-empty subset of the finite set
     ["session.context", "session.images.prompts", "composer.prefill"],
     ["session.context", "filesystem.read"], // unknown
     ["session.context", "session.assets.read"], // another API's permission
-    ["session.context", "repository.workItems.read"],
+    ["session.context", "repository.worktrees.read"], // worktrees without the items they belong to
+    ["session.context", "repository.workItems.read", "repository.worktrees.write"], // write without read
     [...design, "panel.preferences"],
     "session.context",
   ]) await assert.rejects(api4(permissions), { code: "invalid" }, JSON.stringify(permissions))
