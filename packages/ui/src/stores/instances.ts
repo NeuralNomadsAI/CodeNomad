@@ -285,7 +285,7 @@ const pendingRequestSyncs = new Map<string, {
 }>()
 const pendingRequestLiveness = new Map<string, Promise<void>>()
 const pendingRequestControllers = new Map<string, Set<AbortController>>()
-const pendingRecoveryNoticeChecks = new Map<string, AbortController>()
+const pendingRecoveryNoticeChecks = new Map<string, { controller: AbortController; current: () => boolean }>()
 const pendingRecoveryNoticeReads = new BackgroundReadQueue(1)
 const [incompletePendingRecovery, setIncompletePendingRecovery] = createSignal<ReadonlySet<string>>(new Set())
 export { incompletePendingRecovery }
@@ -458,7 +458,7 @@ function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
 }
 
 function invalidatePendingRequestSync(instanceId: string): void {
-  pendingRecoveryNoticeChecks.get(instanceId)?.abort()
+  pendingRecoveryNoticeChecks.get(instanceId)?.controller.abort()
   if (instances().has(instanceId)) markPendingRecovery(instanceId, true)
   bumpEpoch(pendingRequestSyncEpochs, instanceId)
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
@@ -793,6 +793,13 @@ function getPendingRequestLocations(instanceId: string, rootDirectory?: string, 
   ])
 }
 
+function pendingRecoveryNoticeScope(instanceId: string): string {
+  const folder = instances().get(instanceId)?.folder
+  const directories = (includeHistorical: boolean) => [...new Set(getPendingRequestLocations(instanceId, folder, includeHistorical)
+    .flatMap(location => location.directory ? [normalizeWorkspacePath(location.directory)] : []))].sort()
+  return JSON.stringify([folder, directories(true), directories(false)])
+}
+
 function pendingSnapshotResults<T>(
   snapshot: Extract<RecoverySnapshot, { supported: true }>,
   select: (entry: { permissions: PermissionRequest[]; forms: FormWithLocation[] }) => T[],
@@ -1101,18 +1108,27 @@ async function runPendingRequestSync(
             // This probe does not publish queue data or change the scan outcome.
             return () => {
               if (!isCurrent() || !notices.current()) return
+              const existing = pendingRecoveryNoticeChecks.get(instanceId)
+              if (existing?.current()) return
+              existing?.controller.abort()
               const controller = new AbortController()
-              pendingRecoveryNoticeChecks.set(instanceId, controller)
-              const probeCurrent = () => !controller.signal.aborted && isCurrent() && notices.current()
-              void pendingRecoveryNoticeReads.run(controller.signal, async () => {
-                const proof = await readPendingRequestSnapshot(instanceId, probeCurrent, {
-                  reconcileInventory: false, onlyDirectories: missing, noticeSignal: controller.signal,
-                })
+              const scope = pendingRecoveryNoticeScope(instanceId)
+              const probeCurrent = () => !controller.signal.aborted && notices.current()
+                && instances().get(instanceId)?.client === client
+                && pendingRequestSyncGenerations.get(instanceId) === generation
+                && pendingRecoveryNoticeScope(instanceId) === scope
+              const check = { controller, current: probeCurrent }
+              pendingRecoveryNoticeChecks.set(instanceId, check)
+              void pendingRecoveryNoticeReads.run(controller.signal, () => readPendingRequestSnapshot(instanceId, probeCurrent, {
+                reconcileInventory: false, onlyDirectories: missing, noticeSignal: controller.signal,
+              })).then(async proof => {
+                // Let an overlapping real scan confirm recovery before re-arming.
+                await pendingRequestSyncs.get(instanceId)?.promise.catch(() => {})
                 if (probeCurrent() && proof.supported) {
                   notices.release([...covered, ...proof.directories.filter(entry => entry.status === "excluded").map(entry => entry.directory)])
                 }
               }).catch(() => {}).finally(() => {
-                if (pendingRecoveryNoticeChecks.get(instanceId) === controller) pendingRecoveryNoticeChecks.delete(instanceId)
+                if (pendingRecoveryNoticeChecks.get(instanceId) === check) pendingRecoveryNoticeChecks.delete(instanceId)
               })
             }
           }
@@ -1120,8 +1136,11 @@ async function runPendingRequestSync(
       }
       return
     } catch (error) {
-      if (isCurrent()) markPendingRecovery(instanceId, true, error !== pendingDiscoveryDeferred && error !== pendingRequestSyncSuperseded
-        ? recoveryCauseOf(error) : undefined)
+      if (isCurrent()) {
+        pendingRecoveryNoticeChecks.get(instanceId)?.controller.abort()
+        markPendingRecovery(instanceId, true, error !== pendingDiscoveryDeferred && error !== pendingRequestSyncSuperseded
+          ? recoveryCauseOf(error) : undefined)
+      }
       if (error === pendingDiscoveryDeferred) { resumePendingDiscovery(); return }
       if (error !== pendingRequestSyncSuperseded) throw error
     }
@@ -1155,7 +1174,8 @@ function syncPendingRequests(
     return existing.promise
   }
   const token = { cancelled: false }
-  pendingRecoveryNoticeChecks.get(instanceId)?.abort()
+  const check = pendingRecoveryNoticeChecks.get(instanceId)
+  if (check && (targetLocations || !check.current())) check.controller.abort()
   if (!targetLocations) deferredPendingDiscovery.delete(instanceId)
   const promise = runPendingRequestSync(instanceId, generation, token, targetLocations).finally(() => {
     if (pendingRequestSyncs.get(instanceId)?.promise === promise) pendingRequestSyncs.delete(instanceId)

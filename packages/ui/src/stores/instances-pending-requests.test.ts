@@ -700,23 +700,25 @@ test("a scan started before a project warning cannot rearm it", async () => {
   } finally { reopened.cleanup() }
 })
 
-for (const mode of ["rearm", "supersede", "budget"] as const) test(`a removed checkout is checked independently of recovery (${mode})`, { timeout: 3_000 }, async () => {
+for (const mode of ["rearm", "supersede", "budget", "routine"] as const) test(`a removed checkout is checked independently of recovery (${mode})`, { timeout: 3_000 }, async () => {
   const refreshDuringProbe = mode !== "rearm"
   const project = `pending-probe-${mode}`
   const h = harness(`/${project}`)
-  const removed = `${h.directory}/removed-checkout`
+  const removed = Array.from({ length: mode === "routine" ? 9 : 1 }, (_, i) => `${h.directory}/removed-checkout-${i}`)
   const worktrees = serverApi.fetchWorktrees
   const probeStarted = deferred<AbortSignal | undefined>()
   const probe = deferred<WorkspacePendingRequestsResponse>()
   const replacementStarted = deferred<AbortSignal | undefined>()
   const replacement = deferred<WorkspacePendingRequestsResponse>()
-  const excluded: WorkspacePendingRequestsResponse = { supported: true, directories: [{ directory: removed, status: "excluded" }] }
+  const excluded = (directories: string[]): WorkspacePendingRequestsResponse => ({
+    supported: true, directories: directories.map(directory => ({ directory, status: "excluded" })),
+  })
   let recovery: Promise<void> | undefined
   try {
-    serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "removed", directory: removed, kind: "worktree" }] })
+    serverApi.fetchWorktrees = async () => ({ worktrees: removed.map((directory, i) => ({ slug: `removed-${i}`, directory, kind: "worktree" })) })
     await reloadWorktrees(h.id)
     serverApi.getPendingRequests = async (_id, directories) => ({
-      supported: true, directories: directories.map(directory => directory === removed
+      supported: true, directories: directories.map(directory => removed.includes(directory)
         ? { directory, status: "error", reason: "unverified" }
         : { directory, status: "ok", locations: [emptyLocation(directory)] }),
     })
@@ -729,8 +731,8 @@ for (const mode of ["rearm", "supersede", "budget"] as const) test(`a removed ch
     let exclusions = 0
     let pending = false
     serverApi.getPendingRequests = async (_id, directories, signal, optional) => {
-      if (directories.includes(removed)) {
-        assert.ok(optional?.includes(removed))
+      if (directories.some(directory => removed.includes(directory))) {
+        assert.deepEqual(optional, directories)
         exclusions++
         if (refreshDuringProbe) {
           if (exclusions === 1) {
@@ -741,7 +743,7 @@ for (const mode of ["rearm", "supersede", "budget"] as const) test(`a removed ch
           return replacement.promise
         }
       }
-      return { supported: true, directories: directories.map(directory => directory === removed
+      return { supported: true, directories: directories.map(directory => removed.includes(directory)
         ? { directory, status: "excluded" }
         : { directory, status: "ok", locations: [{ ...emptyLocation(directory), permissions: pending ? [permission("appeared")] : [] }] }) }
     }
@@ -770,16 +772,26 @@ for (const mode of ["rearm", "supersede", "budget"] as const) test(`a removed ch
         }
         return
       }
-      const refreshed = syncPendingRequests(h.id)
-      assert.notEqual(refreshed, recovery, "a real refresh must not join a toast-only check")
-      assert.equal(signal?.aborted, true, "a new recovery cancels the superseded probe")
-      await refreshed
-      assert.deepEqual(getPermissionQueue(h.id).map(entry => entry.id), ["appeared"])
-      probe.resolve(excluded)
-      const nextSignal = await replacementStarted.promise
-      removeInstance(h.id, { authoritative: false })
-      assert.equal(nextSignal?.aborted, true, "workspace removal still cancels the pending probe")
-      return
+      if (mode === "supersede") {
+        serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "live", directory: `${h.directory}/live`, kind: "worktree" }] })
+        await reloadWorktrees(h.id, true)
+        const refreshed = syncPendingRequests(h.id)
+        assert.notEqual(refreshed, recovery, "a real refresh must not join a toast-only check")
+        assert.equal(signal?.aborted, true, "a scope change cancels the superseded probe")
+        await refreshed
+        assert.deepEqual(getPermissionQueue(h.id).map(entry => entry.id), ["appeared"])
+        probe.resolve(excluded(removed))
+        const nextSignal = await replacementStarted.promise
+        removeInstance(h.id, { authoritative: false })
+        assert.equal(nextSignal?.aborted, true, "workspace removal still cancels the pending probe")
+        return
+      }
+      pending = false
+      probe.resolve(excluded(removed.slice(0, 8)))
+      const last = await replacementStarted.promise
+      await syncPendingRequests(h.id)
+      assert.equal(last?.aborted, false, "an equivalent refresh lets the second batch finish")
+      replacement.resolve(excluded(removed.slice(8)))
     }
     await recovery
     await new Promise<void>(resolve => setImmediate(resolve))
@@ -794,10 +806,10 @@ for (const mode of ["rearm", "supersede", "budget"] as const) test(`a removed ch
     await assert.rejects(syncPendingRequests(h.id))
     await assert.rejects(syncPendingRequests(h.id))
     assert.equal(recoveryWarnings(project).length, 2)
-    assert.equal(exclusions, 1)
+    assert.equal(exclusions, mode === "routine" ? 2 : 1)
   } finally {
-    probe.resolve(excluded)
-    replacement.resolve(excluded)
+    probe.resolve(excluded(removed))
+    replacement.resolve(excluded(removed))
     await recovery?.catch(() => {})
     serverApi.fetchWorktrees = worktrees
     h.cleanup()
