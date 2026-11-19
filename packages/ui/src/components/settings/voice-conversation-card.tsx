@@ -7,9 +7,9 @@ import { hasLiveVoiceConsent } from "../../lib/live-voice-consent"
 import { serverEvents } from "../../lib/server-events"
 import { storage } from "../../lib/storage"
 import { classicConversationUnavailable } from "../../stores/conversation-speech"
-import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError } from "../../stores/speech"
+import { loadSpeechCapabilities, speechCapabilities } from "../../stores/speech"
 import {
-  loadVoiceConversationEngine, setVoiceConversationEngine, voiceConversationEngine, voiceConversationEngineLoaded,
+  loadVoiceConversationEngine, setVoiceConversationEngine, voiceConversationEngine, voiceConversationEngineLoaded, voiceConversationReadFailed,
 } from "../../stores/voice-conversation-engine"
 import { VoiceSave, VoiceSelectField, VoiceSettingsCard, VoiceTextField } from "./voice-settings-fields"
 
@@ -82,7 +82,7 @@ export function VoiceConversationCard(props: { settled: boolean }) {
     void read()
   })
 
-  const unavailable = () => readFailed() || Boolean(speechCapabilitiesError())
+  const unavailable = () => readFailed() || voiceConversationReadFailed()
   const status = () => {
     if (unavailable()) return t("settings.voice.conversation.loadError")
     if (!voiceConversationEngineLoaded()) return t("settings.speech.status.loading")

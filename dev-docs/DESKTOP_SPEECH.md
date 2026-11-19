@@ -69,8 +69,9 @@ the bearer `Authorization` header on their provider WebSockets.
   admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.
 - The two voices are transcribed in memory until the window is dismissed.
-  Gemini user rows close on their own transcription completion, independently
-  of the model turn.
+  The Gemini gateway emits a separate user completion. An explicit transcription
+  flag takes precedence; input without one uses model turn completion as a
+  best-effort boundary.
   A stop, target change, closed document, provider failure or disconnect
   releases capture and sockets, with no reconnect or engine fallback.
 - Each backend admits one live conversation per identity and four in total.

@@ -16,6 +16,7 @@ import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { MESSAGE_WINDOW_PAGE_SIZE } from "../../../src/stores/message-v2/message-window"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { activeSettingsSection, openSettingsRow, settingsOpen } from "../../../src/stores/settings-screen"
+import { loadSpeechCapabilities } from "../../../src/stores/speech"
 import { activeSessionId, getSessionDraftPrompt, sessions, setActiveSession, setSessionDraftPrompt, setSessions, setSessionStatus } from "../../../src/stores/session-state"
 import { loadVoiceConversationEngine, setVoiceConversationEngine } from "../../../src/stores/voice-conversation-engine"
 import { applyUiSettings } from "./ui-settings"
@@ -85,9 +86,10 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([sessionId, "o
 setActiveInstanceId(instanceId)
 setActiveSession(instanceId, sessionId)
 setSessionDraftPrompt(instanceId, sessionId, "Unsent draft")
+let geminiConfigured = true
 serverApi.fetchSpeechCapabilities = async () => ({
   available: true, sttConfigured: true, supportsStt: true,
-  voiceConversation: { geminiLive: { configured: true }, openaiRealtime: { configured: true } },
+  voiceConversation: { geminiLive: { configured: geminiConfigured }, openaiRealtime: { configured: true } },
 } as any)
 const store = messageStoreBus.getOrCreate(instanceId)
 store.upsertMessage({
@@ -125,6 +127,7 @@ function Fixture() {
   })
   Object.assign(window, { fixture: {
     info, switchSession: () => setActiveSession(instanceId, "other"),
+    returnSession: () => setActiveSession(instanceId, sessionId),
     transcript: voice.transcript, state: voice.state,
     draft: () => getSessionDraftPrompt(instanceId, sessionId),
     userTexts: () => store.getSessionMessageIds(sessionId).map(id => store.getMessage(id))
@@ -133,6 +136,7 @@ function Fixture() {
     setFirstPrompt: (value: typeof firstPrompt) => { firstPrompt = value },
     waitingAck: () => Boolean(releaseAck),
     releaseAck: () => releaseAck?.(),
+    acknowledgementSettled: () => sessions().get(instanceId)?.get(sessionId)?.generationAdmissionToken === undefined,
     openHistory: () => {
       for (let index = 0; index < MESSAGE_WINDOW_PAGE_SIZE - 1; index++) {
         store.upsertMessage({ id: `older-${index}`, sessionId, role: "assistant",
@@ -173,6 +177,7 @@ function Interactive() {
   Object.assign(window, { fixture: {
     info, switchSession: () => setActiveSession(instanceId, "other"), setVoiceConversationEngine,
     openVoiceSettings: () => openSettingsRow("speech", "voice-dictation"),
+    removeProviderKey: () => { geminiConfigured = false; return loadSpeechCapabilities(true) },
     microphoneEnabled: () => microphone?.enabled,
   } })
   return <main style={{ display: "flex", "min-height": "100dvh", "flex-direction": "column", "justify-content": "flex-end" }}>

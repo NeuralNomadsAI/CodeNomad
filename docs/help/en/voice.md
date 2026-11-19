@@ -72,6 +72,8 @@ In **Conversation**, choose a **Conversation engine**:
 - **Classic** needs only configured playback in a supported format. In the composer's **More actions**, choose **Enable conversation mode**. CodeNomad asks the agent to start each reply to a prompt you send with a short `spoken` summary and reads only that completed block in the active main session. The mode applies to the project tab until you disable it or reload. Starting dictation stops the spoken summary.
 - **Gemini Live** and **OpenAI Realtime** each have their own **API key**, **Model** and optional **Voice**. Save the selected provider's settings. Open the target session, choose **Conversation mode** under **More actions**, and choose **Agree and start** when the provider consent dialog appears. Allow microphone access.
 
+If the provider becomes unavailable while the consent dialog is open, choose **Voice settings** to open the **Conversation** card.
+
 The live voice model can read the fixed session's status, latest visible reply and recent errors. It has no file access. When you ask it to send a request to the agent, it sends it directly as a user message, without on-screen confirmation. The usual agent permissions, questions and Yolo setting still apply.
 
 The server allows one live conversation at a time per signed-in user, or per paired device with Remote Control. Use **Stop** to end audio and keep the transcript open. CodeNomad keeps the live transcript in memory until its window closes; requests sent to the agent remain ordinary session messages. Live voice also ends after two minutes without speech, after eight minutes total, when the target changes, when you close the window or if the connection drops. There is no automatic reconnection or provider fallback.

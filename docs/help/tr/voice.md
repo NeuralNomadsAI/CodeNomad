@@ -72,6 +72,8 @@ Oynatma, anlatımlı bir ekran görüntüsünü değil, CodeNomad'in metin proje
 - **Klasik** yalnızca desteklenen bir formatta oynatma ayarı gerektirir. **Diğer eylemler** menüsünden **Konuşma modunu etkinleştir** seçeneğini kullanın. CodeNomad, gönderdiğiniz her istemin yanıtına kısa bir `spoken` özetiyle başlamasını ajandan ister ve etkin ana oturumda yalnızca tamamlanan özeti seslendirir. Mod, kapatılana veya sayfa yeniden yüklenene kadar proje sekmesinde geçerlidir. Dikte başlatıldığında özetin oynatılması durur.
 - **Gemini Live** ve **OpenAI Realtime** için ayrı **API anahtarı**, **Model** ve isteğe bağlı **Ses** ayarlanır. Seçtiğiniz sağlayıcının ayarlarını kaydedin. Hedef oturumu açın, **Diğer eylemler** menüsünde **Konuşma modu** seçeneğini, sağlayıcının onay penceresi açıldığında **Kabul et ve başlat** seçeneğini kullanın. Mikrofona izin verin.
 
+Onay penceresi açıkken sağlayıcı kullanılamaz hâle gelirse **Ses ayarları** ile sohbet kartını açın.
+
 Ses modeli başta sabitlenen oturumun durumunu, görünür son yanıtı ve yakın tarihli hataları okuyabilir. Dosyalara erişemez. Ajana bir istek göndermesini istediğinizde, ekranda onay almadan doğrudan sizin mesajınız olarak gönderir. Ajan izinleri, soruları ve Yolo ayarı geçerliliğini korur.
 
 Sunucu, oturum açmış kullanıcı başına veya Uzaktan Kontrol’de eşleştirilmiş cihaz başına aynı anda bir canlı sohbete izin verir. **Durdur**, sesi kapatır ve sohbet dökümünü açık bırakır. Döküm, pencere kapanana kadar bellekte kalır; ajana gönderilen istekler oturum mesajı olarak kalır. İki dakika konuşulmadığında, toplam sekiz dakika dolduğunda, hedef değiştiğinde, pencere kapandığında veya bağlantı kesildiğinde sohbet sona erer. Otomatik yeniden bağlantı veya sağlayıcı değişimi yapılmaz.

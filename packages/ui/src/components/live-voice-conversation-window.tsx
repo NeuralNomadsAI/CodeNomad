@@ -1,7 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Mic, MicOff, Settings, VolumeX } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createRenderEffect, onCleanup, untrack } from "solid-js"
-import type { useLiveVoiceConversation } from "../lib/hooks/use-live-voice-conversation"
+import type { LiveVoiceUnavailable, useLiveVoiceConversation } from "../lib/hooks/use-live-voice-conversation"
 import { useI18n } from "../lib/i18n"
 import type { LiveVoiceStopReason, LiveVoiceTranscriptRow } from "../lib/live-voice-session"
 import { openSettingsRow } from "../stores/settings-screen"
@@ -78,6 +78,7 @@ export default function LiveVoiceConversationWindow(props: {
   return <>
     <Show when={state().phase === "consent"}>
       <LiveVoiceConsent provider={provider()} company={company()} targetLabel={props.targetLabel}
+        unavailable={props.controller.unavailable()}
         accept={() => props.controller.acceptConsent()} cancel={dismiss}
         returnFocus={() => state().phase === "closed" ? props.returnFocus() : undefined} />
     </Show>
@@ -142,11 +143,17 @@ function LiveVoiceConsent(props: {
   provider: string
   company: string
   targetLabel: string
+  unavailable?: LiveVoiceUnavailable
   accept: () => void
   cancel: () => void
   returnFocus: () => HTMLElement | undefined
 }) {
   const { t } = useI18n()
+  const unavailableKey = () => {
+    const reason = props.unavailable
+    if (reason === "missingKey") return "voice.live.status.unconfigured"
+    return reason ? `voice.command.${reason}` as const : undefined
+  }
   let cancel: HTMLButtonElement | undefined
   return <Dialog open modal onOpenChange={open => { if (!open) props.cancel() }}>
     <Dialog.Portal>
@@ -178,13 +185,19 @@ function LiveVoiceConsent(props: {
           <p>{t("voice.live.consent.text")}</p>
           <p>{t("voice.live.consent.send")}</p>
           <p>{t("voice.live.consent.billing", { company: props.company })}</p>
+          <Show when={unavailableKey()}>{key => <p role="status">{t(key())}</p>}</Show>
         </Dialog.Description>
         <footer class="window-footer">
           <button ref={element => { cancel = element }} type="button" class="button-secondary" onClick={props.cancel}>
             {t("alertDialog.actions.cancel")}
           </button>
-          <button type="button" class="button-primary" onClick={props.accept}>
-            {t("voice.live.consent.start")}
+          <button type="button" class="button-primary" onClick={() => {
+            if (props.unavailable) {
+              props.cancel()
+              void openSettingsRow("speech", "voice-conversation")
+            } else props.accept()
+          }}>
+            {t(props.unavailable ? "voice.live.settings" : "voice.live.consent.start")}
           </button>
         </footer>
       </Dialog.Content>

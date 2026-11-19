@@ -54,6 +54,7 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
   let interruptedResponse: string | undefined
   let playingResponse: string | undefined
   let cancelSequence = 0
+  let geminiInput: "implicit" | "explicit" | undefined
 
   function remember<T>(store: Map<string, T> | Set<string>) {
     if (store.size > LIVE_VOICE_TRACKED_IDS) store.delete(store.keys().next().value!)
@@ -160,10 +161,25 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
         }
       }
     }
-    transcript("user", user?.text, user?.finished === true)
+    if (user?.finished === true) {
+      transcript("user", user.text, true)
+      geminiInput = undefined
+    } else if (transcriptText(user?.text)) {
+      transcript("user", user.text, false)
+      if (user.finished === false) geminiInput = "explicit"
+      else if (user.text.trim()) geminiInput ??= "implicit"
+    }
     const assistant = object(content.outputTranscription)
     transcript("assistant", assistant?.text, assistant?.finished === true)
-    if (content.turnComplete === true) io.emit({ type: "turn-complete" })
+    if (content.turnComplete === true) {
+      // Gemini doesn't guarantee input ordering or a final flag. Use the model
+      // turn as a best-effort boundary only for input without explicit completion.
+      if (geminiInput === "implicit") {
+        transcript("user", "", true)
+        geminiInput = undefined
+      }
+      io.emit({ type: "turn-complete" })
+    }
   }
 
   function interruptOpenAI(responseId: string | undefined) {

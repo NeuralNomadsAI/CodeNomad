@@ -2,8 +2,8 @@ import { batch, createRenderEffect, createSignal, onCleanup } from "solid-js"
 import { liveVoiceTarget, type LiveVoiceEngine } from "../../../../server/src/speech/live-voice-contract"
 import { liveVoiceAgent, liveVoiceContext, liveVoiceTargetSession } from "../../stores/live-voice-agent"
 import type { FollowUpBehavior } from "../../stores/preferences"
-import { speechCapabilities, speechCapabilitiesError } from "../../stores/speech"
-import { voiceConversationEngine, voiceConversationEngineLoaded } from "../../stores/voice-conversation-engine"
+import { speechCapabilities } from "../../stores/speech"
+import { voiceConversationEngine, voiceConversationEngineLoaded, voiceConversationReadFailed } from "../../stores/voice-conversation-engine"
 import { CODENOMAD_API_BASE } from "../api-base"
 import { liveVoiceAudioUnavailable, startLiveVoiceAudio } from "../live-voice-audio"
 import { hasLiveVoiceConsent, rememberLiveVoiceConsent } from "../live-voice-consent"
@@ -47,7 +47,7 @@ export function useLiveVoiceConversation(options: {
   }
 
   function unavailable(): LiveVoiceUnavailable | undefined {
-    if (speechCapabilitiesError()) return "capabilitiesError"
+    if (voiceConversationReadFailed()) return "capabilitiesError"
     if (!voiceConversationEngineLoaded()) return "loading"
     const engine = selectedEngine()
     if (!engine) return

@@ -7,6 +7,7 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { addInstance, setActiveInstanceId, updateInstance } from "../../../src/stores/instances"
 import { ConfigProvider } from "../../../src/stores/preferences"
+import { addToHistory } from "../../../src/stores/message-history"
 import { activeSettingsSection, adoptSettingsRowHint, closeSettings, settingsOpen } from "../../../src/stores/settings-screen"
 import { setVoiceConversationEngine, voiceConversationEngineLoaded } from "../../../src/stores/voice-conversation-engine"
 import { applyUiSettings } from "./ui-settings"
@@ -98,6 +99,7 @@ const [session, setSession] = createSignal("ses_a")
 const [nativeSettings, setNativeSettings] = createSignal(false)
 const sends: string[] = []
 await applyUiSettings({ locale: new URL(location.href).searchParams.get("locale") === "he" ? "he" : "en", showPromptVoiceInput: true })
+if (new URLSearchParams(location.search).has("history")) await addToHistory(folder, "Previously sent")
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={showAlerts}><AlertDialog /></Show>
   <button id="elsewhere" type="button">Other control</button>

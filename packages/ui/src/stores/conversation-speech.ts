@@ -6,12 +6,12 @@ import { getLogger } from "../lib/logger"
 import { formatToMimeType, getSpeechPlaybackSupport } from "../lib/speech-playback-support"
 import { createObjectUrlFromBase64, streamToMediaSource } from "../lib/audio-utils"
 import { serverSettings } from "./preferences"
-import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError } from "./speech"
+import { loadSpeechCapabilities, speechCapabilities } from "./speech"
 import { getActiveSession, sessions } from "./session-state"
 import type { ClientPart, MessageInfo } from "../types/message"
 import { messageStoreBus } from "./message-v2/bus"
 import { activeInstanceId } from "./instances"
-import { voiceConversationEngine, voiceConversationEngineLoaded } from "./voice-conversation-engine"
+import { voiceConversationEngine, voiceConversationEngineLoaded, voiceConversationReadFailed } from "./voice-conversation-engine"
 
 type SpeechPlaybackMode = "streaming" | "buffered"
 type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
@@ -96,7 +96,7 @@ export function isConversationModeEnabled(instanceId: string): boolean {
 }
 
 export function classicConversationUnavailable(): "loading" | "capabilitiesError" | "setupPlayback" | "unsupportedFormat" | undefined {
-  if (speechCapabilitiesError()) return "capabilitiesError"
+  if (voiceConversationReadFailed()) return "capabilitiesError"
   if (!voiceConversationEngineLoaded() || voiceConversationEngine() !== "classic") return "loading"
   const capabilities = speechCapabilities()
   if (!capabilities?.available || !capabilities.ttsConfigured || !capabilities.supportsTts) {

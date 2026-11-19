@@ -4,7 +4,7 @@ import { CODENOMAD_API_BASE } from "../lib/api-base"
 import { serverApi } from "../lib/api-client"
 import { generateUUID } from "../lib/client-identity"
 import { isDesktopHost, isNativeApplicationWindow } from "../lib/runtime-env"
-import { loadSpeechCapabilities, speechCapabilities } from "./speech"
+import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError } from "./speech"
 
 const prefix = "codenomad:voice-conversation-engine:"
 const browserKey = () => `${prefix}${CODENOMAD_API_BASE ?? window.location.origin}`
@@ -22,6 +22,7 @@ function readBrowserEngine() {
 
 const [browserEngine, setBrowserEngine] = createSignal(readBrowserEngine())
 const [desktopEngine, setDesktopEngine] = createSignal<VoiceConversationEngine>()
+const [desktopEngineReadFailed, setDesktopEngineReadFailed] = createSignal(false)
 let pending: Promise<void> | undefined
 let sequence = 0
 const desktopChange = `${prefix}desktop-changed`
@@ -34,11 +35,16 @@ if (typeof window !== "undefined") {
 
 export async function loadVoiceConversationEngine(refresh = false) {
   await loadSpeechCapabilities()
-  if (useDesktopEngine() && (refresh || !desktopEngine())) {
+  if (useDesktopEngine() && (refresh || !desktopEngine() || desktopEngineReadFailed())) {
     if (!pending || refresh) {
       const revision = ++sequence
       const read = serverApi.getDesktopVoiceConversationEngine().then(({ engine }) => {
-        if (revision === sequence) setDesktopEngine(parseEngine(engine))
+        if (revision !== sequence) return
+        setDesktopEngine(parseEngine(engine))
+        setDesktopEngineReadFailed(false)
+      }).catch(error => {
+        if (revision === sequence) setDesktopEngineReadFailed(true)
+        throw error
       }).finally(() => { if (pending === read) pending = undefined })
       pending = read
     }
@@ -48,6 +54,9 @@ export async function loadVoiceConversationEngine(refresh = false) {
 
 export const voiceConversationEngineLoaded = () =>
   Boolean(speechCapabilities()) && (!useDesktopEngine() || desktopEngine() !== undefined)
+
+export const voiceConversationReadFailed = () =>
+  Boolean(speechCapabilitiesError()) || (useDesktopEngine() && desktopEngineReadFailed())
 
 export const voiceConversationEngine = (): VoiceConversationEngine =>
   useDesktopEngine() ? desktopEngine() ?? "classic" : browserEngine()

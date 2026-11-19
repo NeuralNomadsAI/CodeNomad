@@ -20,6 +20,10 @@ const EXECUTION_START_GRACE_MS = 15_000
 
 export function liveVoiceTargetSession(instanceId: string, sessionId: string | undefined) {
   if (!sessionId || activeInstanceId() !== instanceId || activeSessionId().get(instanceId) !== sessionId) return
+  return nativeVoiceTarget(instanceId, sessionId)
+}
+
+function nativeVoiceTarget(instanceId: string, sessionId: string) {
   const instance = instances().get(instanceId)
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!instance?.client || instance.status !== "ready" || !session?.location.directory || session.catalogSnapshot) return
@@ -61,7 +65,7 @@ export function liveVoiceAgent({ instance, session, key }: Target, options: {
   const instanceId = instance.id
   const sessionId = session.id
   const targetCurrent = () => {
-    const current = liveVoiceTargetSession(instanceId, sessionId)
+    const current = nativeVoiceTarget(instanceId, sessionId)
     return current?.key === key && current.instance.client === instance.client
   }
   const lifecycle = () => nativeSessionLifecycleGeneration(instanceId, sessionId)

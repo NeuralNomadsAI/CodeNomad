@@ -764,7 +764,6 @@ export default function PromptInput(props: PromptInputProps) {
     draftRevision: promptState.draftRevision,
     setPrompt: value => {
       restoredQueuedPayload = undefined
-      resetHistoryNavigation()
       setPrompt(value)
     },
     getTextarea: () => textareaRef ?? null,

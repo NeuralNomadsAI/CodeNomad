@@ -297,6 +297,33 @@ test("a voice send acknowledged after reopening still makes the new controller q
   } finally { await context.close() }
 })
 
+test("native voice acknowledgement in another displayed session stays bound to the original session", async () => {
+  const { page, context, start, closed, snapshot, waitForSent, nextSocket } = await fixture()
+  try {
+    const send = await start()
+    await page.evaluate(() => (window as any).fixture.setFirstPrompt("holdAck"))
+    const call = (id: string) => ({ type: "tool-call", id, name: "send_to_agent", arguments: { text: id } })
+    send(call("first"))
+    await page.waitForFunction(() => (window as any).fixture.waitingAck())
+    assert.equal(await page.evaluate(() => (window as any).fixture.acknowledgementSettled()), false)
+    await page.evaluate(() => (window as any).fixture.switchSession())
+    await closed
+    await page.evaluate(() => (window as any).fixture.releaseAck())
+    await page.waitForFunction(() => (window as any).fixture.acknowledgementSettled() && (window as any).fixture.info.released === 1)
+    await page.evaluate(() => (window as any).fixture.returnSession())
+    const pending = nextSocket()
+    await page.getByRole("button", { name: "Start", exact: true }).click()
+    const socket = await pending
+    socket.send(JSON.stringify({ type: "ready", inputRate: 16_000, outputRate: 24_000 }))
+    await page.waitForFunction(() => (window as any).fixture.state().phase === "live")
+    socket.send(JSON.stringify(call("second")))
+    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "second")).output), { delivery: "queued" })
+    assert.deepEqual((await snapshot()).info.prompts.map((item: any) => [item.sessionID, item.text, item.delivery]), [
+      ["voice", "first", "steer"], ["voice", "second", "queue"],
+    ])
+  } finally { await context.close() }
+})
+
 test("voice sends from an older page await the latest window and recheck the target", async () => {
   for (const switchTarget of [false, true]) {
     const { page, context, start, closed, snapshot, waitForSent } = await fixture()
@@ -614,6 +641,25 @@ test("consent discloses direct sends in the dialog description before capture", 
       /The voice assistant can send messages to the agent on your behalf without further confirmation\./)
     assert.equal(opens(), 0)
     assert.equal(await page.evaluate(() => (window as any).fixture.info.capture), 0)
+  } finally { await context.close() }
+})
+
+test("consent replaces Start with a settings action when the provider key is removed", async () => {
+  const { context, consent, openConsent, opens, page } = await fixture("gemini", true)
+  try {
+    await openConsent()
+    const start = consent.getByRole("button", { name: "Agree and start" })
+    await start.focus()
+    await page.evaluate(() => (window as any).fixture.removeProviderKey())
+    await consent.getByRole("status").getByText("Set up the provider in Voice settings").waitFor()
+    assert.equal(await start.count(), 0)
+    const settings = consent.getByRole("button", { name: "Voice settings", exact: true })
+    assert.equal(await settings.evaluate(el => el === document.activeElement), true)
+    await page.keyboard.press("Enter")
+    await consent.waitFor({ state: "detached" })
+    await page.waitForFunction(() => document.activeElement?.id === "voice-conversation")
+    assert.equal(await page.evaluate(() => (window as any).fixture.info.capture), 0)
+    assert.equal(opens(), 0)
   } finally { await context.close() }
 })
 

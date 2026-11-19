@@ -7,7 +7,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>
 before(async () => { fixture = await startProductFixture("composer-dictation") })
 after(async () => { await fixture?.close() })
 
-async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false) {
+async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number> } = {}) {
   const context = await fixture.browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
@@ -132,8 +132,12 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
       if (url.endsWith("/speech/capabilities")) {
         const status = typeof unconfigured === "boolean" ? 200 : await unconfigured
         return route.fulfill({ status, json: status === 200
-          ? { available: true, sttConfigured: !ttsOnly && unconfigured !== true, supportsStt: true, ttsConfigured: ttsOnly, supportsTts: true }
+          ? { available: true, sttConfigured: !ttsOnly && unconfigured !== true, supportsStt: true, ttsConfigured: ttsOnly, supportsTts: true,
+            desktopVoiceConversationEngine: Boolean(options.engineStatus) }
           : { error: "Capabilities unavailable" } })
+      }
+      if (url.endsWith("/speech/conversation/engine") && options.engineStatus) {
+        return route.fulfill({ status: await options.engineStatus, json: { error: "Engine unavailable" } })
       }
       return route.fulfill({ json: ttsOnly && url.endsWith("/config/server") ? { speech: { playbackMode: "buffered" } } : {} })
     })
@@ -141,6 +145,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
     if (native === "wsl") target.searchParams.set("wsl", "1")
     if (pcm) target.searchParams.set("pcm", "1")
     if (locale !== "en") target.searchParams.set("locale", locale)
+    if (options.history) target.searchParams.set("history", "")
     await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 })
     await page.waitForFunction(() => Boolean((window as any).fixture)).catch(error => {
       if (errors.length) throw new AggregateError(errors, errors.map(value => value.message).join("; "))
@@ -214,6 +219,37 @@ test("a speech capabilities 503 shows read failure and opens each command's own 
     assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
   }, false, undefined, false, "en", false, response)
 })
+
+test("a desktop conversation engine read failure opens Conversation and leaves API dictation available", async () => {
+  let resolve!: (status: number) => void
+  const engineStatus = new Promise<number>(done => { resolve = done })
+  await withComposer(async page => {
+    await page.getByRole("button", { name: "More actions", exact: true }).press("Enter")
+    await page.getByRole("menuitem", { name: /Conversation mode.*Checking voice settings/ }).waitFor()
+    // The device uses the API path; only the desktop engine preference is unavailable.
+    await page.evaluate(() => { (window as any).speechSettings.engine = "api"; window.dispatchEvent(new Event("focus")) })
+    resolve(503)
+    await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
+    await page.getByRole("menuitem", { name: /Conversation mode.*Couldn’t check voice settings/ }).click()
+    await page.waitForFunction(() => document.activeElement?.id === "voice-conversation")
+    await page.getByText("Could not load conversation settings", { exact: true }).waitFor()
+  }, false, "hex-setup", false, "en", false, false, { engineStatus })
+})
+
+test("dictating into a recalled prompt does not replace the saved draft", () => withComposer(async page => {
+  await field(page).fill("Original unsent draft")
+  await action(page, "Previous prompt")
+  await page.waitForFunction(() => document.querySelector("textarea")?.value === "Previously sent")
+  await select(page, "Previously ".length, "Previously sent".length)
+  await start(page)
+  await stop(page)
+  await finish(page, "appendix")
+  assert.equal(await field(page).inputValue(), "Previously appendix ")
+  await page.evaluate(() => (window as any).fixture.setSession("ses_b"))
+  await page.waitForFunction(() => document.querySelector("textarea")?.value === "")
+  await page.evaluate(() => (window as any).fixture.setSession("ses_a"))
+  await page.waitForFunction(() => document.querySelector("textarea")?.value === "Original unsent draft")
+}, false, undefined, false, "en", false, false, { history: true }))
 
 test("dictation replaces only its original selection and neither sends nor steals focus", () => withComposer(async page => {
   await field(page).fill("before replace after")

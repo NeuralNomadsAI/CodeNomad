@@ -36,6 +36,7 @@ export class RemoteDeviceRegistry {
   private state: StoredState
   private pairing: { codeHash: Buffer; expiresAt: number } | null = null
   private readonly persistedLastSeen = new Map<string, number>()
+  private readonly pendingRevocations = new Set<string>()
   private persisted: boolean
 
   constructor(private readonly filePath: string, private readonly now: () => number = Date.now) {
@@ -141,7 +142,8 @@ export class RemoteDeviceRegistry {
   revoke(id: string): boolean {
     const before = this.state.devices.length
     this.state.devices = this.state.devices.filter((device) => device.id !== id)
-    if (this.state.devices.length === before) return false
+    if (this.state.devices.length === before && !this.pendingRevocations.has(id)) return false
+    this.pendingRevocations.add(id)
     this.persistedLastSeen.delete(id)
     this.persist()
     return true
@@ -163,6 +165,7 @@ export class RemoteDeviceRegistry {
     const temporary = `${this.filePath}.${process.pid}.tmp`
     fs.writeFileSync(temporary, `${JSON.stringify(this.state, null, 2)}\n`, { mode: 0o600 })
     fs.renameSync(temporary, this.filePath)
+    this.pendingRevocations.clear()
     this.persisted = true
   }
 }

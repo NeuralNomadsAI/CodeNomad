@@ -10,6 +10,7 @@ import pino from "pino"
 import { Agent, fetch } from "undici"
 import WebSocket, { WebSocketServer } from "ws"
 import { DEVICE_COOKIE_NAME } from "../remote-control/gate"
+import { RemoteDeviceRegistry } from "../remote-control/devices"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "../remote-control/test-support/surface"
 import { RemoteProxySessionManager } from "../server/remote-proxy"
 import { resolveHttpsOptions } from "../server/tls"
@@ -149,6 +150,52 @@ test("a failed revocation write reports failure and disconnects the live device 
   assert.deepEqual(await client.closed, [1006, ""])
   await upstream.closed
   await denied(target(), gemini, headers, 403)
+})
+
+test("a pending revocation refuses upgrades and can be retried durably", { timeout: 10000 }, async t => {
+  const { local, manager, target, code, registryPath } = await startRemoteSurface(t, { skipAuth: true })
+  const { device, token } = manager.exchangePairing(code, undefined)!
+  const tempPath = `${registryPath}.${process.pid}.tmp`
+  fs.mkdirSync(tempPath)
+  const revoke = () => fetch(`http://${local}/api/remote-control/devices/${device.id}`, { method: "DELETE" })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await revoke()
+    await response.text()
+    assert.equal(response.status, 500)
+    assert.equal(manager.isDeviceAuthorized(device.id), false)
+  }
+  await denied(target(), gemini, { host: FAKE_TUNNEL_HOST, origin: `https://${FAKE_TUNNEL_HOST}`,
+    cookie: `${DEVICE_COOKIE_NAME}=${token}` }, 403)
+  assert.equal(new RemoteDeviceRegistry(registryPath).isPaired(device.id), true)
+  fs.rmdirSync(tempPath)
+  assert.equal((await revoke()).status, 204)
+  assert.equal(new RemoteDeviceRegistry(registryPath).authenticate(token), null)
+  const absent = await revoke()
+  await absent.text()
+  assert.equal(absent.status, 404)
+})
+
+test("Gemini emits a user boundary between raw transcripts without a finished flag", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })
+  const client = connect(t, local, gemini, { origin: `http://${local}` })
+  const upstream = await setupGemini(client, fake)
+  for (const text of ["First utterance", "Second utterance"]) {
+    upstream.send({ serverContent: { inputTranscription: { text } } }, true)
+    upstream.send({ serverContent: { turnComplete: true } })
+    assert.deepEqual(await client.next(), { type: "activity" })
+    assert.deepEqual(await client.next(), { type: "transcript", role: "user", text, final: false })
+    assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "", final: true })
+    assert.deepEqual(await client.next(), { type: "turn-complete" })
+  }
+  upstream.send({ serverContent: { inputTranscription: { text: "Still ", finished: false } } })
+  upstream.send({ serverContent: { turnComplete: true } })
+  upstream.send({ serverContent: { inputTranscription: { text: "speaking", finished: true } } })
+  assert.deepEqual(await client.next(), { type: "activity" })
+  assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "Still ", final: false })
+  assert.deepEqual(await client.next(), { type: "turn-complete" })
+  assert.deepEqual(await client.next(), { type: "activity" })
+  assert.deepEqual(await client.next(), { type: "transcript", role: "user", text: "speaking", final: true })
 })
 
 test("direct admission, Gemini binary messages, fixed tools, cancellation and password logout", { timeout: 10000 }, async t => {
