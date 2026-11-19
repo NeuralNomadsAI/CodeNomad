@@ -135,7 +135,7 @@ test("remote dictation is exact-origin primary-frame only, validates fields, and
 
 test("remote microphone requests share host arbitration and retire on committed document loss", () => {
   const f = fixture()
-  const claim = { action: "claimMicrophone", id, purpose: "dictation" }
+  const claim = { action: "claimMicrophone", id, purpose: "conversation" }
   const release = { action: "releaseMicrophone", id }
   assert.deepEqual(f.request(f.opener.event(), claim), { ok: true, value: { busy: "test" } })
   assert.throws(() => f.request(f.opener.event({ url: proxy.href }), claim), /registered main frame/)

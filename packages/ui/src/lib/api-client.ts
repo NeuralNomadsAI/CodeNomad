@@ -33,6 +33,7 @@ import type {
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
+  VoiceConversationEngine,
   SideCar,
   PreviewSession,
   PluginActivationMutationRequest,
@@ -724,6 +725,14 @@ export const serverApi = {
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
+  },
+  getDesktopVoiceConversationEngine() {
+    return request<{ engine: VoiceConversationEngine }>("/api/speech/conversation/engine")
+  },
+  setDesktopVoiceConversationEngine(engine: VoiceConversationEngine) {
+    return request<{ engine: VoiceConversationEngine }>("/api/speech/conversation/engine", {
+      method: "PATCH", body: JSON.stringify({ engine }),
+    })
   },
   transcribeAudio(payload: {
     audioBase64: string

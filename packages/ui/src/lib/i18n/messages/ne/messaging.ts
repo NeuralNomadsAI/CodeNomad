@@ -341,6 +341,7 @@ export const messagingMessages = {
   "voice.microphone.busy": "माइक्रोफोन पहिले नै प्रयोगमा छ।",
   "voice.microphone.dictation": "श्रुतिलेखनले माइक्रोफोन प्रयोग गरिरहेको छ।",
   "voice.microphone.test": "इनपुट परीक्षणले माइक्रोफोन प्रयोग गरिरहेको छ।",
+  "voice.microphone.conversation": "प्रत्यक्ष कुराकानीले माइक्रोफोन प्रयोग गरिरहेको छ।",
   "voice.microphone.unavailable": "यो विन्डोमा माइक्रोफोन उपलब्ध छैन।",
   "promptInput.voiceInput.error.permissionDenied": "macOS द्वारा माइक्रोफोन पहुँच अस्वीकार गरियो।",
   "promptInput.voiceInput.error.unsupported": "यस ब्राउजरमा ध्वनि इनपुट समर्थित छैन।",

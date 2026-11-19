@@ -344,6 +344,7 @@ export const messagingMessages = {
   "voice.microphone.busy": "Le micro est déjà utilisé.",
   "voice.microphone.dictation": "La dictée utilise le micro.",
   "voice.microphone.test": "Le test d’entrée utilise le micro.",
+  "voice.microphone.conversation": "La conversation en direct utilise le micro.",
   "voice.microphone.unavailable": "Le micro est indisponible dans cette fenêtre.",
   "promptInput.voiceInput.error.permissionDenied": "macOS a refusé l'accès au microphone.",
   "promptInput.voiceInput.error.unsupported": "La saisie vocale n'est pas prise en charge dans ce navigateur.",

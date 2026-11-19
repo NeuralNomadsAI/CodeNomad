@@ -343,6 +343,7 @@ export const messagingMessages = {
   "voice.microphone.busy": "麦克风已被占用。",
   "voice.microphone.dictation": "听写正在使用麦克风。",
   "voice.microphone.test": "输入测试正在使用麦克风。",
+  "voice.microphone.conversation": "实时对话正在使用麦克风。",
   "voice.microphone.unavailable": "此窗口无法使用麦克风。",
   "promptInput.voiceInput.error.permissionDenied": "macOS 已拒绝麦克风访问。",
   "promptInput.voiceInput.error.unsupported": "此浏览器不支持语音输入。",

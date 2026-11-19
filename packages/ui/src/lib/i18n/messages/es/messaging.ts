@@ -344,6 +344,7 @@ export const messagingMessages = {
   "voice.microphone.busy": "El micrófono ya está en uso.",
   "voice.microphone.dictation": "El dictado está usando el micrófono.",
   "voice.microphone.test": "La prueba de entrada está usando el micrófono.",
+  "voice.microphone.conversation": "La conversación en directo está usando el micrófono.",
   "voice.microphone.unavailable": "El micrófono no está disponible en esta ventana.",
   "promptInput.voiceInput.error.permissionDenied": "macOS denegó el acceso al micrófono.",
   "promptInput.voiceInput.error.unsupported": "La entrada de voz no es compatible con este navegador.",

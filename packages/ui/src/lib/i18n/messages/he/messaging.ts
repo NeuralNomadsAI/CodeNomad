@@ -341,6 +341,7 @@ export const messagingMessages = {
   "voice.microphone.busy": "המיקרופון כבר בשימוש.",
   "voice.microphone.dictation": "ההכתבה משתמשת במיקרופון.",
   "voice.microphone.test": "בדיקת הקלט משתמשת במיקרופון.",
+  "voice.microphone.conversation": "השיחה החיה משתמשת במיקרופון.",
   "voice.microphone.unavailable": "המיקרופון אינו זמין בחלון זה.",
   "promptInput.voiceInput.error.permissionDenied": "הגישה למיקרופון נדחתה על ידי macOS.",
   "promptInput.voiceInput.error.unsupported": "קלט קולי אינו נתמך בדפדפן זה.",

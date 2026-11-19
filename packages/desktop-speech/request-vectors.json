@@ -11,6 +11,7 @@
   { "request": { "action": "start", "locale": "en-US", "engine": "hex" }, "valid": true },
   { "request": { "action": "start", "locale": "en-US", "engine": "system", "microphoneLeaseId": "e179621e-c691-478c-904e-2dbf02d359ab" }, "valid": true },
   { "request": { "action": "start", "locale": "en-US", "microphoneLeaseId": "e179621e-c691-478c-904e-2dbf02d359ab" }, "valid": false },
+  { "request": { "action": "claimMicrophone", "id": "e179621e-c691-478c-904e-2dbf02d359ab", "purpose": "conversation" }, "valid": true },
   { "request": { "action": "claimMicrophone", "id": "e179621e-c691-478c-904e-2dbf02d359ab", "purpose": "other" }, "valid": false },
   { "request": { "action": "releaseMicrophone", "id": "e179621e-c691-478c-904e-2dbf02d359ab" }, "valid": true },
   { "request": { "action": "start", "locale": "en-US", "engine": null }, "valid": false },

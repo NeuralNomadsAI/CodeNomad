@@ -1,11 +1,11 @@
 export type SpeechEngine = "api" | "system" | "hex"
 export type LocalSpeechEngine = Exclude<SpeechEngine, "api">
-export type MicrophonePurpose = "dictation" | "test"
+export type MicrophonePurpose = "dictation" | "test" | "conversation"
 export type MicrophoneRequest =
   | { action: "claimMicrophone"; id: string; purpose: MicrophonePurpose }
   | { action: "releaseMicrophone"; id: string }
 export function isMicrophonePurpose(value: unknown): value is MicrophonePurpose {
-  return value === "dictation" || value === "test"
+  return value === "dictation" || value === "test" || value === "conversation"
 }
 const validId = (id: unknown): id is string => typeof id === "string" && /^[a-f0-9-]{36}$/.test(id)
 const validMicrophoneId = (id: unknown): id is string =>

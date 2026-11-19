@@ -246,6 +246,7 @@ mod tests {
         for purpose in [
             MicrophonePurpose::Dictation,
             MicrophonePurpose::Test,
+            MicrophonePurpose::Conversation,
         ] {
             let request = Request::ClaimMicrophone {
                 id: uuid::Uuid::new_v4().to_string(),

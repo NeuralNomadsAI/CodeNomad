@@ -1,9 +1,10 @@
 import fs from "fs"
 import path from "path"
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
+import { stringify as stringifyYaml } from "yaml"
 import type { Logger } from "../logger"
 import type { ConfigLocation } from "../config/location"
 import { isPlainObject } from "./merge-patch"
+import { parseSettingsYaml } from "./parse-yaml"
 
 type Doc = Record<string, unknown>
 
@@ -15,9 +16,9 @@ function ensureTrailingNewline(content: string): string {
 function safeReadYaml(filePath: string, logger: Logger): unknown {
   try {
     const content = fs.readFileSync(filePath, "utf-8")
-    return parseYaml(content)
-  } catch (error) {
-    logger.warn({ err: error, filePath }, "Failed to read YAML file during migration")
+    return parseSettingsYaml(content)
+  } catch {
+    logger.warn({ filePath }, "Failed to read YAML file during migration")
     return null
   }
 }
@@ -26,8 +27,8 @@ function safeReadJson(filePath: string, logger: Logger): unknown {
   try {
     const content = fs.readFileSync(filePath, "utf-8")
     return JSON.parse(content)
-  } catch (error) {
-    logger.warn({ err: error, filePath }, "Failed to read JSON file during migration")
+  } catch {
+    logger.warn({ filePath }, "Failed to read JSON file during migration")
     return null
   }
 }
@@ -166,6 +167,8 @@ function mapLegacyToOwnerDocs(legacyConfig: unknown, legacyState: unknown): { co
   if (Object.keys(uiConfig).length > 0) {
     outConfig.ui = uiConfig
   }
+  const { voiceConversation, ...legacyServer } = normalizeDoc(cfg.server)
+  if (voiceConversation !== undefined) serverConfig.voiceConversation = voiceConversation
   if (Object.keys(serverConfig).length > 0) {
     outConfig.server = serverConfig
   }
@@ -176,12 +179,22 @@ function mapLegacyToOwnerDocs(legacyConfig: unknown, legacyState: unknown): { co
   // Unknown top-level keys -> legacy.unknown
   const knownConfigKeys = new Set(["preferences", "opencodeBinaries", "theme", "recentFolders"])
   const unknownConfig = omitKeys(cfg, knownConfigKeys)
+  if (voiceConversation !== undefined) {
+    // Keep the credential block in the server owner where settings redact it.
+    if (Object.keys(legacyServer).length > 0) unknownConfig.server = legacyServer
+    else delete unknownConfig.server
+  }
   if (Object.keys(unknownConfig).length > 0) {
     outConfig.legacy = { unknown: unknownConfig }
   }
 
   const knownStateKeys = new Set(["recentFolders"])
   const unknownState = omitKeys(st, knownStateKeys)
+  if (legacyState === legacyConfig && voiceConversation !== undefined) {
+    // The legacy JSON is input to both migrations; state must not copy private config.
+    if (Object.keys(legacyServer).length > 0) unknownState.server = legacyServer
+    else delete unknownState.server
+  }
   if (Object.keys(unknownState).length > 0) {
     outState.legacy = { unknown: unknownState }
   }
@@ -228,7 +241,7 @@ export function migrateSettingsLayout(location: ConfigLocation, logger: Logger) 
   const sourceConfig = shouldMigrateFromJson ? safeReadJson(legacyJsonPath, logger) : configDoc
   const sourceState = shouldMigrateFromJson ? sourceConfig : stateDoc
 
-  const { config, state } = mapLegacyToOwnerDocs(sourceConfig, sourceState)
+  const { config, state } = mapLegacyToOwnerDocs(configIsNew ? undefined : sourceConfig, sourceState)
 
   try {
     fs.mkdirSync(location.baseDir, { recursive: true })
@@ -237,7 +250,7 @@ export function migrateSettingsLayout(location: ConfigLocation, logger: Logger) 
   }
 
   // Backup legacy files before rewriting.
-  if (configExists) {
+  if (configExists && !configIsNew) {
     try {
       const bak = pickBackupPath(configYamlPath)
       fs.renameSync(configYamlPath, bak)
@@ -267,7 +280,7 @@ export function migrateSettingsLayout(location: ConfigLocation, logger: Logger) 
     }
   }
 
-  writeYaml(configYamlPath, config, logger)
+  if (!configIsNew) writeYaml(configYamlPath, config, logger)
   writeYaml(stateYamlPath, state, logger)
 
   logger.info({ configYamlPath, stateYamlPath }, "Migrated settings docs to owner-bucket layout")

@@ -344,6 +344,7 @@ export const messagingMessages = {
   "voice.microphone.busy": "マイクはすでに使用中です。",
   "voice.microphone.dictation": "音声入力でマイクを使用中です。",
   "voice.microphone.test": "入力テストでマイクを使用中です。",
+  "voice.microphone.conversation": "ライブ会話でマイクを使用中です。",
   "voice.microphone.unavailable": "このウィンドウではマイクを利用できません。",
   "promptInput.voiceInput.error.permissionDenied": "macOS によりマイクへのアクセスが拒否されました。",
   "promptInput.voiceInput.error.unsupported": "このブラウザーでは音声入力はサポートされていません。",

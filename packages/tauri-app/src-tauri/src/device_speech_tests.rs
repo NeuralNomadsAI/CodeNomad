@@ -236,7 +236,7 @@ fn leased_start_binds_the_engine_and_claims_use_canonical_generated_ids() {
         json!({"action": "claimMicrophone", "id": id.to_uppercase(), "purpose": "test"})
     ));
     assert!(valid(
-        json!({"action": "claimMicrophone", "id": id, "purpose": "dictation"})
+        json!({"action": "claimMicrophone", "id": id, "purpose": "conversation"})
     ));
     assert!(valid(json!({"action": "releaseMicrophone", "id": id})));
 }
@@ -425,7 +425,7 @@ fn renderer_releases_and_revocations_are_owner_fenced() {
     let (_directory, device, _, _) = fixture();
     let id = Uuid::new_v4().to_string();
     let wrong = Uuid::new_v4().to_string();
-    for purpose in [Dictation, Test] {
+    for purpose in [Dictation, Test, Conversation] {
         assert_eq!(
             claim(&device, "owner", &id, purpose),
             json!({ "busy": null })
@@ -489,19 +489,19 @@ fn system_and_hex_require_the_exact_dictation_lease_when_supplied_or_held() {
         let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
         release_microphone(&device, "owner", &id);
         assert_eq!(
-            claim(&device, "other", &wrong, Test),
+            claim(&device, "other", &wrong, Conversation),
             json!({ "busy": "dictation" })
         );
         device.request("owner", Request::Cancel { id: op }).unwrap();
         assert!(control.cancelled());
         assert_eq!(
-            claim(&device, "other", &wrong, Test),
+            claim(&device, "other", &wrong, Conversation),
             json!({ "busy": "dictation" })
         );
         release.send(Resolution::Text("discarded")).unwrap();
         assert_eq!(settle(&control), Operation::Cancelled);
         assert_eq!(
-            claim(&device, "other", &wrong, Test),
+            claim(&device, "other", &wrong, Conversation),
             json!({ "busy": null })
         );
         release_microphone(&device, "other", &wrong);
@@ -537,7 +537,7 @@ fn native_start_and_renderer_claim_are_mutually_exclusive() {
             )
         });
         barrier.wait();
-        let renderer = claim(&device, "remote", &id, MicrophonePurpose::Test);
+        let renderer = claim(&device, "remote", &id, MicrophonePurpose::Conversation);
         (native.join().unwrap(), renderer)
     });
     if native.is_ok() {
@@ -579,7 +579,7 @@ fn webkit_permit_consults_the_exact_lease_and_current_engine() {
     assert!(!device.claim_local_microphone("preferences", &url));
     release_microphone(&device, "local", &id);
 
-    for purpose in [Test] {
+    for purpose in [Test, Conversation] {
         assert_eq!(
             claim(&device, "local", &id, purpose),
             json!({ "busy": null })

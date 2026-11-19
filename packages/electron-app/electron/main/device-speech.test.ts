@@ -36,12 +36,12 @@ test("microphone reservations compete across owners and native dictation stays b
   })
   assert.equal(preference.select("system"), undefined)
   const id = "c0de0001-1234-4567-8abc-0123456789ab"
-  const claim = (owner: number, purpose: "test" | "dictation") =>
+  const claim = (owner: number, purpose: "test" | "dictation" | "conversation") =>
     device.request(owner, { action: "claimMicrophone", id, purpose })
   const release = (owner: number) => device.request(owner, { action: "releaseMicrophone", id })
   const occupied = (busy: string | null) => ({ ok: true, value: { busy } })
   assert.deepEqual(claim(1, "test"), occupied(null))
-  assert.deepEqual(claim(2, "dictation"), occupied("test"))
+  assert.deepEqual(claim(2, "conversation"), occupied("test"))
   assert.deepEqual(device.request(2, { action: "start", locale: "en-US" }), busy)
   release(2)
   device.revoke(1, false)
@@ -52,10 +52,10 @@ test("microphone reservations compete across owners and native dictation stays b
   assert.ok(start.ok && start.value && "id" in start.value)
   await tick()
   device.revoke(2)
-  assert.deepEqual(claim(3, "test"), occupied("dictation"))
+  assert.deepEqual(claim(3, "conversation"), occupied("dictation"))
   finish("discarded")
   await tick()
-  assert.deepEqual(claim(3, "test"), occupied(null))
+  assert.deepEqual(claim(3, "conversation"), occupied(null))
 })
 
 test("unconfigured desktop preserves API; only supported choices can be written", (t) => {
@@ -203,7 +203,7 @@ test("IPC verifies registered windows, action scope and origins; document loss r
   assert.throws(() => request(local.event(), { action: "prepare", planId: "plan" }), /Preferences window/)
   assert.throws(() => request(preferences.event(), { action: "start", locale: "fr" }), /composer window/)
   const id = "c0de0001-1234-4567-8abc-0123456789ab"
-  assert.throws(() => request(preferences.event(), { action: "claimMicrophone", id, purpose: "dictation" }), /focused application window/)
+  assert.throws(() => request(preferences.event(), { action: "claimMicrophone", id, purpose: "conversation" }), /focused application window/)
   assert.deepEqual(request(preferences.event(), { action: "claimMicrophone", id, purpose: "test" }), { ok: true, value: { busy: null } })
   assert.deepEqual(request(local.event(), { action: "read" }), request(preferences.event(), { action: "read" }))
   preferences.frame.url = "http://127.0.0.1:9000"

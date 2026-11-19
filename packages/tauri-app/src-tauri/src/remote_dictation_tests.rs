@@ -24,7 +24,7 @@ fn remote_ipc_is_closed_and_ids_are_canonical_v4() {
     ] {
         assert!(serde_json::from_value::<Arguments<Request>>(invalid).is_err());
     }
-    for purpose in ["dictation", "test"] {
+    for purpose in ["dictation", "test", "conversation"] {
         assert!(matches!(
             serde_json::from_value::<Arguments<Request>>(json!({
                 "request": {"action": "claimMicrophone", "id": id, "purpose": purpose}

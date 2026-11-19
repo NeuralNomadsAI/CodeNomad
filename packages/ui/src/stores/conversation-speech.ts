@@ -11,6 +11,7 @@ import { getActiveSession, sessions } from "./session-state"
 import type { ClientPart, MessageInfo } from "../types/message"
 import { messageStoreBus } from "./message-v2/bus"
 import { activeInstanceId } from "./instances"
+import { voiceConversationEngine, voiceConversationEngineLoaded } from "./voice-conversation-engine"
 
 type SpeechPlaybackMode = "streaming" | "buffered"
 type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
@@ -95,6 +96,7 @@ export function isConversationModeEnabled(instanceId: string): boolean {
 }
 
 export function canUseConversationMode(): boolean {
+  if (!voiceConversationEngineLoaded() || voiceConversationEngine() !== "classic") return false
   const capabilities = speechCapabilities()
   if (!capabilities?.available || !capabilities.ttsConfigured || !capabilities.supportsTts) {
     return false

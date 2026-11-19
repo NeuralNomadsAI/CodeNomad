@@ -28,7 +28,7 @@ test("a pending admission retains the reason; cancelled late claims hold through
   assert.equal(attempts, 1)
   closure.resolve()
   await assert.rejects(waiting, { name: "AbortError" })
-  const next = await claim("test", new AbortController().signal)
+  const next = await claim("conversation", new AbortController().signal)
   assert.equal(attempts, 2)
   await next.release()
 })

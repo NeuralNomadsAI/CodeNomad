@@ -344,6 +344,7 @@ export const messagingMessages = {
   "voice.microphone.busy": "Микрофон уже используется.",
   "voice.microphone.dictation": "Микрофон используется для диктовки.",
   "voice.microphone.test": "Микрофон используется для проверки ввода.",
+  "voice.microphone.conversation": "Микрофон используется для разговора в реальном времени.",
   "voice.microphone.unavailable": "Микрофон недоступен в этом окне.",
   "promptInput.voiceInput.error.permissionDenied": "macOS запретила доступ к микрофону.",
   "promptInput.voiceInput.error.unsupported": "Голосовой ввод не поддерживается в этом браузере.",

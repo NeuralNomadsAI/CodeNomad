@@ -294,6 +294,25 @@ test("Classic conversation is available with playback but without API dictation"
   assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
 }, false, undefined, false, "en", true))
 
+test("a stored live engine retires Classic without falling back on reload", () => withComposer(async page => {
+  const more = page.getByRole("button", { name: "More actions", exact: true })
+  const enable = page.getByRole("menuitemcheckbox", { name: "Enable conversation mode" })
+  const disable = page.getByRole("menuitemcheckbox", { name: "Disable conversation mode" })
+  await more.click()
+  await enable.click()
+  await more.click()
+  await disable.waitFor()
+  await page.evaluate(() => (window as any).fixture.setVoiceConversationEngine("gemini-live"))
+  await disable.waitFor({ state: "detached" })
+
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await page.waitForFunction(() => (window as any).fixture?.voiceConversationEngineLoaded())
+  await more.click()
+  assert.equal(await enable.count(), 0)
+  await page.evaluate(() => (window as any).fixture.setVoiceConversationEngine("classic"))
+  await enable.waitFor()
+}, false, undefined, false, "en", true))
+
 test("a remote-served draft receives text only, using its original range", () => withComposer(async page => {
   await field(page).fill("before replace after")
   await select(page, 7, 14)

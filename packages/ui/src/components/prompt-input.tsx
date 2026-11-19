@@ -43,6 +43,7 @@ import {
   isConversationModeEnabled,
   toggleConversationMode,
 } from "../stores/conversation-speech"
+import { loadVoiceConversationEngine, voiceConversationEngine, voiceConversationEngineLoaded } from "../stores/voice-conversation-engine"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { requestUserMessageJump } from "./user-message-navigation"
 const log = getLogger("actions")
@@ -782,6 +783,13 @@ export default function PromptInput(props: PromptInputProps) {
   })
   const showVoiceInput = () => voiceInput.canUseVoiceInput() || voiceInput.state() !== "idle"
   const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
+  createEffect(() => {
+    if (props.isActive !== false) void loadVoiceConversationEngine().catch(() => {})
+  })
+  createEffect(() => {
+    if (props.isActive !== false && conversationModeEnabled()
+      && voiceConversationEngineLoaded() && voiceConversationEngine() !== "classic") toggleConversationMode(props.instanceId)
+  })
   const showConversationToggle = () => canUseConversationMode() || conversationModeEnabled()
   const canToggleConversationMode = () => canUseConversationMode()
   const conversationModeButtonTitle = () =>

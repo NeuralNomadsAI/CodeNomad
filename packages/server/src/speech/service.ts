@@ -2,8 +2,10 @@ import { z } from "zod"
 import type { Readable } from "node:stream"
 import type { Logger } from "../logger"
 import type { SettingsService } from "../settings/service"
-import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../api-types"
+import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse, VoiceConversationEngine } from "../api-types"
+import { SettingsReadError } from "../settings/yaml-doc-store"
 import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
+import { resolveVoiceConversationProvider, voiceConversationCapabilities, type VoiceConversationProviderSettings } from "./voice-conversation-config"
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -55,7 +57,7 @@ export interface SpeechSynthesisStreamResponse {
 export interface SpeechProvider {
   getCapabilities(): Omit<
     SpeechCapabilitiesResponse,
-    "separateProviders" | "sttConfigured" | "ttsConfigured" | "sttBaseUrl" | "ttsBaseUrl"
+    "separateProviders" | "sttConfigured" | "ttsConfigured" | "sttBaseUrl" | "ttsBaseUrl" | "voiceConversation" | "desktopVoiceConversationEngine"
   >
   transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse>
   synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse>
@@ -109,8 +111,40 @@ export class SpeechService {
       separateProviders: separate,
       sttConfigured,
       ttsConfigured,
+      desktopVoiceConversationEngine: Boolean(process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY),
       ...(separate ? { sttBaseUrl: sttSettings.baseUrl, ttsBaseUrl: ttsSettings.baseUrl } : {}),
+      voiceConversation: voiceConversationCapabilities(this.readVoiceConversationConfig()),
     }
+  }
+
+  getVoiceConversationProvider(engine: VoiceConversationEngine): VoiceConversationProviderSettings | undefined {
+    switch (engine) {
+      case "gemini-live":
+        return resolveVoiceConversationProvider(this.readVoiceConversationConfig(), "geminiLive")
+      case "openai-realtime":
+        return resolveVoiceConversationProvider(this.readVoiceConversationConfig(), "openaiRealtime")
+    }
+  }
+
+  private readVoiceConversationConfig(): unknown {
+    try {
+      return this.settings.getRawConfigOwner("server", { refreshCache: false }).voiceConversation
+    } catch (error) {
+      if (!(error instanceof SettingsReadError)) throw error
+    }
+  }
+
+  desktopVoiceConversationEngine(engine?: VoiceConversationEngine): VoiceConversationEngine | undefined {
+    const store = this.settings.desktopVoiceConversationEngineStore()
+    if (!store) return undefined
+    if (engine !== undefined) {
+      store.replace({ selection: { engine } })
+      return engine
+    }
+    const selected = store.getAuthoritativeOwner("selection").engine
+    if (selected === undefined) return "classic"
+    if (selected === "classic" || selected === "gemini-live" || selected === "openai-realtime") return selected
+    throw new SettingsReadError()
   }
 
   async transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {

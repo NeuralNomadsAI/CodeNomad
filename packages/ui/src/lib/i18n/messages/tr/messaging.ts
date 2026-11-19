@@ -314,6 +314,7 @@ export const messagingMessages = {
   "voice.microphone.busy": "Mikrofon zaten kullanılıyor.",
   "voice.microphone.dictation": "Dikte mikrofonu kullanıyor.",
   "voice.microphone.test": "Giriş testi mikrofonu kullanıyor.",
+  "voice.microphone.conversation": "Canlı konuşma mikrofonu kullanıyor.",
   "voice.microphone.unavailable": "Mikrofon bu pencerede kullanılamıyor.",
   "promptInput.voiceInput.error.permissionDenied": "Mikrofon erişimi macOS tarafından reddedildi.",
   "promptInput.voiceInput.error.unsupported": "Ses girişi bu tarayıcıda desteklenmiyor.",

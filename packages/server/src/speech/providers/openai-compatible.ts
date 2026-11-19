@@ -10,6 +10,10 @@ interface OpenAICompatibleSpeechProviderOptions {
   logger: Logger
 }
 
+export class SpeechNotConfiguredError extends Error {
+  constructor() { super("Speech provider is not configured. Add an API key in Speech settings.") }
+}
+
 export class OpenAICompatibleSpeechProvider {
   constructor(private readonly options: OpenAICompatibleSpeechProviderOptions) {}
 
@@ -149,57 +153,27 @@ export class OpenAICompatibleSpeechProvider {
   private async requestSpeechAudio(text: string, format: "mp3" | "wav" | "opus" | "aac"): Promise<Response> {
     const { settings } = this.options
     if (!settings.apiKey) {
-      throw new Error("Speech provider is not configured. Add an API key in Speech settings.")
+      throw new SpeechNotConfiguredError()
     }
 
     const endpoint = new URL("audio/speech", ensureTrailingSlash(settings.baseUrl ?? "https://api.openai.com/v1"))
-    let response: Response
-    try {
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${settings.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: settings.ttsModel,
-          voice: settings.ttsVoice,
-          input: text,
-          response_format: format,
-        }),
-      })
-    } catch (error) {
-      const detailedError = error as Error & {
-        cause?: unknown
-        code?: string
-        errno?: number | string
-        syscall?: string
-        address?: string
-        port?: number
-      }
-      this.options.logger.error(
-        {
-          err: error,
-          endpoint: endpoint.toString(),
-          baseUrl: settings.baseUrl,
-          model: settings.ttsModel,
-          voice: settings.ttsVoice,
-          format,
-          cause: detailedError.cause,
-          code: detailedError.code,
-          errno: detailedError.errno,
-          syscall: detailedError.syscall,
-          address: detailedError.address,
-          port: detailedError.port,
-        },
-        "speech.synthesize fetch failed",
-      )
-      throw error
-    }
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${settings.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: settings.ttsModel,
+        voice: settings.ttsVoice,
+        input: text,
+        response_format: format,
+      }),
+    })
 
     if (!response.ok) {
-      const detail = await response.text()
-      throw new Error(detail || `Speech synthesis failed with ${response.status}`)
+      await response.body?.cancel()
+      throw new Error(`Speech synthesis failed with ${response.status}`)
     }
 
     return response
@@ -208,7 +182,7 @@ export class OpenAICompatibleSpeechProvider {
   private createClient(): OpenAI {
     const { settings } = this.options
     if (!settings.apiKey) {
-      throw new Error("Speech provider is not configured. Add an API key in Speech settings.")
+      throw new SpeechNotConfiguredError()
     }
 
     return new OpenAI({

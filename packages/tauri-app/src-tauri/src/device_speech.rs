@@ -46,6 +46,7 @@ pub(crate) enum SpeechError {
 pub(crate) enum MicrophonePurpose {
     Dictation,
     Test,
+    Conversation,
 }
 
 #[derive(Debug, Deserialize)]

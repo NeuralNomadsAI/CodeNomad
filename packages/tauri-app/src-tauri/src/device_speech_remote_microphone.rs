@@ -438,7 +438,7 @@ mod tests {
         release("remote", id);
         assert!(!speech.accept_remote_microphone(&pending));
         assert_eq!(
-            claim("local", second, MicrophonePurpose::Dictation),
+            claim("local", second, MicrophonePurpose::Conversation),
             Ok(json!({ "busy": "test" }))
         );
         assert!(speech.revoke_remote_microphone(Some("remote"), Some(id)));
@@ -453,7 +453,7 @@ mod tests {
         speech.revoke(Some("remote")); // Navigation also revokes the generic lease.
         assert!(matches!(*capture.phase.lock(), Phase::Retiring));
         assert_eq!(
-            claim("local", id, MicrophonePurpose::Dictation),
+            claim("local", id, MicrophonePurpose::Conversation),
             Ok(json!({ "busy": "dictation" }))
         );
         assert!(reserve("other", id, InputTest).is_none());
@@ -464,12 +464,12 @@ mod tests {
         assert!(!speech.accept_remote_microphone(&legacy));
         *legacy.phase.lock() = Phase::LimitReached("excerpt".into());
         assert_eq!(
-            claim("local", second, MicrophonePurpose::Dictation),
+            claim("local", second, MicrophonePurpose::Conversation),
             Ok(json!({ "busy": "test" }))
         );
         legacy.revoke();
         assert_eq!(
-            claim("local", second, MicrophonePurpose::Dictation),
+            claim("local", second, MicrophonePurpose::Conversation),
             Ok(json!({ "busy": null }))
         );
     }

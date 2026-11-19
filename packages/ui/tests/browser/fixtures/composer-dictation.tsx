@@ -8,6 +8,7 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { addInstance, setActiveInstanceId, updateInstance } from "../../../src/stores/instances"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { activeSettingsSection, settingsOpen } from "../../../src/stores/settings-screen"
+import { setVoiceConversationEngine, voiceConversationEngineLoaded } from "../../../src/stores/voice-conversation-engine"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
@@ -109,6 +110,6 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   </Show>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 Object.assign(window, { fixture: {
-  sends, setOpen, setSession, setNativeSettings,
+  sends, setOpen, setSession, setNativeSettings, setVoiceConversationEngine, voiceConversationEngineLoaded,
   retarget: () => updateInstance(instanceId, { proxyPath: "/workspace/other" }),
 } })
