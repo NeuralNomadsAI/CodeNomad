@@ -21,6 +21,7 @@ import { controlNativeScheduledPassage, type ScheduledPassageControl } from "./n
 import { acquireNativeScheduledPassageCapability } from "./native-scheduled-passage-capability"
 import { acquireNativeMissionConditionReader } from "./native-mission-condition-reader"
 import { acquireNativeSourceFence } from "./native-source-fence"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 import { adoptNativeScheduledCoordinator, releaseNativeScheduledCoordinator } from "./native-scheduled-coordinator"
 import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 
@@ -51,7 +52,9 @@ export const acquireNativeScheduledPassageRuntime = Effect.fn("missions.acquireS
   const calendars = () => run(acquireNativeScheduledPassageCoverage(native, run))
   const now = options.now ?? Date.now
   const guard = (entry: Entry): (() => true) => () => { alive(); entry.signal.throwIfAborted(); entry.current(); return native.assertCurrent() }
+  const range = yield* optionalOrdinaryJournalRange(ctx, run)
   const storage: MissionStorage = {
+    range,
     get: key => run(ctx.storage.get(key)) as ReturnType<MissionStorage["get"]>,
     scan: input => run(ctx.storage.scan(input)) as ReturnType<MissionStorage["scan"]>,
     set: async (key, value, current) => {

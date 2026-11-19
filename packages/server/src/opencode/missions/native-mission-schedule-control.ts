@@ -18,6 +18,7 @@ import { finishMissionDocumentDeletion } from "../../missions/mission-document-d
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { configureNativeMissionPreparation } from "./native-mission-preparation"
 import { deleteDormantMissionJournal } from "../../missions/mission-dormant-journal"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 import { assertAgentScheduledCoordinatorSelection, prevalidateAgentScheduledCoordinatorCreation } from "./native-scheduled-coordinator-adoption"
 
 type Authority = Effect.Success<ReturnType<typeof acquireNativeMissionScheduleAuthority>>
@@ -219,8 +220,9 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
       if (managedCleanup || deleting.coordinatorReleases.length) actorPending = true
       else if (!actorPending && !deleting.pending && !deleting.calendarOwner?.operation.pending
         && !deleting.calendarOwner?.slots.length && !deleting.calendarOwner?.retired.length) {
+        const range = yield* optionalOrdinaryJournalRange(ctx, run)
         yield* Effect.tryPromise(() => store.withExclusion(async locked => {
-          await deleteDormantMissionJournal(locked, { get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
+          await deleteDormantMissionJournal(locked, { range, get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
             set: async (key, value, guard) => { current(); guard?.(); await run(ctx.storage.set(key, value)) } }, deleting, current)
           await finishMissionDocumentDeletion(use => use(locked), use => use(locked),
             { missionID, ...deletion }, Date.now(), current, true)

@@ -1011,6 +1011,35 @@ The authenticated owning backend reconciles saved actor locations and checks nat
 
 Snapshots are authoritative reconstructions of the journal. RPC events are only invalidations; the UI always reloads its list after reconnect because native event subscriptions are live-only.
 
+**Native journal ranges.** The one-time plugin qualifies the local SQLite range
+reader against the database service in the current native invocation. Background
+work uses the activation's qualified reader when available. Ordinary reads enumerate
+mission keys, then reconstruct each selected map in replay order. The source
+holds one transaction per range and reads batches of at most 128 rows and 1 MiB
+of event bodies, except that an oversized existing row is read alone. Receipt
+and report lookups stay inside the same observation. The activation retains one
+derived live map; reuse requires hashing the current source bytes again. A cold
+open or changed range replays event bodies, and maps still retain their live
+task/report bodies. Explicit history and cleanup/purge authority may still
+materialize all the historical events. SQL batches bound individual transfers,
+while the total bytes hashed and the scalar replay headers grow with the history.
+This path uses the existing event keys and does not migrate the journal or write
+a persisted checkpoint. Builds and adapters with only the generic scanner still
+have its entry limit; rolling back to one of those builds leaves event bytes
+intact, but a journal beyond its limit needs a range-capable build.
+
+Briefing replay checks the exact ordered event position and preceding timestamp during
+reduction. Prefix run state is derived from creation and control events; the returned
+map still projects control receipts at their actual journal positions. Run
+`node --import tsx --expose-gc scripts/benchmark-mission-journal.mts --quick` from the
+repository root to measure synthetic journals only, with fresh processes and a warm read
+in each process. `--long` measures one 10,020-entry journal; `--bench` also includes
+large bodies. `npm run test:long-mission-journal` runs standalone write preflight, then cold
+open → declare → briefing → restart and exact replay → declare → Stop → deletion
+on the same synthetic database. Output includes counts and bytes by event type and read,
+latency and memory samples by operation. The warm read uses the same fixture copy as the
+measured operation; both modes use the system's current filesystem cache.
+
 **Panel reads** (`missions/mission-summary.ts`, `MissionControl.list`/`mission`, `server/routes/missions.ts`). The panel never loads every full map. The read-mostly `list({ include?, summariesVersion? })` RPC takes the open missions (`openIDs()`) plus at most four `include` IDs, re-reads each range with `missionView`, and returns their compact maps (§Compact maps) stamped with the project damage flags, one `MissionSummary` row per live map in snapshot order (id, title, objective label of 502 code points with whitespace runs collapsed and a newline kept, enough for the row title, status, runState, coordinator and actor session IDs, updatedAt, a finished map's `finishSequence`, revision, its plan's task count (a compact map's from its task page); rows of re-read ranges come from their fresh maps, and an included map the hints missed gets its row), the hints' cleanup history and discarded count, and `summariesVersion`, a content hash of the rows; `summaries` is omitted when the caller sent that version. The `mission({ missionID })` RPC returns one range's compact map (absent when it holds no live map), that range's own cleanups and the project flags. Both are hints-based reads (§Journal index): rows and cleanup history can miss a foreign write until the rebuild, while included and open maps are read from storage on every call; neither authorizes anything, and every write keeps its authoritative read in the plugin. `GET /api/workspaces/:id/missions?include=<id,…>&summaries=<version>` brokers `list` and projects activity over the returned maps only; `GET /api/workspaces/:id/missions/:missionID` brokers `mission` for display reconciliation (the editor's lost-acknowledgement checks, cleanup retries). `GET /api/workspaces/:id/missions/:missionID/admission` answers the same shape from the full `snapshot` RPC, its map full: the admission read of an application-authored native prompt (the coordinator message), which hints must never authorize. The list and single routes compact the maps they return too (`compactMissionReads`, `compactMissionMap`), since a reload can briefly pair this backend with an older plugin that returns full maps, with or without descriptors (§Compact maps); the admission route never does. A plugin build without `list` (`rpc.method_not_found`) answers `plugin-unavailable`: its only other read, the snapshot, carries every full map, which the panel never loads. A plugin without `mission` answers the single read from its snapshot, that one map compacted; any other RPC failure stays a failure. Bridge routes (assignment, report, lifecycle, prepare, root creation, task conversations) keep the full `snapshot`: they authorize native effects. The UI store (`stores/mission-store.ts`) keeps compact maps (`missions`) and rows (`summaries`; derived from the maps of a list without summaries, which carries every map). Consumers register the maps they need with `want(instanceId, owner, missionID)`: the selected Mission (MissionControl) and the central reader. Includes and the held version are sent only once the backend has answered with a `summariesVersion`, so the first read after a load sends none; a wanted row still without its map, or a newly wanted one, schedules one coalesced follow-up read. `want` and the reads it starts run untracked, and components register through a memo of the target ID only, so store publications never re-run a registration; a mission already asked for by the read in flight starts nothing, and a failed read stays parked until new demand, an invalidation or an explicit refresh. Publication keeps the generation fence and trailing coalescing: when the wanted set changed while a read ran, the maps (and their activity) of rows wanted now that the read neither asked for nor returned stay from the last good display, and one follow-up reads the current includes unless a deactivation (`setDemand(false)`) happened while the read ran, in which case activation reads them; a reader's want needs no panel demand; an omitted list repeats the version this read sent, else the read fails and keeps the last good display. Picker rows, marks, completion seeding, empty states and the reader's absence check use the rows; the selected detail, the task tree, its questions and the readers use the compact maps, and a selected row waits for its map with a loading line. A parked failed read leaves the refresh button available. Native queue requests count for a Mission's declared and observed actors, their observed family and its proven native task conversations (`nativeMissionQuestions`: exact task-session evidence survives unknown family coverage; unknown descendants and global requests never count). A closed row's questions are its declared actors' open native requests; observed-family members count only for open and wanted missions. The row's flag turns red only for the questions it carries (`components/mission-question-owners.ts`, pure; `components/mission-questions.ts` reads the queues and the known task conversations): the coordinator's own, one of the coordinator's family no known task conversation carries, and, once its map is read, one no loaded live task row carries; the rest are its tasks', carried by its chevron (`data-child-activity`, the session list's rule: once the map is read, the task rows' own states through `missionTaskRowState`, input before active before an unseen finished task; before, `working` while a task actor works). Observed activity states, the coordinator's included, cover whole families and never redden the flag: only a question it can open does. Questions and session membership read only current observation pages (`currentMissionObservations`): a Mission's own current activity windows, else its current marks-lane window (a closed row's, `markObservations`); superseded or failed windows read as `unknown` and never count, for the red, the schedule's request count or navigation.
 
 **Body reads** (`missions/mission-content.ts`, `MissionControl.content`). The read-mostly `content({ missionID, kind, field, taskKey | reportId | change, digest?, offset })` RPC returns one mission body for display in slices, from one `missionView` read of that mission's range alone (never the index or another range). Its selector names a value in the live map: a map field (`kind: "mission"`), a task's own field or its `reports` (`task`, `taskKey`), any report by ID, current, earlier or late, never the task's current one in its place (`report`, `reportId`), or a plan change's field by revision (`change`), among every change the same observation's events record (`missionPlanChanges`, the reducer's own changes, of which the map's `history` keeps the last 50), never the nearest or a newer one. The answer carries the map's `revision` and a slice: the string itself or the value's JSON (`json`), `characters`, `digest` (the inspect digest: SHA-256 of the UTF-16 code units) and `next`, the following slice's offset; each answer, as two-space JSON, stays within the inspect bound of 100,000 characters (`sliceEnd`). A first read starts at offset 0 without a digest; every later slice repeats it and is refused (`content-changed`) once the value reads differently, while revisions that leave the value alone keep its slices valid. `mission-not-found` and `content-not-found` answer the rest; a later slice without its digest or a selector naming another kind's identity is invalid input. `GET /api/workspaces/:id/missions/:missionID/content?kind&field&taskKey|reportId|change&digest&offset` brokers it with the list's ownership, plugin and project checks; a plugin without the method answers `plugin-unavailable`, never another read in its place. It is a display read: never a write's or admission's authority. Its wire types live in `missions/mission-content-wire.ts`, which the UI imports.
@@ -1615,11 +1644,17 @@ This transport reuses only the automation bridge discovery; automation keeps its
 - Coordinator and independent actor admission require exact owned roots; native
   descendant observation/reporting uses its separate ancestry/provenance contract.
   Foreign projects are rejected; a graph edge never grants session authority.
-- A mission has no count limit on actors or tasks: its 2,000 stored journal entries
+- The qualified native ordinary journal has no fixed entry count, so writes and
+  terminal receipts do not compete for reserved capacity. A Stop or managed-session
+  cleanup intent holds at most 2,000 distinct targets. A new actor ID is refused
+  at 2,000 distinct recorded actors; reusing an existing ID does not add a target.
+  An already oversized target set is refused before any terminal side effect; deleting with conversations
+  retained requires no managed-session cleanup targets. With the generic
+  scanner, a mission's 2,000 stored journal entries
   (`MISSION_MAX_EVENTS`, counted over its key range, unreadable entries, receipts and
   tombstone included) bound it, and the number of missions, and so a project's
   journal, is unbounded. Entries plus pending reserved receipts never exceed that
-  count, on every storage. Ordinary writes keep the lifecycle reserve of the actors
+  count on that scanner. Ordinary writes keep the lifecycle reserve of the actors
   they leave the mission with (`missionLifecycleReserve`: twice one plus the actor
   count, plus one document-cleanup receipt for unified documents; every session an entry admits as original
   or replacement coordinator, dispatching or native-bound
@@ -1641,8 +1676,11 @@ This transport reuses only the automation bridge discovery; automation keeps its
   tasks; each of its dependency updates names a distinct live task (the journal
   refuses a repeated task key), so one revision rewrites at most as many dependency
   lists as the mission has tasks and can repoint every dependent of a retired task.
-  Capacity checks (`assertCanAppend`, `append`) read the target mission's range and its exact document key. A write's
-  safety decisions still read the full journal (§Journal index), so write cost grows
+  Standalone capacity checks (`assertCanAppend`, `append`) read the target mission's
+  range and its exact document key. Declaration and briefing count the target's
+  entries during the publication snapshot's scan and apply the new event to that
+  same observation under the append exclusion. A write's safety decisions still read
+  the full journal (§Journal index), so write cost grows
   with the project's history. Every read stops past 2,000 entries in one mission range
   (entries outside every range share one such bound); a full project read
   (`events()`/`snapshot()`, the index build) holds every mission's events, bounded only

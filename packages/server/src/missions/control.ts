@@ -138,7 +138,10 @@ export class MissionControl {
   }
 
   async snapshot(): Promise<MissionSnapshot> {
-    const snapshot = await this.journal.snapshot()
+    return this.projectSnapshot(await this.journal.snapshot())
+  }
+
+  private async projectSnapshot(snapshot: MissionSnapshot): Promise<MissionSnapshot> {
     if (this.options.documentReads && snapshot.missions.length) await projectMissionDocuments(this.options.documentReads, snapshot.missions)
     return snapshot
   }
@@ -169,7 +172,7 @@ export class MissionControl {
     })
     const missions: MissionMap[] = []
     for (const missionID of ids) {
-      const { mission } = await this.journal.missionView(missionID)
+      const { mission } = await this.journal.missionProjection(missionID)
       if (!mission) continue
       if (controlUnavailable) mission.controlUnavailable = true
       if (notificationUnavailable) mission.notificationUnavailable = true
@@ -190,8 +193,8 @@ export class MissionControl {
     const include = [...new Set(input.include ?? [])].slice(0, MISSION_LIST_MAX_INCLUDE)
     const hinted = await this.journal.readHints(hints => ({ ids: [...new Set([...hints.openIDs(), ...include])],
       aggregate: hints.aggregate(), cleanups: hints.cleanups(), summaries: hints.summaries() }))
-    const views = new Map<string, MissionView>()
-    for (const missionID of hinted.ids) views.set(missionID, await this.journal.missionView(missionID))
+    const views = new Map<string, Omit<MissionView, "events">>()
+    for (const missionID of hinted.ids) views.set(missionID, await this.journal.missionProjection(missionID))
     const damage = projectDamage(hinted.aggregate, [...views.values()])
     const known = new Set(hinted.summaries.map(summary => summary.id))
     const fresh = (missionID: string) => views.get(missionID)?.mission
@@ -242,7 +245,7 @@ export class MissionControl {
       })
     }
     const missionID = request.source === "tasks" ? request.task.missionID : request.missionID
-    const view = await this.journal.missionView(missionID)
+    const view = await this.journal.missionProjection(missionID)
     // These are this range's already-observed facts, independent of project hints and
     // of which field the caller reads. A damaged reconstruction cannot establish absence.
     const damage = { discardedEvents: view.discardedEvents, controlUnavailable: Boolean(view.controlUnavailable),
@@ -259,7 +262,7 @@ export class MissionControl {
    * cleanups and the hints' project damage flags (read-mostly: never a write's authority). */
   async mission(missionID: string): Promise<MissionRead> {
     const aggregate = await this.journal.readHints(hints => hints.aggregate())
-    const view = await this.journal.missionView(missionID)
+    const view = await this.journal.missionProjection(missionID)
     const damage = projectDamage(aggregate, [view])
     if (this.options.documentReads && view.mission) await projectMissionDocuments(this.options.documentReads, [view.mission])
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
@@ -270,7 +273,7 @@ export class MissionControl {
    * order or tasks by key, ID or report, from one read of its range alone; refused once
    * the order `request.order` names has changed (read-mostly: never a write's authority). */
   async tasks(request: MissionTaskRequest & { missionID: string }): Promise<MissionTaskPageResult> {
-    const { mission } = await this.journal.missionView(request.missionID)
+    const { mission } = await this.journal.missionProjection(request.missionID)
     const base = { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, missionID: request.missionID }
     if (!mission) return { ...base, refused: "mission-not-found" }
     const page = missionTaskPage(mission, request)
@@ -282,8 +285,12 @@ export class MissionControl {
    * mission's range alone, never the index or another range (read-mostly: never a
    * write's authority). */
   async content(request: MissionContentRequest): Promise<MissionContentResult> {
-    const { mission, events } = await this.journal.missionView(request.missionID)
-    return readMissionContent(this.options.project.id, request, mission, () => missionPlanChanges(events, request.missionID))
+    if (request.kind === "change") {
+      const { mission, events } = await this.journal.missionView(request.missionID)
+      return readMissionContent(this.options.project.id, request, mission, () => missionPlanChanges(events, request.missionID))
+    }
+    const { mission } = await this.journal.missionProjection(request.missionID)
+    return readMissionContent(this.options.project.id, request, mission)
   }
 
   /** `hintedMissions` for one session's selection: exactly `missionID`'s range, else the missions naming the session. */
@@ -414,10 +421,9 @@ export class MissionControl {
       if (!sameLocation(fresh.location, caller.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
       this.assertActive()
       const createdAt = this.timestamp(snapshot)
-      await this.journal.append({ version: MISSION_SCHEMA_VERSION, id, type: "mission.briefed", missionID: mission.id,
+      const saved = await this.projectSnapshot(await this.journal.appendWithSnapshot({ version: MISSION_SCHEMA_VERSION, id, type: "mission.briefed", missionID: mission.id,
         projectID: mission.projectID, actorSessionID: sessionID, createdAt,
-        briefing: { ...content, id, basedOnUpdatedAt: mission.updatedAt, createdAt } })
-      const saved = await this.snapshot()
+        briefing: { ...content, id, basedOnUpdatedAt: mission.updatedAt, createdAt } }))
       await this.emitChanged(mission.id, saved)
       return { mission: this.requireMission(saved, mission.id) }
     })
@@ -442,7 +448,7 @@ export class MissionControl {
         || !isDeepStrictEqual(event.preparedBy, input.preparedBy) || !isDeepStrictEqual(event.creationDefaults, input.creationDefaults)
         || input.coordinatorSessionID !== undefined && event.coordinator.sessionID !== input.coordinatorSessionID
         || !input.expectedCoordinatorLocation || !sameLocation(event.coordinator.location, input.expectedCoordinatorLocation)) return result
-      const read = await this.journal.missionView(missionID)
+      const read = await this.journal.missionProjection(missionID)
       if (!read.mission) return result
       if (this.options.documents) {
         const doc = await requireMissionOneTimeDocument(this.options.documents, missionID, event.coordinator.sessionID, input)
@@ -1012,12 +1018,11 @@ export class MissionControl {
         if (!actor || !sameLocation(coordinator.location, actor.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
         this.assertActive()
         if (this.options.documents && mission.document) await markMissionDocumentTaskCreation(this.options.documents, mission.id, () => { this.assertActive(); return true })
-        await this.journal.append({ version: MISSION_SCHEMA_VERSION, id: this.eventID(mission.id, `task-${input.taskKey}-created`),
+        snapshot = await this.projectSnapshot(await this.journal.appendWithSnapshot({ version: MISSION_SCHEMA_VERSION, id: this.eventID(mission.id, `task-${input.taskKey}-created`),
           type: "task.created", missionID: mission.id, projectID: mission.projectID,
           task: { id: `tsk_${stableToken(`${mission.id}\0${input.taskKey}`, 24)}`, key: input.taskKey,
             title: input.title, brief: input.brief, role: input.role, blockedBy: input.blockedBy,
-            execution: input.execution, executionMode: input.executionMode }, createdAt: this.timestamp(snapshot) })
-        snapshot = await this.snapshot()
+            execution: input.execution, executionMode: input.executionMode }, createdAt: this.timestamp(snapshot) }))
         mission = this.requireMission(snapshot, mission.id)
         task = mission.tasks.find(task => task.key === input.taskKey)
         if (!task || !sameExecutionMode(task.executionMode, input.executionMode)) throw new MissionControlError("Task declaration was not accepted", "invalid-journal")
@@ -1991,7 +1996,7 @@ export class MissionControl {
       createdAt: Math.max(report.createdAt + 1, this.timestamp(snapshot)),
     })
     // Only the change event's revision, which is the mission's own.
-    const { mission: updated } = await this.journal.missionView(mission.id)
+    const { mission: updated } = await this.journal.missionProjection(mission.id)
     await this.notifyChanged(mission.id, updated?.revision ?? 0)
   }
 
@@ -2139,7 +2144,7 @@ type ProjectDamage = Pick<MissionSnapshot, "controlUnavailable" | "notificationU
 /** The hints' project damage flags, plus those of ranges just read (fresher than
  * their hints), set only when true as a snapshot sets them. */
 function projectDamage(aggregate: { controlUnavailable: boolean; notificationUnavailable: boolean; cleanupUnavailable: boolean },
-  views: readonly MissionView[]): ProjectDamage {
+  views: readonly Omit<MissionView, "events">[]): ProjectDamage {
   const flag = (key: keyof ProjectDamage) => aggregate[key] || views.some(view => view[key]) ? { [key]: true } : {}
   return { ...flag("controlUnavailable"), ...flag("notificationUnavailable"), ...flag("cleanupUnavailable") }
 }
