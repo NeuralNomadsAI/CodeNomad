@@ -69,6 +69,7 @@ export type LiveVoiceClientMessage =
 export type LiveVoiceServerMessage =
   | { type: "ready"; inputRate: 16000 | 24000; outputRate: 24000 }
   | { type: "audio"; pcm: string; itemId?: string; contentIndex?: number }
+  | { type: "item-order"; itemId: string; previousItemId?: string | null }
   | { type: "transcript"; role: "user" | "assistant"; text: string; final: boolean; replace?: true; itemId?: string }
   | { type: "activity" }
   | { type: "speech-start" }

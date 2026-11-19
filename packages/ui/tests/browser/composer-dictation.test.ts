@@ -391,6 +391,29 @@ test("keyboard insertion of a pending transcript returns focus to the new draft 
     [true, "left saved right", 11, 11])
 }))
 
+test("discarding a pending transcript returns focus to the draft only from the focused button", () => withComposer(async page => {
+  const other = page.getByRole("button", { name: "Other control" })
+  const discard = page.getByRole("button", { name: "Discard transcript", exact: true })
+  for (const focused of [true, false]) {
+    await field(page).fill("original")
+    await start(page)
+    await page.waitForFunction(expected => (window as any).capture.starts === expected, focused ? 1 : 2)
+    await action(page, "Stop recording and transcribe")
+    await page.waitForFunction(expected => (window as any).capture.requests.length === expected, focused ? 1 : 2)
+    await field(page).fill("left right")
+    await select(page, 5)
+    await page.evaluate(() => (window as any).capture.requests.at(-1).resolve("saved"))
+    if (focused) await discard.press("Enter")
+    else {
+      await other.focus()
+      await discard.evaluate((button: HTMLButtonElement) => button.click())
+    }
+    assert.equal(await discard.count(), 0)
+    assert.deepEqual(await field(page).evaluate(element => [element.value, element.selectionStart]), ["left right", 5])
+    assert.equal(await (focused ? field(page) : other).evaluate(el => el === document.activeElement), true)
+  }
+}))
+
 test("a pending transcription survives sending the draft and still inserts in the same session", () => withComposer(async page => {
   await field(page).fill("original")
   await start(page)
@@ -729,6 +752,7 @@ for (const choice of ["hex", "system"] as const) {
     })
     await testInput.click()
     await page.getByRole("button", { name: "Starting…", exact: true }).waitFor()
+    await page.waitForFunction(() => (window as any).native.requests.filter(({ action }: any) => action === "startApiInputTest").length === 2)
     await page.evaluate(() => (window as any).native.admitMicrophone())
     await page.getByRole("button", { name: "Stop recording", exact: true }).click()
     await page.waitForFunction(() => (window as any).capture.requests.length === 1)
@@ -792,6 +816,29 @@ test("remote Linux Tauri API retains the host-bounded excerpt until explicit tra
   await finish(page, "bounded text")
   assert.equal(await field(page).inputValue(), "bounded text ")
 }, false, "tauri-remote-api"))
+
+test("sending a draft preserves the stopped Linux Tauri excerpt until explicit transcription", () => withComposer(async page => {
+  await field(page).fill("send only this draft")
+  await start(page)
+  await page.waitForFunction(() => (window as any).native.requests.some(({ action }: any) => action === "statusApiMicrophone"))
+  await page.evaluate(() => { (window as any).native.microphoneState = "limitReached" })
+  const confirm = page.getByRole("button", { name: "Transcribe", exact: true })
+  await confirm.waitFor()
+  const actions = () => page.evaluate(() => (window as any).native.requests.map(({ action }: any) => action) as string[])
+  await page.waitForFunction(() => (window as any).native.requests.some(({ action }: any) => action === "releaseMicrophone"))
+  await page.evaluate(() => (window as any).fixture.holdSend())
+  await field(page).press("Enter")
+  await page.waitForFunction(() => (window as any).fixture.sendHeld())
+  assert.equal(await confirm.isVisible(), true)
+  assert.ok(!(await actions()).includes("revokeApiMicrophone"))
+  assert.equal(await page.evaluate(() => (window as any).capture.requests.length), 0)
+  await page.evaluate(() => (window as any).fixture.releaseSend())
+  await confirm.click()
+  await page.waitForFunction(() => (window as any).capture.requests.length === 1)
+  await finish(page, "kept excerpt")
+  await page.getByRole("button", { name: "Insert transcript", exact: true }).click()
+  assert.equal(await field(page).inputValue(), "kept excerpt ")
+}, false, "tauri-remote-api", false, "en", false, false, { expectedSends: ["send only this draft"] }))
 
 test("Linux Tauri revokes a late API microphone authorization without starting capture", () => withComposer(async page => {
   await page.evaluate(() => { (window as any).native.holdMicrophone = true })
@@ -877,6 +924,7 @@ for (const surface of ["composer", "Voice settings"] as const) {
         assert.equal(await cancel.evaluate(el => el === document.activeElement), true)
         await page.keyboard.press("Space")
         await status.waitFor({ state: "hidden" })
+        if (inComposer) assert.equal(await field(page).evaluate(el => el === document.activeElement), true)
         await page.clock.runFor(200)
         assert.equal(await requests(), 0)
         assert.equal(await field(page).inputValue(), draft)

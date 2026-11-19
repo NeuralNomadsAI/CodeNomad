@@ -58,7 +58,7 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | SideCar **içerik proxy'si** | SideCar WebSocket'leri gibi loopback gerektirir (`/sidecars/`). `/api/sidecars` kayıt API'leri, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. |
 | Web önizleme içeriği | Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında **Web önizlemeleri** açık olduğu sürece (varsayılan) kullanılabilir. Her önizleme adresi sayfasını eşleştirme olmadan açar; bu yüzden gizli tutun. Anahtarı kapatmak sunulan önizlemeleri ve WebSocket bağlantılarını durdurur; eşleştirilmiş cihazlar yeniden yüklendiğinde **Web önizlemesini aç** seçeneğini gizler. |
 | Otomasyon köprüsü | Kullanılamaz (`/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. |
-| WebSocket yükseltmeleri | Yalnızca web önizlemeleri için kullanılabilir. |
+| WebSocket yükseltmeleri | Web önizlemelerinde ve eşleştirilmiş cihazlarda [canlı sesli konuşmalarda](voice.md#conversation) kullanılabilir. |
 
 Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`/api/remote-control/`) için ana bilgisayarda loopback bağlantısı kullanın. Doğrudan LAN erişiminde de bu işlemler loopback gerektirir; bkz. [Yükseltme](remote-access.md#upgrading). Uzaktan Kontrol web önizlemeleri, adreslerindeki yetenek belirtecini kullanır ve ana bilgisayarda etkin oldukları sürece kullanılabilir kalır; bu adresi gizli tutun.
 

@@ -786,7 +786,8 @@ export default function PromptInput(props: PromptInputProps) {
     },
     active: () => props.isActive !== false,
     enabled: () => props.isActive !== false && preferences().showPromptVoiceInput,
-    disabled: () => Boolean(props.disabled) || props.isActive === false || mode() !== "normal" || submissionsInFlight() > 0,
+    disabled: () => Boolean(props.disabled) || props.isActive === false || mode() !== "normal",
+    sending: () => submissionsInFlight() > 0,
     canInsertTranscript,
   })
   const liveVoice = useLiveVoiceConversation({
@@ -948,6 +949,7 @@ export default function PromptInput(props: PromptInputProps) {
     <div class="prompt-input-container">
       <DictationNotice
         recordingLimitReached={voiceInput.state() === "limitReached"}
+        focusDraft={() => textareaRef?.focus({ preventScroll: true })}
         onTranscribe={voiceInput.confirmTranscription} onCancelRecording={voiceInput.cancelRecording}
         transcript={voiceInput.savedTranscript()} canInsertTranscript={canInsertTranscript()}
         onInsertTranscript={voiceInput.restoreTranscript} onDiscardTranscript={voiceInput.discardTranscript}

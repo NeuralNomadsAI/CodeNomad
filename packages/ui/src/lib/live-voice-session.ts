@@ -1,6 +1,6 @@
 import {
   LIVE_VOICE_ABSOLUTE_MS, LIVE_VOICE_ESTABLISH_MS, LIVE_VOICE_IDLE_MS, LIVE_VOICE_MAX_CALLS, LIVE_VOICE_OUTPUT_RATE,
-  LIVE_VOICE_PROVIDER_BYTES, liveVoiceIdentifier, liveVoiceInputRate, liveVoiceKeys, liveVoiceObject, readLiveVoiceTool,
+  LIVE_VOICE_PROVIDER_BYTES, LIVE_VOICE_TRACKED_IDS, liveVoiceIdentifier, liveVoiceInputRate, liveVoiceKeys, liveVoiceObject, readLiveVoiceTool,
   type LiveVoiceClientMessage, type LiveVoiceContext, type LiveVoiceEndReason, type LiveVoiceEngine,
   type LiveVoiceServerMessage, type LiveVoiceTool,
 } from "../../../server/src/speech/live-voice-contract"
@@ -59,6 +59,7 @@ export function openLiveVoiceSession(options: {
   const calls = new Map<string, { state: "started" | "cancelled" | "finished"; responseId?: string }>()
   const interruptedResponses = new Set<string>()
   const rows = new Map<number, LiveVoiceTranscriptRow>()
+  const positions: { id: number; itemId?: string; previousItemId?: string | null }[] = []
   const keys = new Map<string, number>()
   const assistantRows = new Set<number>()
   const awaitingPlayback = new Set<number>()
@@ -113,7 +114,40 @@ export function openLiveVoiceSession(options: {
     idle = setTimeout(() => stop("idle"), LIVE_VOICE_IDLE_MS)
   }
 
-  function publish() { options.onTranscript([...rows.values()]) }
+  function publish() {
+    options.onTranscript(positions.flatMap(({ id }) => {
+      const row = rows.get(id)
+      return row ? [row] : []
+    }))
+  }
+
+  // Reserve positions before transcription arrives, including non-spoken items
+  // that can be predecessors, without displaying empty rows.
+  function position(itemId?: string) {
+    const existing = itemId ? positions.find(entry => entry.itemId === itemId) : undefined
+    if (existing) return existing
+    const entry: typeof positions[number] = { id: ++sequence, itemId }
+    if (positions.length >= MAX_ROWS + LIVE_VOICE_TRACKED_IDS) {
+      positions.splice(positions.findIndex(({ id }) => !rows.has(id)), 1)
+    }
+    positions.push(entry)
+    return entry
+  }
+
+  function orderItem(itemId: string, previousItemId?: string | null) {
+    const entry = position(itemId)
+    if (previousItemId === undefined || previousItemId === entry.previousItemId) return
+    const previous = previousItemId === null ? undefined : positions.find(entry => entry.itemId === previousItemId)
+    if (previousItemId !== null && !previous) return
+    entry.previousItemId = previousItemId
+    const after = previous ? positions.indexOf(previous) : -1
+    const nextItem = (index: number) => positions.findIndex((candidate, at) => at > index && candidate.itemId !== undefined)
+    if (positions[nextItem(after)] === entry) return
+    positions.splice(positions.indexOf(entry), 1)
+    const next = nextItem(previous ? positions.indexOf(previous) : -1)
+    positions.splice(next < 0 ? positions.length : next, 0, entry)
+    if (rows.has(entry.id)) publish()
+  }
 
   function pendingTool() {
     for (const call of calls.values()) if (call.state === "started") return call
@@ -129,7 +163,8 @@ export function openLiveVoiceSession(options: {
   function saveRow(row: LiveVoiceTranscriptRow) {
     rows.set(row.id, row)
     if (rows.size <= MAX_ROWS) return
-    const oldest = rows.keys().next().value!
+    const index = positions.findIndex(({ id }) => rows.has(id))
+    const [{ id: oldest }] = positions.splice(index, 1)
     rows.delete(oldest)
     assistantRows.delete(oldest)
     awaitingPlayback.delete(oldest)
@@ -137,7 +172,7 @@ export function openLiveVoiceSession(options: {
   }
 
   function marker(role: "sent" | "interrupted", text = "") {
-    saveRow({ id: ++sequence, role, text: text.slice(0, ROW_CHARS), final: true, announce: true })
+    saveRow({ id: position().id, role, text: text.slice(0, ROW_CHARS), final: true, announce: true })
     publish()
   }
 
@@ -149,9 +184,11 @@ export function openLiveVoiceSession(options: {
     let fragment = value.replace ? value.text || prior?.text || "" : (prior?.text ?? "") + value.text
     if (!fragment.trim() && !prior) return
     fragment = fragment.slice(0, ROW_CHARS)
-    const id = prior?.id ?? ++sequence
+    const id = prior?.id ?? position(options.engine === "openai-realtime" ? value.itemId : undefined).id
+    if (!prior && rows.has(id)) return
     saveRow({ id, role: value.role, text: fragment, final: value.final,
       ...(value.role === "user" && value.final ? { announce: true } : {}) })
+    if (!rows.has(id)) return
     if (value.role === "assistant") {
       assistantRows.add(id)
       responseOpen = true
@@ -302,6 +339,12 @@ export function openLiveVoiceSession(options: {
           typeof value.final !== "boolean" || (value.itemId !== undefined && !liveVoiceIdentifier(value.itemId)) ||
           (value.replace !== undefined && value.replace !== true)) return stop("invalid-message")
         transcript(value as TranscriptEvent)
+        break
+      case "item-order":
+        if (options.engine !== "openai-realtime" || !liveVoiceIdentifier(value.itemId)
+          || value.itemId === value.previousItemId || (value.previousItemId !== null && value.previousItemId !== undefined
+            && !liveVoiceIdentifier(value.previousItemId))) return stop("invalid-message")
+        orderItem(value.itemId, value.previousItemId)
         break
       case "turn-complete":
         completeTurn()

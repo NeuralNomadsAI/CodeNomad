@@ -22,6 +22,7 @@ interface UsePromptVoiceInputOptions {
   active: Accessor<boolean>
   enabled: Accessor<boolean>
   disabled: Accessor<boolean>
+  sending: Accessor<boolean>
   canInsertTranscript: Accessor<boolean>
   engine?: (api: VoiceInputEngine) => VoiceInputEngine | undefined
 }
@@ -91,7 +92,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     if (state() === "transcribing") return "promptInput.voiceInput.transcribing.title"
     if (state() === "limitReached") return "promptInput.voiceInput.limitReached"
     if (transcript()) return "voice.command.pendingTranscription"
-    if (options.disabled()) return "voice.command.composerUnavailable"
+    if (options.disabled() || options.sending()) return "voice.command.composerUnavailable"
     if (deviceDictation?.readFailed() || remoteDictation?.readFailed()) return "settings.speech.device.readFailed"
     const purpose = microphoneUse()
     if (purpose) return `voice.microphone.${purpose}`
@@ -122,7 +123,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     const contextCurrent = () => owner() && instanceId === options.instanceId() && sessionId === options.sessionId()
       && directory === options.directory() && options.active() && textarea === options.getTextarea() && textarea.isConnected
     const current = () => contextCurrent() && options.enabled() && selectedEngine === engine()
-      && (state() === "transcribing" || !options.disabled())
+      && (state() === "transcribing" || (!options.disabled() && (state() === "limitReached" || !options.sending())))
     if (!current()) return
     let moved = false
     let delivered = false
@@ -137,7 +138,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       onTranscript: text => {
         if (!held() || delivered || !text) return
         delivered = true
-        if (!options.canInsertTranscript() || options.disabled() || composing || moved
+        if (!options.canInsertTranscript() || options.disabled() || options.sending() || composing || moved
           || revision !== options.draftRevision() || !sameSelection(textarea, range) || textarea.value !== options.prompt()) {
           setPromptTranscript(instanceId, sessionId, { text, directory, owner })
           return

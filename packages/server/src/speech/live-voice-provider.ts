@@ -223,6 +223,12 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     return true
   }
 
+  function orderItem(itemId: unknown, previousItemId: unknown) {
+    if (!identifier(itemId) || itemId === previousItemId) return
+    if (previousItemId === null || identifier(previousItemId)) io.emit({ type: "item-order", itemId, previousItemId })
+    else if (previousItemId === undefined) io.emit({ type: "item-order", itemId })
+  }
+
   function fromOpenAI(event: JsonObject) {
     const { type, item_id: itemId, content_index: index, response_id: responseId } = event
     if (type === "session.created" && state === "connecting" && object(event.session)) return configureOpenAI()
@@ -236,6 +242,13 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
         break
       case "input_audio_buffer.speech_stopped":
         io.speech()
+        break
+      case "input_audio_buffer.committed":
+        orderItem(itemId, event.previous_item_id)
+        break
+      case "conversation.item.added":
+      case "conversation.item.created":
+        orderItem(object(event.item)?.id, event.previous_item_id)
         break
       case "conversation.item.input_audio_transcription.delta":
         transcript("user", event.delta, false, itemId)

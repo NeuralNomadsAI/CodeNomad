@@ -360,6 +360,29 @@ test("Remote Control needs its device credential even without local auth; OpenAI
   await upstream.closed
 })
 
+test("OpenAI relays item ordering separately from late transcription text", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })
+  const client = connect(t, local, openai, { origin: `http://${local}` })
+  const upstream = await fake.next()
+  upstream.send({ type: "session.created", session: {} })
+  assert.equal((await upstream.next()).type, "session.update")
+  upstream.send({ type: "session.updated", session: {} })
+  assert.equal((await client.next()).type, "ready")
+  upstream.send({ type: "input_audio_buffer.committed", item_id: "user", previous_item_id: null })
+  upstream.send({ type: "conversation.item.created", item: { id: "tool", arguments: "private" }, previous_item_id: "user" })
+  upstream.send({ type: "conversation.item.added", item: { id: "assistant" }, previous_item_id: "tool" })
+  upstream.send({ type: "response.output_audio_transcript.done", response_id: "reply", item_id: "assistant", transcript: "Pong" })
+  upstream.send({ type: "response.done", response: { id: "reply", status: "completed", output: [] } })
+  upstream.send({ type: "conversation.item.input_audio_transcription.completed", item_id: "user", transcript: "Ping" })
+  assert.deepEqual(await client.next(), { type: "item-order", itemId: "user", previousItemId: null })
+  assert.deepEqual(await client.next(), { type: "item-order", itemId: "tool", previousItemId: "user" })
+  assert.deepEqual(await client.next(), { type: "item-order", itemId: "assistant", previousItemId: "tool" })
+  assert.deepEqual(await client.next(), { type: "transcript", role: "assistant", itemId: "assistant", text: "Pong", final: true, replace: true })
+  assert.deepEqual(await client.next(), { type: "turn-complete" })
+  assert.deepEqual(await client.next(), { type: "transcript", role: "user", itemId: "user", text: "Ping", final: true, replace: true })
+})
+
 test("OpenAI interruption settles raced function calls for completed replies without forwarding late sends", { timeout: 10000 }, async t => {
   const fake = await provider(t)
   const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })

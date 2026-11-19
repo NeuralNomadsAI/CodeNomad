@@ -688,6 +688,35 @@ test("the duration limit transfers focus from the microphone to Close", async ()
   } finally { await context.close() }
 })
 
+test("OpenAI places late transcriptions in conversation item order without showing empty rows", async () => {
+  const { context, start, snapshot, page } = await fixture("openai")
+  try {
+    const send = await start()
+    const item = (itemId: string, previousItemId: string | null) => send({ type: "item-order", itemId, previousItemId })
+    const line = (role: "user" | "assistant", itemId: string, text: string) =>
+      send({ type: "transcript", role, itemId, text, final: true, replace: true })
+    item("user-1", null)
+    item("assistant-1", "user-1")
+    line("assistant", "assistant-1", "First reply")
+    send({ type: "turn-complete" })
+    item("tool", "assistant-1")
+    item("assistant-2", "tool")
+    line("assistant", "assistant-2", "Second reply")
+    send({ type: "turn-complete" })
+    await page.waitForFunction(() => (window as any).fixture.transcript().length === 2)
+    const texts = async () => (await snapshot()).transcript.map(({ role, text }: any) => [role, text])
+    assert.deepEqual(await texts(), [["assistant", "First reply"], ["assistant", "Second reply"]])
+    item("user-2", "tool")
+    item("assistant-2", "tool") // Duplicate lifecycle event.
+    line("user", "user-2", "Second question")
+    line("user", "user-1", "First question")
+    await page.waitForFunction(() => (window as any).fixture.transcript().length === 4)
+    assert.deepEqual(await texts(), [
+      ["user", "First question"], ["assistant", "First reply"], ["user", "Second question"], ["assistant", "Second reply"],
+    ])
+  } finally { await context.close() }
+})
+
 test("a dropped connection moves focus to Close only if the microphone held focus", async () => {
   for (const focusMic of [true, false]) {
     const { page, context, live, openConsent, acceptConsent, socket } = await fixture("gemini", true)
