@@ -298,6 +298,22 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
+  it("refuses an unreadable session placement without reporting a move", async () => {
+    const { app, manager, requestCount } = await harness("/repo/worktree")
+    const unavailable = async (_id: string, _location: unknown, options?: { strict?: boolean }) => {
+      if (options?.strict) throw new Error("WSL host directory translation unavailable")
+      return undefined
+    }
+    manager.resolveLocationPlacement = unavailable
+    manager.ownsLocation = async (id, location, _client, options) => Boolean(await unavailable(id, location, options))
+    for (const headers of [{}, { [SESSION_PLACEMENT_HEADER]: "1" }]) {
+      const response = await app.inject({ url: "/workspaces/workspace/instance/api/session/owned", headers })
+      assert.equal(response.statusCode, 403)
+      assert.deepEqual(response.json(), { error: "Session does not belong to workspace" })
+    }
+    assert.equal(requestCount(), 0)
+  })
+
   it("returns registered list identity only for an exact placement, keeping its native directory", async () => {
     const { app, manager, requestCount } = await harness("/repo/worktree", {}, {
       alias: "/checkout-alias", nested: "/repo/nested", foreign: "/other",

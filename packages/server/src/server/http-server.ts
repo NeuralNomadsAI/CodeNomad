@@ -1192,19 +1192,27 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       }
       if (!isSessionNotFoundError(error)) throw error
     }
-    const wantsPlacement = request.method === "GET" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
-      && request.headers[SESSION_PLACEMENT_HEADER] === "1" && workspaceManager.resolveLocationPlacement
-    const placement = session && wantsPlacement
-      ? await wait(workspaceManager.resolveLocationPlacement!(workspaceId, session.location, { signal })) : undefined
-    if (session && !(wantsPlacement ? placement
-      : await wait(workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest(), { signal })))) {
-      reply.code(403).send({ error: "Session does not belong to workspace", reason: SESSION_LOCATED_ELSEWHERE_REASON })
-      return
-    }
-    if (session && wantsPlacement && placement) {
-      signal.throwIfAborted()
-      connection?.assertCurrent()
-      return reply.send({ data: { ...session, listWorktreeSlug: placement.listWorktreeSlug } })
+    if (session) {
+      const { location } = session
+      const wantsPlacement = request.method === "GET" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
+        && request.headers[SESSION_PLACEMENT_HEADER] === "1" && workspaceManager.resolveLocationPlacement
+      const ownsSession = async (strict = false) => wantsPlacement
+        ? workspaceManager.resolveLocationPlacement!(workspaceId, location, { signal, strict })
+        : workspaceManager.ownsLocation(workspaceId, location, await clientForRequest(), { signal, strict })
+      const ownership = await wait(ownsSession())
+      if (!ownership) {
+        // A failed translation or inventory read also denies access, but cannot establish departure.
+        const elsewhere = await wait(ownsSession(true)).then(owned => !owned, () => false)
+        signal.throwIfAborted()
+        connection?.assertCurrent()
+        return reply.code(403).send({ error: "Session does not belong to workspace",
+          ...(elsewhere ? { reason: SESSION_LOCATED_ELSEWHERE_REASON } : {}) })
+      }
+      if (typeof ownership === "object") {
+        signal.throwIfAborted()
+        connection?.assertCurrent()
+        return reply.send({ data: { ...session, listWorktreeSlug: ownership.listWorktreeSlug } })
+      }
     }
     authorizedSessionDirectory = session?.location.directory
     authorizedSession = session

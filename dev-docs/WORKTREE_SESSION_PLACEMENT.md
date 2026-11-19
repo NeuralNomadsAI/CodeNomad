@@ -94,6 +94,8 @@ Implementation:
   (`stores/session-move-restore.test.ts`, `tests/browser/session-external-move.test.ts`).
   The workspace proxy's 403 for a session located outside the workspace carries
   `reason: "session_located_elsewhere"` (`opencode/session-access-contract.ts`).
+  Strict ownership confirmation distinguishes a foreign session from an
+  unavailable path translation or inventory; unconfirmed refusals stay generic.
   Parent and saved-workspace reads opt in through the instance adapter
   (`lib/sdk-manager.ts`, a client-side header never sent), which reads that refusal
   as absent and preserves the reason for projection cleanup. Restore applies
