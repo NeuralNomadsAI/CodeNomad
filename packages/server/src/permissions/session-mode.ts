@@ -3,7 +3,7 @@ import type { LocationPublicRef, OpenCodeClient, PermissionRule, SessionInfo } f
 import { z } from "zod"
 import type { ConversationPermissionMode, ConversationPermissionModeResponse } from "../api-types"
 import type { SettingsService } from "../settings/service"
-import { blockPositions, sameRules, sessionPermissionRules, supervisedRules } from "./session-mode-rules"
+import { appendSessionProjection, blockPositions, sameRules, sessionPermissionRules, supervisedRules } from "./session-mode-rules"
 
 export const NEW_CONVERSATION_PERMISSIONS = "newConversationPermissions"
 
@@ -122,22 +122,23 @@ export class SessionPermissionModes {
         if (mode === "supervised") return { mode }
         throw new SessionModeConflict("Ambiguous permission block")
       }
-      const block = owned ?? (mode === "supervised" ? await this.configBlock({ ...target, location: initial.location }) : undefined)
+      const config = mode === "supervised" && !owned ? await this.configBlock({ ...target, location: initial.location }) : undefined
       const history = active && !previous.some(block => sameRules(block, active)) ? [...previous, active] : previous
       const forget = () => {
         // A descendant can still carry this block after the source changes mode.
         if (active) this.remember(key, null, history)
       }
-      let retained = false
+      let retained: { block: PermissionRule[]; previous: PermissionRule[][] } | undefined
       for (let attempt = 0; attempt < 3; attempt++) {
         // Read again after config/lock/persistence. The native update replaces
         // the whole array and has no compare-and-swap precondition.
-        let rules = currentRules(await target.read())
-        let positions = block ? blockPositions(rules, block) : []
+        const rules = currentRules(await target.read())
+        const knownBlock = owned ?? retained?.block
+        const positions = knownBlock ? blockPositions(rules, knownBlock) : []
         if (mode === "supervised" && owned && positions.length) return { mode }
         if (sourceSessionID(initial) && !local && !sameRules(rules, original)) {
           const fresh = await this.inheritedBlock(target, initial, rules)
-          if (fresh && (fresh === "ambiguous" || !block || !sameRules(fresh, block))) {
+          if (fresh && (fresh === "ambiguous" || !knownBlock || !sameRules(fresh, knownBlock))) {
             throw new SessionModeConflict("Permission rules changed")
           }
           // Keep the rule read immediately before dispatch if ancestry required I/O.
@@ -147,21 +148,30 @@ export class SessionPermissionModes {
           forget()
           return { mode }
         }
-        if (!block || positions.length > 1) throw new SessionModeConflict("Ambiguous permission block")
-        if (mode === "supervised" && !retained) {
-          if (owned) throw new SessionModeConflict("Permission rules changed")
-          // Identical unowned rules do not grant a right to remove them later.
-          if (positions.length) throw new SessionModeConflict("Permission block already exists without ownership")
-          this.remember(key, block, history)
-          retained = true
-          rules = currentRules(await target.read())
-          positions = blockPositions(rules, block)
-          if (positions.length) {
-            this.remember(key, active ?? null, previous)
-            throw new SessionModeConflict("Permission rules changed")
-          }
-        }
+        if (positions.length > 1) throw new SessionModeConflict("Ambiguous permission block")
         if (mode === "supervised" && positions.length) return { mode }
+        let block = owned
+        if (mode === "supervised") {
+          if (!config) throw new SessionModeConflict("Permission rules changed")
+          block = appendSessionProjection(config, rules, target.distro)
+          // Identical unowned rules do not grant a right to remove them later.
+          if (blockPositions(rules, config).length || blockPositions(rules, block).length) {
+            throw new SessionModeConflict("Permission block already exists without ownership")
+          }
+          const prior = retained?.block
+          const past = retained?.previous ?? history
+          const retired = prior && !sameRules(prior, block) && !past.some(entry => sameRules(entry, prior))
+            ? [...past, prior] : past
+          this.remember(key, block, retired)
+          const fresh = currentRules(await target.read())
+          if (!sameRules(fresh, rules)) {
+            this.remember(key, prior ?? active ?? null, retained?.previous ?? previous)
+            if (blockPositions(fresh, block).length) throw new SessionModeConflict("Permission rules changed")
+            continue
+          }
+          retained = { block, previous: retired }
+        }
+        if (!block) throw new SessionModeConflict("Permission rules changed")
         const index = positions[0]
         const updated = mode === "supervised" ? [...rules, ...block]
           : [...rules.slice(0, index), ...rules.slice(index + block.length)]

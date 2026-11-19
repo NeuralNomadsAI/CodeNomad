@@ -84,16 +84,19 @@ only replies to an explicit decision.
 
 **Status → Permissions** reads while the selected section is shown. It shares
 the secondary read budget, coalesces invalidations during a read, and preserves
-the last confirmed value during a write. A write settles with an authoritative
-refresh and is never replayed after failure. Status customization normalizes
-saved section IDs before applying order and visibility.
+the last confirmed value during a write. A failed read or disconnect marks that
+value unconfirmed; Reload permissions reads the mode again before editing is
+available. A write settles with an authoritative refresh and is never replayed
+after failure. Status customization normalizes saved section IDs before
+applying order and visibility.
 
 Autonomous contributes no rules. Supervised appends `ask edit *` and `ask shell *`,
 then projects the effective global and project configuration onto those two actions
-in order. Configured `deny` stays `deny`; `allow` becomes `ask`. Home-relative edit
+in order, followed by the conversation's existing rules matching those actions.
+The projection preserves `deny` and `ask` and turns `allow` into `ask`. Home-relative edit
 resources that need expansion by the native config loader are refused if their
-native absolute path cannot be established. Agent-specific or pre-existing
-session refusals can become requests where the appended block takes precedence.
+native absolute path cannot be established. The block takes precedence over
+agent-specific rules where they overlap.
 Saved project approvals can still allow an `ask`; external-directory
 and MCP actions retain their own policy. Tool approval is separate from a person
 running a command directly. Open requests keep their original decision context.

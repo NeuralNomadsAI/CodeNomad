@@ -27,6 +27,7 @@ const statusTab = (page: Page) => page.getByRole("tab", { name: "Status", exact:
 const permissionSection = (page: Page) => page.locator('[data-status-section="permissions"]')
 const sectionIds = (page: Page) => page.locator("[data-status-section]").evaluateAll(rows => rows.map(row => row.getAttribute("data-status-section")))
 const expectValue = (select: Locator, mode: ConversationPermissionMode) => select.locator(`option[value="${mode}"]:checked`).waitFor({ state: "attached" })
+const expectFocus = async (target: Locator) => target.page().waitForFunction(el => el === document.activeElement, await target.elementHandle())
 const permissionUpdate = (sessionID: string, instanceId = "status-fixture") => events.send({
   type: "instance.event", instanceId, event: { type: "session.permissions", data: { sessionID, permissions: [] } },
 } as WorkspaceEventPayload)
@@ -52,10 +53,13 @@ test("Status shows confirmed modes, follows another window and reconciles on rec
   let mode: ConversationPermissionMode = "autonomous"
   let attempts = 0
   let reject = false
+  let failOtherReads = false
   let release!: () => void
+  let allowReconnectRead!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
+  const reconnectRead = new Promise<void>(resolve => { allowReconnectRead = resolve })
   try {
-    await Promise.all(pages.map(async (page) => {
+    await Promise.all(pages.map(async (page, index) => {
       await page.route("**/api/**", statusFixtureResponse)
       await page.route("**/permission-mode", async route => {
         const id = new URL(route.request().url()).pathname.split("/").at(-2)
@@ -68,6 +72,8 @@ test("Status shows confirmed modes, follows another window and reconciles on rec
           await held
           mode = body.mode
           permissionUpdate(id)
+        } else if (index === 1 && failOtherReads && id === "ses_status") {
+          return route.fulfill({ status: 503 })
         }
         return route.fulfill({ json: { mode: id === "ses_status" ? mode : "autonomous" } })
       })
@@ -92,33 +98,87 @@ test("Status shows confirmed modes, follows another window and reconciles on rec
     await status.filter({ hasText: "Permissions: Supervised" }).waitFor({ state: "attached" })
     if (captures) await permissionSection(first).screenshot({ path: join(captures, "status-supervised.png") })
 
-    const info = first.getByRole("button", { name: "About permission modes" })
-    await info.focus()
-    await first.keyboard.press("Enter")
-    await first.getByText("New subagents inherit these rules.", { exact: true }).waitFor()
-    if (captures) await first.getByRole("dialog").screenshot({ path: join(captures, "status-permissions-info.png") })
-    await first.keyboard.press("Escape")
-    await first.getByText("New subagents inherit these rules.", { exact: true }).waitFor({ state: "hidden" })
-    await first.waitForFunction(el => el === document.activeElement, await info.elementHandle())
+    const otherSection = permissionSection(other)
+    const stale = otherSection.getByRole("status").filter({ hasText: "Mode not confirmed." })
+    const reload = otherSection.getByRole("button", { name: "Reload permissions" })
+    failOtherReads = true
+    mode = "autonomous"
+    permissionUpdate("ses_status")
+    await expectValue(select, "autonomous")
+    await stale.waitFor()
+    assert.equal(await modeSelect(other).inputValue(), "supervised", "a failed refresh retains the last known mode")
+    assert.equal(await modeSelect(other).getAttribute("aria-disabled"), "true")
+    failOtherReads = false
+    await reload.click()
+    await expectValue(modeSelect(other), "autonomous")
+    await stale.waitFor({ state: "hidden" })
 
+    await select.selectOption("supervised")
+    await expectValue(select, "supervised")
+    await expectValue(modeSelect(other), "supervised")
     reject = true
     await select.selectOption("autonomous")
     await first.getByText("Couldn’t change permissions. Try again.", { exact: true }).waitFor()
     assert.equal(await select.inputValue(), "supervised")
-    assert.equal(attempts, 2, "reconciliation never replays the write")
+    assert.equal(attempts, 3, "reconciliation never replays the write")
 
     await first.evaluate(() => (window as any).statusFixture.select("ses_other"))
     await expectValue(select, "autonomous")
     await first.evaluate(() => (window as any).statusFixture.select("ses_status"))
     await expectValue(select, "supervised")
     mode = "autonomous"
+    await other.route("**/permission-mode", async route => {
+      if (route.request().method() !== "GET") return route.fallback()
+      await reconnectRead
+      return route.fulfill({ json: { mode } })
+    })
     await other.evaluate(() => (window as any).statusFixture.reconnect())
+    await stale.waitFor()
+    assert.equal(await modeSelect(other).inputValue(), "supervised", "a disconnect removes confirmation before the reconnect read settles")
+    allowReconnectRead()
     await expectValue(modeSelect(other), "autonomous")
+    await stale.waitFor({ state: "hidden" })
     assert.equal(await select.inputValue(), "supervised", "no event was delivered to the original window")
   } catch (error) {
     console.error(await pages[0].locator("body").innerText())
     throw error
-  } finally { release?.(); await Promise.all(pages.map(page => page.close())) }
+  } finally { release(); allowReconnectRead(); await Promise.all(pages.map(page => page.close())) }
+})
+
+test("Permissions help is named and Escape closes it before and after autofocus", async () => {
+  const page = await openPage()
+  try {
+    await page.route("**/api/**", statusFixtureResponse)
+    await page.route("**/permission-mode", route => route.fulfill({ json: { mode: "autonomous" } }))
+    await events.route(page)
+    await page.goto(url)
+    await statusTab(page).click()
+    const name = "About permission modes"
+    const info = permissionSection(page).getByRole("button", { name })
+    const dialog = page.getByRole("dialog", { name, exact: true })
+    await info.press("Enter")
+    await expectFocus(dialog)
+    await dialog.getByText("New subagents inherit these rules.", { exact: true }).waitFor()
+    if (captures) await dialog.screenshot({ path: join(captures, "status-permissions-info.png") })
+    await page.keyboard.press("Escape")
+    await dialog.waitFor({ state: "hidden" })
+    await expectFocus(info)
+
+    // Dispatch in one turn to exercise Escape while the trigger still owns focus.
+    assert.deepEqual(await info.evaluate(button => {
+      ;(button as HTMLButtonElement).click()
+      const openedWithTriggerFocused = button.getAttribute("aria-expanded") === "true" && document.activeElement === button
+      const escaped = !button.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))
+      return { openedWithTriggerFocused, escaped, closed: button.getAttribute("aria-expanded") === "false" }
+    }), { openedWithTriggerFocused: true, escaped: true, closed: true })
+    await dialog.waitFor({ state: "hidden" })
+    await expectFocus(info)
+    await expectValue(modeSelect(page), "autonomous")
+    await info.click()
+    await dialog.waitFor()
+    await statusTab(page).click()
+    await dialog.waitFor({ state: "hidden" })
+  } finally { await page.close() }
 })
 
 test("Status restores the saved position and visibility of Permissions", async () => {
@@ -156,13 +216,18 @@ test("General saves the new-conversation mode immediately before Queue sent prom
   const page = await openPage({ viewport: { width: 830, height: 900 } })
   let value: ConversationPermissionMode | undefined
   let reject = true
+  let attempts = 0
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
-    await page.route("**/api/storage/config/ui", route => {
+    await page.route("**/api/storage/config/ui", async route => {
       if (route.request().method() === "PATCH") {
+        attempts++
         const patch = route.request().postDataJSON()
         assert.deepEqual(patch, { settings: { newConversationPermissions: "supervised" } })
         if (reject) return route.fulfill({ status: 503 })
+        await held
         value = patch.settings.newConversationPermissions
       }
       return route.fulfill({ json: { settings: { locale: "en", newConversationPermissions: value } } })
@@ -182,13 +247,22 @@ test("General saves the new-conversation mode immediately before Queue sent prom
     assert.equal(value, undefined)
     reject = false
     await supervise()
+    await page.locator('button[aria-label="New conversation permissions"][aria-disabled="true"]').waitFor()
+    await expectFocus(setting)
+    await page.keyboard.press("Enter")
+    assert.equal(await setting.getAttribute("aria-expanded"), "false")
+    await page.keyboard.press("Tab")
+    const queueRow = page.getByRole("checkbox", { name: "Queue sent prompts", exact: true }).locator("..")
+    assert.ok(await queueRow.evaluate(row => row.contains(document.activeElement)))
+    release()
     await setting.getByText("Supervised", { exact: true }).waitFor()
     assert.equal(value, "supervised")
+    assert.equal(attempts, 2)
     await page.reload()
     await setting.getByText("Supervised", { exact: true }).waitFor()
     if (captures) await page.locator(".settings-card").filter({ has: setting }).screenshot({ path: join(captures, "preferences-new-conversations.png") })
   } catch (error) {
     console.error(await page.locator("body").innerText())
     throw error
-  } finally { await page.close() }
+  } finally { release(); await page.close() }
 })

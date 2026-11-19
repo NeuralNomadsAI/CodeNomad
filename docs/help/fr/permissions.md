@@ -60,7 +60,9 @@ Les reçus sont des annotations CodeNomad en lecture seule, pas des messages nat
 Sélectionnez une conversation et ouvrez **Statut → Permissions**.
 
 - **Autonome** — Applique les règles de permissions d’OpenCode.
-- **Supervisé** — Demande confirmation avant les modifications de fichiers et les commandes shell de l’agent, sauf si elles sont interdites ou déjà autorisées. Ce n’est pas un bac à sable.
+- **Supervisé** — Demande confirmation avant les modifications de fichiers et les commandes shell de l’agent, selon les règles globales, du projet et de la conversation, ainsi que les autorisations enregistrées. Ce n’est pas un bac à sable.
+
+Si le mode n’est pas confirmé, choisissez **Recharger les permissions**.
 
 Les nouveaux sous-agents et les conversations bifurquées héritent d’une copie des règles. Changer leur mode laisse la conversation source intacte. Les demandes ouvertes gardent leurs règles initiales.
 

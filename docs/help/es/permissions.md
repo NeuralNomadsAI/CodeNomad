@@ -60,7 +60,9 @@ Los comprobantes son anotaciones de solo lectura de CodeNomad, no mensajes nativ
 Selecciona una conversación y abre **Estado → Permisos**.
 
 - **Autónomo** — Aplica las reglas de permisos de OpenCode.
-- **Supervisado** — Pide confirmación antes de que el agente modifique archivos o ejecute comandos de shell, salvo si están prohibidos o ya aprobados. No es un entorno aislado.
+- **Supervisado** — Pide confirmación antes de que el agente modifique archivos o ejecute comandos de shell. Se aplican las reglas globales, del proyecto y de la conversación, y las aprobaciones guardadas. No es un entorno aislado.
+
+Si el modo está sin confirmar, selecciona **Volver a cargar los permisos**.
 
 Los subagentes y las bifurcaciones nuevos heredan una copia de las reglas. Cambiar su modo deja intacta la conversación de origen. Las solicitudes abiertas conservan sus reglas originales.
 

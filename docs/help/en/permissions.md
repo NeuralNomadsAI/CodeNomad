@@ -60,7 +60,9 @@ Receipts are read-only CodeNomad annotations, not native messages or permission-
 Select a conversation and open **Status → Permissions**.
 
 - **Autonomous** — Follows OpenCode’s permission rules.
-- **Supervised** — Asks before agent edits and shell commands, except where denied or already approved. This is not a sandbox.
+- **Supervised** — Asks before agent edits and shell commands, subject to global, project and conversation rules and saved approvals. This is not a sandbox.
+
+If the mode is unconfirmed, choose **Reload permissions**.
 
 New subagents and forks inherit a copy of the rules. Changing their mode leaves the source unchanged. Open requests keep their original rules.
 

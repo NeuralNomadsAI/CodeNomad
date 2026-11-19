@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount, Show } from "solid-js"
+import { createSignal, createUniqueId, onCleanup, onMount, Show } from "solid-js"
 import type { ConversationPermissionMode, ConversationPermissionModeResponse } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
@@ -25,6 +25,7 @@ export function ConversationPermissionsInfo() {
 export function ConversationPermissions(props: { instanceId: string; sessionId: string }) {
   const { t } = useI18n()
   const { instanceId, sessionId } = props
+  const statusID = createUniqueId()
   const [mode, setMode] = createSignal<ConversationPermissionMode>()
   const [writing, setWriting] = createSignal(false)
   const [readFailed, setReadFailed] = createSignal(false)
@@ -33,6 +34,17 @@ export function ConversationPermissions(props: { instanceId: string; sessionId: 
   let read: AbortController | undefined
   let trailing = false
   let unconfirmed: ConversationPermissionMode | undefined
+
+  function cancelRead() {
+    read?.abort()
+    read = undefined
+    trailing = false
+  }
+
+  function disconnect() {
+    cancelRead()
+    setReadFailed(true)
+  }
 
   async function refresh() {
     if (disposed || writing()) return // The write always reconciles afterward.
@@ -53,8 +65,10 @@ export function ConversationPermissions(props: { instanceId: string; sessionId: 
         unconfirmed = undefined
       }
     } catch {
-      if (read === controller && !trailing && !mode()) setReadFailed(true)
-      if (read === controller && !trailing && unconfirmed) setWriteFailed(true)
+      if (read === controller && !trailing) {
+        setReadFailed(true)
+        if (unconfirmed) setWriteFailed(true)
+      }
     } finally {
       if (read === controller) {
         read = undefined
@@ -73,25 +87,27 @@ export function ConversationPermissions(props: { instanceId: string; sessionId: 
       if (native.type === "server.connected" || (native.type === "session.permissions" && native.data?.sessionID === sessionId)) void refresh()
     }))
     onCleanup(serverEvents.on("instance.eventStatus", (event) => {
-      if (event.type === "instance.eventStatus" && event.instanceId === instanceId && event.status === "connected") void refresh()
+      if (event.type !== "instance.eventStatus" || event.instanceId !== instanceId) return
+      if (event.status === "connected") void refresh()
+      else if (event.status === "disconnected" || event.status === "error") disconnect()
+    }))
+    onCleanup(serverEvents.onTransportStatus(status => {
+      if (status === "disconnected") disconnect()
     }))
     onCleanup(serverEvents.onOpen(() => void refresh()))
     void refresh()
   })
   onCleanup(() => {
     disposed = true
-    read?.abort()
-    read = undefined
+    cancelRead()
   })
 
   async function change(select: HTMLSelectElement) {
     const next = select.value
     const previous = mode()
     select.value = previous ?? ""
-    if (!previous || writing() || next === previous || (next !== "autonomous" && next !== "supervised")) return
-    read?.abort()
-    read = undefined
-    trailing = false
+    if (!previous || writing() || readFailed() || next === previous || (next !== "autonomous" && next !== "supervised")) return
+    cancelRead()
     setWriting(true)
     setWriteFailed(false)
     unconfirmed = undefined
@@ -110,13 +126,15 @@ export function ConversationPermissions(props: { instanceId: string; sessionId: 
 
   return <div class="flex flex-col items-start gap-1">
     <Show when={mode()}>
-      <select class="selector-trigger w-full min-w-0" aria-label={t("permissions.title")} aria-disabled={writing()}
+      <select class="selector-trigger w-full min-w-0" aria-label={t("permissions.title")} aria-disabled={writing() || readFailed()}
+        aria-describedby={readFailed() ? statusID : undefined}
         value={mode()} onChange={event => void change(event.currentTarget)}>
         {modes.map(value => <option value={value}>{t(`permissions.mode.${value}`)}</option>)}
       </select>
     </Show>
-    <div role="status" class="sr-only">{writing() ? t("permissions.applying")
-      : mode() ? `${t("permissions.title")}: ${t(`permissions.mode.${mode()}`)}` : ""}</div>
+    <div id={statusID} role="status" class={readFailed() ? "text-xs" : "sr-only"}>{readFailed() ? t("permissions.unconfirmed")
+      : writing() ? t("permissions.applying")
+        : mode() ? `${t("permissions.title")}: ${t(`permissions.mode.${mode()}`)}` : ""}</div>
     <Show when={readFailed()}>
       <button class="window-action" type="button" onClick={() => void refresh()}>{t("permissions.retry")}</button>
     </Show>

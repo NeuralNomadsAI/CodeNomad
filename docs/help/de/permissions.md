@@ -60,7 +60,9 @@ Belege sind schreibgeschützte CodeNomad-Anmerkungen, keine nativen Nachrichten 
 Wählen Sie eine Unterhaltung und öffnen Sie **Status → Berechtigungen**.
 
 - **Autonom** — Befolgt die Berechtigungsregeln von OpenCode.
-- **Beaufsichtigt** — Fragt vor Dateiänderungen und Shell-Befehlen des Agenten nach, außer wenn sie verboten oder bereits genehmigt sind. Dies ist keine Sandbox.
+- **Beaufsichtigt** — Fragt vor Dateiänderungen und Shell-Befehlen des Agenten nach. Globale, Projekt- und Unterhaltungsregeln sowie gespeicherte Genehmigungen gelten weiterhin. Dies ist keine Sandbox.
+
+Ist der Modus nicht bestätigt, wählen Sie **Berechtigungen neu laden**.
 
 Neue Subagenten und Verzweigungen übernehmen eine Kopie der Regeln. Ein Moduswechsel ändert die Quellunterhaltung nicht. Offene Anfragen behalten ihre ursprünglichen Regeln.
 

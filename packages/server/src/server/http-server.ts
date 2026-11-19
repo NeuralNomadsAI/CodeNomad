@@ -111,7 +111,7 @@ import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { SessionPermissionModes } from "../permissions/session-mode"
-import { sessionPermissionRules, blockPositions } from "../permissions/session-mode-rules"
+import { appendSessionProjection, sessionPermissionRules, blockPositions } from "../permissions/session-mode-rules"
 import { registerSessionPermissionModeRoutes } from "./routes/session-permission-mode"
 import { requestAdmission } from "./request-admission"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext, readLocationRef, sameLocation } from "../opencode/compatibility/location"
@@ -1329,19 +1329,20 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       // Native root creation selects its directory from the JSON body, not
       // from an ambient query or header. Read that Location's configuration.
       const location = { directory: input.location?.directory ?? runtimeLocation.directory }
-      let block
+      let configBlock
       try {
-        block = await wait(modes.newRootRules({ client: await clientForRequest(), location, distro, signal }))
+        configBlock = await wait(modes.newRootRules({ client: await clientForRequest(), location, distro, signal }))
       } catch {
         releaseMutation?.()
         return reply.code(503).send({ error: "Conversation permissions unavailable" })
       }
-      if (block) {
+      if (configBlock) {
         const original = sessionPermissionRules.safeParse(input.permissions ?? [])
-        if (!original.success || blockPositions(original.data, block).length) {
+        if (!original.success || blockPositions(original.data, configBlock).length) {
           releaseMutation?.()
           return reply.code(400).send({ error: "Cannot combine conversation permissions" })
         }
+        const block = appendSessionProjection(configBlock, original.data, distro)
         body = { ...input, location, permissions: [...original.data, ...block] }
         confirmRoot = async response => {
           if (!response.ok) return response

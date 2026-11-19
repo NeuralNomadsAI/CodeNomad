@@ -104,6 +104,7 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
       setting.options.map((option) => ({ value: String(option.value), label: t(option.labelKey) })),
     )
     const selectedOption = createMemo(() => options().find((option) => option.value === String(readValue(setting) ?? "")))
+    const [open, setOpen] = createSignal(false)
     const [saving, setSaving] = createSignal(false)
     const [saveFailed, setSaveFailed] = createSignal(false)
 
@@ -132,14 +133,16 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
           options={options()}
           optionValue="value"
           optionTextValue="label"
-          disabled={disabled() || saving()}
+          disabled={disabled()}
+          open={open()}
+          onOpenChange={next => { if (!next || !saving()) setOpen(next) }}
           itemComponent={(itemProps) => (
             <Select.Item item={itemProps.item} class="selector-option">
               <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
             </Select.Item>
           )}
         >
-          <Select.Trigger class="selector-trigger" aria-label={t(setting.titleKey)}>
+          <Select.Trigger class="selector-trigger" aria-label={t(setting.titleKey)} aria-disabled={saving() || undefined}>
             <div class="flex-1 min-w-0">
               <Select.Value<SelectOption>>
                 {(state) => <span class="selector-trigger-primary selector-trigger-primary--align-left">{state.selectedOption()?.label}</span>}

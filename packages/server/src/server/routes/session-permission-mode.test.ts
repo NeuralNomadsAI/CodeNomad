@@ -129,6 +129,18 @@ test("finds inherited blocks in native child and fork lineage, and removes only 
   assert.deepEqual(f.writes, [f.session.id, child.id, f.session.id, descendant.id])
 })
 
+test("projects ordered session rules after config and restores the exact original rules", async t => {
+  const f = await fixture(t)
+  const original = [read, shell("allow", "echo *"), edit("ask", "notes/*"), external,
+    shell("deny", "echo blocked"), { action: "*", resource: "secret.txt", effect: "deny" as const }]
+  f.session.permissions = original
+  assert.deepEqual((await f.set("supervised")).json(), { mode: "supervised" })
+  assert.deepEqual(f.session.permissions, [...original, ...block,
+    shell("ask", "echo *"), edit("ask", "notes/*"), shell("deny", "echo blocked"), edit("deny", "secret.txt"), shell("deny", "secret.txt")])
+  assert.deepEqual((await f.set("autonomous")).json(), { mode: "autonomous" })
+  assert.deepEqual(f.session.permissions, original)
+})
+
 test("recognizes earlier copies when a source gets a different supervised block", async t => {
   const f = await fixture(t)
   assert.equal((await f.set("supervised")).statusCode, 200)
@@ -142,6 +154,19 @@ test("recognizes earlier copies when a source gets a different supervised block"
   assert.equal((await f.set("autonomous", "one", child.id)).statusCode, 200)
   assert.deepEqual(child.permissions, [read])
   assert.deepEqual(f.session.permissions, [read, ...supervisedRules(newConfig, false)])
+})
+
+test("leaves a projected child copy unchanged when a historical prefix makes ownership ambiguous", async t => {
+  const f = await fixture(t)
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  assert.equal((await f.set("autonomous")).statusCode, 200)
+  const original = [read, edit("deny", "local.txt")]
+  f.session.permissions = original
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
+  f.sessions.set(child.id, child)
+  assert.equal((await f.set("autonomous", "two", child.id)).statusCode, 409)
+  assert.deepEqual(child.permissions, [...original, ...block, edit("deny", "local.txt")])
 })
 
 test("does not remove ambiguous copies or use ownership records from a foreign source", async t => {
@@ -161,9 +186,10 @@ test("does not remove ambiguous copies or use ownership records from a foreign s
 
 test("retries an observed post-write conflict from fresh native rules, but never replays a failed transport", async t => {
   const f = await fixture(t)
-  f.mutate(() => { f.session.permissions = [external]; f.mutate(undefined) })
+  const nativeRules = [external, shell("deny", "echo blocked")]
+  f.mutate(() => { f.session.permissions = nativeRules; f.mutate(undefined) })
   assert.deepEqual((await f.set("supervised")).json(), { mode: "supervised" })
-  assert.deepEqual(f.session.permissions, [external, ...block])
+  assert.deepEqual(f.session.permissions, [...nativeRules, ...block, shell("deny", "echo blocked")])
   assert.equal(f.actions.filter(action => action === "write").length, 2)
   f.mutate(() => { throw Error("lost response") })
   assert.equal((await f.set("autonomous")).statusCode, 503)
@@ -171,7 +197,7 @@ test("retries an observed post-write conflict from fresh native rules, but never
   assert.deepEqual((await f.get()).json(), { mode: "supervised" })
   f.mutate(rules => { f.session.permissions = rules; throw Error("lost response after mutation") })
   assert.deepEqual((await f.set("autonomous")).json(), { mode: "autonomous" })
-  assert.deepEqual(f.session.permissions, [external])
+  assert.deepEqual(f.session.permissions, nativeRules)
 })
 
 test("refuses ambiguous, foreign or malformed changes without touching native permissions", async t => {

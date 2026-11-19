@@ -60,7 +60,9 @@ Karar kayıtları OpenCode mesajı veya izin kuralı düzenleyicisi değil, salt
 Bir konuşma seçip **Durum → İzinler** bölümünü açın.
 
 - **Özerk** — OpenCode’un izin kurallarını uygular.
-- **Denetimli** — Ajanın dosya değişikliklerinden ve kabuk komutlarından önce onay ister; yasaklanmış veya önceden onaylanmış işlemler hariçtir. Bu bir yalıtım ortamı değildir.
+- **Denetimli** — Ajanın dosya değişikliklerinden ve kabuk komutlarından önce onay ister. Genel kurallar, proje ve konuşma kuralları ve kayıtlı onaylar geçerlidir. Bu bir yalıtım ortamı değildir.
+
+Mod doğrulanmadıysa **İzinleri yeniden yükle** seçeneğini kullanın.
 
 Yeni alt ajanlar ve çatallanan konuşmalar kuralların bir kopyasını alır. Bunların modunu değiştirmek kaynak konuşmayı etkilemez. Açık istekler ilk kurallarını korur.
 
