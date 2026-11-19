@@ -144,7 +144,7 @@ test("editor creation dispatch is remote; stale completion preserves the current
     immediateCreationFollowed: () => false, mode: () => "once", schedule: { unified: false },
     uncertainRecurrence: () => undefined, missionCreationHold: () => undefined, identity: () => "view",
     captureView: () => env.captureBackendOperation(id).current, objective: () => "draft", notes: () => "", template: () => "custom",
-    taskMode: () => undefined, effectiveProfiles: () => undefined, submittedTitle: () => "title", selectedModel: () => undefined,
+    taskMode: () => undefined, effectiveProfiles: () => undefined, submittedTitle: () => "title", selectedModel: () => undefined, watchedIDs: () => [],
     missionCreationPayloadIdentity: JSON.stringify, holdMissionCreation: () => true, setShownRequestId: () => {}, setAdopted: () => {},
     setPending: () => {}, setError: () => {}, releaseMissionCreation: () => {},
   })
@@ -238,17 +238,19 @@ test("editor GitHub and coordinator payload reaches only its owning schedule con
     Object.assign(scope, env, { unified: false }); scope.props.instanceId = owner
     const schedule = { unified: false, document: () => undefined, save: production("./mission-editor-schedule.ts", "save", scope) }
     const policy = () => ({ when: [{ kind: "github-issue", repository: "acme/repo", author: "alice" }] })
+    const watchedIDs = () => []
     const run = production("./mission-editor.tsx", "save", { ...env, ...editorStart, kind: "create", action, lastPayload: "", requestId: "r",
       props: { instanceId: owner, action }, locked: () => false, isActive: () => true, setFieldError: () => {},
       structuralLocked: () => false, compareError: () => undefined, immediateCreationFollowed: () => false, mode: () => "recurring",
       coordinatorSessionID, coordinatorReady: production("./mission-editor.tsx", "coordinatorReady", { coordinatorSessionID, mode: () => "recurring",
-        watchedIDs: () => [], schedule: { scheduling: () => ({ criteria: [{ kind: "github-issue" }] }) },
+        watchedIDs, schedule: { scheduling: () => ({ criteria: [{ kind: "github-issue" }] }) },
         sourceChoices: { sources: () => ({ "coordinator-session": [{ id: "ses_same" }] }) } }),
       schedule, textLocked: () => false, policy, policyReady: () => true, recurrenceStartText,
       objective: () => "objective", notes: () => "notes", template: () => "custom", taskMode: () => "native",
       uncertainRecurrence: () => undefined, missionCreationHold: () => undefined, identity: () => owner,
       copyMissionProfiles: (value: any) => structuredClone(value), effectiveProfiles: () => ({ coordinator: { agent: "worker", model: { providerID: "p", id: "m" } }, roles: {} }),
-      missionProfileRoles: { custom: [] }, watchedIDs: () => [], sourceLocationReady: () => true, sourceInputBudget: () => ({ sufficient: true }),
+      missionProfileRoles: { custom: [] }, watchedIDs, watchedValid: production("./mission-editor.tsx", "watchedValid", { watchedIDs }),
+      sourceLocationReady: () => true, sourceInputBudget: () => ({ sufficient: true }),
       submittedTitle: () => "title", captureView: () => env.captureBackendOperation(owner).current, setPending: () => {}, setError: () => {},
     })
     await run({ preventDefault() {} })

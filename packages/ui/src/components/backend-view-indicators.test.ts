@@ -236,7 +236,7 @@ for (const kind of ["create", "edit", "delete"] as const) {
         startOnCreation: () => false,
         captureStart: () => async () => assert.fail("stale creation must not start"),
         captureView: () => backend.captureBackendOperation("i").current, objective: () => "draft", notes: () => "notes",
-        template: () => "custom", identity: () => "view", taskMode: () => undefined, effectiveProfiles: () => undefined,
+        template: () => "custom", identity: () => "view", taskMode: () => undefined, effectiveProfiles: () => undefined, watchedIDs: () => [],
         submittedTitle: () => "title", selectedModel: () => undefined, deleteManagedSessions: () => false, deleteAttempted: () => false,
         uncertainRecurrence: () => undefined, missionCreationHold: () => undefined, holdMissionCreation: () => true,
         missionCreationPayloadIdentity: JSON.stringify, releaseMissionCreation: () => {}, retainUncertainMissionCreation: () => {},

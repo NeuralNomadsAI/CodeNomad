@@ -513,7 +513,6 @@ jobs:
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-goal-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
-          packages/ui/src/stores/instance-reconnect-reconciliation.test.ts
           packages/ui/src/stores/session-outline-persistence.test.ts
           packages/ui/src/stores/session-pagination.test.ts
           packages/ui/src/stores/session-fork.test.ts
@@ -701,6 +700,7 @@ jobs:
           packages/ui/src/stores/session-git-degraded.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
           packages/ui/src/stores/blank-session-cleanup.test.ts
+          packages/ui/src/stores/instance-reconnect-reconciliation.test.ts
           packages/ui/src/stores/session-status.test.ts
           packages/ui/src/stores/session-subsession-activity.test.ts
           packages/ui/src/stores/worktree-ready.test.ts

@@ -6,7 +6,7 @@ import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverEvents } from "../lib/server-events.ts"
 import { backends, createBackendClient, registerBackendClient } from "../lib/backend-client.ts"
-import { parseInstanceKey } from "../lib/backend-identity.ts"
+import { LOCAL_BACKEND_ID, parseInstanceKey } from "../lib/backend-identity.ts"
 import { backendEvents } from "../lib/backend-events.ts"
 import { addRemoteRestoreTab, remoteRestoreTabs, removeRemoteRestoreTab } from "./remote-restore-tabs.ts"
 import { createFileAttachment, createTextAttachment } from "../types/attachment.ts"
@@ -56,7 +56,8 @@ function open(id: string, folder: string, existing: string[] = [], read?: (sessi
   const sdk = backends.get(backendId)?.sdk ?? sdkManager
   ;(sdk as any).clients.set(`${id}:/workspaces/${workspaceId}/instance`, client)
   opened.push(id)
-  addInstance({ id, folder, backendId, port: 0, pid: 0, proxyPath: "", status: "ready", client, ...(temporary ? { temporary } : {}) })
+  addInstance({ id, folder, ...(backendId !== LOCAL_BACKEND_ID ? { backendId } : {}),
+    port: 0, pid: 0, proxyPath: "", status: "ready", client, ...(temporary ? { temporary } : {}) })
   if (!restoringSnapshot) attachInstanceTab(id)
 }
 
