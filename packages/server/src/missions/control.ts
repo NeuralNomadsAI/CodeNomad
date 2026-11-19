@@ -5,7 +5,10 @@ import { isSessionNotFoundError, type JsonValue, type SessionMetadata } from "@o
 import { MissionJournal, stableToken, type MissionStorage, type MissionView } from "./journal"
 import { missionToolInspection, type MissionToolInspectInput } from "./tool-inspection"
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
-import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
+import { readMissionContent, readMissionContentValue, type MissionContentRequest, type MissionContentResult } from "./mission-content"
+import { missionPanelHeader, attachPanelHeaderDocument } from "./mission-panel-header"
+import { contentDigest } from "./content-digest"
+import { decodeJournalDisplay, decodeJournalTaskWindow, namedWindowBody, verifiedWindowBody } from "./journal-display"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
 import { missionCreationChoices, sameMissionCreationChoices, parseMissionCreationSelection, missionCreationSelection, type MissionCreationMetadata } from "./creation-defaults"
@@ -138,8 +141,12 @@ export class MissionControl {
   }
 
   async snapshot(): Promise<MissionSnapshot> {
-    const snapshot = await this.journal.snapshot()
-    if (this.options.documentReads && snapshot.missions.length) await projectMissionDocuments(this.options.documentReads, snapshot.missions)
+    return this.projectSnapshot(await this.journal.snapshot())
+  }
+
+  private async projectSnapshot<T extends MissionSnapshot & Pick<Awaited<ReturnType<MissionJournal["snapshot"]>>, "otherDocuments">>(snapshot: T): Promise<T> {
+    if (this.options.documentReads && (snapshot.missions.length || snapshot.otherDocuments?.length))
+      await projectMissionDocuments(this.options.documentReads, [...snapshot.missions, ...snapshot.otherDocuments ?? []])
     return snapshot
   }
 
@@ -169,7 +176,7 @@ export class MissionControl {
     })
     const missions: MissionMap[] = []
     for (const missionID of ids) {
-      const { mission } = await this.journal.missionView(missionID)
+      const { mission } = await this.journal.missionProjection(missionID)
       if (!mission) continue
       if (controlUnavailable) mission.controlUnavailable = true
       if (notificationUnavailable) mission.notificationUnavailable = true
@@ -190,8 +197,8 @@ export class MissionControl {
     const include = [...new Set(input.include ?? [])].slice(0, MISSION_LIST_MAX_INCLUDE)
     const hinted = await this.journal.readHints(hints => ({ ids: [...new Set([...hints.openIDs(), ...include])],
       aggregate: hints.aggregate(), cleanups: hints.cleanups(), summaries: hints.summaries() }))
-    const views = new Map<string, MissionView>()
-    for (const missionID of hinted.ids) views.set(missionID, await this.journal.missionView(missionID))
+    const views = new Map<string, Omit<MissionView, "events">>()
+    for (const missionID of hinted.ids) views.set(missionID, await this.journal.missionProjection(missionID))
     const damage = projectDamage(hinted.aggregate, [...views.values()])
     const known = new Set(hinted.summaries.map(summary => summary.id))
     const fresh = (missionID: string) => views.get(missionID)?.mission
@@ -242,35 +249,96 @@ export class MissionControl {
       })
     }
     const missionID = request.source === "tasks" ? request.task.missionID : request.missionID
-    const view = await this.journal.missionView(missionID)
-    // These are this range's already-observed facts, independent of project hints and
-    // of which field the caller reads. A damaged reconstruction cannot establish absence.
-    const damage = { discardedEvents: view.discardedEvents, controlUnavailable: Boolean(view.controlUnavailable),
-      notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }
-    if (!view.mission) return { available: false, reason: damage.discardedEvents || damage.controlUnavailable
-      || damage.notificationUnavailable || damage.cleanupUnavailable ? "damaged" : "mission-not-found" }
-    const mission = view.mission
-    if (request.source === "mission" && this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [mission])
-    if (request.source === "mission" && mission.document?.dormant) return { available: false, reason: "mission-not-found" }
-    return projectMissionPanel(mission, request, damage)
+    const projectID = this.options.project.id
+    const firstTasks = request.source === "tasks" && request.task.offset === 0
+    const pins = request.source === "tasks" && request.task.ids && !request.task.keys && request.task.offset === undefined
+      && request.task.attention === undefined ? JSON.stringify([request.task.ids, request.task.reportIds ?? []]) : undefined
+    if (request.source === "tasks" && (firstTasks || pins)) {
+      const stored = await this.journal.readDisplay(missionID, undefined, firstTasks ? "tasks" : "pins")
+      const window = stored && decodeJournalTaskWindow(stored.value, projectID, missionID)
+      if (window && window.pinSelection === pins) {
+        if (request.task.order !== undefined && request.task.order !== window.page.taskPage.order)
+          return { available: false, reason: "changed" }
+        return missionPanelPage({ ...base, missionID, revision: window.revision, discardedEvents: 0,
+          controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }, [window.page], request.cursor)
+      }
+    }
+    const headerOnly = request.source === "mission" && request.header === true
+    if (headerOnly) {
+      const stored = await this.journal.readDisplay(missionID)
+      const display = stored && decodeJournalDisplay(stored.value, this.options.project.id, missionID)
+      if (display) {
+        const binding: Pick<MissionMap, "id" | "coordinatorSessionId" | "document"> = {
+          id: missionID, coordinatorSessionId: display.coordinator,
+        }
+        if (this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [binding])
+        if (binding.document?.dormant) return { available: false, reason: "mission-not-found" }
+        return missionPanelPage({ ...base, missionID, revision: display.revision, ...display.damage, header: true },
+          [attachPanelHeaderDocument(display.header, binding.document)], request.cursor)
+      }
+    }
+    return this.journal.readProjection(missionID, async (view, provenance): Promise<MissionPanelPageResult> => {
+      // A damaged reconstruction cannot establish absence. Use only this range,
+      // independent of display hints and of the field being requested.
+      const damage = { discardedEvents: view.discardedEvents, controlUnavailable: Boolean(view.controlUnavailable),
+        notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }
+      if (!view.mission) return { available: false, reason: damage.discardedEvents || damage.controlUnavailable
+        || damage.notificationUnavailable || damage.cleanupUnavailable ? "damaged" : "mission-not-found" }
+      const mission = { ...view.mission }
+      if (request.source === "mission") {
+        if (this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [mission])
+        if (mission.document?.dormant) return { available: false, reason: "mission-not-found" }
+      }
+      if (headerOnly) {
+        const header = missionPanelHeader({ ...mission, document: undefined })
+        if (provenance && !Object.values(damage).some(Boolean)) {
+          await this.journal.saveDisplay(missionID, provenance.digest, JSON.stringify({
+            header, damage, revision: mission.revision, coordinator: mission.coordinatorSessionId, sources: provenance.sources,
+          }))
+        }
+        return missionPanelPage({ ...base, missionID, revision: mission.revision, ...damage, header: true },
+          [attachPanelHeaderDocument(header, mission.document)], request.cursor)
+      }
+      if (request.source === "tasks" && (firstTasks || pins) && provenance && !Object.values(damage).some(Boolean)) {
+        const page = missionTaskPage(mission, request.task)
+        if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }
+        const scopeSources = (keys: string[], sources: ReadonlyMap<string, string>) =>
+          Object.fromEntries(keys.flatMap(key => {
+            const id = sources.get(key)
+            return id ? [[key, id]] : []
+          }))
+        const panelPins = pins ? missionPanelHeader(mission).tasks : undefined
+        if (!panelPins || pins === JSON.stringify([panelPins.pins, panelPins.reportPins])) {
+          await this.journal.saveDisplay(missionID, provenance.digest, JSON.stringify({
+            projectID, missionID, revision: mission.revision, page, pinSelection: pins,
+            taskSources: scopeSources(page.tasks.map(task => task.key), provenance.taskSources),
+            reportSources: scopeSources(page.reports.map(report => report.id), provenance.reportSources),
+          }), firstTasks ? "tasks" : "pins")
+        }
+        return missionPanelPage({ ...base, missionID, revision: mission.revision, ...damage }, [page], request.cursor)
+      }
+      return projectMissionPanel(mission, request, damage)
+    })
   }
 
   /** One mission's range for display reconciliation, its map compact, with its own
    * cleanups and the hints' project damage flags (read-mostly: never a write's authority). */
   async mission(missionID: string): Promise<MissionRead> {
     const aggregate = await this.journal.readHints(hints => hints.aggregate())
-    const view = await this.journal.missionView(missionID)
-    const damage = projectDamage(aggregate, [view])
-    if (this.options.documentReads && view.mission) await projectMissionDocuments(this.options.documentReads, [view.mission])
+    const { mission, cleanups, damage } = await this.journal.readProjection(missionID, view => {
+      const damage = projectDamage(aggregate, [view])
+      return { mission: view.mission && compactMissionMap(stampDamage(view.mission, damage)), cleanups: view.cleanups, damage }
+    })
+    if (this.options.documentReads && mission) await projectMissionDocuments(this.options.documentReads, [mission])
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
-      ...(view.mission && !view.mission.document?.dormant ? { mission: compactMissionMap(stampDamage(view.mission, damage)) } : {}), cleanups: view.cleanups ?? [], ...damage }
+      ...(mission && !mission.document?.dormant ? { mission } : {}), cleanups: cleanups ?? [], ...damage }
   }
 
   /** More of one mission's tasks for display (`missionTaskPage`): a window of its display
    * order or tasks by key, ID or report, from one read of its range alone; refused once
    * the order `request.order` names has changed (read-mostly: never a write's authority). */
   async tasks(request: MissionTaskRequest & { missionID: string }): Promise<MissionTaskPageResult> {
-    const { mission } = await this.journal.missionView(request.missionID)
+    const { mission } = await this.journal.missionProjection(request.missionID)
     const base = { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, missionID: request.missionID }
     if (!mission) return { ...base, refused: "mission-not-found" }
     const page = missionTaskPage(mission, request)
@@ -282,8 +350,43 @@ export class MissionControl {
    * mission's range alone, never the index or another range (read-mostly: never a
    * write's authority). */
   async content(request: MissionContentRequest): Promise<MissionContentResult> {
-    const { mission, events } = await this.journal.missionView(request.missionID)
-    return readMissionContent(this.options.project.id, request, mission, () => missionPlanChanges(events, request.missionID))
+    if ((request.kind === "task" && request.field === "brief")
+      || (request.kind === "report" && ["summary", "evidence", "next", "artifact"].includes(request.field))) {
+      const projectID = this.options.project.id
+      const decode = (value: string) => decodeJournalTaskWindow(value, projectID, request.missionID)
+      for (const slot of ["tasks", "pins"] as const) {
+        const stored = await this.journal.readDisplay(request.missionID, value => {
+          const window = decode(value)
+          return window ? namedWindowBody(window, request)?.id : undefined
+        }, slot)
+        const window = stored && decode(stored.value)
+        if (window && stored.event) {
+          const body = verifiedWindowBody(window, request, stored.event)
+          if (body) return readMissionContentValue(projectID, request, window.revision, body.value)
+        }
+      }
+    }
+    if (request.kind === "mission" && (request.field === "objective" || request.field === "notes")) {
+      const field = request.field, projectID = this.options.project.id
+      const stored = await this.journal.readDisplay(request.missionID,
+        value => decodeJournalDisplay(value, projectID, request.missionID)?.sources[field])
+      const display = stored && decodeJournalDisplay(stored.value, projectID, request.missionID)
+      const event = stored?.event
+      const text = event && (event.type === "mission.created" || event.type === "mission.updated"
+        || event.type === "mission.prepared" || event.type === "mission.revised") ? event[field] : undefined
+      const descriptor = display?.bodies[field]
+      if (display && descriptor && typeof text === "string" && text.length === descriptor.characters && contentDigest(text) === descriptor.digest)
+        return readMissionContentValue(projectID, request, display.revision, text)
+    }
+    if (request.kind === "change") {
+      if (request.field === "objective") {
+        const selected = await this.journal.changeObjective(request.missionID, request.change)
+        if (selected) return readMissionContentValue(this.options.project.id, request, selected.revision, selected.value)
+      }
+      const { mission, events } = await this.journal.missionView(request.missionID)
+      return readMissionContent(this.options.project.id, request, mission, () => missionPlanChanges(events, request.missionID))
+    }
+    return this.journal.readProjection(request.missionID, ({ mission }) => readMissionContent(this.options.project.id, request, mission))
   }
 
   /** `hintedMissions` for one session's selection: exactly `missionID`'s range, else the missions naming the session. */
@@ -371,7 +474,8 @@ export class MissionControl {
   briefing(sessionID: string, raw: MissionBriefingRequest): Promise<{ mission: MissionMap }> {
     const request = parseMissionBriefingRequest(raw)
     return this.mutate(async () => {
-      const caller = await this.ownedRootSession(sessionID), snapshot = await this.snapshot()
+      const caller = await this.ownedRootSession(sessionID)
+      const snapshot = await this.projectSnapshot(await this.journal.snapshot(request.missionID))
       if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable)
         throw new MissionControlError("Damaged Mission journal", "invalid-journal")
       const mission = this.selectMission(snapshot, sessionID, request.missionID)
@@ -414,10 +518,9 @@ export class MissionControl {
       if (!sameLocation(fresh.location, caller.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
       this.assertActive()
       const createdAt = this.timestamp(snapshot)
-      await this.journal.append({ version: MISSION_SCHEMA_VERSION, id, type: "mission.briefed", missionID: mission.id,
+      const saved = await this.projectSnapshot(await this.journal.appendWithSnapshot({ version: MISSION_SCHEMA_VERSION, id, type: "mission.briefed", missionID: mission.id,
         projectID: mission.projectID, actorSessionID: sessionID, createdAt,
-        briefing: { ...content, id, basedOnUpdatedAt: mission.updatedAt, createdAt } })
-      const saved = await this.snapshot()
+        briefing: { ...content, id, basedOnUpdatedAt: mission.updatedAt, createdAt } }))
       await this.emitChanged(mission.id, saved)
       return { mission: this.requireMission(saved, mission.id) }
     })
@@ -442,7 +545,7 @@ export class MissionControl {
         || !isDeepStrictEqual(event.preparedBy, input.preparedBy) || !isDeepStrictEqual(event.creationDefaults, input.creationDefaults)
         || input.coordinatorSessionID !== undefined && event.coordinator.sessionID !== input.coordinatorSessionID
         || !input.expectedCoordinatorLocation || !sameLocation(event.coordinator.location, input.expectedCoordinatorLocation)) return result
-      const read = await this.journal.missionView(missionID)
+      const read = await this.journal.missionProjection(missionID)
       if (!read.mission) return result
       if (this.options.documents) {
         const doc = await requireMissionOneTimeDocument(this.options.documents, missionID, event.coordinator.sessionID, input)
@@ -970,7 +1073,7 @@ export class MissionControl {
     let input = normalizeTaskDeclaration(raw)
     return this.mutate(async () => {
       await this.ownedRootSession(sessionID)
-      let snapshot = await this.snapshot()
+      let snapshot = await this.projectSnapshot(await this.journal.snapshot(input.missionID))
       if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable) {
         throw new MissionControlError("Damaged Mission journal cannot authorize task declarations", "invalid-journal")
       }
@@ -1012,12 +1115,11 @@ export class MissionControl {
         if (!actor || !sameLocation(coordinator.location, actor.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
         this.assertActive()
         if (this.options.documents && mission.document) await markMissionDocumentTaskCreation(this.options.documents, mission.id, () => { this.assertActive(); return true })
-        await this.journal.append({ version: MISSION_SCHEMA_VERSION, id: this.eventID(mission.id, `task-${input.taskKey}-created`),
+        snapshot = await this.projectSnapshot(await this.journal.appendWithSnapshot({ version: MISSION_SCHEMA_VERSION, id: this.eventID(mission.id, `task-${input.taskKey}-created`),
           type: "task.created", missionID: mission.id, projectID: mission.projectID,
           task: { id: `tsk_${stableToken(`${mission.id}\0${input.taskKey}`, 24)}`, key: input.taskKey,
             title: input.title, brief: input.brief, role: input.role, blockedBy: input.blockedBy,
-            execution: input.execution, executionMode: input.executionMode }, createdAt: this.timestamp(snapshot) })
-        snapshot = await this.snapshot()
+            execution: input.execution, executionMode: input.executionMode }, createdAt: this.timestamp(snapshot) }))
         mission = this.requireMission(snapshot, mission.id)
         task = mission.tasks.find(task => task.key === input.taskKey)
         if (!task || !sameExecutionMode(task.executionMode, input.executionMode)) throw new MissionControlError("Task declaration was not accepted", "invalid-journal")
@@ -1991,7 +2093,7 @@ export class MissionControl {
       createdAt: Math.max(report.createdAt + 1, this.timestamp(snapshot)),
     })
     // Only the change event's revision, which is the mission's own.
-    const { mission: updated } = await this.journal.missionView(mission.id)
+    const { mission: updated } = await this.journal.missionProjection(mission.id)
     await this.notifyChanged(mission.id, updated?.revision ?? 0)
   }
 
@@ -2106,9 +2208,9 @@ export class MissionControl {
     return `msg_${stableToken(purpose, 28)}`
   }
 
-  private timestamp(snapshot: MissionSnapshot): number {
+  private timestamp(snapshot: MissionSnapshot & { latestUpdatedAt?: number }): number {
     const now = this.options.now?.() ?? Date.now()
-    const latest = snapshot.missions.reduce((value, mission) => Math.max(value, mission.updatedAt), 0)
+    const latest = snapshot.latestUpdatedAt ?? snapshot.missions.reduce((value, mission) => Math.max(value, mission.updatedAt), 0)
     this.lastTimestamp = Math.max(now, latest + 1, this.lastTimestamp + 1)
     return this.lastTimestamp
   }
@@ -2139,7 +2241,7 @@ type ProjectDamage = Pick<MissionSnapshot, "controlUnavailable" | "notificationU
 /** The hints' project damage flags, plus those of ranges just read (fresher than
  * their hints), set only when true as a snapshot sets them. */
 function projectDamage(aggregate: { controlUnavailable: boolean; notificationUnavailable: boolean; cleanupUnavailable: boolean },
-  views: readonly MissionView[]): ProjectDamage {
+  views: readonly Omit<MissionView, "events">[]): ProjectDamage {
   const flag = (key: keyof ProjectDamage) => aggregate[key] || views.some(view => view[key]) ? { [key]: true } : {}
   return { ...flag("controlUnavailable"), ...flag("notificationUnavailable"), ...flag("cleanupUnavailable") }
 }

@@ -5,6 +5,7 @@ import { backendEvents as serverEvents } from "../lib/server-events"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getSessionRoot, sessions } from "./session-state"
+import { confirmedSessionWorktree } from "./session-events"
 import { getLogger } from "../lib/logger"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
 import { showToastNotification } from "../lib/notifications"
@@ -39,6 +40,14 @@ function captureWorktreeOperation(instanceId: string, parent?: AbortSignal) {
 }
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
+
+const publicationListeners = new Set<(instanceId: string, fresh: boolean) => void>()
+
+/** Called after each successfully read inventory is published. */
+export function onWorktreesPublished(listener: (instanceId: string, fresh: boolean) => void): () => void {
+  publicationListeners.add(listener)
+  return () => publicationListeners.delete(listener)
+}
 
 async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh = false, signal = serverEvents.signalForInstance(instanceId)): Promise<void> {
   const ownerSignal = signal
@@ -84,6 +93,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
           next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
           return next
         })
+        if (current()) for (const listener of publicationListeners) listener(instanceId, fresh)
       } catch (error) {
         if (!current()) {
           if (!signal?.aborted && (!initialRead || fresh)) throw error
@@ -309,12 +319,14 @@ function getWorktreeForDirectory(instanceId: string, directory: string): Worktre
   return getWorktrees(instanceId).find((worktree) => normalizeDirectory(worktree.serviceDirectory ?? worktree.directory) === normalized)
 }
 
-function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {
-  const directory = sessions().get(instanceId)?.get(parentSessionId)?.location.directory
-  const locationSlug = directory && getWorktreeForDirectory(instanceId, directory)?.slug
-  if (locationSlug) return normalizeWorktreeSlug(instanceId, locationSlug)
+function getWorktreeForSession(instanceId: string, sessionId: string): WorktreeDescriptor | undefined {
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) return
+  return confirmedSessionWorktree(instanceId, sessionId, session) ?? getWorktreeForDirectory(instanceId, session.location.directory)
+}
 
-  return "root"
+function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {
+  return normalizeWorktreeSlug(instanceId, getWorktreeForSession(instanceId, parentSessionId)?.slug ?? "root")
 }
 
 function getWorktreeSlugForSession(instanceId: string, sessionId: string): string {
@@ -383,7 +395,8 @@ async function setWorktreeSlugForParentSession(
   // Do not turn that reconciliation into a family move and native move echoes.
   const currentDirectory = sessions().get(instanceId)?.get(rootSessionId)?.location.directory
   const targetDirectory = worktree.serviceDirectory ?? worktree.directory
-  if (currentDirectory && normalizeDirectory(currentDirectory) === normalizeDirectory(targetDirectory)) return
+  if (getWorktreeForSession(instanceId, rootSessionId)?.slug === normalizedSlug
+    || (currentDirectory && normalizeDirectory(currentDirectory) === normalizeDirectory(targetDirectory))) return
 
   const key = `${instanceId}:${rootSessionId}`
   const pending = familyMoveRequests.get(key)

@@ -50,7 +50,7 @@ test("Electron cache resolves the real workspace lock", () => {
   assert.equal(packages["node_modules/app-builder-bin"], undefined)
   for (const host of [linux, windows, mac]) {
     assert.deepEqual(spec("electron", host, { packageLock: realPackageLock }), {
-      key: `electron-${host.platform}-${host.arch}-${packages["node_modules/electron"].version}-app-builder-bin-${bin.version}`,
+      key: `electron-${host.platform}-${host.arch}-${(packages["packages/electron-app/node_modules/electron"] ?? packages["node_modules/electron"]).version}-app-builder-bin-${bin.version}`,
       paths: spec("electron", host, { packageLock }).paths,
     })
   }
@@ -106,6 +106,13 @@ test("Electron cache accepts identical app-builder-bin copies independently of k
       assert.deepEqual(spec("electron", host, { packageLock: JSON.stringify({ packages }) }), spec("electron", host, { packageLock }))
     }
   }
+})
+
+test("Electron cache keys use the app workspace's Electron version before the hoisted version", () => {
+  const lock = JSON.parse(packageLock)
+  lock.packages["packages/electron-app/node_modules/electron"] = { version: "45.2.4" }
+  assert.equal(spec("electron", linux, { packageLock: JSON.stringify(lock) }).key,
+    "electron-linux-x64-45.2.4-app-builder-bin-4.0.0")
 })
 
 test("Cargo caches only download directories, keyed by the lockfile whatever its line endings", () => {

@@ -31,13 +31,14 @@ export const readNativeScheduleFlag = Effect.fn("missions.readScheduleFlag")(fun
   if (!Array.isArray(entries) || entries.length > 256 || entries.some(entry => !entry
     || entry.type !== "directory" && (entry.type !== "document" || !entry.info || typeof entry.info !== "object")))
     throw new Error("Native schedule flag configuration incomplete")
-  const state = flags.resolve(entries)?.schedules
+  const state = flags.resolve(entries)?.automations
   if (!state || typeof state.enabled !== "boolean" || !["env", "config", "default"].includes(state.source))
     throw new Error("Native schedule flag resolution unavailable")
   const block = [...entries].reverse().find(entry => entry.type === "document" && entry.info.experimental !== undefined)
   const provenance: NativeScheduleFlag["provenance"] = state.source === "env" ? "environment"
     : state.source === "default" ? "channel-default"
-    : block?.type === "document" && block.info.experimental?.schedules !== undefined ? "experimental-block" : "all-flags"
+    : block?.type === "document" && (block.info.experimental?.automations !== undefined
+      || block.info.experimental?.schedules !== undefined) ? "experimental-block" : "all-flags"
   current()
   return { enabled: state.enabled, provenance } satisfies NativeScheduleFlag
 })

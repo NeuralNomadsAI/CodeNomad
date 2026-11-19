@@ -7,6 +7,7 @@ import type { BackendCallerGuard } from "../../codenomad-servers/ui-caller"
 import { isHostOnlyPath, isMemoryRelayRoute } from "../../remote-control/gate"
 import { routedPath } from "../routed-path"
 import { isRelayAuthority, RELAY_AUTHORITY_HEADER, RELAY_AUTHORITY_QUERY, RELAY_BOOTSTRAP } from "../../codenomad-servers/relay-authority"
+import { SESSION_PLACEMENT_HEADER } from "../../opencode/session-access-contract"
 
 const profileId = /^[A-Za-z0-9_-]{1,64}$/
 const responseHeaders = new Set(["content-type", "content-length", "content-disposition", "content-range", "accept-ranges", "etag", "last-modified", "retry-after"])
@@ -110,6 +111,8 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
             const value = request.headers[name]
             if (typeof value === "string") headers.set(name, value)
           }
+          if (request.method === "GET" && /^\/workspaces\/[^/]+\/instance\/api\/session\/[^/]+\/?$/.test(pathname)
+            && request.headers[SESSION_PLACEMENT_HEADER] === "1") headers.set(SESSION_PLACEMENT_HEADER, "1")
           const body = ["GET", "HEAD"].includes(request.method) ? undefined : Readable.toWeb(request.raw) as ReadableStream<Uint8Array>
           const response = await deps.manager.relay(id, target, { method: request.method, headers, body, signal, duplex: "half" } as RequestInit,
             proof, deps.principalSignal?.(request) !== undefined)

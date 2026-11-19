@@ -47,8 +47,9 @@ export function selectWorkspaceSessionFamilies(
   inventory: SessionInfo[],
   folder: string,
   worktrees: WorktreeDescriptor[],
+  listDirectory: (session: SessionInfo) => string | undefined = () => undefined,
 ): SessionInfo[] {
   const ids = selectWorkspaceFamilyIds(inventory.map((session) => ({ id: session.id, parentId: session.parentID,
-    directory: session.location.directory })), folder, worktrees)
+    directory: listDirectory(session) ?? session.location.directory })), folder, worktrees)
   return inventory.filter((session) => ids.has(session.id))
 }

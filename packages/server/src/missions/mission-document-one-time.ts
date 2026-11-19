@@ -189,7 +189,8 @@ export function missionDocumentSummary(doc: MissionDocument) {
 }
 export type MissionDocumentSummary = ReturnType<typeof missionDocumentSummary>
 
-export async function projectMissionDocuments(access: MissionDocumentAccess, missions: MissionMap[]): Promise<void> {
+export async function projectMissionDocuments(access: MissionDocumentAccess,
+  missions: Pick<MissionMap, "id" | "coordinatorSessionId" | "document">[]): Promise<void> {
   await access(async store => {
     for (const mission of missions) {
       const doc = await store.read(mission.id)

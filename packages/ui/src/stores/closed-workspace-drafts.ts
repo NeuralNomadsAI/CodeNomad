@@ -382,7 +382,7 @@ export function restoreClosedWorkspaceDrafts(
     if (!isCurrent()) return
     const absenceProofs = await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
       Object.keys(claim.entry.drafts), Object.keys(claim.entry.attachments),
-    ]), undefined, isCurrent, true)
+    ]), undefined, isCurrent, { verifyDrafts: true, reconcileDeparture: true })
     if (!isCurrent()) return
     hydrate()
     recoverDeletedWorkspacePrompts(instanceId, emptySessionsOf(instanceId, claim.entry), currentDraftAbsences(absenceProofs))

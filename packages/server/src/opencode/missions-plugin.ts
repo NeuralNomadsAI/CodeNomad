@@ -101,6 +101,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
     project: { id: string; canonical: string }
   }
   storage: {
+    readonly range?: import("../missions/journal").MissionStorage["range"]
     get(key: string): Promise<MissionJsonValue | undefined>
     set(key: string, value: MissionJsonValue): Promise<void>
     remove(key: string): Promise<void>
@@ -204,14 +205,14 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       canonical: context.location.project.canonical,
       location: readLocationRef(context.location),
     },
-    storage: policy ? { get: key => context.storage.get(key), scan: options => context.storage.scan(options), set: (key, value, current) => writer.run(async () => {
+    storage: policy ? { get range() { return context.storage.range }, get: key => context.storage.get(key), scan: options => context.storage.scan(options), set: (key, value, current) => writer.run(async () => {
       const event = parseMissionEvent(value)
       const publicationFence = event ? await policy.beforeJournalWrite(event) : undefined
       assertActive()
       publicationFence?.()
       current?.()
       await writer.write(() => context.storage.set(key, value))
-    }), ...removal } : { get: key => context.storage.get(key), scan: options => context.storage.scan(options),
+    }), ...removal } : { get range() { return context.storage.range }, get: key => context.storage.get(key), scan: options => context.storage.scan(options),
       set: (key, value, current) => writer.run(async () => {
         assertActive()
         current?.()

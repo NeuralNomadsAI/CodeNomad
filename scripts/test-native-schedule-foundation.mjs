@@ -101,7 +101,7 @@ const observe = (name, input) => client.rpc(observerDefinition)[name](input, { l
 let artifacts, principal, reconciliation, principalSchedule, reconciliationSchedule
 try {
   artifacts = await buildNativeScheduleFoundation(path.join(root, "artifacts"), { qualification: true })
-  const config = { "$schema": "https://opencode.ai/config.json", snapshots: false, update: "disable", experimental: { schedules: true },
+  const config = { "$schema": "https://opencode.ai/config.json", snapshots: false, update: "disable", experimental: { automations: true },
     plugins: [{ package: path.dirname(artifacts.qualification.file), options: { registrationFile, provider: artifacts.provider,
       runtime: artifacts.qualification, logFile: eventsFile, loseFirstReply: !coldMissing && !controlledMaintenance,
       holdCompaction: controlledMaintenance } },
@@ -141,11 +141,11 @@ try {
       measuredTokensFixture: tokenFixture, contextLimit: 32000, automaticCompactionVerifiedByHealthyControl: controlledMaintenance })
   } else reconciliation = await create("reconciliation")
   const signal = "CODENOMAD_MISSION_SCHEDULE_WAKE"
-  principalSchedule = await client.experimental.schedule.create({ sessionID: principal.id, when: { every: "90 minutes" },
-    ends: { after: "91 minutes", times: 3 }, prompt: signal, name: "foundation-principal-phase" })
-  reconciliationSchedule = await client.experimental.schedule.create({ sessionID: reconciliation.id, when: { every: controlledMaintenance ? "90 minutes" : "1 minute" },
-    ends: controlledMaintenance ? { times: 3, after: "181 minutes" } : { times: 4 }, prompt: signal, name: "foundation-native-carrier-qualification" })
-  if (controlledMaintenance) await client.experimental.schedule.pause({ scheduleID: principalSchedule.id })
+  principalSchedule = await client.experimental.automation.create({ sessionID: principal.id, trigger: { type: "every", every: "90 minutes" },
+    expires: "in 91 minutes", action: { type: "prompt", prompt: signal }, name: "foundation-principal-phase" })
+  reconciliationSchedule = await client.experimental.automation.create({ sessionID: reconciliation.id, trigger: { type: "every", every: controlledMaintenance ? "90 minutes" : "1 minute" },
+    expires: controlledMaintenance ? "in 181 minutes" : "in 4 minutes", action: { type: "prompt", prompt: signal }, name: "foundation-native-carrier-qualification" })
+  if (controlledMaintenance) await client.experimental.automation.pause({ automationID: principalSchedule.id })
   save("document-initial", await qa("initialize", { principal: { sessionID: principal.id, scheduleID: principalSchedule.id },
     reconciliation: { sessionID: reconciliation.id, scheduleID: reconciliationSchedule.id } }))
   if (coldMissing) {
@@ -188,17 +188,16 @@ try {
     assert(held.messages.some(message => message.type === "compaction" && message.reason === "auto" && message.status === "running"))
     assert.equal(held.schedule.next_due_at, firstDue + 90 * 60_000)
     assert.equal(held.schedule.run_count, 1)
-    assert.equal(held.schedule.remaining_runs, 2)
     writeFileSync(path.join(root, "release-compaction"), "release only the fixture hook; preserve native identities")
     await wait(() => events().some(event => event.kind === "cas" && event.run === 1))
     const compacted = save("controlled-after-auto-compaction", await snapshot())
     assert(compacted.messages.some(message => message.type === "compaction" && message.reason === "auto" && message.status === "completed"))
-    for (const key of ["id", "session_id", "when", "next_due_at", "ends_at", "remaining_runs", "run_count", "time_created", "time_updated"])
+    for (const key of ["id", "session_id", "when", "next_due_at", "ends_at", "run_count", "time_created", "time_updated"])
       assert.deepEqual(compacted.schedule[key], held.schedule[key], key)
     await stop(current)
     const cold = await launch("controlled-cold")
     const restarted = save("controlled-after-cold", await snapshot())
-    for (const key of ["id", "session_id", "when", "next_due_at", "ends_at", "remaining_runs", "run_count", "time_created", "time_updated"])
+    for (const key of ["id", "session_id", "when", "next_due_at", "ends_at", "run_count", "time_created", "time_updated"])
       assert.deepEqual(restarted.schedule[key], compacted.schedule[key], key)
     save("controlled-tick-two", await observe("tick", { at: restarted.schedule.next_due_at }))
     await wait(() => events().some(event => event.pid === cold.pid && event.kind === "cas" && event.run === 2))
@@ -206,7 +205,6 @@ try {
     assert.equal(final.session.id, first.session.id)
     assert.equal(final.schedule.id, first.schedule.id)
     assert.equal(final.schedule.run_count, 2)
-    assert.equal(final.schedule.remaining_runs, 1)
     assert.equal(final.schedule.status, "done") // next 270-minute slot is beyond ends.at at 181 minutes.
     assert.equal(final.schedule.ends_at, first.schedule.ends_at)
     assert.equal(final.document.calendars.find(item => item.role === "reconciliation").highWater, 2)
@@ -246,15 +244,15 @@ try {
   assert(forgedRefused)
   save("forged-input", { refused: forgedRefused, boundary: "native prompt hook + separately invoked reusable ordinary guard" })
   await qa("forceTitle", { sessionID: reconciliation.id })
-  const phaseBefore = save("phase-before-compaction", await client.experimental.schedule.get({ scheduleID: principalSchedule.id }))
-  const auxiliaryBefore = save("aux-before-compaction", await client.experimental.schedule.get({ scheduleID: reconciliationSchedule.id }))
+  const phaseBefore = save("phase-before-compaction", await client.experimental.automation.get({ automationID: principalSchedule.id }))
+  const auxiliaryBefore = save("aux-before-compaction", await client.experimental.automation.get({ automationID: reconciliationSchedule.id }))
   await client.session.compact({ sessionID: reconciliation.id })
   await wait(async () => {
     const result = await client.message.list({ sessionID: reconciliation.id, limit: 32 })
     return result.data.some(message => message.type === "compaction" && message.status === "completed")
   })
-  const phaseCompacted = save("phase-after-compaction", await client.experimental.schedule.get({ scheduleID: principalSchedule.id }))
-  const auxiliaryCompacted = save("aux-after-compaction", await client.experimental.schedule.get({ scheduleID: reconciliationSchedule.id }))
+  const phaseCompacted = save("phase-after-compaction", await client.experimental.automation.get({ automationID: principalSchedule.id }))
+  const auxiliaryCompacted = save("aux-after-compaction", await client.experimental.automation.get({ automationID: reconciliationSchedule.id }))
   for (const key of ["id", "sessionID", "nextDueAt", "endsAt", "remainingRuns", "runCount"])
     assert.deepEqual(phaseCompacted[key], phaseBefore[key], key)
   for (const key of ["id", "sessionID", "nextDueAt", "remainingRuns", "runCount"])
@@ -280,7 +278,7 @@ try {
   assert.equal(second.calendars.find(item => item.role === "reconciliation").highWater, 3)
   assert.equal(second.launchedCount, 0)
   assert.equal(second.pending, null)
-  const phaseCold = save("phase-after-cold-wake", await client.experimental.schedule.get({ scheduleID: principalSchedule.id }))
+  const phaseCold = save("phase-after-cold-wake", await client.experimental.automation.get({ automationID: principalSchedule.id }))
   for (const key of ["id", "sessionID", "nextDueAt", "endsAt", "remainingRuns", "runCount"]) assert.deepEqual(phaseCold[key], phaseBefore[key], key)
   const wake = { missionID: second.id, generation: second.timeGeneration, scheduleID: reconciliationSchedule.id, run: 1,
     sessionID: reconciliation.id, messageID: `msg_${reconciliationSchedule.id}_1` }

@@ -20,9 +20,11 @@ const APPIMAGE_PLUGIN_FILE = "linuxdeploy-plugin-appimage.AppImage"
 const sha256 = (data) => crypto.createHash("sha256").update(data).digest("hex")
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
 
-function lockedVersion(lock, name) {
-  const version = lock.packages?.[`node_modules/${name}`]?.version
-  if (!version) throw new Error(`package-lock.json does not lock ${name} at the root`)
+function lockedVersion(lock, name, workspace) {
+  const key = `node_modules/${name}`
+  const local = workspace && lock.packages?.[`${workspace}/${key}`]
+  const version = (local || lock.packages?.[key])?.version
+  if (!version) throw new Error(`package-lock.json does not lock ${name} for ${workspace ?? "the root"}`)
   return version
 }
 
@@ -85,7 +87,8 @@ function spec(kind, host, inputs) {
     const paths = [electronDir(host)]
     // electron-builder's own downloads: fpm (deb) and winCodeSign (rcedit).
     if (platform !== "darwin") paths.push(path.join(cacheHome(host), "electron-builder", platform === "win32" ? "Cache" : ""))
-    const key = `electron-${id}-${lockedVersion(lock, "electron")}-app-builder-bin-${appBuilderVersion(lock)}`
+    const workspace = "packages/electron-app"
+    const key = `electron-${id}-${lockedVersion(lock, "electron", workspace)}-app-builder-bin-${appBuilderVersion(lock)}`
     return { key, paths }
   }
   if (kind === "cargo") {

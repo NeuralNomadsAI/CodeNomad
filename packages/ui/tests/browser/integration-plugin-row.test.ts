@@ -652,6 +652,7 @@ test("ambiguous identities cannot claim a plain row, and inactive panels or unlo
     assert.equal(count("read"), reads)
     assert.equal(count("binding"), 0)
     await fx(page, "active", true)
+    await waitFor(() => count("binding") > 0, "the active panel reads the loaded integration's binding")
     await waitLink(page, "none")
     assert.equal(count("binding"), 1, "only the loaded integration of the active panel")
   } finally { await page.close() }

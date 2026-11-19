@@ -69,6 +69,10 @@ test("resolves nested and junction paths to their canonical owning worktree", as
 
   const expectedSlug = (await loadWorktrees()).find(entry => entry.branch === "doomed")!.slug
   assert.equal(resolved?.slug, expectedSlug)
+  assert.equal(resolved?.exact, false, "ownership of a descendant is not an exact list match")
+  const exact = await resolveOwnedWorktreePath({ loadWorktrees, workspaceId, workspacePath: root, directory: alias })
+  assert.equal(exact?.slug, expectedSlug)
+  assert.equal(exact?.exact, true, "the alias resolves to the exact registered worktree")
   assert.equal(resolved?.directory, await realpath(path.join(worktree, "nested")))
   assert.equal(resolved?.worktreeDirectory, await realpath(worktree))
   assert.equal((await resolveOwnedWorktreePath({

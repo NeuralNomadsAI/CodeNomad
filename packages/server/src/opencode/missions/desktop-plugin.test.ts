@@ -8,6 +8,7 @@ import { desktopPlugin } from "./desktop-plugin"
 import type { NativeMissionSession } from "../../missions/control-types"
 import type { MissionJsonValue } from "../../missions/model"
 import { MissionControl } from "../../missions/control"
+import type { NativeJournalRange } from "./native-journal-range"
 
 const RETIRED = "codenomad-missions/authority-"
 
@@ -26,14 +27,21 @@ test("presence-owned setup registers one-time Missions without touching the reti
   }
   const registrations = { dispose: async () => {} }
   let snapshot: (() => Promise<unknown>) | undefined
+  let rangeReads = 0
+  let requestRange: NativeJournalRange | undefined
+  const range: NativeJournalRange = {
+    listRanges: async () => { rangeReads++; return { missionIDs: [], stray: 0 } },
+    readOrdered: async () => assert.fail("no mission ranges"),
+    readEvent: async () => assert.fail("no events"),
+  }
   try {
-    const cleanup = await desktopPlugin(directory).setup({
+    const cleanup = await desktopPlugin(directory, undefined, undefined, undefined, () => requestRange).setup({
       location: { directory: directory, project: { id: "owned-project", canonical: directory } },
       storage: {
         get: async (key: string) => { trap(key); return values.get(key) },
         set: async (key: string, value: unknown) => { trap(key); values.set(key, value) },
         remove: async (key: string) => { trap(key); values.delete(key) },
-        scan: async ({ prefix }: { prefix: string }) => { trap(prefix); return { entries: [] } },
+        scan: async () => assert.fail("qualified ordinary RPC must use the range reader"),
       },
       session: { hook: async () => registrations },
       rpc: { register: async (_: unknown, handlers: { snapshot(): Promise<unknown> }) => {
@@ -48,7 +56,9 @@ test("presence-owned setup registers one-time Missions without touching the reti
     assert.equal(typeof cleanup, "function")
     try {
       assert.deepEqual(tools, ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "settings", "control", "configure", "delete"])
+      requestRange = range
       assert.deepEqual((await snapshot!() as { missions: unknown[] }).missions, [])
+      assert.ok(rangeReads > 0)
     } finally { await cleanup?.() }
     assert.deepEqual(touched.filter(key => key.startsWith(RETIRED)), [], "no retired namespace read, create or repair")
     assert.ok(touched.every(key => key.startsWith(`${MISSION_JOURNAL_STORAGE_PREFIX}/`) || key === MISSION_JOURNAL_STORAGE_PREFIX), touched.join(", "))

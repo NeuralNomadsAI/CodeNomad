@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { Context, Effect, Schema } from "effect"
-import { Schedule } from "@opencode/schema/schedule"
+import { Automation } from "@opencode/schema/automation"
+import { missionAutomationID } from "./native-mission-automation"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { MissionDocumentPassageEngine, type DocumentPassagePorts } from "../../missions/mission-document-passage-engine"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
@@ -30,15 +31,16 @@ async function composed(t: test.TestContext, maximum = 3) {
   const schedule = {
     enabled: () => Effect.succeed(true),
     get: (id: string) => Effect.sync(() => {
-      const row = f.calendars.get(id)
+      const row = [...f.calendars.values()].find(row => missionAutomationID(row.id) === id)
       if (!row) throw new Error("Native calendar missing")
-      return Schema.decodeUnknownSync(Schedule.Info)({ id: row.id, sessionID: row.sessionID, name: row.name, when: row.when, tz: "UTC",
-        action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, status: row.status, runCount: row.runCount,
-        ...(row.nextDueAt === null ? {} : { nextDueAt: row.nextDueAt }), ...(row.endsAt === null ? {} : { endsAt: row.endsAt }),
+      return Schema.decodeUnknownSync(Automation.Info)({ id, sessionID: row.sessionID, name: row.name, trigger: row.when, tz: "UTC",
+        projectID: f.ctx.location.project.id, directory: f.ctx.location.directory,
+        action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: row.sessionID } }, status: row.status, runCount: row.runCount,
+        ...(row.nextDueAt === null ? {} : { nextDueAt: row.nextDueAt }), ...(row.endsAt === null ? {} : { expires: row.endsAt }),
         time: { created: row.createdAt, updated: row.createdAt } })
     }),
   }
-  const graph = Context.make(Context.Service<never, unknown>("@opencode/Schedule"), schedule)
+  const graph = Context.make(Context.Service<never, unknown>("@opencode/Automation"), schedule)
   const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromiseWith(graph)(effect)
   const coverage = await run(acquireNativeScheduledPassageCoverage(native, run)), signal = new AbortController().signal
   f.native.wakeAcknowledged = async (target, wake, current) => {

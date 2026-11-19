@@ -462,7 +462,7 @@ test("SDK location, media and reconciliation contracts survive the relay while R
   assert.equal((await f.connect()).status, 200)
   const headers = { "x-codenomad-location": encodeURIComponent(JSON.stringify({ directory: "/srv/worktree" })),
     "x-codenomad-media": "deferred", "x-codenomad-pending-reconciliation": "1", "x-codenomad-human-answer": "1",
-    "x-opencode-directory": encodeURIComponent("/srv/worktree") }
+    "x-opencode-directory": encodeURIComponent("/srv/worktree"), "x-codenomad-session-placement": "1" }
   f.remote.state.handlers.set("/workspaces/ws/instance/api/session/s", (request, response) => {
     for (const [name, value] of Object.entries(headers)) assert.equal(request.headers[name], value, name)
     response.writeHead(503, { "content-type": "application/json", "retry-after": "30" })
@@ -471,6 +471,12 @@ test("SDK location, media and reconciliation contracts survive the relay while R
   const response = await f.call("/workspaces/ws/instance/api/session/s", { headers })
   assert.equal(response.status, 503)
   assert.equal(response.headers["retry-after"], "30")
+  f.remote.state.handlers.set("/workspaces/ws/instance/api/session/s/message", (request, response) => {
+    assert.equal(request.headers["x-codenomad-session-placement"], undefined)
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end("{}")
+  })
+  assert.equal((await f.call("/workspaces/ws/instance/api/session/s/message", { headers })).status, 200)
 })
 
 test("server-advertised LAN and remote origins never gain loopback relay authority", async t => {

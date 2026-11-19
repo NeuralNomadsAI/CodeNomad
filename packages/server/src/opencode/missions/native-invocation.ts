@@ -62,5 +62,5 @@ export function nativeInvocation(timeoutMs = NATIVE_HUMAN_ANSWER_TIMEOUT_MS) {
     })()
     return track(invocation.pending, done)
   }
-  return { capture, check }
+  return { capture, check, active: () => local.getStore()?.active === true }
 }

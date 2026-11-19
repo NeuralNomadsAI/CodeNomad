@@ -12,7 +12,8 @@ import { Location } from "@opencode/schema/location"
 import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { SessionMessage } from "@opencode/schema/session-message"
-import { Schedule } from "@opencode/schema/schedule"
+import { Automation } from "@opencode/schema/automation"
+import { missionAutomationID } from "./native-mission-automation"
 import type { MissionConfiguration } from "../../missions/launch-policy"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
 import { NativeMissionDocumentStore } from "../../missions/mission-document-store"
@@ -58,9 +59,9 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     when: { type: "every" as const, every: "15 minutes", tz: "UTC" }, endsAt: null, ambiguous: [] }))
   const calendars = descriptors.map(item => ({ role: item.role, slot: 0, timeGeneration: 1,
     scheduleID: item.scheduleID, sessionID: item.sessionID, highWater: 0, pendingWake: null, wakePreparing: null }))
-  const infos = new Map(descriptors.map(item => [item.scheduleID, Schema.decodeUnknownSync(Schedule.Info)({ id: item.scheduleID,
-    sessionID: item.sessionID, name: item.name, when: item.when, tz: "UTC", status: "active", runCount: 0,
-    nextDueAt: at + 900_000, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, time: { created: at, updated: at } })]))
+  const infos = new Map(descriptors.map(item => [missionAutomationID(item.scheduleID), Schema.decodeUnknownSync(Automation.Info)({ id: missionAutomationID(item.scheduleID),
+    sessionID: item.sessionID, name: item.name, projectID: "project", directory, trigger: item.when, tz: "UTC", status: "active", runCount: 0,
+    nextDueAt: at + 900_000, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: item.sessionID } }, time: { created: at, updated: at } })]))
   for (const item of descriptors) sessions.set(item.sessionID, Schema.decodeUnknownSync(Session.Info)({ id: item.sessionID, projectID: "project",
     location: { directory }, model: NATIVE_SCHEDULE_CARRIER_MODEL, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     time: { created: at, updated: at }, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: { missionID: "review", timeGeneration: 1, role: item.role, slot: 0 } } }))
@@ -126,7 +127,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
   graph = Context.add(graph, tag("@opencode/Location"), location)
   graph = Context.add(graph, tag("@opencode/Session"), native)
   for (const name of ["Form", "Permission", "Shell"]) graph = Context.add(graph, tag(`@opencode/${name}`), { list: () => Effect.succeed([]) })
-  graph = Context.add(graph, tag("@opencode/Schedule"), { get: (id: string) => Effect.sync(() => infos.get(id)), enabled: () => Effect.sync(() => enabled) })
+  graph = Context.add(graph, tag("@opencode/Automation"), { get: (id: string) => Effect.sync(() => infos.get(id)), enabled: () => Effect.sync(() => enabled) })
   const transforms: Array<(editor: ProviderEditor) => void> = []
   let records = new Map<string, ProviderRecord>()
   const updateMetadata = (id: string, metadata: Record<string, unknown>) => {
@@ -184,7 +185,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       assert.deepEqual(await invoke(runtime => runtime.preflight({ ...entry, missionID: doc.id, wake })),
         { messagePresent: false, ready: false, cutoff: at + 2000 })
       assert.deepEqual(snapshot(), before)
-      const info = infos.get(principal.scheduleID)!
+      const info = infos.get(missionAutomationID(principal.scheduleID))!
       infos.set(info.id, { ...info, runCount: 1 })
       messages.set(messageID, Schema.decodeUnknownSync(SessionMessage.Info)({ type: "user", id: messageID,
         text: NATIVE_SCHEDULE_CARRIER_SIGNAL, time: { created: at },
@@ -228,7 +229,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     await assert.rejects(invoke(runtime => runtime.prepareBusiness(pending.coordinatorSessionID, entry)))
     assert.equal(environments, 1)
     enabled = true
-    const auxiliary = infos.get("sch_reconciliation")!
+    const auxiliary = infos.get("aut_reconciliation")!
     infos.set(auxiliary.id, { ...auxiliary, status: "paused" })
     await assert.rejects(invoke(runtime => runtime.prepareBusiness(pending.coordinatorSessionID, entry)))
     assert.equal(environments, 1)
@@ -319,7 +320,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       })
       const originalPending = structuredClone(converted.pending!)
       const bare = { storage: stored, location } as unknown as Plugin.Context
-      const noSchedule = Context.omit(tag("@opencode/Schedule"))(graph)
+      const noSchedule = Context.omit(tag("@opencode/Automation"))(graph)
       const immediate = <T>(use: (runtime: NativeScheduledPassageRuntime) => Promise<T>) => invoke(use, bare, noSchedule)
       assert.equal(await immediate(runtime => runtime.reconcile({ ...entry, missionID: converted.id })), "pending")
       converted = await owner!.read(converted.id) as MissionDocument

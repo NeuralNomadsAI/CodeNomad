@@ -5,10 +5,13 @@ import { z } from "zod"
 import type { FormInfo, PermissionRequest } from "@opencode/client"
 import type { WorkspacePendingRequestLocation, WorkspacePendingRequestsResponse } from "../../api-types"
 import { PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../api-types"
+import type { Logger } from "../../logger"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
 import { deferPendingDiscovery, markLoadedPendingSupported, PENDING_DISCOVERY_DEFERRED } from "../../workspaces/pending-discovery"
+import { awaitNativePlugin } from "../../opencode/plugin-activation"
+import { READINESS_WAIT_MS } from "../../opencode/desktop-plugin-readiness"
 
 const directorySchema = z.string().min(1).max(4096)
 const directoryListSchema = z.union([directorySchema, z.array(directorySchema).min(1).max(64)])
@@ -66,7 +69,8 @@ async function drainOwnershipReads<T>(reads: Promise<T>[]): Promise<T[]> {
 const missingHost = (host: string) => lstat(host).then(() => false, error => (error as NodeJS.ErrnoException).code === "ENOENT")
 
 export interface PendingRequestsRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation" | "desktopPluginsReady">
+  logger: Pick<Logger, "warn">
+  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation">
   worktreeDeletionFence: Pick<WorktreeDeletionFence, "isBlocked" | "captureDisplay">
   /** Test seam only; production always uses the real Git common-directory reader. */
   readGitCommonDirectory?: typeof readGitCommonDirectory
@@ -85,12 +89,14 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
     const abandoned = new AbortController()
     const abort = () => { if (!reply.raw.writableEnded) abandoned.abort() }
     reply.raw.once("close", abort)
-    const signal = AbortSignal.any([abandoned.signal, AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)])
-    const deadlineAt = Date.now() + PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS
+    const deadline = AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)
+    const signal = AbortSignal.any([abandoned.signal, deadline])
+    let phaseSignal = signal
+    const timedOut = () => phaseSignal.reason?.name === "TimeoutError"
     const bootstrap = manager.getServiceLocation(id)
     const fences = [deps.worktreeDeletionFence.captureDisplay(bootstrap ? [bootstrap.directory] : [])]
     const started = Date.now()
-    let phase = "ownership"
+    let phase = "connection"
     let nativeStatus: number | undefined
     // Phase durations only; never paths or queue contents.
     const timing: string[] = []
@@ -101,10 +107,21 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       lap = now
       reply.header("Server-Timing", timing.join(", "))
     }
+    const recordFailure = () => {
+      record(phase)
+      // Keep paths, native payloads and queue contents out of diagnostic logs.
+      deps.logger.warn({ workspaceId: id, phase, nativeStatus, timedOut: timedOut(), elapsedMs: Date.now() - started }, "Pending request recovery failed")
+    }
     try {
       const connection = await manager.getSharedServiceConnection(id)
-      if (!connection) return reply.code(503).send({ error: "Pending requests unavailable" })
+      signal.throwIfAborted()
+      if (!connection) {
+        recordFailure()
+        return reply.code(503).send({ error: "Pending requests unavailable" })
+      }
+      record("connection")
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
+      phase = "ownership"
       const submitted = [...new Set(typeof query.data.directories === "string" ? [query.data.directories] : query.data.directories)]
       const optional = new Set(typeof query.data.optionalDirectories === "string" ? [query.data.optionalDirectories] : query.data.optionalDirectories ?? [])
       if ([...optional].some((directory) => !submitted.includes(directory))) return reply.code(400).send({ error: "Invalid optional pending request directories" })
@@ -311,15 +328,19 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       }
       assertCurrent()
       record("ownership")
-      // Initial resolution above admits this read. Revalidate after all native
-      // and placement IO, not repeatedly within the same pre/post-read phase.
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
-      // Even an all-excluded historical batch must negotiate real RPC capability.
-      // The established root is the only bootstrap, never an inactive candidate.
-      await manager.desktopPluginsReady({ connection, location: { directory: bootstrapDirectory }, signal, deadlineAt, assertCurrent })
+      // Warm only the authorized bootstrap. The validated read itself proves
+      // registration; the separate presence challenge can expire on a working RPC.
+      phase = "plugin-activation"
+      phaseSignal = AbortSignal.any([signal, AbortSignal.timeout(READINESS_WAIT_MS)])
+      await awaitNativePlugin(connection.client, "codenomad-session-pruning", { directory: bootstrapDirectory }, phaseSignal, assertCurrent)
+      phaseSignal = signal
+      record("plugin-activation")
+      phase = "ownership-revalidation"
       await assertOrigin(bootstrapDirectory)
       await revalidateCandidates()
       assertCurrent()
+      record("ownership-revalidation")
       const admitted = resolved.filter(entry => !failed.has(entry.submitted))
       if (!admitted.length && failed.size) return reply.code(403).send({ error: "Directory does not belong to workspace", directories: [
         ...result.directories.filter(entry => !failed.has(entry.directory)),
@@ -378,6 +399,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         if (!locations.length) locations.push({ location: { directory: entry.directory }, permissions: [], forms: [] })
         return locations
       }
+      phase = "placement"
       for (const entry of native.data) {
         const locations = await readLocations(entry)
         assertCurrent()
@@ -406,11 +428,9 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       ]
       return result
     } catch {
-      record(phase)
-      // Keep queue contents/paths and native payloads out of diagnostic logs.
-      request.log.warn({ workspaceId: id, phase, nativeStatus, timedOut: signal.aborted, elapsedMs: Date.now() - started }, "Pending request recovery failed")
+      if (!phaseSignal.aborted || timedOut()) recordFailure()
       // Never convert transport, malformed coverage or ownership errors to empty.
-      return reply.code(503).send({ error: "Pending requests unavailable; retain existing queues", ...(signal.aborted ? { code: "timeout" } : {}) })
+      return reply.code(503).send({ error: "Pending requests unavailable; retain existing queues", ...(timedOut() ? { code: "timeout" } : {}) })
     } finally { reply.raw.removeListener("close", abort) }
   })
 }

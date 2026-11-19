@@ -61,7 +61,7 @@ export async function hydrateRestoredWorkspaceState(
   // first so its initial restore cannot mistake an unavailable snapshot for a
   // deliberate at-bottom state.
   seedRestoredWorkspaceState(instanceId, snapshot)
-  await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal, isCurrentBinding)
+  await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal, isCurrentBinding, { reconcileDeparture: true })
   attachment.throwIfAborted()
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
@@ -83,7 +83,7 @@ export async function hydrateRestoredWorkspaceState(
   const absenceProofs = await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
     Object.keys(requestedPrompts.drafts),
     Object.keys(requestedPrompts.attachments),
-  ]), signal, isCurrentBinding, true)
+  ]), signal, isCurrentBinding, { verifyDrafts: true, reconcileDeparture: true })
   attachment.throwIfAborted()
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
