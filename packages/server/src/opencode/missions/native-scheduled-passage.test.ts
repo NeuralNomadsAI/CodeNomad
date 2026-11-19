@@ -328,6 +328,21 @@ test("explicit existing coordinator is adopted despite active work, preserves tr
   assert.equal(f.counts().sends, 2)
 })
 
+test("a quiet inherited descendant in another worktree does not block settlement; new work there still does", async () => {
+  const f = await fixture(true), first = (await f.read()).pending!
+  const worktree = "/project/.worktrees/earlier", old = f.states.get("ses_old_child")!
+  old.directory = worktree; f.sessions.get("ses_old_child")!.location = { directory: worktree }
+  assert.equal((await f.admit()).kind, "admitted")
+  f.states.get("ses_existing")!.active = false
+  await f.use(async input => {
+    await nativeScheduledPassageBusiness(input).control.report("ses_existing", { missionID: first.missionID, outcome: "completed",
+      summary: "Done", final: true, evidence: [], next: [] })
+  })
+  assert.equal((await f.use(observeNativeScheduledPassage))?.outcome, "completed")
+  old.terminal = { inputMessageID: "msg_later", messageID: "msg_later_idle", outcome: "succeeded" }
+  await assert.rejects(f.use(observeNativeScheduledPassage), /Passage family moved/)
+})
+
 test("a missing selected coordinator is never recreated and original proof still prevents replay", async () => {
   const f = await fixture(true)
   f.sessions.delete("ses_existing")

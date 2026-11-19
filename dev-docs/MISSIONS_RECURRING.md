@@ -202,7 +202,9 @@ A missing chosen root stays missing; attempted admission retains its original pr
 Before adoption, one immutable `coordinatorBaseline` checkpoint captures the bounded
 native family and its per-session message high-water, boundary, in-flight input and durable
 aggregate sequence under document CAS and native-state fencing. Existing quiet histories
-are separated from new descendants and later child inputs. A native prompt hook records
+are separated from new descendants and later child inputs. A quiet inherited descendant
+keeps its existing Location, such as an earlier worktree; passage-owned sessions and
+inherited sessions with new activity must stay in the coordinator's Location. A native prompt hook records
 the first actual child-input identity in `codenomad.passage-input` metadata for that passage;
 later inputs retain it through pruning and restarts. Inherited running work keeps its actual
 captured input and failures after the ownership boundary. Idle ancestors of inherited
