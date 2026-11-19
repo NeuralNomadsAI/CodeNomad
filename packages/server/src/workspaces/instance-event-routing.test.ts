@@ -179,6 +179,28 @@ test("a failed old-location lookup still delivers the move to its destination ow
   } finally { h.bridge.shutdown() }
 })
 
+test("a move without an envelope reaches the payload destination without reading the session", async () => {
+  let sessionReads = 0
+  const h = harness(async (id, location) =>
+    (id === "fast" && location.directory === "/repo") || (id === "slow" && location.directory === "/other-alias"),
+  async () => {
+    sessionReads++
+    throw new Error("Session lookup unavailable")
+  })
+  h.workspaces.push({ id: "unrelated", path: "/third" })
+  try {
+    await until(() => h.streams.length === 1)
+    h.streams[0].send(delta("before", "s", "/repo"))
+    await until(() => h.received.length === 1)
+    h.streams[0].send({ id: "move", type: "session.moved",
+      data: { sessionID: "s", location: { directory: "/other-alias" } } } as OpenCodeEvent)
+    h.streams[0].send(delta("after", "s", "/other-alias"))
+    await until(() => h.received.some(x => x.instanceId === "slow" && x.event.type === "session.text.delta"))
+    assert.deepEqual(h.received.filter(x => x.event.type === "session.moved").map(x => x.instanceId).sort(), ["fast", "slow"])
+    assert.equal(sessionReads, 0)
+  } finally { h.bridge.shutdown() }
+})
+
 test("native and local inventory invalidations fence pending ownership before publication", async () => {
   for (const native of [false, true]) {
     const pending = deferred<boolean>()

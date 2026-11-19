@@ -212,11 +212,19 @@ export class InstanceEventBridge {
     const sessionId = this.sessionId(event)
     const ptyId = this.ptyId(event)
     const shellId = this.shellId(event)
-    if (event.type === "session.moved" && sessionId) this.sessionLocations.delete(sessionId)
+    const envelope = event.location ? readLocationRef(event.location) : undefined
+    if (event.type === "session.moved" && sessionId) {
+      this.sessionLocations.delete(sessionId)
+      const destination = readLocationRef(event.data.location)
+      if (destination) {
+        this.deliverEvent(event, envelope, route, destination)
+        return
+      }
+    }
 
     // A scoped event is native location authority, not merely a cwd hint. Keep
     // that full pair for subsequent locationless PTY/Shell/session events.
-    const resolved = event.location ? readLocationRef(event.location)
+    const resolved = event.location ? envelope
       : (ptyId ? this.ptyLocations.get(ptyId) : undefined)
         ?? this.ptyInfoLocation(event)
         ?? (shellId ? this.shellLocations.get(shellId) : undefined)
@@ -270,13 +278,12 @@ export class InstanceEventBridge {
     return `location:${JSON.stringify([location?.directory, location?.workspaceID])}`
   }
 
-  private deliverEvent(event: OpenCodeEvent, location: LocationRef | undefined, route: EventRoute): void {
+  private deliverEvent(event: OpenCodeEvent, location: LocationRef | undefined, route: EventRoute, destination?: LocationRef): void {
     const resolvedAt = Date.now()
     const sessionId = this.sessionId(event)
     // Like native location subscriptions, a move reaches both owners. A
     // recipient of the session's earlier events learns that it left even
     // when the envelope names only its destination.
-    const destination = event.type === "session.moved" ? readLocationRef((event.data as { location?: unknown }).location) : undefined
     for (const { id: instanceId, epoch } of route.recipients) {
       const current = () => route.current() && (this.workspaceEpochs.get(instanceId) ?? 0) === epoch
       route.queue.enqueue(`deliver:${JSON.stringify([instanceId, route.key])}`, route.bytes, async () => {
@@ -293,7 +300,7 @@ export class InstanceEventBridge {
         do {
           revision = this.ownershipRevision
           lookupFailed = false
-          allowed = !location || heldSession || await owns(location)
+          allowed = heldSession || (!location && !destination) || (!!location && await owns(location))
           // An unreadable source does not settle ownership of the destination.
           if (!current()) return
           if (!allowed && destination) allowed = await owns(destination)
