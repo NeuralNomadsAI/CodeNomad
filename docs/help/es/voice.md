@@ -1,11 +1,12 @@
-# Entrada y reproducción de voz
+# Dictado, reproducción y conversación por voz
 
-## Configurar la API de voz {#configure}
+## Configurar Voz {#configure}
 
-1. Abre **Configuración → Voz**. La tarjeta **Voz** usa un adaptador del servidor compatible con OpenAI, independiente del proveedor de modelos de tu conversación.
-2. Introduce **Clave API**, opcionalmente **URL base**, **Modelo de transcripción**, **Modelo de voz** y **Voz predeterminada**.
-3. Si entrada y salida necesitan servicios distintos, activa **Proveedores separados para entrada y salida** y rellena los campos de clave, URL base y modelo de entrada/salida.
-4. Elige **Modo de reproducción** y **Formato de salida** y después **Guardar** (disponible mientras haya cambios sin guardar). Comprueba el estado junto a los botones de prueba, **Configurado**, **Parcialmente configurado** o **Falta la clave API**, antes de probar; un guardado fallido muestra **Error al guardar**.
+Abre **Preferencias → Voz** (**Configuración → Voz** en un navegador o una ventana remota). Las tarjetas **Dictado**, **Reproducción** y **Conversación** muestran su estado.
+
+1. En **Dictado**, elige el [motor del dispositivo](#desktop-dictation) en las preferencias locales de escritorio. El navegador y el móvil solo usan la API.
+2. Para el dictado por API y la reproducción, abre **Credenciales de API** desde cualquiera de las dos tarjetas. Introduce **Clave API** y, si hace falta, **URL base**, **Modelo de transcripción** y **Modelo de voz**. Para usar dos servicios, activa **Proveedores separados para entrada y salida**, rellena sus campos y pulsa **Guardar**.
+3. **Reproducción** muestra el **Proveedor**. Ajusta **Voz predeterminada**, **Modo de reproducción** y **Formato de salida** y pulsa **Guardar**.
 
 Los ajustes y claves de voz pertenecen a la configuración del servidor CodeNomad conectado, no al proyecto seleccionado ni a la conexión del proveedor OpenCode. Los demás clientes que la compartan usan esos ajustes. Las claves guardadas se ocultan: un campo de clave vacío conserva el valor guardado; **Borrar clave guardada** programa su eliminación al guardar. Una dirección de entrada o salida sin endpoint ni clave propios puede usar los ajustes compartidos; un endpoint separado necesita su propia clave, y una clave separada necesita su endpoint. Al cambiar un endpoint, proporciona explícitamente la clave prevista y verifica la configuración guardada; los cambios de endpoint borran la clave guardada de esa posición en lugar de enviarla a otro anfitrión.
 
@@ -34,7 +35,7 @@ La prueba de reproducción usa inmediatamente el modo/formato de reproducción s
 ## Dictar un mensaje {#dictate}
 
 1. Mantén activada **Entrada de voz del prompt** en **Voz** (está activada por defecto).
-2. En el editor, abre **Más acciones → Dictar** y permite el acceso al micrófono. Si aparece **Dictar: abrir los ajustes de Voz**, elige o configura allí el motor y vuelve al borrador.
+2. En el editor, abre **Más acciones → Dictar** y permite el acceso al micrófono. Si el dictado o la conversación no están disponibles, el comando indica el motivo y abre la tarjeta de **Voz** correspondiente. El dictado, la prueba de entrada y la conversación en directo usan el micrófono de uno en uno.
 3. Elige **Detener grabación y transcribir** para obtener el texto o **Cancelar el dictado** para descartar la grabación. Cambiar de conversación o cerrar el editor también cancela el dictado.
 4. Revisa el texto. Solo sustituye la selección original si el borrador y la selección no han cambiado. Si han cambiado, elige **Insertar la transcripción** o **Descartar la transcripción**. El dictado nunca envía el mensaje.
 
@@ -42,7 +43,7 @@ Si la API recurre a WAV en Tauri para Linux, el dictado y la prueba de entrada d
 
 ### Elegir un motor en el escritorio {#desktop-dictation}
 
-En **Preferencias → Voz** de la aplicación de escritorio local, elige el **Motor de dictado en este dispositivo**. La elección se aplica a todos los proyectos del dispositivo; la tarjeta **Voz** sigue configurando la API del servidor conectado. El navegador y el móvil usan el proveedor de API configurado y necesitan un contexto seguro para acceder al micrófono.
+En **Preferencias → Voz → Dictado** de la aplicación de escritorio local, elige el **Motor de dictado en este dispositivo**. La elección se aplica a todos los proyectos del dispositivo. **Proveedor de API** usa los ajustes del servidor conectado y necesita un contexto seguro para el micrófono.
 
 - El **Reconocimiento local del sistema** funciona dentro de CodeNomad sin abrir el panel de dictado del sistema. Requiere un motor local instalado para el idioma de la aplicación en Windows o macOS. En Linux, o si falta el motor o el idioma, prueba Hex si está disponible.
 - Voz muestra qué componentes faltan y el tamaño de descarga de cada uno y del total. Un clic en **Activar Hex** verifica y reutiliza los archivos compatibles, descarga lo que falta y selecciona Hex cuando está listo. Sigue el progreso en Voz. Puedes usar **Cancelar la activación de Hex** y, cuando aparezca, **Reanudar la activación de Hex**. Si falla o se cancela, se mantiene el motor anterior. Abrir Preferencias, seleccionar **Hex (local)** cuando ya está listo o dictar con él no inicia otra descarga.
@@ -60,14 +61,25 @@ Gemini Live y OpenAI Realtime no están disponibles en las ventanas remotas de T
 
 1. Usa **Reproducir mensaje** en un mensaje, o la misma acción en una llamada a herramienta, cuando TTS esté disponible.
 2. Usa **Detener reproducción** en el mismo control para terminarla; iniciar otra lectura detiene la actual.
-3. Cambia la voz, el modelo, el modo o el formato guardados en **Voz** para solicitudes posteriores.
+3. Cambia la voz, el modo o el formato en **Reproducción**, o el modelo en **Credenciales de API**, y guarda los cambios.
 
 La reproducción usa la proyección de texto de CodeNomad, no una captura narrada: los bytes binarios/de imágenes y los comprobantes de permisos no son contenido de voz. No ejecuta un mensaje ni cambia el modelo OpenCode seleccionado.
 
-Para voz automática de conversación, usa **Activar modo conversacion** en el menú **Más acciones** del editor; se aplica a esa pestaña de proyecto y no se conserva tras recargar. Mientras está activado, CodeNomad pide al agente, con cada mensaje que envías, que empiece su respuesta con un breve resumen delimitado `spoken`. Solo se lee ese bloque completado, en la sesión principal activa; no lee automáticamente todas las respuestas ni subagentes. **Desactivar modo conversacion** detiene su cola y deja de pedir el resumen. Iniciar la entrada de micrófono también detiene la voz de conversación activa. El modo de conversación requiere que la reproducción esté configurada en un formato compatible.
+## Conversación por voz {#conversation}
+
+En **Conversación**, elige el **Motor de conversación**:
+
+- **Clásico** solo requiere reproducción configurada en un formato compatible. Elige **Activar modo conversación** en **Más acciones**. CodeNomad pide al agente que empiece la respuesta a cada mensaje que envías con un resumen breve `spoken` y solo lee ese bloque completo en la sesión principal activa. Se aplica a la pestaña del proyecto hasta que lo desactives o recargues. Iniciar el dictado detiene la lectura del resumen.
+- **Gemini Live** y **OpenAI Realtime** tienen cada uno su propia **Clave API**, su **Modelo** y una **Voz** opcional. Guarda los ajustes del proveedor elegido. Abre la sesión de destino, elige **Modo de conversación** en **Más acciones** y, cuando aparezca el aviso del proveedor, pulsa **Aceptar y empezar**. Permite el acceso al micrófono.
+
+El modelo de voz puede leer el estado de la sesión fijada al inicio, la última respuesta visible y los errores recientes. No tiene acceso a archivos. Si le pides que envíe una solicitud al agente, la envía directamente como mensaje tuyo, sin confirmación en pantalla. Se mantienen los permisos y las preguntas del agente, así como el ajuste Yolo.
+
+El servidor admite una conversación en directo a la vez por usuario autenticado o por dispositivo emparejado con Control remoto. **Detener** finaliza el audio y deja abierta la transcripción. Esta se conserva en memoria hasta que se cierra la ventana; las solicitudes enviadas al agente quedan como mensajes de la sesión. La conversación también termina tras dos minutos sin hablar, a los ocho minutos en total, al cambiar de sesión de destino, al cerrar la ventana o al perder la conexión. No hay reconexión automática ni cambio de proveedor.
 
 ## Flujo de datos y privacidad {#privacy}
 
 El dictado local conserva el audio en el dispositivo y no cambia al proveedor de API. Con **Proveedor de API**, el audio del micrófono pasa por el servidor de CodeNomad al endpoint de transcripción configurado. El texto seleccionado para síntesis viaja por ese servidor al endpoint TTS configurado; el audio devuelto se reproduce en el cliente. Las claves API permanecen en el servidor.
 
-Usa un endpoint al que confíes el material dictado o leído. Las credenciales OpenCode no autorizan la voz automáticamente. Cambiar una clave o endpoint afecta a solicitudes futuras, no a datos ya enviados. Consulta [Seguridad](security.md) antes de exponer un servidor a otros usuarios.
+Con **Gemini Live** u **OpenAI Realtime**, Google u OpenAI recibe el audio del micrófono, el nombre del proyecto, la rama, el árbol de trabajo, el título y el estado de la sesión. El proveedor también puede recibir el texto de la última respuesta visible del agente y los errores recientes. El uso puede facturarse a tu cuenta con el proveedor elegido.
+
+Usa un proveedor al que confíes lo que dictas, lees o compartes. Las credenciales de OpenCode no autorizan automáticamente los servicios de voz. Consulta [Seguridad](security.md) antes de exponer un servidor a otros usuarios.

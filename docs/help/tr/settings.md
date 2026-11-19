@@ -6,12 +6,12 @@
 2. Bir bölüm seçin. Yerel Electron ve Tauri pencereleri bir yerel Tercihler penceresini açar veya odaklar; tarayıcı ve uzak görünümler yerleşik ayarlar ekranını kullanır.
 3. Ayrılmadan önce ayarın kapsamını ve herhangi bir **Kaydet** eylemini kontrol edin.
 
-Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses, özel palet renkleri ve Yapılandırma Dosyaları açık bir **Kaydet** eylemini korur. Kısa açıklama için ayar başlığının yanındaki **i** simgesinin üzerine gelin veya odaklanın. Yardım bağlantısı varsa tıklamak, Enter'a basmak veya dokunmak ilgili bölümü arayüz dilinde sistem tarayıcısında ya da ayrı bir sekmede açar. Yalnızca ipucu içeren simgeler dokunulduğunda açıklamayı gösterir. **Ayarlar → Bilgi** bölümünde ayrıca **CodeNomad'i destekleyin** kartı bulunur: **Sponsor olun veya katkıda bulunun**, [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
+Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses API’si ayarları, özel palet renkleri ve Yapılandırma Dosyaları için **Kaydet** düğmesine basın. Kısa açıklama için ayar başlığının yanındaki **i** simgesinin üzerine gelin veya odaklanın. Yardım bağlantısı varsa tıklamak, Enter'a basmak veya dokunmak ilgili bölümü arayüz dilinde sistem tarayıcısında ya da ayrı bir sekmede açar. Yalnızca ipucu içeren simgeler dokunulduğunda açıklamayı gösterir. **Ayarlar → Bilgi** bölümünde ayrıca **CodeNomad'i destekleyin** kartı bulunur: **Sponsor olun veya katkıda bulunun**, [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
 
 | Durum | Neyi yönetir |
 | --- | --- |
 | CodeNomad yapılandırması | Paylaşılan arayüz tercihleri ve ses API’si, SideCars, Uzaktan Kontrol ve Ortam Değişkenleri gibi **Sunucu ayarı** olarak işaretlenen seçenekler. |
-| Bu cihazda dikte | [Masaüstü dikte motoru](voice.md#desktop-dictation) yerel Ses ayarlarından seçilir ve cihazdaki tüm projeler için geçerlidir. |
+| Ses motorları | [Masaüstü dikte motoru](voice.md#desktop-dictation) cihazdaki tüm projeler için geçerlidir. [Sohbet motoru](voice.md#conversation), masaüstü profiline veya tarayıcı profili ile bağlı sunucuya göre seçilir. |
 | Pencere/proje sekmesi düzeni | Açık paneller, seçilen sekmeler, okuyucu durumu ve geri yüklenebilir taslaklar/düzen. Bunlar OpenCode yapılandırması değildir. |
 | Genel/Proje OpenCode ayarları | Görüntülenen kapsamda yerel eklenti/yapılandırma değişiklikleri. Proje kontrolleri etkin bir proje/Location gerektirir. |
 | Masaüstü veri profili | Yerel pencereler, yapılandırma dosyasından ve paylaşılan OpenCode hizmetinden bağımsız olarak geri yükleme durumu ve tarayıcı depolaması. Bkz. [Masaüstü pencereleri ve veriler](desktop.md). |
@@ -112,4 +112,4 @@ Yalnızca Geçmiş'e yönlendirilen bildirimleri sayan zil/okunmamış geçmiş 
 | Uzun asistan yanıtlarını beklet | Bir akış yanıtı görünümün ötesine geçtiğinde otomatik takibi durdurur. |
 | Ortam Değişkenleri | Her istem veya oturum komutundan önce sunucu tarafında uygulanır; okumalar halihazırda çalışmakta olan yürütmeyi güncellemez. Bkz. [OpenCode kurulumu](opencode.md). |
 
-Klavye yapılandırması için [Klavye kısayolları](shortcuts.md); ses kontrolleri için [Ses girişi ve oynatma](voice.md)'yi kullanın. Başlangıç geri yükleme ve masaüstü veri profilleri, [Masaüstü pencereleri ve veriler](desktop.md) kapsamında ele alınmaktadır.
+Klavye ayarları için [Klavye kısayolları](shortcuts.md) bölümüne bakın. **Ses**, [Dikte, Oynatma ve Sohbet](voice.md) kartlarını içerir. Başlangıçta geri yükleme ve masaüstü profilleri için [Masaüstü pencereleri ve veriler](desktop.md) bölümüne bakın.

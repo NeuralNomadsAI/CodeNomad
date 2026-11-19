@@ -1,11 +1,12 @@
-# Saisie et lecture vocales
+# Dictée, lecture et conversation vocale
 
-## Configurer l’API vocale {#configure}
+## Configurer la voix {#configure}
 
-1. Ouvrez **Paramètres → Voix**. La carte **Voix** utilise un adaptateur côté serveur compatible OpenAI, indépendamment du fournisseur de modèles de la conversation.
-2. Saisissez **Clé API**, et éventuellement **URL de base**, **Modèle de transcription**, **Modèle vocal** et **Voix par défaut**.
-3. Si l’entrée et la sortie nécessitent des services différents, activez **Fournisseurs séparés pour l'entrée et la sortie**, puis remplissez les clés, URL de base et modèles d’entrée/sortie.
-4. Choisissez **Mode de lecture** et **Format de sortie**, puis **Enregistrer** (disponible tant que des changements ne sont pas enregistrés). Vérifiez l’état affiché à côté des boutons de test, **Configuré**, **Partiellement configuré** ou **Clé API manquante**, avant les tests ; un enregistrement échoué affiche **Échec de l'enregistrement**.
+Ouvrez **Préférences → Voix** (**Paramètres → Voix** dans un navigateur ou une fenêtre distante). Les cartes **Dictée**, **Lecture** et **Conversation** affichent chacune leur état.
+
+1. Dans **Dictée**, choisissez le [moteur de l’appareil](#desktop-dictation) dans les préférences locales. Le navigateur et le mobile utilisent uniquement l’API.
+2. Pour la dictée par API et la lecture, ouvrez **Identifiants API** depuis l’une des deux cartes. Renseignez **Clé API** et, si besoin, **URL de base**, **Modèle de transcription** et **Modèle vocal**. Pour utiliser deux services, activez **Fournisseurs séparés pour l'entrée et la sortie**, remplissez leurs champs et cliquez sur **Enregistrer**.
+3. **Lecture** indique le **Fournisseur**. Réglez **Voix par défaut**, **Mode de lecture** et **Format de sortie**, puis cliquez sur **Enregistrer**.
 
 Les paramètres et clés vocaux appartiennent à la configuration du serveur CodeNomad connecté, pas au projet sélectionné ni à la connexion fournisseur OpenCode. Les autres clients qui la partagent les utilisent. Les clés enregistrées sont masquées : un champ vide conserve la valeur ; **Effacer la clé enregistrée** prévoit sa suppression à l’enregistrement. Une direction sans point d’accès ni clé propres peut utiliser les paramètres partagés ; un point d’accès séparé nécessite sa clé et une clé séparée nécessite son point d’accès. Lors d’un changement de point d’accès, fournissez explicitement la clé voulue et vérifiez la configuration enregistrée ; ce changement efface la clé enregistrée de cet emplacement plutôt que de l’envoyer à un autre hôte.
 
@@ -34,7 +35,7 @@ Le test de lecture utilise immédiatement le mode/format sélectionné, mais le 
 ## Dicter un prompt {#dictate}
 
 1. Gardez **Saisie vocale du prompt** activée dans **Voix** (elle l’est par défaut).
-2. Dans **Plus d'actions** de la zone de saisie, choisissez **Dicter** et autorisez le microphone. Si vous voyez **Dicter : ouvrir les réglages Voix**, choisissez ou configurez le moteur à cet endroit, puis revenez au brouillon.
+2. Dans **Plus d'actions** de la zone de saisie, choisissez **Dicter** et autorisez le microphone. Si la dictée ou la conversation est indisponible, la commande indique pourquoi et ouvre la carte **Voix** correspondante. La dictée, le test d’entrée et la conversation en direct utilisent le microphone à tour de rôle.
 3. Choisissez **Arrêter l'enregistrement et transcrire** pour obtenir le texte ou **Annuler la dictée** pour abandonner l’enregistrement. Changer de conversation ou fermer la zone de saisie annule aussi la dictée.
 4. Relisez le texte. Il remplace la sélection d’origine si le brouillon et la sélection n’ont pas changé ; sinon, choisissez **Insérer la transcription** ou **Ignorer la transcription**. La dictée n’envoie jamais le brouillon.
 
@@ -42,7 +43,7 @@ Si l’API utilise le mode WAV de secours sur Tauri sous Linux, **Dicter** et **
 
 ### Choisir un moteur sur ordinateur {#desktop-dictation}
 
-Dans les **Préférences → Voix** de l’application de bureau locale, sélectionnez le **Moteur de dictée sur cet appareil**. Ce choix vaut pour tous les projets sur cet appareil ; la carte **Voix** configure toujours l’API du serveur connecté. Le navigateur et le mobile utilisent le fournisseur API configuré et nécessitent un contexte sécurisé pour le microphone.
+Dans **Préférences → Voix → Dictée** sur le bureau local, sélectionnez **Moteur de dictée sur cet appareil**. Ce choix vaut pour tous les projets sur cet appareil. **Fournisseur API** utilise les réglages du serveur connecté et nécessite un contexte sécurisé pour le microphone.
 
 - La **Reconnaissance système locale** fonctionne dans CodeNomad sans ouvrir le panneau de dictée de l’OS. Elle nécessite un moteur local installé pour la langue de l’application sous Windows ou macOS. Sous Linux, ou si le moteur ou la langue manque, essayez Hex s’il est proposé.
 - Voix indique ce qui manque à Hex, le volume à télécharger pour chaque composant et le total. Un clic sur **Activer Hex** vérifie et réutilise les fichiers compatibles, télécharge ce qui manque, puis sélectionne Hex dès qu’il est prêt. Suivez la progression dans Voix ; utilisez **Annuler l’activation de Hex** pour arrêter et **Reprendre l’activation de Hex** lorsque l’action est proposée. En cas d’échec ou d’annulation, le moteur précédent reste sélectionné. Rouvrir les préférences, sélectionner **Hex (local)** déjà prêt ou dicter avec ne déclenche aucun téléchargement.
@@ -60,14 +61,25 @@ Gemini Live et OpenAI Realtime sont indisponibles dans les fenêtres Tauri dista
 
 1. Utilisez **Lire le message** sur un message, ou la même action sur un appel d’outil, lorsque TTS est disponible.
 2. Utilisez **Arrêter la lecture** sur la même commande pour l’arrêter ; démarrer une autre lecture arrête celle en cours.
-3. Changez la voix, le modèle, le mode ou le format enregistrés dans **Voix** pour les demandes suivantes.
+3. Changez la voix, le mode ou le format dans **Lecture**, ou le modèle dans **Identifiants API**, puis enregistrez.
 
 La lecture utilise la projection textuelle CodeNomad, pas une capture d’écran racontée : les octets binaires/d’images et les reçus d’autorisation ne sont pas du contenu vocal. Elle n’exécute pas de prompt et ne change pas le modèle OpenCode sélectionné.
 
-Pour la voix automatique de conversation, utilisez **Activer le mode conversation** dans le menu **Plus d'actions** de la zone de saisie ; il s’applique à cet onglet de projet et n’est pas conservé après un rechargement. Tant qu’il est actif, CodeNomad demande à l’agent, avec chaque prompt que vous envoyez, de commencer sa réponse par un court résumé dans un bloc clôturé `spoken`. Seul ce bloc terminé est lu, dans la session principale active ; ce n’est pas une lecture automatique de chaque réponse ou sous-agent. **Desactiver le mode conversation** arrête sa file et ne demande plus le résumé. Démarrer le microphone arrête aussi la voix de conversation active. Le mode conversation nécessite une lecture configurée dans un format pris en charge.
+## Conversation vocale {#conversation}
+
+Dans **Conversation**, choisissez un **Moteur de conversation** :
+
+- **Classique** nécessite seulement une lecture configurée dans un format compatible. Dans **Plus d'actions**, choisissez **Activer le mode conversation**. CodeNomad demande à l’agent de commencer chaque réponse à un prompt envoyé par un résumé `spoken` et lit ce seul bloc terminé dans la session principale active. Le mode s’applique à l’onglet du projet jusqu’à sa désactivation ou au rechargement. Démarrer la dictée arrête la lecture du résumé.
+- **Gemini Live** et **OpenAI Realtime** ont chacun leur **Clé API**, leur **Modèle** et une **Voix** facultative. Enregistrez les réglages du fournisseur choisi. Ouvrez la session cible, choisissez **Mode conversation** dans **Plus d'actions**, puis **Accepter et démarrer** quand la boîte de dialogue du fournisseur s’affiche. Autorisez le microphone.
+
+Le modèle vocal peut lire l’état de la session fixée au démarrage, la dernière réponse visible et les erreurs récentes. Il n’a pas accès aux fichiers. Quand vous lui demandez de transmettre une demande à l’agent, il l’envoie directement comme un message de votre part, sans confirmation à l’écran. Les autorisations et questions de l’agent et le réglage Yolo s’appliquent toujours.
+
+Le serveur autorise une seule conversation en direct à la fois par utilisateur connecté, ou par appareil appairé avec le Contrôle à distance. **Arrêter** coupe l’audio en laissant la transcription ouverte. Celle-ci reste en mémoire jusqu’à la fermeture de la fenêtre ; les demandes envoyées à l’agent restent dans la session. La conversation s’arrête aussi après deux minutes sans parole, au bout de huit minutes au total, si la session cible change, si vous fermez la fenêtre ou si la connexion est perdue. Il n’y a ni reconnexion automatique ni bascule vers un autre fournisseur.
 
 ## Flux de données et confidentialité {#privacy}
 
 La dictée locale garde l’audio sur l’appareil et ne bascule jamais vers l’API. Avec **Fournisseur API**, l’audio du microphone passe par le serveur CodeNomad jusqu’au point d’accès de transcription configuré. Le texte sélectionné pour synthèse passe par ce backend vers le point d’accès TTS configuré ; l’audio reçu est lu sur le client. Les clés API restent côté serveur et ne sont pas renvoyées comme valeurs enregistrées au formulaire.
 
-Utilisez un point d’accès de confiance pour le contenu dicté ou lu. Les identifiants OpenCode n’autorisent pas automatiquement la voix. Changer une clé ou un point d’accès affecte les demandes futures, pas les données déjà envoyées. Voir [Sécurité](security.md) avant d’exposer un serveur à d’autres utilisateurs.
+Avec **Gemini Live** ou **OpenAI Realtime**, Google ou OpenAI reçoit l’audio du microphone, le nom du projet, la branche, l’arbre de travail, ainsi que le titre et l’état de la session. Le fournisseur peut aussi recevoir le texte de la dernière réponse visible de l’agent et les erreurs récentes. L’utilisation peut être facturée sur votre compte auprès du fournisseur choisi.
+
+Utilisez un fournisseur de confiance pour ce que vous dictez, lisez ou partagez. Les identifiants OpenCode n’autorisent pas automatiquement les services vocaux. Voir [Sécurité](security.md) avant d’exposer un serveur à d’autres utilisateurs.

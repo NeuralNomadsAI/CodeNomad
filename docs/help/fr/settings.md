@@ -6,12 +6,12 @@
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
 
-La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. La voix, les couleurs de palette personnalisées et les fichiers de configuration gardent un **Enregistrer** explicite. Survolez ou focalisez le **i** à côté du titre d’un réglage pour une courte explication. S’il mène à l’aide, cliquez, appuyez sur Entrée ou touchez-le pour ouvrir la section pertinente dans la langue de l’interface, dans le navigateur système ou un onglet séparé. Les icônes limitées à une infobulle affichent leur explication au toucher. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
+La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. Les réglages des API vocales, les couleurs de palette personnalisées et les fichiers de configuration gardent un bouton **Enregistrer**. Survolez ou focalisez le **i** à côté du titre d’un réglage pour une courte explication. S’il mène à l’aide, cliquez, appuyez sur Entrée ou touchez-le pour ouvrir la section pertinente dans la langue de l’interface, dans le navigateur système ou un onglet séparé. Les icônes limitées à une infobulle affichent leur explication au toucher. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
 
 | État | Ce qu’il contrôle |
 | --- | --- |
 | Configuration CodeNomad | Préférences d’interface partagées et commandes signalées par **Paramètre serveur**, dont l’API vocale, les SideCars, le Contrôle à distance et les variables d’environnement. |
-| Dictée sur cet appareil | Le [moteur de dictée de l’application de bureau](voice.md#desktop-dictation) se choisit dans les préférences Voix locales et vaut pour tous les projets sur cet appareil. |
+| Moteurs vocaux | Le [moteur de dictée](voice.md#desktop-dictation) vaut pour tous les projets sur cet appareil. Le [moteur de conversation](voice.md#conversation) est choisi pour le profil de bureau ou pour le profil du navigateur et le serveur connecté. |
 | Disposition de fenêtre/d’onglet de projet | Panneaux ouverts, onglets sélectionnés, état du lecteur et brouillons/disposition restaurables. Ce n’est pas de la configuration OpenCode. |
 | Paramètres OpenCode Global/Projet | Changements de plugins/configuration natifs à la portée affichée. Les commandes Projet nécessitent un projet/une Location actif. |
 | Profil de données de bureau | Fenêtres natives, état de restauration et stockage navigateur, indépendamment du fichier de configuration et du service OpenCode partagé. Voir [Fenêtres de bureau et données](desktop.md). |
@@ -112,4 +112,4 @@ Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notif
 | Retenir les longues réponses de l’assistant | Arrête le suivi automatique lorsqu’une réponse en cours dépasse la zone visible. |
 | Variables d’environnement | Appliquées côté serveur avant chaque prompt ou commande de session ; les lectures ne mettent pas à jour une exécution déjà active. Voir [Configuration d’OpenCode](opencode.md). |
 
-Pour configurer le clavier, voir [Raccourcis clavier](shortcuts.md) ; pour les commandes vocales, voir [Saisie et lecture vocales](voice.md). La restauration au démarrage et les profils de données de bureau sont décrits dans [Fenêtres de bureau et données](desktop.md).
+Pour configurer le clavier, voir [Raccourcis clavier](shortcuts.md). **Voix** regroupe [Dictée, Lecture et Conversation](voice.md). La restauration au démarrage et les profils de données de bureau sont décrits dans [Fenêtres de bureau et données](desktop.md).

@@ -1,11 +1,12 @@
-# Voice input and playback
+# Dictation, playback and voice conversation
 
-## Configure the speech API {#configure}
+## Set up Voice {#configure}
 
-1. Open **Settings → Voice**. The **Speech** card uses an OpenAI-compatible server-side adapter, independently of your conversation's model provider.
-2. Enter **API key**, optionally **Base URL**, **Transcription model**, **Speech model** and **Default voice**.
-3. If input and output need different services, enable **Separate providers for input and output**, then fill the input/output key, base URL and model fields.
-4. Choose **Playback mode** and **Output format**, then **Save** (available while changes are unsaved). Check the status beside the test buttons, **Configured**, **Partially configured** or **Missing API key**, before testing; a failed save shows **Save failed**.
+Open **Preferences → Voice** (**Settings → Voice** in a browser or remote window). The **Dictation**, **Playback** and **Conversation** cards each show their status.
+
+1. In **Dictation**, choose the [device engine](#desktop-dictation) in local desktop Preferences. Browser and mobile clients use the API only.
+2. For API dictation and playback, open **API credentials** from either card. Enter the **API key** and optionally set the **Base URL**, **Transcription model** and **Speech model**. If the two directions need different services, enable **Separate providers for input and output**, fill their fields, then **Save**.
+3. **Playback** shows the **Provider**. Set **Default voice**, **Playback mode** and **Output format**, then **Save**.
 
 Speech settings and keys belong to the connected CodeNomad server configuration, not the selected project or OpenCode provider connection. Other clients sharing it use those settings. Saved keys are hidden: a blank key field keeps the saved value; **Clear saved key** schedules its removal when saved. A direction with neither its own endpoint nor key can use shared settings; a separate endpoint needs its own key, and a separate key needs its endpoint. When changing an endpoint, explicitly supply the intended key and verify the saved configuration; endpoint changes clear the saved key for that slot rather than sending it to a different host.
 
@@ -34,7 +35,7 @@ The playback test uses the selected playback mode/format immediately, but endpoi
 ## Dictate a prompt {#dictate}
 
 1. Keep **Prompt voice input** enabled in **Voice** (it is on by default).
-2. In the composer's **More actions** menu, choose **Dictate** and allow microphone access. If you see **Dictate: open Voice settings**, choose or configure the engine there, then come back to the draft.
+2. In the composer's **More actions** menu, choose **Dictate** and allow microphone access. If dictation or conversation is unavailable, its menu item shows why and opens the relevant **Voice** card. Dictation, the input test and live conversation can use the microphone only one at a time.
 3. Choose **Stop recording and transcribe** to get text or **Cancel dictation** to discard the recording. Switching conversations or closing the composer also cancels dictation.
 4. Review the text. It replaces the original selection only if the draft and selection are unchanged; otherwise choose **Insert transcript** or **Discard transcript**. Dictation never sends the prompt.
 
@@ -42,10 +43,10 @@ If the API uses WAV fallback on Linux Tauri, **Dictate** and **Test input** stop
 
 ### Choose a desktop engine {#desktop-dictation}
 
-In local desktop **Preferences → Voice**, set **Dictation engine on this device**. This choice applies across projects on the device; the manual **Speech** card still configures the connected server's API. Browser and mobile clients use the configured API provider and need a secure context for microphone access.
+In local desktop **Preferences → Voice → Dictation**, set **Dictation engine on this device**. This choice applies across projects on the device. **API provider** uses the connected server's API settings and requires a secure context for microphone access.
 
 - **On-device system recognition** works inside CodeNomad without opening the OS dictation panel. It requires an installed local recognizer for the app language on Windows or macOS. On Linux, or if the recognizer or language is missing, try Hex if offered.
-- Voice lists what Hex still needs and the download size for each component and in total. One click on **Activate Hex** verifies and reuses compatible files, downloads what is missing, and selects Hex when ready. Follow the progress in Voice; use **Cancel Hex activation** to stop and **Resume Hex activation** when offered to continue with the remaining download. Failure or cancellation keeps your previous engine. Opening Preferences, selecting ready **Hex (local)** or dictating with it starts no download.
+- **Dictation** shows the remaining download size, per component and in total, before you choose **Activate Hex**. Activation verifies and reuses compatible files, downloads what is missing, and selects Hex when ready. Use **Cancel Hex activation** to stop or **Resume Hex activation** when offered. Failure or cancellation keeps your previous engine. Selecting ready **Hex (local)** starts no download.
 - Hex is offered on eligible Windows x64/arm64, Apple silicon with macOS 15+, and Linux x64/arm64 with glibc 2.36+ and the libraries required by Hex. Intel Macs and Linux systems with older glibc or musl are ineligible. The engine and models are separate from the CodeNomad installer; no terminal or API key is needed.
 
 Ubuntu 24.04 meets the glibc requirement; Ubuntu 22.04 does not. Hex detects the spoken language from [Parakeet’s supported languages](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), which include English and French. This list is independent of the app language.
@@ -60,14 +61,25 @@ Gemini Live and OpenAI Realtime are unavailable in remote Tauri windows on Linux
 
 1. Use **Speak message** on a message, or the same action on a tool call, when TTS is available.
 2. Use **Stop playback** on the same control to end it; starting another reading stops the current one.
-3. Change the saved voice, model, mode or format on the **Speech** card in **Voice** for subsequent requests.
+3. Change the voice, mode or format in **Playback**, or the model in **API credentials**, and save for subsequent requests.
 
 Playback uses CodeNomad's text projection, not a narrated screenshot: binary/image bytes and permission receipts are not speech content. It does not run a prompt or change the selected OpenCode model.
 
-For automatic conversation speech, use **Enable conversation mode** in the composer's **More actions** menu; it applies to that project tab and is not kept after a reload. While it is on, CodeNomad asks the agent, with each prompt you send, to begin its reply with a short fenced `spoken` summary. Only that completed block is read, in the active main session; it is not an automatic reading of every reply or subagent. **Disable conversation mode** stops its queue and no longer asks for the summary. Starting microphone input also stops active conversation speech. Conversation mode requires configured playback in a supported format.
+## Voice conversation {#conversation}
+
+In **Conversation**, choose a **Conversation engine**:
+
+- **Classic** needs only configured playback in a supported format. In the composer's **More actions**, choose **Enable conversation mode**. CodeNomad asks the agent to start each reply to a prompt you send with a short `spoken` summary and reads only that completed block in the active main session. The mode applies to the project tab until you disable it or reload. Starting dictation stops the spoken summary.
+- **Gemini Live** and **OpenAI Realtime** each have their own **API key**, **Model** and optional **Voice**. Save the selected provider's settings. Open the target session, choose **Conversation mode** under **More actions**, and choose **Agree and start** when the provider consent dialog appears. Allow microphone access.
+
+The live voice model can read the fixed session's status, latest visible reply and recent errors. It has no file access. When you ask it to send a request to the agent, it sends it directly as a user message, without on-screen confirmation. The usual agent permissions, questions and Yolo setting still apply.
+
+The server allows one live conversation at a time per signed-in user, or per paired device with Remote Control. Use **Stop** to end audio and keep the transcript open. CodeNomad keeps the live transcript in memory until its window closes; requests sent to the agent remain ordinary session messages. Live voice also ends after two minutes without speech, after eight minutes total, when the target changes, when you close the window or if the connection drops. There is no automatic reconnection or provider fallback.
 
 ## Data flow and privacy {#privacy}
 
 Local dictation keeps audio on this device and never falls back to the API. With **API provider**, microphone audio travels through the CodeNomad server to the configured transcription endpoint. Text selected for synthesis travels through that backend to the configured TTS endpoint; returned audio plays on the client. API keys stay server-side and are not returned as saved values to the settings form.
 
-Use an endpoint you trust with the material being dictated or read. OpenCode credentials do not authorize speech automatically. Changing a key or endpoint affects future requests, not data already sent to a provider. See [Security](security.md) before exposing a server to other users.
+With **Gemini Live** or **OpenAI Realtime**, Google or OpenAI receives microphone audio and the project name, branch, worktree, session title and status. The provider can also receive the text of the latest visible agent reply and recent errors. The selected provider may bill your account for usage.
+
+Use a provider you trust with what you dictate, read or share. OpenCode credentials do not authorize voice services automatically. See [Security](security.md) before exposing a server to other users.

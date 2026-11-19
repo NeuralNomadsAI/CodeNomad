@@ -207,8 +207,10 @@ credentials follow their separate registry lifetime and revocation rules.
   changes, session expiry and listener shutdown terminate those connections.
 - Remote Control checks the exact tunnel `Host` and HTTPS `Origin`, plus its
   paired-device cookie on every voice upgrade. It binds the socket to the
-  device, independently of the local authentication setting. Device revocation
-  or tunnel shutdown ends voice; the preview switch affects previews alone.
+  device, independently of the local authentication setting. The gateway's
+  single-conversation slot is keyed by paired device at this ingress and by
+  username on the direct listener. Device revocation or tunnel shutdown ends
+  voice; the preview switch affects previews alone.
 - The Tauri TLS-exception proxy accepts this one upgrade from its exact window
   origin and checks a per-window HttpOnly credential from bootstrap. The proxy
   connects only to that window's configured HTTPS target via the pinned DNS

@@ -1,11 +1,12 @@
-# Ses girişi ve oynatma
+# Dikte, oynatma ve sesli sohbet
 
-## Ses API’sini yapılandırın {#configure}
+## Ses ayarlarını yapılandırın {#configure}
 
-1. **Ayarlar → Ses** öğesini açın. **Konuşma** kartı, görüşmenizin model sağlayıcısından bağımsız olarak OpenAI uyumlu bir sunucu tarafı bağdaştırıcısı kullanır.
-2. **API anahtarı** öğesini, isteğe bağlı olarak **Temel URL**, **Transkripsiyon modeli**, **Konuşma modeli** ve **Varsayılan ses** öğesini girin.
-3. Giriş ve çıkış farklı hizmetlere ihtiyaç duyuyorsa **Girdi ve çıktı için ayrı provider'lar** öğesini etkinleştirin, ardından giriş/çıkış anahtarını, temel URL'yi ve model alanlarını doldurun.
-4. **Oynatma modu** ve **Çıktı formatı** öğesini, ardından **Kaydet** öğesini seçin (kaydedilmemiş değişiklikler varken kullanılabilir). Test etmeden önce test düğmelerinin yanındaki durumu kontrol edin: **Yapılandırıldı**, **Kısmen yapılandırıldı** veya **API anahtarı eksik**; başarısız bir kaydetme **Kaydetme başarısız** gösterir.
+**Tercihler → Ses** bölümünü açın (tarayıcıda veya uzak pencerede **Ayarlar → Ses**). **Dikte**, **Oynatma** ve **Sohbet** kartlarının her biri kendi durumunu gösterir.
+
+1. Yerel masaüstü uygulamasında **Dikte** kartından [cihazın motorunu](#desktop-dictation) seçin. Tarayıcı ve mobil istemciler yalnızca API kullanır.
+2. API ile dikte ve oynatma için iki karttan birinde **API erişim bilgileri** bölümünü açın. **API anahtarı** ve gerekirse **Temel URL**, **Transkripsiyon modeli** ve **Konuşma modeli** alanlarını doldurun. İki ayrı hizmet için **Girdi ve çıktı için ayrı provider'lar** seçeneğini açın, ilgili alanları doldurun ve **Kaydet** düğmesine basın.
+3. **Oynatma** kartı **Sağlayıcı** bilgisini gösterir. **Varsayılan ses**, **Oynatma modu** ve **Çıktı formatı** seçeneklerini ayarlayıp **Kaydet** düğmesine basın.
 
 Konuşma ayarları ve anahtarlar, seçilen projeye veya OpenCode sağlayıcı bağlantısına değil, bağlı CodeNomad sunucu yapılandırmasına aittir. Bunu paylaşan diğer istemciler bu ayarları kullanır. Kaydedilen anahtarlar gizlidir: boş bir anahtar alanı kaydedilen değeri tutar; **Kayıtlı anahtarı temizle** kaydedildiğinde kaldırılmasını planlıyor. Kendi uç noktası veya anahtarı olmayan bir yön, paylaşılan ayarları kullanabilir; ayrı bir uç noktanın kendi anahtarına, ayrı bir anahtarın da kendi uç noktasına ihtiyacı vardır. Bir uç noktayı değiştirirken amaçlanan anahtarı açıkça sağlayın ve kaydedilen yapılandırmayı doğrulayın; uç nokta değişiklikleri, farklı bir ana bilgisayara göndermek yerine o yuva için kayıtlı anahtarı temizler.
 
@@ -34,7 +35,7 @@ Oynatma testi seçilen oynatma modunu/formatını hemen kullanır, ancak uç nok
 ## Bir istemi dikte edin {#dictate}
 
 1. **Ses** bölümünde **Prompt ses girişi** öğesini etkin tutun (varsayılan olarak açıktır).
-2. İleti düzenleyicisinde **Diğer eylemler → Dikte et** seçeneğini kullanın ve mikrofona izin verin. **Dikte et: Ses ayarlarını aç** görünürse motoru orada seçin veya yapılandırın, sonra taslağa dönün.
+2. İleti düzenleyicisinde **Diğer eylemler → Dikte et** seçeneğini kullanın ve mikrofona izin verin. Dikte veya sohbet kullanılamıyorsa menü öğesi nedenini gösterir ve ilgili **Ses** kartını açar. Dikte, girdi testi ve canlı sohbet aynı anda mikrofonu kullanamaz.
 3. Metni almak için **Kaydı durdur ve metne dönüştür**, kaydı atmak için **Dikteyi iptal et** seçeneğini kullanın. Görüşmeyi değiştirmek veya düzenleyiciyi kapatmak da dikteyi iptal eder.
 4. Metni inceleyin. Yalnızca taslak ve seçim değişmediyse özgün seçimin yerini alır. Aksi hâlde **Dikte metnini ekle** veya **Dikte metnini sil** seçeneğini kullanın. Dikte taslağı göndermez.
 
@@ -42,7 +43,7 @@ API, Linux’ta Tauri ile WAV yedek modunu kullanıyorsa dikte ve giriş testi k
 
 ### Masaüstünde motor seçin {#desktop-dictation}
 
-Yerel masaüstü uygulamasında **Tercihler → Ses** bölümünden **Bu cihazdaki dikte motoru** seçeneğini ayarlayın. Seçim cihazdaki tüm projeler için geçerlidir; **Konuşma** kartı bağlı sunucunun API’sini yapılandırmaya devam eder. Tarayıcı ve mobil istemciler yapılandırılmış API sağlayıcısını kullanır ve mikrofon için güvenli bir bağlam gerektirir.
+Yerel masaüstü uygulamasında **Tercihler → Ses → Dikte** bölümünden **Bu cihazdaki dikte motoru** seçeneğini ayarlayın. Seçim cihazdaki tüm projeler için geçerlidir. **API sağlayıcısı**, bağlı sunucunun ayarlarını kullanır ve mikrofon için güvenli bir bağlam gerektirir.
 
 - **Yerel sistem konuşma tanıma**, işletim sisteminin dikte panelini açmadan CodeNomad içinde çalışır. Windows veya macOS’ta uygulamanın dili için yüklü bir yerel tanıyıcı gerekir. Linux’ta veya tanıyıcı ya da dil eksikse, sunuluyorsa Hex’i deneyin.
 - Ses bölümünde Hex için eksik bileşenler, her bileşenin indirme boyutu ve toplam boyut gösterilir. **Hex’i etkinleştir** düğmesine bir kez basmak uyumlu dosyaları doğrulayıp yeniden kullanır, eksikleri indirir ve hazır olduğunda Hex’i seçer. İlerlemeyi burada izleyin. **Hex etkinleştirmesini iptal et** ile durdurabilir, seçenek sunulduğunda **Hex etkinleştirmesini sürdür** ile devam edebilirsiniz. Başarısızlık veya iptal durumunda önceki motor seçili kalır. Ayarları açmak, hazır **Hex (yerel)** seçeneğini seçmek veya onunla dikte etmek yeniden indirme başlatmaz.
@@ -60,14 +61,25 @@ Gemini Live ve OpenAI Realtime, Linux’taki uzak Tauri pencerelerinde kullanıl
 
 1. TTS kullanılabiliyorsa bir mesajda **Mesajı seslendir** eylemini veya bir araç çağrısında aynı eylemi kullanın.
 2. Bitirmek için aynı kontrolde **Oynatmayı durdur** öğesini kullanın; başka bir okumayı başlatmak geçerli okumayı durdurur.
-3. Sonraki istekler için **Konuşma** bölümünde kayıtlı sesi, modeli, modu veya formatı değiştirin.
+3. Ses, mod veya formatı **Oynatma** kartında, modeli **API erişim bilgileri** bölümünde değiştirip kaydedin.
 
 Oynatma, anlatımlı bir ekran görüntüsünü değil, CodeNomad'in metin projeksiyonunu kullanır: ikili/görüntü baytları ve izin makbuzları konuşma içeriği değildir. Bir istem çalıştırmaz veya seçilen OpenCode modelini değiştirmez.
 
-Otomatik konuşma seslendirmesi için ileti düzenleyicisinin **Diğer eylemler** menüsünden **Konuşma modunu etkinleştir** seçeneğini kullanın; bu mod o proje sekmesi için geçerlidir ve yeniden yüklemeden sonra korunmaz. Açıkken CodeNomad, gönderdiğiniz her istemle birlikte ajandan yanıtına kod çitleri arasında kısa bir `spoken` özetiyle başlamasını ister. Etkin ana oturumda yalnızca bu tamamlanmış blok okunur; her yanıtı veya alt ajanı otomatik okumaz. **Konuşma modunu devre dışı bırak** kuyruğu durdurur ve artık özeti istemez. Mikrofon girişine başlamak da etkin seslendirmeyi durdurur. Konuşma modu, desteklenen bir biçimde yapılandırılmış ses oynatımı gerektirir.
+## Sesli sohbet {#conversation}
+
+**Sohbet** kartında bir **Sohbet motoru** seçin:
+
+- **Klasik** yalnızca desteklenen bir formatta oynatma ayarı gerektirir. **Diğer eylemler** menüsünden **Konuşma modunu etkinleştir** seçeneğini kullanın. CodeNomad, gönderdiğiniz her istemin yanıtına kısa bir `spoken` özetiyle başlamasını ajandan ister ve etkin ana oturumda yalnızca tamamlanan özeti seslendirir. Mod, kapatılana veya sayfa yeniden yüklenene kadar proje sekmesinde geçerlidir. Dikte başlatıldığında özetin oynatılması durur.
+- **Gemini Live** ve **OpenAI Realtime** için ayrı **API anahtarı**, **Model** ve isteğe bağlı **Ses** ayarlanır. Seçtiğiniz sağlayıcının ayarlarını kaydedin. Hedef oturumu açın, **Diğer eylemler** menüsünde **Konuşma modu** seçeneğini, sağlayıcının onay penceresi açıldığında **Kabul et ve başlat** seçeneğini kullanın. Mikrofona izin verin.
+
+Ses modeli başta sabitlenen oturumun durumunu, görünür son yanıtı ve yakın tarihli hataları okuyabilir. Dosyalara erişemez. Ajana bir istek göndermesini istediğinizde, ekranda onay almadan doğrudan sizin mesajınız olarak gönderir. Ajan izinleri, soruları ve Yolo ayarı geçerliliğini korur.
+
+Sunucu, oturum açmış kullanıcı başına veya Uzaktan Kontrol’de eşleştirilmiş cihaz başına aynı anda bir canlı sohbete izin verir. **Durdur**, sesi kapatır ve sohbet dökümünü açık bırakır. Döküm, pencere kapanana kadar bellekte kalır; ajana gönderilen istekler oturum mesajı olarak kalır. İki dakika konuşulmadığında, toplam sekiz dakika dolduğunda, hedef değiştiğinde, pencere kapandığında veya bağlantı kesildiğinde sohbet sona erer. Otomatik yeniden bağlantı veya sağlayıcı değişimi yapılmaz.
 
 ## Veri akışı ve gizlilik {#privacy}
 
 Yerel dikte sesi cihazda tutar ve API’ye geçmez. **API sağlayıcısı** kullanılırsa ses CodeNomad sunucusu üzerinden yapılandırılmış transkripsiyon uç noktasına gider. Sentez metni sunucu üzerinden TTS uç noktasına gider; dönen ses istemcide oynar. API anahtarları sunucuda kalır.
 
-Dikte edilen veya okunan içerik için güvendiğiniz bir uç nokta kullanın. OpenCode kimlik bilgileri konuşmaya otomatik olarak yetki vermez. Anahtar veya uç nokta değişiklikleri yalnızca gelecekteki istekleri etkiler. Sunucuyu başkalarına açmadan önce [Güvenlik](security.md) konusuna bakın.
+**Gemini Live** veya **OpenAI Realtime** kullanıldığında Google ya da OpenAI; mikrofon sesini, proje adını, dalı, çalışma ağacını, oturum başlığını ve durumunu alır. Görünür son ajan yanıtının metni ve yakın tarihli hatalar da sağlayıcıya gönderilebilir. Kullanım bedeli seçilen sağlayıcıdaki hesabınıza yansıyabilir.
+
+Dikte ettiğiniz, seslendirdiğiniz veya paylaştığınız içerik için güvendiğiniz bir sağlayıcı kullanın. OpenCode kimlik bilgileri ses hizmetlerine otomatik erişim sağlamaz. Sunucuyu başkalarına açmadan önce [Güvenlik](security.md) konusuna bakın.

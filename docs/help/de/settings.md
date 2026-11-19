@@ -6,12 +6,12 @@
 2. Wählen Sie einen Abschnitt. Lokale Electron-/Tauri-Fenster öffnen oder fokussieren ein natives Einstellungsfenster; Browser-/Remote-Ansichten verwenden die eingebettete Einstellungsseite.
 3. Prüfen Sie vor dem Verlassen den Geltungsbereich und mögliche **Speichern**-Aktionen.
 
-Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderung sofort speichern. Sprache, eigene Palettenfarben und Konfigurationsdateien behalten ein explizites **Speichern**. Zeigen Sie auf das **i** neben dem Einstellungstitel oder fokussieren Sie es für eine kurze Erklärung. Bei einem Hilfelink öffnen Klicken, Eingabe oder Antippen den passenden Abschnitt in der Oberflächensprache im Systembrowser oder in einem separaten Tab. Reine Tooltip-Symbole zeigen ihre Erklärung beim Antippen. **Einstellungen → Info** enthält außerdem die Karte **CodeNomad unterstützen**: **Sponsern oder mitwirken** öffnet die Seite [CodeNomad unterstützen](sponsor.md).
+Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderung sofort speichern. Einstellungen für Sprach-APIs, eigene Palettenfarben und Konfigurationsdateien erfordern **Speichern**. Zeigen Sie auf das **i** neben dem Einstellungstitel oder fokussieren Sie es für eine kurze Erklärung. Bei einem Hilfelink öffnen Klicken, Eingabe oder Antippen den passenden Abschnitt in der Oberflächensprache im Systembrowser oder in einem separaten Tab. Reine Tooltip-Symbole zeigen ihre Erklärung beim Antippen. **Einstellungen → Info** enthält außerdem die Karte **CodeNomad unterstützen**: **Sponsern oder mitwirken** öffnet die Seite [CodeNomad unterstützen](sponsor.md).
 
 | Zustand | Was er steuert |
 | --- | --- |
 | CodeNomad-Konfiguration | Gemeinsame UI-Einstellungen und als **Server-Einstellung** gekennzeichnete Optionen, darunter die Sprach-API, SideCars, Fernsteuerung und Umgebungsvariablen. |
-| Diktat auf diesem Gerät | Die [Diktier-Engine der Desktop-App](voice.md#desktop-dictation) wird in den lokalen Spracheinstellungen gewählt und gilt für alle Projekte auf diesem Gerät. |
+| Sprach-Engines | Die [Diktier-Engine der Desktop-App](voice.md#desktop-dictation) gilt für alle Projekte auf diesem Gerät. Die [Gesprächs-Engine](voice.md#conversation) gilt für das Desktop-Profil bzw. das Browserprofil und den verbundenen Server. |
 | Fenster-/Projekt-Tab-Layout | Offene Panels, ausgewählte Tabs, Lesezustand und wiederherstellbare Entwürfe/Layout. Dies ist keine OpenCode-Konfiguration. |
 | Globale/projektbezogene OpenCode-Einstellungen | Native Plugin-/Konfigurationsänderungen im angezeigten Umfang. Projektsteuerung benötigt ein aktives Projekt/eine Location. |
 | Desktop-Datenprofil | Native Fenster, Wiederherstellungszustand und Browserspeicher, unabhängig von Konfigurationsdatei und gemeinsamem OpenCode-Dienst. Siehe [Desktop-Fenster und Daten](desktop.md). |
@@ -112,4 +112,4 @@ Die ungelesene Glocken-/Verlaufszahl, die nur an den Verlauf geleitete Benachric
 | Lange Assistentenantworten anhalten | Stoppt automatisches Folgen, wenn eine gestreamte Antwort über die Ansicht hinauswächst. |
 | Umgebungsvariablen | Serverseitig vor jedem Prompt/Sitzungsbefehl angewandt; Lesen aktualisiert keine bereits laufende Ausführung. Siehe [OpenCode-Einrichtung](opencode.md). |
 
-Tastaturkonfiguration siehe [Tastenkürzel](shortcuts.md); Sprachsteuerung siehe [Spracheingabe und Wiedergabe](voice.md). Startwiederherstellung und Desktop-Datenprofile behandelt [Desktop-Fenster und Daten](desktop.md).
+Tastaturkonfiguration siehe [Tastenkürzel](shortcuts.md). Unter **Sprache** finden Sie [Diktat, Wiedergabe und Gespräch](voice.md). Startwiederherstellung und Desktop-Datenprofile behandelt [Desktop-Fenster und Daten](desktop.md).

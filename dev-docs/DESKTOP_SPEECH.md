@@ -54,10 +54,12 @@ the bearer `Authorization` header on their provider WebSockets.
 - The renderer fixes the active project's proxy, session and native location
   for the conversation. These four tools are the full provider interface:
   `get_session_status`, `get_last_reply`, `get_recent_errors`, `send_to_agent`.
-  Reads return bounded text from the open session. The prompt goes through
-  native `sendMessage` using the composer's delivery rules and no attachments;
-  normal permission, question and Yolo handling apply. A call ID is admitted
-  once across the voice session. Cancellation and target changes fence queued
+  Reads return bounded text from the open session: up to 2,000 characters of the
+  latest visible reply and up to three recent errors of 500 characters each.
+  `send_to_agent` submits a user message directly, without a confirmation dialog,
+  through native `sendMessage` with the composer's delivery rules and no
+  attachments. Normal permission, question and Yolo handling apply. A call ID is
+  admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.
 - The two voices are transcribed in memory until the window is dismissed.
   A stop, target change, closed document, provider failure or disconnect
@@ -106,6 +108,8 @@ Run `node --test packages/desktop-speech/hex.test.mjs` for simulated downloads, 
 `live-voice-audio.test.ts` exercises the renderer lifecycle with a synthetic stream.
 `live-voice-session.test.ts` combines synthetic capture, both simulated providers
 and the native prompt and interruption paths. `live-voice-gateway.test.ts`
-checks the provider wire envelopes using loopback WebSocket peers.
+checks the provider wire envelopes using loopback WebSocket peers. End-to-end
+qualification with real provider keys, a physical microphone and packaged
+desktop apps is a separate check.
 `packages/tauri-app/tests/webkit-live-audio.c` loads the same processors in WebKitGTK
 with a simulated capture device.

@@ -1,11 +1,12 @@
-# Spracheingabe und Wiedergabe
+# Diktat, Wiedergabe und Sprachgespräch
 
-## Sprach-API konfigurieren {#configure}
+## Sprache einrichten {#configure}
 
-1. Öffnen Sie **Einstellungen → Sprache**. Die Karte **Sprache** verwendet einen OpenAI-kompatiblen serverseitigen Adapter, unabhängig vom Modellanbieter Ihrer Unterhaltung.
-2. Geben Sie **API-Schlüssel**, optional **Basis-URL**, **Transkriptionsmodell**, **Sprachmodell (TTS)** und **Standardstimme** ein.
-3. Benötigen Ein- und Ausgabe verschiedene Dienste, aktivieren Sie **Getrennte Anbieter für Ein- und Ausgabe** und füllen Sie Schlüssel-, Basis-URL- und Modellfelder für Ein-/Ausgabe aus.
-4. Wählen Sie **Wiedergabemodus** und **Ausgabeformat**, dann **Speichern** (verfügbar, solange Änderungen ungespeichert sind). Prüfen Sie vor Tests den Status neben den Testschaltflächen, **Konfiguriert**, **Teilweise konfiguriert** oder **API-Schlüssel fehlt**; ein fehlgeschlagenes Speichern zeigt **Speichern fehlgeschlagen**.
+Öffnen Sie **Einstellungen → Sprache**. Die Karten **Diktat**, **Wiedergabe** und **Gespräch** zeigen jeweils ihren Status.
+
+1. Wählen Sie in der lokalen Desktop-App unter **Diktat** die [Diktier-Engine](#desktop-dictation). Browser und Mobilgeräte verwenden ausschließlich die API.
+2. Öffnen Sie für API-Diktat und Wiedergabe **API-Zugangsdaten** auf einer der beiden Karten. Geben Sie den **API-Schlüssel** und optional **Basis-URL**, **Transkriptionsmodell** und **Sprachmodell (TTS)** ein. Für verschiedene Dienste aktivieren Sie **Getrennte Anbieter für Ein- und Ausgabe**, füllen deren Felder aus und wählen **Speichern**.
+3. **Wiedergabe** zeigt den **Anbieter**. Stellen Sie **Standardstimme**, **Wiedergabemodus** und **Ausgabeformat** ein und wählen Sie **Speichern**.
 
 Spracheinstellungen und Schlüssel gehören zur verbundenen CodeNomad-Serverkonfiguration, nicht zum ausgewählten Projekt oder zur OpenCode-Anbieterverbindung. Andere Clients derselben Konfiguration verwenden sie ebenfalls. Gespeicherte Schlüssel sind verborgen: Ein leeres Schlüsselfeld behält den Wert; **Gespeicherten Schlüssel löschen** merkt dessen Entfernung beim Speichern vor. Eine Richtung ohne eigenen Endpunkt und Schlüssel kann gemeinsame Einstellungen nutzen; ein separater Endpunkt braucht einen eigenen Schlüssel, ein separater Schlüssel seinen Endpunkt. Geben Sie bei Endpunktänderung ausdrücklich den vorgesehenen Schlüssel an und prüfen Sie die gespeicherte Konfiguration; Endpunktänderungen löschen den gespeicherten Schlüssel dieses Platzes, statt ihn an einen anderen Host zu senden.
 
@@ -34,7 +35,7 @@ Der Wiedergabetest verwendet gewählten Modus/Format sofort, aber Endpunkt, Schl
 ## Prompt diktieren {#dictate}
 
 1. Lassen Sie **Prompt-Spracheingabe** unter **Sprache** aktiviert (standardmäßig eingeschaltet).
-2. Wählen Sie im Eingabefeld **Weitere Aktionen → Diktieren** und erlauben Sie den Mikrofonzugriff. Erscheint **Diktieren: Einstellungen für Sprache öffnen**, wählen oder konfigurieren Sie dort die Engine und kehren Sie zum Entwurf zurück.
+2. Wählen Sie im Eingabefeld **Weitere Aktionen → Diktieren** und erlauben Sie den Mikrofonzugriff. Ist Diktat oder Gespräch nicht verfügbar, zeigt der Menüpunkt den Grund und öffnet die passende Karte unter **Sprache**. Nur eine Funktion zugleich kann das Mikrofon nutzen: Diktat, Eingabetest oder Live-Gespräch.
 3. Wählen Sie **Aufnahme stoppen und transkribieren** für den Text oder **Diktat abbrechen**, um die Aufnahme zu verwerfen. Ein Gesprächswechsel oder das Schließen des Eingabefelds bricht das Diktat ebenfalls ab.
 4. Prüfen Sie den Text. Er ersetzt die ursprüngliche Auswahl nur, wenn Entwurf und Auswahl unverändert sind. Andernfalls wählen Sie **Transkription einfügen** oder **Transkription verwerfen**. Beim Diktieren wird nichts gesendet.
 
@@ -42,7 +43,7 @@ Wenn die API unter Linux mit Tauri auf WAV ausweicht, endet die Aufnahme beim Di
 
 ### Desktop-Engine auswählen {#desktop-dictation}
 
-Wählen Sie in den lokalen **Einstellungen → Sprache** der Desktop-App die **Diktier-Engine auf diesem Gerät**. Die Wahl gilt für alle Projekte auf diesem Gerät; die Karte **Sprache** konfiguriert weiterhin die API des verbundenen Servers. Browser und Mobilgeräte verwenden den konfigurierten API-Anbieter und benötigen für den Mikrofonzugriff einen sicheren Kontext.
+Wählen Sie in der lokalen Desktop-App unter **Einstellungen → Sprache → Diktat** die **Diktier-Engine auf diesem Gerät**. Die Wahl gilt für alle Projekte auf diesem Gerät. **API-Anbieter** nutzt die Einstellungen des verbundenen Servers und benötigt einen sicheren Kontext für das Mikrofon.
 
 - Die **Lokale System-Spracherkennung** läuft in CodeNomad, ohne das Diktierfenster des Betriebssystems zu öffnen. Unter Windows oder macOS muss ein lokaler Erkenner für die App-Sprache installiert sein. Unter Linux oder wenn Erkenner oder Sprache fehlen, versuchen Sie Hex, sofern es angeboten wird.
 - Unter Sprache sehen Sie vorab, was Hex noch benötigt und wie groß der Download je Komponente und insgesamt ist. Ein Klick auf **Hex aktivieren** prüft kompatible Dateien, verwendet sie wieder, lädt Fehlendes und wählt das fertige Hex aus. Verfolgen Sie den Fortschritt dort; nutzen Sie **Hex-Aktivierung abbrechen** oder, wenn angeboten, **Hex-Aktivierung fortsetzen**. Bei Fehler oder Abbruch bleibt die bisherige Engine ausgewählt. Das Öffnen der Einstellungen, die Auswahl von bereits einsatzbereitem **Hex (lokal)** und das Diktieren lösen keinen Download aus.
@@ -60,14 +61,25 @@ Gemini Live und OpenAI Realtime sind in entfernten Tauri-Fenstern unter Linux ni
 
 1. Verwenden Sie **Nachricht vorlesen** an einer Nachricht oder dieselbe Aktion an einem Werkzeugaufruf, wenn TTS verfügbar ist.
 2. Verwenden Sie **Wiedergabe stoppen** an derselben Steuerung, um sie zu beenden; eine andere Wiedergabe zu starten stoppt die laufende.
-3. Ändern Sie gespeicherte Stimme, Modell, Modus oder Format unter **Sprache** für spätere Anfragen.
+3. Ändern Sie Stimme, Modus oder Format unter **Wiedergabe** oder das Modell unter **API-Zugangsdaten** und speichern Sie.
 
 Wiedergabe verwendet CodeNomads Textprojektion, keinen vorgelesenen Screenshot: Binär-/Bildbytes und Berechtigungsbelege sind kein Sprachinhalt. Sie führt keinen Prompt aus und ändert nicht das ausgewählte OpenCode-Modell.
 
-Verwenden Sie für automatische Unterhaltungssprache **Konversationsmodus aktivieren** im Menü **Weitere Aktionen** des Eingabefelds; er gilt für diesen Projekt-Tab und bleibt nach einem Neuladen nicht erhalten. Solange er aktiv ist, bittet CodeNomad den Agenten mit jedem gesendeten Prompt, seine Antwort mit einer kurzen Zusammenfassung in einem Markdown-Codeblock mit der Kennzeichnung `spoken` zu beginnen. Nur dieser abgeschlossene Block wird vorgelesen, in der aktiven Hauptsitzung; es ist kein automatisches Vorlesen jeder Antwort oder jedes Subagenten. **Konversationsmodus deaktivieren** stoppt dessen Warteschlange und fordert die Zusammenfassung nicht mehr an. Mikrofonstart stoppt ebenfalls aktive Unterhaltungssprache. Der Gesprächsmodus benötigt eine konfigurierte Wiedergabe mit einem unterstützten Format.
+## Sprachgespräch {#conversation}
+
+Wählen Sie in **Gespräch** eine **Gesprächs-Engine**:
+
+- **Klassisch** benötigt nur eine eingerichtete Wiedergabe in einem unterstützten Format. Wählen Sie **Konversationsmodus aktivieren** unter **Weitere Aktionen**. CodeNomad bittet den Agenten, jede Antwort auf einen gesendeten Prompt mit einer kurzen `spoken`-Zusammenfassung zu beginnen, und liest nur diesen fertigen Block in der aktiven Hauptsitzung vor. Der Modus gilt für den Projekt-Tab bis zur Deaktivierung oder zum Neuladen. Der Beginn eines Diktats stoppt das Vorlesen der Zusammenfassung.
+- **Gemini Live** und **OpenAI Realtime** haben jeweils einen eigenen **API-Schlüssel**, ein **Modell** und eine optionale **Stimme**. Speichern Sie die Einstellungen für den ausgewählten Anbieter. Öffnen Sie die Zielsitzung, wählen Sie **Gesprächsmodus** unter **Weitere Aktionen** und bei der Einwilligung **Zustimmen und starten**. Erlauben Sie den Mikrofonzugriff.
+
+Das Sprachmodell kann den Status der beim Start festgelegten Sitzung, die letzte sichtbare Antwort und aktuelle Fehler lesen. Es hat keinen Dateizugriff. Wenn Sie es bitten, eine Anfrage an den Agenten zu senden, sendet es sie direkt als Nutzernachricht, ohne Bildschirmbestätigung. Berechtigungen, Rückfragen und die Yolo-Einstellung gelten wie gewohnt.
+
+Der Server erlaubt gleichzeitig ein Live-Gespräch pro angemeldetem Nutzer oder bei Fernsteuerung pro gekoppeltem Gerät. **Stoppen** beendet die Audioübertragung und lässt die Abschrift offen. Sie bleibt bis zum Schließen des Fensters im Arbeitsspeicher; gesendete Anfragen bleiben in der Sitzung. Das Gespräch endet auch nach zwei Minuten ohne Sprache, nach insgesamt acht Minuten, beim Wechsel der Zielsitzung, beim Schließen des Fensters oder bei Verbindungsabbruch. Weder Wiederverbindung noch Anbieterwechsel erfolgen automatisch.
 
 ## Datenfluss und Datenschutz {#privacy}
 
 Beim lokalen Diktieren bleibt Audio auf dem Gerät, ohne Wechsel zur API. Mit dem **API-Anbieter** geht es über das CodeNomad-Backend zum konfigurierten STT-Endpunkt. Zur Synthese ausgewählter Text geht durch dieses Backend zum TTS-Endpunkt; zurückgegebenes Audio spielt auf dem Client. API-Schlüssel bleiben serverseitig und werden nicht als gespeicherte Werte an das Einstellungsformular zurückgegeben.
 
-Verwenden Sie einen Endpunkt, dem Sie das diktierte oder vorgelesene Material anvertrauen. OpenCode-Zugangsdaten autorisieren Sprache nicht automatisch. Eine Schlüssel- oder Endpunktänderung betrifft künftige Anfragen, nicht bereits gesendete Daten. Lesen Sie vor Serverfreigabe an andere Nutzer [Sicherheit](security.md).
+Bei **Gemini Live** oder **OpenAI Realtime** erhält Google bzw. OpenAI Mikrofon-Audio, Projektname, Branch, Worktree, Sitzungstitel und Sitzungsstatus. Der Anbieter kann auch den Text der letzten sichtbaren Agentenantwort und aktuelle Fehler erhalten. Die Nutzung kann über Ihr Konto beim ausgewählten Anbieter abgerechnet werden.
+
+Wählen Sie einen Anbieter, dem Sie diktierte, vorgelesene oder geteilte Inhalte anvertrauen. OpenCode-Zugangsdaten autorisieren Sprachdienste nicht automatisch. Lesen Sie vor der Serverfreigabe an andere Nutzer [Sicherheit](security.md).
