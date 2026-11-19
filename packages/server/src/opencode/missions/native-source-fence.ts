@@ -17,6 +17,9 @@ import { coordinatorBaselineSchema, COORDINATOR_INPUT_MARKER, type CoordinatorBa
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const transactionGraph = new AsyncLocalStorage<Context.Context<never>>()
+export class ScheduledCoordinatorRefusal extends Error {
+  constructor(readonly reason: "coordinator-busy" | "coordinator-owned" | "coordinator-is-source") { super(reason) }
+}
 export const withNativeSourceTransaction = <A>(graph: Context.Context<never>, use: () => A): A => transactionGraph.run(graph, use)
 const nativeKey = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
 export const nativeBackgroundSQL = `SELECT key,json_extract(value,'$.recovery.kind') AS kind,
@@ -125,16 +128,18 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           || Number(size.size) > 16 * 1024 * 1024) throw new Error("Mission source journal capacity")
         pin("SELECT key,value FROM kv WHERE key>=? AND key<? AND key<>? ORDER BY key LIMIT 2037", args)
       },
-      coordinator: (id: string) => {
+      coordinator: (id: string, selectingSelf = false) => {
         const cte = `WITH RECURSIVE family(id) AS (SELECT id FROM session_v2 WHERE id=? UNION SELECT s.id FROM session_v2 s JOIN family f ON s.parent_id=f.id LIMIT 4097)`
-        const members = pin(`${cte} SELECT s.id,s.parent_id,s.project_id,s.directory,s.workspace_id,s.metadata,s.agent,s.model,s.time_suspended,
+        const members = pin(`${cte} SELECT s.id,s.parent_id,s.project_id,s.directory,s.workspace_id,s.metadata,s.agent,s.model${selectingSelf ? "" : `,s.time_suspended,
           (SELECT count(*) FROM session_inbox i WHERE i.session_id=s.id) AS inbox,
           (SELECT count(*) FROM session_message m,json_each(${nativeMessageDataSQL},'$.content') p
             WHERE m.session_id=s.id AND m.type='assistant' AND json_extract(p.value,'$.type')='tool'
-            AND json_extract(p.value,'$.state.status') IN ('running','streaming')) AS tools
+            AND json_extract(p.value,'$.state.status') IN ('running','streaming')) AS tools`}
           FROM session_v2 s JOIN family f ON s.id=f.id ORDER BY s.id`, [id])
-        if (!members.length || members.length > 4096 || members.some(row => row.time_suspended != null || row.inbox !== 0 || row.tools !== 0))
-          throw new Error("coordinator-busy")
+        if (!members.length || members.length > 4096) throw new ScheduledCoordinatorRefusal("coordinator-owned")
+        if (selectingSelf) return
+        if (members.some(row => row.inbox !== 0 || row.time_suspended != null || row.tools !== 0))
+          throw new ScheduledCoordinatorRefusal("coordinator-busy")
         const ids = new Set(members.map(row => String(row.id)))
         const list = (name: string, codec: Schema.Codec<unknown, unknown>) => {
           const service = Context.get(graph, Context.Service<never, unknown>(name)) as { list?(): Effect.Effect<unknown, unknown> }
@@ -156,7 +161,7 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           const shells = list("@opencode/Shell", Schema.Array(Schema.toType(Shell.Info)))
           if ([...active].some(member => ids.has(String(member)))
             || requests.some(item => item.sessionID == null || ids.has(String(item.sessionID)))
-            || shells.some(item => nativeShellBlocksFamily(item, ids))) throw new Error("coordinator-busy")
+            || shells.some(item => nativeShellBlocksFamily(item, ids))) throw new ScheduledCoordinatorRefusal("coordinator-busy")
         })
       },
       conversation: (id: string) => {

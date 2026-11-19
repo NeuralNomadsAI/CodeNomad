@@ -146,6 +146,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.shortcut.cron": "Avanzado (cron)",
   "missions.scheduling.condition.schedule-success": "Otra programación tiene éxito",
   "missions.scheduling.condition.branch-commits": "Nuevos commits en una rama local",
+  "missions.scheduling.condition.remote-branch-commits": "Nuevos commits en una rama remota",
+  "missions.scheduling.repository.branch": "Rama",
   "missions.scheduling.condition.mission-completed": "Una Misión única termina con éxito",
   "missions.scheduling.condition.conversation-message": "Nuevo mensaje en una conversación seguida",
   "missions.scheduling.condition.files-changed": "Cambios en archivos explícitos",

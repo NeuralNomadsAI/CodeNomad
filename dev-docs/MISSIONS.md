@@ -465,9 +465,9 @@ equivalent agent surfaces:
 | Schedule Start/Pause/Resume/Stop, Run now, Check, activation/diagnostic and daily controls | `schedule` |
 
 Presentation gestures (selection, copy, mark read, opening conversations) remain
-window-local. Authenticated human answers use the human question gate. Existing
-coordinator selection belongs to the scheduled editor; one-time preparation uses
-a fresh root, while `inspect.start` attaches the calling root.
+window-local. Authenticated human answers use the human question gate. Scheduled
+preparations can explicitly select the agent's own eligible root. One-time
+preparation uses a fresh root, while `inspect.start` attaches the calling root.
 
 ### Agent schedule controls
 

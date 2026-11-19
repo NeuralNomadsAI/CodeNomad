@@ -3,11 +3,10 @@ import { serverApi } from "../lib/api-client"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { buildProjectSessionListOptions, normalizeSessionDirectory } from "../stores/session-list-options"
-import type { MissionConditionKind } from "./mission-scheduling-data"
+import { isMissionPickerSource, type MissionConditionKind } from "./mission-scheduling-data"
 import type { MissionSchedulingSourceLists } from "./mission-scheduling-sources"
 import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 import { backgroundReads } from "../lib/background-read-queue"
-import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 
 type Kind = keyof MissionSchedulingSourceLists
 
@@ -31,7 +30,7 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
   selected: () => readonly { kind: Kind; id: string }[]
   captureView: () => (() => boolean) }) {
   const [sources, setSources] = createSignal<MissionSchedulingSourceLists>({})
-  const kinds = createMemo(() => [...new Set(props.kinds().filter((kind): kind is Kind => kind !== "files-changed" && kind !== "repository-activity" && !isMissionGithubKind(kind)))].sort(),
+  const kinds = createMemo(() => [...new Set(props.kinds().filter((kind): kind is Kind => kind === "coordinator-session" || isMissionPickerSource(kind)))].sort(),
     [] as Kind[], { equals: (a, b) => a.join() === b.join() })
   const forget = (kind: Kind) => setSources(previous => { const { [kind]: _removed, ...rest } = previous; return rest })
   const readers = mapArray(kinds, kind => {

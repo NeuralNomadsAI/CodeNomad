@@ -161,11 +161,8 @@ async function fixture(existing = false, author?: string) {
     set now(value: number) { clock = value } }
 }
 
-test("agent coordinator prevalidation refuses its actual author and both conversation source kinds", async () => {
-  const f = await fixture(true, "ses_existing")
-  await assert.rejects(f.admit(), /coordinator-is-author/)
-  assert.equal((await f.read()).pending!.coordinatorBaseline, undefined)
-  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
+test("agent coordinator prevalidation refuses both conversation source kinds", async () => {
+  const f = await fixture(true, "ses_author")
   const config = (await f.read()).configuration, author = { coordinatorSessionID: "ses_author" }
   assert.throws(() => assertAgentScheduledCoordinatorSelection({ ...config, watchedConversationIDs: ["ses_existing"] }, author), /coordinator-is-source/)
   assert.throws(() => assertAgentScheduledCoordinatorSelection({ ...config,
@@ -190,10 +187,15 @@ test("agent adoption refuses root/family activity, inbox, durable claims, tools 
   }
 })
 
-test("a quiet agent-selected root admits once with its own adoption marker and preserves unrelated state", async () => {
-  const f = await fixture(true, "ses_author")
+test("an agent's own root waits until idle and reuses the same conversation on later passages", async () => {
+  const f = await fixture(true, "ses_existing")
+  await assert.rejects(f.admit(), /coordinator-busy/)
+  assert.equal((await f.read()).pending!.coordinatorBaseline, undefined)
+  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
   f.states.get("ses_existing")!.active = false
-  assert.equal((await f.admit()).kind, "admitted")
+  const first = await f.admit()
+  assert.equal(first.kind, "admitted")
+  if (first.kind === "admitted") assert.equal(first.coordinatorSessionID, "ses_existing")
   assert.equal(f.sessions.get("ses_existing")!.metadata!.unrelated, "keep")
   assert.equal((await f.admit()).kind, "recorded")
   assert.deepEqual(f.counts(), { sends: 1, creates: 0, environments: 1 })
@@ -205,7 +207,9 @@ test("a quiet agent-selected root admits once with its own adoption marker and p
   doc = await f.store.change(doc.id, doc.revision, current, next => changes.settle(next, next.pending!.id, "completed", at + 2000, false, settled!.proof))
   await f.store.change(doc.id, doc.revision, current, next => changes.reserve(next, { kind: "manual", requestID: "agent_next_passage" }, at + 3000, []))
   f.now = at + 4000
-  assert.equal((await f.admit()).kind, "admitted", "the exact archived marker authorizes quiet reuse by a later passage")
+  const second = await f.admit()
+  assert.equal(second.kind, "admitted", "the exact archived marker authorizes quiet reuse by a later passage")
+  if (second.kind === "admitted") assert.equal(second.coordinatorSessionID, "ses_existing")
   assert.deepEqual(f.counts(), { sends: 2, creates: 0, environments: 2 })
 })
 

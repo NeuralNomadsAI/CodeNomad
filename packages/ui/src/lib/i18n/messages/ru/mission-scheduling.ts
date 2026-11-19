@@ -146,6 +146,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.shortcut.cron": "Расширенное (cron)",
   "missions.scheduling.condition.schedule-success": "Успех другого расписания",
   "missions.scheduling.condition.branch-commits": "Новые коммиты в локальной ветке",
+  "missions.scheduling.condition.remote-branch-commits": "Новые коммиты в удалённой ветке",
+  "missions.scheduling.repository.branch": "Ветка",
   "missions.scheduling.condition.mission-completed": "Успешное завершение разовой Миссии",
   "missions.scheduling.condition.conversation-message": "Новое сообщение в отслеживаемом разговоре",
   "missions.scheduling.condition.files-changed": "Изменение явно указанных файлов",

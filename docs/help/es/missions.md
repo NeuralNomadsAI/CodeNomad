@@ -86,9 +86,13 @@ Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la re
 
 **Sesión del coordinador** usa por defecto una **Nueva sesión** por pase. Con un horario o evento, **Sesión existente** permite elegir una conversación raíz del proyecto y de la misma Location de ejecución. Cada pase continúa allí con el agente y modelo configurados, conservando historial, título y permisos. Los controles de la misión también afectan al trabajo existente allí. Cada pase mantiene su propio resultado y diario en el historial.
 
+Puedes pedir a un agente que prepare la programación con su conversación raíz actual. Los pases esperan a que la conversación esté inactiva.
+
 La programación seleccionada muestra estado, próximo despertar o comprobación, pasadas lanzadas/exitosas e historial. Se conservan 30 resultados y los contadores acumulados. **Ejecutar ahora** cuenta al admitirse. Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
 
 En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, también para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
+
+Elige **Nuevos commits en una rama local** para seguir una referencia Git local o **Nuevos commits en una rama remota** e introduce el nombre de la rama (por ejemplo, `dev`). La comprobación consulta directamente el repositorio detectado, sin un fetch local. Varios commits entre comprobaciones generan un solo pase.
 
 ### Programaciones diarias existentes {#existing-daily-schedules}
 

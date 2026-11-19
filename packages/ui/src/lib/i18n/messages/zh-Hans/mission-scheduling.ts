@@ -146,6 +146,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.shortcut.cron": "高级（cron）",
   "missions.scheduling.condition.schedule-success": "另一计划执行成功",
   "missions.scheduling.condition.branch-commits": "本地分支有新提交",
+  "missions.scheduling.condition.remote-branch-commits": "远程分支有新提交",
+  "missions.scheduling.repository.branch": "分支",
   "missions.scheduling.condition.mission-completed": "一次性任务成功完成",
   "missions.scheduling.condition.conversation-message": "关注的对话有新消息",
   "missions.scheduling.condition.files-changed": "指定文件发生变化",

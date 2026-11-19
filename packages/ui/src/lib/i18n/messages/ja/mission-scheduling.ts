@@ -146,6 +146,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.shortcut.cron": "詳細（cron）",
   "missions.scheduling.condition.schedule-success": "別のスケジュールの成功",
   "missions.scheduling.condition.branch-commits": "ローカルブランチの新しいコミット",
+  "missions.scheduling.condition.remote-branch-commits": "リモートブランチの新しいコミット",
+  "missions.scheduling.repository.branch": "ブランチ",
   "missions.scheduling.condition.mission-completed": "単発ミッションの正常完了",
   "missions.scheduling.condition.conversation-message": "フォロー中の会話の新しいメッセージ",
   "missions.scheduling.condition.files-changed": "明示したファイルの変更",
