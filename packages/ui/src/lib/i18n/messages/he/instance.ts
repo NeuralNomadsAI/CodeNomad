@@ -9,6 +9,7 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "פתיחה או התחלה של שיחת התמונות של פרויקט זה.",
   "panelExtensions.api4.opencode.designAgent": "מוסיפה ל-OpenCode את סוכן Design של CodeNomad ואת מיומנויות התמונה שלו כל עוד הרחבה זו מופעלת.",
   "panelExtensions.api4.panel.preferences": "זכירת ההגדרות הייחודיות של לוח זה.",
+  "panelExtensions.api4.panel.notes": "שמירת הערה אחת לכל שיחה בפרויקט זה, הצגת ההערות ומחיקתן ופתיחת השיחות שלהן. הסרת ההרחבה מוחקת את ההערות.",
   "panelExtensions.empty": "אין הרחבות מותקנות.",
   "panelExtensions.catalog.title": "זמינות ברשת",
   "panelExtensions.catalog.search": "חיפוש הרחבות",

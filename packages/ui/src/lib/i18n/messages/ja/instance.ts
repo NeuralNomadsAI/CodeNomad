@@ -9,6 +9,7 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "このプロジェクトの「画像」会話を開くか開始します。",
   "panelExtensions.api4.opencode.designAgent": "この拡張機能が有効な間、CodeNomad の Design エージェントとその画像スキルを OpenCode に追加します。",
   "panelExtensions.api4.panel.preferences": "このパネル独自の設定を記憶します。",
+  "panelExtensions.api4.panel.notes": "このプロジェクトの会話ごとにメモを 1 件保存し、一覧表示や削除をして、その会話を開きます。拡張機能を削除するとメモも削除されます。",
   "panelExtensions.empty": "インストール済みの拡張機能はありません。",
   "panelExtensions.catalog.title": "オンラインで利用可能",
   "panelExtensions.catalog.search": "拡張機能を検索",

@@ -142,3 +142,48 @@ test("preferences: an invalid entry alone reads {}; a corrupt store is unavailab
     }
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
+
+test("notes: one per session and project, revision-checked, empty deletes, capped, kept on disable and replace, removed with the package", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-"))
+  try {
+    const changed: string[] = []
+    const store = new PanelExtensionStore(directory, () => {}, id => changed.push(id))
+    const pkg = await api4(["session.context", "panel.notes"])
+    await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
+    const id = pkg.manifest.id, project = "a".repeat(64), other = "b".repeat(64)
+    assert.deepEqual(await store.notes(id, pkg.digest, project), [])
+    const saved = await store.setNote(id, pkg.digest, project, "ses_1", 0, { title: "One", text: "first" })
+    assert.equal(saved.status, "saved")
+    const revision = (saved as { revision: number }).revision
+    assert.deepEqual(changed, [id])
+    assert.deepEqual(await store.setNote(id, pkg.digest, project, "ses_1", 0, { title: "One", text: "stale" }),
+      { status: "conflict", note: { text: "first", revision } }, "a stale writer never overwrites")
+    assert.deepEqual(await store.notes(id, pkg.digest, other), [], "projects are isolated")
+    assert.deepEqual(await store.setNote(id, pkg.digest, project, "ses_2", 0, { title: "Two", text: "x".repeat(32 * 1024 + 1) }), { status: "too-large" })
+    assert.equal((await store.setNote(id, pkg.digest, project, "ses_2", 0, { title: "Two", text: "é".repeat(16 * 1024) })).status, "saved")
+    assert.deepEqual((await new PanelExtensionStore(directory).notes(id, pkg.digest, project)).map(note => note.sessionID), ["ses_2", "ses_1"],
+      "newest first, kept across restarts")
+    assert.deepEqual(await store.setNote(id, pkg.digest, project, "ses_1", revision, { title: "", text: "" }), { status: "saved", revision: 0 })
+    assert.deepEqual((await store.notes(id, pkg.digest, project)).map(note => note.sessionID), ["ses_2"], "empty text deletes")
+    for (let index = 1; index < 256; index++) await store.setNote(id, pkg.digest, other, `ses_${index}`, 0, { title: "", text: "n" })
+    assert.equal((await store.setNote(id, pkg.digest, other, "ses_last", 0, { title: "", text: "n" })).status, "saved")
+    assert.deepEqual(await store.setNote(id, pkg.digest, other, "ses_full", 0, { title: "", text: "n" }), { status: "full" })
+    await assert.rejects(store.notes(id, pkg.digest, "../x"), { code: "invalid" })
+
+    await store.activate(id, pkg.digest, false)
+    await assert.rejects(store.notes(id, pkg.digest, project), { code: "unavailable" }, "a disabled package has no authority")
+    await assert.rejects(store.setNote(id, pkg.digest, project, "ses_3", 0, { title: "", text: "n" }), { code: "unavailable" })
+    const replacement = await api4(["session.context", "panel.notes"], { version: "1.1.0" })
+    await store.install(replacement, pkg.digest); await store.activate(id, replacement.digest, true)
+    assert.equal((await store.notes(id, replacement.digest, project)).length, 1, "disabling and replacing keep notes")
+    const file = path.join(directory, "notes", id, `${project}.json`)
+    const bytes = await readFile(file, "utf8")
+    await writeFile(file, "corrupt")
+    await assert.rejects(store.setNote(id, replacement.digest, project, "ses_3", 0, { title: "", text: "n" }), { code: "unavailable" })
+    assert.equal(await readFile(file, "utf8"), "corrupt", "a corrupt notes file is never replaced")
+    await writeFile(file, bytes)
+    await store.remove(id, replacement.digest)
+    await store.install(replacement); await store.activate(id, replacement.digest, true)
+    assert.deepEqual(await store.notes(id, replacement.digest, project), [], "removal deletes them")
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})

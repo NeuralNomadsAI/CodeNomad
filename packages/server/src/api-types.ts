@@ -879,6 +879,7 @@ export type WorkspaceEventType =
   | "yolo.autoAccepted"
   | "permission.receiptsChanged"
   | "memory.changed"
+  | "panelExtensions.notesChanged"
 
 export interface PermissionReceipt {
   requestId: string
@@ -922,6 +923,8 @@ export type WorkspaceEventPayload =
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
   | { type: "permission.receiptsChanged"; instanceId: string; sessionId: string; messageId?: string }
+  /** A package's `panel.notes` changed in some project; frames re-read their own. */
+  | { type: "panelExtensions.notesChanged"; id: string }
 
 export interface NetworkAddress {
   ip: string

@@ -9,6 +9,7 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "Ouvrir ou démarrer la conversation Images de ce projet.",
   "panelExtensions.api4.opencode.designAgent": "Ajoute l’agent Design de CodeNomad et ses compétences d’image à OpenCode tant que cette extension est activée.",
   "panelExtensions.api4.panel.preferences": "Mémoriser les réglages propres à ce panneau.",
+  "panelExtensions.api4.panel.notes": "Garder une note par conversation de ce projet, les lister, les supprimer et ouvrir leurs conversations. Retirer l’extension efface les notes.",
   "panelExtensions.empty": "Aucune extension installée.",
   "panelExtensions.catalog.title": "Disponibles en ligne",
   "panelExtensions.catalog.search": "Rechercher des extensions",

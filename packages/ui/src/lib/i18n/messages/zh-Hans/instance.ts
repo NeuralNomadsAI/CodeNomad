@@ -9,6 +9,7 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "打开或开始此项目的“图像”对话。",
   "panelExtensions.api4.opencode.designAgent": "在此扩展启用期间，将 CodeNomad 的 Design 智能体及其图像技能添加到 OpenCode。",
   "panelExtensions.api4.panel.preferences": "记住此面板自身的设置。",
+  "panelExtensions.api4.panel.notes": "为此项目的每个对话保存一条笔记，列出和删除笔记，并打开其对话。移除此扩展会删除这些笔记。",
   "panelExtensions.empty": "未安装扩展。",
   "panelExtensions.catalog.title": "在线可用",
   "panelExtensions.catalog.search": "搜索扩展",

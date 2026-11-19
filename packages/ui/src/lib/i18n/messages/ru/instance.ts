@@ -9,6 +9,7 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "Открывать или начинать разговор «Изображения» этого проекта.",
   "panelExtensions.api4.opencode.designAgent": "Добавляет в OpenCode агент Design от CodeNomad и его навыки работы с изображениями, пока это расширение включено.",
   "panelExtensions.api4.panel.preferences": "Запоминать собственные настройки этой панели.",
+  "panelExtensions.api4.panel.notes": "Хранить по одной заметке на каждый разговор этого проекта, показывать и удалять заметки и открывать их разговоры. Удаление расширения удаляет заметки.",
   "panelExtensions.empty": "Нет установленных расширений.",
   "panelExtensions.catalog.title": "Доступны онлайн",
   "panelExtensions.catalog.search": "Поиск расширений",

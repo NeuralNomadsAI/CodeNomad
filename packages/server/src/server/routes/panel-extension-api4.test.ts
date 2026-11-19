@@ -27,13 +27,15 @@ async function fixture(t: TestContext, permissions: string[], options: {
   fence?: WorktreeDeletionFence
 } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-route-"))
-  const store = new PanelExtensionStore(directory)
+  const notesChanged: string[] = []
+  const store = new PanelExtensionStore(directory, () => {}, id => notesChanged.push(id))
   const pkg = await readPanelExtensionArchive(fixtureArchive("<p>x</p>", { apiVersion: 4, permissions }))
   await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
   const calls: Array<{ method: string; input: any; directory: string }> = [], excluded: string[] = [], checked: string[] = []
   const sessions: Record<string, any> = {
     ses_images: { id: "ses_images", location: { directory: "/repo" }, metadata: marked, agent: "design", time: { updated: 42 } },
-    ses_work: { id: "ses_work", location: { directory: "/repo" }, agent: "build", ...options.session },
+    ses_work: { id: "ses_work", title: "Work", location: { directory: "/repo" }, agent: "build", ...options.session },
+    ses_other: { id: "ses_other", title: "Other", location: { directory: "/repo" } },
     ses_foreign: { id: "ses_foreign", location: { directory: "/elsewhere" } },
   }
   const connection = { current: true }, owned = new Set(["/repo"]), reads: Record<string, number> = {}
@@ -41,7 +43,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
     session: { get: async ({ sessionID }: any, request?: { signal?: AbortSignal }) => {
       reads[sessionID] = (reads[sessionID] ?? 0) + 1
       await options.onSessionGet?.(sessionID, reads[sessionID]!, request?.signal)
-      return sessions[sessionID] ?? Promise.reject(new Error("missing"))
+      return sessions[sessionID] ?? Promise.reject(Object.assign(new Error("Session not found"), { _tag: "SessionNotFoundError" }))
     } },
     location: { get: async ({ location }: any, request?: { signal?: AbortSignal }) => {
       await options.onLocationGet?.(request?.signal)
@@ -68,6 +70,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
     excludeDesignFolder: async value => { excluded.push(value.directory); return "excluded" },
     checkDesignFolderExclusion: async value => { checked.push(value.directory); return excluded.includes(value.directory) ? "excluded" : "missing" },
     ...(options.routeBudgetMs ? { routeBudgetMs: options.routeBudgetMs } : {}),
+    projectIdentity: async ({ directory }) => ({ id: (directory === "/repo" ? "a" : "b").repeat(64), source: "local" }),
     imageSettings: { read: async (_workspace: string, _location: unknown, signal?: AbortSignal) => {
       await options.onSettingsRead?.(signal)
       return { location: { directory: "/repo" }, mediaStorage: null,
@@ -82,12 +85,13 @@ async function fixture(t: TestContext, permissions: string[], options: {
       desktopPluginsReady: async () => {},
       getWorktreeIdentityForPath: async () => "/repo",
       getServiceWslDistro: () => undefined,
+      getServiceDirectoryForPath: async (id: string, value: string) => id === "i" && owned.has(value) ? value : undefined,
       getHostPathForServicePath: async (_id: string, value: string) => value,
     } })
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }) })
   const post = (method: string, body: Record<string, unknown> = {}) => app.inject({ method: "POST", url: `/api/panel-extensions/${pkg.manifest.id}/${method}`,
     payload: { instanceId: "i", digest: pkg.digest, ...body } })
-  return { app, store, pkg, calls, excluded, checked, post, file: path.join(directory, "installed.json"), connection, owned, sessions }
+  return { app, store, pkg, calls, excluded, checked, post, file: path.join(directory, "installed.json"), connection, owned, sessions, notesChanged }
 }
 
 test("each method requires its own declared permission on the enabled exact package", async t => {
@@ -95,7 +99,9 @@ test("each method requires its own declared permission on the enabled exact pack
   for (const [method, body] of [["images", { sessionID: "ses_images" }], ["imageRead", { sessionID: "ses_images", target }],
     ["imagesStatus", { directory: "/repo" }], ["prefillReferences", { sessionID: "ses_images", targets: [target] }],
     ["conversationStatus", { directory: "/repo" }], ["conversationOpen", { directory: "/repo", title: "Images" }],
-    ["conversationNew", { directory: "/repo", title: "Images" }]] as const) {
+    ["conversationNew", { directory: "/repo", title: "Images" }], ["notesGet", { sessionID: "ses_work" }],
+    ["notesSet", { sessionID: "ses_work", text: "x", revision: 0 }], ["notesList", {}], ["notesDelete", { target: "ses_work", revision: 1 }],
+    ["notesOpen", { target: "ses_work" }]] as const) {
     assert.equal((await post(method, body)).statusCode, 403, method)
   }
   assert.equal((await post("preferencesGet")).statusCode, 200)
@@ -299,4 +305,32 @@ test("preferences routes: get/set through the store; a corrupt store answers una
   assert.deepEqual((await post("preferencesGet")).json(), { status: "unavailable" })
   assert.deepEqual((await post("preferencesSet", { value: {} })).json(), { status: "unavailable" })
   assert.equal(await readFile(file, "utf8"), "corrupt")
+})
+
+test("notes routes: the displayed session's note in its project, a paged project list with orphans, delete and open", async t => {
+  const { post, sessions, owned, notesChanged, pkg } = await fixture(t, ["session.context", "panel.notes"])
+  assert.deepEqual((await post("notesGet", { sessionID: "ses_work" })).json(), { note: null })
+  const saved = (await post("notesSet", { sessionID: "ses_work", text: "plan", revision: 0 })).json()
+  assert.equal(saved.status, "saved")
+  assert.deepEqual(notesChanged, [pkg.manifest.id])
+  assert.deepEqual((await post("notesGet", { sessionID: "ses_work" })).json(), { note: { text: "plan", revision: saved.revision } })
+  assert.equal((await post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).json().status, "conflict")
+  assert.equal((await post("notesSet", { sessionID: "ses_foreign", text: "x", revision: 0 })).statusCode, 403, "a foreign session is refused")
+  assert.equal((await post("notesSet", { sessionID: "ses_work", text: "x", revision: 0, directory: "/elsewhere" })).statusCode, 400, "the host chooses the project")
+  const other = (await post("notesSet", { sessionID: "ses_other", text: "aside", revision: 0 })).json()
+
+  // Without a displayed session, the list is the instance's project; a deleted session's note is an orphan with its last title.
+  delete sessions.ses_work
+  const page = (await post("notesList", {})).json()
+  assert.deepEqual(page.notes.map((note: any) => [note.sessionID, note.title, note.orphan]), [["ses_other", "Other", false], ["ses_work", "Work", true]])
+  assert.equal(page.cursor, null)
+  assert.deepEqual((await post("notesOpen", { target: "ses_work" })).json(), { openable: false }, "an orphan cannot be opened")
+  assert.deepEqual((await post("notesOpen", { target: "ses_other" })).json(), { openable: true })
+  assert.deepEqual((await post("notesOpen", { target: "ses_images" })).json(), { openable: false }, "only a session with a note")
+  assert.deepEqual((await post("notesDelete", { target: "ses_work", revision: 1 })).json(), { status: "conflict" })
+  assert.deepEqual((await post("notesDelete", { target: "ses_work", revision: saved.revision })).json(), { status: "deleted" })
+  assert.deepEqual((await post("notesDelete", { target: "ses_other", revision: other.revision })).json(), { status: "deleted" })
+  assert.deepEqual((await post("notesList", { sessionID: "ses_other" })).json(), { notes: [], cursor: null })
+  owned.delete("/repo")
+  assert.equal((await post("notesList", {})).statusCode, 403, "a disowned Location has no project")
 })

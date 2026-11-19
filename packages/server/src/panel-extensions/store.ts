@@ -14,6 +14,14 @@ const RecordSchema = z.object({ manifest: ManifestSchema, html: z.string().max(P
 const StoreSchema = z.object({ version: z.literal(1), records: z.array(RecordSchema).max(PANEL_EXTENSION_LIMITS.installed) }).strict()
 type Stored = z.infer<typeof RecordSchema>
 type Preferences = Record<string, unknown>
+// API 4 `panel.notes`: one file per package and project identity, beside the catalogue.
+const NoteSchema = z.object({ sessionID: z.string().min(1).max(256), title: z.string().max(256), text: z.string().min(1),
+  revision: z.number().int().min(1), updated: z.number().int().min(0) }).strict()
+const NotesSchema = z.object({ version: z.literal(1), notes: z.array(NoteSchema).max(PANEL_EXTENSION_LIMITS.notes) }).strict()
+export type PanelStoredNote = z.infer<typeof NoteSchema>
+export type PanelNoteChange = { status: "saved"; revision: number } | { status: "conflict"; note: { text: string; revision: number } | null }
+  | { status: "too-large" } | { status: "full" }
+const Project = /^[a-f0-9]{64}$/
 
 /** A plain JSON object serialized within the preferences budget, else the reason it is refused. */
 function preferencesOf(value: unknown): Preferences | "invalid" | "too-large" {
@@ -26,7 +34,8 @@ function preferencesOf(value: unknown): Preferences | "invalid" | "too-large" {
 
 export class PanelExtensionStore {
   private tail: Promise<unknown> = Promise.resolve()
-  constructor(private readonly directory: string, private readonly changed: () => void = () => {}) {}
+  constructor(private readonly directory: string, private readonly changed: () => void = () => {},
+    private readonly notesChanged: (id: string) => void = () => {}) {}
 
   async list(): Promise<PanelExtensionSummary[]> {
     return this.serialize(async () => (await this.read()).map(record => ({ manifest: record.manifest, digest: record.digest,
@@ -51,12 +60,13 @@ export class PanelExtensionStore {
     }), id)
   }
 
+  /** Removal also deletes the package's notes; replacement and deactivation keep them. */
   remove(id: string, digest: string): Promise<void> {
     return this.mutate(records => records.filter(record => {
       if (record.manifest.id !== id) return true
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
       return false
-    }), id)
+    }), id, true, () => fs.rm(this.notesDirectory(id), { recursive: true, force: true }))
   }
 
   async panel(id: string, digest: string): Promise<string> {
@@ -104,6 +114,67 @@ export class PanelExtensionStore {
     return "saved"
   }
 
+  /** The enabled package's notes in `project`, newest first. A corrupt file throws `unavailable` and is kept. */
+  async notes(id: string, digest: string, project: string): Promise<PanelStoredNote[]> {
+    return this.serialize(async () => {
+      granted(await this.read(), id, digest, "panel.notes")
+      return (await this.readNotes(id, project)).sort((a, b) => b.updated - a.updated || (a.sessionID < b.sessionID ? -1 : 1))
+    })
+  }
+
+  /**
+   * Replaces `sessionID`'s note when its current revision is `revision` (0 when it has
+   * none); empty text deletes it. Revisions are increasing timestamps, so a recreated
+   * note never takes a stale writer's revision.
+   */
+  async setNote(id: string, digest: string, project: string, sessionID: string, revision: number,
+    next: { title: string; text: string }): Promise<PanelNoteChange> {
+    if (Buffer.byteLength(next.text) > PANEL_EXTENSION_LIMITS.noteBytes) return { status: "too-large" }
+    return this.serialize(async () => {
+      granted(await this.read(), id, digest, "panel.notes")
+      const notes = await this.readNotes(id, project)
+      const current = notes.find(note => note.sessionID === sessionID)
+      if ((current?.revision ?? 0) !== revision) return { status: "conflict", note: current ? { text: current.text, revision: current.revision } : null }
+      const others = notes.filter(note => note !== current)
+      if (!next.text) {
+        if (current) await this.writeNotes(id, project, others)
+        return { status: "saved", revision: 0 }
+      }
+      if (!current && notes.length >= PANEL_EXTENSION_LIMITS.notes) return { status: "full" }
+      const now = Date.now(), note = { sessionID, title: next.title.slice(0, 256), text: next.text, revision: Math.max(now, revision + 1), updated: now }
+      await this.writeNotes(id, project, [...others, note])
+      return { status: "saved", revision: note.revision }
+    })
+  }
+
+  private notesDirectory(id: string) { return path.join(this.directory, "notes", id) }
+
+  private async readNotes(id: string, project: string): Promise<PanelStoredNote[]> {
+    if (!Project.test(project)) throw new PanelExtensionError("invalid")
+    try {
+      return NotesSchema.parse(JSON.parse(await fs.readFile(path.join(this.notesDirectory(id), `${project}.json`), "utf8"))).notes
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+      throw new PanelExtensionError("unavailable")
+    }
+  }
+
+  private async writeNotes(id: string, project: string, notes: PanelStoredNote[]) {
+    const directory = this.notesDirectory(id), file = path.join(directory, `${project}.json`)
+    if (!notes.length) await fs.rm(file, { force: true })
+    else await this.replace(directory, file, JSON.stringify({ version: 1, notes }))
+    this.notesChanged(id)
+  }
+
+  private async replace(directory: string, file: string, text: string) {
+    await fs.mkdir(directory, { recursive: true })
+    const temporary = path.join(directory, `${randomUUID()}.tmp`)
+    try {
+      await fs.writeFile(temporary, text, { flag: "wx", mode: 0o600 })
+      await fs.rename(temporary, file)
+    } finally { await fs.rm(temporary, { force: true }) }
+  }
+
   private async read(): Promise<Stored[]> {
     try {
       const file = path.join(this.directory, "installed.json")
@@ -118,7 +189,7 @@ export class PanelExtensionStore {
     }
   }
 
-  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true): Promise<void> {
+  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true, after?: () => Promise<void>): Promise<void> {
     return this.serialize(async () => {
       const records = await this.read()
       if (requiredId && !records.some(record => record.manifest.id === requiredId)) throw new PanelExtensionError("missing")
@@ -126,12 +197,8 @@ export class PanelExtensionStore {
       if (!StoreSchema.safeParse({ version: 1, records: next }).success) throw new PanelExtensionError("limit")
       const text = JSON.stringify({ version: 1, records: next })
       if (Buffer.byteLength(text) > PANEL_EXTENSION_LIMITS.storageBytes) throw new PanelExtensionError("limit")
-      await fs.mkdir(this.directory, { recursive: true })
-      const temporary = path.join(this.directory, `${randomUUID()}.tmp`)
-      try {
-        await fs.writeFile(temporary, text, { flag: "wx", mode: 0o600 })
-        await fs.rename(temporary, path.join(this.directory, "installed.json"))
-      } finally { await fs.rm(temporary, { force: true }) }
+      await this.replace(this.directory, path.join(this.directory, "installed.json"), text)
+      await after?.()
       if (notify) this.changed()
     })
   }
@@ -145,10 +212,10 @@ export class PanelExtensionStore {
   }
 }
 
-/** The installed, enabled exact package declaring `panel.preferences`; anything else is `unavailable`. */
-function granted(records: Stored[], id: string, digest: string): Stored {
+/** The installed, enabled exact package declaring `permission`; anything else is `unavailable`. */
+function granted(records: Stored[], id: string, digest: string, permission: "panel.preferences" | "panel.notes" = "panel.preferences"): Stored {
   const record = records.find(record => record.manifest.id === id)
   if (!record || record.digest !== digest || !record.global
-    || !(record.manifest.permissions as readonly string[]).includes("panel.preferences")) throw new PanelExtensionError("unavailable")
+    || !(record.manifest.permissions as readonly string[]).includes(permission)) throw new PanelExtensionError("unavailable")
   return record
 }

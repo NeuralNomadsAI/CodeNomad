@@ -1,9 +1,10 @@
 import { z } from "zod"
 import type { FastifyInstance } from "fastify"
-import type { LocationRef, OpenCodeClient } from "@opencode/client"
+import { isSessionNotFoundError, type LocationRef, type OpenCodeClient } from "@opencode/client"
 import type { WorkspaceManager } from "../../workspaces/manager"
-import type { PanelExtensionStore } from "../../panel-extensions/store"
-import type { PanelExtensionPermission, PanelConversationStatus } from "../../panel-extensions/contract"
+import type { PanelExtensionStore, PanelStoredNote } from "../../panel-extensions/store"
+import { PANEL_EXTENSION_LIMITS, type PanelExtensionPermission, type PanelConversationStatus, type PanelNotesPage } from "../../panel-extensions/contract"
+import { resolveMemoryProjectIdentity } from "../../memory/project-identity"
 import { PanelExtensionError } from "../../panel-extensions/archive"
 import { readPanelImagesStatus } from "../../panel-extensions/images-status"
 import type { ImageSettings } from "../../opencode/image-settings"
@@ -26,9 +27,11 @@ const ROUTE_BUDGET_MS = 19_000, RPC_TIMEOUT_MS = 8_000
 
 export interface PanelExtensionApi4Deps extends ImagesConversationRouteDeps {
   store: PanelExtensionStore
-  workspaceManager: ImagesConversationRouteDeps["workspaceManager"] & Pick<WorkspaceManager, "getSharedServiceConnection" | "get">
+  workspaceManager: ImagesConversationRouteDeps["workspaceManager"] & Pick<WorkspaceManager, "getSharedServiceConnection" | "get" | "getServiceDirectoryForPath">
   imageSettings: Pick<ImageSettings, "read">
   checkDesignFolderExclusion?: typeof checkDesignFolderExclusion
+  /** Tests only: the agent-memory project identity that files `panel.notes`. */
+  projectIdentity?: typeof resolveMemoryProjectIdentity
   /** Tests only: the whole-route deadline. */
   routeBudgetMs?: number
 }
@@ -278,5 +281,68 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   route("preferencesSet", null, { value: z.unknown() }, 16384, async (input, { id }) => {
     if (!manager.get(input.instanceId)) throw new PanelExtensionError("missing")
     return preferences(async () => ({ status: await deps.store.setPreferences(id, input.digest, input.value) }))
+  })
+
+  // panel.notes: one note per session, filed under the agent-memory project identity of the
+  // displayed conversation's Location (else the instance's), so worktrees and clones share them.
+  const projectIdentity = deps.projectIdentity ?? resolveMemoryProjectIdentity
+  const project = async (context: RouteContext, instanceId: string, sessionID: string | undefined) => {
+    const connection = await connect(instanceId)
+    context.pin(connection)
+    const client = connection.client
+    const session = sessionID ? await ownedSession(instanceId, client, sessionID, context.signal) : undefined
+    const location = session ? readLocationRef(session.location) : manager.getServiceLocation(instanceId)
+    if (!location) throw new Refused(403)
+    if (session) fenceSession(context, instanceId, client, sessionID!, session.location)
+    else fenceLocation(context, instanceId, client, location.directory)
+    const directory = await manager.getServiceDirectoryForPath(instanceId, location.directory)
+    if (!directory) throw new Refused(403)
+    const { id } = await projectIdentity({ directory, distro: manager.getServiceWslDistro(instanceId) })
+    context.signal.throwIfAborted()
+    return { id, client, session }
+  }
+  /** The session, or `undefined` once it is deleted; any other failure fails the request. */
+  const unlessDeleted = <T>(signal: AbortSignal, read: Promise<T>) => read.catch(error => {
+    if (!signal.aborted && isSessionNotFoundError(error)) return undefined
+    throw error
+  })
+  const Revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+  const noteOf = (note?: PanelStoredNote) => note ? { text: note.text, revision: note.revision } : null
+  route("notesGet", "panel.notes", { sessionID: Id }, 8192, async (input, context) => {
+    const { id: projectId } = await project(context, input.instanceId, input.sessionID)
+    return { note: noteOf((await deps.store.notes(context.id, input.digest, projectId)).find(note => note.sessionID === input.sessionID)) }
+  })
+  // JSON escapes can grow the text sixfold; the store measures its UTF-8 bytes.
+  route("notesSet", "panel.notes", { sessionID: Id, text: z.string().max(PANEL_EXTENSION_LIMITS.noteBytes), revision: Revision },
+    6 * PANEL_EXTENSION_LIMITS.noteBytes + 8192, async (input, context) => {
+      const { id: projectId, session } = await project(context, input.instanceId, input.sessionID)
+      await context.authorize()
+      return deps.store.setNote(context.id, input.digest, projectId, input.sessionID, input.revision, { title: session!.title ?? "", text: input.text })
+    })
+  route("notesList", "panel.notes", { sessionID: Id.optional(), cursor: z.string().regex(/^\d{1,4}$/).optional() }, 8192, async (input, context) => {
+    const { id: projectId, client } = await project(context, input.instanceId, input.sessionID)
+    const all = await deps.store.notes(context.id, input.digest, projectId)
+    const start = Number(input.cursor ?? 0), page = all.slice(start, start + PANEL_EXTENSION_LIMITS.notesPage)
+    const notes = await Promise.all(page.map(async note => {
+      const live = await unlessDeleted(context.signal, client.session.get({ sessionID: note.sessionID }, { signal: bounded(context.signal) }))
+      return { sessionID: note.sessionID, title: live?.title || note.title, text: note.text, revision: note.revision, updated: note.updated, orphan: !live }
+    }))
+    return { notes, cursor: start + page.length < all.length ? String(start + page.length) : null } satisfies PanelNotesPage
+  })
+  route("notesDelete", "panel.notes", { sessionID: Id.optional(), target: Id, revision: Revision.min(1) }, 8192, async (input, context) => {
+    const { id: projectId } = await project(context, input.instanceId, input.sessionID)
+    await context.authorize()
+    const result = await deps.store.setNote(context.id, input.digest, projectId, input.target, input.revision, { title: "", text: "" })
+    return { status: result.status === "saved" ? "deleted" as const : "conflict" as const }
+  })
+  // Only a session with a note in this project, still owned by this instance, may be shown.
+  route("notesOpen", "panel.notes", { sessionID: Id.optional(), target: Id }, 8192, async (input, context) => {
+    const { id: projectId, client } = await project(context, input.instanceId, input.sessionID)
+    if (!(await deps.store.notes(context.id, input.digest, projectId)).some(note => note.sessionID === input.target)) return { openable: false }
+    const session = await unlessDeleted(context.signal, ownedSession(input.instanceId, client, input.target, context.signal))
+      .catch(error => { if (error instanceof Refused && error.status === 403) return undefined; throw error })
+    if (!session) return { openable: false }
+    fenceSession(context, input.instanceId, client, input.target, session.location)
+    return { openable: true }
   })
 }

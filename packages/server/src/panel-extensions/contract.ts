@@ -1,7 +1,7 @@
 /** Public extension contract, independent of CodeNomad's internal Solid modules. */
 export const PANEL_EXTENSION_API_VERSION = 4
 export const PANEL_EXTENSION_LIMITS = { archiveBytes: 2 * 1024 * 1024, htmlBytes: 2 * 1024 * 1024, installed: 32, storageBytes: 16 * 1024 * 1024,
-  preferencesBytes: 4096 } as const
+  preferencesBytes: 4096, noteBytes: 32 * 1024, notes: 256, notesPage: 16 } as const
 
 /**
  * API 4's finite permission set: `session.context` plus a non-empty subset of
@@ -9,7 +9,7 @@ export const PANEL_EXTENSION_LIMITS = { archiveBytes: 2 * 1024 * 1024, htmlBytes
  * `session.images.prompts` requires `session.images.read`.
  */
 export const PANEL_EXTENSION_API4_PERMISSIONS = ["session.images.read", "session.images.prompts", "composer.prefill", "images.conversation",
-  "opencode.designAgent", "panel.preferences"] as const
+  "opencode.designAgent", "panel.preferences", "panel.notes"] as const
 export type PanelExtensionApi4Permission = typeof PANEL_EXTENSION_API4_PERMISSIONS[number]
 
 export type PanelExtensionManifest = {
@@ -64,6 +64,22 @@ export interface PanelConversationStatus {
 
 export type PanelPrefillStatus = "added" | "busy" | "no-session" | "too-long" | "invalid"
 export type PanelPreferencesSetStatus = "saved" | "too-large" | "invalid" | "unavailable"
+
+/**
+ * API 4 `notes.list()` entry: a note of a session in the displayed project, newest first.
+ * `orphan` notes belong to a deleted session and show the last title the host read.
+ */
+export interface PanelNote {
+  sessionID: string
+  title: string
+  text: string
+  revision: number
+  /** Last change, in ms. */
+  updated: number
+  orphan: boolean
+}
+
+export interface PanelNotesPage { notes: PanelNote[]; cursor: string | null }
 
 export type ForgeProvider = "github" | "gitlab" | "gitea"
 export type ForgeWorkItemKind = "issue" | "pullRequest"

@@ -9,6 +9,7 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "यस परियोजनाको छविहरू कुराकानी खोल्ने वा सुरु गर्ने।",
   "panelExtensions.api4.opencode.designAgent": "यो विस्तार सक्षम रहेसम्म CodeNomad को Design agent र यसका छवि skill हरू OpenCode मा थप्छ।",
   "panelExtensions.api4.panel.preferences": "यस प्यानलका आफ्नै सेटिङहरू सम्झने।",
+  "panelExtensions.api4.panel.notes": "यस प्रोजेक्टको प्रत्येक कुराकानीमा एउटा नोट राख्ने, नोटहरू सूचीबद्ध गर्ने र मेटाउने, र तिनका कुराकानीहरू खोल्ने। एक्सटेन्सन हटाउँदा नोटहरू मेटिन्छन्।",
   "panelExtensions.empty": "कुनै विस्तार स्थापित छैन।",
   "panelExtensions.catalog.title": "अनलाइन उपलब्ध",
   "panelExtensions.catalog.search": "विस्तार खोज्नुहोस्",

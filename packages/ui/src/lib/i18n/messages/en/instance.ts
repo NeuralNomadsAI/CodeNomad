@@ -9,6 +9,7 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "Open or start this project's Images conversation.",
   "panelExtensions.api4.opencode.designAgent": "Adds CodeNomad's Design agent and its image skills to OpenCode while this extension is enabled.",
   "panelExtensions.api4.panel.preferences": "Remember this panel's own settings.",
+  "panelExtensions.api4.panel.notes": "Keep one note per conversation of this project, list and delete them, and open their conversations. Removing the extension deletes the notes.",
   "panelExtensions.empty": "No extensions installed.",
   "panelExtensions.catalog.title": "Available online",
   "panelExtensions.catalog.search": "Search extensions",

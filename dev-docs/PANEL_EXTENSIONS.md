@@ -23,7 +23,7 @@ the project's GitHub, GitLab or Gitea/Forgejo repository, read by the host, and
 opening one item's page in the browser. API 4 carries `session.context` plus any
 non-empty subset of a finite permission set used by the independent **Design**
 image companion ([API 4](#api-4)): read-back images of the displayed conversation, their prompts,
-composer prefill, the Images conversation, the Design agent and panel preferences.
+composer prefill, the Images conversation, the Design agent, panel preferences and per-conversation notes.
 
 ## Package layout
 
@@ -63,7 +63,7 @@ HTML, 32 installed extensions, 16 MiB persisted installed-extension store.
   version. This host supports APIs 1 to 4. API 2 requires exactly
   `["session.context", "session.assets.read"]` and API 3 exactly
   `["session.context", "repository.workItems.read"]`; API 4 takes
-  `session.context` plus a non-empty subset of its six permissions, each at most
+  `session.context` plus a non-empty subset of its seven permissions, each at most
   once, in any order. An unsupported major API or unknown permission is
   rejected, without executing author code, and the catalogue shows it incompatible.
 - Author, name, license and repository are mandatory. Repository must be an HTTPS
@@ -91,8 +91,8 @@ Compare the displayed digest with the publisher's checksum through a trusted
 channel. Replacing code revokes **all** activation grants, even when permissions
 are unchanged, and drops the record's API 4 preferences. The old package remains
 intact on validation, conflict or storage failure. Concurrent mutations compare
-exact digests. Removal is explicit and removes only the installed code, its grants
-and its preferences.
+exact digests. Removal is explicit and removes only the installed code, its grants,
+its preferences and its notes; replacement keeps the notes.
 
 Never add an arbitrary URL installer, silent update, automatic project discovery,
 signature authority or remote-code startup hook. Keep trusted source/releases
@@ -240,6 +240,7 @@ exact package before and after IO. Never add a permission registry, generic RPC 
 | `images.conversation` | `conversation.status()`, `conversation.open()`, `conversation.startNew()` | the displayed conversation's Location (else the instance's), `images-conversation.ts` |
 | `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
 | `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
+| `panel.notes` | `notes.get()`, `notes.set(text, revision)`, `notes.list(cursor?)`, `notes.delete(sessionID, revision)`, `notes.open(sessionID)`, `notes.onChanged(listener)` | displayed conversation; the server profile's store, per extension and [project identity](AGENT_MEMORY.md) |
 
 ```js
 const status = await codenomad.images.status()
@@ -256,6 +257,12 @@ await codenomad.conversation.status()
 await codenomad.conversation.open() // { opened, created }; codenomad.conversation.startNew() → { opened }
 await codenomad.preferences.get() // object, or "unavailable"
 await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" | "invalid" | "unavailable"
+await codenomad.notes.get() // { text, revision } | null (no note, or no displayed conversation)
+await codenomad.notes.set("Plan", 0) // { status: "saved", revision } | { status: "conflict", note } | { status: "too-large" | "full" | "no-session" }
+await codenomad.notes.list() // { notes: [{ sessionID, title, text, revision, updated, orphan }], cursor }
+await codenomad.notes.delete(sessionID, revision) // { status: "deleted" | "conflict" }
+await codenomad.notes.open(sessionID) // { opened }
+codenomad.notes.onChanged(() => { /* read again */ })
 ```
 
 - **Status** reads the session's Location (without a displayed conversation, the
@@ -308,6 +315,22 @@ await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" |
   store, another digest or a missing package answers `unavailable`, never rewriting the
   file. An invalid stored entry alone reads `{}`. Panels keep only their own display
   settings there; never treat preferences as a security boundary.
+- **Notes**: one plain-text note per session, at most 32 KiB UTF-8 and 256 per project,
+  filed in `panel-extensions/notes/<id>/<project>.json` under the agent-memory project
+  identity of the displayed conversation's Location (else the instance's), so worktrees
+  and clones of one repository share them. `get`/`set` act only on the displayed
+  conversation; `set` replaces the note when `revision` is its current one (0 for
+  none), else answers `conflict` with the current note; empty text deletes it.
+  Revisions are increasing timestamps, so a recreated note never takes a stale
+  writer's. `list` pages the project's notes newest first (16 a page, decimal
+  cursor), with each session's current title, or, for a deleted session (`orphan`),
+  the last title written. `delete` takes any note of the project at its revision;
+  `open` shows only a session with a note in the project, still owned by this window,
+  answering the frame first. The store checks the exact enabled package in its queue;
+  a corrupt file answers an error and is never rewritten. Writes publish a data-free
+  `panelExtensions.notesChanged { id }`; the channel coalesces it with session
+  deletions and reconnects into `notes:changed` for that package only, and the frame
+  reads again. Deactivation and replacement keep notes; removal deletes them.
 - **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
   and method names select only own entries of `Map`s; never index an object with frame
   data (inherited names such as `constructor` would run). Inputs are validated per
