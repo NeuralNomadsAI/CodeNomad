@@ -1786,6 +1786,8 @@ answers mutations with 405 and writes `browser-report.json` to the absolute
 
 ## Agent conventions
 
+- Model-facing tool schemas use a plain object at the root, with variants inside properties. Keep scope and action validation in the execution codec.
+
 - Missions project tools admit every owned project conversation, including descendants and scheduled passages, and include human-created Missions. Keep coordinator-only topology and authenticated human-answer evidence at their existing domain boundaries.
 
 - Mission reader and conversation gestures advance the tab occurrence generation at admission. Async navigation adopts only while that generation is current. Passage retargeting, inventory cleanup and Mission absence reconciliation apply immediately against their current source and reader; pending gestures retain their authority.
