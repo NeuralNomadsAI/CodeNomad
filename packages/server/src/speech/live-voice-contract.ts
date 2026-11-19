@@ -60,6 +60,7 @@ export function readLiveVoiceTool(name: unknown, args: unknown): LiveVoiceTool |
 export type LiveVoiceClientMessage =
   | { type: "start"; context: LiveVoiceContext }
   | { type: "audio"; pcm: string }
+  | { type: "interrupt"; responseId: string }
   | { type: "truncate"; itemId: string; contentIndex: number; audioEndMs: number }
   | { type: "tool-result"; id: string; output: string }
   | { type: "stop" }
@@ -69,6 +70,7 @@ export type LiveVoiceServerMessage =
   | { type: "audio"; pcm: string; itemId?: string; contentIndex?: number }
   | { type: "transcript"; role: "user" | "assistant"; text: string; final: boolean; replace?: true; itemId?: string }
   | { type: "activity" }
+  | { type: "thinking"; responseId?: string }
   | { type: "interrupted" }
   | { type: "turn-complete" }
   | ({ type: "tool-call"; id: string } & LiveVoiceTool)

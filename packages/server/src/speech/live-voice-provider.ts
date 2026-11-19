@@ -47,10 +47,13 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
   const pending = new Map<string, string>()
   const used = new Set<string>()
   const outputParts = new Map<string, { index: number; bytes: number; truncated: boolean }>()
+  const cancelEvents = new Set<string>()
   let state: "connecting" | "configuring" | "ready" = "connecting"
   let continueWhenToolsComplete = false
+  let activeResponse: string | undefined
   let interruptedResponse: string | undefined
   let playingResponse: string | undefined
+  let cancelSequence = 0
 
   function remember<T>(store: Map<string, T> | Set<string>) {
     if (store.size > LIVE_VOICE_TRACKED_IDS) store.delete(store.keys().next().value!)
@@ -145,6 +148,7 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     const interimUser = object(content?.interimInputTranscription)
     if (activity === "ACTIVITY_START" || activity === "ACTIVITY_END"
       || (transcriptText(user?.text) && user.text.trim()) || (transcriptText(interimUser?.text) && interimUser.text.trim())) io.speech()
+    if (activity === "ACTIVITY_END") io.emit({ type: "thinking" })
     if (!content) return
     if (content.interrupted === true) io.emit({ type: "interrupted" })
     else {
@@ -162,6 +166,16 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     if (content.turnComplete === true) io.emit({ type: "turn-complete" })
   }
 
+  function interruptOpenAI(responseId: string | undefined) {
+    interruptedResponse = responseId
+    continueWhenToolsComplete = false
+    // Settle interrupted tool calls without starting another response.
+    for (const id of pending.keys()) {
+      cancelTool(id)
+      sendOpenAIToolOutput(id, "Interrupted by the user.")
+    }
+  }
+
   function fromOpenAI(event: JsonObject) {
     const { type, item_id: itemId, content_index: index, response_id: responseId } = event
     if (type === "session.created" && state === "connecting" && object(event.session)) return configureOpenAI()
@@ -170,13 +184,7 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     switch (type) {
       case "input_audio_buffer.speech_started":
         io.speech()
-        interruptedResponse = playingResponse
-        continueWhenToolsComplete = false
-        // Leave a settled function output for each interrupted call without starting a new response.
-        for (const id of pending.keys()) {
-          cancelTool(id)
-          sendOpenAIToolOutput(id, "Interrupted by the user.")
-        }
+        interruptOpenAI(activeResponse ?? playingResponse)
         io.emit({ type: "interrupted" })
         break
       case "input_audio_buffer.speech_stopped":
@@ -197,7 +205,10 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
         break
       case "response.created": {
         const id = object(event.response)?.id
-        if (identifier(id)) playingResponse = id
+        if (identifier(id)) {
+          activeResponse = playingResponse = id
+          io.emit({ type: "thinking", responseId: id })
+        }
         break
       }
       case "response.output_audio.delta": {
@@ -216,6 +227,7 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
       }
       case "response.done": {
         const response = object(event.response)
+        if (response?.id === activeResponse) activeResponse = undefined
         if (response?.status === "failed") return io.stop("provider-error")
         if (response?.status === "completed" && (interruptedResponse === undefined || response.id !== interruptedResponse)
           && Array.isArray(response.output)) {
@@ -234,7 +246,13 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     }
   }
   function receive(event: JsonObject) {
-    if (event.type === "error" || Object.hasOwn(event, "error")) return io.stop("provider-error")
+    if (event.type === "error" || Object.hasOwn(event, "error")) {
+      const request = object(event.error)?.event_id
+      // Completion can win the race with response.cancel. Its correlated
+      // error leaves the provider session usable; unrelated errors still fail closed.
+      if (!gemini && identifier(request) && cancelEvents.delete(request)) return
+      return io.stop("provider-error")
+    }
     if (gemini) fromGemini(event)
     else fromOpenAI(event)
   }
@@ -249,9 +267,20 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
           ? { realtimeInput: { audio: { data: value.pcm, mimeType: `audio/pcm;rate=${inputRate}` } } }
           : { type: "input_audio_buffer.append", audio: value.pcm })
         break
+      case "interrupt": {
+        if (gemini) return io.stop("invalid-message")
+        if (activeResponse !== value.responseId || interruptedResponse === value.responseId) break
+        if (cancelSequence >= LIVE_VOICE_MAX_CALLS) return io.stop("limit")
+        const eventId = `codenomad-cancel-${++cancelSequence}`
+        cancelEvents.add(eventId)
+        remember(cancelEvents)
+        interruptOpenAI(value.responseId)
+        io.send({ type: "response.cancel", response_id: value.responseId, event_id: eventId })
+        break
+      }
       case "truncate": {
         const output = outputParts.get(value.itemId)
-        if (gemini || !output || output.index !== value.contentIndex || output.truncated
+        if (gemini || value.contentIndex !== 0 || !output || output.index !== value.contentIndex || output.truncated
           || value.audioEndMs > Math.floor(output.bytes / (2 * OUTPUT_RATE / 1000))) return io.stop("invalid-message")
         output.truncated = true
         io.send({ type: "conversation.item.truncate", item_id: value.itemId, content_index: output.index, audio_end_ms: value.audioEndMs })

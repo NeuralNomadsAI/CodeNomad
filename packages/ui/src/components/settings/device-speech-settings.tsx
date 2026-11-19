@@ -1,12 +1,27 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { hexCaptureAvailable } from "../../lib/hex-capture"
-import { resolveSystemSpeechLocale, type SpeechEngine } from "../../lib/native/device-speech"
-import { useDeviceSpeechSettings } from "./use-device-speech-settings"
+import { resolveSystemSpeechLocale, type DeviceSpeechSnapshot, type SpeechEngine } from "../../lib/native/device-speech"
+import type { useDeviceSpeechSettings } from "./use-device-speech-settings"
 
-export function DeviceSpeechSettings() {
+export function deviceSystemLabel(snapshot: DeviceSpeechSnapshot | undefined, locale: string) {
+  if (snapshot?.system !== "ready") return `settings.speech.device.${snapshot?.systemReason ?? "unavailable"}`
+  return resolveSystemSpeechLocale(snapshot.systemLocales ?? [], locale)
+    ? "settings.speech.device.system" : "settings.speech.device.localeUnavailable"
+}
+
+export function deviceHexLabel(snapshot: DeviceSpeechSnapshot | undefined) {
+  if (!hexCaptureAvailable()) return "settings.speech.device.hexUnavailable"
+  switch (snapshot?.hex.state) {
+    case "needsPreparation": return "settings.speech.device.hexNeedsPreparation"
+    case "ready": return "settings.speech.device.hex"
+    default: return "settings.speech.device.hexUnavailable"
+  }
+}
+
+export function DeviceSpeechSettings(props: { speech: ReturnType<typeof useDeviceSpeechSettings> }) {
   const { t, locale } = useI18n()
-  const speech = useDeviceSpeechSettings()
+  const speech = props.speech
   const planId = createUniqueId()
   const totalId = createUniqueId()
   let engineSelect: HTMLSelectElement | undefined
@@ -23,14 +38,8 @@ export function DeviceSpeechSettings() {
       .format(Math.ceil(bytes / divisor * 100) / 100)
   }
   const isolatedSize = (bytes: number) => `\u2068${formatSize(bytes)}\u2069`
-  const systemKey = () => {
-    const snapshot = speech.snapshot()
-    if (snapshot?.system !== "ready") return `settings.speech.device.${snapshot?.systemReason ?? "unavailable"}`
-    return resolveSystemSpeechLocale(snapshot.systemLocales ?? [], locale())
-      ? "settings.speech.device.system" : "settings.speech.device.localeUnavailable"
-  }
-  const hexKey = () => plan() ? "settings.speech.device.hexNeedsPreparation"
-    : hex()?.state === "ready" && hexCaptureAvailable() ? "settings.speech.device.hex" : "settings.speech.device.hexUnavailable"
+  const systemKey = () => deviceSystemLabel(speech.snapshot(), locale())
+  const hexKey = () => deviceHexLabel(speech.snapshot())
   const errorKey = () => {
     switch (speech.error()) {
       case "planChanged": return "settings.speech.device.planChanged"

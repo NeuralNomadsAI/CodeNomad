@@ -1,5 +1,9 @@
 import { render } from "solid-js/web"
+import { Show } from "solid-js"
+import AlertDialog from "../../../src/components/alert-dialog"
 import { InterruptionDock } from "../../../src/components/interruption-dock"
+import PromptInput from "../../../src/components/prompt-input"
+import { SpeechSettingsSection } from "../../../src/components/settings/speech-settings-section"
 import { serverApi } from "../../../src/lib/api-client"
 import { useLiveVoiceConversation } from "../../../src/lib/hooks/use-live-voice-conversation"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -9,13 +13,18 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { ConfigProvider } from "../../../src/stores/preferences"
+import { activeSettingsSection, openSettingsRow, settingsOpen } from "../../../src/stores/settings-screen"
 import { activeSessionId, getSessionDraftPrompt, setActiveSession, setSessionDraftPrompt, setSessions, setSessionStatus } from "../../../src/stores/session-state"
 import { loadVoiceConversationEngine, setVoiceConversationEngine } from "../../../src/stores/voice-conversation-engine"
+import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
 const instanceId = "live-voice-fixture", sessionId = "voice"
+const params = new URLSearchParams(location.search)
+const interactive = params.has("ui")
 const path = "/voice-fixture"
 const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false }
+let microphone: MediaStreamTrack | undefined
 let eventId = 0
 let releaseAdmission: (() => void) | undefined
 const emit = (type: string, data: object) => (sseManager as any).handleEvent(instanceId, {
@@ -46,13 +55,14 @@ const client: any = {
 sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
 addInstance({ id: instanceId, folder: path, projectName: "Project", port: 0, pid: 0, proxyPath: path, status: "ready", client })
 setSessions(previous => new Map(previous).set(instanceId, new Map([sessionId, "other"].map(id => [id, {
-  id, instanceId, parentId: null, title: "Conversation", location: { directory: path },
+  id, instanceId, parentId: null, title: interactive ? "Feature ABC — משימה 42" : "Conversation", location: { directory: path },
   status: "idle", agent: "", model: { providerId: "", modelId: "" }, time: { created: 1, updated: 1 },
 } as any]))))
 setActiveInstanceId(instanceId)
 setActiveSession(instanceId, sessionId)
 setSessionDraftPrompt(instanceId, sessionId, "Unsent draft")
 serverApi.fetchSpeechCapabilities = async () => ({
+  available: true, sttConfigured: true, supportsStt: true,
   voiceConversation: { geminiLive: { configured: true }, openaiRealtime: { configured: true } },
 } as any)
 const store = messageStoreBus.getOrCreate(instanceId)
@@ -74,13 +84,15 @@ Object.defineProperty(navigator.mediaDevices, "getUserMedia", { value: async () 
   oscillator.start()
   await context.resume()
   const track = sink.stream.getAudioTracks()[0]
+  microphone = track
   const stop = track.stop.bind(track)
   track.stop = () => { stop(); info.released++; void context.close() }
   return sink.stream
 } })
 
 await loadVoiceConversationEngine()
-await setVoiceConversationEngine(location.search === "?openai" ? "openai-realtime" : "gemini-live")
+await setVoiceConversationEngine(params.has("openai") ? "openai-realtime" : "gemini-live")
+if (interactive) await applyUiSettings({ locale: params.has("he") ? "he" : "en", showPromptVoiceInput: true })
 
 function Fixture() {
   const current = () => activeSessionId().get(instanceId) ?? undefined
@@ -105,4 +117,20 @@ function Fixture() {
     <InterruptionDock instanceId={instanceId} sessionId={current()} />
   </main>
 }
-render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+
+function Interactive() {
+  const current = () => activeSessionId().get(instanceId) ?? sessionId
+  Object.assign(window, { fixture: {
+    info, switchSession: () => setActiveSession(instanceId, "other"), setVoiceConversationEngine,
+    openVoiceSettings: () => openSettingsRow("speech", "voice-dictation"),
+    microphoneEnabled: () => microphone?.enabled,
+  } })
+  return <main style={{ display: "flex", "min-height": "100dvh", "flex-direction": "column", "justify-content": "flex-end" }}>
+    <AlertDialog />
+    <InterruptionDock instanceId={instanceId} sessionId={current()} />
+    <PromptInput instanceId={instanceId} instanceFolder={path} sessionId={current()} isActive
+      onSend={async () => { throw new Error("Dictation must never send") }} />
+    <Show when={settingsOpen() && activeSettingsSection() === "speech"}><SpeechSettingsSection /></Show>
+  </main>
+}
+render(() => <ConfigProvider><I18nProvider><ThemeProvider>{interactive ? <Interactive /> : <Fixture />}</ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

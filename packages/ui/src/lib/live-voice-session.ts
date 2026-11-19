@@ -9,11 +9,13 @@ import { MicrophoneUnavailable, type MicrophonePurpose } from "./microphone-leas
 
 type LiveVoiceAudio = Awaited<ReturnType<typeof startLiveVoiceAudio>>
 export type LiveVoiceStopReason = LiveVoiceEndReason | "targetChanged" | "device" | "permission" | "microphoneUnavailable" | MicrophonePurpose
+export type LiveVoiceActivity = "listening" | "speaking" | "thinking"
 export interface LiveVoiceTranscriptRow {
   id: number
-  role: "user" | "assistant"
+  role: "user" | "assistant" | "sent" | "interrupted"
   text: string
   final: boolean
+  announce?: true
 }
 type TranscriptEvent = Extract<LiveVoiceServerMessage, { type: "transcript" }>
 type AudioEvent = Extract<LiveVoiceServerMessage, { type: "audio" }>
@@ -48,19 +50,28 @@ export function openLiveVoiceSession(options: {
   onReady: () => void
   onStop: (reason: LiveVoiceStopReason) => void
   onTranscript: (value: readonly LiveVoiceTranscriptRow[]) => void
+  onActivity: (value: LiveVoiceActivity, canInterrupt: boolean) => void
 }) {
   const lifetime = new AbortController()
   const signal = lifetime.signal
   const inputRate = liveVoiceInputRate(options.engine)
   const outputRate = LIVE_VOICE_OUTPUT_RATE
-  const calls = new Map<string, "started" | "cancelled">()
+  const calls = new Map<string, "started" | "cancelled" | "finished">()
   const rows = new Map<number, LiveVoiceTranscriptRow>()
   const keys = new Map<string, number>()
+  const assistantRows = new Set<number>()
+  const awaitingPlayback = new Set<number>()
   let sequence = 0
   let socket: ReturnType<typeof options.socket> | undefined
   let audio: LiveVoiceAudio | undefined
   let connected = false
   let ready = false
+  let playing = false
+  let responseOpen = false
+  let responseSpoken = false
+  let responseId: string | undefined
+  let discardResponse = false
+  let pendingTools = 0
   let idle: ReturnType<typeof setTimeout> | undefined
   let setup: ReturnType<typeof setTimeout> | undefined
   const absolute = setTimeout(() => stop("duration"), LIVE_VOICE_ABSOLUTE_MS)
@@ -103,7 +114,29 @@ export function openLiveVoiceSession(options: {
 
   function publish() { options.onTranscript([...rows.values()]) }
 
+  function updateActivity() {
+    if (!ready || signal.aborted) return
+    const canInterrupt = !discardResponse && (responseOpen || playing)
+    options.onActivity(playing || responseSpoken ? "speaking" : canInterrupt || pendingTools > 0 ? "thinking" : "listening", canInterrupt)
+  }
+
+  function saveRow(row: LiveVoiceTranscriptRow) {
+    rows.set(row.id, row)
+    if (rows.size <= MAX_ROWS) return
+    const oldest = rows.keys().next().value!
+    rows.delete(oldest)
+    assistantRows.delete(oldest)
+    awaitingPlayback.delete(oldest)
+    for (const [key, id] of keys) if (id === oldest) keys.delete(key)
+  }
+
+  function marker(role: "sent" | "interrupted", text = "") {
+    saveRow({ id: ++sequence, role, text: text.slice(0, ROW_CHARS), final: true })
+    publish()
+  }
+
   function transcript(value: TranscriptEvent) {
+    if (discardResponse && value.role === "assistant") return
     const key = value.itemId ? `${value.role}:${value.itemId}` : value.role
     const prior = rows.get(keys.get(key) ?? 0)
     if (prior?.final && value.itemId) return
@@ -111,38 +144,98 @@ export function openLiveVoiceSession(options: {
     if (!fragment.trim() && !prior) return
     fragment = fragment.slice(0, ROW_CHARS)
     const id = prior?.id ?? ++sequence
-    rows.set(id, { id, role: value.role, text: fragment, final: value.final })
+    saveRow({ id, role: value.role, text: fragment, final: value.final,
+      ...(value.role === "user" && value.final ? { announce: true } : {}) })
+    if (value.role === "assistant") {
+      assistantRows.add(id)
+      responseOpen = true
+      updateActivity()
+    }
     if (!value.itemId && value.final) keys.delete(key)
     else keys.set(key, id)
-    if (rows.size > MAX_ROWS) {
-      const oldest = rows.keys().next().value!
-      rows.delete(oldest)
-      for (const [known, id] of keys) if (id === oldest) keys.delete(known)
-    }
     publish()
   }
 
   function finishTurn(interrupted: boolean) {
-    // Gemini segments have no item ID. On OpenAI interruption, the truncated
-    // response may never send a transcript completion.
-    for (const [key, id] of keys) {
-      if (key !== "assistant" && (interrupted ? !key.startsWith("assistant:") : key !== "user")) continue
+    for (const id of assistantRows) {
       const row = rows.get(id)!
-      if (!row.final) rows.set(id, { ...row, final: true })
-      if (key === "assistant" || key === "user") keys.delete(key)
+      if (!interrupted && playing) awaitingPlayback.add(id)
+      rows.set(id, { ...row, final: true, ...(!interrupted && !playing ? { announce: true } : {}) })
     }
+    assistantRows.clear()
+    keys.delete("assistant")
+    // Gemini segments do not have item IDs. OpenAI inputs finish independently.
+    const user = keys.get("user")
+    if (!interrupted && user !== undefined) {
+      rows.set(user, { ...rows.get(user)!, final: true, announce: true })
+      keys.delete("user")
+    }
+  }
+
+  function interrupt(manual: boolean) {
+    if (!ready || !audio || !current() || discardResponse) return
+    const active = responseOpen || playing
+    // OpenAI reports speech start as an interruption hint, including when idle.
+    if (!active && (manual || options.engine === "openai-realtime")) return
+    discardResponse = responseOpen || (!manual && options.engine === "gemini-live")
+    responseOpen = responseSpoken = false
+    awaitingPlayback.clear()
+    // Resolve the flush at the hardware playback position, not bytes queued.
+    void audio.interrupt().then(truncations => {
+      if (options.engine === "openai-realtime") for (const item of truncations) {
+        if (item.contentIndex === 0) send(item)
+      }
+    }, () => stop("device"))
+    if (manual && responseId) send({ type: "interrupt", responseId })
+    responseId = undefined
+    if (signal.aborted) return
+    finishTurn(true)
+    marker("interrupted")
+    updateActivity()
+  }
+
+  function completeTurn() {
+    audio?.turnComplete()
+    finishTurn(discardResponse)
+    responseId = undefined
+    responseOpen = responseSpoken = discardResponse = false
+    updateActivity()
+    publish()
+  }
+
+  function playbackChanged(value: boolean) {
+    playing = value
+    updateActivity()
+    if (value || !awaitingPlayback.size || !current()) return
+    for (const id of awaitingPlayback) rows.set(id, { ...rows.get(id)!, announce: true })
+    awaitingPlayback.clear()
     publish()
   }
 
   async function execute(id: string, tool: LiveVoiceTool) {
     const admitted = () => current() && socket?.readyState === OPEN && calls.get(id) === "started"
     if (!admitted()) return
+    pendingTools++
+    updateActivity()
     let output: string
-    try { output = JSON.stringify(await options.execute(tool, admitted)) } catch {
+    try {
+      const result = await options.execute(tool, admitted)
+      output = JSON.stringify(result)
+      const delivery = liveVoiceObject(result)?.delivery
+      // A native send may settle after the provider cancels its tool call.
+      if (tool.name === "send_to_agent" && (delivery === "queued" || delivery === "submitted") && options.current()) {
+        marker("sent", tool.arguments.text.trim())
+      }
+    } catch {
       // A failed response may follow an accepted native send. Never retry it.
       output = JSON.stringify({ error: "Result unconfirmed. Do not repeat this request." })
     }
-    if (admitted()) send({ type: "tool-result", id, output })
+    if (admitted()) {
+      calls.set(id, "finished")
+      pendingTools--
+      updateActivity()
+      send({ type: "tool-result", id, output })
+    }
   }
 
   function message(event: MessageEvent) {
@@ -164,11 +257,23 @@ export function openLiveVoiceSession(options: {
       case "activity":
         activity()
         break
+      case "thinking":
+        if (options.engine === "openai-realtime" ? !liveVoiceIdentifier(value.responseId) : value.responseId !== undefined) {
+          return stop("invalid-message")
+        }
+        if (discardResponse) break
+        responseId = value.responseId as string | undefined
+        responseOpen = true
+        updateActivity()
+        break
       case "audio":
         if (typeof value.pcm !== "string" || (options.engine === "openai-realtime" &&
           (!liveVoiceIdentifier(value.itemId) || !Number.isInteger(value.contentIndex) ||
             Number(value.contentIndex) < 0 || Number(value.contentIndex) > 32))) return stop("invalid-message")
-        audio.play(value as AudioEvent)
+        if (!discardResponse) {
+          responseOpen = responseSpoken = true
+          audio.play(value as AudioEvent)
+        }
         break
       case "transcript":
         if ((value.role !== "user" && value.role !== "assistant") || typeof value.text !== "string" ||
@@ -177,20 +282,17 @@ export function openLiveVoiceSession(options: {
         transcript(value as TranscriptEvent)
         break
       case "turn-complete":
-        audio.turnComplete()
-        finishTurn(false)
+        completeTurn()
         break
       case "interrupted":
-        // The flush settles asynchronously with samples actually rendered, not enqueued.
-        void audio.interrupt().then(truncations => {
-          if (options.engine === "openai-realtime") for (const item of truncations) send(item)
-        }, () => stop("device"))
-        finishTurn(true)
+        interrupt(false)
         break
       case "tool-cancel":
         if (!liveVoiceIdentifier(value.id)) return stop("invalid-message")
         if (!calls.has(value.id) && calls.size >= LIVE_VOICE_MAX_CALLS) return stop("limit")
+        if (calls.get(value.id) === "started") pendingTools--
         calls.set(value.id, "cancelled")
+        updateActivity()
         break
       case "tool-call": {
         const tool = readLiveVoiceTool(value.name, value.arguments)
@@ -220,6 +322,7 @@ export function openLiveVoiceSession(options: {
       const media = await options.startAudio({
         signal, inputRate, outputRate,
         onInput: input => { if (ready) send(input) },
+        onPlaybackChange: playbackChanged,
         onError: error => stop(audioFailure(error)),
       })
       if (!current()) { void media.close().catch(() => {}); return }
@@ -239,5 +342,14 @@ export function openLiveVoiceSession(options: {
   }
 
   void start()
-  return { stop }
+  return {
+    stop,
+    interrupt: () => interrupt(true),
+    setMuted(value: boolean) {
+      if (!ready || !audio || !current()) return false
+      audio.setMuted(value)
+      return true
+    },
+    activityLevel: () => audio?.level(playing || responseSpoken) ?? 0,
+  }
 }

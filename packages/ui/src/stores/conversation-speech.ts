@@ -95,19 +95,19 @@ export function isConversationModeEnabled(instanceId: string): boolean {
   return conversationModeInstances().get(instanceId) === true
 }
 
-export function canUseConversationMode(): boolean {
-  if (!voiceConversationEngineLoaded() || voiceConversationEngine() !== "classic") return false
+export function classicConversationUnavailable(): "loading" | "setupPlayback" | "unsupportedFormat" | undefined {
+  if (!voiceConversationEngineLoaded() || voiceConversationEngine() !== "classic") return "loading"
   const capabilities = speechCapabilities()
   if (!capabilities?.available || !capabilities.ttsConfigured || !capabilities.supportsTts) {
-    return false
+    return "setupPlayback"
   }
 
   const settings = serverSettings().speech
-  return getSpeechPlaybackSupport({
+  if (!getSpeechPlaybackSupport({
     playbackMode: settings.playbackMode,
     ttsFormat: settings.ttsFormat,
     capabilities,
-  }).available
+  }).available) return "unsupportedFormat"
 }
 
 export function setConversationModeEnabled(instanceId: string, enabled: boolean): void {

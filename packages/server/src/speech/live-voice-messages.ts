@@ -49,6 +49,9 @@ export function readClientMessage(value: JsonObject): LiveVoiceClientMessage | u
     case "audio":
       if (keys(value, "type", "pcm") && typeof value.pcm === "string" && pcmBytes(value.pcm)) return { type: "audio", pcm: value.pcm }
       break
+    case "interrupt":
+      if (keys(value, "type", "responseId") && identifier(value.responseId)) return { type: "interrupt", responseId: value.responseId }
+      break
     case "truncate": {
       const { itemId, contentIndex, audioEndMs } = value
       if (keys(value, "type", "itemId", "contentIndex", "audioEndMs") && identifier(itemId)

@@ -5,13 +5,14 @@ import { getMicrophone, stopTracks } from "../../lib/microphone"
 import { claimMicrophone, microphoneErrorKey } from "../../lib/microphone-lease"
 import { usesWebKitMicrophone } from "../../lib/native/device-speech"
 import { remoteApiMicrophoneAvailable, startRemoteApiMicrophone, usesNativeRemoteApiMicrophone } from "../../lib/native/remote-api-microphone"
-import { isElectronHost } from "../../lib/runtime-env"
+import { isDesktopHost, isElectronHost } from "../../lib/runtime-env"
 import { createRecordingController, type RecordingControllerCallbacks } from "./recording-controller"
 
 const needsPcm = () => usesWebKitMicrophone() && !supportedRecordingType()
 
 export function apiCaptureAvailable() {
-  return typeof window !== "undefined" && (usesNativeRemoteApiMicrophone() ? remoteApiMicrophoneAvailable()
+  return typeof window !== "undefined" && (isDesktopHost() || Boolean(navigator.locks)) &&
+    (usesNativeRemoteApiMicrophone() ? remoteApiMicrophoneAvailable()
     : needsPcm() ? hexCaptureAvailable()
     : typeof window.MediaRecorder !== "undefined" && typeof navigator.mediaDevices?.getUserMedia === "function")
 }

@@ -44,6 +44,7 @@ export function useRemoteDictation(locale: () => string, active: Accessor<boolea
     },
   }
   return {
+    choice,
     async authorizeApi() {
       if (await remote.readFresh().catch(() => undefined) === "api") return true
       remote.refresh()

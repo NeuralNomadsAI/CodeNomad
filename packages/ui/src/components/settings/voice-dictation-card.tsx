@@ -1,0 +1,101 @@
+import { Show, createMemo } from "solid-js"
+import { Loader2, Mic, Square } from "lucide-solid"
+import { useTranscriptionTest } from "../../lib/hooks/use-transcription-test"
+import { useI18n } from "../../lib/i18n"
+import { getBehaviorSettings } from "../../lib/settings/behavior-registry"
+import { useConfig } from "../../stores/preferences"
+import { speechCapabilities, speechCapabilitiesError } from "../../stores/speech"
+import { useRemoteDictation } from "../prompt-input/useRemoteDictation"
+import { BehaviorSettingRows } from "./behavior-setting-rows"
+import { DeviceSpeechSettings, deviceHexLabel, deviceSystemLabel } from "./device-speech-settings"
+import type { useDeviceSpeechSettings } from "./use-device-speech-settings"
+import { VoiceSettingsCard } from "./voice-settings-fields"
+
+export function VoiceDictationCard(props: {
+  device?: ReturnType<typeof useDeviceSpeechSettings>
+  settled: boolean
+  onCredentials: () => void
+}) {
+  const { t, locale } = useI18n()
+  const config = useConfig()
+  const voiceSetting = createMemo(() =>
+    getBehaviorSettings(config).filter(setting => setting.id === "behavior.promptVoiceInput"),
+  )
+  const device = props.device
+  const remote = useRemoteDictation(locale, () => !device)
+  const remoteChoice = () => remote?.choice()
+  const visibleEngine = () => {
+    if (!remote) return t("settings.speech.device.api")
+    const choice = remoteChoice()
+    return choice ? t(`settings.speech.device.${choice}`) : t("settings.voice.unavailable")
+  }
+  const test = useTranscriptionTest()
+  const status = () => {
+    if (!config.preferences().showPromptVoiceInput) return t("settings.voice.dictation.off")
+    if (device?.readFailed()) return t("settings.voice.unavailable")
+    if (!props.settled) return t("settings.speech.status.loading")
+    const snapshot = device?.snapshot()
+    if (snapshot?.engine === "system") {
+      const key = deviceSystemLabel(snapshot, locale())
+      return t(key === "settings.speech.device.system" ? "settings.voice.ready" : key)
+    }
+    if (snapshot?.engine === "hex") {
+      const key = deviceHexLabel(snapshot)
+      return t(key === "settings.speech.device.hex" ? "settings.voice.ready" : key)
+    }
+    if (remote && remoteChoice() !== "api") return t(remoteChoice() ? "settings.voice.ready" : "settings.voice.unavailable")
+    if (speechCapabilitiesError()) return t("settings.speech.status.error")
+    const capabilities = speechCapabilities()
+    if (!capabilities) return t("settings.speech.status.loading")
+    if (!capabilities.available || !capabilities.supportsStt) return t("settings.voice.unavailable")
+    if (!capabilities.sttConfigured) return t("settings.voice.notConfigured")
+    return t(test.canUseTranscription() ? "settings.voice.ready" : "settings.voice.unavailable")
+  }
+
+  return (
+    <VoiceSettingsCard id="voice-dictation" title={t("settings.voice.dictation.title")} status={status()} settled={props.settled}>
+      <BehaviorSettingRows settings={voiceSetting} preferences={config.preferences} />
+      <Show when={device} fallback={
+        <div class="settings-toggle-row settings-toggle-row-compact">
+          <span class="settings-toggle-title">{t("settings.speech.device.engine")}</span>
+          <span class="settings-inline-note">{visibleEngine()}</span>
+        </div>
+      }>
+        {settings => <DeviceSpeechSettings speech={settings()} />}
+      </Show>
+      <div class="settings-toolbar-inline flex-wrap">
+        <button type="button" class="window-text-button" onClick={props.onCredentials}>
+          {t("settings.voice.credentials.title")}
+        </button>
+        <Show when={test.state() === "limitReached"} fallback={
+          <button
+            type="button"
+            class="selector-button selector-button-secondary w-auto inline-flex items-center gap-2"
+            onClick={() => void test.toggle()}
+            disabled={test.state() === "starting" || test.isTranscribing() || (test.state() === "idle" && !test.canUseTranscription())}
+          >
+            <Show when={test.state() === "starting" || test.isTranscribing()} fallback={
+              <Show when={test.isRecording()} fallback={<Mic class="size-3.5" aria-hidden="true" />}>
+                <Square class="size-3.5" aria-hidden="true" />
+              </Show>
+            }>
+              <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
+            </Show>
+            {test.buttonTitle()}
+          </button>
+        }>
+          <span class="settings-inline-note" role="status">{t("promptInput.voiceInput.limitReached")}</span>
+          <button type="button" class="selector-button selector-button-secondary w-auto" onClick={test.confirmTranscription}>
+            {t("promptInput.voiceInput.transcribe")}
+          </button>
+          <button type="button" class="selector-button selector-button-secondary w-auto" onClick={test.cancelRecording}>
+            {t("alertDialog.actions.cancel")}
+          </button>
+        </Show>
+        <Show when={test.result()}>
+          {text => <span class="settings-inline-note break-words min-w-0" role="status">{text()}</span>}
+        </Show>
+      </div>
+    </VoiceSettingsCard>
+  )
+}

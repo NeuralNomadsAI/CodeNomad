@@ -10,7 +10,7 @@ let browser: Browser, url: string
 before(async () => {
   const fixture = await borrowFixture({
     name: "live-voice-session",
-    routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/live-voice-session.tsx"></script></body></html>' }],
+    routes: [{ path: "/fixture", html: '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/live-voice-session.tsx"></script></body></html>' }],
   })
   url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
@@ -18,14 +18,24 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-async function fixture(engine: "gemini" | "openai" = "gemini") {
-  const page = await browser.newPage()
+async function fixture(engine: "gemini" | "openai" = "gemini", interactive = false, hebrew = false) {
+  const context = await browser.newContext(interactive ? { viewport: { width: hebrew ? 320 : 400, height: 600 } } : {})
+  const page = await context.newPage()
   page.setDefaultTimeout(8_000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await page.route("**/api/**", route => route.fulfill(route.request().url().endsWith("/api/events")
-    ? { contentType: "text/event-stream", body: ": ready\n\n" }
-    : { contentType: "application/json", body: "{}" }))
+  const config = {
+    speech: { hasApiKey: true, ttsVoice: "sample", ttsFormat: "mp3", playbackMode: "buffered" },
+    voiceConversation: {
+      geminiLive: { hasApiKey: true, model: "test-gemini", voice: "Puck" },
+      openaiRealtime: { hasApiKey: true, model: "test-openai", voice: "marin" },
+    },
+  }
+  await page.context().route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": ready\n\n" })
+    return route.fulfill({ json: interactive && path.endsWith("/config/server") ? config : {} })
+  })
   const sent: any[] = []
   const events = new EventEmitter()
   const waitForSent = (predicate: (item: any) => boolean) => {
@@ -56,7 +66,11 @@ async function fixture(engine: "gemini" | "openai" = "gemini") {
     ws.onClose(() => close())
     opened(ws)
   })
-  await page.goto(`${url}${engine === "openai" ? "?openai" : ""}`)
+  const destination = new URL(url)
+  if (engine === "openai") destination.searchParams.set("openai", "")
+  if (interactive) destination.searchParams.set("ui", "")
+  if (hebrew) destination.searchParams.set("he", "")
+  await page.goto(destination.href, { waitUntil: "domcontentloaded", timeout: 30_000 })
   const snapshot = () => page.evaluate(() => {
     const f = (window as any).fixture
     return { info: f.info, state: f.state(), transcript: f.transcript(), draft: f.draft(), userTexts: f.userTexts() }
@@ -78,11 +92,11 @@ async function fixture(engine: "gemini" | "openai" = "gemini") {
     await page.waitForFunction(() => (window as any).fixture.state().phase === "live")
     return send
   }
-  return { page, start, sent, closed, errors, snapshot, waitForSent }
+  return { page, context, start, sent, closed, errors, snapshot, waitForSent, socket, opens: () => opens }
 }
 
 test("Gemini consent gates capture and connection; the real send and dock keep the draft", async () => {
-  const { page, start, sent, closed, errors, snapshot, waitForSent } = await fixture()
+  const { page, context, start, sent, closed, errors, snapshot, waitForSent } = await fixture()
   try {
     const send = await start()
     send({ type: "transcript", role: "user", text: "Hello ", final: false })
@@ -99,7 +113,7 @@ test("Gemini consent gates capture and connection; the real send and dock keep t
     assert.equal((await snapshot()).draft, "Unsent draft")
     assert.deepEqual((await snapshot()).userTexts.map((part: any) => part.text), ["Ask the agent"])
     assert.deepEqual((await snapshot()).transcript.map((row: any) => [row.role, row.text, row.final]), [
-      ["user", "Hello agent", true], ["assistant", "Hi", true],
+      ["user", "Hello agent", true], ["assistant", "Hi", true], ["sent", "Ask the agent", true],
     ])
     assert.equal((await waitForSent(item => item.id === "reply")).output, '{"text":"Visible answer"}')
     await waitForSent(item => item.id === "one")
@@ -113,11 +127,11 @@ test("Gemini consent gates capture and connection; the real send and dock keep t
     await page.waitForFunction(() => (window as any).fixture.info.released === 1)
     assert.deepEqual((await snapshot()).transcript, [])
     assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally { await context.close() }
 })
 
 test("Gemini cancellation and target changes fence calls through native admission", async () => {
-  const { page, start, sent, closed, snapshot } = await fixture()
+  const { page, context, start, sent, closed, snapshot } = await fixture()
   try {
     const send = await start()
     await page.evaluate(() => (window as any).fixture.holdAdmission())
@@ -142,11 +156,11 @@ test("Gemini cancellation and target changes fence calls through native admissio
     assert.deepEqual((await snapshot()).info.prompts, [])
     assert.deepEqual(sent.filter(item => item.type === "tool-result"), [])
     assert.equal((await snapshot()).state.phase, "closed")
-  } finally { await page.close() }
+  } finally { await context.close() }
 })
 
 test("OpenAI final text replaces deltas; unknown tools fail closed", async () => {
-  const { page, start, closed, snapshot, waitForSent } = await fixture("openai")
+  const { page, context, start, closed, snapshot, waitForSent } = await fixture("openai")
   try {
     const send = await start()
     send({ type: "transcript", role: "user", text: "Hel", final: false, itemId: "user" })
@@ -167,11 +181,11 @@ test("OpenAI final text replaces deltas; unknown tools fail closed", async () =>
     assert.equal(result.state.reason, "invalid-message")
     assert.equal(result.transcript[0].text, "Hello")
     assert.deepEqual(result.info.prompts.map((item: any) => item.text), ["Queue this prompt"])
-  } finally { await page.close() }
+  } finally { await context.close() }
 })
 
 test("the client stops a silent active conversation even when its socket stays open", async () => {
-  const { page, start, closed, snapshot } = await fixture()
+  const { page, context, start, closed, snapshot } = await fixture()
   try {
     await page.clock.install()
     const send = await start()
@@ -181,5 +195,161 @@ test("the client stops a silent active conversation even when its socket stays o
     await closed
     assert.equal((await snapshot()).state.reason, "idle")
     assert.equal((await snapshot()).info.released, 1)
-  } finally { await page.close() }
+  } finally { await context.close() }
+})
+
+test("the composer opens consent, retains stopped turns, and keeps native input focus", async () => {
+  const { page, context, socket, closed, opens, errors, waitForSent } = await fixture("gemini", true)
+  const consent = page.locator(".live-voice-consent")
+  const live = page.locator("#live-voice-conversation")
+  const menu = () => page.getByRole("button", { name: "More actions", exact: true })
+  const counts = () => page.evaluate(() => {
+    const { capture, released } = (window as any).fixture.info
+    return { capture, released }
+  })
+  try {
+    const open = async () => {
+      await menu().focus()
+      await page.keyboard.press("Enter")
+      await page.locator('[data-action-key="voice"]').waitFor()
+      await page.keyboard.press("Home")
+      await page.waitForFunction(() => document.activeElement?.getAttribute("data-action-key") === "voice")
+      await page.keyboard.press("ArrowDown")
+      await page.waitForFunction(() => document.activeElement?.getAttribute("data-action-key") === "conversation")
+      await page.keyboard.press("Enter")
+      await consent.waitFor()
+      await page.waitForFunction(() => document.activeElement?.textContent?.trim() === "Cancel")
+    }
+    await open()
+    assert.match(await consent.innerText(), /Google/i)
+    assert.match(await consent.innerText(), /billed/i)
+    await page.keyboard.press("Escape")
+    await consent.waitFor({ state: "detached" })
+    assert.equal(opens(), 0)
+    assert.deepEqual(await counts(), { capture: 0, released: 0 })
+    await open()
+    await consent.getByRole("button", { name: "Agree and start" }).click()
+    const ws = await socket
+    await waitForSent(item => item.type === "start")
+    const send = (message: object) => ws.send(JSON.stringify(message))
+    send({ type: "ready", inputRate: 16_000, outputRate: 24_000 })
+    await live.getByText("Listening", { exact: true }).waitFor()
+    assert.equal(await live.locator(".live-voice-target bdi").textContent(), "Feature ABC — משימה 42")
+    await live.getByRole("button", { name: "Mute microphone" }).click()
+    await live.getByText("Microphone muted", { exact: true }).waitFor()
+    assert.equal((await counts()).capture, 1)
+    assert.equal(await page.evaluate(() => (window as any).fixture.microphoneEnabled()), false)
+    await live.getByRole("button", { name: "Mute microphone" }).click()
+    await live.getByText("Listening", { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.microphoneEnabled()), true)
+
+    await menu().press("Enter")
+    await page.getByRole("menuitem", { name: "Dictate — Live conversation is using the microphone." }).waitFor()
+    await page.keyboard.press("Escape")
+
+    const second = await context.newPage()
+    try {
+      const unavailable = second.getByRole("menuitem", { name: "Dictate — Live conversation is using the microphone." })
+      await second.goto(page.url(), { waitUntil: "domcontentloaded", timeout: 30_000 })
+      await second.getByRole("button", { name: "More actions", exact: true }).click()
+      await unavailable.click()
+      await second.waitForFunction(() => document.activeElement?.id === "voice-dictation")
+      await second.getByRole("button", { name: "Test input", exact: true }).click()
+      await second.getByRole("dialog").getByText("Live conversation is using the microphone.", { exact: true }).waitFor()
+      assert.equal(await second.evaluate(() => (window as any).fixture.info.capture), 0)
+    } finally { await second.close() }
+
+    send({ type: "tool-call", id: "send", name: "send_to_agent", arguments: { text: "Ask the agent" } })
+    await waitForSent(item => item.id === "send")
+    await live.getByText("Sent to session", { exact: true }).waitFor()
+    await page.getByRole("button", { name: "Next request" }).press("Enter")
+    const answer = page.locator(".interruption-dock").getByRole("textbox")
+    await answer.focus()
+    send({ type: "transcript", role: "assistant", text: "Continued answer", final: true })
+    send({ type: "interrupted" })
+    await live.getByText("Response interrupted", { exact: true }).waitFor()
+    assert.equal(await answer.evaluate(element => document.activeElement === element), true)
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+
+    await live.getByRole("button", { name: "Stop", exact: true }).click()
+    await closed
+    await page.waitForFunction(() => (window as any).fixture.info.released === 1)
+    await live.getByText("Continued answer", { exact: true }).waitFor()
+    await menu().press("Enter")
+    await page.getByRole("menuitem", { name: "Conversation mode", exact: true }).press("Enter")
+    await page.waitForFunction(() => document.activeElement?.matches("#live-voice-conversation .window-close-button"))
+    assert.equal(opens(), 1)
+    await live.getByRole("button", { name: "Close", exact: true }).click()
+    await live.waitFor({ state: "detached" })
+    assert.equal(opens(), 1)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("the live window and its controls fit 320px with a Hebrew interface", async () => {
+  const { page, context, socket, closed, errors, waitForSent } = await fixture("openai", true, true)
+  const consent = page.locator(".live-voice-consent")
+  const live = page.locator("#live-voice-conversation")
+  try {
+    await page.locator(".prompt-actions-menu-trigger").click()
+    await page.locator('[data-action-key="conversation"]').click()
+    await consent.waitFor()
+    assert.match(await consent.innerText(), /OpenAI/)
+    assert.equal(await page.locator("html").getAttribute("dir"), "rtl")
+    assert.ok(await consent.evaluate(el => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().width <= innerWidth))
+    await consent.locator(".button-primary").click()
+    const ws = await socket
+    await waitForSent(item => item.type === "start")
+    ws.send(JSON.stringify({ type: "ready", inputRate: 24_000, outputRate: 24_000 }))
+    await live.locator(".live-voice-target bdi").waitFor()
+    assert.ok(await live.evaluate(el => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().width <= innerWidth))
+    const actions = live.locator(".live-voice-actions button")
+    assert.equal(await actions.count(), 3)
+    for (const button of await actions.all()) assert.ok(await button.evaluate(el => {
+      const box = el.getBoundingClientRect()
+      return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight
+    }))
+    ws.send(JSON.stringify({ type: "thinking", responseId: "response-test" }))
+    await actions.nth(1).click()
+    assert.deepEqual(await waitForSent(item => item.type === "interrupt"), { type: "interrupt", responseId: "response-test" })
+    await live.locator('[data-role="interrupted"]').waitFor()
+    await page.evaluate(() => (window as any).fixture.switchSession())
+    await closed
+    await live.waitFor({ state: "detached" })
+    await page.waitForFunction(() => (window as any).fixture.info.released === 1)
+    await page.evaluate(() => (window as any).fixture.openVoiceSettings())
+    await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
+    const settings = page.locator(".settings-section-stack")
+    for (const card of await settings.locator(":scope > section").all()) {
+      assert.ok(await card.evaluate(el => el.scrollWidth <= el.clientWidth))
+    }
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("Voice settings keep one shared credentials editor and switching engines does not start capture", async () => {
+  const { page, context, opens, errors } = await fixture("gemini", true)
+  try {
+    await page.waitForFunction(() => Boolean((window as any).fixture?.openVoiceSettings))
+    await page.evaluate(() => (window as any).fixture.openVoiceSettings())
+    const dictation = page.getByRole("region", { name: "Dictation", exact: true })
+    const playback = page.getByRole("region", { name: "Playback", exact: true })
+    const conversation = page.getByRole("region", { name: "Conversation", exact: true })
+    await dictation.getByRole("button", { name: "API credentials", exact: true }).click()
+    await page.waitForFunction(() => document.activeElement?.id === "voice-playback")
+    assert.deepEqual(await page.locator(".settings-section-stack > section h3").allTextContents(), ["Dictation", "Playback", "Conversation"])
+    await playback.getByRole("button", { name: "Test playback", exact: true }).waitFor()
+    await dictation.getByRole("button", { name: "Test input", exact: true }).waitFor()
+    assert.equal(await page.locator("details").filter({ has: page.getByText("API credentials", { exact: true }) }).count(), 1)
+    const engine = conversation.getByRole("combobox", { name: "Conversation engine" })
+    await engine.selectOption("openai-realtime")
+    const key = conversation.getByPlaceholder("Key saved", { exact: true })
+    assert.equal(await key.inputValue(), "")
+    assert.equal(await conversation.getByRole("textbox", { name: "Model", exact: true }).inputValue(), "test-openai")
+    await engine.selectOption("classic")
+    assert.equal(await key.count(), 0)
+    assert.equal(opens(), 0)
+    assert.equal(await page.evaluate(() => (window as any).fixture.info.capture), 0)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
 })

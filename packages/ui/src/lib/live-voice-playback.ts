@@ -14,6 +14,8 @@ export class LiveVoicePlayback {
   private rendered = 0
   private openItem?: Item
 
+  get pending() { return this.received > this.rendered }
+
   append(frames: number, message: AudioMessage) {
     if (this.received - this.rendered + frames > LIVE_VOICE_PLAYBACK_CAPACITY) throw new Error("Playback overrun")
     let item: Item | undefined

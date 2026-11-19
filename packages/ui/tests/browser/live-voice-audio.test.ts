@@ -64,6 +64,33 @@ test("synthetic live audio holds the mic, captures PCM, and truncates only rende
   } finally { await page.close() }
 })
 
+test("muting withholds captured frames while playback runs and resumes the same capture", async () => {
+  const page = await browser.newPage()
+  try {
+    await start(page)
+    await page.waitForFunction(() => (window as any).fixture.info.input.length >= 2 && (window as any).fixture.level(false) > 0)
+    const count = await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.mute(true)
+      fixture.play()
+      return fixture.info.input.length
+    })
+    await page.waitForFunction(() => {
+      const { info, level } = (window as any).fixture
+      return info.playing && level(true) > 0 && info.rendered > 0
+    })
+    assert.ok(await page.evaluate(() => (window as any).fixture.busy()))
+    await page.waitForFunction(() => !(window as any).fixture.info.playing)
+    assert.deepEqual(await page.evaluate(() => {
+      const { info, level } = (window as any).fixture
+      return { frames: info.input.length, requests: info.requests, micLevel: level(false) }
+    }), { frames: count, requests: 1, micLevel: 0 })
+    await page.evaluate(() => (window as any).fixture.mute(false))
+    await page.waitForFunction(count => (window as any).fixture.info.input.length > count + 2 && (window as any).fixture.level(false) > 0, count)
+    assert.equal(await page.evaluate(() => (window as any).fixture.info.requests), 1)
+  } finally { await page.close() }
+})
+
 test("stopping while permission is pending keeps the lease until the late stream is stopped", async () => {
   const page = await browser.newPage()
   try {

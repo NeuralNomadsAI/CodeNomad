@@ -7,7 +7,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>
 before(async () => { fixture = await startProductFixture("composer-dictation") })
 after(async () => { await fixture?.close() })
 
-async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false) {
+async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured = false) {
   const context = await fixture.browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
@@ -119,7 +119,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
       await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(native)}); }`)
     }
     await context.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/speech/capabilities")
-      ? { available: true, sttConfigured: !ttsOnly, supportsStt: true, ttsConfigured: ttsOnly, supportsTts: true }
+      ? { available: true, sttConfigured: !ttsOnly && !unconfigured, supportsStt: true, ttsConfigured: ttsOnly, supportsTts: true }
       : ttsOnly && route.request().url().endsWith("/config/server") ? { speech: { playbackMode: "buffered" } } : {} }))
     const target = new URL(fixture.url)
     if (native === "wsl") target.searchParams.set("wsl", "1")
@@ -304,6 +304,7 @@ test("a stored live engine retires Classic without falling back on reload", () =
   await disable.waitFor()
   await page.evaluate(() => (window as any).fixture.setVoiceConversationEngine("gemini-live"))
   await disable.waitFor({ state: "detached" })
+  await page.getByRole("menuitem", { name: "Conversation mode — Set up Gemini Live" }).waitFor()
 
   await page.reload({ waitUntil: "domcontentloaded" })
   await page.waitForFunction(() => (window as any).fixture?.voiceConversationEngineLoaded())
@@ -312,6 +313,29 @@ test("a stored live engine retires Classic without falling back on reload", () =
   await page.evaluate(() => (window as any).fixture.setVoiceConversationEngine("classic"))
   await enable.waitFor()
 }, false, undefined, false, "en", true))
+
+test("both unavailable voice commands are reachable by keyboard and focus their own settings titles", () => withComposer(async page => {
+  const more = page.getByRole("button", { name: "More actions", exact: true })
+  await more.focus()
+  await more.press("Enter")
+  const dictate = page.getByRole("menuitem", { name: "Dictate — Set up dictation" })
+  await dictate.waitFor()
+  await page.keyboard.press("Home")
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-action-key") === "voice")
+  await dictate.press("Enter")
+  await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
+  await page.evaluate(() => (window as any).fixture.closeSettings())
+  await more.focus()
+  await more.press("Enter")
+  await dictate.waitFor()
+  await page.keyboard.press("Home")
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-action-key") === "voice")
+  await page.keyboard.press("ArrowDown")
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-action-key") === "conversation")
+  await page.getByRole("menuitem", { name: "Conversation mode — Set up playback" }).press("Enter")
+  await page.waitForFunction(() => document.activeElement?.id === "voice-playback")
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+}, false, undefined, false, "en", false, true))
 
 test("a remote-served draft receives text only, using its original range", () => withComposer(async page => {
   await field(page).fill("before replace after")
@@ -608,12 +632,13 @@ test("keyboard activation shows the approved plan, cancels and resumes, and neve
   const menu = page.getByRole("button", { name: "More actions", exact: true })
   await menu.focus()
   await menu.press("Enter")
-  const setup = page.getByRole("menuitem", { name: "Dictate: open Voice settings" })
+  const setup = page.getByRole("menuitem", { name: "Dictate — System recognition unavailable for this language" })
   await setup.focus()
   await setup.press("Enter")
   const activate = page.getByRole("button", { name: "Activate Hex" })
   const engine = page.getByRole("combobox", { name: "Dictation engine on this device" })
   await activate.waitFor()
+  await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
   assert.equal(await engine.inputValue(), "system")
   assert.equal(await engine.locator("option[value=system]").innerText(), "System recognition unavailable for this language")
   assert.equal(await engine.locator("option[value=hex]").evaluate((node: HTMLOptionElement) => node.disabled), true)

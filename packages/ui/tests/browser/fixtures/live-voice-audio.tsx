@@ -2,10 +2,12 @@ import { liveVoiceAudioUnavailable, startLiveVoiceAudio } from "../../../src/lib
 import { claimMicrophone } from "../../../src/lib/microphone-lease"
 
 const abort = new AbortController()
-const info = { input: [] as string[], rendered: 0, requested: false, stopped: false, started: false, rejected: false, error: "" }
+const info = { input: [] as string[], rendered: 0, playing: false, requested: false, requests: 0,
+  stopped: false, started: false, rejected: false, error: "" }
 let lateStream: (() => void) | undefined
 const getUserMedia = async () => {
   info.requested = true
+  info.requests++
   const context = new AudioContext({ sampleRate: 44_100 })
   const oscillator = context.createOscillator()
   const sink = context.createMediaStreamDestination()
@@ -49,6 +51,7 @@ button.onclick = () => {
   void startLiveVoiceAudio({
     signal: abort.signal, inputRate: 16_000, outputRate: 24_000,
     onInput: message => info.input.push(message.pcm), onError: error => { info.error = String(error) },
+    onPlaybackChange: value => { info.playing = value },
   }).then(result => {
     audio = result
     info.started = true
@@ -60,6 +63,8 @@ Object.assign(window, {
     stop: () => abort.abort(),
     allowStream: () => lateStream?.(),
     unavailable: liveVoiceAudioUnavailable,
+    mute: (value: boolean) => audio.setMuted(value),
+    level: (playback: boolean) => audio.level(playback),
     async busy() {
       try {
         const lease = await claimMicrophone("test", new AbortController().signal)

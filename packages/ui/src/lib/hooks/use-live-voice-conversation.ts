@@ -1,4 +1,4 @@
-import { createRenderEffect, createSignal, onCleanup } from "solid-js"
+import { batch, createRenderEffect, createSignal, onCleanup } from "solid-js"
 import { liveVoiceTarget, type LiveVoiceEngine } from "../../../../server/src/speech/live-voice-contract"
 import { liveVoiceAgent, liveVoiceContext, liveVoiceTargetSession } from "../../stores/live-voice-agent"
 import type { FollowUpBehavior } from "../../stores/preferences"
@@ -7,7 +7,7 @@ import { voiceConversationEngine, voiceConversationEngineLoaded } from "../../st
 import { CODENOMAD_API_BASE } from "../api-base"
 import { liveVoiceAudioUnavailable, startLiveVoiceAudio } from "../live-voice-audio"
 import { hasLiveVoiceConsent, rememberLiveVoiceConsent } from "../live-voice-consent"
-import { openLiveVoiceSession, type LiveVoiceStopReason, type LiveVoiceTranscriptRow } from "../live-voice-session"
+import { openLiveVoiceSession, type LiveVoiceActivity, type LiveVoiceStopReason, type LiveVoiceTranscriptRow } from "../live-voice-session"
 
 export type LiveVoiceUnavailable = "loading" | "noSession" | "missingKey" | "secureContext" | "remoteWebKit" | "device"
 export type LiveVoiceState =
@@ -25,12 +25,20 @@ export function useLiveVoiceConversation(options: {
 }) {
   const [state, setState] = createSignal<LiveVoiceState>({ phase: "closed" })
   const [transcript, setTranscript] = createSignal<readonly LiveVoiceTranscriptRow[]>([])
+  const [activity, setActivity] = createSignal<LiveVoiceActivity>("listening")
+  const [canInterrupt, setCanInterrupt] = createSignal(false)
+  const [muted, setMuted] = createSignal(false)
   const selectedEngine = (): LiveVoiceEngine | undefined => {
     const engine = voiceConversationEngine()
     return engine === "classic" ? undefined : engine
   }
   const target = () => options.active() ? liveVoiceTargetSession(options.instanceId(), options.sessionId()) : undefined
   const server = () => new URL(CODENOMAD_API_BASE ?? window.location.origin).origin
+  const needsConsent = () => {
+    const engine = selectedEngine()
+    return !!engine && !hasLiveVoiceConsent(server(), engine)
+  }
+  const engineCurrent = (engine: LiveVoiceEngine) => !voiceConversationEngineLoaded() || selectedEngine() === engine
   type Target = NonNullable<ReturnType<typeof target>>
   let owner: { engine: LiveVoiceEngine; key: string; client: Target["instance"]["client"]; server: string } | undefined
   let session: ReturnType<typeof openLiveVoiceSession> | undefined
@@ -42,18 +50,28 @@ export function useLiveVoiceConversation(options: {
     if (!voiceConversationEngineLoaded()) return "loading"
     const engine = selectedEngine()
     if (!engine) return
+    const audioUnavailable = liveVoiceAudioUnavailable()
+    if (audioUnavailable) return audioUnavailable
     const provider = engine === "gemini-live" ? "geminiLive" : "openaiRealtime"
     if (!speechCapabilities()?.voiceConversation?.[provider]?.configured) return "missingKey"
     if (!target()) return "noSession"
-    return liveVoiceAudioUnavailable()
+  }
+
+  function resetActivity() {
+    setActivity("listening")
+    setCanInterrupt(false)
+    setMuted(false)
   }
 
   function dismiss() {
     owner = undefined
     session?.stop()
     session = undefined
-    setState({ phase: "closed" })
-    setTranscript([])
+    batch(() => {
+      setState({ phase: "closed" })
+      setTranscript([])
+      resetActivity()
+    })
   }
 
   function begin(consent: boolean) {
@@ -74,7 +92,7 @@ export function useLiveVoiceConversation(options: {
       }
     }
     const audience = owner
-    const current = () => owner === audience && sameTarget(target()) && selectedEngine() === engine && server() === origin
+    const current = () => owner === audience && sameTarget(target()) && engineCurrent(engine) && server() === origin
     setState({ phase: "starting", engine })
     session = openLiveVoiceSession({
       engine, context: liveVoiceContext(bound), current,
@@ -87,20 +105,28 @@ export function useLiveVoiceConversation(options: {
       execute: liveVoiceAgent(bound, options),
       onReady: () => setState({ phase: "live", engine }),
       onStop: reason => {
-        session = undefined
         if (owner !== audience) return
+        session = undefined
         if (reason === "targetChanged") dismiss()
-        else setState({ phase: "ended", engine, reason })
+        else batch(() => {
+          setState({ phase: "ended", engine, reason })
+          resetActivity()
+        })
       },
       onTranscript: setTranscript,
+      onActivity: (value, interruptible) => batch(() => {
+        setActivity(value)
+        setCanInterrupt(interruptible)
+      }),
     })
     return true
   }
 
   createRenderEffect(() => {
     const current = target()
-    const engine = selectedEngine()
-    if (owner && (!sameTarget(current) || owner.engine !== engine || owner.server !== server())) dismiss()
+    const loaded = voiceConversationEngineLoaded()
+    const engine = loaded ? selectedEngine() : undefined
+    if (owner && (!sameTarget(current) || (loaded && owner.engine !== engine) || owner.server !== server())) dismiss()
   })
   // In particular, do not retain a consent prompt or transcript across a bfcache restore.
   if (typeof window !== "undefined") {
@@ -110,9 +136,15 @@ export function useLiveVoiceConversation(options: {
   onCleanup(dismiss)
 
   return {
-    state, transcript, unavailable, dismiss,
+    state, transcript, unavailable, needsConsent, dismiss, activity, canInterrupt, muted,
     start: () => begin(false),
     acceptConsent: () => begin(true),
     stop: () => session?.stop(),
+    interrupt: () => session?.interrupt(),
+    activityLevel: () => session?.activityLevel() ?? 0,
+    toggleMute() {
+      const next = !muted()
+      if (session?.setMuted(next)) setMuted(next)
+    },
   }
 }

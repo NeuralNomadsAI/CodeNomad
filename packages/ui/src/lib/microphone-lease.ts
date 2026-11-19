@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js"
 import { isMicrophonePurpose, type MicrophonePurpose } from "../../../desktop-speech/contract"
 import { generateUUID } from "./client-identity"
 import { requestDeviceSpeech } from "./native/device-speech"
@@ -21,17 +22,19 @@ type Release = () => void | Promise<void>
 type Admit = (id: string, purpose: MicrophonePurpose) => Promise<Release>
 
 // Hold the local admission until both the capture and its external lease have closed.
-export function createMicrophoneLeases(admit: Admit) {
+export function createMicrophoneLeases(admit: Admit, onChange?: (purpose: MicrophonePurpose | undefined) => void) {
   let occupied: MicrophonePurpose | undefined
   return async (purpose: MicrophonePurpose, signal: AbortSignal) => {
     signal.throwIfAborted()
     if (occupied) throw new MicrophoneUnavailable(occupied)
     occupied = purpose
+    onChange?.(purpose)
     const id = generateUUID()
     let close: Release | undefined
     let closing: Promise<void> | undefined
     const release = () => closing ??= Promise.resolve().then(() => close?.()).finally(() => {
       occupied = undefined
+      onChange?.(undefined)
     })
     try {
       close = await admit(id, purpose)
@@ -88,6 +91,42 @@ async function admitDesktop(id: string, purpose: MicrophonePurpose): Promise<Rel
   throw new MicrophoneUnavailable("unavailable")
 }
 
+const [localPurpose, setLocalPurpose] = createSignal<MicrophonePurpose>()
+const [browserPurpose, setBrowserPurpose] = createSignal<MicrophonePurpose | "busy">()
+let readVersion = 0
+
+/** Display hint only: only a claim grants capture. A stale storage value is not
+ * sufficient to report a held lock after another document has been closed. */
+export async function refreshMicrophoneUse() {
+  if (isDesktopHost() || typeof navigator.locks?.query !== "function" || localPurpose()) return
+  const version = ++readVersion
+  try {
+    const { held } = await navigator.locks.query()
+    if (version !== readVersion || localPurpose()) return
+    const purpose = localStorage.getItem(purposeKey)
+    setBrowserPurpose(held?.some(lock => lock.name === lockName) ? isMicrophonePurpose(purpose) ? purpose : "busy" : undefined)
+  } catch {
+    if (version === readVersion) setBrowserPurpose(undefined)
+  }
+}
+
+if (typeof window !== "undefined") window.addEventListener("storage", event => {
+  if (event.key !== purposeKey && event.key !== null) return
+  if (event.newValue) void refreshMicrophoneUse()
+  else {
+    readVersion++
+    setBrowserPurpose(undefined)
+  }
+})
+
+export const microphoneUse = () => localPurpose() ?? browserPurpose()
+
 /** Retain the lease through permission and close audio capture before releasing it. */
-export const claimMicrophone = createMicrophoneLeases((id, purpose) =>
-  isDesktopHost() ? admitDesktop(id, purpose) : admitBrowser(id, purpose))
+export const claimMicrophone = createMicrophoneLeases(
+  (id, purpose) => isDesktopHost() ? admitDesktop(id, purpose) : admitBrowser(id, purpose),
+  purpose => {
+    readVersion++
+    setBrowserPurpose(undefined)
+    setLocalPurpose(purpose)
+  },
+)

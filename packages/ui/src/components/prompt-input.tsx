@@ -17,7 +17,10 @@ import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { createAttachmentPlaceholderRegex, getAttachmentPlaceholder } from "../lib/attachment-placeholders"
 import { preferences } from "../stores/preferences"
-import { openSettings } from "../stores/settings-screen"
+import { openSettingsRow } from "../stores/settings-screen"
+import { microphoneUse, refreshMicrophoneUse } from "../lib/microphone-lease"
+import { useLiveVoiceConversation } from "../lib/hooks/use-live-voice-conversation"
+import LiveVoiceConversationWindow, { LIVE_VOICE_CONVERSATION_WINDOW_ID } from "./live-voice-conversation-window"
 import DictationNotice from "./prompt-input/DictationNotice"
 import type { PromptDelivery, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
@@ -38,7 +41,7 @@ import {
   setPromptInputHeight,
 } from "./prompt-input/height-state"
 import {
-  canUseConversationMode,
+  classicConversationUnavailable,
   clearConversationPlaybackForInstance,
   isConversationModeEnabled,
   toggleConversationMode,
@@ -781,7 +784,17 @@ export default function PromptInput(props: PromptInputProps) {
     enabled: () => props.isActive !== false && preferences().showPromptVoiceInput,
     disabled: () => Boolean(props.disabled) || props.isActive === false || mode() !== "normal" || submissionsInFlight() > 0,
   })
-  const showVoiceInput = () => voiceInput.canUseVoiceInput() || voiceInput.state() !== "idle"
+  const liveVoice = useLiveVoiceConversation({
+    instanceId: () => props.instanceId,
+    sessionId: () => props.sessionId,
+    active: () => props.isActive !== false,
+    followUp: () => preferences().followUpBehavior,
+    canSend: () => !props.disabled && !props.sendBlocked,
+    composerSending: () => submissionsInFlight() > 0,
+  })
+  const liveVoiceTargetLabel = () => sessions().get(props.instanceId)?.get(props.sessionId)?.title || t("voice.command.activeSession")
+  const conversationIsLiveEngine = () => liveVoice.state().phase !== "closed" ||
+    (voiceConversationEngineLoaded() && voiceConversationEngine() !== "classic")
   const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
   createEffect(() => {
     if (props.isActive !== false) void loadVoiceConversationEngine().catch(() => {})
@@ -790,12 +803,23 @@ export default function PromptInput(props: PromptInputProps) {
     if (props.isActive !== false && conversationModeEnabled()
       && voiceConversationEngineLoaded() && voiceConversationEngine() !== "classic") toggleConversationMode(props.instanceId)
   })
-  const showConversationToggle = () => canUseConversationMode() || conversationModeEnabled()
-  const canToggleConversationMode = () => canUseConversationMode()
-  const conversationModeButtonTitle = () =>
-    conversationModeEnabled()
-      ? t("promptInput.conversationMode.disable.title")
-      : t("promptInput.conversationMode.enable.title")
+  const liveVoiceRunning = () => liveVoice.state().phase === "starting" || liveVoice.state().phase === "live"
+  const voiceMenuLabel = (label: string, reason: string | undefined) => reason
+    ? t("voice.command.unavailable", { action: label, reason })
+    : label
+  const conversationReason = () => {
+    if (!conversationIsLiveEngine()) {
+      const reason = classicConversationUnavailable()
+      if (reason) return { text: t(`voice.command.${reason}`), row: reason === "loading" ? "voice-conversation" : "voice-playback" } as const
+      return
+    }
+    const unavailable = liveVoice.unavailable()
+    if (unavailable === "missingKey") return { text: t(voiceConversationEngine() === "gemini-live"
+      ? "voice.command.setupGemini" : "voice.command.setupOpenAI"), row: "voice-conversation" } as const
+    if (unavailable) return { text: t(`voice.command.${unavailable}`), row: "voice-conversation" } as const
+    const purpose = microphoneUse()
+    return purpose ? { text: t(`voice.microphone.${purpose}`), row: "voice-conversation" } as const : undefined
+  }
 
   const instance = () => getActiveInstance()
 
@@ -821,22 +845,17 @@ export default function PromptInput(props: PromptInputProps) {
       // The shortcut's own resolution: an idle session always sends normally.
       onSelect: () => void handleSend(promptDelivery(true)),
     })
-    const needsVoiceSettings = voiceInput.canOpenVoiceSettings()
-    if ((showVoiceInput() || needsVoiceSettings) && voiceInput.state() !== "starting" && voiceInput.state() !== "limitReached") {
-      items.push({
-        key: "voice",
-        label: needsVoiceSettings
-          ? t("promptInput.voiceInput.dictateSetup", { section: t("settings.nav.voice") })
-          : voiceInput.buttonTitle(),
-        icon: voiceInput.isTranscribing()
-          ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
-          : <Mic class="h-4 w-4" aria-hidden="true" />,
-        disabled: !needsVoiceSettings && !voiceInput.isRecording() && !voiceInput.canStartRecording(),
-        selectBeforeClose: !needsVoiceSettings,
-        onSelect: needsVoiceSettings ? () => openSettings("speech")
-          : voiceInput.isRecording() ? voiceInput.stopRecording : beginVoiceInput,
-      })
-    }
+    const dictationReason = !voiceInput.isRecording() ? voiceInput.unavailableKey() : undefined
+    items.push({
+      key: "voice",
+      label: voiceMenuLabel(voiceInput.buttonTitle(), dictationReason && t(dictationReason)),
+      icon: voiceInput.isTranscribing()
+        ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+        : <Mic class="h-4 w-4" aria-hidden="true" />,
+      selectBeforeClose: !dictationReason,
+      onSelect: dictationReason ? () => openSettingsRow("speech", "voice-dictation")
+        : voiceInput.isRecording() ? voiceInput.stopRecording : beginVoiceInput,
+    })
     if (voiceInput.state() !== "idle" && voiceInput.state() !== "limitReached") {
       items.push({
         key: "voice-cancel",
@@ -846,16 +865,24 @@ export default function PromptInput(props: PromptInputProps) {
         onSelect: voiceInput.cancelRecording,
       })
     }
-    if (showConversationToggle()) {
-      items.push({
-        key: "conversation",
-        label: conversationModeButtonTitle(),
-        icon: <Volume2 class="h-4 w-4" aria-hidden="true" />,
-        checked: conversationModeEnabled(),
-        disabled: !conversationModeEnabled() && !canToggleConversationMode(),
-        onSelect: () => toggleConversationMode(props.instanceId),
-      })
-    }
+    const liveEngine = conversationIsLiveEngine()
+    const running = liveEngine ? liveVoiceRunning() : conversationModeEnabled()
+    const retained = liveVoice.state().phase === "ended"
+    const reason = running || retained ? undefined : conversationReason()
+    items.push({
+      key: "conversation",
+      label: reason || (liveEngine && !running)
+        ? voiceMenuLabel(t("voice.command.conversation"), reason?.text)
+        : t(running ? "promptInput.conversationMode.disable.title" : "promptInput.conversationMode.enable.title"),
+      icon: <Volume2 class="h-4 w-4" aria-hidden="true" />,
+      checked: reason || liveEngine ? undefined : running,
+      selectBeforeClose: liveEngine && !reason && !running && !retained && !liveVoice.needsConsent(),
+      onSelect: reason ? () => openSettingsRow("speech", reason.row)
+        : !liveEngine ? () => toggleConversationMode(props.instanceId)
+        : running ? liveVoice.stop
+        : retained ? () => document.getElementById(LIVE_VOICE_CONVERSATION_WINDOW_ID)?.querySelector<HTMLElement>(".window-close-button")?.focus()
+        : () => { liveVoice.start() },
+    })
     items.push({
       key: "attach",
       label: t(isReadingFiles() ? "promptInput.attachFiles.reading" : "promptInput.attachFiles.title"),
@@ -1036,6 +1063,7 @@ export default function PromptInput(props: PromptInputProps) {
                 items={promptActionMenuItems()}
                 label={t("messageItem.actions.more")}
                 triggerClass="prompt-actions-menu-trigger"
+                onOpenChange={open => { if (open) void refreshMicrophoneUse() }}
               />
             </div>
 
@@ -1079,6 +1107,8 @@ export default function PromptInput(props: PromptInputProps) {
       </div>
 
       <PromptAsideWindow id={asideId} controller={aside} returnFocus={() => textareaRef} />
+      <LiveVoiceConversationWindow controller={liveVoice} targetLabel={liveVoiceTargetLabel()}
+        returnFocus={() => wrapperRef?.querySelector<HTMLElement>(".prompt-actions-menu-trigger") ?? undefined} />
     </div>
   )
 }

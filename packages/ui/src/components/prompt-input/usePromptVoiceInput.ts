@@ -3,6 +3,7 @@ import { showAlertDialog } from "../../stores/alerts"
 import { loadSpeechCapabilities, speechCapabilities } from "../../stores/speech"
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { useI18n } from "../../lib/i18n"
+import { microphoneUse } from "../../lib/microphone-lease"
 import { apiCaptureAvailable, createApiRecordingController } from "./api-recording-controller"
 import { type RecordingState, type VoiceInputController, type VoiceInputEngine } from "./recording-controller"
 import { useRemoteDictation } from "./useRemoteDictation"
@@ -83,8 +84,24 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     retire()
   })
 
-  const canUseVoiceInput = () => options.enabled() && Boolean(engine()?.canStart())
-  const canStartRecording = () => canUseVoiceInput() && !options.disabled() && state() === "idle"
+  function unavailableKey() {
+    if (!options.enabled()) return "voice.command.off"
+    if (state() === "starting") return "settings.speech.testInput.requesting"
+    if (state() === "transcribing") return "promptInput.voiceInput.transcribing.title"
+    if (state() === "limitReached") return "promptInput.voiceInput.limitReached"
+    if (options.disabled()) return "voice.command.composerUnavailable"
+    const purpose = microphoneUse()
+    if (purpose) return `voice.microphone.${purpose}`
+    if (engine()?.canStart()) return
+    if (deviceDictation?.languageMissing()) return "settings.speech.device.localeUnavailable"
+    if (engine() === apiEngine && !apiCaptureAvailable()) {
+      if (typeof window !== "undefined" && !window.isSecureContext) return "voice.command.secureContext"
+      return "voice.microphone.unavailable"
+    }
+    if (remoteDictation && !remoteDictation.choice()) return "promptInput.remoteDictation.unavailable"
+    return "voice.command.setupDictation"
+  }
+  const canStartRecording = () => state() === "idle" && !unavailableKey()
 
   async function startRecording() {
     if (!canStartRecording() || activeCapture() || composing) return
@@ -147,8 +164,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
 
   return {
     state,
-    canUseVoiceInput,
-    canOpenVoiceSettings: () => options.enabled() && !options.disabled() && state() === "idle" && !canUseVoiceInput(),
+    unavailableKey,
     deviceDictation,
     canStartRecording,
     startRecording,
@@ -167,7 +183,6 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     isTranscribing: () => state() === "transcribing",
     buttonTitle: () => {
       if (state() === "recording") return t("promptInput.voiceInput.stop.title")
-      if (state() === "transcribing") return t("promptInput.voiceInput.transcribing.title")
       return t("promptInput.voiceInput.dictate")
     },
   }
