@@ -820,6 +820,8 @@ async function fetchSessions(instanceId: string, options?: {
         let parent = currentSessions.get(id)?.parentId
         while (parent && !fetchedIds.has(parent)) {
           fetchedIds.add(parent)
+          // Family membership retains the row, not its previous placement.
+          if (!isSessionMovePending(instanceId, parent)) retainPlacement(parent, currentSessions.get(parent))
           parent = currentSessions.get(parent)?.parentId
         }
       }

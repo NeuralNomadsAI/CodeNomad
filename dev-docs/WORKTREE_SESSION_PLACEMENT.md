@@ -68,8 +68,8 @@ Implementation:
   execution keeps the native directory. Nested independent repositories follow
   the same list rules as their canonical directories. Move and restore reads
   confirm the exact placement across catalogue refreshes for the current client
-  generation. A catalogue that would
-  discard a matching alias with expired evidence rechecks it through the proxy.
+  generation. A complete catalogue rechecks expired placement evidence through
+  the proxy for an absent alias, including an ancestor retained by a local descendant.
   A successful read applies the current placement and renews the evidence;
   a typed departure removes the old list,
   selection and transcript

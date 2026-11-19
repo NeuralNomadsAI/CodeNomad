@@ -310,9 +310,9 @@ test("cold restore keeps a proxy-confirmed alias selected through catalogue reco
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees; f.cleanup() }
 })
 
-for (const withDescendant of [false, true]) {
-  test(`revalidates a confirmed alias after first connection (${withDescendant ? "local descendant" : "standalone"})`, async () => {
-    const id = `catalog-alias-reconnect-${withDescendant}`, f = fixture(id)
+for (const mode of ["standalone", "local descendant", "absent parent"] as const) {
+  test(`revalidates a confirmed alias after first connection (${mode})`, async () => {
+    const id = `catalog-alias-reconnect-${mode.replaceAll(" ", "-")}`, f = fixture(id)
     const originalFetch = globalThis.fetch, originalWorktrees = serverApi.fetchWorktrees
     const native = (id: string, directory: string, parentID?: string) => ({
       ...row(id), parentID, location: { directory }, model: { providerID: "p", id: "m" },
@@ -339,7 +339,7 @@ for (const withDescendant of [false, true]) {
       f.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
       f.client.agent = { list: async ({ location }: any) => { agentDirectories.push(location.directory); return [] } }
       f.client.session.list = async (input: any) => ({ data: input.project
-        ? [alias, ...(withDescendant ? [native("child", "/repo", "root")] : [])]
+        ? [...(mode === "absent parent" ? [] : [alias]), ...(mode === "standalone" ? [] : [native("child", "/repo", "root")])]
         : [native("other", "/repo")], cursor: {} })
       Object.assign(f.saved, { activeSessionId: "root", drafts: { root: "keep draft" }, sessionCatalog: undefined })
       setInstanceMetadata(id, { project: { id: "project" } as any })
@@ -395,6 +395,7 @@ for (const withDescendant of [false, true]) {
       assert.equal(reads, 7)
       assert.equal(activeSessionId().get(id), undefined, "typed departure removes the projection")
       assert.equal(sessions().get(id)?.has("root") ?? false, false)
+      if (mode !== "standalone") assert.equal(sessions().get(id)?.has("child"), true)
       assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
     } finally {
       delayed.resolve(replies.forbidden())
