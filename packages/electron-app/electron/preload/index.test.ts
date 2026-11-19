@@ -199,8 +199,12 @@ test("remote dictation uses separate fixed bridge channels for the remote and tr
     if (context === "remote") {
       assert.equal(api.deviceSpeech, undefined)
       api.remoteDictation(read)
+      assert.equal(api.remoteMicrophoneLease, true)
       assert.deepEqual(calls, [["remote-dictation:request", read]])
-    } else assert.equal(api.remoteDictation, undefined)
+    } else {
+      assert.equal(api.remoteDictation, undefined)
+      assert.equal(api.remoteMicrophoneLease, undefined)
+    }
     if (context === "dictation") {
       assert.deepEqual(Object.keys(api), ["deviceSpeech", "requestMicrophoneAccess", "settleRemoteDictation"])
       api.deviceSpeech(read)

@@ -98,6 +98,7 @@ import {
   hasPendingSessionReturn, matchesSessionPlacement, retainConfirmedSessionPlacement, settleListedReturn,
 } from "./session-events"
 import { idleReadAdmissionEpoch, mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
+import { setPromptTranscript } from "./prompt-transcripts"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
 import {
@@ -1522,6 +1523,7 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, source
   const preserve = requested?.cleanup ?? (source === "observation")
   if (preserve) recoverRemovedSessionDraft(instanceId, sessionId)
   markSessionDeletedAuthoritative(instanceId, sessionId)
+  setPromptTranscript(instanceId, sessionId, undefined)
   forgetSessionMovedAway(instanceId, sessionId)
   clearPendingSessionMove(instanceId, sessionId)
   if (preserve) {

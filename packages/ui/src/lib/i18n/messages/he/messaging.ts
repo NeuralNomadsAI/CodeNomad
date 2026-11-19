@@ -327,7 +327,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.stop.title": "עצור הקלטה ותמלל",
   "promptInput.voiceInput.transcribing.title": "מתמלל אודיו",
   "promptInput.voiceInput.cancel": "ביטול הכתבה",
-  "promptInput.voiceInput.limitReached": "ההקלטה הגיעה למגבלת 24 שניות",
+  "promptInput.voiceInput.limitReached": "ההקלטה הגיעה למגבלה",
   "promptInput.voiceInput.transcribe": "תמלול",
   "promptInput.voiceInput.recovery.saved": "התמלול מוכן להוספה",
   "promptInput.voiceInput.recovery.insert": "הוספת התמלול",

@@ -240,6 +240,22 @@ fn is_microphone_document(entry: &crate::RemoteWindowMetadata, current: &Url) ->
         && microphone_document_url(current)
 }
 
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn authorize_renderer_microphone(webview: &Webview, generation: u64) {
+    let Ok(current) = webview.url() else { return };
+    let app = webview.app_handle();
+    let state = app.state::<AppState>();
+    let Ok(metadata) = state.remote_navigation.lock() else {
+        return;
+    };
+    if metadata.get(webview.label()).is_some_and(|entry| {
+        entry.window_generation == generation && is_microphone_document(entry, &current)
+    }) {
+        app.state::<DeviceSpeech>()
+            .authorize_remote_renderer_microphone(webview.label());
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ApiMicrophonePurpose {
@@ -524,9 +540,10 @@ fn remote_request(
             if !input.valid() {
                 return Err("Invalid dictation request ID");
             }
-            let result =
-                crate::shutdown::with_navigation_authority(app, || speech.request(label, input))
-                    .ok_or("unavailable")?;
+            let result = crate::shutdown::with_navigation_authority(app, || {
+                speech.request_remote(label, input)
+            })
+            .ok_or("unavailable")?;
             drop(metadata);
             resolver
                 .clone()

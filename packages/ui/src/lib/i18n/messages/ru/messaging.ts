@@ -330,7 +330,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.stop.title": "Остановить запись и расшифровать",
   "promptInput.voiceInput.transcribing.title": "Идёт расшифровка аудио",
   "promptInput.voiceInput.cancel": "Отменить диктовку",
-  "promptInput.voiceInput.limitReached": "Достигнут предел записи в 24 секунды",
+  "promptInput.voiceInput.limitReached": "Достигнут предел записи",
   "promptInput.voiceInput.transcribe": "Расшифровать",
   "promptInput.voiceInput.recovery.saved": "Расшифровка готова к вставке",
   "promptInput.voiceInput.recovery.insert": "Вставить расшифровку",

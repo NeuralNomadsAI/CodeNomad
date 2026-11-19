@@ -92,7 +92,8 @@ impl DeviceSpeech {
         id: Uuid,
         purpose: ApiMicrophonePurpose,
     ) -> Option<Arc<Capture>> {
-        let slots = self.slots.lock();
+        let mut slots = self.slots.lock();
+        slots.expire_microphone(Instant::now());
         if slots.active(Kind::Dictation)
             || slots
                 .microphone
@@ -101,18 +102,35 @@ impl DeviceSpeech {
         {
             return None;
         }
-        self.remote_microphone
-            .reserve(owner, id, purpose, slots.microphone.is_some())
+        let capture =
+            self.remote_microphone
+                .reserve(owner, id, purpose, slots.microphone.is_some())?;
+        if let Some(lease) = slots
+            .microphone
+            .as_mut()
+            .filter(|lease| lease.expires_at.is_some())
+        {
+            // Once the native dialog owns capture, use its bounded confirmation window.
+            lease.expires_at = Some(Instant::now() + Duration::from_secs(30));
+        }
+        Some(capture)
     }
 
     pub(crate) fn accept_remote_microphone(&self, capture: &Capture) -> bool {
-        let slots = self.slots.lock();
+        let mut slots = self.slots.lock();
+        // The native confirmation has its own deadline and occupies the microphone.
         let (owner, id, purpose, lease_bound) = capture.admission();
         let lease_matches = match &slots.microphone {
             Some(lease) => lease.matches(owner, Some(id), purpose.microphone_purpose()),
             None => !lease_bound,
         };
-        lease_matches && capture.accept()
+        if !lease_matches || !capture.accept() {
+            return false;
+        }
+        if let Some(lease) = slots.microphone.as_mut() {
+            lease.expires_at = None;
+        }
+        true
     }
 
     pub(crate) fn get_remote_microphone(&self, owner: &str, id: Uuid) -> Option<Arc<Capture>> {

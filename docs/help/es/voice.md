@@ -41,6 +41,8 @@ La prueba de reproducción usa inmediatamente el modo y el formato seleccionados
 
 Si la API recurre a WAV en Tauri para Linux, el dictado y la prueba de entrada detienen la grabación a los 24 segundos. El fragmento queda en este dispositivo hasta que elijas **Transcribir** para enviarlo al proveedor de voz o **Cancelar** para descartarlo.
 
+Las grabaciones comprimidas para la API también se detienen al alcanzar el límite de tamaño y ofrecen **Transcribir** o **Cancelar**.
+
 ### Elegir un motor en el escritorio {#desktop-dictation}
 
 En **Preferencias → Voz → Dictado** de la aplicación de escritorio local, elige el **Motor de dictado en este dispositivo**. La elección se aplica a todos los proyectos del dispositivo. **Proveedor de API** usa los ajustes del servidor conectado y necesita un contexto seguro para el micrófono.

@@ -89,22 +89,33 @@ type Slot = {
 
 export class DeviceSpeech {
   private slots = new Map<"prepare" | "start", Slot>()
-  private microphone?: { owner: number; id: string; purpose: MicrophonePurpose }
+  private microphone?: { owner: number; id: string; purpose: MicrophonePurpose; expiresAt?: number }
 
-  constructor(private preference: DeviceSpeechPreference, private driver?: DeviceSpeechDriver, private hexDriver?: DeviceSpeechDriver) {}
+  constructor(private preference: DeviceSpeechPreference, private driver?: DeviceSpeechDriver, private hexDriver?: DeviceSpeechDriver,
+    private now = Date.now) {}
+
+  private currentMicrophone() {
+    if (this.microphone?.expiresAt !== undefined && this.now() >= this.microphone.expiresAt) this.microphone = undefined
+    return this.microphone
+  }
+
+  authorizeRendererMicrophone(owner: number): void {
+    const lease = this.currentMicrophone()
+    if (lease?.owner === owner) lease.expiresAt = undefined
+  }
 
   private capabilities(): DeviceSpeechCapabilities {
     const fallback = this.driver?.capabilities() ?? unavailable
     return this.hexDriver ? { ...fallback, hex: this.hexDriver.capabilities().hex } : fallback
   }
 
-  request(owner: number, input: DeviceSpeechRequest): DeviceSpeechResult<DeviceSpeechResponses[keyof DeviceSpeechResponses]> {
+  request(owner: number, input: DeviceSpeechRequest, remote = false): DeviceSpeechResult<DeviceSpeechResponses[keyof DeviceSpeechResponses]> {
     try {
       const snapshot = () => ({ engine: this.preference.read().engine, ...this.capabilities() })
       switch (input.action) {
         case "claimMicrophone": {
-          const busy = this.microphone?.purpose ?? (this.active("start") ? "dictation" : null)
-          if (!busy) this.microphone = { owner, id: input.id, purpose: input.purpose }
+          const busy = this.currentMicrophone()?.purpose ?? (this.active("start") ? "dictation" : null)
+          if (!busy) this.microphone = { owner, id: input.id, purpose: input.purpose, expiresAt: remote ? this.now() + 10_000 : undefined }
           return ok({ busy })
         }
         case "releaseMicrophone": {
@@ -139,7 +150,7 @@ export class DeviceSpeech {
         }
         case "start": {
           if (this.active("start")) return error("busy")
-          const lease = this.microphone
+          const lease = this.currentMicrophone()
           if (lease && !(lease.owner === owner && lease.id === input.microphoneLeaseId && lease.purpose === "dictation")) {
             return error("busy")
           }

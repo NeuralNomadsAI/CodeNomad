@@ -324,6 +324,38 @@ test("native voice acknowledgement in another displayed session stays bound to t
   } finally { await context.close() }
 })
 
+test("a typed send queues behind a confirmed voice send before the native start event", async () => {
+  const { page, context, openConsent, acceptConsent, waitForSent } = await fixture("gemini", true)
+  try {
+    await openConsent()
+    const send = await acceptConsent()
+    await page.evaluate(() => (window as any).fixture.setFirstPrompt("delay"))
+    send({ type: "tool-call", name: "send_to_agent", id: "first", arguments: { text: "first" } })
+    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "first")).output), { delivery: "submitted" })
+    const field = page.getByRole("textbox").first()
+    await field.fill("typed follow-up")
+    await field.press("Enter")
+    await page.waitForFunction(() => (window as any).fixture.info.prompts.length === 2)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.info.prompts.map((prompt: any) => [prompt.text, prompt.delivery, prompt.resume])),
+      [["first", "steer", undefined], ["typed follow-up", "queue", false]])
+  } finally { await context.close() }
+})
+
+test("get_last_reply reads the latest answer without replacing the displayed history", async () => {
+  const { page, context, start, waitForSent } = await fixture()
+  try {
+    const send = await start()
+    await page.evaluate(() => (window as any).fixture.openHistory())
+    const history = () => page.evaluate(() => (window as any).fixture.history())
+    const before = await history()
+    send({ type: "tool-call", name: "get_last_reply", id: "reply", arguments: {} })
+    await page.waitForFunction(() => (window as any).fixture.info.historyReads === 1)
+    await page.evaluate(() => (window as any).fixture.releaseHistory())
+    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "reply")).output), { text: "Newest answer" })
+    assert.deepEqual(await history(), before)
+  } finally { await context.close() }
+})
+
 test("voice sends from an older page await the latest window and recheck the target", async () => {
   for (const switchTarget of [false, true]) {
     const { page, context, start, closed, snapshot, waitForSent } = await fixture()

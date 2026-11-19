@@ -3,7 +3,7 @@ import { isMicrophonePurpose, type MicrophonePurpose } from "../../../desktop-sp
 import { generateUUID } from "./client-identity"
 import { requestDeviceSpeech } from "./native/device-speech"
 import { requestRemoteMicrophone } from "./native/remote-dictation"
-import { isDesktopHost, isRemoteWindow } from "./runtime-env"
+import { isDesktopHost, isElectronHost, isRemoteWindow } from "./runtime-env"
 
 export type { MicrophonePurpose } from "../../../desktop-speech/contract"
 
@@ -49,6 +49,8 @@ export function createMicrophoneLeases(admit: Admit, onChange?: (purpose: Microp
 
 const lockName = "codenomad:microphone"
 const purposeKey = `${lockName}:purpose`
+const usesNativeLease = () => isDesktopHost() && !(isElectronHost() && isRemoteWindow()
+  && (window.electronAPI?.remoteMicrophoneLease !== true || typeof window.electronAPI.remoteDictation !== "function"))
 
 async function admitBrowser(_id: string, purpose: MicrophonePurpose): Promise<Release> {
   if (!navigator.locks || !window.isSecureContext) throw new MicrophoneUnavailable("unavailable")
@@ -98,7 +100,7 @@ let readVersion = 0
 /** Display hint only: only a claim grants capture. A stale storage value is not
  * sufficient to report a held lock after another document has been closed. */
 export async function refreshMicrophoneUse() {
-  if (isDesktopHost() || typeof navigator.locks?.query !== "function" || localPurpose()) return
+  if (usesNativeLease() || typeof navigator.locks?.query !== "function" || localPurpose()) return
   const version = ++readVersion
   try {
     const { held } = await navigator.locks.query()
@@ -123,7 +125,7 @@ export const microphoneUse = () => localPurpose() ?? browserPurpose()
 
 /** Retain the lease through permission and close audio capture before releasing it. */
 export const claimMicrophone = createMicrophoneLeases(
-  (id, purpose) => isDesktopHost() ? admitDesktop(id, purpose) : admitBrowser(id, purpose),
+  (id, purpose) => usesNativeLease() ? admitDesktop(id, purpose) : admitBrowser(id, purpose),
   purpose => {
     readVersion++
     setBrowserPurpose(undefined)

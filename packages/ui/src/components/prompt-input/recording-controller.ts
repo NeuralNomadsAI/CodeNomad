@@ -1,4 +1,9 @@
+import { TRANSCRIPTION_AUDIO_LIMIT } from "../../../../server/src/speech/transcription-contract"
+
 export type RecordingState = "idle" | "starting" | "recording" | "limitReached" | "transcribing"
+
+// Reserve enough room for the final timeslice and container data.
+const RECORDING_STOP_BYTES = TRANSCRIPTION_AUDIO_LIMIT - 64 * 1024
 
 export interface VoiceInputController {
   startRecording(): Promise<void>
@@ -62,6 +67,9 @@ export function createRecordingController(
   let recorder: RecorderHandle | null = null
   let mediaStream: StreamHandle | null = null
   let recordedChunks: Blob[] = []
+  let recordedBytes = 0
+  let recorderStopped = false
+  let recordingTrimmed = false
   let capture: AbortController | undefined
   let closeMicrophone: (() => void) | undefined
   let pcm: Awaited<ReturnType<NonNullable<RecordingControllerDeps["capturePcm"]>>> | undefined
@@ -87,8 +95,12 @@ export function createRecordingController(
       finishPcm(capture, pcm)
       return
     }
+    stopRecorder("transcribing")
+  }
+
+  function stopRecorder(next: "transcribing" | "limitReached") {
     if (!recorder) return
-    setState("transcribing")
+    setState(next)
     const stream = mediaStream
     const rec = recorder
     mediaStream = null
@@ -113,7 +125,12 @@ export function createRecordingController(
   }
 
   function confirmTranscription() {
-    if (state === "limitReached" && capture && pcm) finishPcm(capture, pcm)
+    if (state !== "limitReached" || !capture) return
+    if (pcm) finishPcm(capture, pcm)
+    else if (recorder) {
+      setState("transcribing")
+      if (recorderStopped) void finalizeRecording(capture)
+    }
   }
 
   async function startRecording() {
@@ -166,15 +183,27 @@ export function createRecordingController(
       mediaStream = stream
       const rec = deps.setupRecorder(stream, {
         onDataAvailable: (chunk) => {
-          if (signal.aborted) return
-          if (chunk.size > 0) {
+          if (signal.aborted || recordingTrimmed || !chunk.size) return
+          const exceeds = recordedBytes + chunk.size > TRANSCRIPTION_AUDIO_LIMIT
+          if (exceeds) {
+            recordingTrimmed = true
+            if (!recordedBytes) {
+              callbacks.onError("promptInput.voiceInput.error.transcribe")
+              cancelCurrent()
+              return
+            }
+          } else {
             recordedChunks.push(chunk)
+            recordedBytes += chunk.size
           }
+          if (state === "recording" && (exceeds || recordedBytes >= RECORDING_STOP_BYTES)) stopRecorder("limitReached")
+          else if (state === "transcribing" && exceeds) setState("limitReached")
         },
         onStop: () => {
           if (signal.aborted || !recorder) return
+          recorderStopped = true
           if (state === "transcribing") void finalizeRecording(operation)
-          else cancelRecording()
+          else if (state !== "limitReached") cancelRecording()
         },
         onError: cancelCurrent,
       })
@@ -203,6 +232,9 @@ export function createRecordingController(
     mediaStream = null
     const chunks = recordedChunks
     recordedChunks = []
+    recordedBytes = 0
+    recorderStopped = false
+    recordingTrimmed = false
     deps.stopTracks(stream)
     await transcribe(operation, async () => chunks.length ? new Blob(chunks, {
       type: rec?.mimeType || chunks[0]?.type || "audio/webm",
@@ -247,6 +279,9 @@ export function createRecordingController(
     recorder = null
     mediaStream = null
     recordedChunks = []
+    recordedBytes = 0
+    recorderStopped = false
+    recordingTrimmed = false
     try {
       rec?.stop()
     } catch {

@@ -327,7 +327,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.stop.title": "Aufnahme stoppen und transkribieren",
   "promptInput.voiceInput.transcribing.title": "Audio wird transkribiert",
   "promptInput.voiceInput.cancel": "Diktat abbrechen",
-  "promptInput.voiceInput.limitReached": "Aufnahmelimit von 24 Sekunden erreicht",
+  "promptInput.voiceInput.limitReached": "Aufnahmelimit erreicht",
   "promptInput.voiceInput.transcribe": "Transkribieren",
   "promptInput.voiceInput.recovery.saved": "Transkription zum Einfügen bereit",
   "promptInput.voiceInput.recovery.insert": "Transkription einfügen",

@@ -41,6 +41,8 @@ Oynatma testi seçilen modu ve biçimi hemen kullanır, ancak uç nokta, anahtar
 
 API, Linux’ta Tauri ile WAV yedek modunu kullanıyorsa dikte ve giriş testi kaydı 24 saniyede durur. Kayıt, ses sağlayıcısına göndermek için **Yazıya dök** veya silmek için **İptal** seçeneğini kullanana kadar bu cihazda kalır.
 
+API için sıkıştırılan kayıtlar da boyut sınırında durur ve **Yazıya dök** ile **İptal et** seçeneklerini sunar.
+
 ### Masaüstünde motor seçin {#desktop-dictation}
 
 Yerel masaüstü uygulamasında **Tercihler → Ses → Dikte** bölümünden **Bu cihazdaki dikte motoru** seçeneğini ayarlayın. Seçim cihazdaki tüm projeler için geçerlidir. **API sağlayıcısı**, bağlı sunucunun ayarlarını kullanır ve mikrofon için güvenli bir bağlam gerektirir.

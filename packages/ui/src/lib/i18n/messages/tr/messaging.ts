@@ -300,7 +300,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.stop.title": "Kaydı durdur ve metne dönüştür",
   "promptInput.voiceInput.transcribing.title": "Ses metne dönüştürülüyor",
   "promptInput.voiceInput.cancel": "Dikteyi iptal et",
-  "promptInput.voiceInput.limitReached": "24 saniyelik kayıt sınırına ulaşıldı",
+  "promptInput.voiceInput.limitReached": "Kayıt sınırına ulaşıldı",
   "promptInput.voiceInput.transcribe": "Yazıya dök",
   "promptInput.voiceInput.recovery.saved": "Dikte metni eklenmeye hazır",
   "promptInput.voiceInput.recovery.insert": "Dikte metnini ekle",

@@ -8,6 +8,7 @@ import { serverApi } from "../../../src/lib/api-client"
 import { useLiveVoiceConversation } from "../../../src/lib/hooks/use-live-voice-conversation"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { refreshSessionRuntimeStatus } from "../../../src/stores/session-api"
+import { sendMessage } from "../../../src/stores/session-actions"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -89,7 +90,9 @@ const client: any = {
     info.historyReads++
     await latestPage
     return { data: [{ id: "latest-assistant", type: "assistant", agent: "build",
-      model: { providerID: "fixture", id: "fixture" }, time: { created: 10 }, content: [] }], cursor: {} }
+      model: { providerID: "fixture", id: "fixture" }, time: { created: 10 }, content: [
+        { type: "text", text: "Newest answer" }, { type: "reasoning", text: "Private reasoning" },
+      ] }], cursor: {} }
   } },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
@@ -134,7 +137,7 @@ Object.defineProperty(navigator.mediaDevices, "getUserMedia", { value: async () 
 
 await loadVoiceConversationEngine()
 await setVoiceConversationEngine(params.has("openai") ? "openai-realtime" : "gemini-live")
-if (interactive) await applyUiSettings({ locale: params.has("he") ? "he" : "en", showPromptVoiceInput: true })
+if (interactive) await applyUiSettings({ locale: params.has("he") ? "he" : "en", showPromptVoiceInput: true, followUpBehavior: "queue" })
 
 function Fixture() {
   const current = () => activeSessionId().get(instanceId) ?? undefined
@@ -194,6 +197,7 @@ function Interactive() {
     info, switchSession: () => setActiveSession(instanceId, "other"), setVoiceConversationEngine,
     openVoiceSettings: () => openSettingsRow("speech", "voice-dictation"),
     playback,
+    setFirstPrompt: (value: typeof firstPrompt) => { firstPrompt = value },
     holdAdmission: () => { info.admissionHeld = true },
     waitingAdmission: () => Boolean(releaseAdmission),
     releaseAdmission: () => { info.admissionHeld = false; releaseAdmission?.() },
@@ -204,7 +208,9 @@ function Interactive() {
     <AlertDialog />
     <InterruptionDock instanceId={instanceId} sessionId={current()} />
     <PromptInput instanceId={instanceId} instanceFolder={path} sessionId={current()} isActive
-      onSend={async () => { throw new Error("Dictation must never send") }} />
+      onSend={async (text, attachments, delivery, restoredPayload, admitDelivery) => {
+        await sendMessage(instanceId, current(), text, attachments, { delivery: admitDelivery ?? delivery, restoredPayload })
+      }} />
     <Show when={settingsOpen() && activeSettingsSection() === "speech"}><SpeechSettingsSection /></Show>
   </main>
 }

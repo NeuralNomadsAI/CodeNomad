@@ -41,7 +41,7 @@ export function setupRemoteDictationIPC(ipc: Pick<IpcMain, "handle">, dependenci
   createDialog(opener: BrowserWindow): BrowserWindow
   revokeSpeech(owner: number, documentGone?: boolean): void
   rendererMicrophone?: {
-    request(owner: number, input: MicrophoneRequest): unknown
+    request(owner: number, input: MicrophoneRequest, remote: true): unknown
     revokeRendererMicrophone(owner: number): void
   }
   openSpeechPreferences(): Promise<void>
@@ -156,7 +156,7 @@ export function setupRemoteDictationIPC(ipc: Pick<IpcMain, "handle">, dependenci
         !dependencies.rendererMicrophone || (input.action === "claimMicrophone" && !opener.isFocused())) {
         throw new Error("Microphone use requires a secure remote application document")
       }
-      return dependencies.rendererMicrophone.request(event.sender.id, input)
+      return dependencies.rendererMicrophone.request(event.sender.id, input, true)
     }
 
     const readChoice = () => {

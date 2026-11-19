@@ -7,7 +7,7 @@
 - Electron validates the registered main frame and configured local origin. Tauri uses a command ACL on primary app webviews plus native registry, window and exact origin checks. Preferences can select an installed engine or confirm Hex preparation; local composer and trusted dictation windows can start native dictation. A project displayed by a local renderer uses the same device contract whether its project runs on the host or in WSL.
 - `device-speech/choice.json` in the shared CodeNomad application data base holds the versioned choice and revision, independently of profile, server config and window restoration. Writes replace the file atomically under the existing cross-host selection lock in that directory. A preparation commits the choice only against the revision captured at admission. Invalid files fail read and write without defaulting to API or replacing the file.
 - The host tracks one preparation and one dictation slot per process. Status, finish and cancel require the initiating renderer plus the host-issued operation ID. Document navigation or window loss revokes the owner, and application exit revokes active work. The client renews a 30-second lease by reading current status; the host also imposes absolute limits (150 seconds for dictation, two hours for preparation). Terminal results expire after 30 seconds or can be discarded sooner with cancel. A cancelled slot stays busy until the driver confirms release.
-- One microphone lease spans the host's registered app windows, including remote windows and Preferences. `claimMicrophone(purpose, signal)` in `packages/ui/src/lib/microphone-lease.ts` reserves before asynchronous authorization; its `id` binds matching native starts and its `release()` runs after capture cleanup, including any late permission result. The host only accepts a matching document and ID, returns the occupying purpose (`dictation`, `test`, `conversation`) and retains native driver occupancy through shutdown. Trusted local hand-off windows reserve only when the person clicks capture. Classic playback uses no microphone.
+- One microphone lease spans the host's registered app windows, including remote windows and Preferences. `claimMicrophone(purpose, signal)` in `packages/ui/src/lib/microphone-lease.ts` reserves before asynchronous authorization; its `id` binds matching native starts and its `release()` runs after capture cleanup. An unused remote host reservation expires after ten seconds. A native microphone request retains the lease through the capture; Linux Tauri's recorder uses its own bounded confirmation window. Navigation and window closure release reservations. The remote Electron preload advertises native lease support explicitly; without it the renderer uses a Web Lock. Trusted local hand-off windows reserve only when the person clicks capture. Classic playback uses no microphone.
 - Web and mobile use an exclusive Web Lock within the secure same-origin browser storage partition. A localStorage value describes the current purpose when available; the browser owns exclusion and document teardown. Without Web Locks, capture is refused rather than admitted concurrently.
 
 ## Remote-server windows
@@ -64,9 +64,10 @@ the bearer `Authorization` header on their provider WebSockets.
   through native `sendMessage` with the composer's delivery rules and no
   attachments. A send from history loads the latest message window and then
   rechecks its target. Follow-up delivery uses the session state at serialized
-  admission. An acknowledged steering prompt counts as busy for that native
-  session, including across window reopen, for up to 15 seconds, until native
-  execution, settlement or a fresh idle observation.
+  admission. An acknowledged steering prompt counts as busy for both voice and
+  typed follow-ups in that native session for up to 15 seconds, until native
+  execution, settlement or a fresh idle observation. While browsing history,
+  `get_last_reply` reads a bounded recent page without moving the transcript.
   Normal permission, question and Yolo handling apply. A call ID is
   admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.

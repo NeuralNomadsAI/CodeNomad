@@ -29,6 +29,7 @@ import { syncSessionInstructions } from "./session-instructions"
 import { serializeSessionAction } from "./session-action-queue"
 import { beginGesture } from "./session-surface"
 import { activeSessionId } from "./session-selection-state"
+import { capturePromptAcknowledgement } from "./session-prompt-ack"
 
 const log = getLogger("actions")
 const technicalPartUpdates = new Map<string, Promise<void>>()
@@ -217,9 +218,7 @@ async function sendMessage(
   prompt: string,
   attachments: Attachment[] = [],
   options: { delivery?: SessionInboxDelivery | (() => SessionInboxDelivery); restoredPayload?: SessionInboxUserPayload;
-    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean;
-    // Capture dispatch-time state; run the receipt before the next admission.
-    onDispatch?: () => (() => void) | undefined } = {},
+    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean } = {},
 ): Promise<string> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -382,7 +381,7 @@ async function sendMessage(
       const input = { sessionID: sessionId, ...requestBody, ...(delivery ? { delivery } : {}),
         ...(delivery === "queue" ? { resume: false } : {}) }
       log.info("session.prompt", { instanceId, sessionId, requestBody: input })
-      const onAccepted = options.onDispatch?.()
+      const onAccepted = delivery !== "queue" ? capturePromptAcknowledgement(instanceId, sessionId) : undefined
       const result = await client.session.prompt(input)
       onAccepted?.()
       const confirmedId = result?.id || messageId

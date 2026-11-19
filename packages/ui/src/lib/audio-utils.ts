@@ -17,7 +17,7 @@ export function supportedRecordingType() {
 
 export function createMediaRecorder(stream: MediaStream): MediaRecorder {
   const supported = supportedRecordingType()
-  return supported ? new MediaRecorder(stream, { mimeType: supported }) : new MediaRecorder(stream)
+  return new MediaRecorder(stream, { audioBitsPerSecond: 128_000, ...(supported ? { mimeType: supported } : {}) })
 }
 
 export function createObjectUrlFromBase64(audioBase64: string, mimeType: string): string {

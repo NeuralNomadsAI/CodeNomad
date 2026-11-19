@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { SpeechService } from "../../speech/service"
 import { SpeechNotConfiguredError } from "../../speech/providers/openai-compatible"
 import { requestAdmission } from "../request-admission"
+import { TRANSCRIPTION_BODY_LIMIT } from "../../speech/transcription-contract"
 import { isLocalRequest } from "../../remote-control/request-origin"
 import { LIVE_VOICE_CONSENT_PATH, LIVE_VOICE_NOTICE_VERSION } from "../../speech/live-voice-contract"
 
@@ -83,7 +84,7 @@ export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
     } catch { return reply.code(503).send({ error: "Voice consent could not be saved" }) }
   })
 
-  app.post("/api/speech/transcribe", async (request, reply) => {
+  app.post("/api/speech/transcribe", { bodyLimit: TRANSCRIPTION_BODY_LIMIT }, async (request, reply) => {
     const admission = requestAdmission(request, reply)
     try {
       const body = TranscribeBodySchema.parse(request.body ?? {})

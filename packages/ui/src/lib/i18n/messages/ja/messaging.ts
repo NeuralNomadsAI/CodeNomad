@@ -330,7 +330,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.stop.title": "録音を停止して文字起こし",
   "promptInput.voiceInput.transcribing.title": "音声を文字起こし中",
   "promptInput.voiceInput.cancel": "音声入力をキャンセル",
-  "promptInput.voiceInput.limitReached": "録音時間が上限の24秒に達しました",
+  "promptInput.voiceInput.limitReached": "録音が上限に達しました",
   "promptInput.voiceInput.transcribe": "文字起こし",
   "promptInput.voiceInput.recovery.saved": "文字起こしを挿入できます",
   "promptInput.voiceInput.recovery.insert": "文字起こしを挿入",

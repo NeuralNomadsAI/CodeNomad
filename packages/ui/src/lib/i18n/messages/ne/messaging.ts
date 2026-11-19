@@ -327,7 +327,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.stop.title": "रेकर्डिङ रोक्नुहोस् र ट्रान्सक्राइब गर्नुहोस्",
   "promptInput.voiceInput.transcribing.title": "अडियो ट्रान्सक्राइब गर्दै",
   "promptInput.voiceInput.cancel": "श्रुतिलेखन रद्द गर्नुहोस्",
-  "promptInput.voiceInput.limitReached": "रेकर्डिङको २४ सेकेन्डको सीमा पुग्यो",
+  "promptInput.voiceInput.limitReached": "रेकर्डिङको सीमा पुग्यो",
   "promptInput.voiceInput.transcribe": "प्रतिलेखन गर्नुहोस्",
   "promptInput.voiceInput.recovery.saved": "प्रतिलेख घुसाउन तयार छ",
   "promptInput.voiceInput.recovery.insert": "प्रतिलेख घुसाउनुहोस्",

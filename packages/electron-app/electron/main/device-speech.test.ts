@@ -10,11 +10,29 @@ import vectors from "../../../desktop-speech/request-vectors.json"
 import { DeviceSpeech, DeviceSpeechPreference, type DeviceSpeechDriver, type SpeechOperationControl } from "./device-speech"
 import { setupDeviceSpeechIPC } from "./device-speech-ipc"
 
-function fixture(t: TestContext, driver?: DeviceSpeechDriver, hexDriver?: DeviceSpeechDriver) {
+test("an unused remote microphone reservation expires; an authorized one stays held until revocation", t => {
+  let now = 0
+  const { device } = fixture(t, undefined, undefined, () => now)
+  const claim = (owner: number, remote = false) => device.request(owner, {
+    action: "claimMicrophone", id: "c2d420ea-2677-4dbd-a521-92435a6ba004", purpose: "dictation",
+  }, remote)
+  assert.deepEqual(claim(1, true), { ok: true, value: { busy: null } })
+  assert.deepEqual(claim(2), { ok: true, value: { busy: "dictation" } })
+  device.authorizeRendererMicrophone(2)
+  now = 10_000
+  assert.deepEqual(claim(2, true), { ok: true, value: { busy: null } })
+  device.authorizeRendererMicrophone(2)
+  now = 20_000
+  assert.deepEqual(claim(1), { ok: true, value: { busy: "dictation" } })
+  device.revokeRendererMicrophone(2)
+  assert.deepEqual(claim(1), { ok: true, value: { busy: null } })
+})
+
+function fixture(t: TestContext, driver?: DeviceSpeechDriver, hexDriver?: DeviceSpeechDriver, now?: () => number) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-speech-"))
   const path = join(directory, "choice.json")
   const preference = new DeviceSpeechPreference(path)
-  const device = new DeviceSpeech(preference, driver, hexDriver)
+  const device = new DeviceSpeech(preference, driver, hexDriver, now)
   t.after(() => { device.revokeAll(); rmSync(directory, { recursive: true, force: true }) })
   return { device, preference, path }
 }

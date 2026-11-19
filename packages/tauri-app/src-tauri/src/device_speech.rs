@@ -335,6 +335,7 @@ struct MicrophoneLease {
     owner: String,
     id: Uuid,
     purpose: MicrophonePurpose,
+    expires_at: Option<Instant>,
 }
 
 impl MicrophoneLease {
@@ -352,6 +353,17 @@ struct Slots {
 }
 
 impl Slots {
+    fn expire_microphone(&mut self, now: Instant) {
+        if self
+            .microphone
+            .as_ref()
+            .and_then(|lease| lease.expires_at)
+            .is_some_and(|expires| now >= expires)
+        {
+            self.microphone = None;
+        }
+    }
+
     fn active(&self, kind: Kind) -> bool {
         self.operations[kind as usize]
             .as_ref()
@@ -371,6 +383,19 @@ pub(crate) struct DeviceSpeech {
 }
 
 impl DeviceSpeech {
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn authorize_remote_renderer_microphone(&self, owner: &str) {
+        let mut slots = self.slots.lock();
+        slots.expire_microphone(Instant::now());
+        if let Some(lease) = slots
+            .microphone
+            .as_mut()
+            .filter(|lease| lease.owner == owner)
+        {
+            lease.expires_at = None;
+        }
+    }
+
     pub(crate) fn new(path: PathBuf, driver: Option<Arc<dyn Driver>>) -> Self {
         Self {
             store: Store(path),
@@ -421,7 +446,22 @@ impl DeviceSpeech {
     }
 
     pub(crate) fn request(&self, owner: &str, input: Request) -> Result<Value, SpeechError> {
+        self.request_with_microphone_scope(owner, input, false)
+    }
+
+    pub(crate) fn request_remote(&self, owner: &str, input: Request) -> Result<Value, SpeechError> {
+        self.request_with_microphone_scope(owner, input, true)
+    }
+
+    fn request_with_microphone_scope(
+        &self,
+        owner: &str,
+        input: Request,
+        remote: bool,
+    ) -> Result<Value, SpeechError> {
         let mut slots = self.slots.lock();
+        let now = Instant::now();
+        slots.expire_microphone(now);
         for entry in &mut slots.operations {
             let expired = entry.as_ref().is_some_and(|entry| {
                 let slot = entry.0 .0.lock();
@@ -454,6 +494,7 @@ impl DeviceSpeech {
                         owner: owner.into(),
                         id,
                         purpose,
+                        expires_at: remote.then(|| now + Duration::from_secs(10)),
                     });
                 }
                 Ok(json!({ "busy": busy }))

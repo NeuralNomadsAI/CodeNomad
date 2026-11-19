@@ -39,7 +39,7 @@ export function createApiRecordingController(
       recorder.addEventListener("stop", handlers.onStop)
       recorder.addEventListener("error", handlers.onError)
       return {
-        start: () => recorder.start(),
+        start: () => recorder.start(250),
         stop: () => { if (recorder.state !== "inactive") recorder.stop() },
         get mimeType() { return recorder.mimeType },
       }

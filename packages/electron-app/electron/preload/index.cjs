@@ -100,6 +100,7 @@ const localElectronAPI = {
 }
 
 const remoteElectronAPI = {
+  remoteMicrophoneLease: true,
   remoteDictation: (request) => ipcRenderer.invoke("remote-dictation:request", request),
   requestMicrophoneAccess: localElectronAPI.requestMicrophoneAccess,
   setWakeLock: localElectronAPI.setWakeLock,

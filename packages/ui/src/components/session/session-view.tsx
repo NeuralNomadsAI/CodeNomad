@@ -429,6 +429,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     attachments: Attachment[],
     delivery: PromptDelivery,
     restoredPayload?: SessionInboxUserPayload,
+    admitDelivery?: () => PromptDelivery,
   ) {
     if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
       await loadLatestMessageWindow(props.instanceId, props.sessionId)
@@ -437,7 +438,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
     const initialPinIntent = startSubmitBottomPinIntent(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
-      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery, restoredPayload })
+      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery: admitDelivery ?? delivery, restoredPayload })
       const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)

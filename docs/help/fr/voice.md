@@ -41,6 +41,8 @@ Le test de lecture utilise immédiatement le mode et le format sélectionnés, m
 
 Si l’API utilise le mode WAV de secours sur Tauri sous Linux, **Dicter** et **Tester l'entrée API** arrêtent l’enregistrement au bout de 24 secondes. L’extrait reste sur cet appareil jusqu’à ce que vous choisissiez **Transcrire** pour l’envoyer au fournisseur vocal ou **Annuler** pour le supprimer.
 
+Les enregistrements compressés pour l’API s’arrêtent à la taille maximale et proposent les mêmes choix : **Transcrire** ou **Annuler**.
+
 ### Choisir un moteur sur ordinateur {#desktop-dictation}
 
 Dans **Préférences → Voix → Dictée** sur le bureau local, sélectionnez **Moteur de dictée sur cet appareil**. Ce choix vaut pour tous les projets sur cet appareil. **Fournisseur API** utilise les réglages du serveur connecté et nécessite un contexte sécurisé pour le microphone.

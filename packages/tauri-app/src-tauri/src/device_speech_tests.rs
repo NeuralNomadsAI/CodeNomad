@@ -424,6 +424,57 @@ fn dictation_and_permission_revocation_are_owner_fenced() {
 }
 
 #[test]
+fn unused_remote_microphone_reservation_expires_and_navigation_releases_it() {
+    let (_folder, device, _, _) = fixture();
+    let id = "c2d420ea-2677-4dbd-a521-92435a6ba004";
+    let remote_claim = || {
+        device.request_remote(
+            "remote",
+            Request::ClaimMicrophone {
+                id: id.into(),
+                purpose: MicrophonePurpose::Dictation,
+            },
+        )
+    };
+    assert_eq!(remote_claim().unwrap(), json!({ "busy": null }));
+    assert_eq!(
+        claim(&device, "local", id, MicrophonePurpose::Test),
+        json!({ "busy": "dictation" })
+    );
+    #[cfg(not(target_os = "linux"))]
+    {
+        device.authorize_remote_renderer_microphone("local");
+        assert!(device
+            .slots
+            .lock()
+            .microphone
+            .as_ref()
+            .unwrap()
+            .expires_at
+            .is_some());
+    }
+    device.slots.lock().microphone.as_mut().unwrap().expires_at = Some(Instant::now());
+    assert_eq!(remote_claim().unwrap(), json!({ "busy": null }));
+    #[cfg(not(target_os = "linux"))]
+    {
+        device.authorize_remote_renderer_microphone("remote");
+        assert!(device
+            .slots
+            .lock()
+            .microphone
+            .as_ref()
+            .unwrap()
+            .expires_at
+            .is_none());
+    }
+    device.revoke(Some("remote"));
+    assert_eq!(
+        claim(&device, "local", id, MicrophonePurpose::Test),
+        json!({ "busy": null })
+    );
+}
+
+#[test]
 fn renderer_releases_and_revocations_are_owner_fenced() {
     use MicrophonePurpose::*;
     let (_directory, device, _, _) = fixture();

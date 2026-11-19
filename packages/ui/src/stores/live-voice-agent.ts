@@ -9,14 +9,15 @@ import type { FollowUpBehavior } from "./preferences"
 import { locationAuthorityKey } from "./request-locations"
 import { sendMessage } from "./session-actions"
 import { isLatestMessageWindow, loadLatestMessageWindow } from "./session-api"
-import { nativeSessionLifecycleGeneration } from "./session-events"
 import { normalizeSessionDirectory } from "./session-list-options"
 import { activeSessionId, sessions } from "./session-state"
 import { isSessionBusy } from "./session-status"
 import { getWorktrees } from "./worktrees"
+import { sessionPromptAwaitingExecution } from "./session-prompt-ack"
+import { getRootClient } from "./opencode-client"
+import { normalizeSessionMessage } from "./message-v2/normalizers"
 
 const title = (label: string | undefined) => (label ?? "").slice(0, 256)
-const EXECUTION_START_GRACE_MS = 15_000
 
 export function liveVoiceTargetSession(instanceId: string, sessionId: string | undefined) {
   if (!sessionId || activeInstanceId() !== instanceId || activeSessionId().get(instanceId) !== sessionId) return
@@ -31,9 +32,6 @@ function nativeVoiceTarget(instanceId: string, sessionId: string) {
 }
 
 type Target = NonNullable<ReturnType<typeof liveVoiceTargetSession>>
-type Acknowledgement = { client: Target["instance"]["client"]; generation: number; idle: number; admission: number; expires: number }
-// A native receipt can arrive after the voice window closes or is reopened.
-const awaitingExecution = new Map<string, Acknowledgement>()
 
 function sessionStatus(instanceId: string, sessionId: string) {
   const session = sessions().get(instanceId)?.get(sessionId)
@@ -57,33 +55,13 @@ export function liveVoiceContext({ instance, session }: Target): LiveVoiceContex
   }
 }
 
-export function liveVoiceAgent({ instance, session, key }: Target, options: {
+export function liveVoiceAgent({ instance, session }: Target, options: {
   followUp: () => FollowUpBehavior
   canSend: () => boolean
   composerSending?: () => boolean
 }) {
   const instanceId = instance.id
   const sessionId = session.id
-  const targetCurrent = () => {
-    const current = nativeVoiceTarget(instanceId, sessionId)
-    return current?.key === key && current.instance.client === instance.client
-  }
-  const lifecycle = () => nativeSessionLifecycleGeneration(instanceId, sessionId)
-  const currentSession = () => sessions().get(instanceId)?.get(sessionId)
-  const idleBoundary = () => currentSession()?.time.idle ?? 0
-  function busyFromAcknowledgement() {
-    const pending = awaitingExecution.get(key)
-    if (!pending) return false
-    if (
-      pending.client !== instance.client || pending.generation !== lifecycle() || idleBoundary() > pending.idle ||
-      (currentSession()?.idleReadAdmissionEpoch ?? 0) >= pending.admission ||
-      performance.now() >= pending.expires
-    ) {
-      awaitingExecution.delete(key)
-      return false
-    }
-    return true
-  }
   function recentAssistant() {
     const store = messageStoreBus.getInstance(instanceId)
     if (!store || !isLatestWindow(store.getMessageWindow(sessionId))) return []
@@ -101,10 +79,21 @@ export function liveVoiceAgent({ instance, session, key }: Target, options: {
       case "get_session_status":
         return sessionStatus(instanceId, sessionId)
       case "get_last_reply": {
-        for (const { row } of recentAssistant()) {
+        const stored = isLatestMessageWindow(instanceId, sessionId)
+        const latest = stored ? undefined : await getRootClient(instanceId).message.list({
+          sessionID: sessionId, limit: MESSAGE_WINDOW_PAGE_SIZE, order: "desc",
+        })
+        if (!current()) return { error: "The conversation has changed." }
+        const boundary = sessions().get(instanceId)?.get(sessionId)?.revert?.messageID
+        const parts = !latest ? recentAssistant().map(({ row }) => row.partIds.map(id => row.parts[id]?.data))
+          : latest.data.flatMap(raw => {
+            if (boundary && raw.id >= boundary) return []
+            const { message, info } = normalizeSessionMessage(sessionId, raw)
+            return info.role === "assistant" && info.nativeType !== "system" ? [message.parts] : []
+          })
+        for (const row of parts) {
           let text = ""
-          for (const id of row.partIds) {
-            const part = row.parts[id]?.data
+          for (const part of row) {
             if (part?.type !== "text" || !partHasRenderableText(part)) continue
             const remaining = 2000 - text.length
             text += `${text ? "\n\n" : ""}${part.text.slice(0, remaining)}`.slice(0, remaining)
@@ -130,22 +119,9 @@ export function liveVoiceAgent({ instance, session, key }: Target, options: {
         await sendMessage(instanceId, sessionId, tool.arguments.text.trim(), [], {
           admissionCurrent: () => admissionCurrent() && latest(),
           delivery: () => delivery = resolvePromptDelivery(
-            busyFromAcknowledgement() || isSessionBusy(instanceId, sessionId) || !!options.composerSending?.(),
+            sessionPromptAwaitingExecution(instanceId, sessionId) || isSessionBusy(instanceId, sessionId) || !!options.composerSending?.(),
             options.followUp(),
           ),
-          onDispatch: () => {
-            if (delivery !== "steer") return
-            const generation = lifecycle(), idle = idleBoundary()
-            const admission = currentSession()?.generationAdmissionEpoch
-            return () => {
-              // Provider cancellation stops tool delivery, not a native send already on the wire.
-              if (admission !== undefined && targetCurrent() && generation === lifecycle() && idleBoundary() <= idle) {
-                const pending = { client: instance.client, generation, idle, admission, expires: performance.now() + EXECUTION_START_GRACE_MS }
-                awaitingExecution.set(key, pending)
-                setTimeout(() => { if (awaitingExecution.get(key) === pending) awaitingExecution.delete(key) }, EXECUTION_START_GRACE_MS)
-              }
-            }
-          },
         })
         return { delivery: delivery === "queue" ? "queued" : "submitted" }
       }

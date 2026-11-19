@@ -637,9 +637,10 @@ function runPrimary(firstIntent: LaunchIntent) {
       remoteDictation.observeRemote(window)
       remoteDictation.setRemoteTarget(window, target, base)
       bindNotificationBadge(window)
-      if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
+      configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
         .filter((candidate) => candidate.webContents.session === remoteSession)
-        .flatMap((candidate) => [...(remoteOrigins.get(candidate.id) ?? [])]), remoteSession)
+        .flatMap((candidate) => [...(remoteOrigins.get(candidate.id) ?? [])]), remoteSession, undefined,
+        contents => deviceSpeech.authorizeRendererMicrophone(contents.id))
       window.setTitle(title)
       window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
       setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)

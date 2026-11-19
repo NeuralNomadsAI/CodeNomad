@@ -22,7 +22,8 @@ import { microphoneUse, refreshMicrophoneUse } from "../lib/microphone-lease"
 import { useLiveVoiceConversation } from "../lib/hooks/use-live-voice-conversation"
 import LiveVoiceConversationWindow, { LIVE_VOICE_CONVERSATION_WINDOW_ID } from "./live-voice-conversation-window"
 import DictationNotice from "./prompt-input/DictationNotice"
-import type { PromptDelivery, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
+import { sessionPromptAwaitingExecution } from "../stores/session-prompt-ack"
+import type { PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
 import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
@@ -464,17 +465,22 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   const promptDelivery = (alternate = false) => resolvePromptDelivery(
-    Boolean(props.isSessionBusy || submissionsInFlight() > 0),
+    Boolean(props.isSessionBusy || submissionsInFlight() > 0 || sessionPromptAwaitingExecution(props.instanceId, props.sessionId)),
     preferences().followUpBehavior,
     alternate,
   )
 
-  async function handleSend(delivery?: PromptDelivery) {
+  async function handleSend(alternate = false) {
     const draftText = prompt()
     const text = draftText.trim()
     const currentAttachments = attachments()
     if (props.disabled || props.sendBlocked || isReadingFiles() || submissionsInFlight() > 0 || (!text && currentAttachments.length === 0)) return
-    const resolvedDelivery = delivery ?? promptDelivery()
+    const { instanceId, sessionId } = props
+    const followUp = preferences().followUpBehavior
+    const admitDelivery = () => resolvePromptDelivery(
+      Boolean(props.isSessionBusy || sessionPromptAwaitingExecution(instanceId, sessionId)), followUp, alternate,
+    )
+    const resolvedDelivery = admitDelivery()
     const restoredPayload = restoredQueuedPayload
 
     const isShellMode = mode() === "shell"
@@ -573,7 +579,7 @@ export default function PromptInput(props: PromptInputProps) {
           await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
         }
       } else {
-        await props.onSend(submitPrompt, currentAttachments, resolvedDelivery, restoredPayload)
+        await props.onSend(submitPrompt, currentAttachments, resolvedDelivery, restoredPayload, admitDelivery)
       }
       restoredQueuedPayload = undefined
     } catch (error) {
@@ -748,7 +754,7 @@ export default function PromptInput(props: PromptInputProps) {
     getAttachments: attachments,
     removeAttachment: (attachmentId) => removeAttachment(props.instanceId, props.sessionId, attachmentId),
     submitOnEnter,
-    onSend: (alternate) => void handleSend(promptDelivery(Boolean(alternate))),
+    onSend: (alternate) => void handleSend(Boolean(alternate)),
     onBackground: handleBackground,
     selectPreviousHistory: (force) =>
       selectPreviousHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
@@ -841,9 +847,9 @@ export default function PromptInput(props: PromptInputProps) {
       icon: alternate === "queue"
         ? <ListEnd class="h-4 w-4" aria-hidden="true" />
         : <SendHorizontal class="h-4 w-4" aria-hidden="true" />,
-      disabled: mode() !== "normal" || !props.isSessionBusy || !canSendDraft(),
+      disabled: mode() !== "normal" || !(props.isSessionBusy || sessionPromptAwaitingExecution(props.instanceId, props.sessionId)) || !canSendDraft(),
       // The shortcut's own resolution: an idle session always sends normally.
-      onSelect: () => void handleSend(promptDelivery(true)),
+      onSelect: () => void handleSend(true),
     })
     const dictationReason = !voiceInput.isRecording() ? voiceInput.unavailableKey() : undefined
     items.push({

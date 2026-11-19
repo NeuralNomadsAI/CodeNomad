@@ -66,6 +66,7 @@ declare global {
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     deviceSpeech?: (request: import("../../../desktop-speech/contract").DeviceSpeechRequest) => Promise<unknown>
+    remoteMicrophoneLease?: true
     remoteDictation?: (request: import("../../../desktop-speech/remote-contract").RemoteDictationRequest) => Promise<unknown>
     settleRemoteDictation?: (request: import("../../../desktop-speech/remote-contract").SettleRemoteDictation) => Promise<unknown>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>

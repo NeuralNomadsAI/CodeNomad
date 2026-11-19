@@ -41,6 +41,8 @@ Der Wiedergabetest verwendet den gewählten Modus und das Format sofort, aber En
 
 Wenn die API unter Linux mit Tauri auf WAV ausweicht, endet die Aufnahme beim Diktieren und beim Eingabetest nach 24 Sekunden. Der Ausschnitt bleibt auf diesem Gerät, bis Sie ihn mit **Transkribieren** an den Sprachanbieter senden oder mit **Abbrechen** verwerfen.
 
+Komprimierte API-Aufnahmen stoppen am Größenlimit und bieten ebenfalls **Transkribieren** oder **Abbrechen** an.
+
 ### Desktop-Engine auswählen {#desktop-dictation}
 
 Wählen Sie in der lokalen Desktop-App unter **Einstellungen → Sprache → Diktat** die **Diktier-Engine auf diesem Gerät**. Die Wahl gilt für alle Projekte auf diesem Gerät. **API-Anbieter** nutzt die Einstellungen des verbundenen Servers und benötigt einen sicheren Kontext für das Mikrofon.

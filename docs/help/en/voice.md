@@ -41,6 +41,8 @@ The playback test uses the selected playback mode/format immediately, but endpoi
 
 If the API uses WAV fallback on Linux Tauri, **Dictate** and **Test API input** stop recording at 24 seconds. The clip stays on this device until you choose **Transcribe** to send it to the speech provider or **Cancel** to discard it.
 
+Encoded API recordings also stop at a size limit and offer the same **Transcribe** and **Cancel** choices.
+
 ### Choose a desktop engine {#desktop-dictation}
 
 In local desktop **Preferences → Voice → Dictation**, set **Dictation engine on this device**. This choice applies across projects on the device. **API provider** uses the connected server's API settings and requires a secure context for microphone access.

@@ -1123,6 +1123,13 @@ fn open_remote_window_locked(
     .title(title)
     .inner_size(1400.0, 900.0)
     .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0);
+    #[cfg(not(target_os = "linux"))]
+    let builder = builder.on_permission_request(move |webview, kind| {
+        if kind == tauri::webview::PermissionKind::Microphone {
+            remote_dictation::authorize_renderer_microphone(&webview, window_generation);
+        }
+        tauri::webview::PermissionResponse::Default
+    });
     let builder = window_zoom::configure(builder);
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(profile_identifier(&profile_key));

@@ -329,7 +329,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.stop.title": "停止录音并转写",
   "promptInput.voiceInput.transcribing.title": "正在转写音频",
   "promptInput.voiceInput.cancel": "取消听写",
-  "promptInput.voiceInput.limitReached": "已达到 24 秒录音上限",
+  "promptInput.voiceInput.limitReached": "已达到录音上限",
   "promptInput.voiceInput.transcribe": "转写",
   "promptInput.voiceInput.recovery.saved": "转写文本可插入",
   "promptInput.voiceInput.recovery.insert": "插入转写文本",

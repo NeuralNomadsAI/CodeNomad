@@ -17,7 +17,8 @@ import "../../../src/index.css"
 const needsPcm = new URL(location.href).searchParams.get("pcm") === "1"
 const showAlerts = new URL(location.href).searchParams.has("alerts")
 const capture = { tracksStopped: 0, starts: 0, samples: 0, permit: null as null | (() => void), deferPermission: false, frames: [] as HTMLIFrameElement[],
-  requests: [] as Array<{ signal: AbortSignal; input: { mimeType: string }; resolve: (text: string) => void }> }
+  chunk: (_bytes: number) => {},
+  requests: [] as Array<{ signal: AbortSignal; input: { mimeType: string; audioBase64: string }; resolve: (text: string) => void }> }
 Object.assign(window, { capture })
 navigator.mediaDevices.getUserMedia = async () => {
   if (capture.deferPermission) await new Promise<void>(resolve => { capture.permit = resolve })
@@ -70,7 +71,15 @@ window.MediaRecorder = class extends EventTarget {
   static isTypeSupported = (type: string) => !needsPcm && type === "audio/mp4"
   mimeType = "audio/mp4"
   state = "inactive"
-  start() { this.state = "recording"; capture.starts++ }
+  start() {
+    this.state = "recording"
+    capture.starts++
+    capture.chunk = bytes => {
+      if (this.state === "recording") {
+        this.dispatchEvent(new BlobEvent("dataavailable", { data: new Blob([new Uint8Array(bytes)], { type: this.mimeType }) }))
+      }
+    }
+  }
   stop() {
     this.state = "inactive"
     queueMicrotask(() => {

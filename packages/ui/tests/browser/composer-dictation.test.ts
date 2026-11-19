@@ -7,7 +7,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>
 before(async () => { fixture = await startProductFixture("composer-dictation") })
 after(async () => { await fixture?.close() })
 
-async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[] } = {}) {
+async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-api-legacy" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[] } = {}) {
   const context = await fixture.browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
@@ -27,10 +27,10 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
           holdRead: false, releaseRead: () => {}, holdCancelReceipt: false, releaseCancelReceipt: () => {},
         }
         const tauriApi = kind === "tauri-api" || kind === "tauri-preferences" || kind === "tauri-remote-api"
-        const bridge = { requests, choice: kind === "remote-api" || tauriApi ? "api" : "hex", operation: "recording",
+        const bridge = { requests, choice: kind === "remote-api" || kind === "remote-api-legacy" || tauriApi ? "api" : "hex", operation: "recording",
           resolve: (_: string) => {}, holdMicrophone: false, admitMicrophone: () => {},
-          denyMicrophone: false, microphoneState: "recording", readFails: false }
-        const mic = (action: unknown) => action === "claimMicrophone" ? { ok: true, value: { busy: null } }
+          denyMicrophone: false, microphoneState: "recording", readFails: false, denyLease: false }
+        const mic = (action: unknown) => action === "claimMicrophone" ? { ok: true, value: { busy: bridge.denyLease ? "test" : null } }
           : action === "releaseMicrophone" ? { ok: true, value: null } : undefined
         const relay = async (request: Record<string, unknown>) => {
           requests.push(request)
@@ -100,7 +100,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
               case "cancel": bridge.operation = "cancelled"; return { ok: true, value: null }
             }
           },
-        } : { remoteDictation: relay }
+        } : { remoteDictation: relay, ...(kind !== "remote-api-legacy" ? { remoteMicrophoneLease: true } : {}) }
         Object.assign(window, { native: bridge, speechSettings: settings, __CODENOMAD_WINDOW_CONTEXT__: local ? "local" : "remote" })
         if (kind === "remote-tauri" || tauriApi) {
           Object.assign(window, {
@@ -314,6 +314,79 @@ test("Dictate waits for the previous transcription to be inserted or discarded",
   assert.equal(await field(page).inputValue(), "updated saved ")
   await start(page)
   await page.waitForFunction(() => (window as any).capture.starts === 2)
+}))
+
+test("an older remote Electron renderer uses the browser lease only when the native lease is absent", async () => {
+  await withComposer(async page => {
+    await start(page)
+    await stop(page)
+    await finish(page, "recorded")
+    assert.equal(await field(page).inputValue(), "recorded ")
+    assert.equal(await page.evaluate(() => (window as any).native.requests.some((request: any) => request.action === "claimMicrophone")), false)
+  }, false, "remote-api-legacy")
+  await withComposer(async page => {
+    await page.evaluate(() => { (window as any).native.denyLease = true })
+    await start(page)
+    await page.waitForFunction(() => (window as any).native.requests.some((request: any) => request.action === "claimMicrophone"))
+    await page.getByRole("button", { name: "More actions", exact: true }).click()
+    await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+  }, false, "remote-api")
+})
+
+test("MediaRecorder releases its lease before an oversize upload and retains a confirmable excerpt", () => withComposer(async page => {
+  await start(page)
+  await page.waitForFunction(() => (window as any).capture.starts === 1)
+  await page.evaluate(() => {
+    const capture = (window as any).capture
+    for (let index = 0; index < 8; index++) capture.chunk(100_000)
+  })
+  const confirm = page.getByRole("button", { name: "Transcribe", exact: true })
+  await confirm.waitFor()
+  assert.equal(await page.evaluate(() => (window as any).capture.tracksStopped), 1)
+  assert.equal(await page.evaluate(() => (window as any).capture.requests.length), 0)
+  assert.equal(await page.evaluate(() => navigator.locks.request("codenomad:microphone", { ifAvailable: true }, lock => !!lock)), true)
+  await confirm.click()
+  await page.waitForFunction(() => (window as any).capture.requests.length === 1)
+  const bytes = await page.evaluate(() => new TextEncoder().encode(JSON.stringify((window as any).capture.requests[0].input)).byteLength)
+  assert.ok(bytes > 900_000 && bytes < 1024 * 1024)
+  await finish(page, "excerpt")
+  assert.equal(await field(page).inputValue(), "excerpt ")
+}))
+
+test("a pending transcript belongs to its session, including after composer remount", () => withComposer(async page => {
+  await field(page).fill("original")
+  await start(page)
+  await stop(page)
+  await field(page).fill("updated")
+  await finish(page, "saved")
+  const insert = page.getByRole("button", { name: "Insert transcript", exact: true })
+  await insert.waitFor()
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture
+    fixture.setOpen(false)
+    fixture.setSession("ses_b")
+    fixture.setOpen(true)
+  })
+  await page.waitForFunction(() => document.querySelector("textarea")?.value === "")
+  assert.equal(await insert.count(), 0)
+  await page.evaluate(() => (window as any).fixture.setSession("ses_a"))
+  await insert.waitFor()
+  await insert.click()
+  assert.match(await field(page).inputValue(), /saved/)
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 1)
+}))
+
+test("keyboard insertion of a pending transcript returns focus to the new draft caret", () => withComposer(async page => {
+  await field(page).fill("original")
+  await start(page)
+  await stop(page)
+  await field(page).fill("left right")
+  await finish(page, "saved")
+  await select(page, 5)
+  await page.getByRole("button", { name: "Insert transcript", exact: true }).press("Enter")
+  assert.deepEqual(await field(page).evaluate(element => [element === document.activeElement, element.value, element.selectionStart, element.selectionEnd]),
+    [true, "left saved right", 11, 11])
 }))
 
 test("a pending transcription survives sending the draft and still inserts in the same session", () => withComposer(async page => {
@@ -699,7 +772,7 @@ test("remote Linux Tauri API revokes on navigation and ignores a pending consent
 test("remote Linux Tauri API retains the host-bounded excerpt until explicit transcription", () => withComposer(async page => {
   await start(page)
   await page.waitForFunction(() => (window as any).native.requests.some(({ action }: any) => action === "statusApiMicrophone"))
-  const limited = page.getByRole("status").filter({ hasText: "24-second recording limit reached" })
+  const limited = page.getByRole("status").filter({ hasText: "Recording limit reached" })
   const setLimit = async () => {
     await page.evaluate(() => { (window as any).native.microphoneState = "limitReached" })
     await limited.waitFor()
@@ -772,7 +845,7 @@ for (const surface of ["composer", "Voice settings"] as const) {
 
     const startCapture = inComposer ? () => start(page)
       : () => page.getByRole("button", { name: "Test API input", exact: true }).click()
-    const status = page.getByRole("status").filter({ hasText: "24-second recording limit reached" })
+    const status = page.getByRole("status").filter({ hasText: "Recording limit reached" })
     const transcribe = page.getByRole("button", { name: "Transcribe", exact: true })
     const cancel = page.getByRole("button", { name: "Cancel", exact: true })
     const other = page.getByRole("button", { name: "Other control" })
