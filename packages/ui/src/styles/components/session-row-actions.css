@@ -102,8 +102,7 @@
   }
 }
 
-.session-item-favorite,
-.session-item-favorite-branch {
+.session-item-favorite {
   flex-shrink: 0;
   color: var(--accent-primary);
 }

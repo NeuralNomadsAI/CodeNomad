@@ -41,6 +41,7 @@ const seed = [
   make("equipe", "Équipe", 63.5),
   make("validation", "Validation budget", 3),
   make("conseil", "Préparer conseil", 4, main, "ses_equipe"),
+  make("conseil_notes", "Notes du conseil", 5, main, "ses_equipe"),
   make("search_only", "Projet secret", 0),
   ...Array.from({ length: 60 }, (_, index) => {
     const n = String(index + 1).padStart(2, "0")

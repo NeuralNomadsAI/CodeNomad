@@ -85,7 +85,6 @@ export const sessionMessages = {
   "sessionList.filter.showHidden.one": "{count} gizli eşleşmeyi göster",
   "sessionList.filter.showHidden.other": "{count} gizli eşleşmeyi göster",
   "sessionList.favorite.label": "Favori",
-  "sessionList.favorite.branch": "Favori oturum içeriyor",
   "sessionList.favorite.add": "Favorilere ekle",
   "sessionList.favorite.remove": "Favorilerden çıkar",
   "sessionList.favorite.only": "Yalnızca favoriler",

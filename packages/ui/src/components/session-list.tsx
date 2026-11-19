@@ -7,7 +7,7 @@ import { preserveListFocus } from "../lib/preserve-list-focus"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
-import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Star, GitBranch } from "lucide-solid"
+import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Star } from "lucide-solid"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -22,7 +22,6 @@ import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
   ensureSessionAncestorsExpanded,
-  ensureSessionExpanded,
   getVisibleSessionIds,
   isSessionExpanded,
   loadMessages,
@@ -270,30 +269,6 @@ const SessionList: Component<SessionListProps> = (props) => {
   const normalThreads = createMemo(() => projectSessionFamilies(projectUnarchivedSessionThreads(props.threads, props.activeSessionId), {
     sort: "activity", getWorktreeLabel, favoriteIds: favorites(),
   }))
-  const favoriteAncestors = createMemo(() => {
-    const ids = favorites()
-    const ancestors = new Set<string>()
-    if (ids.size === 0 || props.enableFilterBar) return ancestors
-    const visit = (thread: SessionThread): boolean => {
-      if (thread.children.map(visit).some(Boolean)) ancestors.add(thread.session.id)
-      return ids.has(thread.session.id) || ancestors.has(thread.session.id)
-    }
-    normalThreads().forEach(visit)
-    return ancestors
-  })
-  const visitedFavoriteBranches = createMemo(on(() => props.instanceId, () => new Set<string>()))
-  createEffect(on(favoriteAncestors, ancestors => {
-    for (const id of ancestors) {
-      if (visitedFavoriteBranches().has(id)) continue
-      visitedFavoriteBranches().add(id)
-      ensureSessionExpanded(props.instanceId, id)
-    }
-  }))
-  const toggleBranch = (id: string) => {
-    if (isSessionExpanded(props.instanceId, id)) visitedFavoriteBranches().add(id)
-    toggleSessionExpanded(props.instanceId, id)
-  }
-
   const searchMatches = createMemo<SessionThread[]>(() => {
     if (!props.enableFilterBar) return []
     const query = normalizedQuery()
@@ -306,6 +281,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       })
     return projectSessionSearchResults(candidates, {
       sort: sortBy(),
+      favoriteIds: favorites(),
       worktreeDirectory: worktreeDirectory(),
       includeSubsessions: true,
       includeMainSessions: true,
@@ -900,7 +876,6 @@ const SessionList: Component<SessionListProps> = (props) => {
       }
     }
     const favorite = () => favorites().has(sessionId())
-    const favoriteBranch = () => !props.enableFilterBar && favoriteAncestors().has(sessionId())
     const favoriteLabel = () => t(favorite() ? "sessionList.favorite.remove" : "sessionList.favorite.add")
     const actionItems: ActionOverflowMenuItem[] = [
       {
@@ -990,8 +965,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             onClick={selectRow}
             title={title()}
             aria-current={isActive() ? "true" : undefined}
-            aria-description={favorite() ? t("sessionList.favorite.label")
-              : favoriteBranch() ? t("sessionList.favorite.branch") : undefined}
+            aria-description={favorite() ? t("sessionList.favorite.label") : undefined}
           >
             <Show when={isSubsession()} fallback={<User class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />}>
               <Bot class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />
@@ -1007,9 +981,6 @@ const SessionList: Component<SessionListProps> = (props) => {
             class="session-item-badges"
             onClick={(event) => { if (!(event.target as Element).closest("button")) selectRow() }}
           >
-            <Show when={!favorite() && favoriteBranch()}>
-              <span class="session-item-favorite-branch" aria-hidden="true"><GitBranch size={12} /></span>
-            </Show>
             <Show when={isSessionArchived(rowProps.session)}>
               <span class="status-indicator session-status-list" title={t("sessionList.status.archived")}>
                 <Archive class="w-3.5 h-3.5" aria-hidden="true" />
@@ -1305,7 +1276,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                          depth={row()!.depth}
                          hasChildren={row()!.hasChildren}
                          expanded={row()!.expanded}
-                         onToggleExpand={() => toggleBranch(sessionId)}
+                         onToggleExpand={() => toggleSessionExpanded(props.instanceId, sessionId)}
                          isLastChild={row()!.isLastChild}
                          isLastRow={index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()}
                        />

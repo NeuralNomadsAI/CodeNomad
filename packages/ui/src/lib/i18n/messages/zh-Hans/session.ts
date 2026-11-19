@@ -87,7 +87,6 @@ export const sessionMessages = {
   "sessionList.filter.showHidden.one": "显示 {count} 个隐藏结果",
   "sessionList.filter.showHidden.other": "显示 {count} 个隐藏结果",
   "sessionList.favorite.label": "已收藏",
-  "sessionList.favorite.branch": "包含已收藏的会话",
   "sessionList.favorite.add": "添加到收藏",
   "sessionList.favorite.remove": "取消收藏",
   "sessionList.favorite.only": "仅显示收藏",

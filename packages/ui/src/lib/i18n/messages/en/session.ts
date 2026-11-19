@@ -87,7 +87,6 @@ export const sessionMessages = {
   "sessionList.filter.showHidden.one": "Show {count} hidden match",
   "sessionList.filter.showHidden.other": "Show {count} hidden matches",
   "sessionList.favorite.label": "Favorite",
-  "sessionList.favorite.branch": "Contains a favorite",
   "sessionList.favorite.add": "Add to favorites",
   "sessionList.favorite.remove": "Remove from favorites",
   "sessionList.favorite.only": "Favorites only",

@@ -87,7 +87,6 @@ export const sessionMessages = {
   "sessionList.filter.showHidden.one": "הצג {count} תוצאה מוסתרת",
   "sessionList.filter.showHidden.other": "הצג {count} תוצאות מוסתרות",
   "sessionList.favorite.label": "מועדף",
-  "sessionList.favorite.branch": "מכיל סשן מועדף",
   "sessionList.favorite.add": "הוספה למועדפים",
   "sessionList.favorite.remove": "הסרה מהמועדפים",
   "sessionList.favorite.only": "מועדפים בלבד",

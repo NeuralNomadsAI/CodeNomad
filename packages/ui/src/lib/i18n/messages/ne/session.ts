@@ -87,7 +87,6 @@ export const sessionMessages = {
   "sessionList.filter.showHidden.one": "{count} लुकेको नतिजा देखाउनुहोस्",
   "sessionList.filter.showHidden.other": "{count} लुकेका नतिजाहरू देखाउनुहोस्",
   "sessionList.favorite.label": "मनपर्ने",
-  "sessionList.favorite.branch": "मनपर्ने सत्र समावेश छ",
   "sessionList.favorite.add": "मनपर्नेमा थप्नुहोस्",
   "sessionList.favorite.remove": "मनपर्नेबाट हटाउनुहोस्",
   "sessionList.favorite.only": "मनपर्ने मात्र",

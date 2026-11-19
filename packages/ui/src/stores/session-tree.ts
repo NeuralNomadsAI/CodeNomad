@@ -55,15 +55,14 @@ type SessionFamilyProjection = {
   favoriteIds?: ReadonlySet<string>
 }
 
-// Ranking applies to siblings and bubbles through retained descendants, so a
-// favorite or urgent child brings its branch forward without duplicating rows.
+// Pending requests bring their branch forward; favorites rank only their own row.
 function prioritizeActivity(threads: SessionThread[], favoriteIds: ReadonlySet<string>): SessionThread[] {
   const rank = new Map<SessionThread, number>()
   const visit = (siblings: SessionThread[]): SessionThread[] => siblings.map(thread => {
     const children = visit(thread.children)
     const row = { ...thread, children }
     const own = thread.session.pendingPermission || thread.session.pendingForm ? 2 : favoriteIds.has(thread.session.id) ? 1 : 0
-    rank.set(row, children.reduce((max, child) => Math.max(max, rank.get(child)!), own))
+    rank.set(row, children.some(child => rank.get(child) === 2) ? 2 : own)
     return row
   }).sort((a, b) => rank.get(b)! - rank.get(a)!)
   return visit(threads)

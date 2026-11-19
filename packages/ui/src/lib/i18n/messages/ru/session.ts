@@ -87,7 +87,6 @@ export const sessionMessages = {
   "sessionList.filter.showHidden.one": "Показать {count} скрытое совпадение",
   "sessionList.filter.showHidden.other": "Показать скрытые совпадения: {count}",
   "sessionList.favorite.label": "В избранном",
-  "sessionList.favorite.branch": "Есть избранные сессии",
   "sessionList.favorite.add": "Добавить в избранное",
   "sessionList.favorite.remove": "Убрать из избранного",
   "sessionList.favorite.only": "Только избранные",

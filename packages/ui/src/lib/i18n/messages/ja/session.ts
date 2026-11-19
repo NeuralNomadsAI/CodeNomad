@@ -87,7 +87,6 @@ export const sessionMessages = {
   "sessionList.filter.showHidden.one": "非表示の一致 {count} 件を表示",
   "sessionList.filter.showHidden.other": "非表示の一致 {count} 件を表示",
   "sessionList.favorite.label": "お気に入り",
-  "sessionList.favorite.branch": "お気に入りを含む",
   "sessionList.favorite.add": "お気に入りに追加",
   "sessionList.favorite.remove": "お気に入りから削除",
   "sessionList.favorite.only": "お気に入りのみ",
