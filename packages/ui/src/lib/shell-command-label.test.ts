@@ -25,6 +25,8 @@ test("ambiguous shell syntax stays raw", () => {
     "node a.js | cat", "node a.js && node b.js", "node a.js > output",
     "PORT=3001 node script.js", "node $(echo script.js)", "node `echo script.js`",
     "wsl.exe -d Ubuntu --cd /srv -e node script.js", "bash -lc \"node script.js\"",
+    "pwsh -File -", "cmd /c node %SCRIPT% --port 3001", "cmd /c node ^script.js",
+    "cmd /c node !SCRIPT!", "bash -lc 'node scripts/*.js'", "bash -lc 'node script.js # comment'",
     'node "unterminated', 'node "script".js', "unknown --flag", "cmd /c ".repeat(1000) + "node script.js",
   ]) assert.equal(shellCommandLabel(command), null, command)
 })

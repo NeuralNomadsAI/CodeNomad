@@ -4,7 +4,7 @@ export interface ShellCommandLabel {
 }
 
 // Display only: unfamiliar syntax stays raw instead of approximating shell parsing.
-export function shellCommandLabel(command: string, _shell?: string): ShellCommandLabel | null {
+export function shellCommandLabel(command: string): ShellCommandLabel | null {
   return commandLabel(command, 0)
 }
 
@@ -22,21 +22,22 @@ function commandLabel(command: string, depth: number): ShellCommandLabel | null 
   const value = (index: number) => tokens[index]?.[0].replace(/^(["'])(.*)\1$/, "$2") ?? ""
   const executable = value(0).split(/[\\/]/).pop()?.toLowerCase().replace(/\.exe$/, "")
   const rest = (index: number) => command.slice(tokens[index]?.index ?? command.length).trim()
-  const plain = (index: number): ShellCommandLabel | null => {
-    if (!tokens[index] || /^[\w]+=/u.test(value(index))) return null
-    return { program: value(index).split(/[\\/]/).pop()!, args: rest(index + 1) }
-  }
   if (executable === "cmd") {
-    return value(1).toLowerCase() === "/c" && !rest(2).startsWith('"') ? commandLabel(rest(2), depth + 1) : null
+    const payload = rest(2)
+    return value(1).toLowerCase() === "/c" && !/^"|[%!^]/.test(payload) ? commandLabel(payload, depth + 1) : null
   }
   if (executable === "wsl") return value(1) === "-e" ? commandLabel(rest(2), depth + 1) : null
   if (["bash", "sh", "zsh"].includes(executable ?? "")) {
     if (value(1) !== "-lc" || tokens.length !== 3 || !tokens[2][0].startsWith("'")) return null
-    return commandLabel(value(2), depth + 1)
+    const payload = value(2)
+    if (/[\\*?[\]{}#~]/.test(payload)) return null
+    return commandLabel(payload, depth + 1)
   }
   if (["pwsh", "powershell"].includes(executable ?? "")) {
     const file = value(1).toLowerCase() === "-noprofile" ? 2 : 1
-    return value(file).toLowerCase() === "-file" ? plain(file + 1) : null
+    const script = value(file + 1)
+    if (value(file).toLowerCase() !== "-file" || !script || script.startsWith("-") || /^[\w]+=/.test(script)) return null
+    return { program: script.split(/[\\/]/).pop()!, args: rest(file + 2) }
   }
   if (/^[\w]+=/u.test(value(0))) return null
   // Keep the launcher and script together so node/python invocations remain faithful.

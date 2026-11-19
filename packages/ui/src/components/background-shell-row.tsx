@@ -20,7 +20,7 @@ export function BackgroundShellRow(props: BackgroundShellRowProps) {
   let button!: HTMLButtonElement
   let content: HTMLDivElement | undefined
   let pointerStart: { x: number; y: number } | undefined
-  const label = createMemo(() => shellCommandLabel(props.shell.command, props.shell.shell))
+  const label = createMemo(() => shellCommandLabel(props.shell.command))
   const state = () => {
     if (props.shell.status === "running") return "running"
     if (props.shell.status === "killed") return "killed"
