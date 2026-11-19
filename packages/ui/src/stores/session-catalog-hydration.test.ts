@@ -399,7 +399,7 @@ for (const directory of ["/linked-alias", "/repo/linked-alias"]) test(`cold rest
   } finally { globalThis.fetch = originalFetch; serverApi.fetchWorktrees = originalWorktrees; f.cleanup() }
 })
 
-for (const mode of ["return", "late inventory", "late inventory after departure", "new departure", "unregistered"] as const) test(`favorite placement reconciles a previous departure (${mode})`, async () => {
+for (const mode of ["return", "late inventory", "late inventory after reconnect", "late inventory after departure", "new departure", "unregistered"] as const) test(`favorite placement reconciles a previous departure (${mode})`, async () => {
   const id = `favorite-return-${mode.replaceAll(" ", "-")}`, f = fixture(id)
   const originalWorktrees = serverApi.fetchWorktrees
   const started = deferred<void>(), read = deferred<any>()
@@ -410,7 +410,8 @@ for (const mode of ["return", "late inventory", "late inventory after departure"
     { slug: "root", directory: "/repo", kind: "root" },
     ...(hasLinked ? [{ slug: "linked", directory: "/repo-linked", kind: "worktree" } as const] : []),
   ] })
-  f.client.session.get = async () => { started.resolve(); return read.promise }
+  let reads = 0
+  f.client.session.get = async () => { reads++; started.resolve(); return read.promise }
   f.client.session.list = async (input: any) => ({ data: input.project ? [alias] : [], cursor: {} })
   setInstanceMetadata(id, { project: { id: "project" } as any })
   let restoring: Promise<unknown> | undefined
@@ -427,20 +428,26 @@ for (const mode of ["return", "late inventory", "late inventory after departure"
       assert.equal(getMovedAwaySessions(id).get("root"), "/other-project")
       assert.equal(getSessionThreads(id).some(thread => thread.session.id === "root"), false)
       if (mode === "late inventory after departure") markSessionMovedAway(id, "root", "/newer-project")
+      if (mode === "late inventory after reconnect") {
+        applyOpenCodeDataEvent(id, "/repo", { id: "connected", type: "server.connected", created: 1, data: {} } as any)
+      }
       hasLinked = true
       await reloadWorktrees(id, true)
+      if (mode === "late inventory after reconnect") assert.equal(getSessionThreads(id).some(thread => thread.session.id === "root"), false)
     }
     await fetchSessions(id, { strictStatus: true })
-    const returned = mode === "return" || mode === "late inventory"
+    const returned = mode === "return" || mode === "late inventory" || mode === "late inventory after reconnect"
     assert.equal(getMovedAwaySessions(id).get("root"), returned ? undefined
       : mode === "new departure" || mode === "late inventory after departure" ? "/newer-project" : "/other-project")
     assert.equal(getSessionThreads(id).some(thread => thread.session.id === "root"), returned)
     assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
     if (returned) assert.equal(sessions().get(id)?.get("root")?.location.directory, alias.location.directory)
+    if (mode === "late inventory after reconnect") assert.equal(reads, 2, "the expired proof needs exactly one fresh read")
   } finally {
     read.resolve(alias)
     await restoring
     serverApi.fetchWorktrees = originalWorktrees
+    destroyOpenCodeData(id)
     f.cleanup()
   }
 })

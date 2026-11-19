@@ -136,6 +136,7 @@ export function retainConfirmedSessionPlacement(
   revalidations.set(sessionId, async () => {
     const current = () => isCurrent() && !signal?.aborted && !isSessionMovePending(instanceId, sessionId)
       && confirmedPlacements.get(instanceId)?.get(sessionId) === confirmed
+      && (confirmed.returnFrom === undefined || getMovedAwaySessions(instanceId).get(sessionId) === confirmed.returnFrom)
       && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), confirmed.placement)
     const readSignal = signal ?? new AbortController().signal
     try {
@@ -150,11 +151,12 @@ export function retainConfirmedSessionPlacement(
         if (result === LOCATED_ELSEWHERE) markSessionMovedAway(instanceId, sessionId, null)
         removeSessionProjection(instanceId, sessionId)
       } else if (result?.id === sessionId && result.location) {
-        confirmSessionPlacement(instanceId, sessionId, result)
+        confirmSessionPlacement(instanceId, sessionId, result, confirmed.returnFrom)
         if (!matchesSessionPlacement(result, confirmed.placement) || result.listWorktreeSlug !== confirmed.placement.listWorktreeSlug) {
           applySessionMovePlacement(instanceId, { ...result, sessionID: sessionId })
           refreshSelectedMoveCatalog(instanceId, sessionId)
         }
+        if (confirmListedReturn(instanceId, sessionId)) forgetSessionMovedAway(instanceId, sessionId)
       }
     } catch (error) {
       if (current()) log.warn("Failed to revalidate session placement", { instanceId, sessionId, error })
@@ -512,19 +514,20 @@ export function isSessionMovePending(instanceId: string, sessionId: string): boo
   return getPendingSessionMove(instanceId, sessionId) !== undefined
 }
 
+function confirmListedReturn(instanceId: string, id: string): boolean {
+  const evidence = confirmedPlacements.get(instanceId)?.get(id)
+  if (evidence?.returnFrom === undefined || evidence.returnFrom !== getMovedAwaySessions(instanceId).get(id)
+    || evidence.client !== instances().get(instanceId)?.client || evidence.generation !== getOpenCodeInstanceGeneration(instanceId)
+    || isSessionMovePending(instanceId, id) || !matchesSessionPlacement(sessions().get(instanceId)?.get(id), evidence.placement)
+    || !getWorktrees(instanceId).some(worktree => worktree.slug === evidence.placement.listWorktreeSlug)) return false
+  confirmSessionPlacement(instanceId, id, evidence.placement)
+  return true
+}
+
 /** A later inventory that serves a moved-away session's destination lists it again. */
 function relistReturnedSessions(instanceId: string): void {
   const returned = [...getMovedAwaySessions(instanceId)].filter(([id, directory]) => {
-    const evidence = confirmedPlacements.get(instanceId)?.get(id)
-    if (evidence?.returnFrom !== undefined) {
-      const slug = evidence.placement.listWorktreeSlug
-      if (evidence.returnFrom !== directory || evidence.client !== instances().get(instanceId)?.client
-        || evidence.generation !== getOpenCodeInstanceGeneration(instanceId) || isSessionMovePending(instanceId, id)
-        || !matchesSessionPlacement(sessions().get(instanceId)?.get(id), evidence.placement)
-        || !getWorktrees(instanceId).some(worktree => worktree.slug === slug)) return false
-      confirmSessionPlacement(instanceId, id, evidence.placement)
-      return true
-    }
+    if (confirmedPlacements.get(instanceId)?.get(id)?.returnFrom !== undefined) return confirmListedReturn(instanceId, id)
     return directory !== null && servesSessionDirectory(instanceId, directory)
   }).map(([id]) => id)
   if (!returned.length) return
