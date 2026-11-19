@@ -60,13 +60,15 @@ Les reçus sont des annotations CodeNomad en lecture seule, pas des messages nat
 Sélectionnez une conversation et ouvrez **Statut → Permissions**.
 
 - **Autonome** — Applique les règles de permissions d’OpenCode.
-- **Supervisé** — Demande confirmation avant les modifications de fichiers et les commandes shell de l’agent, selon les règles globales, du projet et de la conversation, ainsi que les autorisations enregistrées. Ce n’est pas un bac à sable.
+- **Supervisé** — Demande confirmation avant que l’agent modifie des fichiers ou exécute des commandes shell. Pour ces actions, les interdictions globales, du projet et de la conversation restent en vigueur, et les règles d’autorisation deviennent des demandes. Les accords **Toujours autoriser** enregistrés par OpenCode restent valables pour les demandes correspondantes.
 
-Si le mode n’est pas confirmé, choisissez **Recharger les permissions**.
+Les deux modes utilisent les règles de session d’OpenCode, y compris dans son interface terminal lorsqu’elle est connectée au même service et ouverte sur la même conversation. Revenir à **Autonome** retire seulement les règles ajoutées pour la supervision. Les fichiers de configuration d’OpenCode restent inchangés. CodeNomad n’approuve pas automatiquement les demandes, quel que soit le mode.
 
-Les nouveaux sous-agents et les conversations bifurquées héritent d’une copie des règles. Changer leur mode laisse la conversation source intacte. Les demandes ouvertes gardent leurs règles initiales.
+Le mode Supervisé n’est pas un bac à sable. Les lectures, les accès hors projet et les outils MCP gardent leurs propres règles. Les demandes ouvertes gardent leurs règles initiales.
 
-Choisissez le mode initial des nouvelles conversations dans **Paramètres → Général → Permissions des nouvelles conversations**.
+Les sous-agents et les conversations bifurquées reçoivent une copie des règles de session à leur création. Vous pouvez changer leur mode séparément.
+
+Si le mode n’est pas confirmé, choisissez **Recharger les permissions**. Pour régler le mode initial, voir [Permissions des nouvelles conversations](settings.md#new-conversation-permissions).
 
 ## Récupérer les demandes manquantes ou périmées {#request-recovery}
 

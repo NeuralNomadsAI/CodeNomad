@@ -60,13 +60,15 @@ Karar kayıtları OpenCode mesajı veya izin kuralı düzenleyicisi değil, salt
 Bir konuşma seçip **Durum → İzinler** bölümünü açın.
 
 - **Özerk** — OpenCode’un izin kurallarını uygular.
-- **Denetimli** — Ajanın dosya değişikliklerinden ve kabuk komutlarından önce onay ister. Genel kurallar, proje ve konuşma kuralları ve kayıtlı onaylar geçerlidir. Bu bir yalıtım ortamı değildir.
+- **Denetimli** — Ajan dosyaları değiştirmeden veya kabuk komutlarını çalıştırmadan önce onay ister. Bu işlemlere ilişkin genel, proje ve konuşma yasakları geçerli kalır; izin veren kurallar onay isteğine dönüşür. OpenCode’a kaydedilen **Her Zaman İzin Ver** onayları, eşleşen istekler için geçerli kalır.
 
-Mod doğrulanmadıysa **İzinleri yeniden yükle** seçeneğini kullanın.
+Her iki mod da OpenCode’un oturum kurallarını kullanır. Aynı hizmette aynı konuşmayı açtığınızda bu kurallar OpenCode’un terminal arayüzünde de geçerlidir. **Özerk** moda dönmek yalnızca denetim için eklenen kuralları kaldırır. OpenCode yapılandırma dosyaları değişmez. CodeNomad hiçbir modda istekleri otomatik olarak onaylamaz.
 
-Yeni alt ajanlar ve çatallanan konuşmalar kuralların bir kopyasını alır. Bunların modunu değiştirmek kaynak konuşmayı etkilemez. Açık istekler ilk kurallarını korur.
+Denetimli mod bir yalıtım ortamı değildir. Okuma, proje dışına erişim ve MCP araçları kendi kurallarına tabi kalır. Açık istekler ilk kurallarını korur.
 
-**Ayarlar → Genel → Yeni konuşmaların izinleri** bölümünde CodeNomad’da oluşturulan yeni konuşmaların başlangıç modunu seçin.
+Alt ajanlar ve çatallanan konuşmalar oluşturulduklarında oturum kurallarının bir kopyasını alır. Modlarını ayrı ayrı değiştirebilirsiniz.
+
+Mod doğrulanmadıysa **İzinleri yeniden yükle** seçeneğini kullanın. Başlangıç modunu seçmek için [Yeni konuşmaların izinleri](settings.md#new-conversation-permissions) bölümüne bakın.
 
 ## Eksik veya eski istekleri kurtarma {#request-recovery}
 

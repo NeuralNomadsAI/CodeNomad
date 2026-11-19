@@ -60,13 +60,15 @@ Receipts are read-only CodeNomad annotations, not native messages or permission-
 Select a conversation and open **Status → Permissions**.
 
 - **Autonomous** — Follows OpenCode’s permission rules.
-- **Supervised** — Asks before agent edits and shell commands, subject to global, project and conversation rules and saved approvals. This is not a sandbox.
+- **Supervised** — Asks before agent edits and shell commands. For those actions, global, project and conversation deny rules still apply, and allow rules become requests. Matching **Always Allow** approvals saved by OpenCode still apply.
 
-If the mode is unconfirmed, choose **Reload permissions**.
+Both modes use OpenCode’s session rules, including in its terminal UI when connected to the same service and conversation. Switching to **Autonomous** removes only the rules added for supervision. OpenCode’s configuration files stay unchanged. CodeNomad does not auto-approve requests in either mode.
 
-New subagents and forks inherit a copy of the rules. Changing their mode leaves the source unchanged. Open requests keep their original rules.
+Supervised is not a sandbox. Reads, access outside the project and MCP tools keep their own rules. Open requests keep their original rules.
 
-Choose the starting mode in **Settings → General → New conversation permissions**.
+New subagents and forks get a copy of the session rules at creation. You can change their mode separately.
+
+If the mode is unconfirmed, choose **Reload permissions**. To set the starting mode, see [New conversation permissions](settings.md#new-conversation-permissions).
 
 ## Recover missing or stale requests {#request-recovery}
 

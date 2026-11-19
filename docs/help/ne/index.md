@@ -72,7 +72,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | कार्यस्थान स्थापना वा serve गर्ने | [स्थापना](install.md), [सर्भर सन्दर्भ](server.md), [नेटवर्क र TLS](remote-access.md) |
 | checkout र कुराकानीबीच काम गर्ने | [परियोजना](projects.md), [कुराकानी](conversations.md), [फाइल](files.md) |
 | इतिहास खोज्ने वा सुरक्षित सफाइ गर्ने | [इतिहास](history.md) |
-| नेटिभ प्रश्न र अनुमति उत्तर दिने | [अनुमति](permissions.md) |
+| कुराकानीका अनुमतिहरू मिलाउने वा अनुरोधको जवाफ दिने | [अनुमति मोडहरू](permissions.md#conversation-mode), [प्रश्न र अनुमतिहरू](permissions.md) |
 | सीमित वा निर्धारित काम समन्वय गर्ने | [मिसन](missions.md) |
 | कार्यान्वयन र एकीकरण कन्फिगर गर्ने | [OpenCode](opencode.md), [प्रदायक](providers.md), [एकीकरण](integrations.md) |
 | अर्को उपकरण जोड्ने | [Remote Control](remote-control.md), [सुरक्षा](security.md), [मोबाइल](mobile.md) |

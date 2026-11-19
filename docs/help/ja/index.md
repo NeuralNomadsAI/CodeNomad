@@ -72,7 +72,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | ワークスペースのインストールまたは配信 | [インストール](install.md)、[サーバーリファレンス](server.md)、[ネットワークと TLS](remote-access.md) |
 | 複数のチェックアウトや会話で作業 | [プロジェクト](projects.md)、[会話](conversations.md)、[ファイル](files.md) |
 | 履歴の検索や安全な整理 | [履歴](history.md) |
-| ネイティブの質問や権限リクエストへの回答 | [権限](permissions.md) |
+| 会話の権限を設定する、リクエストに回答する | [権限モード](permissions.md#conversation-mode)、[質問と権限](permissions.md) |
 | 範囲を限定した作業やスケジュールした作業の調整 | [ミッション](missions.md) |
 | 実行環境と連携の設定 | [OpenCode](opencode.md)、[プロバイダー](providers.md)、[連携](integrations.md) |
 | 別の端末からの接続 | [リモートコントロール](remote-control.md)、[セキュリティ](security.md)、[モバイル](mobile.md) |

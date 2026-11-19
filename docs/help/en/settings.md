@@ -37,6 +37,10 @@ If colors become hard to read, set **Contrast → On**. You can also select a bu
 
 In **Settings → General**, **Keep the computer awake while CodeNomad is running** is off by default. Turn it on to prevent system sleep while a local CodeNomad window is open (including minimized), even when no session is working; the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working. This option appears only in local desktop-app windows and Preferences; it is hidden in browser and remote views.
 
+## New conversation permissions {#new-conversation-permissions}
+
+In **Settings → General → New conversation permissions**, choose **Autonomous** (the default) or **Supervised** for new top-level conversations you create in CodeNomad. This leaves existing conversations unchanged. To change one, open [Status → Permissions](permissions.md#conversation-mode) in that conversation.
+
 ## Persistent agent memory {#agent-memory}
 
 CodeNomad attempts to remove the session's stale memory instructions; if that cleanup also fails, the previous instructions can remain until a successful refresh.

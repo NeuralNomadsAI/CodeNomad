@@ -37,6 +37,10 @@ Si los colores se vuelven difíciles de leer, elige **Contraste → Activado**. 
 
 En **Configuración → General**, **Mantener el ordenador activo mientras CodeNomad esté en ejecución** está desactivado por defecto. Actívalo para impedir la suspensión del sistema mientras haya una ventana local de CodeNomad abierta (aunque esté minimizada), incluso si ninguna sesión está trabajando; la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando. La opción aparece solo en las ventanas locales de la aplicación de escritorio y en Preferencias; está oculta en las vistas de navegador y remotas.
 
+## Permisos de las conversaciones nuevas {#new-conversation-permissions}
+
+En **Configuración → General → Permisos de las conversaciones nuevas**, elige **Autónomo** (el valor predeterminado) o **Supervisado** para las conversaciones principales que crees en CodeNomad. Las conversaciones existentes no cambian. Para cambiar el modo de una de ellas, abre [Estado → Permisos](permissions.md#conversation-mode) en esa conversación.
+
 ## Memoria persistente del agente {#agent-memory}
 
 CodeNomad intenta retirar las instrucciones de memoria obsoletas de la sesión; si esa limpieza también falla, las anteriores pueden permanecer hasta una actualización correcta.

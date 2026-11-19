@@ -79,8 +79,10 @@ uses the daemon's default directory as a substitute or triggers strategy discove
 `GET`/`PUT /api/workspaces/:id/sessions/:sessionId/permission-mode` reads or sets
 `{ mode: "autonomous" | "supervised" }` for an owned conversation. Read that
 route on selection and reconnect, and on a native `session.permissions` event
-for that conversation. OpenCode owns evaluation and settlement; CodeNomad
-only replies to an explicit decision.
+for that conversation. OpenCode owns evaluation and settlement from the session’s
+ordered native `permissions` array (`action`, `resource`, `effect`) regardless
+of client, including the TUI on the same service and session. CodeNomad replies
+only to explicit decisions; stored automatic receipts remain readable.
 
 **Status → Permissions** reads while the selected section is shown. It shares
 the secondary read budget, coalesces invalidations during a read, and preserves
@@ -90,24 +92,29 @@ available. A write settles with an authoritative refresh and is never replayed
 after failure. Status customization normalizes saved section IDs before
 applying order and visibility.
 
-Autonomous contributes no rules. Supervised appends `ask edit *` and `ask shell *`,
-then projects the effective global and project configuration onto those two actions
-in order, followed by the conversation's existing rules matching those actions.
-The projection preserves `deny` and `ask` and turns `allow` into `ask`. Home-relative edit
-resources that need expansion by the native config loader are refused if their
-native absolute path cannot be established. The block takes precedence over
-agent-specific rules where they overlap.
-Saved project approvals can still allow an `ask`; external-directory
-and MCP actions retain their own policy. Tool approval is separate from a person
-running a command directly. Open requests keep their original decision context.
-Configuration changes are picked up the next time Supervised is enabled.
+Autonomous contributes no rules. Supervised preserves the original session array
+and appends `ask edit *` and `ask shell *`, then projects the effective global and
+project configuration onto those two actions in order, followed by the session's
+own matching rules. The projection preserves `deny` and `ask` and turns `allow`
+into `ask`, keeping native ordering. Home-relative edit resources that need
+expansion by the native config loader are refused if their native absolute path
+cannot be established. The block takes precedence over agent-specific rules where
+they overlap. Configuration files remain read-only; a fresh enable of Supervised
+reads the effective configuration at the session's native Location.
+
+Matching saved project **Always Allow** approvals can still settle an `ask`.
+Reads, external-directory actions, MCP and delegation retain their own rules.
+Open requests keep their original decision context. This gates agent tool requests;
+approved tools run under the same OS account and isolation as in Autonomous.
 
 The exact contiguous block is recorded in private backend state. Subagents and
-forks start with native copies. With no matching local block, the backend checks
+forks receive a native copy at creation and can change modes independently. With
+no matching local block, the backend checks
 the copy against blocks recorded along its owned native parent or fork lineage,
 including blocks retired by a source that changed modes. Returning to Autonomous
-removes only the matching block from the selected conversation; ambiguous matches
-are left unchanged. A missing or unowned ancestor ends the lookup. Proof uses
+removes only the matching block from the selected conversation, preserving the
+order and content of all other rules; ambiguous matches are left unchanged.
+A missing or unowned ancestor ends the lookup. Proof uses
 native lineage and exact rule values; rules have no per-entry native identity.
 Writes from one backend serialize, read immediately before and after the native
 update, and retry a detected concurrent change from fresh rules. OpenCode replaces the whole array
@@ -117,8 +124,8 @@ the check and update can be undetectable.
 `ui.settings.newConversationPermissions` defaults to Autonomous. The workspace
 proxy, paused Mission creation, managed independent roots and the Images
 conversation creation path send the selected rules at creation. Existing
-conversations, imports, forks and roots created by the native unattended
-schedule runtime use the native rules for their creation path.
+conversations, imports and forks keep their native rules. Mission roots created
+by the native schedule runtime start in Autonomous regardless of this preference.
 
 ## Validation
 

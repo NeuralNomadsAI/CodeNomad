@@ -72,7 +72,7 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | Çalışma alanını kurun veya sunun | [Kurulum](install.md), [Sunucu başvurusu](server.md), [Ağ ve TLS](remote-access.md) |
 | Çalışma kopyaları ve konuşmalar arasında çalışın | [Projeler](projects.md), [Konuşmalar](conversations.md), [Dosyalar](files.md) |
 | Geçmişi bulun veya güvenle temizleyin | [Geçmiş](history.md) |
-| Yerel soruları ve izinleri yanıtlayın | [İzinler](permissions.md) |
+| Konuşma izinlerini ayarlayın veya istekleri yanıtlayın | [İzin modları](permissions.md#conversation-mode), [Sorular ve izinler](permissions.md) |
 | Sınırlı veya zamanlanmış işleri koordine edin | [Görevler](missions.md) |
 | Yürütme ve entegrasyonları yapılandırma | [OpenCode](opencode.md), [Sağlayıcılar](providers.md), [Entegrasyonlar](integrations.md) |
 | Başka bir cihaz bağlayın | [Uzaktan Kontrol](remote-control.md), [Güvenlik](security.md), [Mobil](mobile.md) |

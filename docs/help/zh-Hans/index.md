@@ -72,7 +72,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | 安装或提供工作区服务 | [安装](install.md)、[服务器参考](server.md)、[网络与 TLS](remote-access.md) |
 | 跨检出目录和对话工作 | [项目](projects.md)、[对话](conversations.md)、[文件](files.md) |
 | 查找历史记录或安全清理 | [历史记录](history.md) |
-| 回答原生问题和权限请求 | [权限](permissions.md) |
+| 设置对话权限或回应请求 | [权限模式](permissions.md#conversation-mode)、[问题与权限](permissions.md) |
 | 协调有界任务或计划工作 | [任务](missions.md) |
 | 配置执行和集成 | [OpenCode](opencode.md)、[提供商](providers.md)、[集成](integrations.md) |
 | 连接另一台设备 | [远程控制](remote-control.md)、[安全](security.md)、[移动设备](mobile.md) |

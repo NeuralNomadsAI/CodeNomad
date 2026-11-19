@@ -79,7 +79,7 @@ Authentication and Remote Control admission judge `routedPath()` (`server/routed
 
 Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy exposes an explicit method/path allowlist, adds shared-service authorization, validates prompt files, defaults safe requests to the workspace location, and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`. Never trust a browser-supplied worktree path: resolve ownership server-side. Upstream additions are exposed only after an explicit proxy review.
 
-Conversation permission mode lives at `/api/workspaces/:id/sessions/:sessionId/permission-mode`; native `session.permissions` triggers a fresh mode read.
+The conversation permission mode route (`/api/workspaces/:id/sessions/:sessionId/permission-mode`) owns the Supervised block of native session rules. OpenCode evaluates the same session rules for CodeNomad and its terminal UI; configuration is read-only to this route. Native `session.permissions` triggers a fresh mode read. See [Native interruption UX](NATIVE_INTERRUPTION_UX.md#conversation-permissions).
 
 ### Published UI compatibility
 

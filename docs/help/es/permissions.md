@@ -60,13 +60,15 @@ Los comprobantes son anotaciones de solo lectura de CodeNomad, no mensajes nativ
 Selecciona una conversación y abre **Estado → Permisos**.
 
 - **Autónomo** — Aplica las reglas de permisos de OpenCode.
-- **Supervisado** — Pide confirmación antes de que el agente modifique archivos o ejecute comandos de shell. Se aplican las reglas globales, del proyecto y de la conversación, y las aprobaciones guardadas. No es un entorno aislado.
+- **Supervisado** — Pide confirmación antes de que el agente modifique archivos o ejecute comandos de shell. Para esas acciones, las prohibiciones globales, del proyecto y de la conversación siguen vigentes, y las reglas que las permiten pasan a requerir confirmación. Las aprobaciones de **Permitir siempre** guardadas por OpenCode siguen vigentes para las solicitudes que coincidan.
 
-Si el modo está sin confirmar, selecciona **Volver a cargar los permisos**.
+Ambos modos usan las reglas de sesión de OpenCode, también en su interfaz de terminal si abres la misma conversación en el mismo servicio. Volver a **Autónomo** solo quita las reglas añadidas para la supervisión. Los archivos de configuración de OpenCode no cambian. CodeNomad no aprueba solicitudes automáticamente en ninguno de los dos modos.
 
-Los subagentes y las bifurcaciones nuevos heredan una copia de las reglas. Cambiar su modo deja intacta la conversación de origen. Las solicitudes abiertas conservan sus reglas originales.
+El modo Supervisado no es un entorno aislado. Las lecturas, el acceso fuera del proyecto y las herramientas MCP conservan sus propias reglas. Las solicitudes abiertas conservan sus reglas originales.
 
-Elige el modo inicial de las conversaciones nuevas en **Configuración → General → Permisos de las conversaciones nuevas**.
+Los subagentes y las bifurcaciones reciben una copia de las reglas de la sesión al crearse. Puedes cambiar su modo por separado.
+
+Si el modo está sin confirmar, selecciona **Volver a cargar los permisos**. Para elegir el modo inicial, consulta [Permisos de las conversaciones nuevas](settings.md#new-conversation-permissions).
 
 ## Recuperar solicitudes ausentes u obsoletas {#request-recovery}
 

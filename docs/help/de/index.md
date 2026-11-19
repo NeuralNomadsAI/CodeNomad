@@ -72,7 +72,7 @@ Das Arbeitsbereichs-Stammverzeichnis begrenzt, welche Ordner CodeNomad öffnet; 
 | Arbeitsbereich installieren oder bereitstellen | [Installation](install.md), [Server-Referenz](server.md), [Netzwerk und TLS](remote-access.md) |
 | Über Checkouts und Unterhaltungen hinweg arbeiten | [Projekte](projects.md), [Unterhaltungen](conversations.md), [Dateien](files.md) |
 | Verlauf finden oder sicher bereinigen | [Verlauf](history.md) |
-| Native Fragen und Berechtigungsanfragen beantworten | [Berechtigungen](permissions.md) |
+| Berechtigungen einer Unterhaltung einstellen oder Anfragen beantworten | [Berechtigungsmodi](permissions.md#conversation-mode), [Fragen und Berechtigungen](permissions.md) |
 | Begrenzte oder geplante Arbeit koordinieren | [Missionen](missions.md) |
 | Ausführung und Integrationen konfigurieren | [OpenCode](opencode.md), [Anbieter](providers.md), [Integrationen](integrations.md) |
 | Weiteres Gerät verbinden | [Fernsteuerung](remote-control.md), [Sicherheit](security.md), [Mobil](mobile.md) |

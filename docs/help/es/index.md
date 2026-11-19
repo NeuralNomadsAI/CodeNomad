@@ -72,7 +72,7 @@ La raíz del espacio de trabajo limita qué carpetas abre CodeNomad; no es un en
 | Instalar o servir el espacio de trabajo | [Instalación](install.md), [Referencia del servidor](server.md), [Red y TLS](remote-access.md) |
 | Trabajar con varias copias de trabajo y conversaciones | [Proyectos](projects.md), [Conversaciones](conversations.md), [Archivos](files.md) |
 | Buscar en el historial o limpiarlo de forma segura | [Historial](history.md) |
-| Responder preguntas y permisos nativos | [Permisos](permissions.md) |
+| Configurar los permisos de una conversación o responder a solicitudes | [Modos de permisos](permissions.md#conversation-mode), [Preguntas y permisos](permissions.md) |
 | Coordinar trabajo acotado o programado | [Misiones](missions.md) |
 | Configurar la ejecución y las integraciones | [OpenCode](opencode.md), [Proveedores](providers.md), [Integraciones](integrations.md) |
 | Conectar otro dispositivo | [Control remoto](remote-control.md), [Seguridad](security.md), [Móvil](mobile.md) |

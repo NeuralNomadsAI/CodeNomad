@@ -72,7 +72,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | התקנה או אירוח סביבת העבודה | [התקנה](install.md), [מדריך שרת](server.md), [רשת ו־TLS](remote-access.md) |
 | עבודה בעותקי עבודה ובשיחות | [פרויקטים](projects.md), [שיחות](conversations.md), [קבצים](files.md) |
 | איתור היסטוריה או ניקוי בטוח שלה | [היסטוריה](history.md) |
-| מענה לשאלות ולאישורים מקוריים | [אישורים](permissions.md) |
+| הגדרת הרשאות לשיחה או מענה לבקשות | [מצבי הרשאות](permissions.md#conversation-mode), [שאלות והרשאות](permissions.md) |
 | תיאום עבודה תחומה או מתוזמנת | [משימות](missions.md) |
 | הגדרת הרצה ושילובים | [OpenCode](opencode.md), [ספקים](providers.md), [שילובים](integrations.md) |
 | חיבור מכשיר נוסף | [שליטה מרחוק](remote-control.md), [אבטחה](security.md), [נייד](mobile.md) |

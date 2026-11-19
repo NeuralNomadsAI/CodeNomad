@@ -37,6 +37,10 @@ Werden Farben schwer lesbar, wählen Sie **Kontrast → Ein**. Sie können auch 
 
 Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNomad läuft** standardmäßig deaktiviert. Aktivieren Sie die Option, um den Ruhezustand zu verhindern, solange ein lokales CodeNomad-Fenster geöffnet ist (auch minimiert), auch wenn keine Sitzung arbeitet; der Bildschirm kann sich weiterhin ausschalten. Wenn deaktiviert, hält CodeNomad den Computer nur wach, während eine Sitzung arbeitet. Die Option erscheint nur in lokalen Desktop-App-Fenstern und im nativen Einstellungsfenster; in Browser-/Remote-Ansichten ist sie ausgeblendet.
 
+## Berechtigungen für neue Unterhaltungen {#new-conversation-permissions}
+
+Wählen Sie unter **Einstellungen → Allgemein → Berechtigungen für neue Unterhaltungen** den Modus **Autonom** (Standard) oder **Beaufsichtigt** für neue Hauptunterhaltungen, die Sie in CodeNomad erstellen. Bestehende Unterhaltungen bleiben unverändert. Zum Ändern öffnen Sie in der jeweiligen Unterhaltung [Status → Berechtigungen](permissions.md#conversation-mode).
+
 ## Dauerhaftes Agentengedächtnis {#agent-memory}
 
 CodeNomad versucht, veraltete Speicheranweisungen der Sitzung zu entfernen; schlägt auch dies fehl, können die bisherigen Anweisungen bis zur nächsten erfolgreichen Aktualisierung erhalten bleiben.

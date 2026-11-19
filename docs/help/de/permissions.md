@@ -60,13 +60,15 @@ Belege sind schreibgeschützte CodeNomad-Anmerkungen, keine nativen Nachrichten 
 Wählen Sie eine Unterhaltung und öffnen Sie **Status → Berechtigungen**.
 
 - **Autonom** — Befolgt die Berechtigungsregeln von OpenCode.
-- **Beaufsichtigt** — Fragt vor Dateiänderungen und Shell-Befehlen des Agenten nach. Globale, Projekt- und Unterhaltungsregeln sowie gespeicherte Genehmigungen gelten weiterhin. Dies ist keine Sandbox.
+- **Beaufsichtigt** — Fragt vor Dateiänderungen und Shell-Befehlen des Agenten nach. Globale Verbote sowie Verbote für das Projekt und die Unterhaltung bleiben für diese Aktionen wirksam; Erlaubnisregeln führen zu einer Anfrage. Passende, von OpenCode gespeicherte Genehmigungen über **Immer erlauben** gelten weiterhin.
 
-Ist der Modus nicht bestätigt, wählen Sie **Berechtigungen neu laden**.
+Beide Modi nutzen die Sitzungsregeln von OpenCode, auch in dessen Terminaloberfläche, wenn Sie dort dieselbe Unterhaltung im selben Dienst öffnen. Der Wechsel zu **Autonom** entfernt nur die für die Beaufsichtigung hinzugefügten Regeln. Die OpenCode-Konfigurationsdateien bleiben unverändert. CodeNomad genehmigt in keinem Modus Anfragen automatisch.
 
-Neue Subagenten und Verzweigungen übernehmen eine Kopie der Regeln. Ein Moduswechsel ändert die Quellunterhaltung nicht. Offene Anfragen behalten ihre ursprünglichen Regeln.
+Der beaufsichtigte Modus ist keine Sandbox. Lesezugriffe, Zugriffe außerhalb des Projekts und MCP-Werkzeuge behalten ihre eigenen Regeln. Offene Anfragen behalten ihre ursprünglichen Regeln.
 
-Wählen Sie den Startmodus für neue Unterhaltungen in CodeNomad unter **Einstellungen → Allgemein → Berechtigungen für neue Unterhaltungen**.
+Subagenten und verzweigte Unterhaltungen erhalten bei der Erstellung eine Kopie der Sitzungsregeln. Sie können ihren Modus separat ändern.
+
+Ist der Modus nicht bestätigt, wählen Sie **Berechtigungen neu laden**. Zum Festlegen des Startmodus siehe [Berechtigungen für neue Unterhaltungen](settings.md#new-conversation-permissions).
 
 ## Fehlende oder veraltete Anfragen wiederherstellen {#request-recovery}
 

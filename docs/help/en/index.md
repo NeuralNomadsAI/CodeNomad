@@ -72,7 +72,7 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 | Install or serve the workspace | [Install](install.md), [Server reference](server.md), [Network and TLS](remote-access.md) |
 | Work across checkouts and conversations | [Projects](projects.md), [Conversations](conversations.md), [Files](files.md) |
 | Find history or safely clean it up | [History](history.md) |
-| Answer native questions and permissions | [Permissions](permissions.md) |
+| Set conversation permissions or answer requests | [Permission modes](permissions.md#conversation-mode), [Questions and permissions](permissions.md) |
 | Coordinate bounded or scheduled work | [Missions](missions.md) |
 | Configure execution and integrations | [OpenCode](opencode.md), [Providers](providers.md), [Integrations](integrations.md) |
 | Connect another device | [Remote Control](remote-control.md), [Security](security.md), [Mobile](mobile.md) |

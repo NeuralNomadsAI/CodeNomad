@@ -72,7 +72,7 @@ La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce 
 | Installer ou servir l’espace de travail | [Installation](install.md), [Référence serveur](server.md), [Réseau et TLS](remote-access.md) |
 | Travailler avec plusieurs copies de travail et conversations | [Projets](projects.md), [Conversations](conversations.md), [Fichiers](files.md) |
 | Rechercher dans l’historique ou le nettoyer sans risque | [Historique](history.md) |
-| Répondre aux questions et autorisations natives | [Autorisations](permissions.md) |
+| Régler les permissions d’une conversation ou répondre aux demandes | [Modes de permissions](permissions.md#conversation-mode), [Questions et autorisations](permissions.md) |
 | Coordonner un travail délimité ou programmé | [Missions](missions.md) |
 | Configurer l’exécution et les intégrations | [OpenCode](opencode.md), [Fournisseurs](providers.md), [Intégrations](integrations.md) |
 | Connecter un autre appareil | [Contrôle à distance](remote-control.md), [Sécurité](security.md), [Mobile](mobile.md) |
