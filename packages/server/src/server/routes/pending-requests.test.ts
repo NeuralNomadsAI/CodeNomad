@@ -14,6 +14,7 @@ import { rememberRuntime } from "../../opencode/compatibility/runtime"
 import { registerPendingRequestRoutes, type PendingRequestsRouteDeps } from "./pending-requests"
 import { observePendingDiscovery, markLoadedPendingSupported, deferPendingDiscovery } from "../../workspaces/pending-discovery"
 import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
+import { READINESS_WAIT_MS } from "../../opencode/desktop-plugin-readiness"
 
 const git = promisify(execFile)
 const permission = { id: "permission", sessionID: "background", action: "read", resources: ["file"] }
@@ -262,6 +263,38 @@ for (const deadlineFirst of [true, false]) test(`failure logging follows the fir
     assert.equal(diagnostic?.timedOut, deadlineFirst ? true : undefined)
   } finally { await h.cleanup() }
 })
+
+for (const closeOrder of ["none", "after timeout", "before timeout"] as const) {
+  test(`catalogue activation reports its first abort (${closeOrder})`, async (t) => {
+    const logs: string[] = []
+    const h = await harness({ logs })
+    const activationDeadline = new AbortController()
+    const timeout = AbortSignal.timeout
+    t.mock.method(AbortSignal, "timeout", (ms: number) =>
+      ms === READINESS_WAIT_MS ? activationDeadline.signal : timeout(ms))
+    let close: () => void
+    h.app.addHook("onRequest", async (_request, reply) => { close = () => { reply.raw.emit("close") } })
+    h.connection.client.plugin.list = async (_input, options) => {
+      if (closeOrder === "before timeout") close()
+      activationDeadline.abort(new DOMException("Catalogue activation deadline", "TimeoutError"))
+      if (closeOrder === "after timeout") close()
+      options?.signal?.throwIfAborted()
+      assert.fail("activation should be cancelled")
+    }
+    try {
+      const response = h.app.inject({ url: h.url() })
+      if (closeOrder === "none") {
+        const failure = await response
+        assert.equal(failure.statusCode, 503)
+        assert.equal(failure.json().code, "timeout")
+      } else await assert.rejects(response, { code: "LIGHT_ECONNRESET" })
+      const diagnostic = logs.map(line => JSON.parse(line)).find(line => line.msg === "Pending request recovery failed")
+      assert.equal(diagnostic?.phase, closeOrder === "before timeout" ? undefined : "plugin-activation")
+      assert.equal(diagnostic?.timedOut, closeOrder === "before timeout" ? undefined : true)
+      assert.deepEqual(h.state.calls, [])
+    } finally { await h.cleanup() }
+  })
+}
 
 test("final publication revalidates root, candidate and submitted aliases after placement checks", async () => {
   for (const changed of ["root", "candidate", "alias"] as const) {

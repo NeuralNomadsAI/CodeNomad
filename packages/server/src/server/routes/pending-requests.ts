@@ -91,7 +91,8 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
     reply.raw.once("close", abort)
     const deadline = AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)
     const signal = AbortSignal.any([abandoned.signal, deadline])
-    const timedOut = () => deadline.aborted && signal.reason === deadline.reason
+    let phaseSignal = signal
+    const timedOut = () => phaseSignal.reason?.name === "TimeoutError"
     const bootstrap = manager.getServiceLocation(id)
     const fences = [deps.worktreeDeletionFence.captureDisplay(bootstrap ? [bootstrap.directory] : [])]
     const started = Date.now()
@@ -331,8 +332,9 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       // Warm only the authorized bootstrap. The validated read itself proves
       // registration; the separate presence challenge can expire on a working RPC.
       phase = "plugin-activation"
-      await awaitNativePlugin(connection.client, "codenomad-session-pruning", { directory: bootstrapDirectory },
-        AbortSignal.any([signal, AbortSignal.timeout(READINESS_WAIT_MS)]), assertCurrent)
+      phaseSignal = AbortSignal.any([signal, AbortSignal.timeout(READINESS_WAIT_MS)])
+      await awaitNativePlugin(connection.client, "codenomad-session-pruning", { directory: bootstrapDirectory }, phaseSignal, assertCurrent)
+      phaseSignal = signal
       record("plugin-activation")
       phase = "ownership-revalidation"
       await assertOrigin(bootstrapDirectory)
@@ -426,7 +428,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       ]
       return result
     } catch {
-      if (!signal.aborted || timedOut()) recordFailure()
+      if (!phaseSignal.aborted || timedOut()) recordFailure()
       // Never convert transport, malformed coverage or ownership errors to empty.
       return reply.code(503).send({ error: "Pending requests unavailable; retain existing queues", ...(timedOut() ? { code: "timeout" } : {}) })
     } finally { reply.raw.removeListener("close", abort) }
