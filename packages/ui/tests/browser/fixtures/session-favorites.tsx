@@ -38,7 +38,7 @@ const make = (key: string, title: string, age: number, directory = main, parentI
 })
 const seed = [
   make("briefing", "Briefing du matin", 1),
-  make("equipe", "Équipe", 2),
+  make("equipe", "Équipe", 63.5),
   make("validation", "Validation budget", 3),
   make("conseil", "Préparer conseil", 4, main, "ses_equipe"),
   make("search_only", "Projet secret", 0),

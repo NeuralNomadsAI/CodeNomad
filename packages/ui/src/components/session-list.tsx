@@ -1,4 +1,4 @@
-import { Component, Show, batch, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
+import { Component, For, Show, batch, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
 import { focusInterruption } from "../stores/interruption-navigation"
 import { beginGesture } from "../stores/session-surface"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
@@ -7,12 +7,13 @@ import { preserveListFocus } from "../lib/preserve-list-focus"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
-import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Star } from "lucide-solid"
+import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Star, GitBranch } from "lucide-solid"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import SessionExpander from "./session-expander"
+import { useSessionRowOverflow } from "./session-row-overflow"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
 import { toggleSweepClear, toggleSweepGroup } from "../lib/toggle-sweep"
@@ -846,6 +847,18 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
 
     const [rowElement, setRowElement] = createSignal<HTMLDivElement>()
+    const menuOpen = () => menuSessionId() === sessionId()
+    const overflow = useSessionRowOverflow(rowElement)
+    const compactActions = () => overflow() || menuOpen()
+    const releaseMenu = () => {
+      if (!menuOpen()) return
+      const row = rowElement()
+      const transfer = row?.querySelector(".action-overflow-trigger") === document.activeElement
+      setMenuSessionId(undefined)
+      if (transfer && row?.isConnected && !compactActions()) {
+        row.querySelector<HTMLElement>(".session-item-inline-actions button")?.focus({ preventScroll: true })
+      }
+    }
     const favorite = () => favorites().has(sessionId())
     const favoriteBranch = () => !props.enableFilterBar && favoriteAncestors().has(sessionId())
     const favoriteLabel = () => t(favorite() ? "sessionList.favorite.remove" : "sessionList.favorite.add")
@@ -855,7 +868,8 @@ const SessionList: Component<SessionListProps> = (props) => {
         get label() { return favoriteLabel() },
         get icon() { return <Star class="w-3.5 h-3.5" fill={favorite() ? "currentColor" : "none"} /> },
         get disabled() { return !favoriteStore.ready() || favoriteStore.pending().has(sessionId()) || !isSessionInWorkspaceScope(props.instanceId, sessionId()) },
-        onSelect: () => toggleFavorite(sessionId(), rowElement()?.querySelector<HTMLElement>(".action-overflow-trigger")),
+        onSelect: () => toggleFavorite(sessionId(), rowElement()?.querySelector<HTMLElement>(
+          compactActions() ? ".action-overflow-trigger" : '.session-item-inline-actions [data-action-key="favorite"]')),
       },
       {
         key: "rename",
@@ -899,6 +913,7 @@ const SessionList: Component<SessionListProps> = (props) => {
           style={nestedStyle()}
           data-session-id={sessionId()}
           ref={setRowElement}
+          data-compact-actions={compactActions()}
           data-favorite={favorite() || undefined}
         >
           <Show when={props.enableFilterBar}>
@@ -943,8 +958,8 @@ const SessionList: Component<SessionListProps> = (props) => {
               <Bot class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />
             </Show>
             <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
-            <Show when={favorite() || favoriteBranch()}>
-              <Star class="session-item-favorite" size={12} fill={favorite() ? "currentColor" : "none"} aria-hidden="true" />
+            <Show when={compactActions() && favorite()}>
+              <Star class="session-item-favorite" size={12} fill="currentColor" aria-hidden="true" />
             </Show>
           </button>
           {/* Badges sit beside the select button so a clearable one can be its own button;
@@ -953,6 +968,9 @@ const SessionList: Component<SessionListProps> = (props) => {
             class="session-item-badges"
             onClick={(event) => { if (!(event.target as Element).closest("button")) selectRow() }}
           >
+            <Show when={!favorite() && favoriteBranch()}>
+              <span class="session-item-favorite-branch" aria-hidden="true"><GitBranch size={12} /></span>
+            </Show>
             <Show when={isSessionArchived(rowProps.session)}>
               <span class="status-indicator session-status-list" title={t("sessionList.status.archived")}>
                 <Archive class="w-3.5 h-3.5" aria-hidden="true" />
@@ -994,11 +1012,26 @@ const SessionList: Component<SessionListProps> = (props) => {
             </Show>
           </span>
           <div class="session-item-actions">
-            <ActionOverflowMenu
-              label={t("messageItem.actions.more")}
-              onOpenChange={(open) => setMenuSessionId(open ? sessionId() : undefined)}
-              items={actionItems}
-            />
+            <div class="session-item-inline-actions" inert={compactActions()}>
+              <For each={actionItems}>{item => (
+                <button
+                  type="button"
+                  class="session-item-close"
+                  title={item.label}
+                  aria-label={item.label}
+                  aria-disabled={item.disabled || undefined}
+                  data-favorite-action={item.key === "favorite" ? favorite() : undefined}
+                  data-action-key={item.key}
+                  onClick={() => { if (!item.disabled) void item.onSelect() }}
+                >
+                  {item.icon}
+                </button>
+              )}</For>
+            </div>
+            <div class="session-item-overflow-actions">
+              <ActionOverflowMenu label={t("messageItem.actions.more")} items={actionItems}
+                onOpenChange={open => { if (open) setMenuSessionId(sessionId()) }} onFocusRestored={releaseMenu} />
+            </div>
           </div>
         </div>
       </div>

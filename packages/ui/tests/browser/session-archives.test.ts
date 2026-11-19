@@ -68,6 +68,7 @@ test("archive and restore remain keyboard accessible through the compact action 
   try {
     await page.goto(url); await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.locator(".session-list-container").evaluate(element => { element.parentElement!.style.width = "340px" })
+    await page.waitForFunction(() => document.querySelector('[data-session-id="done"]')?.getAttribute("data-compact-actions") === "true")
     const menu = row(page, "done").getByRole("button", { name: "More actions", exact: true })
     await menu.focus(); await menu.press("Enter")
     const archive = page.getByRole("menuitem", { name: "Archive session", exact: true })
@@ -76,6 +77,7 @@ test("archive and restore remain keyboard accessible through the compact action 
     await page.evaluate(() => (window as any).fixture.setFilter(true))
     await page.getByRole("combobox", { name: "Filter sessions by archive state" }).selectOption("archived")
     await row(page, "done").waitFor()
+    await page.waitForFunction(() => document.querySelector('[data-session-id="done"]')?.getAttribute("data-compact-actions") === "true")
     await menu.focus(); await menu.press("Enter")
     const restore = page.getByRole("menuitem", { name: "Restore session", exact: true })
     await restore.focus(); await restore.press("Enter")

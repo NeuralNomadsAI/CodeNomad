@@ -23,7 +23,9 @@ Retour/Avancer est un historique de visites par onglet de projet et par fenêtre
 
 ## Garder des conversations dans les favoris {#favorites}
 
-Dans **Plus d'actions** (⋯) sur une ligne, choisissez **Ajouter aux favoris** ou **Retirer des favoris**. En navigation, les demandes en attente de votre réponse passent en premier, puis les favoris et leurs branches, puis les autres conversations par activité. Une sous-session favorite reste sous son parent : sa branche s’ouvre une fois et peut être repliée.
+Survolez une ligne de session ou placez-y le focus pour afficher ses actions. Sur écran tactile, elles sont visibles sans survol. Utilisez le bouton étoile ou, si la place manque, ouvrez **Plus d'actions** (⋯) et choisissez **Ajouter aux favoris** ou **Retirer des favoris**.
+
+En navigation, les demandes en attente de votre réponse passent en premier, puis les favoris et leurs branches, puis les autres conversations par activité. Une sous-session favorite reste sous son parent : sa branche s’ouvre une fois et peut être repliée.
 
 Dans la recherche de sessions, choisissez **Favoris uniquement**. **Afficher … résultats masqués** active les deux types de sessions sans changer la recherche, le worktree ni les autres filtres. **Réinitialiser** rétablit les filtres et le tri par défaut.
 

@@ -23,7 +23,9 @@ Back/Forward is a per-project-tab, per-window visit history, not list order. The
 
 ## Keep conversations in favorites {#favorites}
 
-On a session row, open **More actions** (⋯) and choose **Add to favorites** or **Remove from favorites**. In normal browsing, requests needing your input come first, then favorites and their branches, then other conversations by activity. A favorite subsession stays with its parent. Its branch opens once and can be collapsed again.
+Hover over or focus a session row to reveal its actions. On touch, the actions are visible without hovering. Use the star button or, when space is tight, open **More actions** (⋯) and choose **Add to favorites** or **Remove from favorites**.
+
+In normal browsing, requests needing your input come first, then favorites and their branches, then other conversations by activity. A favorite subsession stays with its parent. Its branch opens once and can be collapsed again.
 
 In session search, choose **Favorites only**. **Show … hidden matches** enables both session types without changing the search, worktree or other filters. **Reset** restores the default filters and sort.
 

@@ -431,6 +431,19 @@
   @apply flex items-center flex-shrink-0;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .session-item-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .session-item-base:is(:hover, :focus-within) .session-item-actions,
+  .session-item-actions:has([data-expanded]) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .session-item-active {
   background-color: var(--list-item-highlight-bg);
   color: var(--text-primary);
@@ -478,12 +491,14 @@
 
 @media (pointer: coarse) {
   .session-item-select,
-  .session-item-expander {
+  .session-item-expander,
+  .session-item-actions .action-overflow-trigger {
     min-height: var(--touch-target-size);
   }
 
   .session-item-expander,
-  .session-item-expander--spacer {
+  .session-item-expander--spacer,
+  .session-item-actions .action-overflow-trigger {
     min-width: var(--touch-target-size);
   }
 }

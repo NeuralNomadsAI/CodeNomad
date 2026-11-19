@@ -566,9 +566,8 @@ test("body-portaled dialogs and utility windows paint above the fixed toggles", 
     assert.equal(await hitsToggle("right"), true)
 
     // A modal scrim covers (and dims) both toggles.
-    await page.locator('.session-sidebar [data-session-id="session"]')
-      .getByRole("button", { name: "More actions", exact: true }).click()
-    await page.getByRole("menuitem", { name: "Rename session", exact: true }).click()
+    await page.locator('.session-sidebar [data-session-id="session"]').hover()
+    await page.getByRole("button", { name: "Rename session", exact: true }).first().click()
     const dialog = page.getByRole("dialog")
     await dialog.waitFor()
     assert.equal(await hitsToggle("left"), false)

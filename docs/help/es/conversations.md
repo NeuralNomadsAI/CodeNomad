@@ -23,7 +23,9 @@ Atrás/Adelante es un historial de visitas por pestaña de proyecto y ventana, n
 
 ## Guardar conversaciones en favoritos {#favorites}
 
-Abre el menú (⋯) de una fila y elige **Añadir a favoritos** o **Quitar de favoritos**. En la vista normal van primero las solicitudes que esperan tu respuesta, luego los favoritos y sus ramas y, por último, el resto por actividad. Una subsesión favorita queda debajo de su sesión padre; su rama se abre una vez y se puede volver a contraer.
+Pasa el puntero por una fila de sesión o enfócala para ver sus acciones. En pantallas táctiles están visibles directamente. Usa el botón de la estrella o, si falta espacio, abre **Más acciones** (⋯) y elige **Añadir a favoritos** o **Quitar de favoritos**.
+
+En la vista normal van primero las solicitudes que esperan tu respuesta, luego los favoritos y sus ramas y, por último, el resto por actividad. Una subsesión favorita queda debajo de su sesión padre; su rama se abre una vez y se puede volver a contraer.
 
 En la búsqueda de sesiones, elige **Solo favoritas**. **Mostrar … resultados ocultos** habilita ambos tipos de sesión sin cambiar la búsqueda, el worktree ni los demás filtros. **Restablecer** recupera los filtros y el orden predeterminados.
 

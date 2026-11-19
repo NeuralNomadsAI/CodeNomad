@@ -23,7 +23,9 @@ Geri/İleri, liste sırası değil, proje sekmesi başına, pencere başına ziy
 
 ## Konuşmaları favorilerde tutun {#favorites}
 
-Oturum satırındaki menüyü (⋯) açıp **Favorilere ekle** veya **Favorilerden çıkar** seçeneğini kullanın. Normal listede önce yanıtınızı bekleyen istekler, sonra favoriler ve dalları, ardından etkinliğe göre diğer konuşmalar gelir. Favori alt oturum, üst oturumunun altında kalır. Dalı bir kez açılır ve yeniden daraltılabilir.
+Eylemleri görmek için işaretçiyi oturum satırının üzerine getirin veya satıra odaklanın. Dokunmatik ekranda eylemler doğrudan görünür. Yıldız düğmesini kullanın veya yer darsa **Diğer eylemler** (⋯) menüsünden **Favorilere ekle** ya da **Favorilerden çıkar** seçeneğini seçin.
+
+Normal listede önce yanıtınızı bekleyen istekler, sonra favoriler ve dalları, ardından etkinliğe göre diğer konuşmalar gelir. Favori alt oturum, üst oturumunun altında kalır. Dalı bir kez açılır ve yeniden daraltılabilir.
 
 Oturum aramasında **Yalnızca favoriler** seçeneğini kullanın. Gizli eşleşmeleri gösterme düğmesi aramayı, çalışma ağacını ve diğer filtreleri değiştirmeden her iki oturum türünü açar. **Sıfırla**, varsayılan filtre ve sıralamayı geri yükler.
 

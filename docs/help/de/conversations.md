@@ -23,7 +23,9 @@ Zurück/Vorwärts ist ein Besuchsverlauf pro Projekt-Tab und Fenster, nicht die 
 
 ## Unterhaltungen als Favoriten behalten {#favorites}
 
-Wählen Sie im Zeilenmenü (⋯) **Zu Favoriten hinzufügen** oder **Aus Favoriten entfernen**. In der normalen Liste stehen Anfragen, die auf Ihre Eingabe warten, zuerst, dann Favoriten und ihre Zweige, dann die übrigen Unterhaltungen nach Aktivität. Eine favorisierte Untersitzung bleibt unter ihrer übergeordneten Sitzung. Ihr Zweig öffnet sich einmal und lässt sich wieder einklappen.
+Bewegen Sie den Mauszeiger über eine Sitzungszeile oder fokussieren Sie sie, um ihre Aktionen anzuzeigen. Auf Touchscreens sind sie direkt sichtbar. Verwenden Sie die Sterntaste oder wählen Sie bei wenig Platz unter **Weitere Aktionen** (⋯) **Zu Favoriten hinzufügen** oder **Aus Favoriten entfernen**.
+
+In der normalen Liste stehen Anfragen, die auf Ihre Eingabe warten, zuerst, dann Favoriten und ihre Zweige, dann die übrigen Unterhaltungen nach Aktivität. Eine favorisierte Untersitzung bleibt unter ihrer übergeordneten Sitzung. Ihr Zweig öffnet sich einmal und lässt sich wieder einklappen.
 
 Wählen Sie in der Sitzungssuche **Nur Favoriten**. **… ausgeblendete Treffer anzeigen** aktiviert beide Sitzungstypen, ohne Suchtext, Worktree oder andere Filter zu ändern. **Zurücksetzen** stellt die voreingestellten Filter und die Sortierung wieder her.
 

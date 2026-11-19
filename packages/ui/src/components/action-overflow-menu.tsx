@@ -21,6 +21,7 @@ interface ActionOverflowMenuProps {
   triggerClass?: string
   minItems?: number
   onOpenChange?: (open: boolean) => void
+  onFocusRestored?: () => void
 }
 
 export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
@@ -59,7 +60,10 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
             // actions afterwards so a newly opened window keeps its autofocus.
             const action = selectedAction
             selectedAction = undefined
-            if (action) queueMicrotask(() => { void action() })
+            if (action || props.onFocusRestored) queueMicrotask(() => {
+              props.onFocusRestored?.()
+              void action?.()
+            })
           }}>
             <For each={props.items}>
               {(item) => (
