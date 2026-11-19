@@ -234,6 +234,9 @@ The native adapter resolves that calendar to the matching `aut_` row, checks the
 exact owned session, project, timing and fixed action, and verifies each pending
 wake against its unique durable native message. An absent or conflicting row
 does not authorize a new calendar, wake or passage.
+OpenCode migrates active or paused timer rows that have a next due time and no
+native condition or run count limit. Mission conditions and passage limits are
+stored in the Mission document rather than in those native rows.
 
 Explicit Pause, terminal Stop, proven failure and a proven end without a report
 retain their admission barriers and human recovery controls. Incomplete native

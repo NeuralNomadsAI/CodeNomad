@@ -650,6 +650,8 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       if (beforeMaintenance.document.pending) {
         assert(Number.isSafeInteger(auxiliaryDue))
         const definition = { id: "codenomad.schedule-clock-qualification", methods: { tick: { input: { type: "object" }, output: { type: "object" } } }, events: {} }
+        await until(async () => (await client.plugin.list({ location: { directory: project } })).data.some(entry =>
+          entry.id === definition.id && entry.state.status === "active"))
         await client.rpc(definition).tick({ at: auxiliaryDue + 1 }, { location: { directory: project }, signal: AbortSignal.timeout(20000) })
       }
       const settled = await until(() => { const state = snapshot(id); return state.document.pending === null && state.document.settledCount === 1 ? state : false })

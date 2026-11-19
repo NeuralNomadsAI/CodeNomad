@@ -13,7 +13,7 @@ import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "
 import { matchMissionAutomation } from "./native-mission-automation"
 
 async function facade(t: test.TestContext, availability: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void>) {
-  const state: { enabled: boolean; closed: boolean; row?: string; runCount?: number; action?: Automation.Info["action"] } = { enabled: true, closed: false }, created: any[] = []
+  const state: { enabled: boolean; closed: boolean; row?: string; duplicate?: boolean; runCount?: number; action?: Automation.Info["action"] } = { enabled: true, closed: false }, created: any[] = []
   const directory = path.resolve("native-calendar-scope-unit-only")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory, project: { id: "project", directory, canonical: directory } })
   const selected: NativeScheduleCalendarTarget = { missionID: "calendar_scope", descriptor: { role: "principal", slot: 0, timeGeneration: 1,
@@ -43,7 +43,10 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
     Effect.provideService(Context.Service<never, unknown>("@opencode/Config"), { entries: () => Effect.succeed([{ type: "document", info: { experimental: { schedules: state.enabled } } }]) }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Flag"), { resolve: () => ({ automations: { enabled: state.enabled, source: "config" } }) }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), { remove: () => Effect.void, active: Effect.succeed(new Set()) }),
-    Effect.provideService(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: { unsafe: () => ({ withoutTransform: Effect.sync(() => state.row === undefined ? [] : [{ id: JSON.parse(state.row).id, data: state.row }]) }) } } }),
+    Effect.provideService(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: { unsafe: () => ({
+      withoutTransform: Effect.sync(() => state.row === undefined ? [] : [{ id: JSON.parse(state.row).id, type: "user", data: state.row },
+        ...(state.duplicate ? [{ id: "msg_sch_scope_1", type: "user", data: null }] : [])]),
+    }) } } }),
     Effect.provideService(Scope.Scope, scope)))
   return { native, selected, state, created, scope }
 }
@@ -84,6 +87,9 @@ test("prepared wake ACK decodes encoded native SQL timestamps and keeps partial 
   f.state.row = JSON.stringify({ ...encoded, id: "msg_aut_scope_1",
     metadata: { automation: { id: "aut_scope", run: 1, dueAt: 1, late: false } } })
   assert.equal(await f.native.wakeAcknowledged(f.selected, wake, () => true), true)
+  f.state.duplicate = true
+  assert.equal(await f.native.wakeAcknowledged(f.selected, wake, () => true), false, "an oversized conflicting legacy row still counts")
+  f.state.duplicate = false
   f.state.row = JSON.stringify({ ...encoded, metadata: { schedule: { id: wake.scheduleID, run: 1, dueAt: 1 } } })
   assert.equal(await f.native.wakeAcknowledged(f.selected, wake, () => true), false)
   f.state.row = JSON.stringify(encoded); f.state.runCount = 0

@@ -230,9 +230,9 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
       const info = yield* get(target, wake.scheduleID)
       if (!info || info.runCount < wake.run) return false
       const ids = missionWakeReadIDs(wake.scheduleID, wake.run)
-      const value = yield* query("SELECT id,data FROM session_message WHERE id IN (?,?) AND session_id=? AND type='user' AND length(CAST(data AS BLOB))<=262144",
+      const value = yield* query("SELECT id,type,CASE WHEN length(CAST(data AS BLOB))<=262144 THEN data END AS data FROM session_message WHERE id IN (?,?) AND session_id=?",
         [ids[0], ids.at(-1), target.descriptor.sessionID])
-      if (value.length !== 1 || typeof value[0].data !== "string") return false
+      if (value.length !== 1 || value[0].type !== "user" || typeof value[0].data !== "string") return false
       const data = JSON.parse(value[0].data)
       const message = Schema.decodeUnknownSync(SessionMessage.User)({ ...data, id: value[0].id, type: "user" })
       const metadata = missionWakeMetadata(message.metadata, message.id)
