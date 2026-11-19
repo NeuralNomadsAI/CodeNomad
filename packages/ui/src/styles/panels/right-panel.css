@@ -558,7 +558,7 @@
   opacity: 1;
 }
 
-.status-tab-container .right-panel-accordion-content :is(.border, .status-process-card) {
+.status-tab-container .right-panel-accordion-content .border {
   border-width: 1px;
   border-color: color-mix(in srgb, var(--border-base) 50%, transparent);
 }
