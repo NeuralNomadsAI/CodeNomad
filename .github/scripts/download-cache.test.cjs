@@ -39,6 +39,15 @@ test("Electron caches are keyed by the locked Electron and app-builder versions 
   assert.deepEqual(electronTargets(windows), ["win32-x64"])
 })
 
+test("Electron cache keys use the app workspace's own version before the hoisted version", () => {
+  const lock = JSON.parse(packageLock)
+  lock.packages["packages/electron-app/node_modules/app-builder-bin"] = { version: "4.2.0" }
+  assert.equal(spec("electron", linux, { packageLock: JSON.stringify(lock) }).key,
+    "electron-linux-x64-45.2.3-app-builder-bin-4.2.0")
+  const actual = fs.readFileSync(path.join(__dirname, "../../package-lock.json"), "utf8")
+  assert.match(spec("electron", linux, { packageLock: actual }).key, /^electron-linux-x64-.+-app-builder-bin-\d/)
+})
+
 test("Cargo caches only download directories, keyed by the lockfile whatever its line endings", () => {
   const lock = crate("serde", "1.0.0", "aa")
   const result = spec("cargo", linux, { cargoLock: lock })
