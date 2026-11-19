@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { MISSION_MAX_EVENTS, type MissionJsonValue } from "./model"
+import { MISSION_MAX_EVENTS, type MissionJsonValue, type MissionSnapshot } from "./model"
 
 import {
   MissionControl,
@@ -350,6 +350,35 @@ test("recovers only pending report notifications after transient failure and res
   assert.equal(sessions.synthetics.length, 2)
   assert.equal(sessions.prompts.length, 1, "notification recovery must not dispatch or prompt tasks")
 })
+
+test("a deleted coordinator stops its pending notifications from being offered again", async () => {
+  const { create, sessions } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Coordinator removed", template: "custom" } }, "deleted-coordinator")
+  const dispatched = await control.delegate("ses_coordinator", {
+    taskKey: "fix", title: "Fix", brief: "Make the change.", role: "specialist", blockedBy: [], delivery: "queue",
+  })
+  sessions.failNextSynthetic = true
+  await control.report(actorFor(dispatched.mission, "specialist"), { taskKey: "fix", outcome: "completed", summary: "Fixed.", evidence: [], next: [], final: false })
+  // The user deletes the coordinator conversation: the session store answers "not found".
+  const get = sessions.get.bind(sessions)
+  sessions.get = async input => {
+    if (input.sessionID === "ses_coordinator") throw Object.assign(new Error("Session not found"), { _tag: "Session.NotFoundError" })
+    return get(input)
+  }
+  sessions.failSyntheticCount = 10
+  const offered = sessions.synthetics.length
+  assert.deepEqual(await control.retryPendingNotifications(), { attempted: 1, failed: 0, cursor: expectedCursor(await control.snapshot()) })
+  assert.equal(sessions.synthetics.length, offered + 1, "one more delivery attempt finds the coordinator gone")
+  assert.deepEqual(await control.retryPendingNotifications(), { attempted: 0, failed: 0 })
+  assert.equal(sessions.synthetics.length, offered + 1, "no further delivery or session read for a deleted coordinator")
+  assert.equal((await control.snapshot()).missions[0]!.reports[0]?.notificationStatus, "pending", "the journal keeps the report unchanged")
+})
+
+function expectedCursor(snapshot: MissionSnapshot): string {
+  const mission = snapshot.missions[0]!
+  return `${mission.id}\0${mission.reports[0]!.id}`
+}
 
 test("durable report writes reject actors moved from their exact admitted worktree", async () => {
   const f = harness()

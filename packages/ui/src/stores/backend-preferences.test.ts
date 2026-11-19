@@ -85,6 +85,12 @@ test("real preference consumers isolate host, server, fallback, instance data an
     assert.deepEqual(host.calls.slice(before), [{ url: "/api/storage/config/ui", method: "PATCH",
       body: '{"settings":{"locale":"de"}}', credentials: "include" }])
     assert.equal(prefsB.preferences().locale, "de")
+    const beforeContrast = host.calls.length
+    assert.equal(await prefsA.setHighContrastPreference("on"), true)
+    assert.equal(hostPrefs.highContrastPreference(), "on")
+    assert.equal(prefsB.highContrastPreference(), "on")
+    assert.deepEqual(host.calls.slice(beforeContrast), [{ url: "/api/storage/config/ui", method: "PATCH",
+      body: '{"settings":{"highContrast":"on"}}', credentials: "include" }])
     assert.equal(a.calls.some(call => call.method === "PATCH"), false)
     assert.equal(b.calls.some(call => call.method === "PATCH"), false)
     disk.replace(host.config)

@@ -44,8 +44,11 @@ async function fixture(run: (f: any) => Promise<void>) {
       config: { get: async () => [{ type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
         { type: "directory", path: global }, { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) }] },
       rpc: () => ({ documentCapabilities: async () => ({ version: 1 }),
-        scheduleFlag: async () => ({ enabled: parse(await readFile(projectFile, "utf8")).experimental?.schedules === true,
-          provenance: parse(await readFile(projectFile, "utf8")).experimental?.schedules === undefined ? "channel-default" : "experimental-block" }),
+        scheduleFlag: async () => {
+          const block = parse(await readFile(projectFile, "utf8")).experimental
+          const configured = block?.automations ?? block?.schedules
+          return { enabled: configured === true, provenance: configured === undefined ? "channel-default" : "experimental-block" }
+        },
         documentActivation: async (input: any) => {
         phases.push(input.action)
         const result = await applyMissionDocumentActivation(documents, input, () => true, project)
@@ -80,7 +83,7 @@ test("HTTP preparation composes durable RPC phases with only the project effect 
   assert.equal(doc.scheduleActivation.state, "ready")
   assert.ok(doc.scheduleActivation.targets.every((target: any) => target.attempted && target.acknowledged))
   assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).experimental, { subagent_depth: 2 })
-  assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).experimental, { subagent_depth: 8, schedules: true })
+  assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).experimental, { subagent_depth: 8, automations: true })
   assert.ok(!JSON.stringify([...f.values]).includes("must-stay-out-of-document"))
   const repeat = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(repeat.statusCode, 200, repeat.body)
@@ -99,7 +102,7 @@ test("lost native acknowledgement retains the original intention and exact recon
   assert.equal(partial.state, "paused"); assert.equal(partial.scheduleActivation.state, "failed")
   assert.equal(partial.scheduleActivation.targets[0].acknowledged, true)
   assert.equal(partial.scheduleActivation.targets.length, 1)
-  assert.equal(parse(await readFile(f.projectFile, "utf8")).experimental.schedules, true)
+  assert.equal(parse(await readFile(f.projectFile, "utf8")).experimental.automations, true)
   const retry = await f.app.inject({ method: "POST", url: f.url, headers: f.headers, payload: f.payload })
   assert.equal(retry.statusCode, 200, retry.body)
   assert.equal(retry.json().document.scheduleActivation.state, "ready")

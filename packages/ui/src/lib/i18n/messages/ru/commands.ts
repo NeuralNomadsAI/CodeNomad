@@ -51,7 +51,7 @@ export const commandMessages = {
   "commands.closeSession.keywords": "закрыть, остановить",
 
   "commands.scrubSessions.label": "Очистить сессии",
-  "commands.scrubSessions.description": "Удалить пустые сессии, завершенные сессии субагентов и лишние форкнутые сессии.",
+  "commands.scrubSessions.description": "Удалить сеансы, подтверждённые как пустые и неактивные.",
   "commands.scrubSessions.keywords": "очистка, пустые, сессии, удалить, убрать",
 
   "commands.instanceInfo.label": "Информация об экземпляре",

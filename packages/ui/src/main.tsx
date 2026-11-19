@@ -2,13 +2,15 @@ import { render } from "solid-js/web"
 import type { Component } from "solid-js"
 import { PreferencesWindow } from "./components/preferences-window"
 import { ThemeProvider } from "./lib/theme"
-import { ConfigProvider } from "./stores/preferences"
+import { ConfigProvider, ensureLoaded, getAppearancePalette, highContrastPreference, preferences, themePreference } from "./stores/preferences"
 import { InstanceConfigProvider } from "./stores/instance-config"
 import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
-import { storage } from "./lib/storage"
-import { applyColorScheme, normalizeColorScheme } from "./lib/theme-scheme"
-import { isNativeApplicationWindow, isTauriHost, usesClientState } from "./lib/runtime-env"
+import { applyColorScheme } from "./lib/theme-scheme"
+import { effectiveAppearance } from "./lib/appearance-preferences"
+import { effectiveHighContrast } from "./lib/high-contrast"
+import { isNativeApplicationWindow, isTauriHost, isWebHost, usesClientState } from "./lib/runtime-env"
+import { webTabTitle } from "./lib/web-tab-title"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -23,6 +25,7 @@ const mount = root
 if (typeof document !== "undefined") {
   document.documentElement.dataset.runtimeHost = runtimeEnv.host
   document.documentElement.dataset.runtimePlatform = runtimeEnv.platform
+  if (isWebHost()) document.title = webTabTitle(window.location)
 }
 
 async function bootstrap() {
@@ -48,24 +51,19 @@ async function bootstrap() {
   }
 
   if (typeof document !== "undefined") {
+    const applyInitialTheme = () => {
+      const systemDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false
+      applyColorScheme(getAppearancePalette(effectiveAppearance(themePreference(), systemDark)), {
+        systemDark,
+        highContrast: effectiveHighContrast(highContrastPreference(), window.matchMedia?.("(prefers-contrast: more)").matches),
+      })
+    }
     try {
-      const [uiConfig, uiState] = await Promise.all([
-        storage.loadConfigOwner("ui"),
-        storage.loadStateOwner("ui"),
-      ])
-      const theme = (uiState as any)?.theme ?? (uiConfig as any)?.theme
-      const colorScheme = (uiState as any)?.colorScheme ?? (uiConfig as any)?.colorScheme
-      const locale = typeof (uiConfig as any)?.settings?.locale === "string" ? (uiConfig as any).settings.locale : undefined
-
-      applyColorScheme(normalizeColorScheme(colorScheme, theme), {
-        systemDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
-      })
-
-      await preloadLocaleMessages(locale)
+      await ensureLoaded()
+      applyInitialTheme()
+      await preloadLocaleMessages(preferences().locale)
     } catch {
-      applyColorScheme(normalizeColorScheme("system"), {
-        systemDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
-      })
+      applyInitialTheme()
       await preloadLocaleMessages()
     }
   }

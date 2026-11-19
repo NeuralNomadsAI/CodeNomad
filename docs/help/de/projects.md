@@ -40,7 +40,7 @@ Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab 
 
 Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Projektverbindungen nicht; die normale Startwiederherstellung gilt weiterhin. Stoppen Sie relevante Ausführungen ausdrücklich, wenn Sie sicherstellen müssen, dass sie beendet sind. CodeNomad entlädt niemals native Locations; die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
 
-Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigenen Panel-Auswahlen, Missionsauswahl und -leseansicht sowie die gespeicherte Browser-URL und den Browserverlauf wieder her. Gespeicherte Browserseiten laden beim ausdrücklichen erneuten Öffnen. Das Schließen einer Instanz entfernt nur ihre gespeicherte Ansicht; erneutes Öffnen des Ordners erzeugt eine neue Instanz.
+Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigenen Panel-Auswahlen, Missionsauswahl und -leseansicht sowie die Wahl zwischen Chat und Web-Vorschau wieder her. Browser-URLs und Verlauf werden pro Sitzung geteilt; gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen der Web-Vorschau. Das Schließen einer Instanz entfernt nur ihre gespeicherte Ansicht; erneutes Öffnen des Ordners erzeugt eine neue Instanz.
 
 ## Remote-Tabs wiederherstellen {#restore-remote-tabs}
 

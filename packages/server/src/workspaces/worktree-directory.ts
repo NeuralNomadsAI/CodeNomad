@@ -11,7 +11,7 @@ type WorktreeCacheEntry = {
   expiresAt: number
   refreshedOnMiss: boolean
   worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string; directoryOnly?: boolean; verifyCheckoutAbsence: boolean }>
-  resolvedDirectories: Map<string, { slug: string; directory: string; worktreeDirectory: string } | null>
+  resolvedDirectories: Map<string, OwnedWorktreePath | null>
 }
 
 const WORKTREE_CACHE_TTL_MS = 10_000
@@ -211,6 +211,8 @@ export function isPathWithinWorktree(root: string, candidate: string): boolean {
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
+type OwnedWorktreePath = { slug: string; directory: string; worktreeDirectory: string; exact: boolean }
+
 export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   workspaceId: string
   workspacePath: string
@@ -218,7 +220,7 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   strict?: boolean
   logger?: LogLike
   media?: { current: () => void }
-}, budget = params.strict ? { restarts: 0 } : undefined): Promise<{ slug: string; directory: string; worktreeDirectory: string } | null> {
+}, budget = params.strict ? { restarts: 0 } : undefined): Promise<OwnedWorktreePath | null> {
   const current = params.media?.current
   current?.()
   const target = params.strict && !params.media ? await realpath(params.directory) : await resolveDirectoryPath(params.directory, current)
@@ -272,7 +274,8 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
     }))
     current()
     const match = find(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null))
-    return match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory } : null
+    return match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory,
+      exact: match.normalizedDirectory === target } : null
   }
   const finalFreshRead = budget?.restarts === WORKTREE_OWNERSHIP_RESTART_LIMIT
   let entry = await getCachedWorktrees(params, finalFreshRead, budget)
@@ -295,7 +298,8 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
     restartWorktreeRead(budget)
     return resolveOwnedWorktreePath(params, budget)
   }
-  const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory } : null
+  const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory,
+    exact: match.normalizedDirectory === target } : null
   entry.resolvedDirectories.set(target, resolved)
   return resolved
 }

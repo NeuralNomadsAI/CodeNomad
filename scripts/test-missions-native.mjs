@@ -280,9 +280,10 @@ try {
   const invoke = async (tool, input, sessionID = coordinator.id, callID = `fixture-${tool}`) => {
     const result = JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
     if (typeof result.fixtureToolError === "string") throw new Error(result.fixtureToolError)
-    if (result.missionID === undefined) return result
+    const missionID = result.missionID ?? (result.target?.kind === "one-time" ? result.target.mission.missionID : undefined)
+    if (missionID === undefined) return result
     const { missions } = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-    const mission = missions.find(mission => mission.id === result.missionID)
+    const mission = missions.find(mission => mission.id === missionID)
     if (mission) delete mission.creationDefaults
     return { ...result, mission }
   }
@@ -319,7 +320,10 @@ try {
     await play(selected.mission)
     const prepared = await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
       caller.id, "preferences-prepare")
-    assert.deepEqual(prepared.selection, selection)
+    assert.equal(prepared.outcome, "prepared")
+    assert.equal(prepared.acknowledgement, "fresh")
+    assert.equal(prepared.target.kind, "one-time")
+    assert.deepEqual(prepared.target.mission.selection, selection)
     assert.equal("creationDefaults" in prepared.mission, false)
     const saved = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
     for (const result of [selected, prepared]) {
@@ -334,8 +338,12 @@ try {
     uiPreferences = {}
     const reads = preferenceReads
     assert.deepEqual((await invoke("inspect", { start }, caller.id, "preferences-create")).selection, selection)
-    assert.deepEqual((await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
-      caller.id, "preferences-prepare")).selection, selection)
+    const recovered = await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
+      caller.id, "preferences-prepare")
+    assert.equal(recovered.outcome, "prepared")
+    assert.equal(recovered.acknowledgement, "recovered")
+    assert.equal(recovered.target.kind, "one-time")
+    assert.deepEqual(recovered.target.mission.selection, selection)
     assert.equal(preferenceReads, reads, "Saved provenance and choices replay without consulting changed preferences")
     const finished = await invoke("report", { missionID: selected.mission.id, outcome: "completed", summary: "Preferences verified", final: true },
       caller.id, "preferences-finish")
@@ -621,7 +629,8 @@ try {
   // their exact/changed retries without weakening creation-uncertain/conflict.
   await rejectedMutation("POST", "", conflictingCreation, 409, "request-conflict")
   await rejectedMutation("POST", "", conflictingCreation, 409, "request-conflict")
-  await rejectedMutation("POST", "", { ...conflictingCreation, objective: "Changed contract" }, 409, "request-conflict")
+  // A retry differing from the first HTTP contract of this request is refused by the route itself.
+  await rejectedMutation("POST", "", { ...conflictingCreation, objective: "Changed contract" }, 409, "creation-conflict")
   assert.deepEqual(await client.session.list({ location, limit: 32 }), beforeCreationConflict,
     "Native pre-effect conflicts and HTTP retries never create another coordinator")
   await rejectedMutation("PATCH", `/${crudCreated.mission.id}`, {
@@ -983,9 +992,7 @@ try {
     assert.equal(finished.mission.status, "completed")
     history.push(finished.mission)
   }
-  // The journal bound is per mission: the finished missions' own ranges, seeded in
-  // the isolated KV table as an earlier activation left them, take the project past
-  // one mission's 2,000-entry bound while each mission stays far below it.
+  // Include one long range alongside short ranges in this fixture's private database.
   const { DatabaseSync } = await import("node:sqlite")
   const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const journalEntries = (database, range) => database.prepare("SELECT COUNT(*) AS count FROM kv WHERE substr(key, 1, ?) = ?").get(range.length, range).count
@@ -1002,14 +1009,15 @@ try {
     // One transaction: thousands of autocommits would idle the client's keep-alive connection past the daemon's timeout.
     seeding.exec("BEGIN IMMEDIATE")
     for (const mission of history) {
-      for (let index = 0; index < 22; index++) {
-        const id = `evt_seeded_${String(index).padStart(2, "0")}`
+      const extra = mission.id === history[0].id ? 10_020 : 22
+      for (let index = 0; index < extra; index++) {
+        const id = `evt_seeded_${String(index).padStart(5, "0")}`
         insert.run(`${journalRange}${mission.id}/${id}`, JSON.stringify({ version: 1, id, type: "mission.updated", missionID: mission.id, projectID: mission.projectID,
           createdAt: mission.createdAt + 1 + index, requestID: `seeded-${index}`, expectedRevision: 1, notesSpecified: false, objective: `Seeded ${index}` }), Date.now(), Date.now())
       }
     }
     seeding.exec("COMMIT")
-    assert.ok(journalEntries(seeding, journalRange) > 2_000, "The project holds more than one mission's bound")
+    assert.ok(journalEntries(seeding, `${journalRange}${history[0].id}/`) > 10_000, "One native mission exceeds 10,000 events")
   } finally {
     seeding.close()
     Object.assign(reloadDiagnostics.seed, { finishedAt: new Date().toISOString(), durationMs: performance.now() - seedStarted })
@@ -1029,7 +1037,8 @@ try {
   assert.equal((await invoke("report", { missionID: live.id, taskKey: liveTask.taskKey, outcome: "completed", summary: "History unaffected" },
     liveCoordinator, "history-readout")).disposition, "reported")
   const beforeDelete = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-  assert.equal(beforeDelete.missions.find(mission => mission.id === history[0].id).revision, history[0].revision + 22, "Seeded entries read as the mission's own events")
+  assert.equal(beforeDelete.missions.find(mission => mission.id === history[0].id).revision, history[0].revision + 10_020,
+    "The real plugin reloads one long range and admits work on its neighbour")
   // The deletion's retention purge pushes the oldest settled deletion past the history, through native storage.remove.
   const settled = beforeDelete.cleanups.filter(item => item.pending === 0)
   assert.equal(settled.length, 20)

@@ -11,7 +11,7 @@ import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-famil
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { nativeMessageDataSQL } from "./native-message-data"
 import type { NativeMissionSession } from "../../missions/control-types"
-import { acquireNativeSourceFence, nativeBackgroundSQL, assertNativeBackgroundRows } from "./native-source-fence"
+import { acquireNativeSourceFence, nativeBackgroundSQL, assertNativeBackgroundRows, nativeShellBlocksFamily } from "./native-source-fence"
 import { COORDINATOR_INPUT_MARKER, coordinatorInputSchema, type CoordinatorInputOwner, type CoordinatorBaseline } from "../../missions/mission-coordinator-baseline"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
@@ -218,7 +218,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       // safely attributed away. Native shell list returns running records only.
       const family = new Set(sessionIDs)
       return [...pendingForms, ...pendingPermissions].some(item => item.sessionID == null || family.has(String(item.sessionID)))
-        || runningShells.some(item => item.status === "running")
+         || runningShells.some(item => nativeShellBlocksFamily(item, family))
         || background.some(item => [item.sessionID, item.parentSessionID, item.childSessionID].some(id => typeof id === "string" && family.has(id)))
     },
   } satisfies NativePassageObservation

@@ -1,29 +1,16 @@
 # Support CodeNomad
 
-## Why sponsor CodeNomad {#why}
-
-CodeNomad is released under the [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) and costs nothing to download or use. Pascal André and Shantur Rathore maintain it in their own time, with contributions from the community. OpenCode is updated independently, so CodeNomad needs regular work just to stay compatible, before any new feature.
-
-## What sponsorship pays for {#how-it-helps}
-
-- **Maintenance**: fixing reported bugs and keeping CodeNomad compatible with new OpenCode versions.
-- **Releases**: building, testing and publishing the Windows, macOS and Linux apps.
-- **Languages**: keeping the interface and this help site current in ten languages.
-- **New features**, like the work behind [Missions](missions.md), [Remote Control](remote-control.md) and [history search](history.md).
-
-## Funding policy {#policy}
-
-- A sponsorship is a contribution, not a purchase. It buys no features, roadmap influence, support priority or license rights.
-- Sponsors get the same CodeNomad as everyone else. There is no paid edition and no sponsor-only build.
-- Bug reports and feature requests are handled on their merits, whether or not you sponsor.
-- Sponsoring is never required to download, use or update CodeNomad.
-- Each channel names who receives the money. Payment happens on the channel's own site; this help site never sees your payment details.
-
-## Sponsor {#channels}
-
-Each channel's page lets you choose the amount and how often you contribute.
-
 {{funding}}
+
+I develop and maintain CodeNomad full time. It is free and open source, and I want to keep giving it the attention that a tool used for real work deserves.
+
+My background is in 3D and visual effects, with three decades spent creating, solving production problems and building software alongside the people who use it. That experience shapes how I approach CodeNomad: a tool has to hold up beyond the first demonstration, through long sessions, complex projects and the unexpected things that happen in daily use.
+
+Feedback, bug reports and code contributions help make CodeNomad better. Donations support the time I spend turning that input into something dependable, and maintaining it as OpenCode evolves.
+
+To continue doing this full time, I need that financial support. If CodeNomad has become part of your work, sponsoring helps me make a living from building and maintaining a tool that remains available to everyone.
+
+Pascal André
 
 ## Other ways to help {#other-ways}
 

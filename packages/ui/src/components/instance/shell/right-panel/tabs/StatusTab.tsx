@@ -12,7 +12,7 @@ import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 import Switch from "@suid/material/Switch"
 
-import { ChevronRight, GripVertical, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronRight, GripVertical, Info } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
 import type { Session } from "../../../../../types/session"
@@ -29,6 +29,7 @@ import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
 import { showToastNotification } from "../../../../../lib/notifications"
 import { ShellOutputDialog } from "../../../../shell-output-dialog"
+import { BackgroundShellRow } from "../../../../background-shell-row"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -103,7 +104,9 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
   const shellLocation = createMemo(() => props.activeSession()?.location ?? { directory: props.instance.folder })
   const shellState = createMemo(() => shellStore.getState(props.instanceId, shellLocation().directory, shellLocation().workspaceID))
+  const shellsById = createMemo(() => new Map(shellState().items.map(shell => [shell.id, shell])))
   const [outputShell, setOutputShell] = createSignal<{ shell: ShellInfo; location: LocationRef; instanceId: string } | null>(null)
+  const [removingShells, setRemovingShells] = createSignal<ReadonlySet<string>>(new Set())
 
   createEffect(() => {
     if (!props.isActive() || !isSectionExpanded("background-processes")
@@ -143,20 +146,36 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     )
   }
 
-  const removeShell = async (shellId: string, command: string, running: boolean) => {
+  const removeShell = async (shellId: string, command: string, running: boolean, source: HTMLButtonElement) => {
     const instanceId = props.instanceId
     const location = { ...shellLocation() }
-    const confirmed = await showConfirmDialog(
-      props.t("instanceShell.backgroundProcesses.remove.message", { title: command }),
-      {
-        title: props.t("instanceShell.backgroundProcesses.remove.title"),
-        confirmLabel: props.t(running
-          ? "instanceShell.backgroundProcesses.actions.stopRemove"
-          : "instanceShell.backgroundProcesses.actions.remove"),
-      },
-    )
-    if (confirmed && !await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)) {
-      showToastNotification({ category: "sessions", message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
+    const key = JSON.stringify([instanceId, location, shellId])
+    if (removingShells().has(key)) return
+    const row = source.closest(".status-process-card")!
+    const next = row.nextElementSibling?.querySelector<HTMLButtonElement>(".window-icon-button")
+      ?? row.previousElementSibling?.querySelector<HTMLButtonElement>(".window-icon-button")
+    const section = row.closest(".right-panel-section-draggable")?.querySelector<HTMLButtonElement>("[data-status-section-trigger]")
+    const returnFocus = () => {
+      const target = [source, next, section].find(element => element?.isConnected)
+      target?.focus({ preventScroll: true })
+    }
+    setRemovingShells(current => new Set([...current, key]))
+    try {
+      const action = running ? "stopRemove" : "remove"
+      const confirmed = await showConfirmDialog(
+        props.t(`instanceShell.backgroundProcesses.${action}.message`, { title: command }),
+        {
+          title: props.t(`instanceShell.backgroundProcesses.${action}.title`),
+          confirmLabel: props.t(`instanceShell.backgroundProcesses.actions.${action}`),
+          returnFocus,
+        },
+      )
+      if (confirmed && !await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)) {
+        showToastNotification({ category: "sessions", message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
+      }
+    } finally {
+      setRemovingShells(current => { const next = new Set(current); next.delete(key); return next })
+      if (!source.isConnected && document.activeElement === document.body) returnFocus()
     }
   }
 
@@ -174,40 +193,14 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           fallback={<div class="right-panel-empty right-panel-empty--left"><span class="text-xs">{props.t("instanceShell.backgroundProcesses.empty")}</span></div>}
         >
           <div class="flex flex-col gap-1">
-            <For each={shellState().items}>
-              {(shell) => {
-                const running = () => shell.status === "running"
+            <For each={[...shellsById().keys()]}>
+              {(id) => {
+                const shell = createMemo<ShellInfo>(previous => shellsById().get(id) ?? previous!)
                 return (
-                  <article class="status-process-card" title={[shell.command, shell.shell, shell.cwd,
-                    props.t(`instanceShell.backgroundProcesses.status.${shell.status}`),
-                    shell.pid === undefined ? "" : props.t("instanceShell.backgroundProcesses.pid", { pid: shell.pid }),
-                    shell.exit === undefined ? "" : props.t("instanceShell.backgroundProcesses.exitCode", { code: shell.exit }),
-                  ].filter(Boolean).join("\n")}>
-                    <span class="min-w-0 flex-1 truncate text-xs text-primary">{shell.command}</span>
-                    <div class="status-process-actions">
-                      <button
-                        type="button"
-                        class="window-icon-button"
-                        title={props.t("instanceShell.backgroundProcesses.actions.output")}
-                        aria-label={props.t("instanceShell.backgroundProcesses.actions.output")}
-                        onClick={() => setOutputShell({ shell, location: { ...shellLocation() }, instanceId: props.instanceId })}
-                      >
-                        <TerminalSquare class="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        class="window-icon-button"
-                        title={props.t(running() ? "instanceShell.backgroundProcesses.actions.stopRemove" : "instanceShell.backgroundProcesses.actions.remove")}
-                        aria-label={props.t(running() ? "instanceShell.backgroundProcesses.actions.stopRemove" : "instanceShell.backgroundProcesses.actions.remove")}
-                        disabled={shellState().loading}
-                        onClick={() => void removeShell(shell.id, shell.command, running())}
-                      >
-                        <Show when={running()} fallback={<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />}>
-                          <XOctagon class="h-3.5 w-3.5" aria-hidden="true" />
-                        </Show>
-                      </button>
-                    </div>
-                  </article>
+                  <BackgroundShellRow shell={shell()}
+                    removing={shellState().loading || removingShells().has(JSON.stringify([props.instanceId, shellLocation(), id]))}
+                    onOutput={() => setOutputShell({ shell: shell(), location: { ...shellLocation() }, instanceId: props.instanceId })}
+                    onRemove={source => void removeShell(id, shell().command, shell().status === "running", source)} />
                 )
               }}
             </For>

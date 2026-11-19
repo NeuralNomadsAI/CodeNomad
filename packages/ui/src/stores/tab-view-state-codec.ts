@@ -5,11 +5,13 @@ import type { BrowserViewportPreset } from "../components/browser-frame"
 import { missionProfileRoles } from "../../../server/src/missions/playbook-profiles"
 
 export interface RestorableTabPreview {
-  targetUrl: string
   mode: "preview" | "chat"
+  targetUrl?: string
   history?: BrowserHistory
   viewport?: BrowserViewportPreset
 }
+export interface RestorableBrowserPreview extends RestorableTabPreview { targetUrl: string }
+export const SESSION_BROWSER_STATE_KEY = "opencode-session-browser-state-v1"
 export interface RestorableTabMissionView {
   selected?: string
   selectedRecurrence?: string
@@ -34,8 +36,9 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const id = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0
   && value.length <= 512 && !["__proto__", "constructor", "prototype"].includes(value)
 
-export function normalizeTabPreview(value: unknown): RestorableTabPreview | undefined {
+function normalizeTabPreview(value: unknown): RestorableTabPreview | undefined {
   if (!record(value) || (value.mode !== "chat" && value.mode !== "preview")) return
+  if (value.targetUrl === undefined) return { mode: value.mode }
   const targetUrl = historyUrl(value.targetUrl)
   if (!targetUrl || targetUrl.length > 2048) return
   const parsedHistory = parseBrowserHistory(value.history, targetUrl)
@@ -46,16 +49,29 @@ export function normalizeTabPreview(value: unknown): RestorableTabPreview | unde
       ? { viewport: value.viewport as BrowserViewportPreset } : {}) }
 }
 
-export function parseLegacySessionPreviews(value: string | null): Array<[string, RestorableTabPreview]> {
+export function parseLegacySessionPreviews(value: string | null): Array<[string, RestorableBrowserPreview]> {
   if (!value || value.length > 4096) return []
   try {
     const parsed: unknown = JSON.parse(value)
     if (!record(parsed)) return []
     return Object.entries(parsed).slice(0, MAX_TAB_PREVIEWS).flatMap(([key, value]) => {
       const preview = normalizeTabPreview(value)
-      return key && key.length <= 4096 && preview ? [[key, preview] as [string, RestorableTabPreview]] : []
+      return key && key.length <= 4096 && preview?.targetUrl ? [[key, preview as RestorableBrowserPreview] as [string, RestorableBrowserPreview]] : []
     })
   } catch { return [] }
+}
+
+/** Most recent/active sources go first. Persist resources before stripping imported URLs. */
+export function mergeSessionBrowsers(views: readonly (RestorableTabViewState | undefined)[], stored: string | null) {
+  const previews: Record<string, RestorableTabPreview> = Object.fromEntries(parseLegacySessionPreviews(stored))
+  for (const view of [...views].reverse()) for (const [id, preview] of Object.entries(view?.previews ?? {})) {
+    if (preview.targetUrl) { delete previews[id]; previews[id] = { ...preview, mode: "chat" } }
+  }
+  return JSON.stringify(normalizeTabViewState({ version: 1, previews })?.previews ?? {})
+}
+
+export function tabPreviewModes(view: RestorableTabViewState): RestorableTabViewState {
+  return view.previews ? { ...view, previews: Object.fromEntries(Object.entries(view.previews).map(([id, p]) => [id, { mode: p.mode }])) } : view
 }
 
 function normalizeMissionView(value: unknown): RestorableTabMissionView | undefined {

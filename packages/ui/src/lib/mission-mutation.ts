@@ -21,7 +21,7 @@ export class MissionMutationError extends HttpResponseError {
 
 // Only reviewed redacted codes cross this seam. Never display or log arbitrary
 // upstream error text, and never replay an already dispatched mutation.
-export async function missionMutationRequest(url: string, method: "POST" | "PATCH", input: object, fetcher: typeof fetch = authenticatedFetch): Promise<{ mission: MissionMap }> {
+export async function missionMutationRequest(url: string, method: "POST" | "PATCH", input: object, fetcher: typeof fetch = authenticatedFetch): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
   const response = await fetcher(url, { method, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
   if (!response.ok) {
     const operation = method === "POST" ? "create" : "edit"
@@ -33,7 +33,7 @@ export async function missionMutationRequest(url: string, method: "POST" | "PATC
   if (!mission || typeof mission !== "object" || typeof (mission as { id?: unknown }).id !== "string") {
     throw new TypeError("Mission change acknowledgement is unreadable")
   }
-  return body as { mission: MissionMap }
+  return body as { mission: MissionMap; acknowledgement?: "fresh" | "recovered" }
 }
 
 export function isUncertainCreation(error: unknown): boolean {
@@ -48,7 +48,7 @@ export function isUncertainCreation(error: unknown): boolean {
 // committed native write and must keep the original request held.
 export function isDefinitiveCreationRejection(error: unknown): boolean {
   if (!(error instanceof MissionMutationError) || error.operation !== "create") return false
-  if (error.code) return error.code !== "creation-uncertain"
+  if (error.code) return error.code !== "creation-uncertain" && error.code !== "creation-conflict"
   return [400, 401, 403, 404].includes(error.status)
 }
 
@@ -65,7 +65,6 @@ export function recurrenceCreationRefusalKey(error: unknown): string | undefined
   if (status === 503 && code === "creation-capacity") return "missions.control.creation.capacity"
   if (status === 503 && code === "creation-unavailable") return "missions.control.creation.unavailable"
   if (status === 409 && code === "creation-worktree-deleting") return "missions.control.creation.worktreeDeleting"
-  if (status === 409 && code === "creation-conflict") return "missions.control.creation.scopeConflict"
   if (!code && [401, 403, 404].includes(status)) return "missions.control.mutation.forbidden"
   return undefined
 }
@@ -73,8 +72,6 @@ export function recurrenceCreationRefusalKey(error: unknown): string | undefined
 export function missionMutationErrorKey(error: unknown): string {
   if (error instanceof MissionMutationError) {
     if (error.code === "compare-models-required" || error.code === "compare-models-identical") return `missions.compare.${error.code}`
-    if (isUncertainCreation(error)) return "missions.control.creation.uncertain"
-    if (error.status === 409 && error.code === "creation-conflict") return "missions.control.creation.scopeConflict"
     if (error.status === 503 && error.code === "creation-capacity") return "missions.control.creation.capacity"
     if (error.status === 503 && error.code === "creation-unavailable") return "missions.control.creation.unavailable"
     if (error.status === 409 && error.code === "creation-worktree-deleting") return "missions.control.creation.worktreeDeleting"

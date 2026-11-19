@@ -42,7 +42,10 @@ test("wake reader accepts only the durable exact native user, bounds SQL and exp
   const user = { text: NATIVE_SCHEDULE_CARRIER_SIGNAL, time: { created: 1000 }, metadata: { schedule: { id: wake.scheduleID, run: 1, dueAt: 1000, late: false } } }
   let rows: unknown[] = [{ type: "user", data: JSON.stringify(user) }]
   const queries: Array<{ sql: string; params: readonly unknown[] }> = []
-  const client = { unsafe: (sql: string, params: readonly unknown[]) => { queries.push({ sql, params }); return { withoutTransform: Effect.sync(() => rows) } } }
+  let rowID = wake.messageID
+  const client = { unsafe: (sql: string, params: readonly unknown[]) => {
+    queries.push({ sql, params }); return { withoutTransform: Effect.sync(() => params[1] === rowID ? rows : []) }
+  } }
   const scope = await Effect.runPromise(Scope.make())
   t.after(() => Effect.runPromise(Scope.close(scope, Exit.void)))
   const graph = Context.make(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: client } }).pipe(
@@ -56,6 +59,9 @@ test("wake reader accepts only the durable exact native user, bounds SQL and exp
   assert.equal(await reader.message(wake), undefined)
   rows = [{ type: "user", data: JSON.stringify({ ...user, metadata: { schedule: { ...user.metadata.schedule, run: 2 } } }) }]
   assert.equal(await reader.message(wake), undefined)
+  rowID = "msg_aut_aux_1"
+  rows = [{ type: "user", data: JSON.stringify({ ...user, metadata: { automation: { ...user.metadata.schedule, id: "aut_aux" } } }) }]
+  assert.deepEqual(await reader.message(wake), { scheduleID: wake.scheduleID, messageID: wake.messageID, run: 1, dueAt: 1000 })
   rows = []
   assert.equal(await reader.message(wake), undefined)
   await Effect.runPromise(Scope.close(scope, Exit.void))

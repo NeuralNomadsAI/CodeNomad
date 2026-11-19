@@ -14,6 +14,7 @@ import {
   markPreservedWorkspaceReopened, markPreservedWorkspaceUnavailable,
   getPreservedWorkspaceReopenTarget, getPreservedWorkspaceState,
   hasRestoredTabBinding, mergeRestorableSessionState, recordRestoredTab,
+  retirePreservedWorkspacePrompts,
   settleRestoredTab as settlePreservedTab, type RestorableSessionPreservation,
   type RestorableWorkspaceRuntimeAuthority,
 } from "../../stores/app-session-snapshot-merge"
@@ -29,11 +30,12 @@ import {
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "../../stores/message-v2/bus"
 import type { ScrollSnapshot } from "../../stores/message-v2/types"
 import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsForInstance } from "../../stores/attachments"
+import { closedDraftSnapshotAuthority, omitSupersededClosedDrafts, pendingClosedDrafts } from "../../stores/closed-workspace-drafts"
 import { serializeDraftAttachments } from "../../stores/client-state-attachments-codec"
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
 import { captureSeenInterruptions, seenInterruptionsRevision } from "../../stores/session-interruption-seen"
-import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
+import { hydrateWorkspacePromptState, recoverDeletedWorkspacePrompts } from "../../stores/app-session-prompt-hydration"
 import { captureSessionOutlineIndexes, outlineCacheRevision } from "../../stores/session-outline"
 import { captureSessionCatalog } from "../../stores/session-catalog-persistence"
 import { captureTabViewState } from "../../stores/tab-view-state"
@@ -98,12 +100,15 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     const expansionAuthority = getAuthoritativeSessionExpansionIdsForInstance(id)
     const expanded = getPersistentExpandedSessionIds(id)
     const prioritySessionIds = [sessionId, "__no_session_draft__"].filter((value): value is string => Boolean(value))
+    const pending = pendingClosedDrafts(id)
+    const live = serializeDraftAttachments(
+      getSessionDraftPromptsForInstance(id), getSessionAttachmentsForInstance(id), prioritySessionIds,
+    )
     const result: RestorableWorkspaceTabState = {
       kind: "workspace", folder: tab.instance.folder, occurrence: occurrenceByInstance.get(id) ?? 0, workspaceId: id,
       ...(tab.instance.backendId ? { backendId: tab.instance.backendId } : {}),
-      ...serializeDraftAttachments(
-        getSessionDraftPromptsForInstance(id), getSessionAttachmentsForInstance(id), prioritySessionIds,
-      ),
+      drafts: { ...pending.drafts, ...live.drafts },
+      attachments: { ...pending.attachments, ...live.attachments },
       ...captureRuntimeState(id), scrollSnapshots: captureScrollSnapshots(id),
       outlineIndexes: captureSessionOutlineIndexes(id, getAuthoritativelyDeletedSessionIdsForInstance(id)),
       sessionCatalog: captureSessionCatalog(getSessions(id)),
@@ -123,9 +128,10 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     if (tab.kind !== "instance") return undefined
     const id = tab.instance.id
     const sessionIds = new Set(getSessions(id).map(({ id }) => id))
+    const closed = closedDraftSnapshotAuthority(id)
     return {
-      drafts: getAuthoritativeDraftSessionIdsForInstance(id),
-      attachments: getAuthoritativeAttachmentSessionIdsForInstance(id),
+      drafts: new Set([...getAuthoritativeDraftSessionIdsForInstance(id), ...closed]),
+      attachments: new Set([...getAuthoritativeAttachmentSessionIdsForInstance(id), ...closed]),
       scrollSnapshots: scrollAuthority.get(id), idleMarkers: sessionIds, generationRecovery: sessionIds,
       sessionExpansion: getAuthoritativeSessionExpansionIdsForInstance(id),
       deletedSessions: getAuthoritativelyDeletedSessionIdsForInstance(id),
@@ -175,22 +181,27 @@ export function useAppSessionCapture() {
   let timer: ReturnType<typeof setTimeout> | null = null
   let preservation: RestorableSessionPreservation | null = null
   let nativeFallbackState: RestorableSessionState | null = null
-  const hydratePreservedPrompts = (instanceId: string) => {
+  const hydratePreservedPrompts = (instanceId: string, recoverOnly = false) => {
     if (!preservation) return
     const instance = instances().get(instanceId)
     if (!instance) return
-    const snapshot = getPreservedWorkspaceState(preservation, {
-      runtimeTabId: getInstanceAppTabId(instanceId), folder: instance.folder, occurrence: 0, backendId: instance.backendId,
-    })
-    if (!snapshot) return
-    hydrateWorkspacePromptState(
+    const runtimeTabId = getInstanceAppTabId(instanceId)
+    const source = getPreservedWorkspaceState(preservation, { runtimeTabId, folder: instance.folder, occurrence: 0, backendId: instance.backendId })
+    if (!source) return
+    const snapshot = omitSupersededClosedDrafts(instanceId, source)
+    if (!recoverOnly) hydrateWorkspacePromptState(
       instanceId,
       snapshot,
       new Set(getSessions(instanceId).map(({ id }) => id)),
       NO_SESSION_DRAFT_SESSION_ID,
     )
+    const consumed = recoverDeletedWorkspacePrompts(instanceId, snapshot)
+    if (consumed) retirePreservedWorkspacePrompts(preservation, runtimeTabId, consumed)
   }
   const mergedState = () => {
+    // Flush can run before the hydration effect; move prompt bytes before
+    // merge applies the native deletion tombstones to the saved tab.
+    for (const instanceId of instances().keys()) hydratePreservedPrompts(instanceId, true)
     const captured = captureState(scrollAuthority)
     return mergeRestorableSessionState(captured.state, preservation, {
       currentTabIds: captured.tabIds, currentTabAuthorities: captured.authorities,
@@ -317,6 +328,9 @@ export function useAppSessionCapture() {
           && instances().has(event.instanceId)
           && hasRestoredTabBinding(preservation, sourceIndex, workspace.runtimeTabId),
         )
+        // Seed the independent local composer before either native-read batch can recover into it.
+        if (snapshot && isCurrentBinding()) hydrateWorkspacePromptState(event.instanceId,
+          omitSupersededClosedDrafts(event.instanceId, snapshot), new Set(), NO_SESSION_DRAFT_SESSION_ID, true)
         if (snapshot && instances().has(event.instanceId)) void Promise.resolve().then(() => {
           if (!isCurrentBinding()) return null
           return hydrateRestoredWorkspaceState(event.instanceId, snapshot, hydrationController.signal, isCurrentBinding)
@@ -351,6 +365,7 @@ export function useAppSessionCapture() {
     const tabs = appTabs()
     checkpointSessions()
     for (const tab of tabs) if (tab.kind === "instance") {
+      getAuthoritativelyDeletedSessionIdsForInstance(tab.instance.id)
       untrack(() => hydratePreservedPrompts(tab.instance.id))
     }
   })

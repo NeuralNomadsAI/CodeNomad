@@ -13,7 +13,50 @@ import { MissionControlError } from "../missions/control-error"
 import { MISSION_DEFAULTS_REQUEST_INVALID } from "../missions/recovery-error"
 import { registerAutomationPluginRoute } from "../server/routes/automation-plugin"
 import { setupMissionsPlugin } from "./missions-plugin"
-import { AUTOMATION_BRIDGE_PATH, automationBridgeDirectories, createAutomationBridgeRegistration, publishAutomationBridge, resolveMissionProfileDefaults, sendMissionInput } from "./automation-plugin"
+import { AUTOMATION_BRIDGE_PATH, automationBridgeDirectories, createAutomationBridgeRegistration, publishAutomationBridge, readMissionConfigurations, resolveMissionProfileDefaults, sendMissionInput } from "./automation-plugin"
+
+test("saved configurations require exactly one proven owner and preserve unavailable and update-required refusals", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-configurations-bridge-"))
+  const previous = { LOCALAPPDATA: process.env.LOCALAPPDATA, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR, WSL_DISTRO_NAME: process.env.WSL_DISTRO_NAME }
+  process.env.LOCALAPPDATA = root
+  process.env.XDG_RUNTIME_DIR = root
+  delete process.env.WSL_DISTRO_NAME
+  const removals: Array<() => Promise<void>> = []
+  t.after(async () => {
+    await Promise.all(removals.map(remove => remove()))
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value
+    }
+    await rm(root, { recursive: true, force: true })
+  })
+  const request = () => readMissionConfigurations("ses_owner")
+  let posts = 0, mode: "valid" | "legacy" | "failed" | "not-owner" = "valid"
+  t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
+    const body = JSON.parse(String(options.body))
+    if (mode === "failed") return new Response(JSON.stringify({ error: "private detail" }), { status: 503 })
+    if (mode === "not-owner") return new Response(JSON.stringify({ code: "mission-not-owner" }), { status: 404 })
+    if (body.mode === "browser-claim") {
+      assert.equal(body.purpose, "mission-preferences")
+      return new Response(JSON.stringify({ result: { available: true } }))
+    }
+    posts++
+    assert.equal(body.command.kind, "configurations")
+    assert.deepEqual(body.command.input, {})
+    if (mode === "legacy") return new Response(JSON.stringify({ error: "Unknown command" }), { status: 400 })
+    return new Response(JSON.stringify({ result: [] }))
+  })
+  await assert.rejects(request(), { code: "mission-preferences-unavailable" }, "no owner cannot masquerade as an empty library")
+  removals.push(await publishAutomationBridge(createAutomationBridgeRegistration("http://127.0.0.1:54321")))
+  assert.deepEqual(await request(), [])
+  mode = "legacy"
+  await assert.rejects(request(), { code: "mission-preferences-update-required" })
+  for (mode of ["failed", "not-owner"] as const) await assert.rejects(request(), { code: "mission-preferences-unavailable" })
+  mode = "valid"
+  removals.push(await publishAutomationBridge(createAutomationBridgeRegistration("http://127.0.0.1:54322")))
+  const before = posts
+  await assert.rejects(request(), { code: "mission-preferences-unavailable" }, "ambiguous owners cannot select a library")
+  assert.equal(posts, before)
+})
 
 test("profile defaults distinguish absent owners from ambiguous, failed and unreadable owners", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-profile-default-bridge-"))
@@ -63,7 +106,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
     const body = JSON.parse(String(options.body))
     const token = new Headers(options.headers).get("x-codenomad-automation-token")
-    if (token !== registration.token) return new Response(JSON.stringify({ result: { available: true } }), { status: 200 })
+    if (token !== registration.token) return new Response(JSON.stringify({ result: { available: true, missionCreationDefaults: true, missionPreparationStart: true } }), { status: 200 })
     if (body.mode === "browser-claim") {
       if (probeFailure === "network") throw new Error("secret network error")
       if (probeFailure === "refused") throw Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("refused"), { code: "ECONNREFUSED" }) })
@@ -145,8 +188,8 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   assert.equal(explicitCreated.selection.origins.coordinator, "explicit")
   assert.equal(explicitCreated.selection.origins.taskMode, "explicit")
   assert.equal((await handlers.snapshot()).missions.find((mission: any) => mission.id === explicitCreated.mission.id).creationDefaults.preferences, "unavailable")
-  await assert.rejects(tools.get("prepare").execute({ requestID: "no-backend", objective: "Handoff", template: "custom" }, toolContext),
-    (error: unknown) => error instanceof MissionControlError && error.code === "prepare-refused")
+  assert.deepEqual(JSON.parse((await tools.get("prepare").execute({ requestID: "no-backend", objective: "Handoff", template: "custom" }, toolContext)).content),
+    { outcome: "refused", phase: "creation", code: "prepare-refused" })
   assert.equal((await handlers.snapshot()).missions.length, 2, "backend-less hand-offs remain unavailable")
   assert.equal([...values.keys()].some(key => key.includes("/creation-intents/")), false)
 
@@ -252,19 +295,20 @@ test("prepare never dispatches creation provenance to either legacy backend path
     for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
     await rm(root, { recursive: true, force: true })
   })
-  let mode: "old-desktop" | "old-host" | "current" = "old-desktop", posts = 0
+  let mode: "old-desktop" | "old-host" | "old-preparation" | "current" = "old-desktop", posts = 0
   t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
     const body = JSON.parse(String(options.body))
     if (body.mode === "browser-claim") {
       assert.equal(body.purpose, "mission-prepare")
       return mode === "old-host" ? new Response(JSON.stringify({ error: "Browser automation is unavailable in this host" }), { status: 404 })
-        : new Response(JSON.stringify({ result: { available: true, ...(mode === "current" ? { missionCreationDefaults: true } : {}) } }))
+        : new Response(JSON.stringify({ result: { available: true, ...(mode === "old-preparation" ? { missionCreationDefaults: true } : {}),
+          ...(mode === "current" ? { missionCreationDefaults: true, missionPreparationStart: true } : {}) } }))
     }
     posts++
     return new Response(JSON.stringify({ result: { admitted: true } }))
   })
-  for (mode of ["old-desktop", "old-host"] as const) {
-    await assert.rejects(sendMissionInput("ses_prepare", "prepare", { creationDefaults: {} }),
+  for (mode of ["old-desktop", "old-host", "old-preparation"] as const) {
+    await assert.rejects(sendMissionInput("ses_prepare", "prepare", { creationDefaults: {}, startOnCreation: true }),
       (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-update-required")
     assert.equal(posts, 0, "no old strict prepare schema can observe the unknown field")
   }

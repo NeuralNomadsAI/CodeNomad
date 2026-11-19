@@ -22,6 +22,7 @@ import { nativeScheduleIncarnationGuard, readNativeScheduleIncarnation } from ".
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { scheduledPassageMarker } from "./native-scheduled-passage-business"
 import { abortableNativeEffect } from "./native-invocation"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 
 type Lifecycle = NonNullable<MissionInputTransport["lifecycle"]>
 type ActorCalendarControl = { requestID: string; expectedRevision: number; action: "play" | "resume" | "pause" | "stop" | "delete"; pending: boolean }
@@ -186,7 +187,8 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
       // The existing MissionControl writer serializes ordinary and isolated maps.
       // Read shared memberships under that writer before touching a root.
       if (!(pending.coordinatorReused && target.sessionID === coordinatorID)) {
-        const ordinary = await new MissionJournal(storage, doc.projectID, doc.projectCanonical).snapshot()
+        const range = await invoke(optionalOrdinaryJournalRange(ctx, effect => invoke(Effect.suspend(() => { live(); return effect }))))
+        const ordinary = await new MissionJournal({ ...storage, range }, doc.projectID, doc.projectCanonical).snapshot()
         if (ordinary.discardedEvents || ordinary.controlUnavailable) throw new Error("Scheduled actor membership unknown")
         if (ordinary.missions.some(other => other.id !== mission.id && other.status === "active"
           && other.actors.some(actor => actor.sessionId === target.sessionID))) {

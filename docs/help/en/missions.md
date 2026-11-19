@@ -8,11 +8,21 @@ If Missions is unavailable, **OpenCode settings** opens runtime recovery for a m
 
 Remote connections use the same form and controls. Prefer HTTPS to protect network traffic.
 
-Choose **Create mission**. The form replaces the tree until you create or cancel. Its groups follow the order below.
+Choose **Create mission**. The form replaces the tree until you create or cancel. A confirmed creation selects the Mission; a refused creation leaves the form editable.
+
+Ask an agent in any project conversation, including a subagent or scheduled run, to prepare a separate one-time or scheduled Mission. Its conversation stays unchanged; a new coordinator is the default. Keep the owning CodeNomad backend available. Explicitly requesting **Start automatically** authorizes that new Mission's first start; recovery reads the original result. Agents can also list, inspect, start, pause, stop, resume, **Run now**, check, edit and delete any schedule in this project, including one you created in the editor. The same revision and admission checks apply; explicit scheduling OFF is preserved. An unconfirmed action keeps its original request for read-only status recovery.
 
 ### Configuration {#saved-briefs}
 
+Agents can read every Mission in the project, including yours, from any owned conversation. Read-only project views cover tasks, results, cleanup, scheduled passages and source choices; browsing never starts or retries work.
+
+Agents can also diagnose scheduling, prepare its settings while preserving explicit OFF, resume a confirmed partial edit with its original request, and create or control daily schedules.
+
+For one-time Missions, agents can start, resume, pause gracefully, interrupt immediately, stop, edit, delete, resume coordination after failure, request a missing report or ask for an update. This includes Missions you created, with the same admission and revision checks as the panel. Deletion follows your managed-session deletion preference unless explicitly overridden. Unconfirmed controls and cleanup keep their original identity; agents read the saved status before explicitly continuing a confirmed partial action.
+
 **Configuration** optionally loads a saved objective, notes, playbook, agents/models and task-session choices. Its name supplies the editable title. Check the filled fields before creating.
+
+Agents can read, save, replace or rename, remove and repair saved configurations, including saving an existing Mission's instructions. They can also change global or playbook-specific profile and task-session defaults, restore inheritance, reset invalid preferences, and change the task-conversation deletion preference. The library and these preferences apply across the CodeNomad profile's projects. Project subagent depth supports 1–10 or **Inherit**, including repair of an empty configuration block. Each change checks the last-read value and preserves intervening human edits.
 
 **Save configuration**, in the footer beside Cancel and Create, names and saves a reusable configuration. It does not create or start a Mission. Scheduling and **Start automatically** are separate choices. The Missions gear opens Preferences, including the saved-configuration library; removing a configuration keeps existing missions and conversations.
 
@@ -88,7 +98,11 @@ Select a schedule to read its state, next wake or check, launched and successful
 
 A saved policy that the editor cannot represent stays under **Stored scheduling policy** until you explicitly replace it. Review any retained end or launch limit before editing.
 
+In **Followed conversations**, use **Add conversation** and choose a conversation, including for an immediate Mission. Before Play, change a selection or use its × button to remove it.
+
 ### Existing daily schedules {#existing-daily-schedules}
+
+Agents can find and control these schedules from any conversation belonging to the same project, including another worktree.
 
 Existing daily entries keep their own controls and saved time zone. After a service restart they show **Interrupted** and require **Resume**. They catch up the latest eligible day rather than running every missed day. Read their retained results through the selected entry.
 

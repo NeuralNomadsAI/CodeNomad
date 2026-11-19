@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { after, afterEach, before, describe, it } from "node:test"
 import toast from "solid-toast"
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { createFileAttachment } from "../types/attachment.ts"
 import { addAttachment, clearInstanceAttachments } from "./attachments.ts"
@@ -21,8 +22,9 @@ const instanceId = "blank-cleanup"
 const sessionId = "existing"
 // Node's CJS interop for this browser-only toast package differs from Vite's.
 const originalToast = toast.custom
+const originalCleanup = serverApi.cleanupSession
 before(() => { toast.custom = () => "cleanup-toast" })
-after(() => { toast.custom = originalToast })
+after(() => { toast.custom = originalToast; serverApi.cleanupSession = originalCleanup })
 const emptyPage = () => ({ data: [], cursor: {} })
 const session = (id = sessionId, overrides: Partial<Session> = {}): Session => ({
   id, instanceId, parentId: null, title: id, agent: "", model: { providerId: "", modelId: "" },
@@ -46,6 +48,10 @@ function setup(overrides: Partial<Session> = {}) {
     },
     message: { list: async (input: any) => { reads.push(input); return emptyPage() } },
   } as any
+  serverApi.cleanupSession = async (_instance, id) => {
+    await client.session.remove({ sessionID: id })
+    return { deleted: true }
+  }
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
   setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(sessionId, overrides)]])))
@@ -70,6 +76,32 @@ function residentMessage() {
 }
 
 describe("automatic blank-session cleanup", () => {
+  it("typing during backend preflight aborts admission without clearing the draft", async () => {
+    const { removed } = setup()
+    let entered!: () => void
+    const ready = new Promise<void>(resolve => { entered = resolve })
+    serverApi.cleanupSession = async (_instanceId, _sessionId, signal) => {
+      assert.ok(signal)
+      const done = new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }))
+      entered()
+      await done
+      return { deleted: false }
+    }
+    const sweep = cleanupBlankSession(instanceId, sessionId)
+    await ready
+    setSessionDraftPrompt(instanceId, sessionId, "keep this draft")
+    assert.equal(await sweep, false)
+    assert.deepEqual(removed, [])
+    assert.ok(sessions().get(instanceId)?.has(sessionId))
+  })
+  it("does not fall back to explicit deletion when the cleanup broker refuses or fails", async () => {
+    const { removed } = setup()
+    serverApi.cleanupSession = async () => ({ deleted: false })
+    assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
+    serverApi.cleanupSession = async () => { throw new Error("cleanup unavailable") }
+    assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
+    assert.deepEqual(removed, [])
+  })
   it("creating a session preserves an unloaded conversation with equal timestamps (#754)", async () => {
     const { client, removed } = setup()
     client.message.list = async () => ({ data: [{ id: "prompt", type: "user", text: "Keep me" }], cursor: {} })

@@ -6,7 +6,8 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import MessageSection from "../../../src/components/message-section"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { activeSessionId } from "../../../src/stores/sessions"
-import { getSessionPreview, openSessionPreview } from "../../../src/stores/session-previews"
+import { openSessionPreview } from "../../../src/stores/session-previews"
+import { getTabViewState } from "../../../src/stores/tab-view-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { setSessionSearchOpen } from "../../../src/stores/session-search"
 import { serverApi } from "../../../src/lib/api-client"
@@ -86,9 +87,9 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   showDestinationPreview: async () => {
     serverApi.createPreview = async () => ({ token: "fixture", sessionId: "other-session-2", targetUrl: "https://example.com", url: "/preview/fixture" }) as any
     await openSessionPreview("other-session-2", "https://example.com", instanceId)
-    return getSessionPreview("other-session-2", instanceId)?.mode
+    return getTabViewState(instanceId).previews?.["other-session-2"]?.mode
   },
   opened: () => ({ active: activeSessionId().get(instanceId) ?? null,
     anchor: store.getScrollSnapshot("other-session-2", MESSAGE_STREAM_SCROLL_SCOPE)?.anchorKey ?? null,
-    surface: getSessionPreview("other-session-2", instanceId)?.mode ?? null }),
+    surface: getTabViewState(instanceId).previews?.["other-session-2"]?.mode ?? null }),
 }

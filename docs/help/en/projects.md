@@ -40,7 +40,7 @@ If another window displays the same project connection, its tab closes too and t
 
 Closing a whole window, quitting or reloading does not close its project connections; normal startup restoration still applies. Stop relevant runs explicitly if you need to verify execution ended. CodeNomad never unloads native Locations; shared-service maintenance is described in [OpenCode setup](opencode.md).
 
-With startup restoration enabled, each remaining tab restores its own panel choices, Mission selection/reader and saved browser URL/history. Saved browser pages load on explicit reopening. Closing one occurrence removes only its saved view; reopening the folder creates a new occurrence.
+With startup restoration enabled, each remaining tab restores its own panel choices, Mission selection/reader and chat/web preview choice. Browser URLs and history are shared per session; saved pages load only when the web preview is explicitly reopened. Closing one occurrence removes only its saved view; reopening the folder creates a new occurrence.
 
 ## Restore remote tabs {#restore-remote-tabs}
 

@@ -101,8 +101,8 @@ export const missionDocumentChanges = {
     const config = missionConfigurationSchema.parse(input), edit = projectMissionDocument(doc).edit
     assertMissionLaunchShape(doc, config)
     if (!edit.structural) {
-      const { objective: _oldObjective, notes: _oldNotes, ...oldStructure } = doc.configuration
-      const { objective: _objective, notes: _notes, ...structure } = config
+      const { objective: _oldObjective, notes: _oldNotes, coordinatorSelectionAuthor: _oldAuthor, ...oldStructure } = doc.configuration
+      const { objective: _objective, notes: _notes, coordinatorSelectionAuthor: _author, ...structure } = config
       if (!["passage", "launched-once"].includes(edit.reason ?? "") || !same(oldStructure, structure)) throw new Error("Mission configuration locked")
       // Keep the pending's frozen instructions/profile unchanged.
       doc.configuration = config

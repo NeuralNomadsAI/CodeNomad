@@ -77,7 +77,7 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   }) }) } } }
   const partial = Context.add(Context.make(tag("@opencode/Location"), location), tag("@opencode/storage/Database"), db)
   const withSession = Context.add(partial, tag("@opencode/Session"), { native: true })
-  const full = scheduled ? Context.add(withSession, tag("@opencode/Schedule"), { native: true }) : withSession
+  const full = scheduled ? Context.add(withSession, tag("@opencode/Automation"), { native: true }) : withSession
   const invocation = nativeInvocation(), scope = await Effect.runPromise(Scope.make())
   t.after(() => Effect.runPromise(Scope.close(scope, { _tag: "Success", value: undefined } as never)))
   const mission = { id: pending.missionID, title: "Mission", objective: "Work", template: "custom", revision: 2, status: "active", runState: "running",
@@ -125,7 +125,7 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   } as unknown as Parameters<typeof executeNativeScheduledBusiness>[0]
   const acquire = () => Effect.gen(function* () {
     assert.ok(Option.isSome(yield* Effect.serviceOption(tag("@opencode/Session"))))
-    assert.equal(Option.isSome(yield* Effect.serviceOption(tag("@opencode/Schedule"))), scheduled)
+    assert.equal(Option.isSome(yield* Effect.serviceOption(tag("@opencode/Automation"))), scheduled)
     calls.acquired++; return runtime
   })
   const bridge = await Effect.runPromiseWith(Context.add(partial, Scope.Scope, scope))(registerNativeScheduledBusinessRpc(ctx, artifacts, invocation, acquire))
@@ -232,7 +232,6 @@ test("partial client graphs cross HTTP into a fresh full receiver; mutation proj
     const context = await route.execute!(control => control.contextFor(route.readSessionID))
     assert.equal(context!.instruction, "Owned context")
     await assert.rejects(route.control.interruptTask(f.rootID, { taskKey: "owned" }))
-    await assert.rejects(route.control.prepare(f.rootID, { requestID: "handoff", objective: "No", template: "custom" }))
   })
   assert.equal(f.calls.http, 3); assert.equal(f.calls.acquired, 3)
   assert.ok(f.calls.privateSource.includes(false) && f.calls.privateSource.includes(true))
@@ -300,6 +299,18 @@ test("read and mutation identities are bound separately; delegate targets must b
   for (const method of ["inspect", "observeTask", "decisionCandidates", "listMissions"] as const) {
     assert.throws(() => missionBusinessCall(method, ["ses_root", { taskKey: "owned" }, "read"], "ses_root", "ses_root", "msn_owned"), /inspectTool/)
   }
+})
+
+test("scheduled preparation binds the actual author and preserves inspect-start and interruption refusals", async () => {
+  const request = { requestID: "separate", objective: "Separate mission", template: "custom", startOnCreation: true }
+  const call = missionBusinessCall("prepare", ["ses_child", request], "ses_child", "ses_root", "msn_owned")
+  const calls: unknown[] = []
+  await call.invoke({ prepare: async (...args: unknown[]) => { calls.push(args) } } as never)
+  assert.deepEqual(calls, [["ses_child", request]])
+  assert.throws(() => missionBusinessCall("prepare", ["ses_root", request], "ses_child", "ses_root", "msn_owned"), /Foreign Mission business caller/)
+  assert.throws(() => missionBusinessCall("inspectTool", ["ses_root", { start: { objective: "No", template: "custom" } }, "read", null],
+    "ses_child", "ses_root", "msn_owned"), /creation unavailable/)
+  assert.throws(() => missionBusinessCall("interruptTask", ["ses_child", { taskKey: "no" }], "ses_child", "ses_root", "msn_owned"), /backend actions unavailable/)
 })
 
 test("catalog ownership transports only acknowledgement, independent of native session metadata size", async t => {

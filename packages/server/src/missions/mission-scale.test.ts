@@ -457,7 +457,7 @@ test("through its executor, an owned root without a mission reads a catalog too 
   await assert.rejects(inspect({ missionID: "msn_other", ...again.read }), /names no mission/)
   // Catalog slices read no mission storage. The reader joins an unrelated mission, a
   // write any mission lookup would re-read; then, with every journal read failing, the
-  // owned root and its catalog still serve the slices, and a child session is still refused.
+  // owned conversation and its catalog still serve the slices, including descendants.
   const joined = (await f.control().create({ requestID: "joined", objective: "Unrelated", template: "custom", coordinatorSessionID: "ses_reader" })).mission
   const { get, scan } = f.storage
   const trapped = async () => { throw new Error("Mission storage trapped") }
@@ -465,7 +465,7 @@ test("through its executor, an owned root without a mission reads a catalog too 
   try {
     assert.deepEqual(await readContent(inspect, again.read), await expected())
     f.native.set("ses_reader_child", { id: "ses_reader_child", parentID: "ses_reader", projectID: PROJECT.id, title: "Child", location: { directory: "/repo" } })
-    await assert.rejects(tool(again.read, "ses_reader_child"), /root sessions only/)
+    assert.equal(JSON.parse((await tool(again.read, "ses_reader_child")).content).content.offset, 0)
     // A mission read fails closed at once, and leaves no exclusion or index state held.
     await assert.rejects(inspect({}), /Mission storage trapped/)
     assert.deepEqual(await readContent(inspect, again.read), await expected())

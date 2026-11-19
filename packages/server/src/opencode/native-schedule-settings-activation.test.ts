@@ -32,8 +32,9 @@ async function fixture(run: (value: any) => Promise<void>) {
         const documents = (await entries()).filter(entry => entry.type === "document")
         const block = [...documents].reverse().find(entry => entry.info.experimental !== undefined)?.info.experimental
         const all = [...documents].reverse().find(entry => entry.info.experimental?.all_flags !== undefined)?.info.experimental.all_flags
-        return { enabled: block?.schedules ?? all === true,
-          provenance: block?.schedules !== undefined ? "experimental-block" : all === true ? "all-flags" : "channel-default" }
+        const configured = block?.automations ?? block?.schedules
+        return { enabled: configured ?? all === true,
+          provenance: configured !== undefined ? "experimental-block" : all === true ? "all-flags" : "channel-default" }
       } }) } }
   const manager: any = { get: () => ({}), getSharedServiceConnection: async () => connection,
     getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
@@ -75,7 +76,7 @@ test("project-only activation journals its effect and requires native effective 
   assert.equal(await readFile(f.globalFile, "utf8"), before)
   const project = await readFile(f.projectFile, "utf8")
   assert.match(project, /^\uFEFF/); assert.match(project, /\r\n\t\/\/ keep/)
-  assert.deepEqual(parse(project.slice(1)).experimental, { subagent_depth: 8, todo: true, schedules: true })
+  assert.deepEqual(parse(project.slice(1)).experimental, { subagent_depth: 8, todo: true, automations: true })
 }))
 
 test("a read-only project refuses before any effect", async () => fixture(async f => {
@@ -116,7 +117,7 @@ test("a concurrent depth author cannot overwrite the activation companion", { ti
   release()
   await active; await refused
   assert.deepEqual(parse((await readFile(f.projectFile, "utf8")).slice(1)).experimental,
-    { subagent_depth: 8, todo: true, schedules: true })
+    { subagent_depth: 8, todo: true, automations: true })
 }))
 
 test("explicit OFF and changed targets refuse without a global side effect", async () => fixture(async f => {
@@ -154,7 +155,7 @@ test("lost project acknowledgement is adopted exactly after reload without rewri
     acknowledged: async () => { throw Error("lost ACK") },
   }), /lost ACK/)
   assert.equal(parse(await readFile(f.globalFile, "utf8")).experimental.schedules, undefined)
-  assert.equal(parse((await readFile(f.projectFile, "utf8")).slice(1)).experimental.schedules, true)
+  assert.equal(parse((await readFile(f.projectFile, "utf8")).slice(1)).experimental.automations, true)
   assert.equal(f.ready(), false)
   const persisted = await f.reload()
   assert.equal(persisted.targets[0].attempted, true); assert.equal(persisted.targets[0].acknowledged, false)
@@ -177,7 +178,7 @@ test("connection retirement after the project write preserves its intention with
   await assert.rejects(f.activation().apply("w", f.location, intent, { ...f.journal,
     acknowledged: async (scope: "global" | "project", digest: string) => { await f.journal.acknowledged(scope, digest); f.current(false) },
   }), (error: any) => /replaced|connection/.test(error.message) || error.cause?.message === "replaced")
-  assert.equal(parse((await readFile(f.projectFile, "utf8")).slice(1)).experimental.schedules, true)
+  assert.equal(parse((await readFile(f.projectFile, "utf8")).slice(1)).experimental.automations, true)
   assert.equal(f.intent().targets[0].attempted, true)
   assert.equal(f.ready(), false)
 }))
@@ -237,14 +238,14 @@ test("an absent project config inherits all effective options into its new activ
   const intent = await f.prepare()
   assert.deepEqual(intent.targets.map((target: any) => target.scope), ["project"])
   await f.activation().apply("w", f.location, intent, f.journal)
-  assert.deepEqual(parse(await readFile(intent.targets[0].path, "utf8")).experimental, { ...inherited, schedules: true })
+  assert.deepEqual(parse(await readFile(intent.targets[0].path, "utf8")).experimental, { ...inherited, automations: true })
 }))
 
 test("legacy global intentions observe attempted bytes only and never write an unattempted target", async () => fixture(async f => {
   const single = await f.prepare()
   const view = await f.controls.readConfigDocuments("w", f.location, undefined, true)
   const global = view.documents.find((item: any) => item.scope === "global")
-  const updated = editMissionExperimental(global.document, "schedules", true, {}, "global")
+  const updated = editMissionExperimental(global.document, "automations", true, {}, "global")
   const target = { scope: "global" as const, path: global.path, expectation: nativeSettingExpectation(global.document),
     resultDigest: createHash("sha256").update(updated).digest("hex"), attempted: false, acknowledged: false }
   const intent = { ...single, targets: [target, ...single.targets] }

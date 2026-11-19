@@ -142,13 +142,20 @@ test("session links retain backend availability, preview scope and revocation fe
     assert.equal(await page.evaluate(() => (window as any).fixture.previewMode("local")), "preview")
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.remoteCalls()), ["A"])
 
-    await page.evaluate(() => (window as any).fixture.holdPreview())
-    await page.click('#remote-A a[href="http://localhost:3000/x"]')
+    await page.evaluate(() => {
+      const f = (window as any).fixture
+      f.selectRemoteSession("A")
+      f.holdPreview()
+    })
+    await page.click('#remote-A a[href="http://localhost:3000/next"]')
     await page.waitForFunction(() => (window as any).fixture.pending())
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.remoteCalls()), ["A", "A"])
     await page.evaluate(() => { (window as any).fixture.detach("A"); (window as any).fixture.rejectPending() })
     await page.waitForFunction(() => !document.querySelector('#remote-A a[href="./README.md"]')?.hasAttribute("title"))
     await page.click('#remote-A a[href="./README.md"]')
     assert.equal(await page.evaluate(() => (window as any).fixture.clicks().at(-1).prevented), false)
+    assert.equal(await page.evaluate(() => (window as any).fixture.isRemoteSessionSelected("A")), true,
+      "the stale failure is suppressed even while A's session remains selected")
     assert.equal(await page.evaluate(() => (window as any).fixture.alert()), null)
     assert.equal(await page.evaluate(() => (window as any).fixture.previewMode("local")), "preview")
   } finally {

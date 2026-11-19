@@ -73,7 +73,7 @@ test("an old inactive claim remains uncertain across wakes until a correlated na
 
 // Native `serve` (as of the minimum supported OpenCode) leaves the `event` table empty; each execution terminal is
 // projected into a durable `idle` message whose `outcome` carries the failure.
-async function idleFamily(finish?: "completed") {
+async function idleFamily(finish?: "completed", shells: unknown[] = []) {
   const f = await passageFixture(), db = new DatabaseSync(":memory:")
   await f.start()
   if (finish) await f.finish(finish)
@@ -97,7 +97,7 @@ async function idleFamily(finish?: "completed") {
       withoutTransform: Effect.promise(async () => db.prepare(sql).all(...params as [])) }) } } }],
     ["@opencode/Location", {}], ["@opencode/Session", { active: Effect.sync(() => new Set<string>()) }],
     ["@opencode/Form", { list: () => Effect.succeed([]) }], ["@opencode/Permission", { list: () => Effect.succeed([]) }],
-    ["@opencode/Shell", { list: () => Effect.succeed([]) }],
+    ["@opencode/Shell", { list: () => Effect.sync(() => shells) }],
   ] as const) graph = Context.add(graph, tag(name), value)
   const native = await Effect.runPromise(acquireNativePassageObservation().pipe(Effect.provide(graph)))
   const observe = async () => (await observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
@@ -162,6 +162,31 @@ test("adoption checkpoints separate old/pruned children, inherited running work,
     t.db.prepare("UPDATE session_v2 SET metadata=NULL WHERE id=?").run(t.child)
     assert.equal(t.db.prepare("SELECT time_updated FROM session_v2 WHERE id=?").get(t.child)!.time_updated, 10)
     assert.equal(await observe(), undefined, "equal recency timestamps cannot hide admitted and removed work beyond the durable sequence")
+  } finally { await t.dispose() }
+})
+
+test("running shells block H11 only for the chosen family or indeterminate ownership", async () => {
+  const shells: unknown[] = [], t = await idleFamily("completed", shells)
+  try {
+    t.idle("msg_shell_root", t.coordinator, "succeeded")
+    t.idle("msg_shell_child", t.child, "succeeded")
+    const shell = { id: "sh_running", status: "running", command: "test", cwd: t.f.root, shell: "sh",
+      file: "output", time: { started: 1 }, metadata: { sessionID: "ses_other_family" } as Record<string, unknown> }
+    shells.push(shell)
+    assert.equal(await t.native.requests([t.coordinator, t.child]), false)
+    assert.equal((await t.observe())?.outcome, "completed", "another family's shell permits H11 settlement")
+    for (const sessionID of [t.coordinator, t.child]) {
+      shell.metadata = { sessionID }
+      assert.equal(await t.native.requests([t.coordinator, t.child]), true)
+      assert.equal(await t.observe(), undefined, "owned running shells retain pending")
+    }
+    for (const metadata of [{}, { sessionID: 123 }, { sessionID: "" }, { sessionID: " " }]) {
+      shell.metadata = metadata
+      assert.equal(await t.native.requests([t.coordinator, t.child]), true)
+      assert.equal(await t.observe(), undefined, "unknown running-shell ownership retains pending")
+    }
+    shells.length = 0
+    assert.equal((await t.observe())?.outcome, "completed")
   } finally { await t.dispose() }
 })
 

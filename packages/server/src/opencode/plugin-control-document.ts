@@ -133,7 +133,7 @@ export function replacePluginControlRules(
   const formattingOptions = inferPluginControlFormatting(document.text)
   let updated = document.text
   try {
-    for (const index of removed) updated = applyEdits(updated, modify(updated, ["plugins", index], undefined, { formattingOptions }))
+    updated = deletePluginEntries(updated, removed)
     if (rule !== undefined) {
       updated = applyEdits(updated, modify(updated, ["plugins", document.plugins.length - removed.length], rule, { formattingOptions }))
     }
@@ -150,6 +150,33 @@ export function replacePluginControlRules(
   }
   if (!updated.endsWith("\n")) updated += formattingOptions.eol
   return document.byteOrderMark ? `﻿${updated}` : updated
+}
+
+/**
+ * Deletes the `plugins` elements at `indexes` with their separators, leaving every other byte in place. Ranges come
+ * from the parse tree: jsonc-parser's own removal of a last element assumes whitespace before `]` and corrupts a
+ * compact array. Callers verify the parsed result.
+ */
+export function deletePluginEntries(text: string, indexes: readonly number[]): string {
+  const root = parseTree(text, [], { allowTrailingComma: true, disallowComments: false })
+  const array = root?.children?.find(property => property.children?.[0]?.value === "plugins")?.children?.[1]
+  const children = array?.type === "array" ? array.children ?? [] : []
+  const removed = new Set(indexes)
+  if (!array || [...removed].some(index => !children[index])) throw new Error("OpenCode plugin entry is missing")
+  const end = (node: JsonNode) => node.offset + node.length
+  const edits: Array<{ offset: number; length: number; content: string }> = []
+  for (let first = 0; first < children.length; first++) {
+    if (!removed.has(first)) continue
+    let last = first
+    while (removed.has(last + 1)) last++
+    // A run before a kept element ends where that element starts; a trailing run starts after the kept element before
+    // it, taking the separating comma; a run of every element empties the brackets.
+    const from = last + 1 < children.length ? children[first]!.offset : first > 0 ? end(children[first - 1]!) : array.offset + 1
+    const to = last + 1 < children.length ? children[last + 1]!.offset : first > 0 ? end(children[last]!) : end(array) - 1
+    edits.push({ offset: from, length: to - from, content: "" })
+    first = last
+  }
+  return applyEdits(text, edits)
 }
 
 export async function replacePluginControlDocument(

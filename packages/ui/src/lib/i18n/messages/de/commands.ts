@@ -51,7 +51,7 @@ export const commandMessages = {
   "commands.closeSession.keywords": "schließen, stoppen",
 
   "commands.scrubSessions.label": "Sitzungen bereinigen",
-  "commands.scrubSessions.description": "Leere Sitzungen, Unteragenten-Sitzungen, die ihre Hauptaufgabe abgeschlossen haben, und überflüssige verzweigte Sitzungen entfernen.",
+  "commands.scrubSessions.description": "Nachweislich leere, inaktive Sitzungen entfernen.",
   "commands.scrubSessions.keywords": "bereinigen, leer, sitzungen, entfernen, löschen",
 
   "commands.instanceInfo.label": "Instanz-Info",

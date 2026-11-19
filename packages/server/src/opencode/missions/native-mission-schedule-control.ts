@@ -11,25 +11,45 @@ import { acquireNativeMissionScheduleOwner } from "./native-mission-schedule-own
 import { acquireNativeScheduleInstallation, acquireNativeMissionServiceRegistration, type NativeScheduleArtifacts } from "./native-schedule-installation"
 import { acquireNativeScheduledActorTransport, scheduledActorCalendarBarrier } from "./native-mission-schedule-actors"
 import { acquireNativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
-import { nativeImmediatePlayPassage, nativeMissionScheduleResult } from "./native-mission-schedule-result"
+import { nativeImmediatePlayPassage, nativeMissionScheduleActorControl, nativeMissionScheduleResult } from "./native-mission-schedule-result"
 import { immediateMissionControlReceipts, prepareNativeImmediateMissionControl } from "./native-mission-schedule-immediate"
 import { NativeScheduleControlRefusal, nativeScheduleOwnerControlReceipt, type NativeScheduleOwnerControl } from "./native-schedule-owner"
 import { finishMissionDocumentDeletion } from "../../missions/mission-document-deletion"
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { configureNativeMissionPreparation } from "./native-mission-preparation"
 import { deleteDormantMissionJournal } from "../../missions/mission-dormant-journal"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
+import { assertAgentScheduledCoordinatorSelection, prevalidateAgentScheduledCoordinatorCreation } from "./native-scheduled-coordinator-adoption"
 
 type Authority = Effect.Success<ReturnType<typeof acquireNativeMissionScheduleAuthority>>
 
 export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule")(function* (
   ctx: Plugin.Context, authority: Authority, artifacts: NativeScheduleArtifacts | undefined, run: MissionNativeRunner,
 ) {
-  const { request, store, current, profileSource, admitControl, signal } = authority
+  const { request, store, profileSource, admitControl, signal } = authority
+  let configurationCurrent = (): true => true
+  const current = (): true => { configurationCurrent(); return authority.current() }
   const { missionID, requestID, expectedRevision, action } = request
   current()
+  if (action === "configure" && request.transport.principal?.kind === "agent") {
+    const author = request.transport.principal.author
+    if (request.configuration?.coordinatorSelectionAuthor?.coordinatorSessionID !== author.coordinatorSessionID)
+      throw new Error("Agent coordinator selection author differs")
+    assertAgentScheduledCoordinatorSelection(request.configuration!, author)
+    const before = authority.before && !("deletedAt" in authority.before) ? authority.before : undefined
+    const replay = before && nativeScheduleOwnerControlReceipt(before, requestID)
+    if (!replay && (!before?.pending || before.configuration.coordinatorSessionID !== request.configuration!.coordinatorSessionID))
+      configurationCurrent = yield* prevalidateAgentScheduledCoordinatorCreation(ctx, run, {
+        missionID, configuration: request.configuration!, author, current: authority.current, signal,
+      })
+  }
   if (action === "create") {
     if (!requiresMissionCalendar(request.configuration!.launch)) throw new Error("Use immediate Mission creation")
-    const creation = { requestID, digest: missionSchedulePayloadDigest(request) }
+    const creation = request.creation ?? { requestID, digest: missionSchedulePayloadDigest(request) }
+    const adoption = authority.before ? current : yield* prevalidateAgentScheduledCoordinatorCreation(ctx, run, {
+      missionID, configuration: request.configuration!, author: request.creation?.author, current, signal,
+    })
+    let acknowledgement: "fresh" | "recovered" = "recovered"
     const created = yield* Effect.tryPromise(() => store.withExclusion(async locked => {
       const before = await locked.read(missionID)
       if (before) {
@@ -37,16 +57,41 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
           throw new Error("Mission schedule creation request conflict")
         return before
       }
-      return locked.create(missionID, request.configuration!, Date.now(), current, null, creation)
+      const document = await locked.create(missionID, request.configuration!, Date.now(), () => { adoption(); return current() }, null, creation)
+      acknowledgement = "fresh"
+      return document
     }))
-    return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, created, run, false, requestID))
+    return { ...(yield* Effect.promise(() => nativeMissionScheduleResult(ctx, created, run, false, requestID))), acknowledgement }
   }
   let doc = yield* Effect.promise(() => store.read(missionID))
   if (!doc) throw new Error("Mission schedule unavailable")
+  const conflict = () => ({ document: null, pending: false, refusal: { missionID, requestID, expectedRevision, action,
+    payloadDigest: missionSchedulePayloadDigest(request), reason: "control-conflict" as const } })
   if ("deletedAt" in doc) {
     if (action !== "delete" || doc.requestID !== requestID || doc.expectedRevision !== expectedRevision
-      || doc.deleteManagedSessions !== (request.deleteManagedSessions ?? false)) throw new Error("Mission deletion request conflict")
+      || doc.deleteManagedSessions !== (request.deleteManagedSessions ?? false)) return conflict()
     return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))
+  }
+  const manual = [doc.pending, ...doc.history].find(passage => passage?.origin.kind === "manual" && passage.origin.requestID === requestID)
+  if (manual && (action !== "run-now" || manual.manualExpectedRevision !== expectedRevision)
+    || action === "run-now" && nativeScheduleOwnerControlReceipt(doc, requestID)) return conflict()
+  const receipt = nativeScheduleOwnerControlReceipt(doc, requestID)
+  if (receipt && doc.preparation?.requestID !== requestID
+    && (receipt.action !== action || receipt.expectedRevision !== expectedRevision
+      || receipt.fingerprint !== stableToken(canonicalAuthority({ action, configuration: request.configuration ?? null,
+        deleteManagedSessions: request.deleteManagedSessions ?? false }), 64))) return conflict()
+  // A completed calendar receipt still needs its actor/admission proof. Unknown
+  // or partial results retain the original reconciliation path after a lost reply.
+  // Check always reconciles, including an exact completed request replay.
+  if (action !== "check" && (receipt && !receipt.pending && doc.pending?.admittedAt !== null
+    || manual && (manual.admittedAt !== null || "reason" in manual && manual.reason === "not-started"))) {
+    const result = yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))
+    current()
+    if (!result.pending) { admitControl(doc); return result }
+  }
+  if (request.transport.principal?.kind === "agent" && request.transport.principal.creationRequestID) {
+    if (action !== "play" || doc.creation?.automaticStart?.requestID !== requestID || doc.creation.automaticStart.attempted
+      || doc.firstPlayedAt !== null) throw new Error("Agent Mission first Play unavailable")
   }
   // The prepared journal and its coordinator share this object's identity.
   // Calendar-only configuration cannot publish their preparation atomically.
@@ -144,16 +189,16 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   else {
     if (!interruption) {
       const prepared = yield* Effect.tryPromise(() => prepare({ missionID, requestID, expectedRevision,
-        action, configuration: request.configuration, deleteManagedSessions: request.deleteManagedSessions }))
+        action, configuration: request.configuration, deleteManagedSessions: request.deleteManagedSessions,
+        ...(request.transport.principal?.kind === "agent" && request.transport.principal.creationRequestID
+          ? { automaticStart: { ...request.transport.principal, creationRequestID: request.transport.principal.creationRequestID,
+            creationDigest: request.transport.principal.creationDigest! } } : {}) }))
       if (prepared instanceof NativeScheduleControlRefusal) return { document: null, pending: false, refusal: prepared.refusal }
       doc = prepared
       admitControl(doc)
       doc = yield* Effect.tryPromise(() => owner.reconcile(missionID))
     }
-    const checkedOriginal = action === "check" && doc.calendarOwner?.checks.find(item => item.requestID === requestID)?.originalRequestID
-    const actorControl = checkedOriginal ? nativeScheduleOwnerControlReceipt(doc, checkedOriginal)
-      : action === "check" ? [...doc.calendarOwner?.receipts ?? []].reverse().find(item => ["pause", "stop", "resume", "play"].includes(item.action))
-      : nativeScheduleOwnerControlReceipt(doc, requestID)
+    const actorControl = nativeMissionScheduleActorControl(doc, requestID)
     const actorAction = actorControl?.action === "pause" ? "pause" : actorControl && ["stop", "delete"].includes(actorControl.action) ? "stop" : "start"
     if (actorControl && doc.pending && doc.calendarOwner && scheduledActorCalendarBarrier(doc.calendarOwner, actorControl.requestID, actorAction)) {
       actorPending = !runtime || !lifecycle || (yield* Effect.tryPromise(async () => {
@@ -175,8 +220,9 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
       if (managedCleanup || deleting.coordinatorReleases.length) actorPending = true
       else if (!actorPending && !deleting.pending && !deleting.calendarOwner?.operation.pending
         && !deleting.calendarOwner?.slots.length && !deleting.calendarOwner?.retired.length) {
+        const range = yield* optionalOrdinaryJournalRange(ctx, run)
         yield* Effect.tryPromise(() => store.withExclusion(async locked => {
-          await deleteDormantMissionJournal(locked, { get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
+          await deleteDormantMissionJournal(locked, { range, get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
             set: async (key, value, guard) => { current(); guard?.(); await run(ctx.storage.set(key, value)) } }, deleting, current)
           await finishMissionDocumentDeletion(use => use(locked), use => use(locked),
             { missionID, ...deletion }, Date.now(), current, true)

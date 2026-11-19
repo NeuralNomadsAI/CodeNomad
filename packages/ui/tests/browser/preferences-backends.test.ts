@@ -241,14 +241,21 @@ for (const kind of ["electron", "tauri"] as const) {
     let selected = "local"
     const f = await api(page, () => selected)
     await host(page, kind, project("local"))
+    const card = page.locator("#agent-memory")
+    const selectMemoryEntry = async (owner: string) => {
+      const fold = card.locator("details.agent-memory-entries")
+      if (!await fold.evaluate((element: HTMLDetailsElement) => element.open)) {
+        await fold.locator("> summary").click()
+      }
+      await fold.getByRole("button", { name: `Memory ${owner}` }).click()
+    }
     try {
       await page.goto(url)
       for (const owner of ["local", "a", "b"]) {
         selected = owner
         if (owner !== "local") await page.evaluate(request => (window as any).open(request), project(owner))
-        const card = page.locator("#agent-memory")
         await page.waitForFunction(() => (document.querySelector("#agent-memory select") as HTMLSelectElement)?.value === "project")
-        await card.getByRole("button", { name: `Memory ${owner}` }).click()
+        await selectMemoryEntry(owner)
         await card.getByRole("textbox", { name: "Title", exact: true }).fill(`Edited ${owner}`)
         await Promise.all([
           page.waitForResponse(response => response.request().postData()?.includes('"action":"save"') === true),
@@ -308,8 +315,7 @@ for (const kind of ["electron", "tauri"] as const) {
         assert.equal(f.requests.findLast(value => value.path.includes("/service-usage"))?.owner, owner)
       }
       await page.evaluate(request => (window as any).open(request), project("b"))
-      const card = page.locator("#agent-memory")
-      await card.getByRole("button", { name: "Memory b" }).click()
+      await selectMemoryEntry("b")
       await card.getByRole("textbox", { name: "Title", exact: true }).fill("Unsent b")
       await page.evaluate(async () => {
         const path = "/src/stores/remote-backends.ts"

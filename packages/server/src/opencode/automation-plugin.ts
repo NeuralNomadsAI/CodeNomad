@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { MissionControlError } from "../missions/control-error"
-import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
+import { recurrenceSchedulePrincipal, signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
 import { missionRecoveryControlError, missionRecoveryError } from "../missions/recovery-error"
 import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults"
 import { MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
@@ -403,7 +403,9 @@ export async function verifyRecurrenceBridge(body: RecurrenceControlProofBody, p
     const digest = Buffer.from(signNativeRecurrenceControl(body, registration.token), "hex")
     if (!timingSafeEqual(digest, Buffer.from(proof, "hex"))) continue
     try {
-      const reply = await callBridge(registration, { mode: "recurrence-control-verify", sessionID: body.sessionID, command: body })
+      const principal = recurrenceSchedulePrincipal(body)
+      const reply = await callBridge(registration, { mode: "recurrence-control-verify",
+        sessionID: principal.kind === "human" ? principal.sessionID : principal.author.coordinatorSessionID, command: body })
       if (reply.status === 200 && reply.body.result && typeof reply.body.result === "object"
         && "admitted" in reply.body.result && reply.body.result.admitted === true) return true
     } catch { /* Missing backend is not a reusable human grant. */ }
@@ -614,9 +616,10 @@ async function probeBrowserBridges(
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
         const response = await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)
-        const result = response.body.result as { available?: unknown; missionCreationDefaults?: unknown } | undefined
+        const result = response.body.result as { available?: unknown; missionCreationDefaults?: unknown; missionPreparationStart?: unknown } | undefined
         if (response.status === 200 && (!strict || result?.available === true)) {
-          if (purpose === "mission-prepare" && result?.missionCreationDefaults !== true) throw missionRecoveryControlError("mission-preferences-update-required")
+          if (purpose === "mission-prepare" && (result?.missionCreationDefaults !== true || result.missionPreparationStart !== true))
+            throw missionRecoveryControlError("mission-preferences-update-required")
           return registration
         }
         if (strict && response.status === 404 && response.body.code === undefined) throw missionRecoveryControlError("mission-preferences-update-required")
@@ -640,8 +643,8 @@ async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID:
   if (response.status !== 200) {
     const recovery = missionRecoveryError(response.body.code, response.body.error)
     if (recovery && recovery.status === response.status) throw missionRecoveryControlError(recovery.code, response.body.error)
-    if (kind === "profile-defaults" && response.body.code === "mission-not-owner") throw missionRecoveryControlError("mission-preferences-unavailable")
-    if (kind === "profile-defaults" && [400, 404, 405, 501].includes(response.status)) {
+    if (["profile-defaults", "configurations"].includes(kind) && response.body.code === "mission-not-owner") throw missionRecoveryControlError("mission-preferences-unavailable")
+    if (["profile-defaults", "configurations"].includes(kind) && [400, 404, 405, 501].includes(response.status)) {
       throw missionRecoveryControlError("mission-preferences-update-required")
     }
     throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
@@ -664,10 +667,21 @@ export async function resolveMissionProfileDefaults(sessionID: string, input: un
   }
 }
 
+export async function readMissionConfigurations(sessionID: string): Promise<unknown> {
+  try {
+    const targets = await probeBrowserBridges(await registrations({ strict: true }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission-preferences")
+    if (targets.length !== 1) throw new Error("Saved configurations require exactly one owning CodeNomad backend")
+    return await callMissionInput(targets[0], sessionID, "configurations", {})
+  } catch (error) {
+    if (error instanceof MissionControlError && missionRecoveryError(error.code)) throw error
+    throw missionRecoveryControlError("mission-preferences-unavailable")
+  }
+}
+
 export async function sendMissionInput(sessionID: string,
-  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
+  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "schedule" | "settings" | "project-read" | "project-control" | "project-control-verify" | "project-update" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
   let targets: DiscoveredBridgeRegistration[]
-  const requiresDefaults = kind === "prepare" && Boolean(input && typeof input === "object" && "creationDefaults" in input && input.creationDefaults !== undefined)
+  const requiresDefaults = kind === "prepare" || kind === "schedule" || kind === "settings" || kind === "project-read" || kind.startsWith("project-control") || kind === "project-update"
   try {
     // A backend without native browsers can still claim the session for dispatch.
     targets = await probeBrowserBridges(await registrations({ strict: requiresDefaults }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS,

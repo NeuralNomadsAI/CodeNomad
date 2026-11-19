@@ -12,9 +12,9 @@ Service workers stay disabled in remote previews.
 
 Clicking a `localhost` or `127.0.0.1` link in a conversation opens it in that session's web preview, on every client where previews are available. Through Remote Control when the host keeps web previews off, or on a client where previews are otherwise unavailable, such links keep their normal browser behavior. Ctrl+click (⌘-click on macOS) or middle-click opens the link in your browser instead.
 
-Each preview belongs to one project-tab occurrence and session. Duplicate tabs can show chat and a preview, or different pages, for the same session; messages and execution stay shared. Opening, hiding or closing a preview affects only its own tab. Switching conversation, project, Info or chat retains the native document/history. Closing that tab/window or restarting the renderer ends its live document.
+Each session has one preview within the window. Duplicate tabs choose independently whether to show chat or that same live preview, sharing its page, URL, history and viewport template. The close button returns only that tab to chat. Switching tabs, conversations, projects or Info retains the document; closing one duplicate keeps it alive while another occurrence of the session remains open. Closing the last occurrence/window or restarting the renderer ends its live document.
 
-Each tab saves its preview URL, chat/preview choice, viewport template and history independently. Saved pages load only when you explicitly reopen that tab's session browser. Persistence keeps URLs and a cursor; live forms, DOM, POST bodies and JavaScript memory end with the document. History is bounded to 32 URLs per tab/session and a shared window budget; older entries may be trimmed. Restoring a URL may load a fresh page.
+Each tab saves its chat/preview choice; the session saves its shared URL, viewport template and history. Saved pages load only when you explicitly reopen the session browser. Persistence keeps URLs and a cursor; live forms, DOM, POST bodies and JavaScript memory end with the document. History is bounded to 32 URLs per session and a shared window budget; older entries may be trimmed. Restoring a URL may load a fresh page.
 
 Remote project tabs load previews through that project's CodeNomad server. The address bar and saved history show the application URL. Closing the preview or project tab, disconnecting/removing the server, or quitting ends its live page and connections; reopening loads the saved address with its history. Server sign-in credentials stay on the backend; proxied application cookies are filtered. Keep internal preview loading addresses inside CodeNomad.
 
@@ -22,9 +22,9 @@ Native remote previews suppress context menus, clipboard export, link dragging, 
 
 ## Shared sign-ins and automation boundaries {#signins-automation}
 
-Native previews share cookies, sign-ins and site storage across projects/sessions within the same desktop engine and profile/configuration scope, separately from the trusted CodeNomad renderer. Logging out of a site in one preview affects other previews using that store. Documents, forms, session storage, navigation histories and automation attachments belong to each tab/session pair. Iframe previews are not a full shared native browser profile.
+Native previews share cookies, sign-ins and site storage across projects/sessions within the same desktop engine and profile/configuration scope, separately from the trusted CodeNomad renderer. Logging out of a site in one preview affects other previews using that store. Documents, forms, session storage, navigation histories and automation attachments belong to each session.
 
-An agent's browser open targets the active tab owning its session, or its sole open owner. Ambiguous ownership is refused. The chosen tab stays fixed while opening; closing it cancels that open. Page actions require exactly one visible native preview for the session; hidden previews are excluded.
+An agent opens the session's shared browser in an owning tab, using the active tab when possible. The chosen tab stays fixed while opening; closing it cancels that open. Page actions target the session's visible native preview; hidden previews are excluded.
 
 | Client | Preview implementation | Agent browser automation | Mobile templates |
 | --- | --- | --- | --- |

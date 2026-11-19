@@ -1,9 +1,13 @@
 //! Owner-fenced native child views. Business/session state belongs to consumers.
+use diagnostics::preview_error;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
+
+#[path = "embedded_view/diagnostics.rs"]
+pub(crate) mod diagnostics;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos", test))]
 #[path = "embedded_view/browser.rs"]
@@ -364,8 +368,9 @@ impl EmbeddedViews {
                 app.get_webview(&label).map(|view| view.close())
             };
             if let Some(Err(error)) = result {
+                let error = preview_error("close child webview", error);
                 eprintln!("[browser-cleanup] {label}: {error}");
-                failure.get_or_insert_with(|| error.to_string());
+                failure.get_or_insert(error);
             }
         }
         failure.map_or(Ok(()), Err)
@@ -483,7 +488,9 @@ impl EmbeddedViews {
             return Err("Embedded view requires a local primary renderer".into());
         }
         // Register before add_child: the host navigation interceptor runs during creation.
-        let record = self.reserve(window.label(), label)?;
+        let record = self
+            .reserve(window.label(), label)
+            .map_err(|error| preview_error("reserve child webview", error))?;
         if label.starts_with("browser-") {
             self.install_fullscreen_window(window);
         }
@@ -556,7 +563,7 @@ impl EmbeddedViews {
                 PhysicalPosition::new(-32_768, -32_768),
                 PhysicalSize::new(1, 1),
             )
-            .map_err(|error| format!("failed to create browser preview: {error}"));
+            .map_err(|error| preview_error("create child webview", error));
         let webview = match result {
             Ok(webview) => webview,
             Err(error) => {
@@ -566,10 +573,15 @@ impl EmbeddedViews {
         };
         let configured = webview
             .hide()
-            .map_err(|error| error.to_string())
-            .and_then(|()| install(&webview))
+            .map_err(|error| preview_error("hide new child webview", error))
+            .and_then(|()| {
+                install(&webview).map_err(|error| preview_error("install protections", error))
+            })
             .and_then(|()| self.set_bounds(window.app_handle(), window.label(), label, bounds))
-            .and_then(|()| self.finish_creation(label, &record));
+            .and_then(|()| {
+                self.finish_creation(label, &record)
+                    .map_err(|error| preview_error("finish child creation", error))
+            });
         if let Err(error) = configured {
             self.remove_exact(label, &record);
             let _ = webview.close();
@@ -597,8 +609,10 @@ impl EmbeddedViews {
         }
         webview
             .set_position(PhysicalPosition::new(bounds.x, bounds.y))
-            .and_then(|()| webview.set_size(PhysicalSize::new(bounds.width, bounds.height)))
-            .map_err(|error| error.to_string())
+            .map_err(|error| preview_error("set child position", error))?;
+        webview
+            .set_size(PhysicalSize::new(bounds.width, bounds.height))
+            .map_err(|error| preview_error("set child size", error))
     }
 
     pub(crate) fn set_visible<R: Runtime>(
@@ -617,7 +631,12 @@ impl EmbeddedViews {
         } else {
             webview.hide()
         }
-        .map_err(|error| error.to_string())
+        .map_err(|error| {
+            preview_error(
+                if visible { "show child webview" } else { "hide child webview" },
+                error,
+            )
+        })
     }
 
     fn webview<R: Runtime>(

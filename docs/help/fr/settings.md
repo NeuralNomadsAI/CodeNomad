@@ -25,12 +25,15 @@ L’onglet sélectionné du panneau droit et le mode Fichiers sont enregistrés 
 
 1. Dans **Général**, sélectionnez **Langue** : anglais, espagnol, français, russe, japonais, chinois simplifié, hébreu, allemand, népalais ou turc.
 2. Dans **Palette de couleurs**, choisissez **Mode** : **Auto**, **Sombre** ou **Clair**. Auto suit le système d’exploitation.
-3. Choisissez une palette pour l’apparence affichée. Les sélections claire et sombre sont enregistrées indépendamment ; Auto utilise celle qui correspond.
-4. Pour des couleurs personnalisées, utilisez les échantillons et **Enregistrer** ; **Réinitialiser** restaure les couleurs d’une palette intégrée. Utilisez **Nouveau** pour nommer une palette distincte et **Supprimer** pour retirer une palette que vous avez créée.
+3. À côté de **Mode**, choisissez **Contraste** : **Auto** (par défaut) suit la préférence de contraste du système ; **Activé** renforce le contraste de toute palette ; **Désactivé** utilise le contraste normal.
+4. Choisissez une palette pour l’apparence affichée. Les sélections claire et sombre sont enregistrées indépendamment ; Auto utilise celle qui correspond.
+5. Pour des couleurs personnalisées, utilisez les échantillons et **Enregistrer** ; **Réinitialiser** restaure les couleurs d’une palette intégrée. Utilisez **Nouveau** pour nommer une palette distincte et **Supprimer** pour retirer une palette que vous avez créée.
+
+Le contraste s’applique et s’enregistre immédiatement, indépendamment d’**Enregistrer** pour les couleurs. Il adapte le rendu en conservant la palette sélectionnée, les couleurs éditables et le brouillon de conversation. Le **i** indique l’état actuel du contraste en Auto.
 
 L’interface se met à jour sans redémarrer de conversation. L’hébreu utilise une disposition de droite à gauche ; code et valeurs techniques restent lisibles dans leur propre sens. La sélection de langue change les textes d’interface, pas la langue des messages existants ou instructions d’agent. Les menus natifs du bureau passent à la langue de l’interface dès qu’une fenêtre CodeNomad est chargée.
 
-Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégrée ou réinitialisez celle modifiée. Changer de palette peut demander d’abandonner les modifications de couleur non enregistrées ; cela n’abandonne pas un brouillon de conversation.
+Si les couleurs deviennent difficiles à lire, choisissez **Contraste → Activé**. Vous pouvez aussi sélectionner une palette intégrée ou réinitialiser celle modifiée. Changer de palette peut demander d’abandonner les modifications de couleur non enregistrées ; votre brouillon de conversation est conservé.
 
 ## Garder l’ordinateur éveillé {#keep-computer-awake}
 
@@ -47,7 +50,7 @@ Ouvrez **Préférences → Général → Mémoire** (ou **Paramètres → Géné
 - **À propos de vous** : jusqu’à 60 entrées partagées entre les projets de cette configuration.
 - **Projet** : jusqu’à 200 entrées. Cette interface utilise le projet sélectionné dans les Préférences, ou le projet actif de la fenêtre principale dans les réglages intégrés. Le serveur identifie le dépôt par son adresse Git distante normalisée, avec repli sur son chemin local ; les worktrees partagent cette mémoire. Ouvrez un projet pour sélectionner cette portée.
 
-1. Sélectionnez une portée et une entrée. **Nouveau** et **Modifié** signalent les changements depuis la dernière consultation réussie de cette portée dans cette vue navigateur ou bureau ; ils restent visibles pendant la visite en cours.
+1. Sélectionnez une portée, dépliez son nombre d'entrées (par exemple **7/200**) puis sélectionnez une entrée. **Nouveau** et **Modifié** signalent les changements depuis le dernier affichage des entrées de cette portée dans cette vue navigateur ou bureau ; la ligne du compteur repliée les reprend, et ils restent visibles pendant la visite en cours.
 2. Modifiez **Titre**, **Type** (**Fait**, **Préférence** ou **Référence**) et **Texte**, puis **Enregistrer**. Le titre accepte 60 caractères et le texte 2 000. **Annuler** rétablit le contenu enregistré de l’entrée. Si elle a été modifiée ailleurs, utilisez **Recharger** et vérifiez avant d’enregistrer à nouveau.
 3. Pour retirer une entrée, ouvrez son menu d’actions et confirmez **Oublier**. Elle sort de la mémoire active ; Git conserve son historique local, ancien texte compris. Oublier retire l’entrée de l’usage de l’agent, sans constituer un effacement sécurisé.
 4. Si la mémoire est pleine, fusionnez ou oubliez des entrées avant de réessayer. Un titre identique ou un texte fortement similaire remplace une entrée existante, dont Git conserve le texte précédent.

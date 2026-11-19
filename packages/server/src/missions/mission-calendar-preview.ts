@@ -1,5 +1,5 @@
 import { Cron, Option } from "effect"
-import { Schedule } from "@opencode/schema/schedule"
+import { Automation } from "@opencode/schema/automation"
 import { documentCounter, documentTimestamp } from "./mission-time"
 import type { MissionCalendarPlan } from "./mission-calendar-plan"
 
@@ -29,7 +29,7 @@ export function previewMissionCalendar(plan: MissionCalendarPlan, from: number, 
       at = next
     } else if (when.type === "at") at = Date.parse(when.at)
     else {
-      const duration = Option.getOrUndefined(Schedule.durationMillis(when.type === "every" ? when.every : when.in))
+      const duration = Option.getOrUndefined(Automation.durationMillis(when.type === "every" ? when.every : when.in))
       if (duration === undefined || duration <= 0) throw new Error("Mission native duration invalid")
       at += duration
       if (when.type === "every" && at <= from) at += (Math.floor((from - at) / duration) + 1) * duration

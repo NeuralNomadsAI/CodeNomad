@@ -14,12 +14,16 @@ import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchr
 import { admitMissionCreationLocations } from "./mission-creation-admission"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
 import type { MissionCreationMetadata } from "../../missions/creation-defaults"
+import { nativeDocumentID } from "../../missions/launch-policy"
+import type { MissionPanelMap } from "../../missions/mission-panel-map"
+import type { MissionPreparationOptions } from "../../missions/preparation-input"
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
   template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
   directory: z.string().trim().min(1).max(4_096).optional(), requestId: z.string().trim().min(1).max(128),
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
+  watchedConversationIDs: z.array(nativeDocumentID).max(32).refine(ids => new Set(ids).size === ids.length).optional(),
 }).strict()
 
 export type MissionCreationPipelineManager = Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection"
@@ -38,9 +42,11 @@ export async function prepareMissionCreation(input: {
   request: unknown; signal: AbortSignal; wait?<T>(operation: Promise<T>): Promise<T>
   /** Trusted expected project for protected composition, never HTTP input. */
   expectedProjectID?: string
-  /** Trusted coordinator hand-off from the authenticated plugin bridge, never HTTP input. */
-  preparedBy?: { missionID: string; coordinatorSessionID: string }
+  /** Trusted author session and optional source mission from the authenticated plugin bridge. */
+  preparedBy?: { missionID?: string; coordinatorSessionID: string }
   creationDefaults?: MissionCreationMetadata
+  startOnCreation?: boolean
+  preparationOptions?: MissionPreparationOptions
 }) {
   const { manager, workspaceID, signal } = input
   const wait = input.wait ?? (<T>(operation: Promise<T>) => operation)
@@ -82,7 +88,9 @@ export async function prepareMissionCreation(input: {
   }
   try {
     const capability = await wait(client.rpc(CODENOMAD_MISSIONS_RPC).documentCapabilities({}, { location, ...locationRequestOptions(location), signal }))
-    z.object({ version: z.literal(1) }).strict().parse(capability)
+    const parsed = z.object({ version: z.literal(1), automaticStart: z.literal(true).optional(),
+      agentSchedulePreparation: z.literal(true).optional(), agentScheduleControl: z.literal(true).optional() }).strict().parse(capability)
+    if (input.startOnCreation !== undefined && parsed.automaticStart !== true) throw new Error("Automatic start capability unavailable")
   } catch { throw new MissionCreationPreparationError(503, "Unified Mission documents unavailable") }
   signal.throwIfAborted(); connection.assertCurrent()
   const locations = [location]
@@ -106,10 +114,13 @@ export async function prepareMissionCreation(input: {
     ...(request.title === undefined ? {} : { title: request.title }),
     ...(request.notes === undefined ? {} : { notes: request.notes }), template: request.template, taskMode: request.taskMode ?? "native",
     ...(request.profiles === undefined ? {} : { profiles: request.profiles }),
+    ...(request.watchedConversationIDs === undefined ? {} : { watchedConversationIDs: request.watchedConversationIDs }),
     ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),
     ...(request.coordinatorSessionId ? { coordinatorSessionID: request.coordinatorSessionId } : {}),
     expectedCoordinatorLocation: locations.at(-1)!,
     ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),
+    ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation }),
+    ...(input.preparationOptions === undefined ? {} : { preparationOptions: input.preparationOptions }),
   }
   const admission = await admitMissionCreationLocations(manager, input.fence, workspaceID, connection, locations, signal, {
     key: `human:${projectID}:${missionID}`, workspaceID, projectID, missionID, sessionID, requestDigest: missionCreationDigest(nativeInput),
@@ -117,6 +128,7 @@ export async function prepareMissionCreation(input: {
   let disposed = false
   let executing = false
   let dispatched = false
+  let rejected = false
   const release = () => { if (!disposed) { disposed = true; admission.release() } }
   const dispose = () => { if (!executing) release() }
   const assertCurrent = async () => {
@@ -125,12 +137,24 @@ export async function prepareMissionCreation(input: {
   }
   return {
     missionID, sessionID, creationMessageID, request: structuredClone(nativeInput), dispose,
+    async readReceipt(): Promise<MissionPanelMap | undefined> {
+      // Reconcile in the captured native Location, never the workspace's current default.
+      await admission.assertReceiptCurrent()
+      const result = await client.rpc(CODENOMAD_MISSIONS_RPC).creationReceipt(nativeInput,
+        { location, ...locationRequestOptions(location), signal: AbortSignal.timeout(10_000) }) as { requestID: string; projectID: string; mission?: MissionPanelMap }
+      await admission.assertReceiptCurrent()
+      if (result.requestID !== request.requestId || result.projectID !== projectID || result.mission?.id !== missionID
+        || result.mission.projectID !== projectID) return
+      admission.reconcile()
+      return result.mission
+    },
     /** False until the native create is attempted: any earlier failure proves no effect. */
     get dispatched() { return dispatched },
+    get rejected() { return rejected },
     /** Internal protected composition may supply a fresh exact passage fence.
      * This is NOT a standing grant: recurrence never exposes execute until its
      * real protected grant and native first-effect enforcement are qualified. */
-    async execute(beforeEffect?: () => Promise<() => void>): Promise<{ mission: MissionMap }> {
+    async execute(beforeEffect?: () => Promise<() => void>): Promise<{ mission: MissionMap; acknowledgement: "fresh" | "recovered" }> {
       if (disposed) throw new Error("Mission creation preparation was released")
       if (executing) throw new Error("Mission creation execution already claimed")
       // Claim before the first await. Only this invocation may release its
@@ -148,15 +172,15 @@ export async function prepareMissionCreation(input: {
         admission.dispatched()
         // No cancellation race or signal after dispatch: transport rejection is
         // not a no-effect receipt. The original physical permit remains parked.
-        let result: { mission: MissionMap }
+        let result: { mission: MissionMap; acknowledgement: "fresh" | "recovered" }
         try { result = await client.rpc(CODENOMAD_MISSIONS_RPC).create(nativeInput,
-          { location, ...locationRequestOptions(location) }) as { mission: MissionMap } }
+          { location, ...locationRequestOptions(location) }) as typeof result }
         catch (error) {
-          if (isMissionCreateNoEffectError(error, nativeInput.requestID, missionID)) admission.settled()
+          if (isMissionCreateNoEffectError(error, nativeInput.requestID, missionID)) { rejected = true; admission.settled() }
           throw error
         }
         const coordinator = result.mission?.actors?.find(actor => actor.sessionId === result.mission.coordinatorSessionId && actor.kind === "coordinator")
-        if (result.mission?.id !== missionID || result.mission.projectID !== projectID
+        if (!["fresh", "recovered"].includes(result.acknowledgement) || result.mission?.id !== missionID || result.mission.projectID !== projectID
           || !isCoordinator(result.mission.coordinatorSessionId) || !coordinator || result.mission.title !== nativeInput.title
           || !sameLocation(coordinator.location, nativeInput.expectedCoordinatorLocation)
           || result.mission.preparedBy?.missionId !== input.preparedBy?.missionID
@@ -165,7 +189,7 @@ export async function prepareMissionCreation(input: {
           || (result.mission.taskMode ?? "native") !== nativeInput.taskMode) throw new MissionCreationHoldError("creation-uncertain")
         admission.settled()
         await assertCurrent()
-        return { mission: result.mission }
+        return result
       } catch (error) {
         if (admission.uncertain) throw new MissionCreationHoldError("creation-uncertain")
         throw error

@@ -361,19 +361,29 @@ export class WorkspaceManager {
         if (restarts >= WORKTREE_OWNERSHIP_RESTART_LIMIT) throw new Error("Worktree ownership inventory changed repeatedly")
       }
     }
-    const directory = await this.getServiceDirectoryForPath(id, location.directory, { purpose, strict })
+    return Boolean(await this.resolveLocationPlacement(id, location, { signal, purpose, strict }))
+  }
+
+  async resolveLocationPlacement(id: string, location: LocationRef, { signal, purpose = "request", strict = false }: Omit<LocationOwnershipOptions, "media"> = {}): Promise<{ directory: string; listWorktreeSlug?: string } | undefined> {
     signal?.throwIfAborted()
-    return Boolean(directory)
+    if (location.workspaceID !== undefined) return undefined
+    const placement = await this.resolveServicePlacement(id, location.directory, purpose, strict)
+    signal?.throwIfAborted()
+    return placement
   }
 
   async getServiceDirectoryForPath(id: string, directory: string, { purpose = "request", strict = false }: Pick<LocationOwnershipOptions, "purpose" | "strict"> = {}): Promise<string | undefined> {
+    return (await this.resolveServicePlacement(id, directory, purpose, strict))?.directory
+  }
+
+  private async resolveServicePlacement(id: string, directory: string, purpose: "request" | "event", strict: boolean) {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
     return this.serviceDirectoryForRecord(record, directory, purpose, strict)
   }
 
   private async serviceDirectoryForRecord(record: WorkspaceRecord, directory: string,
-    purpose: "request" | "event", strict = false, media?: MediaOwnership): Promise<string | undefined> {
+    purpose: "request" | "event", strict = false, media?: MediaOwnership): Promise<{ directory: string; listWorktreeSlug?: string } | undefined> {
     media?.current()
     // Directory authorization does not need the checkout's Git mutation identity.
     // Resolve aliases against the explicitly opened folder without spawning Git.
@@ -383,16 +393,17 @@ export class WorkspaceManager {
         ownershipRealpath(record.path, strict),
       ])
       media?.current()
-      if (target && target === root) return target
+      if (target && target === root) return { directory: target, listWorktreeSlug: "root" }
     }
     const owned = await this.resolveOwnedWorktree(record, directory, purpose, strict, media)
     media?.current()
     if (!owned) return undefined
-    if (!record.wslDistro) return owned.directory
+    const listWorktreeSlug = owned.exact ? owned.slug : undefined
+    if (!record.wslDistro) return { directory: owned.directory, listWorktreeSlug }
     const translated = await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
     media?.current()
     if (strict && !translated) throw new Error("WSL service directory translation unavailable")
-    return translated ?? undefined
+    return translated ? { directory: translated, listWorktreeSlug } : undefined
   }
 
   async getWorktreeIdentityForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
@@ -541,6 +552,7 @@ export class WorkspaceManager {
         ? directory
         : await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
       : directory
+    media?.current()
     if (!hostDirectory) {
       if (strict) throw new Error("WSL host directory translation unavailable")
       return null
@@ -558,14 +570,14 @@ export class WorkspaceManager {
         media?.current()
         const worktreeDirectory = await realpath(repoRoot)
         media?.current()
-        return { slug: "root", directory: target, worktreeDirectory }
+        return { slug: "root", directory: target, worktreeDirectory, exact: true }
       } catch (error) {
         media?.current()
         if (!(error instanceof GitRequiredError)) throw error
         // Without Git only the explicitly opened physical folder is authority.
         // The deletion fence compares ancestor/descendant identities as well,
         // covering a checkout parent even if Git disappears or returns mid-send.
-        return { slug: "root", directory: target, worktreeDirectory: root }
+        return { slug: "root", directory: target, worktreeDirectory: root, exact: true }
       }
     }
     if (target && root && !isPathWithinWorktree(root, target)) {

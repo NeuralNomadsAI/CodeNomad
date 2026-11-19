@@ -6,7 +6,8 @@ import { render } from "solid-js/web"
 import { Markdown } from "../../../src/components/markdown"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, tGlobal } from "../../../src/lib/i18n"
-import { addInstance } from "../../../src/stores/instances"
+import { activeInstanceId, addInstance, setActiveInstanceId } from "../../../src/stores/instances"
+import { activeSessionId, setActiveSessionId } from "../../../src/stores/session-selection-state"
 import { setSessions } from "../../../src/stores/session-state"
 import type { Session } from "../../../src/types/session"
 import { getFilePreview } from "../../../src/stores/files-preview"
@@ -98,7 +99,7 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
         instanceId={id} sessionId="ses_child" />
     </div>
     {["A", "B"].map(owner => <div id={`remote-${owner}`}>
-      <Markdown part={{ id: `remote-${owner}`, type: "text", text: "[readme](./README.md) and [local](http://localhost:3000/x)." }}
+      <Markdown part={{ id: `remote-${owner}`, type: "text", text: "[readme](./README.md), [local](http://localhost:3000/x) and [next](http://localhost:3000/next)." }}
         instanceId={`${owner}~${id}`} sessionId="ses_link" />
     </div>)}
   </div>
@@ -117,6 +118,15 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   remoteCalls: () => [...remoteCalls],
   remoteTarget: (owner: string) => getFilePreview(`${owner}~${id}`)?.path ?? null,
   previewMode: (owner: string) => getSessionPreview("ses_link", owner === "local" ? id : `${owner}~${id}`)?.mode ?? null,
+  selectRemoteSession: (owner: string) => {
+    const instanceId = `${owner}~${id}`
+    setActiveInstanceId(instanceId)
+    setActiveSessionId(previous => new Map(previous).set(instanceId, session.id))
+  },
+  isRemoteSessionSelected: (owner: string) => {
+    const instanceId = `${owner}~${id}`
+    return activeInstanceId() === instanceId && activeSessionId().get(instanceId) === session.id
+  },
   detach: (owner: string) => remoteDetach.get(owner)?.(),
   holdPreview: () => { holdPreview = true },
   pending: () => Boolean(rejectPending),

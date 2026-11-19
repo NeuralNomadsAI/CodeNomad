@@ -519,6 +519,21 @@ for (const id of ["owned", "foreign", "unicode", "malformed"]) test(`SQL schedul
   assert(!raw.includes(encoded)); assert(!raw.includes("another-schedule")); assert.equal(f.requests.length, 1)
 })
 
+test("cold SQL recognizes a migrated automation and its exact wake", async t => {
+  const f = await fixture(t)
+  f.edit(db => {
+    db.exec('ALTER TABLE schedule RENAME TO automation; ALTER TABLE automation RENAME COLUMN "when" TO trigger;')
+    db.prepare("UPDATE kv SET value=json_set(value,'$.calendarOwner.slots[0].scheduleID','sch_fixture')").run()
+    db.prepare("UPDATE automation SET id='aut_fixture',last_message_id='msg_aut_fixture_1'").run()
+    db.prepare("UPDATE session_message SET id=?,data=? WHERE id='msg_schedule_1'").run("msg_aut_fixture_1",
+      JSON.stringify({ metadata: { automation: { id: "aut_fixture", run: 1, dueAt: 1000 } } }))
+  })
+  await f.runCatch()
+  const sql = JSON.parse(await readFile(path.join(f.root, "failure-sql.json"), "utf8"))
+  assert.equal(sql.schedules[0].id, `sha256:${sha("aut_fixture")}`)
+  assert.equal(sql.schedules[0].messages[0].message.schedule.correlated, true)
+})
+
 for (const field of ["session", "message"]) test(`SQL schedule proof refuses foreign ${field} context`, async t => {
   const f = await fixture(t)
   f.edit(db => {
@@ -557,7 +572,9 @@ test("non-cold actual document and snapshot export only typed metadata without I
     db.prepare("UPDATE session_message SET data=? WHERE id='start'").run(JSON.stringify({ text: encoded, description: "privateletters",
       metadata: { [encoded]: encoded, "codenomad.mission": { document: { objective: encoded } } } }))
     db.prepare("UPDATE session_inbox SET delivery=?").run(encoded)
-    db.prepare("UPDATE schedule SET last_outcome=?").run(encoded)
+    db.exec('ALTER TABLE schedule RENAME TO automation; ALTER TABLE automation RENAME COLUMN "when" TO trigger;')
+    db.prepare("UPDATE automation SET last_outcome=?").run(encoded)
+    db.prepare("UPDATE session_message SET data=json_set(json_remove(data,'$.metadata.schedule'),'$.metadata.automation',json_extract(data,'$.metadata.schedule')) WHERE id='msg_schedule_1'").run()
   })
   const definitions = driver.slice(driver.indexOf("  const document ="), driver.indexOf("  const technicalRows ="))
   const readSQL = use => { const db = new DatabaseSync(f.databaseFile, { readOnly: true, timeout: 100 }); try { db.exec("BEGIN"); return use(db) } finally { db.close() } }

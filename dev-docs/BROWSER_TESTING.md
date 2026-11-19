@@ -58,6 +58,8 @@ module URLs stable across the daemon's dynamically registered HTML routes.
 - The control plane is plain HTTP over loopback with endpoint secrets passed
   from spawner to borrower through the environment.
 
+Session preview fixtures bind opened project occurrences and use one `SessionPreviewHost` with the active occurrence's `SessionPreviewSlot`. A tab switch moves the foreground slot while live guests retain their documents.
+
 ## Native fixtures
 
 Native product fixtures (`scripts/test-*-native.mjs`) run an isolated OpenCode daemon through

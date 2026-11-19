@@ -6,10 +6,12 @@ import type { PreviewSession } from "../../../server/src/api-types"
 import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
 import { remotePreviewSource } from "../lib/remote-preview-address"
 import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
-import { adoptLegacyTabPreview, getTabViewState, updateTabViewState, type RestorableTabPreview } from "./tab-view-state"
-import { parseLegacySessionPreviews } from "./tab-view-state-codec"
+import { adoptLegacyTabPreview, getTabViewState, updateTabViewState } from "./tab-view-state"
+import { parseLegacySessionPreviews, type RestorableTabPreview } from "./tab-view-state-codec"
 import { isInstanceOccurrenceOpen, onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { onInstanceTabDetached } from "./app-tab-membership"
+import { parseInstanceKey } from "../lib/backend-identity"
+import { savedSessionBrowser, saveSessionBrowser } from "./session-browser-persistence"
 
 interface SessionPreviewRecord extends PreviewSession {
   capability?: string
@@ -25,9 +27,10 @@ type StoredSessionPreview = RestorableTabPreview
 const DEFAULT_PREVIEW_URL = "http://localhost:3000"
 const [sessionPreviews, setSessionPreviews] = createSignal<Map<string, SessionPreviewRecord>>(new Map())
 const restorePromises = new Map<string, Promise<SessionPreviewRecord | null>>()
-type PreviewOperation = SurfaceGesture & { client: BackendClient; signal: AbortSignal }
+type PreviewOperation = SurfaceGesture & { client: BackendClient; signal: AbortSignal; instanceId: string }
 const operations = new Map<string, PreviewOperation>()
 const previewRevocations = new Map<string, () => void>()
+const localOwners = new Map<string, ReadonlyMap<string, unknown>>()
 
 function cancelOperation(storageKey: string) {
   operations.delete(storageKey)
@@ -38,7 +41,7 @@ function beginOperation(storageKey: string, sessionId: string, instanceId: strin
   const client = backendOf(instanceId)
   const gesture = passive ? undefined : intent ?? beginGesture({ sessionId, instanceId })
   const operation: PreviewOperation = {
-    client, signal: owner.signal,
+    client, signal: owner.signal, instanceId,
     current: () => operations.get(storageKey) === operation && owner.current()
       && isInstanceOccurrenceOpen(instanceId) && (gesture?.current() ?? true),
   }
@@ -52,18 +55,25 @@ function finishOperation(storageKey: string, operation: PreviewOperation) {
 export const getPendingPreviewOperationCount = () => operations.size
 
 export const parseStoredSessionPreviews = parseLegacySessionPreviews
-const previewKey = (sessionId: string, instanceId: string) => JSON.stringify([instanceId, sessionId])
-const savedPreview = (sessionId: string, instanceId: string) => getTabViewState(instanceId).previews?.[sessionId]
+const local = (instanceId: string) => parseInstanceKey(instanceId).backendId === "local"
+export const previewKey = (sessionId: string, instanceId: string) => local(instanceId) ? sessionId : JSON.stringify([instanceId, sessionId])
+const tabPreview = (sessionId: string, instanceId: string) => getTabViewState(instanceId).previews?.[sessionId]
+const savedPreview = (sessionId: string, instanceId: string) =>
+  (local(instanceId) ? savedSessionBrowser(sessionId) : undefined) ?? tabPreview(sessionId, instanceId)
 
 function withLiveMode(record: SessionPreviewRecord): SessionPreviewRecord {
   return Object.defineProperty(record, "mode", { enumerable: true, configurable: true,
-    get: () => savedPreview(record.sessionId, record.instanceId)?.mode ?? "chat" })
+    get: () => tabPreview(record.sessionId, record.instanceId)?.mode ?? "chat" })
 }
 
 function storePreview(sessionId: string, instanceId: string, preview: StoredSessionPreview | null) {
   const previews = { ...getTabViewState(instanceId).previews }
+  if (preview?.targetUrl && local(instanceId)) {
+    saveSessionBrowser(sessionId, { ...preview, targetUrl: preview.targetUrl, mode: "chat" })
+    if (previews[sessionId]) return
+  }
   delete previews[sessionId]
-  if (preview) previews[sessionId] = { targetUrl: preview.targetUrl, mode: preview.mode,
+  if (preview) previews[sessionId] = local(instanceId) ? { mode: preview.mode } : { targetUrl: preview.targetUrl, mode: preview.mode,
     ...(preview.history ? { history: preview.history } : {}),
     ...(preview.viewport ? { viewport: preview.viewport } : {}) }
   updateTabViewState(instanceId, { previews })
@@ -85,9 +95,9 @@ function removeLivePreview(storageKey: string, keepalive = false) {
 /** Retain saved logical history while releasing a remote guest's live authority. */
 export function dismissSessionPreview(storageKey: string, keepalive = false) {
   const record = sessionPreviews().get(storageKey)
-  if (!record?.capability) { showSessionChat(storageKey); return }
-  showSessionChat(storageKey)
-  void removeLivePreview(storageKey, keepalive)
+  if (!record) return
+  showSessionChatFor(record.sessionId, record.instanceId)
+  if (record.capability) void removeLivePreview(storageKey, keepalive)
 }
 
 function publishPreview(record: SessionPreviewRecord) {
@@ -102,10 +112,11 @@ function publishPreview(record: SessionPreviewRecord) {
 }
 
 export function getPreviewSessionIds(instanceId: string): string[] {
-  return [...sessionPreviews().values()].filter(preview => preview.instanceId === instanceId && !preview.owner.signal.aborted).map(preview => preview.sessionId)
+  return [...sessionPreviews().values()].filter(preview => !preview.owner.signal.aborted
+    && (preview.owner.client.id === "local" ? localOwners.get(instanceId)?.has(preview.sessionId) : preview.instanceId === instanceId)).map(preview => preview.sessionId)
 }
 
-function getSessionPreview(sessionId: string, instanceId: string): SessionPreviewRecord | null {
+function getSessionPreview(sessionId: string, instanceId = ""): SessionPreviewRecord | null {
   const preview = sessionPreviews().get(previewKey(sessionId, instanceId))
   return preview && !preview.owner.signal.aborted ? preview : null
 }
@@ -140,22 +151,22 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
   const saved = savedPreview(sessionId, instanceId)
   try {
     if (!operation.current()) throw new DOMException("Preview navigation was superseded", "AbortError")
-    const preview = await createPreview(sessionId, url, operation)
+    const preview = existing?.targetUrl === url && existing.owner.signal === operation.signal ? existing : await createPreview(sessionId, url, operation)
     if (canPublish && !await canPublish().catch(() => false)) {
-      void releasePreview(operation.client, preview)
+      if (preview !== existing) void releasePreview(operation.client, preview)
       throw new Error("Preview open request is no longer current")
     }
     if (!operation.current()) {
-      void releasePreview(operation.client, preview)
+      if (preview !== existing) void releasePreview(operation.client, preview)
       throw new DOMException("Preview navigation was superseded", "AbortError")
     }
-    const record: SessionPreviewRecord = { ...preview, sessionId, mode: "preview", storageKey, instanceId,
+    const record: SessionPreviewRecord = preview === existing ? existing : { ...preview, sessionId, mode: "preview", storageKey, instanceId,
       owner: { client: operation.client, signal: operation.signal }, viewport: existing?.viewport ?? saved?.viewport,
       history: new BrowserHistoryJournal(existing?.history ?? parseBrowserHistory(saved?.history, saved?.targetUrl ?? preview.targetUrl)).visitUrl(preview.targetUrl) }
-    publishPreview(record)
+    if (record !== existing) publishPreview(record)
     storePreview(sessionId, instanceId, { ...record, mode: "preview" })
     applySurface({ sessionId, instanceId }, { kind: "web", sessionId }, operation)
-    if (existing) void releasePreview(existing.owner.client, existing)
+    if (existing && record !== existing) void releasePreview(existing.owner.client, existing)
     return record
   } finally { finishOperation(storageKey, operation) }
 }
@@ -167,17 +178,19 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   if (current) return Promise.resolve(current)
   adoptLegacyTabPreview(instanceId, sessionId)
   const stored = savedPreview(sessionId, instanceId)
-  if (!stored) return Promise.resolve(null)
-  const pending = operations.get(storageKey)?.current() ? restorePromises.get(storageKey) : undefined
+  if (!stored?.targetUrl) return Promise.resolve(null)
+  const running = operations.get(storageKey)
+  const ownOperation = running?.instanceId === instanceId && running.current()
+  const pending = ownOperation ? restorePromises.get(storageKey) : undefined
   if (pending) return pending
-  if (operations.get(storageKey)?.current()) return Promise.resolve(null)
+  if (ownOperation) return Promise.resolve(null)
   const operation = beginOperation(storageKey, sessionId, instanceId, undefined, true)
   const restore = createPreview(sessionId, stored.targetUrl, operation).then(preview => {
     if (!operation.current()) {
       void releasePreview(operation.client, preview)
       throw new DOMException("Preview navigation was superseded", "AbortError")
     }
-    const record: SessionPreviewRecord = { ...preview, sessionId, mode: stored.mode, storageKey, instanceId,
+    const record: SessionPreviewRecord = { ...preview, sessionId, mode: tabPreview(sessionId, instanceId)?.mode ?? "chat", storageKey, instanceId,
       owner: { client: operation.client, signal: operation.signal },
       viewport: stored.viewport, history: parseBrowserHistory(stored.history, preview.targetUrl) }
     publishPreview(record)
@@ -190,22 +203,18 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   return restore
 }
 
-function showSessionPreview(storageKey: string, intent?: SurfaceGesture) {
+function showSessionPreview(sessionId: string, instanceId: string, intent?: SurfaceGesture) {
   if (intent && !intent.current()) return
-  const current = sessionPreviews().get(storageKey)
-  if (!current || current.owner.signal.aborted) return
-  cancelOperation(storageKey)
-  applySurface(current, { kind: "web", sessionId: current.sessionId }, intent)
-}
-
-function showSessionChat(storageKey: string) {
-  const [instanceId, sessionId] = JSON.parse(storageKey) as [string, string]
-  cancelOperation(storageKey)
-  applySurface({ instanceId, sessionId }, { kind: "conversation" })
+  if (!getSessionPreview(sessionId, instanceId)) return
+  const previews = getTabViewState(instanceId).previews
+  if (!previews?.[sessionId]) updateTabViewState(instanceId, { previews: { ...previews, [sessionId]: { mode: "chat" } } })
+  applySurface({ instanceId, sessionId }, { kind: "web", sessionId }, intent)
 }
 
 function showSessionChatFor(sessionId: string, instanceId: string) {
-  showSessionChat(previewKey(sessionId, instanceId))
+  const key = previewKey(sessionId, instanceId)
+  if (operations.get(key)?.instanceId === instanceId) cancelOperation(key)
+  applySurface({ instanceId, sessionId }, { kind: "conversation" })
 }
 
 function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
@@ -239,18 +248,20 @@ export function cancelSessionPreviewNavigation(storageKey: string) { cancelOpera
 
 async function closeSessionPreview(storageKey: string) {
   cancelOperation(storageKey)
-  const [instanceId, sessionId] = JSON.parse(storageKey) as [string, string]
-  storePreview(sessionId, instanceId, null)
   await removeLivePreview(storageKey)
+}
+
+export function setPreviewSessionOwners(instanceId: string, sessions: ReadonlyMap<string, unknown>) {
+  if (local(instanceId)) localOwners.set(instanceId, sessions)
 }
 
 onInstanceLifecycleAuthority(event => {
   if (event.type === "opened") return
-  for (const key of operations.keys()) {
-    if ((JSON.parse(key) as [string, string])[0] === event.instanceId) cancelOperation(key)
-  }
+  for (const [key, operation] of operations) if (operation.instanceId === event.instanceId) cancelOperation(key)
+  if (event.type === "removed") localOwners.delete(event.instanceId)
   for (const preview of sessionPreviews().values()) {
-    if (preview.instanceId === event.instanceId && (event.type === "removed" || preview.capability))
+    if (preview.capability ? preview.instanceId === event.instanceId
+      : event.type === "removed" && ![...localOwners.values()].some(sessions => sessions.has(preview.sessionId)))
       void removeLivePreview(preview.storageKey)
   }
 })
@@ -258,7 +269,7 @@ onInstanceLifecycleAuthority(event => {
 onInstanceTabDetached(instanceId => {
   for (const key of operations.keys()) {
     const operation = operations.get(key)!
-    if ((JSON.parse(key) as [string, string])[0] === instanceId && operation.client.id !== "local") cancelOperation(key)
+    if (operation.instanceId === instanceId && operation.client.id !== "local") cancelOperation(key)
   }
   for (const record of sessionPreviews().values())
     if (record.instanceId === instanceId && record.capability) dismissSessionPreview(record.storageKey)
@@ -269,5 +280,5 @@ if (typeof window !== "undefined") window.addEventListener("pagehide", () => {
 })
 
 export { sessionPreviews, getSessionPreview, openSessionPreview, restoreSessionPreview, updateSessionPreviewLocation,
-  showSessionPreview, showSessionChat, showSessionChatFor, closeSessionPreview, DEFAULT_PREVIEW_URL }
+  showSessionPreview, showSessionChatFor, closeSessionPreview, DEFAULT_PREVIEW_URL }
 export type { SessionPreviewRecord, StoredSessionPreview }

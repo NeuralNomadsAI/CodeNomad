@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { MissionDeleteInput } from "./control-types"
-import { MissionJournal } from "./journal"
+import { MissionJournal, parseMissionEvent } from "./journal"
 import { MissionJournalIndex, missionJournalWrites, type MissionIndexHints, type MissionReferenceKind } from "./journal-index"
 import { cleanupReference } from "./cleanup-projection"
 import type { MissionEvent, MissionJsonValue, MissionMap } from "./model"
@@ -131,6 +131,31 @@ test("the activation index answers every cross-mission question like the full sn
     }
   }
   for (const name of RANDOM_COVERAGE) assert.ok(coverage[name] > 0, `histories exercised ${name}`)
+})
+
+test("author provenance with or without a source survives journal decoding and index rebuild, with read-only author visibility", async () => {
+  const f = fixture(1), author = "ses_author"
+  f.native.set(author, { id: author, projectID: f.project.id, location: f.project.location })
+  const ids: string[] = []
+  for (const missionID of [undefined, "source"]) {
+    const preparedBy = { ...(missionID === undefined ? {} : { missionID }), coordinatorSessionID: author }
+    const { mission } = await f.control().create({ requestID: `authored-${missionID ?? "outside"}`, objective: "Hand-off",
+      template: "custom", prepared: true, preparedBy })
+    ids.push(mission.id)
+    assert.deepEqual(mission.preparedBy, { ...(missionID === undefined ? {} : { missionId: missionID }), coordinatorSessionId: author })
+    const event = (await f.journal.events()).events.find(event => event.type === "mission.created" && event.missionID === mission.id)!
+    assert.deepEqual(parseMissionEvent(event), event)
+    for (const invalid of [{ missionID }, { ...preparedBy, coordinatorSessionID: "" }, { ...preparedBy, missionID: null }]) {
+      assert.equal(parseMissionEvent({ ...event, preparedBy: invalid }), undefined)
+    }
+  }
+  f.activate()
+  assert.deepEqual(new Set((await f.journal.readHints(index => index.refs(author))).map(ref => ref.missionID)), new Set(ids))
+  assert.deepEqual(new Set((await f.control().listMissions(author)).map(entry => entry.missionID)), new Set(ids))
+  for (const missionID of ids) {
+    assert.equal((await f.control().inspect(author, { missionID }, "read")).actor, null)
+    await assert.rejects(f.control().declare(author, { missionID, taskKey: "work", title: "Work", brief: "No", role: "specialist", blockedBy: [] }), /not visible/)
+  }
 })
 
 test("deterministic cross-mission edges: shared sessions, orphaned receipts, settled history beyond 20 and key-order ties", async () => {

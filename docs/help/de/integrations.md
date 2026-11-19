@@ -47,11 +47,11 @@ Eine Paketaktualisierung ändert dieses Paket im gemeinsamen Cache von OpenCode 
 3. Behalten Sie **Global** bei, außer das Plugin soll nur für dieses Projekt laufen, und wählen Sie **Hinzufügen**.
 4. Die neue Zeile zeigt **Wird installiert**, bis OpenCode sie meldet.
 
-Zum Entfernen öffnen Sie das Menü neben dem Namen und wählen **Aus Global entfernen** oder **Aus Projekt entfernen**. Nur die Deklaration in der Konfigurationsdatei dieses Bereichs wird gelöscht; ihre Aktivierungsregeln für **Global**/**Projekt** bleiben als Regeln erhalten, und der Paket-Cache von OpenCode bleibt bestehen.
+Zum Entfernen öffnen Sie das Menü neben dem Namen und wählen **Aus Global entfernen** oder **Aus Projekt entfernen**. Die Deklaration und ihre Aktivierungsregeln in der Konfigurationsdatei dieses Bereichs werden gelöscht, außer einer Deaktivierungsregel, solange eine andere Deklaration des Plugins besteht, und einer Aktivierungsregel, die eine frühere Deklaration noch definiert. Eine Aktivierungsregel, die ihre Definition verlieren würde, wird auch aus der Konfiguration dieses Projekts gelöscht, da OpenCode sonst ein gleichnamiges Registry-Paket herunterladen würde; steht sie in einer Datei, die CodeNomad nicht bearbeitet, wird das Entfernen abgelehnt. Der Paket-Cache von OpenCode bleibt bestehen. Regeln eines Plugins, das OpenCode nicht identifizieren konnte (deaktiviert oder vor dem Laden fehlgeschlagen), bleiben in einer eigenen Zeile, deren Menü dasselbe Entfernen anbietet.
 
 Der Code des Plugins läuft mit Ihren Rechten in OpenCode. Ein **Projekt**-Eintrag läuft jedes Mal, wenn dieser Ordner in OpenCode geöffnet wird, und Pakete mit Teilen für die OpenCode-Desktop-App laden diese nur aus **Global**; der Tooltip weist darauf hin, wenn ein solches Paket anderswo deklariert ist. Lokale Pfade, Konfigurationsvariablen und Plugin-IDs werden hier abgelehnt: Deklarieren Sie lokale Plugins in der Konfigurationsdatei. Ein Paket, das bereits in einer für diese Location geltenden Konfiguration deklariert ist, wird abgelehnt, unabhängig von Version, Bereich oder Form.
 
-Zeigen Sie auf den Namen eines Plugins oder fokussieren Sie ihn, um Version, **Update verfügbar** und bei einer fehlgeschlagenen Installation den Fehler mit seiner Referenz im OpenCode-Protokoll zu sehen.
+Die installierte Paketversion erscheint neben dem Plugin-Namen. Bei Git-Plugins enthalten die Details den Commit; ist die Version nicht verfügbar, erscheint der siebenstellige Commit neben dem Namen. Zeigen Sie auf den Namen oder fokussieren Sie ihn, um Details, **Update verfügbar** und bei einer fehlgeschlagenen Installation den Fehler mit seiner Referenz im OpenCode-Protokoll zu sehen.
 
 ## Skills anhängen {#skills}
 
@@ -82,7 +82,7 @@ Das Menü **…** der Zeile beginnt mit dem Verbindungsstatus, zum Beispiel **Bl
 
 Kataloginstallation, Installation/Aktualisierung des Anwendungsteils und Entfernen erfordern eine Bestätigung. **Abbrechen** erhält zuerst den Fokus; die Bestätigungsaktion wird nach 600 ms verfügbar. Aktivierung, Plugin-Updates, Verbinden und Trennen werden direkt ausgeführt.
 
-Beim Entfernen zeigt eine Warnung Plugin und genauen Bereich. **Abbrechen** erhält den Fokus; **Aus Global/Projekt entfernen** wird nach 600 ms verfügbar und erfordert eine ausdrückliche Aktion. Das Entfernen kann Verfügbarkeit und Verbindungen verwendender Unterhaltungen unterbrechen; Global kann weitere Projekte betreffen. Nur die bestätigte Deklaration wird entfernt; Aktivierungsregeln, Cache, Anwendungsdateien und gespeicherte Verbindungshinweise bleiben erhalten. Änderungen der Konfiguration erfordern eine neue Auswahl und Bestätigung.
+Beim Entfernen zeigt eine Warnung Plugin und genauen Bereich. **Abbrechen** erhält den Fokus; **Aus Global/Projekt entfernen** wird nach 600 ms verfügbar und erfordert eine ausdrückliche Aktion. Das Entfernen kann Verfügbarkeit und Verbindungen verwendender Unterhaltungen unterbrechen; Global kann weitere Projekte betreffen. Nur die bestätigte Deklaration und die oben beschriebenen Aktivierungsregeln werden entfernt; Cache, Anwendungsdateien und gespeicherte Verbindungshinweise bleiben erhalten. Änderungen der Konfiguration erfordern eine neue Auswahl und Bestätigung.
 
 ## Anwendungsintegration installieren oder aktualisieren {#application-installation}
 

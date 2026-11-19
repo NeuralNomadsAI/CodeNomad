@@ -21,6 +21,16 @@ Normales Durchsuchen ist hierarchisch; Such-/Filterergebnisse sind flache Eintr�
 
 Zurück/Vorwärts ist ein Besuchsverlauf pro Projekt-Tab und Fenster, nicht die Reihenfolge der Liste. **Vorherige Sitzung** / **Nächste Sitzung** in der Palette durchlaufen stattdessen die sichtbare Liste.
 
+## Unterhaltungen als Favoriten behalten {#favorites}
+
+Bewegen Sie den Mauszeiger über eine Sitzungszeile oder fokussieren Sie sie, um ihre Aktionen anzuzeigen. Auf Touchscreens sind sie direkt sichtbar. Verwenden Sie die Sterntaste oder wählen Sie bei wenig Platz unter **Weitere Aktionen** (⋯) **Zu Favoriten hinzufügen** oder **Aus Favoriten entfernen**.
+
+Im Sitzungsbaum stehen Anfragen, die auf Ihre Eingabe warten, zuerst. Favoriten rücken nur unter Sitzungen derselben Ebene mit derselben übergeordneten Sitzung nach vorn. Jeder Zweig bleibt auf- oder eingeklappt. In der Suche zeigt **Aktivität** passende Favoriten zuerst, auch eingeblendete Untersitzungen. **Name** und **Worktree** folgen ihrer eigenen Reihenfolge.
+
+Wählen Sie in der Sitzungssuche **Nur Favoriten**. **… ausgeblendete Treffer anzeigen** aktiviert beide Sitzungstypen, ohne Suchtext, Worktree oder andere Filter zu ändern. **Zurücksetzen** stellt die voreingestellten Filter und die Sortierung wieder her.
+
+Fenster am selben CodeNomad-Backend teilen die Favoriten für denselben geöffneten Ordner. Die Sitzungsbereinigung behält Favoriten und ihre übergeordneten Sitzungen; explizites Löschen bleibt möglich.
+
 ## Archivieren und wiederherstellen {#archive}
 
 Wählen Sie **Sitzung archivieren** in den Zeilenaktionen, um den Verlauf zu behalten und den inaktiven Zweig aus der normalen Ansicht auszublenden. Die ausgewählte Unterhaltung sowie laufende Arbeit und offene Fragen bleiben erreichbar. Archivieren beendet keine Arbeit, löscht keine Nachrichten und ändert nicht die eigenen Archivkennzeichen der Untersitzungen.

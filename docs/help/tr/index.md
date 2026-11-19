@@ -85,8 +85,9 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 Durum paneli etkin oturumun sağlayıcı kullanımını ve OpenCode arka plan Shell süreçlerini gösterir. Konuşma durumu ve alt konuşma etkinliği; çalışan, sıkıştırılan ve girdi bekleyen oturumları belirtir. Arka plan Shell sürecini izlemek, ileti düzenleyicisinden Shell isteği göndermekten veya ayrı barındırılan terminal SideCar kullanmaktan farklıdır.
 
 1. Seçilen görüşmenin Location'si (veya hiçbir konuşma seçilmediğinde açık çalışma alanı) için **Durum → Arka Plan Shell'leri** öğesini açın.
-2. Yalnızca açıkça arka plana alınmış çalışan komutlar, her satırda bir tane listelenir. Üzerine gelince kabuk, klasör ve PID görünür; **Çıktıyı görüntüle** simgesi yerel çıktıyı açar.
-3. Satırdaki **Durdur ve kaldır** simgesini kullanıp hedefi onaylayın.
+2. Açıkça arka plana alınmış çalışan komutlar, küçük bir durum göstergesiyle birer satırda görünür; uzun komutlar kısaltılır. Çıktı penceresini açmak için komuta tıklayın veya komuta odaklanıp Enter ya da Boşluk tuşuna basın.
+3. Tam komutu ve durumunu, ayrıca mevcut klasör, kabuk, PID, çıkış kodu ve başlangıç/bitiş tarihlerini görmek için komutun üzerine gelin, klavyeyle odaklanın veya dokunmatik ekranda uzun basın. Ayrıntıları kapatmak için Escape tuşuna basın veya dışarıya dokunun.
+4. Çöp kutusu düğmesi komut alanının dışında, sağdadır. Çalışan bir kabuk için **Durdur ve kaldır** seçeneğini seçip onaylayın; tamamlanmış bir kayıt hâlâ görünüyorsa **Kaldır** seçeneğini seçip onaylayın. Çöp kutusu düğmesi çıktıyı açmadan kabuk üzerinde işlem yapar.
 
 Çalışan bir Shell'nin kaldırılması bu işlemi durdurur; çıkış penceresini kapatmak bunu yapmaz.
 

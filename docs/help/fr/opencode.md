@@ -3,7 +3,7 @@
 ## Sélectionner ou installer la CLI {#select-cli}
 
 1. Ouvrez **Paramètres → OpenCode** et utilisez la carte **Binaire OpenCode**, sous **Version d’OpenCode**, pour sélectionner l’exécutable.
-2. Laissez l’entrée automatique sélectionnée pour privilégier le PATH du serveur, sauf s’il contient un OpenCode plus ancien, puis son installation npm utilisateur d’OpenCode 2 ; ou utilisez **Parcourir le binaire…**, ou saisissez un chemin et choisissez **Ajouter**.
+2. Laissez l’entrée automatique sélectionnée, ou dépliez **Choisir un autre binaire…** pour utiliser **Parcourir le binaire…**, ou saisir un chemin et choisir **Ajouter**.
 3. Utilisez **Vérifier l’état et les mises à jour**. Si OpenCode manque, choisissez **Installer et démarrer OpenCode** ; vérifiez d’abord l’hôte et la portée d’installation.
 4. Si la configuration propose **Connecter et continuer**, utilisez-le après résolution du problème signalé.
 
@@ -11,14 +11,14 @@
 
 Lorsqu’un OpenCode plus ancien apparaît en premier dans le PATH, l’action proposée dépend de son mode d’installation. Pour OpenCode 1.x installé avec npm, **Remplacer OpenCode {version} par OpenCode 2** demande une confirmation, retire ce paquet npm et installe OpenCode 2 dans le même dossier npm ; le dossier de données d’OpenCode est conservé, et OpenCode 2 importe lui-même les conversations 1.x. Un OpenCode plus ancien ou inutilisable installé autrement (winget, Homebrew, manuellement) n’est jamais modifié : **Installer OpenCode 2 pour CodeNomad** installe OpenCode 2 dans le dossier npm de l’utilisateur à côté de lui, et CodeNomad utilise ensuite cette copie. Si cette ancienne commande se trouve elle-même dans le dossier npm de l’utilisateur (par exemple un lien dans `~/.local/bin`), ou si ce dossier n’est pas accessible en écriture, la configuration en indique la raison au lieu de proposer l’action : déplacez ou renommez la commande, ou corrigez les droits du dossier, puis choisissez **Vérifier l’état et les mises à jour**. La commande `opencode` d’un terminal peut encore lancer l’ancienne version. Un exécutable personnalisé explicitement sélectionné n’est jamais remplacé.
 
-L’exécutable installé et le service actif peuvent avoir des versions différentes. Comparez **Version installée** et **Service en cours** dans la carte **Version d’OpenCode** au lieu de supposer que sélectionner un autre exécutable a remplacé le démon actif ; **Détails des versions** indique les versions minimale et recommandée.
+La carte **Version d’OpenCode** affiche **Service en cours** séparément quand sa version diffère de **Version installée** ou est inconnue. **Détails des versions** indique la version minimale et, si elle diffère, la version recommandée.
 
 ## Versions requises, recommandées et non vérifiées {#versions}
 
 | Classification | Exigence actuelle | Signification |
 | --- | --- | --- |
 | Minimum | OpenCode **2.3.0** | Requis pour cette version de CodeNomad. Les conversations enregistrées par les versions antérieures restent lisibles après la mise à jour. |
-| Recommandée | OpenCode **2.3.0** | Cible qualifiée ; actuellement la même version que le minimum. |
+| Recommandée | OpenCode **2.3.0** | Pour CodeNomad **1.1.0**. CodeNomad **1.1.1** exige et recommande **2.3.2**. |
 | Non vérifiée | Version plus récente ou personnalisée non entièrement validée | Non rejetée simplement parce que non testée ; les contrats API réels du service connecté sont vérifiés. |
 
 ## Hôte, WSL et portée du service partagé {#execution-host}
@@ -57,7 +57,7 @@ Utilisez **Recharger la configuration OpenCode**, sous **Dépannage** lorsque le
 ## Environnement de session {#session-environment}
 
 1. Ouvrez **Paramètres → Avancé** et développez **Variables d'environnement**.
-2. Ajoutez, modifiez ou retirez les remplacements du profil ; chaque changement est enregistré immédiatement.
+2. Ajoutez des remplacements, modifiez leurs valeurs ou retirez-les ; les noms enregistrés sont en lecture seule et chaque changement est enregistré immédiatement.
 3. Envoyez le prochain prompt, commande personnalisée ou demande shell de session via CodeNomad pour appliquer l’environnement courant à cette conversation.
 
 C’est un réglage de profil de configuration. Simplement ouvrir/lire une conversation ou enregistrer les paramètres ne modifie pas une session native. Retirer un remplacement restaure la valeur héritée de l’hôte d’exécution, ou la supprime si elle y est absente.

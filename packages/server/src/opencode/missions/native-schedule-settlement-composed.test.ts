@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { Context, Effect, Schema } from "effect"
-import { Schedule } from "@opencode/schema/schedule"
+import { Automation } from "@opencode/schema/automation"
+import { missionAutomationID } from "./native-mission-automation"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { MissionDocumentPassageEngine, type DocumentPassagePorts } from "../../missions/mission-document-passage-engine"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
@@ -30,15 +31,16 @@ async function composed(t: test.TestContext, maximum = 3) {
   const schedule = {
     enabled: () => Effect.succeed(true),
     get: (id: string) => Effect.sync(() => {
-      const row = f.calendars.get(id)
+      const row = [...f.calendars.values()].find(row => missionAutomationID(row.id) === id)
       if (!row) throw new Error("Native calendar missing")
-      return Schema.decodeUnknownSync(Schedule.Info)({ id: row.id, sessionID: row.sessionID, name: row.name, when: row.when, tz: "UTC",
-        action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, status: row.status, runCount: row.runCount,
-        ...(row.nextDueAt === null ? {} : { nextDueAt: row.nextDueAt }), ...(row.endsAt === null ? {} : { endsAt: row.endsAt }),
+      return Schema.decodeUnknownSync(Automation.Info)({ id, sessionID: row.sessionID, name: row.name, trigger: row.when, tz: "UTC",
+        projectID: f.ctx.location.project.id, directory: f.ctx.location.directory,
+        action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: row.sessionID } }, status: row.status, runCount: row.runCount,
+        ...(row.nextDueAt === null ? {} : { nextDueAt: row.nextDueAt }), ...(row.endsAt === null ? {} : { expires: row.endsAt }),
         time: { created: row.createdAt, updated: row.createdAt } })
     }),
   }
-  const graph = Context.make(Context.Service<never, unknown>("@opencode/Schedule"), schedule)
+  const graph = Context.make(Context.Service<never, unknown>("@opencode/Automation"), schedule)
   const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromiseWith(graph)(effect)
   const coverage = await run(acquireNativeScheduledPassageCoverage(native, run)), signal = new AbortController().signal
   f.native.wakeAcknowledged = async (target, wake, current) => {
@@ -152,6 +154,25 @@ test("paused observation never authorizes new principal admission, even with a p
   assert.equal(await f.engine.wake({ missionID: doc.id, wake: f.incoming() }), "ignored")
   assert.equal((await f.read()).pending, null); assert.equal((await f.read()).launchedCount, 0)
   assert.deepEqual(f.business, [])
+})
+
+test("a prepared run whose next native slot is overdue and refused at prompt entry is still consumed, unblocking that slot", async t => {
+  const f = await composed(t)
+  f.advance(900_001)
+  let doc = await f.read()
+  doc = await f.store.change(doc.id, doc.revision, f.current, value => changes.prepareWake(value, f.occurrence()))
+  f.acknowledge()
+  // Native retries run 2 while its due time stays past; prompt entry refuses it until run 1 is consumed.
+  f.advance(4 * 900_000)
+  const next = { scheduleID: f.principal.scheduleID, run: 2, messageID: `msg_${f.principal.scheduleID}_2`, dueAt: f.now + 1_800_000 }
+  assert.throws(() => changes.prepareWake(structuredClone(doc), next), /stale or gapped/)
+  const preflight = await f.engine.preflight({ missionID: doc.id, wake: f.incoming() })
+  assert.equal(preflight.messagePresent, true); assert.equal(preflight.ready, true)
+  assert.equal(await f.engine.wake({ missionID: doc.id, wake: f.incoming() }), "started")
+  doc = await f.read()
+  assert.equal(doc.calendars[1].highWater, 1); assert.equal(doc.calendars[1].wakePreparing, null)
+  assert.equal(doc.launchedCount, 1); assert.equal(f.admissions(), 1)
+  assert.doesNotThrow(() => changes.prepareWake(structuredClone(doc), next))
 })
 
 test("paused suppression preserves an in-flight preparation through missing ACK/message, then consumes only its exact positive proof", async t => {

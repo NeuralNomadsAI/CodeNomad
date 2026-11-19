@@ -3,8 +3,17 @@ import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { Context, Effect, Schema } from "effect"
 import { SessionMessage } from "@opencode/schema/session-message"
-import { acquireNativeSourceFence, withNativeSourceTransaction } from "./native-source-fence"
+import { acquireNativeSourceFence, withNativeSourceTransaction, nativeShellBlocksFamily } from "./native-source-fence"
 import { nativePassageMessageDigest } from "./native-service-adapter"
+
+test("shell family classification excludes known foreign owners and keeps unknown owners blocked", () => {
+  const ids = new Set(["ses_root", "ses_child"])
+  assert.equal(nativeShellBlocksFamily({ status: "running", metadata: { sessionID: "ses_other" } }, ids), false)
+  assert.equal(nativeShellBlocksFamily({ status: "running", metadata: { sessionID: "ses_child" } }, ids), true)
+  for (const metadata of [undefined, null, [], "invalid", {}, { sessionID: null }, { sessionID: 1 }, { sessionID: "" }, { sessionID: " " }])
+    assert.equal(nativeShellBlocksFamily({ status: "running", metadata }, ids), true)
+  assert.equal(nativeShellBlocksFamily({ status: "completed" }, ids), false)
+})
 
 test("source projections use the document transaction graph and reject changed messages, placement, families and journals", async t => {
   const db = new DatabaseSync(":memory:"); t.after(() => db.close())
@@ -75,6 +84,22 @@ test("source projections use the document transaction graph and reject changed m
   const journal = factory(); journal.journal("journal/")
   db.prepare("INSERT INTO kv VALUES(?,?)").run(nativeKey("journal/event"), '{"id":"added"}')
   assert.throws(journal.current, /changed during preparation/)
+  const insert = db.prepare("INSERT INTO kv VALUES(?,?)"), ordinary = "codenomad-missions/v2/project-token"
+  for (let n = 0; n < 2050; n++) insert.run(nativeKey(`${ordinary}/msn_neighbor/evt_${n}`), '{"n":1}')
+  insert.run(nativeKey(`${ordinary}/msn_target/evt_1`), '{"n":2}')
+  assert.throws(() => factory().journal(`${ordinary}/`), /journal capacity/)
+  const all = factory(), target = factory()
+  all.journal(ordinary, undefined, true)
+  target.journal(`${ordinary}/msn_target/`, undefined, true)
+  requireTransaction = true
+  const inTransaction = <A>(use: () => A) => withNativeSourceTransaction(Context.add(graph, transaction, true), use)
+  assert.equal(inTransaction(all.current), true)
+  db.prepare("UPDATE kv SET value=? WHERE key=?").run('{"n":3}', nativeKey(`${ordinary}/msn_neighbor/evt_2049`))
+  assert.throws(() => inTransaction(all.current), /changed during preparation/)
+  assert.equal(inTransaction(target.current), true)
+  db.prepare("UPDATE kv SET value=? WHERE key=?").run('{"n":4}', nativeKey(`${ordinary}/msn_target/evt_1`))
+  assert.throws(() => inTransaction(target.current), /changed during preparation/)
+  requireTransaction = false
   db.exec("UPDATE session_v2 SET revert='{}' WHERE id='source'")
   assert.throws(() => factory().conversation("source"), /placement unavailable/)
 })
@@ -100,4 +125,75 @@ test("prepared selection accepts native default materialization, rejects other v
   factory().preparedSession({ ...session, model })
   db.prepare("INSERT INTO session_inbox VALUES(?)").run(session.id)
   assert.throws(() => factory().preparedSession(session), /not empty/)
+})
+
+test("agent adoption synchronously fences family claims, inboxes, tools, activity, requests and foreign ownership at CAS", async t => {
+  const db = new DatabaseSync(":memory:"); t.after(() => db.close())
+  db.exec(`CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);
+    CREATE TABLE session_v2(id TEXT PRIMARY KEY,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,
+      metadata TEXT,time_suspended INTEGER,agent TEXT,model TEXT);
+    CREATE TABLE session_inbox(session_id TEXT);
+    CREATE TABLE session_message(id TEXT,session_id TEXT,seq INTEGER,type TEXT,data TEXT);
+    CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
+    INSERT INTO session_v2(id,project_id,directory) VALUES('ses_root','project','/project');
+    INSERT INTO session_v2(id,parent_id,project_id,directory) VALUES('ses_child','ses_root','project','/project')`)
+  const tag = (key: string) => Context.Service<never, unknown>(key)
+  const active = new Set<string>()
+  let forms: unknown[] = [], permissions: unknown[] = [], shells: unknown[] = []
+  const client = { unsafe: (sql: string, args: readonly unknown[]) => ({
+    withoutTransform: Effect.sync(() => db.prepare(sql).all(...args as []).map(row => ({ ...row }))),
+  }) }
+  let graph = Context.make(tag("@opencode/storage/Database"), { db: { $client: client } })
+  graph = Context.add(graph, tag("@opencode/Session"), { active: Effect.sync(() => new Set(active)) })
+  graph = Context.add(graph, tag("@opencode/Form"), { list: () => Effect.sync(() => forms) })
+  graph = Context.add(graph, tag("@opencode/Permission"), { list: () => Effect.sync(() => permissions) })
+  graph = Context.add(graph, tag("@opencode/Shell"), { list: () => Effect.sync(() => shells) })
+  const factory = await Effect.runPromise(acquireNativeSourceFence(() => true).pipe(Effect.provide(graph)))
+  const quiet = () => { const proof = factory(); proof.coordinator("ses_root"); assert.equal(proof.current(), true); return proof }
+  const mutations = [
+    "UPDATE session_v2 SET time_suspended=1 WHERE id='ses_child'",
+    "INSERT INTO session_inbox VALUES('ses_child')",
+    `INSERT INTO session_message VALUES('tool','ses_child',1,'assistant','{"content":[{"type":"tool","state":{"status":"running"}}]}')`,
+  ]
+  for (const sql of mutations) {
+    const proof = quiet()
+    db.exec(sql)
+    assert.throws(proof.current, /changed during preparation/)
+    assert.throws(() => factory().coordinator("ses_root"), /coordinator-busy/)
+    db.exec("UPDATE session_v2 SET time_suspended=NULL; DELETE FROM session_inbox; DELETE FROM session_message")
+  }
+  const executing = quiet()
+  active.add("ses_child")
+  assert.throws(() => withNativeSourceTransaction(graph, executing.current), /coordinator-busy/)
+  active.clear()
+  const request = quiet()
+  forms = [{ id: "frm_pending", sessionID: "ses_child", title: "Approval", metadata: {},
+    fields: [{ key: "answer", type: "string", title: "Approval" }] }]
+  assert.throws(request.current, /coordinator-busy/)
+  forms = []
+  const permission = quiet()
+  permissions = [{ id: "per_pending", sessionID: "ses_child", action: "read", resources: [] }]
+  assert.throws(permission.current, /coordinator-busy/)
+  permissions = []
+  const shellProof = quiet()
+  const shell = { id: "sh_running", status: "running", command: "test", cwd: "/project", shell: "sh",
+    file: "output", time: { started: 1 }, metadata: { sessionID: "ses_other_family" } as Record<string, unknown> }
+  shells = [shell]
+  assert.equal(shellProof.current(), true, "a running shell owned by another family permits adoption")
+  for (const sessionID of ["ses_root", "ses_child"]) {
+    shell.metadata = { sessionID }
+    assert.throws(shellProof.current, /coordinator-busy/, "a running shell owned by the chosen family refuses adoption")
+  }
+  for (const metadata of [{}, { sessionID: 123 }, { sessionID: "" }, { sessionID: " " }]) {
+    shell.metadata = metadata
+    assert.throws(shellProof.current, /coordinator-busy/, "an indeterminate running-shell owner refuses adoption")
+  }
+  shells = []
+  const nativeKey = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
+  db.prepare("INSERT INTO kv VALUES(?,?)").run(nativeKey("owners/current"), '{"revision":1}')
+  const owner = factory(); owner.journal("owners/", "owners/current")
+  db.prepare("UPDATE kv SET value=? WHERE key=?").run('{"revision":2}', nativeKey("owners/current"))
+  assert.equal(owner.current(), true, "its own CAS remains allowed")
+  db.prepare("INSERT INTO kv VALUES(?,?)").run(nativeKey("owners/foreign"), '{"pending":true}')
+  assert.throws(owner.current, /changed during preparation/, "concurrent foreign reservation invalidates the same CAS fence")
 })

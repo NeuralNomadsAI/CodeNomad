@@ -8,12 +8,13 @@
 .agent-memory-counter,
 .agent-memory-entry-type { color: var(--text-secondary); font-size: 0.75rem; }
 .agent-memory-counter { text-align: end; }
-.agent-memory-list { list-style: none; padding: 0; margin: 0; }
+.agent-memory-entries > summary .agent-memory-badge { margin-inline-start: 0.5rem; }
+.agent-memory-list { list-style: none; padding: 0; margin: 0; border: 1px solid var(--border-base); }
+.agent-memory-list > li + li { border-top: 1px solid var(--border-base); }
 .agent-memory-entry {
   display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
-  inline-size: 100%; padding: 0.6rem; text-align: start;
-  color: var(--text-primary); background: var(--surface-canvas);
-  border: 1px solid var(--border-base);
+  inline-size: 100%; padding: 0.3rem 0.6rem; text-align: start;
+  color: var(--text-primary); background: var(--surface-canvas); border: 0;
 }
 .agent-memory-entry:hover { background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay)); }
 .agent-memory-entry[aria-expanded="true"] { background: var(--list-item-highlight-bg); }

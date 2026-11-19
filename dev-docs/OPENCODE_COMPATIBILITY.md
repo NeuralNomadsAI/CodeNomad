@@ -25,7 +25,7 @@ Positive shared-service test fixtures declare `MINIMUM_OPENCODE_VERSION` when
 serving the pinned client contract. Version-refusal scenarios supply their
 explicit incompatible identity.
 
-Minimum and recommended runtime **2.3.0** (`runtime-support.ts`), with **2.3.0**
+Minimum and recommended runtime **2.3.2** (`runtime-support.ts`), with **2.3.2**
 client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
 qualifies only the 2.3 subagent contract: every subagent call returns at once
 (`metadata.status: "running"`) and the child reports to its parent through
@@ -50,8 +50,8 @@ undergo authenticated contract recognition; missing canonical APIs, session
 environment or the replay shape give a concrete reason. OpenCode reads older
 stored data.
 
-Missions schedules qualify the consumed Schedule API, effective
-`experimental.schedules` flag and retained plugin/provider bundle independently
+Missions schedules qualify the consumed Automation API, effective
+`experimental.automations` flag and retained plugin/provider bundle independently
 of general runtime admission: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
 and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
 consumed capabilities, including on future versions. Schedule delivery qualification
@@ -59,6 +59,10 @@ uses the minimum/latest CI matrix, including cold scheduled passage admission wi
 the retained product bundle and CodeNomad backend closed; keep results in PR/CI evidence.
 Context hooks retain native message IDs; Missions consumes the transport's
 [native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
+
+GPT-6.2 on Responses routes uses OpenCode's cacheable developer-message prefix
+for both ordinary steps and provider compaction. CodeNomad leaves prompt
+assembly and token caching to OpenCode.
 
 ### Native Codex subscription usage
 
@@ -237,19 +241,21 @@ capability is deliberately never probed during an observed compaction.
 
 Candidate traversal constructs no cold Locations; native HTTP middleware may
 warm or rebuild the single bootstrap root, and root eviction or a config rebuild
-constructs it again. Snapshots can go stale after leases release, so per-kind
+constructs it again. Pending recovery waits for catalogue activation at that
+owned root, then rechecks ownership and compaction admission and dispatches once.
+The authenticated, validated snapshot itself establishes coverage. Snapshots
+can go stale after leases release, so per-kind
 mutation fences and settlement tombstones stay essential.
 
 ### Fixed pruning broker admission
 
 The session-pruning, session-history, ranked-history, navigation, Images
-conversation, extension assets, API 4 session reads and pending bootstrap brokers
+conversation, extension assets and API 4 session reads
 use targeted Location preparation. Workspace-record and root-Location identities,
 the captured connection and monotone display/deletion fences span the wait. Session
 descriptors establish session ownership before any activation-capable catalogue
 read. History prepares the selected page directory; ranked history prepares each
-queried directory, including continuations. Pending prepares only its established
-owned bootstrap and retains loaded-only candidates.
+queried directory, including continuations.
 
 Each broker revalidates ownership after preparation, checks the same connection
 and signal beside dispatch and fences publication after IO. Extension grants are
@@ -306,7 +312,7 @@ Verification errors identify the failed file, identity, size or digest check.
   Exclusive creation acquires cleanup ownership through a retained file handle. Cleanup checks its device/inode against the current regular single-link pathname and preserves replacements; partial owned writes are cleaned and exclusive-creation collisions acquire no ownership. Backends remove only their requests. Followers remove only their ACKs and scope records, reclaiming responses after requests disappear. Lease closure joins its pending requests and removes its own identity-matched request folder only when empty; foreign entries and abrupt native shutdown residues remain preserved within the admission bounds. Follower reconciliation serializes ACK writes and joins them before removing its scope record and responses. Targeted cancellation aborts and awaits settlement of its owned catalogue transport; the shared installation retains its independent claims. The five-second budget bounds admission, with cancellation settlement joined before return. A missing or failed bundle proof returns bounded unavailability. Keep logs free of profile content and credentials.
   Each follower handle owns its admitted marker writes. Shutdown stops admission and its timer, joins reconciliation and registration disposal, then drains those writes before releasing its observations, including on disposal failure. Marker IO stays outside normal reconciliation; failed writes retry on a later live check. Overlapping followers keep independent lifetimes, while backend lease removal and the independently running daemon keep their own owners.
 - The Design agent and skills follow backend leases, never a command or RPC. A backend requests them while an installed, enabled panel extension declares `opencode.designAgent` (`opencode/design/demand.ts`, refreshed on every extension-store change). `DesktopPluginLifecycle.setLeaseContent` writes the request (`{"version":1,"design":true}`, or an empty lease) into every session-pruning lease the backend retains, one per configuration namespace, and each new installation starts from it. Writes happen only when the request changes, through a temporary name outside the lease pattern and a rename, serialized with the heartbeat so a removed lease is never resurrected; a failed write retries at the next heartbeat. The shared presence observation (`desktop-plugin-presence.ts`, versioned process key) reads at most 256 bytes of each live lease: empty, unreadable, oversized or unknown-version leases request nothing, and Design is wanted while any live lease of the plugin's presence directories requests it, so one backend's expiry withdraws only its own request. The session-pruning plugin registers its agent and skill transforms once in its `effect`, before `followPresence` (`opencode/design/register.ts`), with content conditioned on a Location-local flag; reconciliation at the presence interval only flips the flag and calls `agent.reload()` and `skill.reload()` on an actual change, and the content loads on the first request. Never register these transforms from presence, an RPC or a command: a late registration bypasses the user's permission rules and overrides the user's own `design` agent or `design-*` skills, which always win. A runtime without agent or skill transforms gets no Design agent. `opencode/design/status.ts` classifies a Location's `GET /api/agent`: `present` when the prompt starts with the content mark, `user` otherwise, or `absent`. Validate with `opencode/design/*.test.ts` and `scripts/test-design-activation-native.mjs` (build the pruning bundle first); that fixture enables project discovery, so outside CI it refuses to run under the user's home unless `CODENOMAD_NATIVE_FIXTURE_PARENT` names a parent outside it.
-- The shared native event relay consumes upstream events before slow routing I/O. Preserve per-session/PTY/Shell and per-recipient FIFO, validated full-location ownership, invalidation/connection/workspace fences and bounded-backlog reconnect recovery. When an ownership lookup still fails after its retry, the relay evicts that cache entry and pulses that recipient's status alone (`error` with `event routing failed`, then `connected`), so its clients run their reconnect reconciliation (one pass per instance, with later requests coalesced into one trailing pass, `ui/src/lib/trailing-resync.ts`). Pulses are leading and trailing, at most every 5 s, doubling to 60 s while failures persist. Never fail the shared subscription for one recipient's lookup: that resyncs every instance. A slow recipient must not block another or the shared SDK subscriber. Validate with the relay regressions and isolated native location fixture.
+- The shared native event relay consumes upstream events before slow routing I/O. Preserve per-session/PTY/Shell and per-recipient FIFO, validated full-location ownership, invalidation/connection/workspace fences and bounded-backlog reconnect recovery. When an ownership lookup still fails after its retry, the relay evicts that cache entry and pulses that recipient's status alone (`error` with `event routing failed`, then `connected`), so its clients run their reconnect reconciliation (one pass per instance, with later requests coalesced into one trailing pass, `ui/src/lib/trailing-resync.ts`). The same pulse answers a session event whose location lookup still fails after its retry or returns an unreadable location (the failure is cached 2 s from its retry's settlement, like a resolved location; it reaches the session's recent recipients, or every recipient when none is known, and the event itself is never broadcast), and a refusal for a recipient that already received the session's events without an intervening move or deletion (a bounded per-session recipient record, kept across ownership invalidation, released by stop/error). A location a recipient never owned stays a silent rejection. Like native location subscriptions, `session.moved` reaches the owners of its envelope (old) location and of its destination, plus the session's recorded recipients, so the old project learns that the session left even when the envelope names only the destination. Pulses are leading and trailing, at most every 5 s, doubling to 60 s while failures persist. Each reconciliation runs every read even when one fails, always reloads the active transcript, and a failed pass retries after 1, 2, 4, 8 and 16 s; instance removal cancels the retry. Never fail the shared subscription for one recipient's lookup: that resyncs every instance. A slow recipient must not block another or the shared SDK subscriber. Validate with the relay regressions and isolated native location fixture.
 - Native OpenCode plugins share `packages/server/scripts/native-plugin-build.mjs`: never embed Effect or the public plugin SDK into daemon-loaded bundles (version boundaries: Qualification policy above). Each desktop runtime builder emits `// CodeNomad plugin IDs: ["..."]` as the payload's first line with its actual exported IDs. The content-addressed digest covers this descriptor; [plugin controls](PLUGIN_CONTROLS.md#codenomad-managed-plugins) use it to identify installed plugins omitted from native runtime inventory. Keep backend-side OpenTunnel isolation separate, and run the bundle regression plus isolated plugin-runtime/pruning/automation/Missions fixtures when changing this boundary.
 - The Design agent and skills exist once, as native OpenCode files in `packages/server/src/opencode/design/opencode/` (`agents/design.md`, `skills/design-*/SKILL.md`, `NOTICE.md`, `LICENSE-APACHE-2.0.txt`), which also work unchanged when copied into a project's `.opencode/` or the global OpenCode configuration folder; the public help links this folder for that use (`docs/help/<locale>/extensions.md#design-without-codenomad`), so moving it means updating those links. Each file keeps its licence notice in frontmatter comments and its references inside its own body: never add sibling files, CLI or form protocols, URLs or brand names (`design/content.test.ts` checks them, with the attribution of each adapted file). `design/content.ts` embeds the files as text through the build's `.md` loader and parses them strictly: bundles call `loadDesignContent()`; `tsx` cannot import `.md`, so checkout code and tests read the files and call `parseDesignContent()`. The agent prompt starts with `codenomad-design-content: <DESIGN_CONTENT_VERSION>`; raise the version whenever the skill, direction or recipe identifiers change. Validate content changes with that test, the self-contained bundle test in `native-plugin-build.test.mjs` and `scripts/test-design-content-native.mjs`. That native test enables project discovery, which walks every ancestor directory: outside CI it refuses to run under the user's home unless `CODENOMAD_NATIVE_FIXTURE_PARENT` names a parent outside it.
 - Missions provisioning installs `provider.mjs` as a separate content-addressed local provider beside its content-addressed runtime. The managed shim supplies native absolute `{provider:{file,sha256},runtime:{file,sha256}}` paths as the factory's second argument; WSL translation applies only to backend filesystem I/O. Lease release and upgrades retain both payloads for native carrier recovery. Registration paths are acquired during arming in the current native RPC graph by `missions/native-schedule-installation.ts`, from the own-process record under native Global state and current ServerInfo URLs, then authenticated with exact-file public Service discovery.

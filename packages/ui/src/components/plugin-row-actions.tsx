@@ -1,18 +1,17 @@
 import { For, Show, createEffect, createMemo, onCleanup } from "solid-js"
 import { DropdownMenu } from "@kobalte/core/dropdown-menu"
 import { AppWindow, BookOpen, Download, Info, MoreHorizontal, PackageSearch, RefreshCw, Trash2 } from "lucide-solid"
-import type { PluginConfiguredSource, PluginControlLocation, PluginControlScope, PluginRuntimeSource } from "../../../server/src/api-types"
+import type { PluginControlLocation, PluginControlScope, PluginRuntimeSource } from "../../../server/src/api-types"
 import { openExternalUrl } from "../lib/external-url"
 import { useI18n } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { isPluginPackagePending, runPluginPackageAction } from "../stores/plugin-package-actions"
-import { pluginSourcesStore } from "../stores/plugin-sources"
+import { pluginSourcesStore, type PluginRemoval as RemovableSource } from "../stores/plugin-sources"
 import { confirmIntegrationAction } from "./integration-confirmation"
 import { backendEvents as serverEvents } from "../lib/server-events"
 
-type RemovableSource = PluginConfiguredSource & { scope: PluginControlScope }
 type Item =
   | { kind: "docs" }
   | { kind: "host"; action: "install" | "update" | "reinstall" }

@@ -30,7 +30,7 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
   return { update: "disable", snapshots: false, permissions: [{ action: "*", resource: "*", effect: "allow" }] }
 }, async ({ client, root, requests, connection }) => {
   const info = await client.server.info()
-  assert.equal(info.version, "2.3.0")
+  assert.equal(info.version, "2.3.2")
   rememberRuntime(connection.endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   const manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
     settings: { getOwner: () => ({ environmentVariables: {} }), readEnvironmentForAdmission: async () => ({}) },
@@ -114,7 +114,7 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
     assert.equal(requests.length, 0)
     assert.ok(!JSON.stringify(receipt).includes("DO-NOT-PERSIST"))
     receipt.status = "passed"
-    console.log("PASS native 2.3.0 production HTTP + document RPC/CAS: project-only effect, unchanged global config, lost reply observation, native Flag readiness, retained ready proof, paused throughout, zero model HTTP")
+    console.log("PASS native 2.3.2 production HTTP + document RPC/CAS: project-only effect, unchanged global config, lost reply observation, native Flag readiness, retained ready proof, paused throughout, zero model HTTP")
   } catch (error) { receipt.status = "failed"; receipt.error = error.message; throw error }
   finally { await plugin.stop(); await app.close(); await manager.shutdown()
     await writeFile(path.join(root, "schedule-activation-receipt.json"), JSON.stringify(receipt, null, 2)) }

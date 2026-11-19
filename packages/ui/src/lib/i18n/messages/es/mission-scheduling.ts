@@ -135,8 +135,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.time": "Introduzca una hora válida.",
   "missions.scheduling.error.count": "Demasiados criterios: como máximo ocho horarios (siete con eventos comprobados aparte) y ocho eventos.",
   "missions.scheduling.error.duplicate": "Quite el criterio duplicado.",
-  "missions.scheduling.immediateFollowed": "El contexto de las conversaciones seguidas se lee y fija al pulsar Play. Las fuentes incompletas o un contexto demasiado grande bloquean el inicio.",
-  "missions.scheduling.immediateCreationFollowed": "Cree con una política programada para conservar las conversaciones seguidas y cámbiela a inicio inmediato antes de Play.",
   "missions.scheduling.once": "Una vez, inmediatamente",
   "missions.scheduling.frequency.at": "Una vez, en una fecha",
   "missions.scheduling.frequency.in": "Una vez, tras un plazo",

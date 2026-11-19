@@ -7,6 +7,9 @@ import { getSessionPreview, openSessionPreview, restoreSessionPreview, showSessi
 import { useAppSessionCapture } from "../../../src/lib/hooks/use-app-session-capture"
 import { serverApi } from "../../../src/lib/api-client"
 import { serverEvents } from "../../../src/lib/server-events"
+import { savedSessionBrowser } from "../../../src/stores/session-browser-persistence"
+import { readClientLayoutValue } from "../../../src/stores/client-state"
+import { SESSION_BROWSER_STATE_KEY } from "../../../src/stores/tab-view-state-codec"
 
 // Exercise the layout fallback when a browser refuses session storage.
 // The harness's inventory and reload controls keep their separate storage access.
@@ -31,6 +34,7 @@ createRoot(() => { const capture = useAppSessionCapture(); capture.start() })
 ;(window as any).fixture = {
   open: openSessionPreview, restore: restoreSessionPreview, hide: showSessionChatFor,
   view: getTabViewState, preview: getSessionPreview, flush: flushClientState,
+  saved: savedSessionBrowser, browsers: () => JSON.parse(readClientLayoutValue(SESSION_BROWSER_STATE_KEY) ?? "{}"),
   state: loadedRestorableSession, created: () => created,
   history: updateSessionPreviewHistory, viewport: updateSessionPreviewViewport,
   close: closeInstanceTab,

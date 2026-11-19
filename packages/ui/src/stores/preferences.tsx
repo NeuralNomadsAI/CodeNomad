@@ -17,6 +17,7 @@ import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
 import { normalizeHotkeyOverrides, type HotkeyBinding, type HotkeyOverrides } from "../lib/hotkey-bindings"
 import { normalizeAppearancePreferences, selectAppearancePalette, type Appearance } from "../lib/appearance-preferences"
+import { normalizeHighContrastPreference, type HighContrastPreference } from "../lib/high-contrast"
 import { defaultNotificationRouting, normalizeNotificationRouting, type NotificationRouting } from "../lib/notification-routing"
 import { encodeMissionDefaults, normalizeMissionDefaults, validMissionDefaults, type MissionProfileDefault } from "../lib/mission-defaults"
 import { normalizeMissionModels, validMissionModels, parseMissionModel, saveMissionModelRecord, removeMissionModelRecord, type UserMissionModel } from "../lib/mission-model-library"
@@ -117,6 +118,7 @@ export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "provider" | "ha
 export interface UiSettings {
   /** Host-owned admission flag, enabled only by explicit configuration. */
   multiBackend: boolean
+  highContrast: HighContrastPreference
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showMessageTimeline: boolean
@@ -243,6 +245,7 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 
 const defaultUiSettings: UiSettings = {
   multiBackend: false,
+  highContrast: "auto",
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
@@ -359,6 +362,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       : "expanded"
   return {
     multiBackend: sanitized.multiBackend === true,
+    highContrast: normalizeHighContrastPreference(sanitized.highContrast),
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
@@ -676,6 +680,10 @@ const effectiveUiConfig = (): UiConfigBucket => local ? uiConfigBucket() : {
   },
 }
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(effectiveUiConfig().settings))
+const [pendingHighContrast, setPendingHighContrast] = createSignal<HighContrastPreference>()
+const [highContrastSaveFailed, setHighContrastSaveFailed] = createSignal(false)
+const [highContrastSavePending, setHighContrastSavePending] = createSignal(false)
+const highContrastPreference = createMemo(() => pendingHighContrast() ?? uiSettings().highContrast)
 const legacyThemePreference = createMemo<ThemePreference>(() => uiStateBucket().theme ?? uiConfigBucket().theme ?? "system")
 const colorSchemeOverrides = createMemo(() => normalizeColorSchemeOverrides(uiStateBucket().colorSchemeOverrides))
 const colorSchemePreference = createMemo(() => {
@@ -838,6 +846,43 @@ function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
       return false
     },
   )
+}
+
+let highContrastWriteQueue: Promise<unknown> = Promise.resolve()
+let highContrastIntent = 0
+
+function setHighContrastPreference(preference: HighContrastPreference): Promise<boolean> {
+  const normalized = normalizeHighContrastPreference(preference)
+  const intent = ++highContrastIntent
+  setPendingHighContrast(normalized)
+  setHighContrastSaveFailed(false)
+  setHighContrastSavePending(true)
+  const write = highContrastWriteQueue.then(async () => {
+    const saved = await updateUiSettings({ highContrast: normalized })
+    let reconciled = saved
+    if (!saved) {
+      try {
+        const owner = await storage.revalidateUiConfigOwner()
+        setUiConfigBucket(owner as UiConfigBucket)
+        setIsUiConfigLoaded(true)
+        setUiConfigLoadFailed(false)
+        reconciled = true
+      } catch (error) {
+        log.error("Failed to reconcile high contrast preference", error)
+        setIsUiConfigLoaded(false)
+        setUiConfigLoadFailed(true)
+      }
+    }
+    // Earlier acknowledgements and rollback reads cannot retire a newer choice.
+    if (intent === highContrastIntent) {
+      if (reconciled) setPendingHighContrast(undefined)
+      setHighContrastSaveFailed(!saved)
+      setHighContrastSavePending(false)
+    }
+    return saved
+  })
+  highContrastWriteQueue = storage.trackWrite(write)
+  return write
 }
 
 function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
@@ -1514,6 +1559,10 @@ interface ConfigContextValue {
   providerModelVisibilitySaveFailed: typeof providerModelVisibilitySaveFailed
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
+  highContrastPreference: typeof highContrastPreference
+  setHighContrastPreference: typeof setHighContrastPreference
+  highContrastSaveFailed: typeof highContrastSaveFailed
+  highContrastSavePending: typeof highContrastSavePending
   getAppearancePalette: typeof getAppearancePalette
   getAppearancePresetId: typeof getAppearancePresetId
   colorSchemePreference: typeof colorSchemePreference
@@ -1600,6 +1649,10 @@ const configContextValue: ConfigContextValue = {
   providerModelVisibilitySaveFailed,
   themePreference,
   setThemePreference,
+  highContrastPreference,
+  setHighContrastPreference,
+  highContrastSaveFailed,
+  highContrastSavePending,
   colorSchemePreference,
   getAppearancePalette,
   getAppearancePresetId,
@@ -1694,6 +1747,7 @@ const deferredServerEdits = new Set([
 ])
 const hostPreferenceMethods = [
   "themePreference", "setThemePreference", "colorSchemePreference", "getAppearancePalette", "getAppearancePresetId",
+  "highContrastPreference", "setHighContrastPreference", "highContrastSaveFailed", "highContrastSavePending",
   "customColorSchemePreference", "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId",
   "setColorSchemePreference", "selectColorSchemePreset", "saveColorSchemeOverride", "resetColorSchemeOverride",
   "saveColorSchemePreset", "deleteColorSchemePreset", "remoteServers", "saveRemoteServerProfile",
@@ -1708,6 +1762,7 @@ const preferenceReads = new Set([
   "preferences", "getProviderModelVisibilityPreference", "providerModelVisibilitySaveFailed", "serverSettings", "isSecureEnvVar",
   "recentFolders", "opencodeBinaries", "uiState", "isFavoriteModelPreference", "getFavoritesOnlyPreference", "getModelThinkingSelection", "lastCloneParent",
   "themePreference", "colorSchemePreference", "getAppearancePalette", "getAppearancePresetId", "customColorSchemePreference",
+  "highContrastPreference", "highContrastSaveFailed", "highContrastSavePending",
   "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId", "remoteServers",
 ])
 const stateEdits = new Set([...deferredServerEdits].filter(key => ![
@@ -1822,6 +1877,7 @@ export function useConfig(instanceId?: Accessor<string | undefined>): ConfigCont
 }
 
 export const {
+  ensureLoaded,
   preferences,
   uiState,
   lastCloneParent,
@@ -1831,6 +1887,10 @@ export const {
   opencodeBinaries,
   themePreference,
   setThemePreference,
+  highContrastPreference,
+  setHighContrastPreference,
+  highContrastSaveFailed,
+  highContrastSavePending,
   colorSchemePreference,
   getAppearancePalette,
   getAppearancePresetId,

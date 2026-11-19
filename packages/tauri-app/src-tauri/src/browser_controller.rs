@@ -1,3 +1,4 @@
+use crate::embedded_view::diagnostics::preview_error;
 use crate::embedded_view::{
     is_allowed_url, validate_bounds, Bounds as BrowserTargetBounds, EmbeddedViews,
 };
@@ -146,7 +147,9 @@ impl BrowserController {
         validate_id(&input.registration_id, 128)?;
         let url = allowed_url(&input.url)?;
         validate_bounds(input.bounds)?;
-        let renderer_version = self.renderer_version(window.label())?;
+        let renderer_version = self
+            .renderer_version(window.label())
+            .map_err(|error| preview_error("read renderer generation", error))?;
         let registration_id = input.registration_id.clone();
         let generation = self.registration_sequence.fetch_add(1, Ordering::Relaxed);
         // Native labels are unique across replacements, including in-flight creations.
@@ -224,6 +227,7 @@ impl BrowserController {
         #[cfg(target_os = "macos")]
         let observation = registration.clone();
         let previous = match self.publish_registration(registration, renderer_version, url.as_str())
+            .map_err(|error| preview_error("publish registration", error))
         {
             Ok(previous) => previous,
             Err(error) => {
@@ -257,7 +261,7 @@ impl BrowserController {
                     &input.registration_id,
                     Some(generation),
                 );
-                return Err(error);
+                return Err(preview_error("configure initial viewport", error));
             }
         }
         if let Err(error) = webview.navigate(url) {
@@ -267,7 +271,7 @@ impl BrowserController {
                 &input.registration_id,
                 Some(generation),
             );
-            return Err(error.to_string());
+            return Err(preview_error("navigate initial document", error));
         }
         let current = self.owned_registration(window.label(), &input.registration_id);
         match current {
@@ -493,13 +497,15 @@ impl BrowserController {
             "emulate" => self.emulate(app, window_label, &input),
             "back" => webview
                 .eval("history.back()")
-                .map_err(|error| error.to_string()),
-            "reload" => webview.reload().map_err(|error| error.to_string()),
+                .map_err(|error| preview_error("navigate back", error)),
+            "reload" => webview
+                .reload()
+                .map_err(|error| preview_error("reload document", error)),
             "navigate" => webview
                 .navigate(allowed_url(input.url.as_deref().ok_or_else(|| {
                     "Browser navigation URL is required".to_string()
                 })?)?)
-                .map_err(|error| error.to_string()),
+                .map_err(|error| preview_error("navigate document", error)),
             _ => Err("Unsupported browser target action".to_string()),
         }
         .map(|()| Value::Null)
@@ -1444,7 +1450,8 @@ fn install_webview2_handlers(
     webview
         .with_webview(move |platform| {
             let result = (|| {
-                let core = unsafe { platform.controller().CoreWebView2() }?;
+                let core = unsafe { platform.controller().CoreWebView2() }
+                    .map_err(|error| preview_error("get WebView2 for navigation handlers", error))?;
                 let started_controller = controller.clone();
                 let started_registration_id = registration_id.clone();
                 let started = NavigationStartingEventHandler::create(Box::new(move |_, args| {
@@ -1464,7 +1471,8 @@ fn install_webview2_handlers(
                     Ok(())
                 }));
                 let mut started_token = 0;
-                unsafe { core.add_NavigationStarting(&started, &mut started_token)? };
+                unsafe { core.add_NavigationStarting(&started, &mut started_token) }
+                    .map_err(|error| preview_error("install navigation starting handler", error))?;
 
                 let completed_controller = controller.clone();
                 let completed_registration_id = registration_id.clone();
@@ -1512,7 +1520,8 @@ fn install_webview2_handlers(
                         Ok(())
                     }));
                 let mut completed_token = 0;
-                unsafe { core.add_NavigationCompleted(&completed, &mut completed_token)? };
+                unsafe { core.add_NavigationCompleted(&completed, &mut completed_token) }
+                    .map_err(|error| preview_error("install navigation completed handler", error))?;
 
                 let source = SourceChangedEventHandler::create(Box::new(move |core, _| {
                     let Some(core) = core else {
@@ -1531,15 +1540,16 @@ fn install_webview2_handlers(
                     Ok(())
                 }));
                 let mut source_token = 0;
-                unsafe { core.add_SourceChanged(&source, &mut source_token)? };
-                Ok::<(), webview2_com::Error>(())
+                unsafe { core.add_SourceChanged(&source, &mut source_token) }
+                    .map_err(|error| preview_error("install source changed handler", error))?;
+                Ok::<(), String>(())
             })();
-            let _ = sender.send(result.map_err(|error| error.to_string()));
+            let _ = sender.send(result);
         })
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| preview_error("dispatch WebView2 navigation handlers", error))?;
     receiver
         .recv_timeout(Duration::from_secs(5))
-        .map_err(|_| "Timed out configuring WebView2 browser security".to_string())?
+        .map_err(|error| preview_error("wait for WebView2 navigation handlers", error))?
 }
 
 #[cfg(windows)]
@@ -1572,6 +1582,20 @@ fn cdp(
 
 #[cfg(windows)]
 fn cdp_guarded(
+    webview: &tauri::Webview,
+    method: &str,
+    params: Value,
+    deadline: Instant,
+    guard: impl Fn() -> Result<(), String> + Send + 'static,
+    response_limit: usize,
+) -> Result<Value, String> {
+    let step = format!("CDP {method}");
+    cdp_guarded_inner(webview, method, params, deadline, guard, response_limit)
+        .map_err(|error| preview_error(&step, error))
+}
+
+#[cfg(windows)]
+fn cdp_guarded_inner(
     webview: &tauri::Webview,
     method: &str,
     params: Value,

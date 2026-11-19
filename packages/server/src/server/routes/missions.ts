@@ -7,6 +7,7 @@ import type { MissionActivityProjection, MissionList, MissionListResponse, Missi
 import { compactMissionMap, compactMissionReads, missionTaskPage, missionTaskRequestSchema } from "../../missions/mission-compact-map"
 import { MISSION_TASK_PAGE, type MissionTaskPageResponse, type MissionTaskPageResult } from "../../missions/mission-panel-map"
 import { projectMissionActivity, type MissionActivityInput, type MissionObservedRequests } from "../../missions/activity"
+import type { MissionActivityCache } from "../../missions/activity-cache"
 import { MissionPanelObservationError, readMissionPanelObservation } from "../../missions/mission-panel-observation"
 import { MISSION_LIST_MAX_INCLUDE } from "../../missions/mission-summary"
 import { missionContentRequestSchema, type MissionContentResponse, type MissionContentResult } from "../../missions/mission-content"
@@ -16,9 +17,8 @@ import { locationRequestOptions, sameLocation } from "../../opencode/compatibili
 import { readMissionMutationError } from "../../missions/rpc-errors"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
-import { prepareMissionCreation, MissionCreationPreparationError } from "./mission-creation-pipeline"
 import { requestAdmission } from "../request-admission"
-import { MissionCreationHoldError } from "./mission-creation-holds"
+import { registerMissionCreation } from "./mission-creation"
 import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot"
 import { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { SettingsService } from "../../settings/service"
@@ -35,7 +35,7 @@ import type { NativeScheduleSettingsActivation } from "../../opencode/native-sch
 import { registerMissionScheduleList } from "./mission-schedule-list"
 import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
 
-interface MissionRouteDeps {
+export interface MissionRouteDeps {
   scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
   scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply" | "verify">
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
@@ -50,6 +50,8 @@ interface MissionRouteDeps {
   /** Whether this backend publishes the local bridge Missions dispatch through,
    * and therefore provisions the plugin. Omitted means it does. */
   missionsHost?: () => boolean
+  /** Display activity memory shared by the panel reads (family trees, deleted sessions). */
+  activityCache?: MissionActivityCache
 }
 
 const MissionParamsSchema = z.object({ id: z.string().trim().min(1).max(200) })
@@ -80,6 +82,7 @@ const UpdateSchema = z.object({
 const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), requestId: RequestID, deleteManagedSessions: z.boolean().optional() }).strict()
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
+  registerMissionCreation(app, deps)
   registerMissionScheduleList(app, deps)
   registerMissionScheduleActivation(app, deps)
   registerMissionScheduled(app, deps)
@@ -202,36 +205,6 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
     })
   })
 
-  app.post<{ Params: { id: string } }>("/api/workspaces/:id/missions", async (request, reply) => {
-    const lifetime = requestAdmission(request, reply)
-    let creation: Awaited<ReturnType<typeof prepareMissionCreation>> | undefined
-    try {
-      lifetime.signal.throwIfAborted()
-      creation = await prepareMissionCreation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence,
-        workspaceID: request.params.id, request: request.body, signal: lifetime.signal, wait: lifetime.wait })
-      return await creation.execute()
-    } catch (error) {
-      // Hold codes keep their own meaning: a creation-uncertain retry may follow
-      // an earlier dispatched attempt with the same request identity.
-      if (error instanceof MissionCreationHoldError) {
-        return reply.code(error.code === "creation-capacity" ? 503 : 409).send({ error: error.message, code: error.code })
-      }
-      const deleting = error instanceof Error && "code" in error && error.code === "worktree-deleting"
-      // Only failures before the native create was attempted prove no effect and
-      // carry a no-effect code; later failures stay codeless and uncertain.
-      if (!creation?.dispatched) {
-        if (error instanceof MissionCreationPreparationError) {
-          return reply.code(error.status).send({ error: error.message, ...(error.message.startsWith("compare-models-") ? { code: error.message }
-            : error.status === 503 ? { code: "creation-unavailable" } : {}) })
-        }
-        if (deleting) return reply.code(409).send({ error: "Worktree deletion is in progress", code: "creation-worktree-deleting" })
-        return reply.code(503).send({ error: "Mission creation unavailable", code: "creation-unavailable" })
-      }
-      if (deleting) return reply.code(409).send({ error: "Worktree deletion is in progress" })
-      return mutationError(reply, error)
-    } finally { lifetime.dispose() }
-  })
-
   app.patch<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID", async (request, reply) => {
     const parsed = UpdateSchema.safeParse(request.body)
     const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
@@ -342,7 +315,7 @@ async function readMissionPlugin<T>(request: FastifyRequest<{ Params: { id: stri
             try { connection.assertCurrent(); return true } catch { return false }
           }
         return projectMissionActivity({
-          client, snapshot, workspaceID, onRequests: requests,
+          client, snapshot, workspaceID, onRequests: requests, cache: deps.activityCache,
           ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager), isCurrent: observationCurrent,
         })
       },

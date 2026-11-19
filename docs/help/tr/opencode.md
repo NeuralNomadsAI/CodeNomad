@@ -2,8 +2,8 @@
 
 ## CLI seçin veya kurun {#select-cli}
 
-1. **Ayarlar → OpenCode** öğesini açın ve yürütülebilir dosyayı seçmek için **OpenCode sürümü** altındaki **OpenCode Binary** kartını kullanın.
-2. Sunucunun PATH'sini (eski bir OpenCode içermediği sürece), ardından kullanıcı npm OpenCode 2 kurulumunu tercih etmek için otomatik girişi seçili bırakın; veya **Binary için gözat…** kullanın veya bir yol girin ve **Ekle** öğesini seçin.
+1. **Ayarlar → OpenCode** öğesini açın ve yürütülebilir dosyayı seçmek için **OpenCode sürümü** altındaki **OpenCode İkili Dosyası** kartını kullanın.
+2. Otomatik girişi seçili bırakın veya **Başka bir binary seç…** bölümünü açarak **Binary için gözat…** kullanın ya da bir yol girip **Ekle** öğesini seçin.
 3. **Durumu ve güncellemeleri denetle** öğesini kullanın. OpenCode eksikse **OpenCode'u kur ve başlat** öğesini seçin; önce ana bilgisayarı ve kurulum kapsamını inceleyin.
 4. Kurulum **Bağlan ve devam et** sunuyorsa, bildirilen sorunu çözdükten sonra bunu kullanın.
 
@@ -11,14 +11,14 @@
 
 PATH üzerinde önce eski bir OpenCode geliyorsa, sunulan eylem nasıl kurulduğuna bağlıdır. npm ile kurulmuş OpenCode 1.x için **OpenCode {version} sürümünü OpenCode 2 ile değiştir** onay ister, o npm paketini kaldırır ve OpenCode 2'yi aynı npm klasörüne kurar; OpenCode veri klasörü korunur ve OpenCode 2, 1.x konuşmalarını kendisi içe aktarır. Başka bir yolla (winget, Homebrew, elle) kurulmuş eski veya kullanılamayan bir OpenCode asla değiştirilmez: **CodeNomad için OpenCode 2 kur**, OpenCode 2'yi onun yanına, kullanıcı npm klasörüne kurar ve CodeNomad bundan sonra bu kopyayı kullanır. Bu eski komutun kendisi kullanıcı npm klasöründeyse (örneğin `~/.local/bin` içindeki bir bağlantı) ya da bu klasör yazılabilir değilse, kurulum eylemi sunmak yerine nedenini açıklar: komutu taşıyın veya yeniden adlandırın ya da klasör izinlerini düzeltin, ardından **Durumu ve güncellemeleri denetle** seçeneğini seçin. Bir terminaldeki `opencode` komutu yine eski sürümü başlatabilir. Açıkça seçilmiş özel bir yürütülebilir dosya asla değiştirilmez.
 
-Yüklü yürütülebilir dosya ve çalışan hizmetin farklı sürümleri olabilir. Başka bir yürütülebilir dosyanın seçilmesinin canlı arka plan programının yerini aldığını varsaymak yerine **OpenCode sürümü** kartında **Kurulu sürüm** ile **Çalışan hizmet** değerlerini karşılaştırın; **Sürüm ayrıntıları** minimum ve önerilen sürümleri listeler.
+**OpenCode sürümü** kartı, sürümü **Kurulu sürüm** değerinden farklı veya bilinmiyorsa **Çalışan hizmet** değerini ayrı gösterir. **Sürüm ayrıntıları** minimum sürümü ve farklıysa önerilen sürümü gösterir.
 
 ## Gerekli, önerilen ve doğrulanmamış sürümler {#versions}
 
 | Sınıflandırma | Mevcut gereksinim | Anlamı |
 | --- | --- | --- |
 | Asgari | OpenCode **2.3.0** | Bu CodeNomad sürümü için gereklidir. Önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. |
-| Önerilen | OpenCode **2.3.0** | Doğrulanan hedef; şu anda asgari sürümle aynı. |
+| Önerilen | OpenCode **2.3.0** | CodeNomad **1.1.0** için. CodeNomad **1.1.1** için asgari ve önerilen sürüm **2.3.2**’dir. |
 | Doğrulanmamış | Tam olarak doğrulanmamış daha yeni veya özel bir sürüm | Yalnızca denenmemiş olduğu için reddedilmez; bağlı hizmetin gerçek API sözleşmeleri kontrol edilir. |
 
 ## Ana bilgisayar, WSL ve paylaşılan hizmet kapsamı {#execution-host}
@@ -29,7 +29,7 @@ Proje sekmesini kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da de
 
 ## Başlangıçta başlat {#login-start}
 
-**Ayarlar → OpenCode** içindeki **Başlangıçta başlat**, oturum açtığınızda işletim sisteminin OpenCode hizmetini arka planda başlatmasını sağlar; CodeNomad kapalıyken de çalışır. Siz açana kadar kapalı kalır, bir sonraki oturum açılışınızda etkinleşir ve CodeNomad sunucusunu çalıştıran bilgisayardaki hesabınız için geçerlidir. **OpenCode Binary** kartında seçilen yürütülebilir dosyayı başlatır; başka bir yerel yürütülebilir dosya seçmek onu günceller, aksi halde öncekini başlatmaya devam eder.
+**Ayarlar → OpenCode** içindeki **Başlangıçta başlat**, oturum açtığınızda işletim sisteminin OpenCode hizmetini arka planda başlatmasını sağlar; CodeNomad kapalıyken de çalışır. Siz açana kadar kapalı kalır, bir sonraki oturum açılışınızda etkinleşir ve CodeNomad sunucusunu çalıştıran bilgisayardaki hesabınız için geçerlidir. **OpenCode İkili Dosyası** kartında seçilen yürütülebilir dosyayı başlatır; başka bir yerel yürütülebilir dosya seçmek onu günceller, aksi halde öncekini başlatmaya devam eder.
 
 | Sistem | OpenCode'u ne başlatır | Çökmeden sonra |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ Kaydedilmiş bir yapılandırma veya yüklü eklenti kullanılamadığında, ça
 ## Oturum ortamı {#session-environment}
 
 1. **Ayarlar → Gelişmiş** öğesini açın ve **Ortam Değişkenleri** bölümünü genişletin.
-2. Profilin geçersiz kılmalarını ekleyin, değiştirin veya kaldırın; her değişiklik hemen kaydedilir.
+2. Geçersiz kılmalar ekleyin, değerlerini düzenleyin veya kaldırın; kaydedilmiş adlar salt okunurdur ve her değişiklik hemen kaydedilir.
 3. Geçerli ortamı söz konusu konuşmaya uygulamak için sonraki istemi, özel komutu veya oturum kabuğu isteğini CodeNomad aracılığıyla gönderin.
 
 Bu bir yapılandırma profili ayarıdır. Yalnızca bir görüşmeyi açmak/okumak veya ayarları kaydetmek yerel oturumu değiştirmez. Bir geçersiz kılmayı kaldırmak, yürütme ana bilgisayarının devralınan değerini geri yükler veya orada yoksa kaldırır.

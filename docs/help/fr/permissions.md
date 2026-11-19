@@ -72,4 +72,6 @@ Désactiver Yolo ne révoque pas une décision déjà acceptée et n’annule pa
 1. Vérifiez l’indicateur de connexion et reconnectez-vous au même backend/projet.
 2. Laissez la récupération réconcilier les demandes natives en attente ; les demandes connues et brouillons restent conservés si la couverture est incomplète.
 
+Après deux tentatives incomplètes de suite, chaque projet affiche un seul avertissement de récupération par onglet du navigateur jusqu’à ce qu’une récupération complète réussisse.
+
 Une réponse incomplète n’est pas une file vide faisant autorité, et l’avertissement n’autorise pas à répéter un prompt, une réponse ou une approbation. Recharger la configuration peut annuler des Forms/autorisations natifs ; ne l’utilisez pas comme bouton d’actualisation habituel des demandes. Voir [Dépannage](troubleshooting.md) et [Configuration d’OpenCode](opencode.md).

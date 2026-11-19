@@ -30,7 +30,7 @@ const { loadInstanceMetadata } = await import("./hooks/use-instance-metadata")
 after(() => hooks.deregister())
 
 const location = { directory: "/repo" }
-const source = { scope: "global" as const, target: "example-plugin", entryIndex: 0, expectedRevision: "confirmed" }
+const source = { scope: "global" as const, expectedRevision: "confirmed", target: "example-plugin", entryIndex: 0 }
 const snapshot = { location, runtime: [], configured: { rules: [], sources: [] }, targets: [], controls: [] }
 type Wire = { url: string; method: string; body: unknown; headers: [string, string][]; credentials?: RequestCredentials }
 const registry = backends as Map<string, BackendClient>

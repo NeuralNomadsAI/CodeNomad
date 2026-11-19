@@ -3,7 +3,7 @@
 ## CLI auswählen oder installieren {#select-cli}
 
 1. Öffnen Sie **Einstellungen → OpenCode** und wählen Sie auf der Karte **OpenCode-Binärdatei** unterhalb von **OpenCode-Version** die Programmdatei.
-2. Lassen Sie den automatischen Eintrag ausgewählt, um den PATH des Servers zu bevorzugen, sofern er kein älteres OpenCode enthält, und danach dessen OpenCode-2-Installation im Benutzer-npm; oder verwenden Sie **Nach Binärdatei suchen...** beziehungsweise geben Sie einen Pfad ein und wählen **Hinzufügen**.
+2. Lassen Sie den automatischen Eintrag ausgewählt oder öffnen Sie **Andere Binärdatei wählen…**, um **Nach Binärdatei suchen...** zu verwenden oder einen Pfad einzugeben und **Hinzufügen** zu wählen.
 3. Verwenden Sie **Status und Updates prüfen**. Fehlt OpenCode, wählen Sie **OpenCode installieren und starten**; prüfen Sie vorher Host und Installationsumfang.
 4. Falls die Einrichtung **Verbinden und fortfahren** anbietet, verwenden Sie dies nach Behebung des gemeldeten Problems.
 
@@ -11,14 +11,14 @@
 
 Steht ein älteres OpenCode im PATH an erster Stelle, hängt die angebotene Aktion davon ab, wie es installiert wurde. Bei einem mit npm installierten OpenCode 1.x fragt **OpenCode {version} durch OpenCode 2 ersetzen** nach Bestätigung, entfernt dieses npm-Paket und installiert OpenCode 2 im selben npm-Ordner; der OpenCode-Datenordner bleibt erhalten, und OpenCode 2 importiert 1.x-Unterhaltungen selbst. Ein älteres oder unbrauchbares, auf anderem Weg installiertes OpenCode (winget, Homebrew, manuell) wird nie verändert: **OpenCode 2 für CodeNomad installieren** installiert OpenCode 2 daneben im Benutzer-npm-Ordner, und CodeNomad verwendet dann diese Kopie. Liegt dieser ältere Befehl selbst im Benutzer-npm-Ordner (zum Beispiel ein Link in `~/.local/bin`) oder ist dieser Ordner nicht beschreibbar, nennt die Einrichtung den Grund, statt die Aktion anzubieten: Verschieben Sie den Befehl oder benennen Sie ihn um, oder korrigieren Sie die Ordnerrechte, und wählen Sie dann **Status und Updates prüfen**. Der Befehl `opencode` eines Terminals kann weiterhin die ältere Version starten. Eine ausdrücklich ausgewählte benutzerdefinierte Programmdatei wird nie ersetzt.
 
-Installierte Programmdatei und laufender Dienst können unterschiedliche Versionen haben. Vergleichen Sie auf der Karte **OpenCode-Version** **Installierte Version** mit **Laufender Dienst**, statt anzunehmen, eine andere Programmdatei habe den laufenden Daemon ersetzt; **Versionsdetails** nennt Mindest- und empfohlene Version.
+Die Karte **OpenCode-Version** zeigt **Laufender Dienst** separat an, wenn seine Version von **Installierte Version** abweicht oder unbekannt ist. **Versionsdetails** zeigt die Mindestversion und bei Abweichung die empfohlene Version.
 
 ## Erforderliche, empfohlene und ungeprüfte Versionen {#versions}
 
 | Einstufung | Aktuelle Anforderung | Bedeutung |
 | --- | --- | --- |
 | Minimum | OpenCode **2.3.0** | Für diese CodeNomad-Version erforderlich. Mit früheren Versionen gespeicherte Unterhaltungen bleiben nach dem Update lesbar. |
-| Empfohlen | OpenCode **2.3.0** | Qualifiziertes Ziel; derzeit dieselbe Version wie das Minimum. |
+| Empfohlen | OpenCode **2.3.0** | Für CodeNomad **1.1.0**. CodeNomad **1.1.1** setzt **2.3.2** voraus und empfiehlt diese Version. |
 | Ungeprüft | Neuere oder angepasste, nicht vollständig validierte Version | Nicht allein wegen fehlender Tests abgelehnt; geprüft werden die tatsächlichen API-Verträge des verbundenen Dienstes. |
 
 ## Host, WSL und gemeinsamer Dienst {#execution-host}
@@ -57,7 +57,7 @@ Verwenden Sie **OpenCode-Konfiguration neu laden** (unter **Fehlerbehebung**, we
 ## Sitzungsumgebung {#session-environment}
 
 1. Öffnen Sie **Einstellungen → Erweitert** und klappen Sie **Umgebungsvariablen** auf.
-2. Ergänzen, ändern oder entfernen Sie die Überschreibungen des Profils; jede Änderung wird sofort gespeichert.
+2. Ergänzen Sie Überschreibungen, bearbeiten Sie ihre Werte oder entfernen Sie sie; gespeicherte Namen sind schreibgeschützt und jede Änderung wird sofort gespeichert.
 3. Senden Sie den nächsten Prompt, benutzerdefinierten Befehl oder Sitzungs-Shell-Aufruf über CodeNomad, um die aktuelle Umgebung auf diese Unterhaltung anzuwenden.
 
 Dies ist eine Konfigurationsprofileinstellung. Bloßes Öffnen/Lesen einer Unterhaltung oder Speichern von Einstellungen verändert keine native Sitzung. Das Entfernen einer Überschreibung stellt den geerbten Wert des Ausführungshosts wieder her oder entfernt ihn, wenn er dort fehlt.

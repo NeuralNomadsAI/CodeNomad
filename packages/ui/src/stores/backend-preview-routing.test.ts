@@ -62,7 +62,7 @@ test("preview store routes creation, replacement and deletion by instance; local
   }
   publishInstanceLifecycleAuthority({ type: "opened", instanceId: "workspace", folder: "/same", occurrence: 0 })
   const local = await openSessionPreview("same-session", "http://localhost:3000/app?q=1#hash", "workspace")
-  assert.equal(local.storageKey, JSON.stringify(["workspace", "same-session"]))
+  assert.equal(local.storageKey, "same-session")
   assert.equal(local.proxyUrl, "/previews/local-token/app?q=1#hash")
   assert.equal(getPreviewFrameSource({ host: "tauri", windowContext: "local" }, local, "http://127.0.0.1:9899/src/"), "http://local-token.preview.localhost:9899/app?q=1#hash")
   await closeSessionPreview(local.storageKey)
@@ -201,7 +201,7 @@ test("explicit reopen after chat starts a fresh restore without joining or clear
   assert.equal(restored?.token, "preview_reopen-3")
   assert.equal(restored?.targetUrl, "https://example.com/saved")
   assert.equal(getSessionPreview("s", id)?.token, restored?.token)
-  showSessionPreview(restored!.storageKey)
+  showSessionPreview("s", id)
   assert.equal(getSessionPreview("s", id)?.mode, "preview")
   await closeSessionPreview(restored!.storageKey)
 })

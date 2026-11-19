@@ -81,6 +81,7 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 import { openSessionPreview } from "./stores/session-previews"
+import { SessionPreviewHost } from "./components/session-preview-view"
 import { beginGesture } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
@@ -287,10 +288,7 @@ const App: Component = () => {
         owners = findOwners()
       }
       const activeTab = activeAppTab()
-      const owner = selectBrowserOpenOwner(
-        owners,
-        activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
-      )
+      const owner = selectBrowserOpenOwner(owners, activeTab?.kind === "instance" ? activeTab.instance.id : undefined)
       if (disposed || !owner) {
         if (!disposed) log.warn("Failed to route agent-requested web preview", {
           sessionID,
@@ -939,6 +937,7 @@ const App: Component = () => {
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
+        <SessionPreviewHost />
         <AuthRecoveryDialog />
 
         <Toaster

@@ -215,7 +215,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
           const bytes = nativeBytes(item)
           if (nativeBytes(stable) !== bytes) break // Updated since the page read: defer this ID and every later ID.
           const technical = request.excludeTechnical && (item.type === "user" || item.type === "synthetic")
-            && item.metadata && ("schedule" in item.metadata || "codenomad.scheduleCarrier" in item.metadata || item.metadata.notice === "restart")
+            && item.metadata && ("schedule" in item.metadata || "automation" in item.metadata || "codenomad.scheduleCarrier" in item.metadata || item.metadata.notice === "restart")
           const text = technical ? "" : item.type === "user" || item.type === "synthetic" ? item.text
             : item.type === "assistant" ? item.content.filter(part => part.type === "text").map(part => part.text).join("\n") : ""
           const reference = { id: String(item.id), type: technical ? "technical" : item.type, nativeDigest: createHash("sha256").update(bytes).digest("hex"),

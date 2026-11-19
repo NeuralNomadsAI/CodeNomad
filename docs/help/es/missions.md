@@ -8,15 +8,25 @@ Si Misiones no está disponible, **Ajustes de OpenCode** abre la recuperación d
 
 Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.
 
-**Crear misión** sustituye el árbol por el formulario hasta crear o cancelar. Los grupos siguen este orden.
+**Crear misión** sustituye el árbol por el formulario hasta crear o cancelar. Una creación confirmada selecciona la misión; una creación rechazada deja el formulario editable.
+
+Pide a un agente en cualquier conversación del proyecto, incluido un subagente o una ejecución programada, que prepare una Misión separada, puntual o programada. Su conversación permanece igual; por defecto se crea una nueva conversación del coordinador. Mantén disponible el backend de CodeNomad responsable. **Iniciar automáticamente** autoriza el primer inicio de esa nueva Misión; la recuperación lee el resultado original. Los agentes también pueden listar, inspeccionar, iniciar, pausar, detener, reanudar, ejecutar ahora, comprobar, editar y eliminar cualquier programación del proyecto, incluidas las creadas en el editor. Se aplican las mismas comprobaciones de revisión y admisión; se conserva la desactivación explícita de la programación. Una acción no confirmada conserva su solicitud original para consultar el estado en modo de solo lectura.
 
 ### Configuración {#saved-briefs}
 
+Los agentes pueden consultar todas las Misiones del proyecto, incluidas las tuyas, desde cualquier conversación propia. Las vistas de solo lectura incluyen tareas, resultados, limpieza, ejecuciones programadas y selección de fuentes; consultar nunca inicia ni reintenta trabajo.
+
+También pueden diagnosticar la programación, preparar sus ajustes conservando un OFF explícito, reanudar una edición parcial confirmada con la solicitud original y crear o controlar programaciones diarias.
+
 **Configuración** carga opcionalmente objetivo, notas, guion, perfiles y sesiones guardados. Su nombre proporciona el título editable. Revisa los campos.
+
+Los agentes pueden leer, guardar, reemplazar o renombrar, eliminar y reparar configuraciones, incluidas las instrucciones de una Misión existente. También pueden cambiar los perfiles y las sesiones predeterminados globalmente o por guion, restaurar la herencia, restablecer preferencias inválidas y cambiar la preferencia de eliminación de conversaciones de tareas. La biblioteca y estas preferencias se aplican a todos los proyectos del perfil de CodeNomad. La profundidad de subagentes del proyecto admite 1–10 o **Heredar**, incluida la reparación de un bloque de configuración vacío. Cada cambio comprueba el último valor leído y conserva las modificaciones humanas posteriores.
 
 **Guardar configuración**, abajo junto a Cancelar y Crear, conserva una configuración reutilizable sin crear ni iniciar una Misión. Programación e inicio automático se eligen aparte. El engranaje abre Preferencias y la biblioteca; eliminar una configuración conserva las misiones y conversaciones.
 
 ### Objetivo, Título y Notas {#mission-instructions}
+
+En las Missions puntuales, los agentes pueden iniciar, reanudar, pausar suavemente, interrumpir de inmediato, detener, editar, eliminar, recuperar la coordinación tras un fallo y pedir un informe pendiente o una actualización. Esto incluye las Missions que usted creó, con las mismas comprobaciones de admisión y revisión del panel. La eliminación sigue su preferencia para las sesiones administradas salvo indicación expresa. Las acciones y limpiezas sin confirmar conservan su identidad original; los agentes leen el estado guardado antes de continuar explícitamente una acción parcial confirmada.
 
 **Objetivo** describe el resultado y cómo comprobarlo. **Título** nombra la entrada; inicialmente sigue la primera frase del objetivo, hasta 60 caracteres, y es editable. **Notas** aporta contexto, restricciones o instrucciones adicionales opcionales para los agentes.
 
@@ -78,7 +88,11 @@ Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la re
 
 La programación seleccionada muestra estado, próximo despertar o comprobación, pasadas lanzadas/exitosas e historial. Se conservan 30 resultados y los contadores acumulados. **Ejecutar ahora** cuenta al admitirse. Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
 
+En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, también para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
+
 ### Programaciones diarias existentes {#existing-daily-schedules}
+
+Los agentes pueden encontrar y controlar estas programaciones desde cualquier conversación del mismo proyecto, incluso en otro worktree.
 
 Conservan controles y zona. Tras reiniciar el servicio requieren **Reanudar** desde el estado interrumpido. Recuperan el último día válido, no todos los perdidos. La entrada seleccionada permite leer resultados.
 

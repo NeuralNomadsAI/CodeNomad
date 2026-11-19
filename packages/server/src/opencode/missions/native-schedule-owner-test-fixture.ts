@@ -89,7 +89,7 @@ export async function ownerFixture(t: test.TestContext, timing: import("../../mi
   const control = async (action: Parameters<typeof owner.control>[0]["action"], requestID = `request_${action}`, configuration?: MissionConfiguration) => {
     const fresh = await read(); return owner.control({ missionID: fresh.id, requestID, expectedRevision: fresh.revision, action, configuration })
   }
-  return { owner, makeOwner, store, native, ctx, directory, values, sessions, calendars, calls, blocked, configuration, read, control, current, now,
+  return { owner, makeOwner, store, native, ctx, directory, values, sessions, calendars, calls, blocked, configuration, installation, read, control, current, now,
     advance: (ms: number) => { clock += ms }, delayAuxiliary: (ms: number) => { auxiliaryDelay = ms },
     loseCreateACK: (role?: "principal" | "reconciliation") => { lost = role ?? true }, loseCreateWithoutCandidate: () => { absentCreate = true }, allowPendingResume: () => { allowResume = true } }
 }
