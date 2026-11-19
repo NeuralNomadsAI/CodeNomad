@@ -21,6 +21,8 @@ export class ScheduledCoordinatorRefusal extends Error {
   constructor(readonly reason: "coordinator-busy" | "coordinator-owned" | "coordinator-is-source") { super(reason) }
 }
 export const withNativeSourceTransaction = <A>(graph: Context.Context<never>, use: () => A): A => transactionGraph.run(graph, use)
+export const readNativeSourceRows = (client: SqlClient.SqlClient, graph: Context.Context<never>, sql: string, args: readonly unknown[]) =>
+  Effect.runSync(client.unsafe(sql, args).withoutTransform.pipe(Effect.provide(transactionGraph.getStore() ?? graph)))
 const nativeKey = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
 export const nativeBackgroundSQL = `SELECT key,json_extract(value,'$.recovery.kind') AS kind,
   json_extract(value,'$.recovery.sessionID') AS sessionID,json_extract(value,'$.recovery.parentSessionID') AS parentSessionID,
@@ -51,7 +53,7 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
   const shellService = Context.getOption(graph, Context.Service<never, unknown>("@opencode/Shell"))
   const read = (sql: string, args: readonly unknown[]) => {
     alive()
-    const result = Effect.runSync(database.db!.$client!.unsafe(sql, args).withoutTransform.pipe(Effect.provide(transactionGraph.getStore() ?? graph)))
+    const result = readNativeSourceRows(database.db!.$client!, graph, sql, args)
     if (!Array.isArray(result)) throw new Error("Mission source projection unavailable")
     return result as Record<string, unknown>[]
   }

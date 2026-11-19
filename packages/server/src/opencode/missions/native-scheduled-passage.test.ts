@@ -2,7 +2,7 @@ import { legacyLaunch } from "../../missions/legacy-launch-test-helper"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import assert from "node:assert/strict"
 import test from "node:test"
-import { Effect, Schema } from "effect"
+import { Context, Effect, Schema } from "effect"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "../../missions/mission-document-store"
@@ -17,7 +17,8 @@ import { documentPassageStartInput, documentWatchCheckpoint, documentWatchCheckp
 import { admitNativeScheduledPassage, readOriginalDocumentAdmission } from "./native-scheduled-passage-admission"
 import { nativeScheduledPassageBusiness, type NativeScheduledPassageContext } from "./native-scheduled-passage-business"
 import { observeNativeScheduledPassage } from "./native-scheduled-passage-settlement"
-import { documentManualPassageAllowed, documentPassageDispatchAllowed } from "./native-scheduled-passage-authority"
+import { acquireNativeScheduledPassageAuthority, documentManualPassageAllowed, documentPassageDispatchAllowed } from "./native-scheduled-passage-authority"
+import { withNativeSourceTransaction } from "./native-source-fence"
 import { prepareNativeDocumentSources } from "./native-scheduled-passage-sources"
 import { createNativeScheduledPassageBusinessPort, type NativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
 import type { MissionNativeService } from "./native-service-adapter"
@@ -160,6 +161,24 @@ async function fixture(existing = false, author?: string) {
     set crashCreate(value: boolean) { crashCreate = value }, set crashAttemptWrite(value: boolean) { crashAttemptWrite = value },
     set now(value: number) { clock = value } }
 }
+
+test("passage authority reads from the open document transaction", async () => {
+  const f = await fixture(true, "ses_existing"), expected = await f.read()
+  let stored = expected
+  const database = Context.Service<never, unknown>("@opencode/storage/Database")
+  const location = Context.Service<never, unknown>("@opencode/Location")
+  const transaction = Context.Service<never, boolean>("passage-test-transaction")
+  const client = { unsafe: () => ({ withoutTransform: Effect.gen(function* () {
+    assert.equal(yield* transaction, true)
+    return [{ value: JSON.stringify(stored) }]
+  }) }) }
+  const graph = Context.add(Context.make(database, { db: { $client: client } }), location, f.native.location)
+  const authority = await Effect.runPromise(Effect.provide(acquireNativeScheduledPassageAuthority(current), graph))
+  const read = () => withNativeSourceTransaction(Context.add(graph, transaction, true), () => authority(expected, "observe"))
+  assert.equal(read(), true)
+  stored = { ...stored, pending: null }
+  assert.throws(read, /Document passage authority changed/)
+})
 
 test("agent coordinator prevalidation refuses both conversation source kinds", async () => {
   const f = await fixture(true, "ses_author")
