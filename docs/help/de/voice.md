@@ -54,6 +54,8 @@ Die lokale Erkennung nutzt das Mikrofon dieses Geräts und funktioniert offline,
 
 In einem Tauri-Fenster für einen entfernten Server unter Linux prüft **Eingabe testen** die Sprach-API des Servers, ohne die Diktat-Engine zu ändern. Prüfen Sie vor jeder API-Aufnahme die Serveradresse im nativen Mikrofondialog und bestätigen Sie die Aufnahme. Die Aufnahme nutzt PulseAudio oder den PulseAudio-Dienst von PipeWire und hat immer das oben beschriebene WAV-Limit von 24 Sekunden.
 
+Gemini Live und OpenAI Realtime sind in entfernten Tauri-Fenstern unter Linux nicht verfügbar: Diese Fenster nutzen für Diktat und Eingabetests die native Aufnahme, und WebKit blockiert den direkten Mikrofonzugriff.
+
 ## Nachrichten vorlesen {#playback}
 
 1. Verwenden Sie **Nachricht vorlesen** an einer Nachricht oder dieselbe Aktion an einem Werkzeugaufruf, wenn TTS verfügbar ist.

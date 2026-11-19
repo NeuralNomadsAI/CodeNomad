@@ -54,6 +54,8 @@ Local recognition uses this device's microphone and works offline, including wit
 
 In a remote Tauri window on Linux, **Test input** checks the server’s speech API without changing the dictation engine. For each API recording, check the server address in the native microphone prompt before confirming. Capture uses PulseAudio or PipeWire’s PulseAudio service and always has the 24-second WAV limit described above.
 
+Gemini Live and OpenAI Realtime are unavailable in remote Tauri windows on Linux: these windows use the native recorder for dictation and input tests, and WebKit blocks direct microphone access.
+
 ## Read messages aloud {#playback}
 
 1. Use **Speak message** on a message, or the same action on a tool call, when TTS is available.

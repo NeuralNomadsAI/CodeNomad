@@ -33,6 +33,17 @@ the bearer `Authorization` header on their provider WebSockets.
   16 kHz PCM input and 24 kHz PCM output. [OpenAI Realtime](https://developers.openai.com/api/docs/guides/realtime-conversations/)
   uses `/v1/realtime` and 24 kHz in both directions. The renderer stops queued
   playback at interruption and reports OpenAI's played duration for truncation.
+- Start audio from the user's activation and send its 20 ms PCM frames only after
+  the gateway confirms the expected rates. The audio processor resamples mono
+  capture off the UI thread, and resamples and plays 24 kHz PCM from a bounded
+  12-second ring. An interruption clears the ring and counts PCM frames rendered
+  per item, excluding queued audio and silent gaps. Socket backpressure is the
+  session controller's responsibility.
+- The audio graph requires a secure top-level application document. Local Linux
+  Tauri uses the short-lived WebKit frame for its browser microphone. Remote
+  Linux Tauri supports API dictation and input testing through the native WAV
+  recorder; the live engines require browser microphone access and are unavailable
+  in that window.
 - Only `send_to_agent` and `read_session` can reach the renderer. Replies must
   match an outstanding call; Gemini cancellation retires the call. The gateway
   has no OpenCode or filesystem tool access. Provider failure and disconnect
@@ -76,3 +87,8 @@ The system helper can be qualified independently of the two hosts: a synthetic `
 Run `node --test packages/desktop-speech/hex.test.mjs` for simulated downloads, integrity, local protocol and child termination. The Electron suite includes the device lifecycle and preload checks (`npm run test:native --workspace @neuralnomads/codenomad-electron-app`). Run `cargo test device_speech` in `packages/tauri-app/src-tauri` for the equivalent state and authorization tests.
 
 `packages/tauri-app/tests/webkit-microphone.c` checks local WebKitGTK capture with a simulated device. `cargo test device_speech` also exercises native remote consent ownership and audio capture, using GStreamer's simulated source. The browser suites `composer-dictation.test.ts` and `hex-capture.test.ts` cover the renderer callers, including the remote API clip, manual API input test and PCM fallback. Linux source builds require the GStreamer base development headers; remote capture at runtime requires the base and PulseAudio (Good) plugins.
+
+`live-voice-worklet.test.ts` checks sample-rate conversion, bounds and interruption;
+`live-voice-audio.test.ts` exercises the renderer lifecycle with a synthetic stream.
+`packages/tauri-app/tests/webkit-live-audio.c` loads the same processors in WebKitGTK
+with a simulated capture device.

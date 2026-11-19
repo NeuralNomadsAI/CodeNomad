@@ -54,6 +54,8 @@ Ubuntu 24.04 满足 glibc 要求，Ubuntu 22.04 则不满足。Hex 会在 [Parak
 
 在 Linux 的远程 Tauri 窗口中，**测试输入**可测试服务器的语音 API，无需更改听写引擎。每次确认 API 录音前，请在原生麦克风对话框中核对服务器地址。录音使用 PulseAudio 或 PipeWire 的 PulseAudio 服务，并始终遵守上文所述的 WAV 录音 24 秒限制。
 
+Linux 上的远程 Tauri 窗口不支持 Gemini Live 和 OpenAI Realtime：这些窗口使用原生录音功能进行听写和输入测试，WebKit 会阻止直接访问麦克风。
+
 ## 朗读消息 {#playback}
 
 1. TTS 可用时，在消息上使用**朗读消息**，或在工具调用上使用同一操作。

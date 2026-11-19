@@ -54,6 +54,8 @@ El reconocimiento local usa el micrófono de este dispositivo y funciona sin con
 
 En una ventana remota de Tauri en Linux, **Probar entrada** comprueba la API de voz del servidor sin cambiar el motor de dictado. Comprueba la dirección del servidor en el cuadro de diálogo nativo del micrófono antes de confirmar cada grabación para la API. La captura usa PulseAudio o el servicio PulseAudio de PipeWire y siempre se aplica el límite de WAV de 24 segundos descrito arriba.
 
+Gemini Live y OpenAI Realtime no están disponibles en las ventanas remotas de Tauri en Linux: esas ventanas usan la grabadora nativa para el dictado y las pruebas de entrada, y WebKit bloquea el acceso directo al micrófono.
+
 ## Leer mensajes en voz alta {#playback}
 
 1. Usa **Reproducir mensaje** en un mensaje, o la misma acción en una llamada a herramienta, cuando TTS esté disponible.

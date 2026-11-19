@@ -54,6 +54,8 @@ Yerel tanıma bu cihazın mikrofonunu kullanır ve yerel uygulamada açılan WSL
 
 Linux’ta uzak bir Tauri penceresinde **Girdiyi test et**, dikte motorunu değiştirmeden sunucunun ses API’sini sınar. API için her kaydı onaylamadan önce yerel mikrofon iletişim kutusundaki sunucu adresini kontrol edin. Kayıt, PulseAudio veya PipeWire’ın PulseAudio hizmetini kullanır ve yukarıda açıklanan 24 saniyelik WAV sınırı her zaman geçerlidir.
 
+Gemini Live ve OpenAI Realtime, Linux’taki uzak Tauri pencerelerinde kullanılamaz: bu pencereler dikte ve girdi sınaması için yerel kayıt aracını kullanır, WebKit ise mikrofona doğrudan erişimi engeller.
+
 ## Mesajları yüksek sesle oku {#playback}
 
 1. TTS kullanılabiliyorsa bir mesajda **Mesajı seslendir** eylemini veya bir araç çağrısında aynı eylemi kullanın.

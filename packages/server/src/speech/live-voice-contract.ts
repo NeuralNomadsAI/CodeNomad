@@ -3,8 +3,14 @@ import type { VoiceConversationEngine } from "../api-types"
 export const LIVE_VOICE_PATH = "/api/speech/conversation/live"
 export const LIVE_VOICE_CLIENT_BYTES = 32 * 1024
 export const LIVE_VOICE_PROVIDER_BYTES = 256 * 1024
+export const LIVE_VOICE_OUTPUT_RATE = 24_000
+export const LIVE_VOICE_TRACKED_IDS = 32
 
 export type LiveVoiceEngine = Exclude<VoiceConversationEngine, "classic">
+
+export function liveVoiceInputRate(engine: LiveVoiceEngine): 16000 | 24000 {
+  return engine === "gemini-live" ? 16_000 : 24_000
+}
 
 export type LiveVoiceTool =
   | { name: "send_to_agent"; arguments: { text: string } }
