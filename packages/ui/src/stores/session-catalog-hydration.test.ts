@@ -10,7 +10,7 @@ import { fetchSessions, hydrateRestoredSessionChain, refreshSessionRuntimeStatus
 import { hydrateRestoredWorkspaceState, seedRestoredWorkspaceState } from "./app-session-workspace-hydration"
 import { ensureWorktreesLoaded } from "./worktrees"
 import { captureSessionCatalog } from "./session-catalog-persistence"
-import { activeParentSessionId, activeSessionId, getInstanceSessionIndicatorStatusCached, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, setActiveParentSession, setActiveSessionFromList, setSessionPendingPermission, setSessionStatus, sessions, setSessions } from "./session-state"
+import { activeParentSessionId, activeSessionId, getInstanceSessionIndicatorStatusCached, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, setActiveParentSession, setActiveSessionFromList, setSessionPendingPermission, setSessionStatus, sessions, setSessions, withSession } from "./session-state"
 import { messageStoreBus } from "./message-v2/bus"
 import { handleNativeSessionEvent } from "./session-events"
 import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data"
@@ -317,7 +317,8 @@ for (const withDescendant of [false, true]) {
     const native = (id: string, directory: string, parentID?: string) => ({
       ...row(id), parentID, location: { directory }, model: { providerID: "p", id: "m" },
     })
-    const alias = native("root", "/linked-alias")
+    let alias = native("root", "/linked-alias")
+    const moved = { ...native("root", "/second-linked-alias"), projectID: "moved-project", subpath: "pkg" }
     const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
     const replies = {
       owned: () => Response.json({ data: alias }),
@@ -326,6 +327,8 @@ for (const withDescendant of [false, true]) {
     }
     let reply: () => Response | Promise<Response> = replies.owned, reads = 0
     const probeStarted = deferred<void>(), delayed = deferred<Response>()
+    const placementProbeStarted = deferred<void>(), delayedPlacement = deferred<Response>()
+    const agentDirectories: string[] = []
     try {
       serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
       globalThis.fetch = async input => {
@@ -334,6 +337,7 @@ for (const withDescendant of [false, true]) {
         return reply()
       }
       f.client.session.get = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) }).session.get
+      f.client.agent = { list: async ({ location }: any) => { agentDirectories.push(location.directory); return [] } }
       f.client.session.list = async (input: any) => ({ data: input.project
         ? [alias, ...(withDescendant ? [native("child", "/repo", "root")] : [])]
         : [native("other", "/repo")], cursor: {} })
@@ -351,10 +355,15 @@ for (const withDescendant of [false, true]) {
       assert.equal(activeSessionId().get(id), "root", "expiry and generic 403 are not a departure")
       assert.equal(reads, 2)
 
-      reply = replies.owned
+      reply = () => Response.json({ data: moved })
       await fetchSessions(id, { strictStatus: true })
       assert.equal(activeSessionId().get(id), "root")
       assert.equal(reads, 3)
+      const placed = sessions().get(id)?.get("root")
+      assert.deepEqual([placed?.location.directory, placed?.projectID, placed?.subpath],
+        [moved.location.directory, moved.projectID, moved.subpath])
+      assert.ok(agentDirectories.includes(moved.location.directory), "composer catalogue reads the confirmed placement")
+      alias = moved
       await fetchSessions(id, { strictStatus: true })
       assert.equal(reads, 3, "successful revalidation renews the proof")
 
@@ -370,14 +379,26 @@ for (const withDescendant of [false, true]) {
       assert.equal(activeSessionId().get(id), "root", "a superseded refusal cannot evict")
       assert.equal(reads, 5)
 
+      reply = () => { placementProbeStarted.resolve(); return delayedPlacement.promise }
+      const pending = fetchSessions(id, { strictStatus: true })
+      await placementProbeStarted.promise
+      const newer = { directory: "/repo/newer" }
+      withSession(id, "root", session => { session.location = newer })
+      delayedPlacement.resolve(Response.json({ data: { ...moved, location: { directory: "/stale-alias" } } }))
+      await pending
+      assert.equal(sessions().get(id)?.get("root")?.location, newer, "a probe cannot overwrite a newer placement")
+      assert.equal(activeSessionId().get(id), "root")
+      withSession(id, "root", session => { session.location = moved.location })
+
       reply = replies.departed
       await fetchSessions(id, { strictStatus: true })
-      assert.equal(reads, 6)
+      assert.equal(reads, 7)
       assert.equal(activeSessionId().get(id), undefined, "typed departure removes the projection")
       assert.equal(sessions().get(id)?.has("root") ?? false, false)
       assert.equal(getSessionDraftPrompt(id, "root"), "keep draft")
     } finally {
       delayed.resolve(replies.forbidden())
+      delayedPlacement.resolve(replies.forbidden())
       destroyOpenCodeData(id)
       globalThis.fetch = originalFetch
       serverApi.fetchWorktrees = originalWorktrees

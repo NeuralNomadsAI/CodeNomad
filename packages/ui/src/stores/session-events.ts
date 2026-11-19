@@ -128,8 +128,12 @@ export function retainConfirmedSessionPlacement(
         clearPendingSessionMove(instanceId, sessionId)
         markSessionMovedAway(instanceId, sessionId, null)
         removeSessionProjection(instanceId, sessionId)
-      } else if (result?.id === sessionId && matchesSessionPlacement(result, confirmed.placement)) {
+      } else if (result?.id === sessionId && result.location) {
         confirmSessionPlacement(instanceId, sessionId, result)
+        if (!matchesSessionPlacement(result, confirmed.placement)) {
+          applySessionMovePlacement(instanceId, { ...result, sessionID: sessionId })
+          refreshSelectedMoveCatalog(instanceId, sessionId)
+        }
       }
     } catch (error) {
       if (current()) log.warn("Failed to revalidate session placement", { instanceId, sessionId, error })
@@ -363,6 +367,14 @@ async function refreshMovedSessions(instanceId: string): Promise<void> {
   }
 }
 
+function refreshSelectedMoveCatalog(instanceId: string, sessionId: string): void {
+  if (activeSessionId().get(instanceId) === sessionId) {
+    void refreshSessionCatalog(instanceId).catch((error) => {
+      log.warn("Failed to refresh moved session catalog", { instanceId, sessionId, error })
+    })
+  }
+}
+
 function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {
   const { sessionID: sessionId, location } = data
   const targetInstanceIds = Array.from(instances().keys()).filter((instanceId) => ownsSessionDirectory(instanceId, location.directory))
@@ -373,11 +385,7 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
   const sourceOwnsLocation = targetInstanceIds.includes(sourceInstanceId)
   if (sourceOwnsLocation) {
     applySessionMovePlacement(sourceInstanceId, data)
-    if (activeSessionId().get(sourceInstanceId) === sessionId) {
-      void refreshSessionCatalog(sourceInstanceId).catch((error) => {
-        log.warn("Failed to refresh moved session catalog", { instanceId: sourceInstanceId, sessionId, error })
-      })
-    }
+    refreshSelectedMoveCatalog(sourceInstanceId, sessionId)
   }
 
   const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]

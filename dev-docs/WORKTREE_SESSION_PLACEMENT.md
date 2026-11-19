@@ -65,7 +65,8 @@ Implementation:
   and junctions. Move and restore reads confirm the exact placement across
   catalogue refreshes for the current client generation. A catalogue that would
   discard a matching alias with expired evidence rechecks it through the proxy.
-  A matching read renews the evidence; a typed departure removes the old list,
+  A successful read applies the current placement and renews the evidence;
+  a typed departure removes the old list,
   selection and transcript
   projection (`removeSessionProjection`). Other read failures keep the move
   unresolved until a later worktree publication retries it. Confirmation updates
