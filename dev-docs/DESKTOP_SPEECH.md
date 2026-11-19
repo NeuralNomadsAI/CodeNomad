@@ -61,6 +61,8 @@ the bearer `Authorization` header on their provider WebSockets.
   `send_to_agent` submits a user message directly, without a confirmation dialog,
   through native `sendMessage` with the composer's delivery rules and no
   attachments. Follow-up delivery uses the session state at serialized admission.
+  An acknowledged steering prompt counts as busy until native execution or
+  settlement is observed.
   Normal permission, question and Yolo handling apply. A call ID is
   admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.

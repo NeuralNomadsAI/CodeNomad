@@ -178,25 +178,48 @@ test("Gemini cancellation and target changes fence calls through native admissio
   } finally { await context.close() }
 })
 
-for (const cancelled of [false, true]) {
-  test(`a waiting voice send ${cancelled ? "starts on idle after the first call is cancelled" : "queues once the first prompt starts work"}`, async () => {
+for (const [order, description] of [
+  ["early", "queues once the first prompt starts work"],
+  ["late", "queues after native acceptance even before execution starts"],
+  ["cancelled", "starts on idle after the first call is cancelled"],
+  ["failed", "starts on idle after the first prompt fails"],
+] as const) {
+  test(`a waiting voice send ${description}`, async () => {
     const { page, context, start, snapshot, waitForSent } = await fixture()
     try {
       const send = await start()
+      if (order === "late" || order === "failed") {
+        await page.evaluate(value => (window as any).fixture.setFirstPrompt(value), order === "late" ? "delay" : "fail")
+      }
       await page.evaluate(() => (window as any).fixture.holdAdmission())
       const call = (id: string) => ({ type: "tool-call", id, name: "send_to_agent", arguments: { text: id } })
+      const readStatus = async (id: string) => {
+        send({ type: "tool-call", id, name: "get_session_status", arguments: {} })
+        return JSON.parse((await waitForSent(item => item.id === id)).output).status
+      }
       send(call("first"))
       await page.waitForFunction(() => (window as any).fixture.waitingAdmission())
       send(call("second"))
+      const cancelled = order === "cancelled"
       if (cancelled) send({ type: "tool-cancel", id: "first" })
-      send({ type: "tool-call", id: "status", name: "get_session_status", arguments: {} })
-      assert.equal(JSON.parse((await waitForSent(item => item.id === "status")).output).status, "idle")
+      assert.equal(await readStatus("before"), "idle")
       assert.deepEqual((await snapshot()).info.prompts, [])
       await page.evaluate(() => (window as any).fixture.releaseAdmission(false))
+      const busy = order === "early" || order === "late"
       assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "second")).output),
-        { delivery: cancelled ? "submitted" : "queued" })
+        { delivery: busy ? "queued" : "submitted" })
       assert.deepEqual((await snapshot()).info.prompts.map((item: any) => [item.text, item.delivery, item.resume]),
-        cancelled ? [["second", "steer", undefined]] : [["first", "steer", undefined], ["second", "queue", false]])
+        [...(cancelled ? [] : [["first", "steer", undefined]]), ["second", busy ? "queue" : "steer", busy ? false : undefined]])
+      if (order === "late") {
+        assert.equal(await readStatus("delayed"), "idle")
+        await page.evaluate(() => (window as any).fixture.startExecution())
+        assert.equal(await readStatus("started"), "running")
+        await page.evaluate(() => (window as any).fixture.finishExecution())
+        assert.equal(await readStatus("finished"), "idle")
+        send(call("after-idle"))
+        assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "after-idle")).output), { delivery: "submitted" })
+        assert.equal((await snapshot()).info.prompts.at(-1).delivery, "steer")
+      }
     } finally { await context.close() }
   })
 }

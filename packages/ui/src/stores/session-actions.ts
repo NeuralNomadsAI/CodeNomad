@@ -217,7 +217,9 @@ async function sendMessage(
   prompt: string,
   attachments: Attachment[] = [],
   options: { delivery?: SessionInboxDelivery | (() => SessionInboxDelivery); restoredPayload?: SessionInboxUserPayload;
-    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean } = {},
+    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean;
+    // Capture dispatch-time state; run the receipt before the next admission.
+    onDispatch?: () => (() => void) | undefined } = {},
 ): Promise<string> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -380,7 +382,9 @@ async function sendMessage(
       const input = { sessionID: sessionId, ...requestBody, ...(delivery ? { delivery } : {}),
         ...(delivery === "queue" ? { resume: false } : {}) }
       log.info("session.prompt", { instanceId, sessionId, requestBody: input })
+      const onAccepted = options.onDispatch?.()
       const result = await client.session.prompt(input)
+      onAccepted?.()
       const confirmedId = result?.id || messageId
       if (projected && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
       if (projected) store.acceptSend(confirmedId)

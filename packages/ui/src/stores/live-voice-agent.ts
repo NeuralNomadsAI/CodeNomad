@@ -8,6 +8,7 @@ import { isLatestWindow, MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-w
 import type { FollowUpBehavior } from "./preferences"
 import { locationAuthorityKey } from "./request-locations"
 import { sendMessage } from "./session-actions"
+import { nativeSessionLifecycleGeneration } from "./session-events"
 import { normalizeSessionDirectory } from "./session-list-options"
 import { activeSessionId, sessions } from "./session-state"
 import { isSessionBusy } from "./session-status"
@@ -54,6 +55,15 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
 }) {
   const instanceId = instance.id
   const sessionId = session.id
+  const lifecycle = () => nativeSessionLifecycleGeneration(instanceId, sessionId)
+  const idleBoundary = () => sessions().get(instanceId)?.get(sessionId)?.time.idle ?? 0
+  let awaitingExecution: { generation: number; idle: number } | undefined
+  function busyFromAcknowledgement() {
+    if (awaitingExecution && (awaitingExecution.generation !== lifecycle() || idleBoundary() > awaitingExecution.idle)) {
+      awaitingExecution = undefined
+    }
+    return awaitingExecution !== undefined
+  }
   function recentAssistant() {
     const store = messageStoreBus.getInstance(instanceId)
     if (!store || !isLatestWindow(store.getMessageWindow(sessionId))) return []
@@ -97,8 +107,18 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
         await sendMessage(instanceId, sessionId, tool.arguments.text.trim(), [], {
           admissionCurrent,
           delivery: () => delivery = resolvePromptDelivery(
-            isSessionBusy(instanceId, sessionId) || !!options.composerSending?.(), options.followUp(),
+            busyFromAcknowledgement() || isSessionBusy(instanceId, sessionId) || !!options.composerSending?.(),
+            options.followUp(),
           ),
+          onDispatch: () => {
+            if (delivery !== "steer") return
+            const generation = lifecycle(), idle = idleBoundary()
+            return () => {
+              if (current() && generation === lifecycle() && idleBoundary() <= idle) {
+                awaitingExecution = { generation, idle }
+              }
+            }
+          },
         })
         return { delivery: delivery === "queue" ? "queued" : "submitted" }
       }

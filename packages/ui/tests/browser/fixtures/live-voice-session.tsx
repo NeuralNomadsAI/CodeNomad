@@ -25,6 +25,7 @@ const interactive = params.has("ui")
 const title = params.get("title") ?? (interactive ? "Feature ABC — משימה 42" : "Conversation")
 const path = "/voice-fixture"
 const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false }
+let firstPrompt: "start" | "delay" | "fail" = "start"
 let microphone: MediaStreamTrack | undefined
 let eventId = 0
 let releaseAdmission: (() => void) | undefined
@@ -42,7 +43,10 @@ const client: any = {
     } },
     prompt: async (input: { id: string; text: string }) => {
       info.prompts.push(input)
-      if (input.text === "first") emit("session.execution.started", {})
+      if (input.text === "first") {
+        if (firstPrompt === "fail") throw new Error("Prompt rejected")
+        if (firstPrompt === "start") emit("session.execution.started", {})
+      }
       if (input.text === "Ask the agent") {
         emit("permission.asked", { id: "allow", action: "bash", resources: ["git status"], metadata: {} })
         emit("form.created", { form: question })
@@ -108,6 +112,9 @@ function Fixture() {
     userTexts: () => store.getSessionMessageIds(sessionId).map(id => store.getMessage(id))
       .filter(row => row?.role === "user").map(row => row!.parts[row!.partIds[0]].data),
     busy: () => setSessionStatus(instanceId, sessionId, "working"),
+    setFirstPrompt: (value: typeof firstPrompt) => { firstPrompt = value },
+    startExecution: () => emit("session.execution.started", {}),
+    finishExecution: () => emit("session.execution.succeeded", {}),
     holdAdmission: () => { info.admissionHeld = true },
     waitingAdmission: () => Boolean(releaseAdmission),
     releaseAdmission: (keepHolding = true) => {
