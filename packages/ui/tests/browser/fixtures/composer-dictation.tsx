@@ -1,6 +1,7 @@
 import { Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import PromptInput from "../../../src/components/prompt-input"
+import type { PromptInputApi } from "../../../src/components/prompt-input/types"
 import AlertDialog from "../../../src/components/alert-dialog"
 import { SpeechSettingsSection } from "../../../src/components/settings/speech-settings-section"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -98,6 +99,8 @@ const [open, setOpen] = createSignal(true)
 const [session, setSession] = createSignal("ses_a")
 const [nativeSettings, setNativeSettings] = createSignal(false)
 const sends: string[] = []
+const resentPayloads: Parameters<PromptInputApi["restoreQueuedPrompt"]>[1][] = []
+let composer: PromptInputApi | undefined
 let holdNextSend = false
 let releaseSend: (() => void) | undefined
 await applyUiSettings({ locale: new URL(location.href).searchParams.get("locale") === "he" ? "he" : "en", showPromptVoiceInput: true })
@@ -107,8 +110,10 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <button id="elsewhere" type="button">Other control</button>
   <Show when={open()}>
     <PromptInput instanceId={instanceId} instanceFolder={folder} sessionId={session()} isActive
-      onSend={async prompt => {
+      registerPromptInputApi={api => { composer = api }}
+      onSend={async (prompt, _attachments, _delivery, restored) => {
         sends.push(prompt)
+        if (restored) resentPayloads.push(restored)
         if (holdNextSend) await new Promise<void>(resolve => { releaseSend = resolve })
       }} />
   </Show>
@@ -118,6 +123,8 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 Object.assign(window, { fixture: {
   sends, setOpen, setSession, closeSettings, setVoiceConversationEngine, voiceConversationEngineLoaded,
+  resentPayloads,
+  restoreQueuedPrompt: (text: string, payload: Parameters<PromptInputApi["restoreQueuedPrompt"]>[1]) => composer!.restoreQueuedPrompt(text, payload),
   holdSend: () => { holdNextSend = true },
   sendHeld: () => Boolean(releaseSend),
   releaseSend: () => { releaseSend?.(); releaseSend = undefined },

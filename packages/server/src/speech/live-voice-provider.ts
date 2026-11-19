@@ -189,7 +189,10 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     const interimUser = object(content?.interimInputTranscription)
     if (activity === "ACTIVITY_START" || activity === "ACTIVITY_END"
       || (transcriptText(user?.text) && user.text.trim()) || (transcriptText(interimUser?.text) && interimUser.text.trim())) io.speech()
-    if (activity === "ACTIVITY_START") startGeminiInput(geminiOffset(voiceActivity?.audioOffset))
+    if (activity === "ACTIVITY_START") {
+      startGeminiInput(geminiOffset(voiceActivity?.audioOffset))
+      io.emit({ type: "speech-start" })
+    }
     if (activity === "ACTIVITY_END") io.emit({ type: "thinking" })
     if (!content) return
     if (content.interrupted === true) io.emit({ type: "interrupted" })

@@ -37,7 +37,7 @@ Le test de lecture utilise immédiatement le mode et le format sélectionnés, m
 1. Gardez **Saisie vocale du prompt** activée dans **Voix** (elle l’est par défaut).
 2. Dans **Plus d'actions** de la zone de saisie, choisissez **Dicter** et autorisez le microphone. Si la dictée ou la conversation est indisponible, la commande indique pourquoi et ouvre la carte **Voix** correspondante. La dictée, le test d’entrée et la conversation en direct utilisent le microphone à tour de rôle.
 3. Choisissez **Arrêter l'enregistrement et transcrire** pour obtenir le texte ou **Annuler la dictée** pour abandonner l’enregistrement. Changer de conversation ou fermer la zone de saisie annule aussi la dictée.
-4. Relisez le texte. Il remplace la sélection d’origine si le brouillon et la sélection n’ont pas changé ; sinon, choisissez **Insérer la transcription** ou **Ignorer la transcription** avant de dicter de nouveau. La dictée n’envoie jamais le brouillon.
+4. Relisez le texte. Il remplace la sélection d’origine si le brouillon et la sélection n’ont pas changé ; sinon, choisissez **Insérer la transcription** en mode normal ou **Ignorer la transcription** avant de dicter de nouveau. La dictée n’envoie jamais le brouillon.
 
 Si l’API utilise le mode WAV de secours sur Tauri sous Linux, **Dicter** et **Tester l'entrée API** arrêtent l’enregistrement au bout de 24 secondes. L’extrait reste sur cet appareil jusqu’à ce que vous choisissiez **Transcrire** pour l’envoyer au fournisseur vocal ou **Annuler** pour le supprimer.
 

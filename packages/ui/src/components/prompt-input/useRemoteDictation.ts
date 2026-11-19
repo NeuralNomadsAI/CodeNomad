@@ -45,11 +45,10 @@ export function useRemoteDictation(locale: () => string, active: Accessor<boolea
   }
   return {
     choice,
+    readFailed: remote.readFailed,
     async authorizeApi() {
-      if (await remote.readFresh().catch(() => undefined) === "api") return true
-      remote.refresh()
-      return false
+      return await remote.readFresh() === "api"
     },
-    route: (api: VoiceInputEngine) => choice() === "api" ? api : relay.canStart() ? relay : undefined,
+    route: (api: VoiceInputEngine) => remote.readFailed() ? undefined : choice() === "api" ? api : relay.canStart() ? relay : undefined,
   }
 }

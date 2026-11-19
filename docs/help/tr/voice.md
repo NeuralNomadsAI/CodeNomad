@@ -37,7 +37,7 @@ Oynatma testi seçilen modu ve biçimi hemen kullanır, ancak uç nokta, anahtar
 1. **Ses** bölümünde **Prompt ses girişi** öğesini etkin tutun (varsayılan olarak açıktır).
 2. İleti düzenleyicisinde **Diğer eylemler → Dikte et** seçeneğini kullanın ve mikrofona izin verin. Dikte veya sohbet kullanılamıyorsa menü öğesi nedenini gösterir ve ilgili **Ses** kartını açar. Dikte, girdi testi ve canlı sohbet aynı anda mikrofonu kullanamaz.
 3. Metni almak için **Kaydı durdur ve metne dönüştür**, kaydı atmak için **Dikteyi iptal et** seçeneğini kullanın. Görüşmeyi değiştirmek veya düzenleyiciyi kapatmak da dikteyi iptal eder.
-4. Metni inceleyin. Yalnızca taslak ve seçim değişmediyse özgün seçimin yerini alır. Aksi hâlde yeniden dikte etmeden önce **Dikte metnini ekle** veya **Dikte metnini sil** seçeneğini kullanın. Dikte taslağı göndermez.
+4. Metni inceleyin. Yalnızca taslak ve seçim değişmediyse özgün seçimin yerini alır. Aksi hâlde yeniden dikte etmeden önce normal modda **Dikte metnini ekle** seçeneğini veya **Dikte metnini sil** seçeneğini kullanın. Dikte taslağı göndermez.
 
 API, Linux’ta Tauri ile WAV yedek modunu kullanıyorsa dikte ve giriş testi kaydı 24 saniyede durur. Kayıt, ses sağlayıcısına göndermek için **Yazıya dök** veya silmek için **İptal** seçeneğini kullanana kadar bu cihazda kalır.
 

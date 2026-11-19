@@ -41,7 +41,8 @@ the bearer `Authorization` header on their provider WebSockets.
   12-second ring. Overflow interrupts the current reply and leaves earlier
   queued replies playing. Playback counts PCM frames rendered per item,
   excluding queued audio and silent gaps. Socket backpressure is the session
-  controller's responsibility.
+  controller's responsibility. A Gemini speech-start flushes any remaining audio
+  of a completed reply while preserving the next reply.
 - The audio graph requires a secure top-level application document. Local Linux
   Tauri uses the short-lived WebKit frame for its browser microphone. Remote
   Linux Tauri supports API dictation and input testing through the native WAV

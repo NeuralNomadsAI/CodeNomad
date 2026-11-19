@@ -702,6 +702,64 @@ test("barge-in after an OpenAI overflow stops the earlier reply still playing", 
   } finally { await context.close() }
 })
 
+test("Gemini speech start flushes a completed reply's queued audio without discarding the next reply", async () => {
+  const { page, context, live, openConsent, acceptConsent } = await fixture("gemini", true)
+  try {
+    await openConsent()
+    const send = await acceptConsent()
+    send({ type: "thinking" })
+    for (let i = 0; i < 8; i++) send({ type: "audio", pcm })
+    await page.waitForFunction(() => (window as any).fixture.playback.rendered > 0)
+    send({ type: "turn-complete" })
+    send({ type: "speech-start" })
+    await page.waitForFunction(() => (window as any).fixture.playback.flushed > 0)
+    assert.ok(await page.evaluate(() => (window as any).fixture.playback.flushed < 96_000))
+    await live.getByText("Listening", { exact: true }).waitFor()
+    send({ type: "thinking" })
+    send({ type: "transcript", role: "assistant", text: "Next reply", final: true })
+    send({ type: "audio", pcm })
+    await live.getByRole("list").getByText("Next reply", { exact: true }).waitFor()
+    await page.waitForFunction(() => (window as any).fixture.playback.rendered > 0)
+  } finally { await context.close() }
+})
+
+test("reopening a consented conversation by keyboard leaves focus on the live window", async () => {
+  const { page, context, live, openConsent, acceptConsent, closed, nextSocket } = await fixture("gemini", true)
+  try {
+    await openConsent()
+    await acceptConsent()
+    const close = live.getByRole("button", { name: "Close", exact: true })
+    await close.click()
+    await closed
+    await page.waitForFunction(() => (window as any).fixture.info.released === 1)
+    const more = page.getByRole("button", { name: "More actions", exact: true })
+    await more.press("Enter")
+    const conversation = page.getByRole("menuitem", { name: "Conversation mode", exact: true })
+    await conversation.focus()
+    await page.evaluate(() => {
+      const focus: string[] = []
+      Object.assign(window, { restartFocus: focus })
+      document.addEventListener("focusin", event => {
+        const element = event.target as HTMLElement
+        if (element.closest("#live-voice-conversation")) focus.push("window")
+        else if (element.matches(".prompt-actions-menu-trigger")) focus.push("trigger")
+      })
+    })
+    const pending = nextSocket()
+    await conversation.press("Enter")
+    const socket = await pending
+    socket.send(JSON.stringify({ type: "ready", inputRate: 16_000, outputRate: 24_000 }))
+    await live.getByText("Listening", { exact: true }).waitFor()
+    await page.getByRole("menu").waitFor({ state: "detached" })
+    // Kobalte dispatches close autofocus on a later task, after the dialog has focused.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.deepEqual(await close.evaluate(button => ({
+      closeFocused: document.activeElement === button,
+      transitions: (window as any).restartFocus,
+    })), { closeFocused: true, transitions: ["window"] })
+  } finally { await context.close() }
+})
+
 test("the live log adds one receipt and one interruption, not partial speech", async () => {
   const { context, live, openConsent, acceptConsent, waitForSent } = await fixture("gemini", true)
   try {

@@ -12,6 +12,8 @@ export interface ActionOverflowMenuItem {
   checked?: boolean
   /** Use for actions that need the current user gesture rather than menu focus restoration. */
   selectBeforeClose?: boolean
+  /** Focus target of a window opened in the selection gesture. */
+  focusAfterSelect?: () => HTMLElement | undefined
   onSelect: () => void | Promise<void>
   onMouseEnter?: () => void
   onMouseLeave?: () => void
@@ -28,6 +30,8 @@ interface ActionOverflowMenuProps {
 
 export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
   let selectedAction: ActionOverflowMenuItem["onSelect"] | undefined
+  let gestureFocus: ActionOverflowMenuItem["focusAfterSelect"]
+  let trigger: HTMLButtonElement | undefined
   let pointerType: string | undefined
   const [hoveredItem, setHoveredItem] = createSignal<ActionOverflowMenuItem | null>(null)
   const itemsByKey = createMemo(() => new Map(props.items.map(item => [item.key, item])))
@@ -49,6 +53,7 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
         props.onOpenChange?.(open)
       }}>
         <DropdownMenu.Trigger
+          ref={element => { trigger = element }}
           class={`action-overflow-trigger ${props.triggerClass ?? ""}`.trim()}
           aria-label={props.label}
           title={props.label}
@@ -58,7 +63,19 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
         </DropdownMenu.Trigger>
 
         <DropdownMenu.Portal>
-          <DropdownMenu.Content class="action-overflow-content" onCloseAutoFocus={() => {
+          <DropdownMenu.Content class="action-overflow-content" onCloseAutoFocus={event => {
+            const active = document.activeElement
+            const button = trigger
+            const target = gestureFocus?.()
+            gestureFocus = undefined
+            if (target?.isConnected && button && !button.inert) {
+              // Kobalte focuses the trigger even when the autofocus event is prevented.
+              button.inert = true
+              queueMicrotask(() => { button.inert = false })
+              if (!active || active === document.body || active === button || (event.currentTarget as Element)?.contains(active)) {
+                target.focus({ preventScroll: true })
+              }
+            }
             // Kobalte restores the trigger after this callback. Launch selected
             // actions afterwards so a newly opened window keeps its autofocus.
             const action = selectedAction
@@ -101,7 +118,10 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
                       if (pointerType && pointerType !== "mouse") suppressCompatibilityClick()
                       pointerType = undefined
                       if (!entry || entry.disabled) return
-                      if (entry.selectBeforeClose) void entry.onSelect()
+                      if (entry.selectBeforeClose) {
+                        gestureFocus = entry.focusAfterSelect
+                        void entry.onSelect()
+                      }
                       else selectedAction = entry.onSelect
                     }}
                   >

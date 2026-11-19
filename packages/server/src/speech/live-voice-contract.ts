@@ -71,6 +71,7 @@ export type LiveVoiceServerMessage =
   | { type: "audio"; pcm: string; itemId?: string; contentIndex?: number }
   | { type: "transcript"; role: "user" | "assistant"; text: string; final: boolean; replace?: true; itemId?: string }
   | { type: "activity" }
+  | { type: "speech-start" }
   | { type: "thinking"; responseId?: string }
   | { type: "interrupted" }
   | { type: "turn-complete" }

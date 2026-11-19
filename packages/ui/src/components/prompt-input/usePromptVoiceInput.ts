@@ -21,6 +21,7 @@ interface UsePromptVoiceInputOptions {
   active: Accessor<boolean>
   enabled: Accessor<boolean>
   disabled: Accessor<boolean>
+  canInsertTranscript: Accessor<boolean>
   engine?: (api: VoiceInputEngine) => VoiceInputEngine | undefined
 }
 
@@ -92,7 +93,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     if (state() === "limitReached") return "promptInput.voiceInput.limitReached"
     if (transcript()?.current()) return "voice.command.pendingTranscription"
     if (options.disabled()) return "voice.command.composerUnavailable"
-    if (deviceDictation?.readFailed()) return "settings.speech.device.readFailed"
+    if (deviceDictation?.readFailed() || remoteDictation?.readFailed()) return "settings.speech.device.readFailed"
     const purpose = microphoneUse()
     if (purpose) return `voice.microphone.${purpose}`
     if (engine()?.canStart()) return
@@ -121,7 +122,8 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     const revision = options.draftRevision(), range = selection(textarea)
     const contextCurrent = () => owner() && instanceId === options.instanceId() && sessionId === options.sessionId()
       && directory === options.directory() && options.active() && textarea === options.getTextarea() && textarea.isConnected
-    const current = () => contextCurrent() && options.enabled() && !options.disabled() && selectedEngine === engine()
+    const current = () => contextCurrent() && options.enabled() && selectedEngine === engine()
+      && (state() === "transcribing" || !options.disabled())
     if (!current()) return
     let moved = false
     let delivered = false
@@ -136,7 +138,8 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       onTranscript: text => {
         if (!held() || delivered || !text) return
         delivered = true
-        if (composing || moved || revision !== options.draftRevision() || !sameSelection(textarea, range) || textarea.value !== options.prompt()) {
+        if (!options.canInsertTranscript() || options.disabled() || composing || moved
+          || revision !== options.draftRevision() || !sameSelection(textarea, range) || textarea.value !== options.prompt()) {
           setTranscript({ text, current: contextCurrent })
           return
         }
@@ -161,7 +164,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
   function restoreTranscript() {
     const saved = transcript()
     const textarea = options.getTextarea()
-    if (!saved?.current() || !textarea || composing || textarea.value !== options.prompt()) return
+    if (!options.canInsertTranscript() || !saved?.current() || !textarea || composing || textarea.value !== options.prompt()) return
     const end = textarea.selectionEnd
     const prefix = /\S$/.test(textarea.value.slice(0, end)) ? " " : ""
     setTranscript(undefined)

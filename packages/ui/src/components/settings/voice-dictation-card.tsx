@@ -33,6 +33,7 @@ export function VoiceDictationCard(props: {
   const status = () => {
     if (!config.preferences().showPromptVoiceInput) return t("settings.voice.dictation.off")
     if (device?.readFailed()) return t("settings.voice.unavailable")
+    if (remote?.readFailed()) return t("settings.speech.device.readFailed")
     if (!props.settled) return t("settings.speech.status.loading")
     const snapshot = device?.snapshot()
     if (snapshot?.engine === "system") {

@@ -759,13 +759,11 @@ export default function PromptInput(props: PromptInputProps) {
   const shouldShowAbortReminder = () => Boolean(props.escapeInDebounce && hotkeyLabel("session-abort"))
   const shouldShowOverlay = () => shouldShowAbortReminder()
     || (prompt().length === 0 && (attachments().length > 0 || mode() === "shell"))
+  const canInsertTranscript = () => mode() === "normal" && !props.disabled
   const voiceInput = usePromptVoiceInput({
     prompt,
     draftRevision: promptState.draftRevision,
-    setPrompt: value => {
-      restoredQueuedPayload = undefined
-      setPrompt(value)
-    },
+    setPrompt,
     getTextarea: () => textareaRef ?? null,
     instanceId: () => props.instanceId,
     sessionId: () => props.sessionId,
@@ -783,6 +781,7 @@ export default function PromptInput(props: PromptInputProps) {
     active: () => props.isActive !== false,
     enabled: () => props.isActive !== false && preferences().showPromptVoiceInput,
     disabled: () => Boolean(props.disabled) || props.isActive === false || mode() !== "normal" || submissionsInFlight() > 0,
+    canInsertTranscript,
   })
   const liveVoice = useLiveVoiceConversation({
     instanceId: () => props.instanceId,
@@ -871,6 +870,7 @@ export default function PromptInput(props: PromptInputProps) {
     const running = liveEngine ? liveVoiceRunning() : conversationModeEnabled()
     const retained = liveVoice.state().phase === "ended"
     const reason = running || retained ? undefined : conversationReason()
+    const focusLiveWindow = () => document.getElementById(LIVE_VOICE_CONVERSATION_WINDOW_ID)?.querySelector<HTMLElement>(".window-close-button") ?? undefined
     items.push({
       key: "conversation",
       label: reason || (liveEngine && !running)
@@ -879,10 +879,11 @@ export default function PromptInput(props: PromptInputProps) {
       icon: <Volume2 class="h-4 w-4" aria-hidden="true" />,
       checked: reason || liveEngine ? undefined : running,
       selectBeforeClose: liveEngine && !reason && !running && !retained && !liveVoice.needsConsent(),
+      focusAfterSelect: focusLiveWindow,
       onSelect: reason ? () => openSettingsRow("speech", reason.row)
         : !liveEngine ? () => toggleConversationMode(props.instanceId)
         : running ? liveVoice.stop
-        : retained ? () => document.getElementById(LIVE_VOICE_CONVERSATION_WINDOW_ID)?.querySelector<HTMLElement>(".window-close-button")?.focus()
+        : retained ? () => focusLiveWindow()?.focus()
         : () => { liveVoice.start() },
     })
     items.push({
@@ -942,7 +943,7 @@ export default function PromptInput(props: PromptInputProps) {
       <DictationNotice
         recordingLimitReached={voiceInput.state() === "limitReached"}
         onTranscribe={voiceInput.confirmTranscription} onCancelRecording={voiceInput.cancelRecording}
-        transcript={voiceInput.savedTranscript()}
+        transcript={voiceInput.savedTranscript()} canInsertTranscript={canInsertTranscript()}
         onInsertTranscript={voiceInput.restoreTranscript} onDiscardTranscript={voiceInput.discardTranscript}
       />
       <div

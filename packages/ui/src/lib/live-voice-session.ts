@@ -274,6 +274,11 @@ export function openLiveVoiceSession(options: {
       case "activity":
         activity()
         break
+      case "speech-start":
+        if (options.engine !== "gemini-live") return stop("invalid-message")
+        // Gemini may have completed generation while its last reply is still playing.
+        if (playing && !responseOpen) interrupt(true)
+        break
       case "thinking":
         if (options.engine === "openai-realtime" ? !liveVoiceIdentifier(value.responseId) : value.responseId !== undefined) {
           return stop("invalid-message")

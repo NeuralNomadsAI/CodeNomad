@@ -29,13 +29,16 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
         const tauriApi = kind === "tauri-api" || kind === "tauri-preferences" || kind === "tauri-remote-api"
         const bridge = { requests, choice: kind === "remote-api" || tauriApi ? "api" : "hex", operation: "recording",
           resolve: (_: string) => {}, holdMicrophone: false, admitMicrophone: () => {},
-          denyMicrophone: false, microphoneState: "recording" }
+          denyMicrophone: false, microphoneState: "recording", readFails: false }
         const mic = (action: unknown) => action === "claimMicrophone" ? { ok: true, value: { busy: null } }
           : action === "releaseMicrophone" ? { ok: true, value: null } : undefined
         const relay = async (request: Record<string, unknown>) => {
           requests.push(request)
           if (mic(request.action)) return mic(request.action)
-          if (request.action === "read") return bridge.choice
+          if (request.action === "read") {
+            if (bridge.readFails) throw new Error("Engine could not be read")
+            return bridge.choice
+          }
           if (request.action === "begin") return new Promise<string>(resolve => { bridge.resolve = resolve })
            if (request.action === "startApiMicrophone" || request.action === "startApiInputTest") {
              if (request.action === "startApiMicrophone" && bridge.choice !== "api") throw "unavailable"
@@ -331,6 +334,55 @@ test("a pending transcription survives sending the draft and still inserts in th
   assert.equal(await field(page).inputValue(), "saved ")
 }, false, undefined, false, "en", false, false, { expectedSends: ["send this draft"] }))
 
+test("an in-flight transcription finishes after the draft is sent and waits for insertion", () => withComposer(async page => {
+  await field(page).fill("send this draft")
+  await start(page)
+  await stop(page)
+  await page.evaluate(() => (window as any).fixture.holdSend())
+  await field(page).press("Enter")
+  await page.waitForFunction(() => (window as any).fixture.sendHeld())
+  assert.equal(await page.evaluate(() => (window as any).capture.requests[0].signal.aborted), false)
+  await finish(page, "saved")
+  const insert = page.getByRole("button", { name: "Insert transcript", exact: true })
+  await insert.waitFor()
+  assert.equal(await field(page).inputValue(), "")
+  await page.evaluate(() => (window as any).fixture.releaseSend())
+  await insert.click()
+  assert.equal(await field(page).inputValue(), "saved ")
+}, false, undefined, false, "en", false, false, { expectedSends: ["send this draft"] }))
+
+test("dictation preserves the expanded pasted block from a restored queued prompt", () => withComposer(async page => {
+  const payload = { text: "Inspect\n\nExpanded pasted block\n", metadata: { displayText: "Inspect" } }
+  await page.evaluate(value => (window as any).fixture.restoreQueuedPrompt(value.metadata.displayText, value), payload)
+  await select(page, 0, "Inspect".length)
+  await start(page)
+  await stop(page)
+  await finish(page, "Inspect carefully")
+  assert.equal(await field(page).inputValue(), "Inspect carefully ")
+  await field(page).press("Enter")
+  await page.waitForFunction(() => (window as any).fixture.sends.length === 1)
+  assert.deepEqual(await page.evaluate(() => (window as any).fixture.resentPayloads), [payload])
+}, false, undefined, false, "en", false, false, { expectedSends: ["Inspect carefully"] }))
+
+test("a pending transcript cannot be inserted in shell mode and remains available in normal mode", () => withComposer(async page => {
+  await field(page).fill("original")
+  await start(page)
+  await stop(page)
+  await field(page).fill("")
+  await finish(page, "dictated text")
+  const insert = page.getByRole("button", { name: "Insert transcript", exact: true })
+  await insert.waitFor()
+  await field(page).press("!")
+  await page.waitForFunction(() => document.querySelector("textarea")?.classList.contains("shell-mode"))
+  assert.equal(await insert.isDisabled(), true)
+  await insert.evaluate((button: HTMLButtonElement) => button.click())
+  await field(page).press("Enter")
+  assert.equal(await field(page).inputValue(), "")
+  await field(page).press("Escape")
+  await insert.click()
+  assert.equal(await field(page).inputValue(), "dictated text ")
+}))
+
 test("an Electron engine read failure replaces cached API dictation with the Dictation settings action", () => withComposer(async page => {
   await page.evaluate(() => { (window as any).speechSettings.engine = "api"; window.dispatchEvent(new Event("focus")) })
   await page.getByRole("button", { name: "More actions", exact: true }).click()
@@ -345,6 +397,20 @@ test("an Electron engine read failure replaces cached API dictation with the Dic
   await page.getByText("Could not check the dictation engine. Check again.", { exact: true }).waitFor()
   assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
 }, false, "hex-setup"))
+
+test("a remote engine read failure blocks the cached API choice and opens the Dictation card", () => withComposer(async page => {
+  const more = page.getByRole("button", { name: "More actions", exact: true })
+  await more.click()
+  await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
+  await page.evaluate(() => { (window as any).native.readFails = true })
+  await page.getByRole("menuitem", { name: "Dictate", exact: true }).click()
+  await page.getByRole("menu").waitFor({ state: "hidden" })
+  await more.click()
+  await page.getByRole("menuitem", { name: /Dictate.*Could not check the dictation engine/ }).click()
+  await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
+  await page.getByText("Could not check the dictation engine. Check again.", { exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+}, false, "remote-api"))
 
 test("moving the selection invalidates insertion even if it returns to the original range", () => withComposer(async page => {
   await field(page).fill("one two")
