@@ -467,9 +467,9 @@ for (const mode of ["return", "late inventory", "late inventory after reconnect"
   }
 })
 
-for (const mode of ["listed parent", "unrelated", "direct with parent", "direct unrelated"] as const) test(`favorite return to a subfolder follows family scope (${mode})`, async () => {
+for (const mode of ["listed parent", "unrelated", "direct with parent", "direct child first", "direct unrelated"] as const) test(`favorite return to a subfolder follows family scope (${mode})`, async () => {
   const direct = mode.startsWith("direct")
-  const hasLocalParent = mode === "listed parent" || mode === "direct with parent"
+  const hasLocalParent = mode !== "unrelated" && mode !== "direct unrelated"
   const id = `favorite-subfolder-${mode.replaceAll(" ", "-")}`, f = fixture(id)
   const originalWorktrees = serverApi.fetchWorktrees
   const parent = { ...row("root"), location: { directory: "/repo" } }
@@ -487,7 +487,7 @@ for (const mode of ["listed parent", "unrelated", "direct with parent", "direct 
   setInstanceMetadata(id, { project: { id: "project" } as any })
   try {
     await ensureWorktreesLoaded(id)
-    if (direct) await hydrateRestoredSessionChain(id, ["root"])
+    if (direct && mode !== "direct child first") await hydrateRestoredSessionChain(id, ["root"])
     markSessionMovedAway(id, "child", "/other-project")
     setSessionDraftPrompt(id, "child", "keep draft")
     await hydrateRestoredSessionChain(id, ["child"], undefined, undefined, { resolveListPlacement: true })

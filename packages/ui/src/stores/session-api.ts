@@ -688,7 +688,11 @@ async function hydrateRestoredSessionChainAttempt(
   // A selected local child may finish loading after its parent's refusal.
   signal?.throwIfAborted()
   if (!isRequestCurrent()) return
-  for (const depart of departures) depart()
+  batch(() => {
+    for (const depart of departures) depart()
+    // A verified return can rejoin its family once its ancestors are loaded.
+    for (const id of visited) settleListedReturn(instanceId, id)
+  })
   if (readFailure) throw readFailure.reason
 }
 
