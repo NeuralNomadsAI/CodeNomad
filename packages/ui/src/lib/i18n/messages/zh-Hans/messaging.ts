@@ -365,6 +365,7 @@ export const messagingMessages = {
   "voice.live.consent.title": "使用 {provider} 开始对话？",
   "voice.live.consent.audio": "CodeNomad 会将麦克风音频实时发送给 {provider}（{company}）。",
   "voice.live.consent.text": "CodeNomad 会共享项目名称、分支、工作树、会话标题和状态，也可能共享智能体的回复和近期错误。",
+  "voice.live.consent.send": "语音助手可以代表你向智能体发送消息，无需再次确认。",
   "voice.live.consent.billing": "使用费用可能会计入你的 {company} 账户。",
   "voice.live.consent.start": "同意并开始",
   "voice.live.status.connecting": "正在连接…",

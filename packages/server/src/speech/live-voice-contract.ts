@@ -9,7 +9,7 @@ export const LIVE_VOICE_IDLE_MS = 2 * 60_000
 export const LIVE_VOICE_ABSOLUTE_MS = 8 * 60_000
 export const LIVE_VOICE_ESTABLISH_MS = 10_000
 export const LIVE_VOICE_MAX_CALLS = 256
-export const LIVE_VOICE_NOTICE_VERSION = 1
+export const LIVE_VOICE_NOTICE_VERSION = 2
 export const LIVE_VOICE_CONSENT_PATH = "/api/speech/conversation/consent"
 export const LIVE_VOICE_TOOL_NAMES = ["send_to_agent", "get_session_status", "get_last_reply", "get_recent_errors"] as const
 
@@ -60,6 +60,7 @@ export function readLiveVoiceTool(name: unknown, args: unknown): LiveVoiceTool |
 export type LiveVoiceClientMessage =
   | { type: "start"; context: LiveVoiceContext }
   | { type: "audio"; pcm: string }
+  | { type: "audio-end" }
   | { type: "interrupt"; responseId: string }
   | { type: "truncate"; itemId: string; contentIndex: number; audioEndMs: number }
   | { type: "tool-result"; id: string; output: string }

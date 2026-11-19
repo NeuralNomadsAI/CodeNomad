@@ -18,7 +18,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-async function fixture(engine: "gemini" | "openai" = "gemini", interactive = false, hebrew = false) {
+async function fixture(engine: "gemini" | "openai" = "gemini", interactive = false, hebrew = false, title?: string) {
   const context = await browser.newContext(interactive ? { viewport: { width: hebrew ? 320 : 400, height: 600 } } : {})
   const page = await context.newPage()
   page.setDefaultTimeout(8_000)
@@ -70,6 +70,7 @@ async function fixture(engine: "gemini" | "openai" = "gemini", interactive = fal
   if (engine === "openai") destination.searchParams.set("openai", "")
   if (interactive) destination.searchParams.set("ui", "")
   if (hebrew) destination.searchParams.set("he", "")
+  if (title) destination.searchParams.set("title", title)
   await page.goto(destination.href, { waitUntil: "domcontentloaded", timeout: 30_000 })
   const snapshot = () => page.evaluate(() => {
     const f = (window as any).fixture
@@ -92,7 +93,24 @@ async function fixture(engine: "gemini" | "openai" = "gemini", interactive = fal
     await page.waitForFunction(() => (window as any).fixture.state().phase === "live")
     return send
   }
-  return { page, context, start, sent, closed, errors, snapshot, waitForSent, socket, opens: () => opens }
+  const consent = page.locator(".live-voice-consent")
+  const live = page.locator("#live-voice-conversation")
+  async function openConsent() {
+    await page.locator(".prompt-actions-menu-trigger").click()
+    await page.locator('[data-action-key="conversation"]').click()
+    await consent.waitFor()
+  }
+  async function acceptConsent() {
+    await consent.locator(".button-primary").click()
+    const ws = await socket
+    await waitForSent(item => item.type === "start")
+    const send = (message: object) => ws.send(JSON.stringify(message))
+    send({ type: "ready", inputRate: engine === "gemini" ? 16_000 : 24_000, outputRate: 24_000 })
+    await live.getByText("Listening", { exact: true }).waitFor()
+    return send
+  }
+  return { page, context, start, sent, closed, errors, snapshot, waitForSent, socket, opens: () => opens,
+    consent, live, openConsent, acceptConsent }
 }
 
 test("Gemini consent gates capture and connection; the real send and dock keep the draft", async () => {
@@ -156,6 +174,26 @@ test("Gemini cancellation and target changes fence calls through native admissio
     assert.deepEqual((await snapshot()).info.prompts, [])
     assert.deepEqual(sent.filter(item => item.type === "tool-result"), [])
     assert.equal((await snapshot()).state.phase, "closed")
+  } finally { await context.close() }
+})
+
+test("a second voice send queues while the idle session admits the first send", async () => {
+  const { page, context, start, snapshot, waitForSent } = await fixture()
+  try {
+    const send = await start()
+    await page.evaluate(() => (window as any).fixture.holdAdmission())
+    const call = (id: string) => ({ type: "tool-call", id, name: "send_to_agent", arguments: { text: id } })
+    send(call("first"))
+    await page.waitForFunction(() => (window as any).fixture.waitingAdmission())
+    send(call("second"))
+    send({ type: "tool-call", id: "status", name: "get_session_status", arguments: {} })
+    assert.equal(JSON.parse((await waitForSent(item => item.id === "status")).output).status, "idle")
+    assert.deepEqual((await snapshot()).info.prompts, [])
+    await page.evaluate(() => (window as any).fixture.releaseAdmission(false))
+    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "second")).output), { delivery: "queued" })
+    assert.deepEqual((await snapshot()).info.prompts.map((item: any) => [item.text, item.delivery, item.resume]), [
+      ["first", "steer", undefined], ["second", "queue", false],
+    ])
   } finally { await context.close() }
 })
 
@@ -236,6 +274,7 @@ test("the composer opens consent, retains stopped turns, and keeps native input 
     await live.getByText("Listening", { exact: true }).waitFor()
     assert.equal(await live.locator(".live-voice-target bdi").textContent(), "Feature ABC — משימה 42")
     await live.getByRole("button", { name: "Mute microphone" }).click()
+    assert.deepEqual(await waitForSent(item => item.type === "audio-end"), { type: "audio-end" })
     await live.getByText("Microphone muted", { exact: true }).waitFor()
     assert.equal((await counts()).capture, 1)
     assert.equal(await page.evaluate(() => (window as any).fixture.microphoneEnabled()), false)
@@ -261,13 +300,13 @@ test("the composer opens consent, retains stopped turns, and keeps native input 
 
     send({ type: "tool-call", id: "send", name: "send_to_agent", arguments: { text: "Ask the agent" } })
     await waitForSent(item => item.id === "send")
-    await live.getByText("Sent to session", { exact: true }).waitFor()
+    await live.getByRole("list").getByText("Sent to session", { exact: true }).waitFor()
     await page.getByRole("button", { name: "Next request" }).press("Enter")
     const answer = page.locator(".interruption-dock").getByRole("textbox")
     await answer.focus()
     send({ type: "transcript", role: "assistant", text: "Continued answer", final: true })
     send({ type: "interrupted" })
-    await live.getByText("Response interrupted", { exact: true }).waitFor()
+    await live.getByRole("list").getByText("Response interrupted", { exact: true }).waitFor()
     assert.equal(await answer.evaluate(element => document.activeElement === element), true)
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
 
@@ -286,6 +325,96 @@ test("the composer opens consent, retains stopped turns, and keeps native input 
   } finally { await context.close() }
 })
 
+test("a long title wraps in consent and leaves the live Session label intact", async () => {
+  const title = "Review the session " + "longUnbrokenTitle".repeat(18)
+  const { context, consent, live, openConsent, acceptConsent, page } = await fixture("gemini", true, false, title)
+  try {
+    await openConsent()
+    const name = consent.locator(".live-voice-target bdi")
+    assert.equal(await name.textContent(), title)
+    assert.ok(await name.evaluate(el => {
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      const lines = [...range.getClientRects()]
+      const bounds = el.getBoundingClientRect()
+      return lines.length > 1 && lines.every(line => line.left >= bounds.left - 1 && line.right <= bounds.right + 1)
+    }))
+    await acceptConsent()
+    assert.equal(await live.locator(".live-voice-target bdi").textContent(), title)
+    assert.ok(await live.locator(".live-voice-target").evaluate(el => {
+      const label = el.querySelector("span")!
+      const title = el.querySelector("bdi")!
+      const range = document.createRange()
+      range.selectNodeContents(label)
+      const line = range.getBoundingClientRect()
+      return label.textContent === "Session" && label.getBoundingClientRect().right >= line.right &&
+        title.getBoundingClientRect().left > line.right && title.scrollWidth > title.clientWidth
+    }))
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+  } finally { await context.close() }
+})
+
+test("inactivity moves focus from the microphone to Close without stealing other focus", async () => {
+  for (const focusMic of [true, false]) {
+    const { page, context, live, openConsent, acceptConsent } = await fixture("gemini", true)
+    try {
+      await page.clock.install()
+      await openConsent()
+      await acceptConsent()
+      const target = focusMic ? live.getByRole("button", { name: "Mute microphone" }) : page.getByRole("textbox").first()
+      await target.focus()
+      assert.ok(await target.evaluate(el => document.activeElement === el))
+      await page.clock.fastForward(120_100)
+      await live.getByText("Conversation ended due to inactivity", { exact: true }).waitFor()
+      const expected = focusMic ? live.getByRole("button", { name: "Close", exact: true }) : target
+      assert.ok(await expected.evaluate(el => document.activeElement === el))
+    } finally { await context.close() }
+  }
+})
+
+test("the live log adds one receipt and one interruption, not partial speech", async () => {
+  const { context, live, openConsent, acceptConsent, waitForSent } = await fixture("gemini", true)
+  try {
+    await openConsent()
+    const send = await acceptConsent()
+    const log = live.getByRole("log")
+    await log.evaluate(el => {
+      const additions: string[] = []
+      Object.assign(el, { additions })
+      new MutationObserver(records => {
+        for (const record of records) for (const node of record.addedNodes) {
+          if (node.textContent?.trim()) additions.push(node.textContent)
+        }
+      }).observe(el, { childList: true, subtree: true, characterData: true })
+    })
+    const call = { type: "tool-call", id: "send", name: "send_to_agent", arguments: { text: "Hello agent" } }
+    send(call)
+    send(call)
+    await waitForSent(item => item.id === "send")
+    send({ type: "transcript", role: "assistant", text: "First ", final: false })
+    send({ type: "transcript", role: "assistant", text: "fragment", final: false })
+    send({ type: "interrupted" })
+    send({ type: "interrupted" })
+    send({ type: "turn-complete" })
+    send({ type: "tool-call", id: "done", name: "get_session_status", arguments: {} })
+    await waitForSent(item => item.id === "done")
+    assert.deepEqual(await log.evaluate(el => (el as HTMLElement & { additions: string[] }).additions),
+      ["Sent to session", "Response interrupted"])
+  } finally { await context.close() }
+})
+
+test("consent discloses direct sends in the dialog description before capture", async () => {
+  const { context, consent, openConsent, opens, page } = await fixture("gemini", true)
+  try {
+    await openConsent()
+    const description = await consent.getAttribute("aria-describedby")
+    assert.match(await page.locator(`[id="${description}"]`).textContent() ?? "",
+      /The voice assistant can send messages to the agent on your behalf without further confirmation\./)
+    assert.equal(opens(), 0)
+    assert.equal(await page.evaluate(() => (window as any).fixture.info.capture), 0)
+  } finally { await context.close() }
+})
+
 test("the live window and its controls fit 320px with a Hebrew interface", async () => {
   const { page, context, socket, closed, errors, waitForSent } = await fixture("openai", true, true)
   const consent = page.locator(".live-voice-consent")
@@ -295,6 +424,7 @@ test("the live window and its controls fit 320px with a Hebrew interface", async
     await page.locator('[data-action-key="conversation"]').click()
     await consent.waitFor()
     assert.match(await consent.innerText(), /OpenAI/)
+    await consent.getByText("העוזר הקולי יכול לשלוח הודעות לסוכן בשמך ללא אישור נוסף.", { exact: true }).waitFor()
     assert.equal(await page.locator("html").getAttribute("dir"), "rtl")
     assert.ok(await consent.evaluate(el => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().width <= innerWidth))
     await consent.locator(".button-primary").click()

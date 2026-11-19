@@ -366,6 +366,7 @@ export const messagingMessages = {
   "voice.live.consent.title": "¿Empezar con {provider}?",
   "voice.live.consent.audio": "CodeNomad transmite en directo el audio del micrófono a {provider} ({company}).",
   "voice.live.consent.text": "CodeNomad comparte el nombre del proyecto, la rama, el árbol de trabajo y el título y estado de la sesión. También puede compartir respuestas del agente y errores recientes.",
+  "voice.live.consent.send": "El asistente de voz puede enviar mensajes al agente en tu nombre sin pedirte otra confirmación.",
   "voice.live.consent.billing": "El uso puede generar cargos en tu cuenta de {company}.",
   "voice.live.consent.start": "Aceptar y empezar",
   "voice.live.status.connecting": "Conectando…",

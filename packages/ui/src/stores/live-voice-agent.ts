@@ -54,6 +54,7 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
 }) {
   const instanceId = instance.id
   const sessionId = session.id
+  let sendsInFlight = 0
   function recentAssistant() {
     const store = messageStoreBus.getInstance(instanceId)
     if (!store || !isLatestWindow(store.getMessageWindow(sessionId))) return []
@@ -93,9 +94,15 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
       case "send_to_agent": {
         const admissionCurrent = () => current() && options.canSend()
         if (!admissionCurrent()) return { error: "This conversation cannot accept a message now." }
-        const delivery = resolvePromptDelivery(isSessionBusy(instanceId, sessionId) || !!options.composerSending?.(), options.followUp())
-        await sendMessage(instanceId, sessionId, tool.arguments.text.trim(), [], { delivery, admissionCurrent })
-        return { delivery: delivery === "queue" ? "queued" : "submitted" }
+        const busy = sendsInFlight > 0 || isSessionBusy(instanceId, sessionId) || !!options.composerSending?.()
+        const delivery = resolvePromptDelivery(busy, options.followUp())
+        sendsInFlight++
+        try {
+          await sendMessage(instanceId, sessionId, tool.arguments.text.trim(), [], { delivery, admissionCurrent })
+          return { delivery: delivery === "queue" ? "queued" : "submitted" }
+        } finally {
+          sendsInFlight--
+        }
       }
     }
   }

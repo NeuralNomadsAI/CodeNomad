@@ -267,6 +267,10 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
           ? { realtimeInput: { audio: { data: value.pcm, mimeType: `audio/pcm;rate=${inputRate}` } } }
           : { type: "input_audio_buffer.append", audio: value.pcm })
         break
+      case "audio-end":
+        if (!gemini) return io.stop("invalid-message")
+        io.send({ realtimeInput: { audioStreamEnd: true } })
+        break
       case "interrupt": {
         if (gemini) return io.stop("invalid-message")
         if (activeResponse !== value.responseId || interruptedResponse === value.responseId) break

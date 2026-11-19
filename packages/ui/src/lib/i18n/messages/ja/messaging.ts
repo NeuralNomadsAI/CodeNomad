@@ -366,6 +366,7 @@ export const messagingMessages = {
   "voice.live.consent.title": "{provider} で開始しますか？",
   "voice.live.consent.audio": "CodeNomad はマイクの音声を {provider}（{company}）にリアルタイムで送信します。",
   "voice.live.consent.text": "CodeNomad はプロジェクト名、ブランチ、作業ツリー、セッションのタイトルと状態を共有します。エージェントの応答や最近のエラーも共有される場合があります。",
+  "voice.live.consent.send": "音声アシスタントは、追加の確認なしであなたに代わってエージェントにメッセージを送信できます。",
   "voice.live.consent.billing": "利用料金が {company} のアカウントに請求される場合があります。",
   "voice.live.consent.start": "同意して開始",
   "voice.live.status.connecting": "接続中…",

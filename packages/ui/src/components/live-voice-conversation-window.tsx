@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Mic, MicOff, Settings, VolumeX } from "lucide-solid"
-import { For, Show, createEffect, createMemo, onCleanup, untrack } from "solid-js"
+import { For, Show, createEffect, createMemo, createRenderEffect, onCleanup, untrack } from "solid-js"
 import type { useLiveVoiceConversation } from "../lib/hooks/use-live-voice-conversation"
 import { useI18n } from "../lib/i18n"
 import type { LiveVoiceStopReason, LiveVoiceTranscriptRow } from "../lib/live-voice-session"
@@ -66,6 +66,13 @@ export default function LiveVoiceConversationWindow(props: {
   }
   const dismiss = () => props.controller.dismiss()
   let close: HTMLButtonElement | undefined
+  let microphone: HTMLButtonElement | undefined
+  createRenderEffect(() => {
+    const current = state()
+    if (current.phase === "ended" && current.reason === "idle" && document.activeElement === microphone) {
+      untrack(() => close?.focus({ preventScroll: true }))
+    }
+  })
 
   return <>
     <Show when={state().phase === "consent"}>
@@ -96,7 +103,7 @@ export default function LiveVoiceConversationWindow(props: {
           <span role="status" aria-atomic="true">{t(statusKey())}</span>
         </div>
         <div class="live-voice-actions">
-          <button type="button" class="window-icon-button icon-toggle"
+          <button ref={element => { microphone = element }} type="button" class="window-icon-button icon-toggle"
             aria-label={t("voice.live.mute")} title={t("voice.live.mute")}
             aria-pressed={props.controller.muted()} disabled={state().phase !== "live"}
             onClick={props.controller.toggleMute}>
@@ -168,6 +175,7 @@ function LiveVoiceConsent(props: {
           <VoiceTarget label={props.targetLabel} />
           <p>{t("voice.live.consent.audio", { provider: props.provider, company: props.company })}</p>
           <p>{t("voice.live.consent.text")}</p>
+          <p>{t("voice.live.consent.send")}</p>
           <p>{t("voice.live.consent.billing", { company: props.company })}</p>
         </Dialog.Description>
         <footer class="window-footer">
@@ -210,7 +218,7 @@ function VoiceTranscript(props: { rows: () => readonly LiveVoiceTranscriptRow[] 
     <div class="sr-only" role="log" aria-label={t("voice.live.transcript.label")} aria-relevant="additions">
       <For each={props.rows().filter(row => row.announce).map(row => row.id)}>{id => {
         const row = byId().get(id)!
-        return <div>{`${role(row)}: ${isolate(row.text)}`}</div>
+        return <div>{row.role === "sent" || row.role === "interrupted" ? role(row) : `${role(row)}: ${isolate(row.text)}`}</div>
       }}</For>
     </div>
   </>

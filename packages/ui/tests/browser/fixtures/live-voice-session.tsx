@@ -22,6 +22,7 @@ import "../../../src/index.css"
 const instanceId = "live-voice-fixture", sessionId = "voice"
 const params = new URLSearchParams(location.search)
 const interactive = params.has("ui")
+const title = params.get("title") ?? (interactive ? "Feature ABC — משימה 42" : "Conversation")
 const path = "/voice-fixture"
 const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false }
 let microphone: MediaStreamTrack | undefined
@@ -55,7 +56,7 @@ const client: any = {
 sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
 addInstance({ id: instanceId, folder: path, projectName: "Project", port: 0, pid: 0, proxyPath: path, status: "ready", client })
 setSessions(previous => new Map(previous).set(instanceId, new Map([sessionId, "other"].map(id => [id, {
-  id, instanceId, parentId: null, title: interactive ? "Feature ABC — משימה 42" : "Conversation", location: { directory: path },
+  id, instanceId, parentId: null, title, location: { directory: path },
   status: "idle", agent: "", model: { providerId: "", modelId: "" }, time: { created: 1, updated: 1 },
 } as any]))))
 setActiveInstanceId(instanceId)
@@ -108,7 +109,12 @@ function Fixture() {
     busy: () => setSessionStatus(instanceId, sessionId, "working"),
     holdAdmission: () => { info.admissionHeld = true },
     waitingAdmission: () => Boolean(releaseAdmission),
-    releaseAdmission: () => { const pending = releaseAdmission; releaseAdmission = undefined; pending?.() },
+    releaseAdmission: (keepHolding = true) => {
+      info.admissionHeld = keepHolding
+      const pending = releaseAdmission
+      releaseAdmission = undefined
+      pending?.()
+    },
   } })
   return <main>
     <button onClick={voice.start}>Start</button>

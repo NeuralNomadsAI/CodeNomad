@@ -363,6 +363,7 @@ export const messagingMessages = {
   "voice.live.consent.title": "להתחיל עם {provider}?",
   "voice.live.consent.audio": "CodeNomad משדר את שמע המיקרופון בשידור חי אל {provider} ({company}).",
   "voice.live.consent.text": "CodeNomad משתף את שם הפרויקט, הענף, עץ העבודה, הכותרת והמצב של הסשן. ייתכן שישותפו גם תשובות של הסוכן ושגיאות אחרונות.",
+  "voice.live.consent.send": "העוזר הקולי יכול לשלוח הודעות לסוכן בשמך ללא אישור נוסף.",
   "voice.live.consent.billing": "השימוש עשוי להיות מחויב בחשבון שלך אצל {company}.",
   "voice.live.consent.start": "הסכמה והתחלה",
   "voice.live.status.connecting": "מתחבר…",

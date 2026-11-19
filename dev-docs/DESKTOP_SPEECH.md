@@ -31,8 +31,10 @@ the bearer `Authorization` header on their provider WebSockets.
 - The gateway translates event envelopes; PCM samples remain unchanged.
   [Gemini Live](https://ai.google.dev/api/live) uses `BidiGenerateContent`,
   16 kHz PCM input and 24 kHz PCM output. [OpenAI Realtime](https://developers.openai.com/api/docs/guides/realtime-conversations/)
-  uses `/v1/realtime` and 24 kHz in both directions. The renderer stops queued
-  playback at interruption and reports OpenAI's played duration for truncation.
+  uses `/v1/realtime` and 24 kHz in both directions. Muting ends the current
+  Gemini input stream to flush buffered audio; unmuting resumes PCM frames.
+  The renderer stops queued playback at interruption and reports OpenAI's
+  played duration for truncation.
 - Start audio from the user's activation and send its 20 ms PCM frames only after
   the gateway confirms the expected rates. The audio processor resamples mono
   capture off the UI thread, and resamples and plays 24 kHz PCM from a bounded
@@ -58,7 +60,8 @@ the bearer `Authorization` header on their provider WebSockets.
   latest visible reply and up to three recent errors of 500 characters each.
   `send_to_agent` submits a user message directly, without a confirmation dialog,
   through native `sendMessage` with the composer's delivery rules and no
-  attachments. Normal permission, question and Yolo handling apply. A call ID is
+  attachments. An in-flight voice send counts as busy for follow-up delivery.
+  Normal permission, question and Yolo handling apply. A call ID is
   admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.
 - The two voices are transcribed in memory until the window is dismissed.

@@ -336,6 +336,7 @@ export const messagingMessages = {
   "voice.live.consent.title": "{provider} ile başlamak ister misiniz?",
   "voice.live.consent.audio": "CodeNomad, mikrofon sesini {provider} ({company}) hizmetine canlı olarak aktarır.",
   "voice.live.consent.text": "CodeNomad proje adını, dalı, çalışma ağacını, oturum başlığını ve durumunu paylaşır. Ajan yanıtları ve son hatalar da paylaşılabilir.",
+  "voice.live.consent.send": "Sesli asistan, ek onay istemeden sizin adınıza ajana mesaj gönderebilir.",
   "voice.live.consent.billing": "Kullanım ücreti {company} hesabınıza yansıtılabilir.",
   "voice.live.consent.start": "Kabul et ve başlat",
   "voice.live.status.connecting": "Bağlanıyor…",

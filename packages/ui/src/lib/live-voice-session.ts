@@ -66,6 +66,7 @@ export function openLiveVoiceSession(options: {
   let audio: LiveVoiceAudio | undefined
   let connected = false
   let ready = false
+  let muted = false
   let playing = false
   let responseOpen = false
   let responseSpoken = false
@@ -131,7 +132,7 @@ export function openLiveVoiceSession(options: {
   }
 
   function marker(role: "sent" | "interrupted", text = "") {
-    saveRow({ id: ++sequence, role, text: text.slice(0, ROW_CHARS), final: true })
+    saveRow({ id: ++sequence, role, text: text.slice(0, ROW_CHARS), final: true, announce: true })
     publish()
   }
 
@@ -347,8 +348,11 @@ export function openLiveVoiceSession(options: {
     interrupt: () => interrupt(true),
     setMuted(value: boolean) {
       if (!ready || !audio || !current()) return false
+      if (muted === value) return true
+      muted = value
       audio.setMuted(value)
-      return true
+      if (value && options.engine === "gemini-live") send({ type: "audio-end" })
+      return !signal.aborted
     },
     activityLevel: () => audio?.level(playing || responseSpoken) ?? 0,
   }

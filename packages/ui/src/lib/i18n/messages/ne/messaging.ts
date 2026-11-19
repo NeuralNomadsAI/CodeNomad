@@ -363,6 +363,7 @@ export const messagingMessages = {
   "voice.live.consent.title": "{provider} सँग सुरु गर्ने?",
   "voice.live.consent.audio": "CodeNomad ले माइक्रोफोनको अडियो {provider} ({company}) मा प्रत्यक्ष पठाउँछ।",
   "voice.live.consent.text": "CodeNomad ले परियोजनाको नाम, शाखा, वर्कट्री र सत्रको शीर्षक तथा स्थिति साझा गर्छ। एजेन्टका जवाफ र हालैका त्रुटि पनि साझा हुन सक्छन्।",
+  "voice.live.consent.send": "आवाज सहायकले थप पुष्टि नलिई तपाईंको तर्फबाट एजेन्टलाई सन्देश पठाउन सक्छ।",
   "voice.live.consent.billing": "प्रयोगको शुल्क तपाईंको {company} खातामा लाग्न सक्छ।",
   "voice.live.consent.start": "सहमत भएर सुरु गर्नुहोस्",
   "voice.live.status.connecting": "जडान हुँदै…",

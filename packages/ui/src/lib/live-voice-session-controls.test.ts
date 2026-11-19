@@ -76,7 +76,7 @@ test("OpenAI interruption cancels the bound response and keeps only samples and 
   ])
   assert.deepEqual(f.played, ["AAA="])
   assert.deepEqual(f.rows().map(row => [row.role, row.text, row.final, row.announce]), [
-    ["assistant", "Before", true, undefined], ["interrupted", "", true, undefined],
+    ["assistant", "Before", true, undefined], ["interrupted", "", true, true],
   ])
   f.receive({ type: "turn-complete" })
   f.receive({ type: "audio", pcm: "AgA=", itemId: "next", contentIndex: 0 })
@@ -91,6 +91,14 @@ test("OpenAI interruption cancels the bound response and keeps only samples and 
   f.drain()
   assert.equal(f.activity(), "listening")
   assert.equal(f.rows().at(-1)?.announce, true)
+})
+
+test("muting flushes Gemini audio once per transition without sending an OpenAI control", async t => {
+  for (const engine of ["gemini-live", "openai-realtime"] as const) {
+    const f = await fixture(t, engine)
+    for (const muted of [true, true, false, true]) assert.equal(f.session.setMuted(muted), true)
+    assert.deepEqual(f.sent.slice(1), engine === "gemini-live" ? [{ type: "audio-end" }, { type: "audio-end" }] : [])
+  }
 })
 
 test("Gemini manual interrupt drops local output only, and receipts require a confirmed native send", async t => {

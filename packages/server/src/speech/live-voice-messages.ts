@@ -46,6 +46,9 @@ export function readClientMessage(value: JsonObject): LiveVoiceClientMessage | u
     case "stop":
       if (keys(value, "type")) return { type: "stop" }
       break
+    case "audio-end":
+      if (keys(value, "type")) return { type: "audio-end" }
+      break
     case "audio":
       if (keys(value, "type", "pcm") && typeof value.pcm === "string" && pcmBytes(value.pcm)) return { type: "audio", pcm: value.pcm }
       break

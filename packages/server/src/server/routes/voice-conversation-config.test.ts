@@ -300,13 +300,14 @@ test("desktop live notice acceptance is versioned and isolated by profile and pr
   const accept = (version: number, remoteAddress = "127.0.0.1") => app.inject({
     method: "PUT", url: "/api/speech/conversation/consent", remoteAddress, payload: { engine: "gemini-live", version },
   })
-  assert.equal((await accept(0)).statusCode, 400)
-  assert.equal((await accept(1, "192.0.2.80")).statusCode, 404)
+  assert.equal((await accept(1)).statusCode, 400)
+  assert.equal((await accept(2, "192.0.2.80")).statusCode, 404)
+  settings.desktopLiveVoiceConsentStore("gemini-live")!.replace({ notice: { version: 1 } })
   assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, {})
-  assert.equal((await accept(1)).statusCode, 204)
-  assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, { "gemini-live": 1 })
+  assert.equal((await accept(2)).statusCode, 204)
+  assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, { "gemini-live": 2 })
   process.env.CODENOMAD_UPDATE_CHANNEL = "voice-two"
   assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, {})
   process.env.CODENOMAD_UPDATE_CHANNEL = "voice-one"
-  assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, { "gemini-live": 1 })
+  assert.deepEqual((await capabilities()).desktopLiveVoiceConsent, { "gemini-live": 2 })
 })

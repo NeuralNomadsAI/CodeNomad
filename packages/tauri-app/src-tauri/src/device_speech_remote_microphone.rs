@@ -23,7 +23,7 @@ const CONSENT: Duration = Duration::from_secs(30);
 const EXPIRE: Duration = Duration::from_secs(150);
 
 #[derive(Default)]
-pub(crate) struct RemoteMicrophone(Mutex<Option<Arc<Capture>>>);
+pub(crate) struct RemoteMicrophone(Mutex<Vec<Arc<Capture>>>);
 
 enum Phase {
     Consent,
@@ -33,6 +33,12 @@ enum Phase {
     LimitReached(String),
     Retiring,
     Closed,
+}
+
+impl Phase {
+    fn occupies_microphone(&self) -> bool {
+        !matches!(self, Self::LimitReached(_) | Self::Closed)
+    }
 }
 
 pub(crate) struct Capture {
@@ -47,8 +53,8 @@ impl RemoteMicrophone {
     pub(crate) fn busy(&self) -> Option<ApiMicrophonePurpose> {
         self.0
             .lock()
-            .as_ref()
-            .filter(|capture| !matches!(*capture.phase.lock(), Phase::Closed))
+            .iter()
+            .find(|capture| capture.phase.lock().occupies_microphone())
             .map(|capture| capture.purpose)
     }
 
@@ -59,11 +65,13 @@ impl RemoteMicrophone {
         purpose: ApiMicrophonePurpose,
         lease_bound: bool,
     ) -> Option<Arc<Capture>> {
-        let mut slot = self.0.lock();
-        if slot
-            .as_ref()
-            .is_some_and(|capture| !matches!(*capture.phase.lock(), Phase::Closed))
-        {
+        let mut captures = self.0.lock();
+        captures.retain(|capture| !matches!(*capture.phase.lock(), Phase::Closed));
+        // Keep at most one pending excerpt per document and capture purpose.
+        if captures.iter().any(|capture| {
+            capture.phase.lock().occupies_microphone()
+                || (capture.owner == owner && (capture.id == id || capture.purpose == purpose))
+        }) {
             return None;
         }
         let capture = Arc::new(Capture {
@@ -73,34 +81,29 @@ impl RemoteMicrophone {
             lease_bound,
             phase: Mutex::new(Phase::Consent),
         });
-        *slot = Some(capture.clone());
+        captures.push(capture.clone());
         Some(capture)
     }
 
     pub(crate) fn get(&self, owner: &str, id: Uuid) -> Option<Arc<Capture>> {
         self.0
             .lock()
-            .as_ref()
-            .filter(|capture| capture.owner == owner && capture.id == id)
+            .iter()
+            .find(|capture| capture.owner == owner && capture.id == id)
             .cloned()
     }
 
     pub(crate) fn revoke(&self, owner: Option<&str>, id: Option<Uuid>) -> bool {
-        let capture = self
-            .0
-            .lock()
-            .as_ref()
-            .filter(|capture| {
-                owner.is_none_or(|owner| capture.owner == owner)
-                    && id.is_none_or(|id| capture.id == id)
-            })
-            .cloned();
-        if let Some(capture) = capture {
-            capture.revoke();
-            true
-        } else {
-            false
+        let mut found = false;
+        for capture in self.0.lock().iter() {
+            if owner.is_none_or(|owner| capture.owner == owner)
+                && id.is_none_or(|id| capture.id == id)
+            {
+                capture.revoke();
+                found = true;
+            }
         }
+        found
     }
 }
 
@@ -348,6 +351,19 @@ mod tests {
     use crate::device_speech::{MicrophonePurpose, Request};
     use serde_json::json;
 
+    fn claim(speech: &DeviceSpeech, owner: &str, id: Uuid, purpose: MicrophonePurpose) -> bool {
+        speech
+            .request(
+                owner,
+                Request::ClaimMicrophone {
+                    id: id.to_string(),
+                    purpose,
+                },
+            )
+            .unwrap()["busy"]
+            .is_null()
+    }
+
     #[test]
     fn consent_is_single_use_and_reacquisition_waits_for_release() {
         let mic = RemoteMicrophone::default();
@@ -462,15 +478,41 @@ mod tests {
         let legacy = reserve("remote", id, InputTest).unwrap();
         assert!(speech.accept_remote_microphone(&legacy));
         assert!(!speech.accept_remote_microphone(&legacy));
-        *legacy.phase.lock() = Phase::LimitReached("excerpt".into());
+    }
+
+    #[test]
+    fn limited_excerpt_keeps_document_ownership_without_occupying_the_microphone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let speech = DeviceSpeech::new(tmp.path().join("choice.json"), None);
+        let id = Uuid::new_v4();
+        let owner = "remote";
+        let test = ApiMicrophonePurpose::InputTest;
+        assert!(claim(&speech, owner, id, MicrophonePurpose::Test));
+        let capture = speech.reserve_remote_microphone(owner, id, test).unwrap();
+        assert!(speech.accept_remote_microphone(&capture));
+        *capture.phase.lock() = Phase::LimitReached("excerpt".into());
+        speech
+            .request(owner, Request::ReleaseMicrophone { id: id.to_string() })
+            .unwrap();
+
+        let other = Uuid::new_v4();
+        assert!(claim(&speech, "other", other, MicrophonePurpose::Test));
+        let next = speech
+            .reserve_remote_microphone("other", other, test)
+            .unwrap();
+        assert!(speech.accept_remote_microphone(&next));
+        assert!(speech.get_remote_microphone("other", id).is_none());
         assert_eq!(
-            claim("local", second, MicrophonePurpose::Conversation),
-            Ok(json!({ "busy": "test" }))
+            speech.get_remote_microphone(owner, id).unwrap().status(),
+            Ok("limitReached")
         );
-        legacy.revoke();
-        assert_eq!(
-            claim("local", second, MicrophonePurpose::Conversation),
-            Ok(json!({ "busy": null }))
-        );
+        speech.revoke(Some(owner));
+        assert!(matches!(*capture.phase.lock(), Phase::Closed));
+        assert!(!claim(
+            &speech,
+            "local",
+            Uuid::new_v4(),
+            MicrophonePurpose::Conversation
+        ));
     }
 }

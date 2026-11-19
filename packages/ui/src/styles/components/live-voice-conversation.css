@@ -27,12 +27,22 @@
   font-size: var(--font-size-xs);
 }
 
+.live-voice-target span {
+  flex: none;
+  white-space: nowrap;
+}
+
 .live-voice-target bdi {
   min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.live-voice-consent .live-voice-target bdi {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .live-voice-state,

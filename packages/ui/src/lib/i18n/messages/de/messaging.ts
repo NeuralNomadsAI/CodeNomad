@@ -363,6 +363,7 @@ export const messagingMessages = {
   "voice.live.consent.title": "Mit {provider} starten?",
   "voice.live.consent.audio": "CodeNomad überträgt den Mikrofonton live an {provider} ({company}).",
   "voice.live.consent.text": "CodeNomad übermittelt Projektname, Branch, Worktree sowie Titel und Status der Sitzung. Auch Antworten des Agenten und kürzlich aufgetretene Fehler können übermittelt werden.",
+  "voice.live.consent.send": "Der Sprachassistent kann in Ihrem Namen ohne weitere Bestätigung Nachrichten an den Agenten senden.",
   "voice.live.consent.billing": "Die Nutzung kann über Ihr Konto bei {company} abgerechnet werden.",
   "voice.live.consent.start": "Zustimmen und starten",
   "voice.live.status.connecting": "Verbindung wird hergestellt…",
