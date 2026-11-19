@@ -4,7 +4,8 @@ import type { ConfigEntry } from "@opencode/client"
 import { PluginControlDocumentError, type PluginControlDocument } from "./plugin-control-document"
 import { editNativeSetting, readNativeSetting, removeEmptyNativeObject } from "./native-setting-document"
 
-export interface MissionExperimentalSettings { [key: string]: unknown; schedules?: boolean; subagent_depth?: number }
+export interface MissionExperimentalSettings { [key: string]: unknown; automations?: boolean; schedules?: boolean; subagent_depth?: number }
+export const configuredMissionAutomation = (block: MissionExperimentalSettings) => block.automations ?? block.schedules
 
 export function nativeSettingExpectation(document: PluginControlDocument): string {
   return createHash("sha256").update(JSON.stringify([
@@ -17,7 +18,8 @@ function settings(value: unknown): MissionExperimentalSettings {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new PluginControlDocumentError("OpenCode experimental setting must be an object", "invalid")
   const block = value as Record<string, unknown>
-  if (block.schedules !== undefined && typeof block.schedules !== "boolean"
+  if (block.automations !== undefined && typeof block.automations !== "boolean"
+    || block.schedules !== undefined && typeof block.schedules !== "boolean"
     || block.subagent_depth !== undefined && (!Number.isSafeInteger(block.subagent_depth) || Number(block.subagent_depth) < 0))
     throw new PluginControlDocumentError("Invalid Missions experimental setting", "invalid")
   return { ...block } as MissionExperimentalSettings
@@ -32,7 +34,8 @@ export function effectiveMissionExperimental(entries: readonly ConfigEntry[]) {
 }
 
 export function readMissionExperimental(document: PluginControlDocument): MissionExperimentalSettings {
-  return settings({ schedules: readNativeSetting(document, ["experimental", "schedules"]),
+  return settings({ automations: readNativeSetting(document, ["experimental", "automations"]),
+    schedules: readNativeSetting(document, ["experimental", "schedules"]),
     subagent_depth: readNativeSetting(document, ["experimental", "subagent_depth"]) })
 }
 
@@ -77,28 +80,28 @@ export function inheritedMissionExperimental(entries: readonly ConfigEntry[], ta
 /** Both authors use one JSONC edit under the existing physical-file lock/byte expectation. */
 export function editMissionExperimental(
   document: PluginControlDocument,
-  key: "schedules" | "subagent_depth",
+  key: "automations" | "subagent_depth",
   value: boolean | number | undefined,
   inherited: MissionExperimentalSettings,
   scope: "global" | "project" = "project",
 ): string {
   // Check both paths for duplicates even when only their companion is being edited.
   const local = readMissionExperimental(document)
-  if (scope === "project" && key === "schedules" && value === true && local.schedules === false)
-    throw new PluginControlDocumentError("OpenCode schedules are explicitly disabled in this document", "conflict")
+  if (scope === "project" && key === "automations" && value === true && configuredMissionAutomation(local) === false)
+    throw new PluginControlDocumentError("OpenCode automations are explicitly disabled in this document", "conflict")
   settings({ [key]: value })
   let current = document
   const apply = (field: string, next: unknown) => {
     const updated = editNativeSetting(current, ["experimental", field], next)
     current = { ...current, text: current.byteOrderMark ? updated.slice(1) : updated }
   }
-  if (key === "subagent_depth" && local.schedules === undefined && inherited.schedules === true) {
+  if (key === "subagent_depth" && configuredMissionAutomation(local) === undefined && configuredMissionAutomation(inherited) === true) {
     const block = readNativeSetting(document, ["experimental"])
     // Removing the sole depth exposes inheritance directly; a remaining block
     // still shadows it and needs the same companion preservation as a save.
-    if (value !== undefined || block && Object.keys(block).some(field => field !== "subagent_depth")) apply("schedules", true)
+    if (value !== undefined || block && Object.keys(block).some(field => field !== "subagent_depth")) apply("automations", true)
   }
-  if (key === "schedules" && readNativeSetting(document, ["experimental"]) === undefined)
+  if (key === "automations" && readNativeSetting(document, ["experimental"]) === undefined)
     for (const [field, companion] of Object.entries(inherited)) if (field !== key) apply(field, companion)
   apply(key, value)
   return removeEmptyNativeObject(current, ["experimental"])

@@ -5,28 +5,24 @@ import { nativeScheduleContractFixture as contract } from "./native-schedule-cap
 
 test("native schedule availability recognizes consumed shapes independently of versions and flag values", () => {
   assert.deepEqual(nativeScheduleCapability(contract()), { available: true })
-  const optionalWhen = contract()
-  optionalWhen.components.schemas["Schedule.CreatePayload"].required = ["sessionID", "prompt"]
-  assert.deepEqual(nativeScheduleCapability(optionalWhen), { available: true })
   const future = { ...contract(), info: { version: "99.0.0-future" } }
   assert.deepEqual(nativeScheduleCapability(future), { available: true })
   assert.deepEqual(nativeScheduleCapability({}), { available: false, reason: "missing-api" })
   for (const mutate of [
-    (value: any) => { delete value.paths["/api/experimental/schedule"].get.parameters },
-    (value: any) => { value.paths["/api/experimental/schedule"].get.parameters = [null] },
-    (value: any) => { value.components.schemas["Schedule.Info"].properties.runCount.type = "string" },
-    (value: any) => { value.components.schemas["Schedule.Info"].type = "string" },
-    (value: any) => { value.components.schemas["Schedule.CreatePayload"].type = "string" },
-    (value: any) => { value.components.schemas["Schedule.CreatePayload"].properties.ends.type = "string" },
-    (value: any) => { value.components.schemas["Schedule.Info"].properties.time.type = "string" },
-    (value: any) => { value.paths["/api/experimental/schedule"].post.responses["200"].content["application/json"].schema.type = "string" },
-    (value: any) => { value.components.schemas["Schedule.Info"].properties.status.enum = "active" },
-    (value: any) => { value.components.schemas["Schedule.Info"].required = 3 },
-    (value: any) => { value.components.schemas["Schedule.When"].anyOf.pop() },
-    (value: any) => { value.components.schemas["Schedule.CreatePayload"].properties.when.anyOf.pop() },
-    (value: any) => { delete value.components.schemas["Schedule.CreatePayload"].properties.when },
-    (value: any) => { delete value.components.schemas["Config.InfoEncoded"].properties.experimental.properties.schedules },
-    (value: any) => { delete value.paths["/api/experimental/schedule/{scheduleID}"].delete.responses["204"] },
+    (value: any) => { delete value.paths["/api/experimental/automation"].get.parameters },
+    (value: any) => { value.paths["/api/experimental/automation"].get.parameters = [null] },
+    (value: any) => { value.components.schemas["Automation.Info"].properties.runCount.type = "string" },
+    (value: any) => { value.components.schemas["Automation.Info"].type = "string" },
+    (value: any) => { value.components.schemas["Automation.CreatePayload"].type = "string" },
+    (value: any) => { value.components.schemas["Automation.CreatePayload"].properties.expires.type = "number" },
+    (value: any) => { value.components.schemas["Automation.Info"].properties.time.type = "string" },
+    (value: any) => { value.paths["/api/experimental/automation"].post.responses["200"].content["application/json"].schema.type = "string" },
+    (value: any) => { value.components.schemas["Automation.Info"].properties.status.enum = "active" },
+    (value: any) => { value.components.schemas["Automation.Info"].required = 3 },
+    (value: any) => { value.components.schemas["Automation.Trigger"].anyOf.pop() },
+    (value: any) => { delete value.components.schemas["Automation.CreatePayload"].properties.trigger },
+    (value: any) => { delete value.components.schemas["Config.InfoEncoded"].properties.experimental.properties.automations },
+    (value: any) => { delete value.paths["/api/experimental/automation/{automationID}"].delete.responses["204"] },
   ]) {
     const value = contract(); mutate(value)
     assert.deepEqual(nativeScheduleCapability(value), { available: false, reason: "incompatible-contract" })
@@ -43,9 +39,9 @@ test("identical inline request/response structures qualify like refs, while malf
   }
   value.paths = inline(value.paths)
   assert.deepEqual(nativeScheduleCapability(value), { available: true })
-  value.paths["/api/experimental/schedule"].post.requestBody.content["application/json"].schema.description = "Equivalent inline schema"
+  value.paths["/api/experimental/automation"].post.requestBody.content["application/json"].schema.description = "Equivalent inline schema"
   assert.deepEqual(nativeScheduleCapability(value), { available: true })
-  value.paths["/api/experimental/schedule/{scheduleID}"].get.responses["200"].content["application/json"].schema.properties.data.properties.runCount.type = "string"
+  value.paths["/api/experimental/automation/{automationID}"].get.responses["200"].content["application/json"].schema.properties.data.properties.runCount.type = "string"
   assert.deepEqual(nativeScheduleCapability(value), { available: false, reason: "incompatible-contract" })
 })
 

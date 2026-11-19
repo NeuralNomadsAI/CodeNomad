@@ -257,7 +257,7 @@ export function claimNativeScheduleCarrierWake(ctx: Context, wake: NativeSchedul
  * check even if a privileged native client edited the session marker. */
 export function assertOrdinaryMissionScheduleInput(input: { ownedCarrier: boolean; sessionMetadata?: Record<string, unknown>; metadata?: Record<string, unknown> }): true {
   if (input.ownedCarrier || input.sessionMetadata?.[NATIVE_SCHEDULE_CARRIER_MARKER] !== undefined
-    || input.metadata?.schedule !== undefined || input.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER] !== undefined)
+    || input.metadata?.schedule !== undefined || input.metadata?.automation !== undefined || input.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER] !== undefined)
     throw new Error("schedule-carrier-ordinary-input")
   return true
 }

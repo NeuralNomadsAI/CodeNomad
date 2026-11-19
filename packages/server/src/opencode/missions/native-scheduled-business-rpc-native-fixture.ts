@@ -30,7 +30,7 @@ export default Plugin.define({ id: "codenomad.missions", effect: ctx => Effect.g
   yield* registerNativeScheduleProvider(ctx, options)
   const hooks = nativeScheduleCarrierHooks(() => false)
   yield* ctx.aisdk.hook("language", event => Effect.sync(() => hooks.language(event)))
-  const sessionTag = Context.Service<never, unknown>("@opencode/Session"), scheduleTag = Context.Service<never, unknown>("@opencode/Schedule")
+  const sessionTag = Context.Service<never, unknown>("@opencode/Session"), scheduleTag = Context.Service<never, unknown>("@opencode/Automation")
   const receivers: boolean[] = []
   const business = yield* registerNativeScheduledBusinessRpc(ctx, options, invocation, run => Effect.gen(function* () {
     receivers.push(Option.isSome(yield* Effect.serviceOption(sessionTag)) && Option.isSome(yield* Effect.serviceOption(scheduleTag)))

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { Context, Effect, Schema } from "effect"
-import { Schedule } from "@opencode/schema/schedule"
+import { Automation } from "@opencode/schema/automation"
 import { SessionMessage } from "@opencode/schema/session-message"
 import type { MissionDocument, MissionCalendar } from "../../missions/mission-document"
 import type { MissionCalendarOwnerSlot } from "../../missions/mission-calendar-owner-state"
@@ -13,16 +13,17 @@ import type { MissionNativeService } from "./native-service-adapter"
 const current = () => true as const, at = 1000, signal = new AbortController().signal
 async function fixture(count = 2) {
   let enabled = true, effectCalls = 0, mutate: (() => void) | undefined
-  const infos = new Map<string, Schedule.Info>(), messages = new Map<string, typeof SessionMessage.Info.Type>()
+  const infos = new Map<string, Automation.Info>(), messages = new Map<string, typeof SessionMessage.Info.Type>()
   const calendars: MissionCalendar[] = Array.from({ length: count }, (_, slot) => ({ role: "principal", slot, timeGeneration: 1,
-    sessionID: `ses_carrier_${slot}`, scheduleID: `sch_calendar_${slot}`, highWater: 0, pendingWake: null, wakePreparing: null }))
+    sessionID: `ses_carrier_${slot}`, scheduleID: `aut_calendar_${slot}`, highWater: 0, pendingWake: null, wakePreparing: null }))
   const descriptors: MissionCalendarOwnerSlot[] = calendars.map(calendar => ({ ...calendar, creation: "adopted", ambiguous: [],
     name: `Owned calendar ${calendar.slot}`, when: { type: "every", every: "15 minutes", tz: "UTC" }, endsAt: null }))
   const doc = { id: "review", projectID: "project", timeGeneration: 1, calendars,
     calendarOwner: { slots: descriptors } } as unknown as MissionDocument
   for (const descriptor of descriptors) {
-    infos.set(descriptor.scheduleID!, Schema.decodeUnknownSync(Schedule.Info)({ id: descriptor.scheduleID, sessionID: descriptor.sessionID,
-      name: descriptor.name, when: descriptor.when, tz: "UTC", action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL },
+    infos.set(descriptor.scheduleID!, Schema.decodeUnknownSync(Automation.Info)({ id: descriptor.scheduleID, sessionID: descriptor.sessionID,
+      name: descriptor.name, trigger: descriptor.when, tz: "UTC", projectID: "project", directory: "/project",
+      action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: descriptor.sessionID } },
       status: "active", nextDueAt: at + 900_000, runCount: 1, time: { created: at, updated: at } }))
     messages.set(`msg_${descriptor.scheduleID}_1`, Schema.decodeUnknownSync(SessionMessage.Info)({ type: "user",
       id: `msg_${descriptor.scheduleID}_1`, text: NATIVE_SCHEDULE_CARRIER_SIGNAL, time: { created: at },
@@ -39,7 +40,7 @@ async function fixture(count = 2) {
       return messages.get(messageID)
     },
   } as unknown as MissionNativeService
-  const scheduleTag = Context.Service<never, unknown>("@opencode/Schedule")
+  const scheduleTag = Context.Service<never, unknown>("@opencode/Automation")
   const service = {
     get: (id: string) => Effect.sync(() => { effectCalls++; return infos.get(id) }),
     enabled: () => Effect.suspend(() => Effect.succeed(enabled)),
@@ -82,7 +83,7 @@ test("OFF, missing message, partial principal inventory and old due barrier all 
 test("an overdue native slot covers the prepared run that prompt entry gates; nothing else relaxes the barrier", async () => {
   const f = await fixture(1), calendar = f.doc.calendars[0], info = f.infos.get(calendar.scheduleID)!
   // Native keeps retrying the next slot, refused at prompt entry, so its due time stays in the past.
-  f.infos.set(info.id, { ...info, nextDueAt: info.time.created, lastFiredAt: info.time.created })
+  f.infos.set(info.id, { ...info, nextDueAt: info.time.created, lastRunAt: info.time.created })
   assert.equal((await f.coverage.coverage(f.doc, f.window, current, signal)).complete, false, "no prepared run: no gate")
   calendar.wakePreparing = { scheduleID: calendar.scheduleID, run: 1, messageID: `msg_${calendar.scheduleID}_1`, dueAt: at }
   const covered = await f.coverage.coverage(f.doc, f.window, current, signal)

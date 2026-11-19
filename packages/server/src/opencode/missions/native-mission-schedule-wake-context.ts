@@ -13,6 +13,7 @@ import { assertNativeScheduleCarrierArtifacts, readNativeScheduleCarrierOwnershi
 import { createNativeScheduleTransport } from "./native-schedule-transport"
 import { nativeScheduleWakeIdentity, type NativeScheduleWake } from "./native-schedule-transport-contract"
 import { assertNativeSchedulePreflight } from "./native-mission-schedule-preflight"
+import { missionWakeMetadata } from "./native-mission-automation"
 import { dispatchNativeMissionScheduleWake, nativeMissionSchedulePriorHeld, parseNativeMissionScheduleClaim,
   recoverNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
 
@@ -81,8 +82,11 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
     if (!scheduleID && !event.messages.some(message => message.role === "user" && /^msg_.+_[1-9]\d*$/.test(message.id ?? ""))) return
     const messages = yield* Effect.promise(() => reader.contextMessages(event.sessionID, event.messages))
     if (!scheduleID) {
-      const ids = new Set(messages.map(message =>
-        (message as { metadata?: { schedule?: { id?: unknown } } }).metadata?.schedule?.id).filter((id): id is string => typeof id === "string"))
+      const ids = new Set(messages.flatMap(message => {
+        const value = message as { metadata?: Readonly<Record<string, unknown>>; id: string }
+        const metadata = missionWakeMetadata(value.metadata, value.id)
+        return metadata ? [metadata.id] : []
+      }))
       if (ids.size !== 1) return
       scheduleID = [...ids][0]
     }

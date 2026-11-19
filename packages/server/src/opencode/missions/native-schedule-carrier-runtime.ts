@@ -18,12 +18,12 @@ import { createNativeScheduleTransport } from "./native-schedule-transport"
 type Input = { wake: NativeScheduleWake; incarnation: NativeScheduleIncarnation; registrationFile: string }
 type Options = NativeScheduleCarrierInstallation & { observe?: (event: Record<string, unknown>) => void }
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
-const scheduleTag = Context.Service<never, unknown>("@opencode/Schedule")
+const scheduleTag = Context.Service<never, unknown>("@opencode/Automation")
 const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
 const pluginPrefix = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
 const exactWakeDueAt = (raw: unknown, expected: NativeScheduleWake): number | undefined => {
   if (typeof raw !== "string") return undefined
-  const data = JSON.parse(raw), wake = data.metadata?.schedule
+  const data = JSON.parse(raw), wake = data.metadata?.automation
   return wake?.id === expected.scheduleID && wake.run === expected.run && Number.isSafeInteger(wake.dueAt)
     && wake.dueAt >= 0 && typeof wake.late === "boolean" && data.text === NATIVE_SCHEDULE_CARRIER_SIGNAL ? wake.dueAt : undefined
 }
@@ -60,7 +60,7 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
         const client = (found.value as { db: { $client: SqlClient.SqlClient } }).db.$client
         if (!Predicate.isFunction(client?.unsafe)) throw new Error("schedule-native-contract")
         const native = yield* client.unsafe(`SELECT m.type,m.data,s.session_id,s.run_count FROM session_message m
-          JOIN schedule s ON s.id=? WHERE m.id=? AND m.session_id=? AND length(CAST(m.data AS BLOB))<=262144`,
+          JOIN automation s ON s.id=? WHERE m.id=? AND m.session_id=? AND length(CAST(m.data AS BLOB))<=262144`,
         [input.wake.scheduleID, input.wake.messageID, input.wake.sessionID]).withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)))
         const message = native[0]
         const present = message?.type === "user" && message.session_id === input.wake.sessionID && Number.isSafeInteger(message.run_count)
@@ -74,10 +74,10 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
       const nativeSchedule = yield* Effect.serviceOption(scheduleTag)
       const nativeDatabase = yield* Effect.serviceOption(databaseTag)
       if (Option.isNone(nativeSchedule) || Option.isNone(nativeDatabase)) throw new Error("schedule-native-contract")
-      const schedules = nativeSchedule.value as { enabled(sessionID: string): Effect.Effect<boolean, unknown> }
+      const schedules = nativeSchedule.value as { enabled(directory: string): Effect.Effect<boolean, unknown> }
       const database = nativeDatabase.value as { db?: { $client?: SqlClient.SqlClient } }
       if (!Predicate.isFunction(schedules.enabled) || !Predicate.isFunction(database.db?.$client?.unsafe)) throw new Error("schedule-native-contract")
-      if (!(yield* schedules.enabled(input.wake.sessionID))) throw new Error("schedule-disabled")
+      if (!(yield* schedules.enabled(ctx.location.directory))) throw new Error("schedule-disabled")
       const graph = yield* Effect.context<never>()
       const query = (sql: string, params: readonly unknown[]) => Effect.runSync(database.db!.$client!.unsafe(sql, params)
         .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))
@@ -97,7 +97,7 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
         if (marker?.missionID !== input.wake.missionID || marker.timeGeneration !== input.wake.generation
           || marker.role !== binding.calendar.role || marker.slot !== binding.calendar.slot
           || model.providerID !== NATIVE_SCHEDULE_CARRIER_MODEL.providerID || model.id !== NATIVE_SCHEDULE_CARRIER_MODEL.id) throw new Error("schedule-carrier-placement")
-        const schedule = query("SELECT session_id,run_count FROM schedule WHERE id=?", [input.wake.scheduleID])[0]
+        const schedule = query("SELECT session_id,run_count FROM automation WHERE id=?", [input.wake.scheduleID])[0]
         if (!schedule || schedule.session_id !== input.wake.sessionID || !Number.isSafeInteger(schedule.run_count)
           || Number(schedule.run_count) < input.wake.run) throw new Error("schedule-native-ack-pending")
         const message = query("SELECT type,data FROM session_message WHERE id=? AND session_id=? AND length(CAST(data AS BLOB))<=262144",
@@ -134,7 +134,7 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
     yield* ctx.session.hook("prompt", event => Effect.gen(function* () {
       const binding = yield* owned(event.sessionID)
       if (!binding) return
-      const wake = event.metadata?.schedule as { id?: unknown; run?: unknown; dueAt?: unknown; late?: unknown } | undefined
+      const wake = event.metadata?.automation as { id?: unknown; run?: unknown; dueAt?: unknown; late?: unknown } | undefined
       if (!wake || wake.id !== binding.calendar.scheduleID || !Number.isSafeInteger(wake.run) || !Number.isSafeInteger(wake.dueAt)
         || typeof wake.late !== "boolean" || event.messageID !== `msg_${wake.id}_${wake.run}`
         || event.prompt.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL) throw new Error("schedule-carrier-prompt")

@@ -7,9 +7,14 @@ import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
+import Fastify from "fastify"
 import toast from "solid-toast"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { registerSessionCleanupRoute } from "../packages/server/src/server/routes/session-cleanup.ts"
+import { SessionCleanupFence } from "../packages/server/src/server/session-cleanup-fence.ts"
+import { WorktreeDeletionFence } from "../packages/server/src/workspaces/worktree-session-evacuation.ts"
 import { createClientSession } from "../packages/ui/src/types/session.ts"
+import { serverApi } from "../packages/ui/src/lib/api-client.ts"
 import { sdkManager } from "../packages/ui/src/lib/sdk-manager.ts"
 import { addInstance, removeInstance } from "../packages/ui/src/stores/instances.ts"
 import { createSession } from "../packages/ui/src/stores/session-api.ts"
@@ -63,6 +68,8 @@ child.stdout.on("data", data => { output += data })
 child.stderr.on("data", data => { output += data })
 const instanceId = "blank-native"
 const originalToast = toast.custom
+const originalCleanup = serverApi.cleanupSession
+const app = Fastify()
 toast.custom = () => "fixture-toast"
 try {
   const deadline = Date.now() + 30_000
@@ -84,6 +91,28 @@ try {
   assert(before.data.some(message => message.type === "user"))
   assert(before.data.some(message => message.type === "assistant"))
 
+  const directory = blank.location.directory
+  const workspace = { path: directory }
+  const connection = { client, assertCurrent() {} }
+  registerSessionCleanupRoute(app, {
+    workspaceManager: {
+      get: id => id === instanceId ? workspace : undefined,
+      getExistingSharedServiceConnection: id => id === instanceId ? connection : undefined,
+      ownsLocation: async (id, location) => id === instanceId && location.directory === directory,
+      getWorktreeIdentityForPath: async (id, value) => id === instanceId && value === directory ? directory : undefined,
+    },
+    worktreeDeletionFence: new WorktreeDeletionFence(),
+    cleanup: new SessionCleanupFence(),
+    isProtected: () => false,
+  })
+  const endpoint = await app.listen({ host: "127.0.0.1", port: 0 })
+  const cleanupAttempts = []
+  serverApi.cleanupSession = async (id, sessionId, signal) => {
+    cleanupAttempts.push(sessionId)
+    const response = await fetch(`${endpoint}/api/workspaces/${id}/session-cleanup/${sessionId}`, { method: "POST", signal })
+    assert.equal(response.status, 200)
+    return response.json()
+  }
   sdkManager.clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: root, port: 0, pid: 0, proxyPath: "", status: "ready", client })
   // Reproduce the UI's unchanged creation snapshot, without loading its transcript.
@@ -91,6 +120,7 @@ try {
   setSessions(new Map([[instanceId, new Map([used, blank].map(info => [info.id, createClientSession(info, instanceId)]))]]))
   const created = await createSession(instanceId)
   await cleanupBlankSessions(instanceId, created.id)
+  assert.deepEqual(cleanupAttempts, [blank.id], "Only the blank session reaches the backend cleanup route")
   const remaining = await client.session.list({ directory: root, limit: 100 })
   assert(remaining.data.some(info => info.id === used.id), "Used session must remain in native storage")
   assert.ok(sessions().get(instanceId)?.has(used.id), "Used session must stay in the UI")
@@ -103,8 +133,10 @@ try {
   process.exitCode = 1
 } finally {
   toast.custom = originalToast
+  serverApi.cleanupSession = originalCleanup
   removeInstance(instanceId, { authoritative: false })
   sdkManager.destroyClientsForInstance(instanceId)
+  await app.close()
   try { await stopFixtureChild(child, stopped) } catch (error) {
     console.error(error)
     process.exitCode = 1

@@ -2,6 +2,7 @@ import type { AISDKHooks } from "@opencode/plugin/effect/aisdk"
 import type { SessionCompaction, SessionContext, SessionHttpRequest, SessionTitle } from "@opencode/plugin/effect/session"
 import type { NativeScheduleWake } from "./native-schedule-transport-contract"
 import { assertNativeScheduleWake } from "./native-schedule-transport-contract"
+import { missionAutomationID, missionWakeMessageID, missionWakeMetadata, sameMissionAutomation } from "./native-mission-automation"
 
 export const NATIVE_SCHEDULE_CARRIER_MODEL = Object.freeze({ providerID: "codenomad-missions-local", id: "schedule-noop" })
 export const NATIVE_SCHEDULE_CARRIER_TITLE = "Mission schedule carrier"
@@ -55,17 +56,16 @@ export function nativeScheduleCarrierWakes(mapping: NativeScheduleCarrierMapping
   const candidates = new Map<number, NativeScheduleCarrierCandidate>()
   for (const raw of messages) {
     if (!raw || typeof raw !== "object") throw new Error("schedule-carrier-context")
-    const message = raw as { type?: unknown; status?: unknown; id?: unknown; metadata?: { schedule?: unknown; notice?: unknown } }
+    const message = raw as { type?: unknown; status?: unknown; id?: unknown; metadata?: Readonly<Record<string, unknown>> }
     if (typeof message.id !== "string" || !message.id.length || message.id.length > 1024) throw new Error("schedule-carrier-coverage")
-    const schedule = message.metadata?.schedule as { id?: unknown; run?: unknown; dueAt?: unknown; late?: unknown } | undefined
+    const schedule = missionWakeMetadata(message.metadata, message.id)
     // Native notices/checkpoints cannot hide a deterministic or schedule-bearing wake.
-    if (schedule === undefined && typeof message.id === "string" && !message.id.startsWith(`msg_${mapping.scheduleID}_`)
+    if (message.metadata?.schedule === undefined && message.metadata?.automation === undefined
+      && !message.id.startsWith(`msg_${mapping.scheduleID}_`) && !message.id.startsWith(`msg_${missionAutomationID(mapping.scheduleID)}_`)
       && (message.type === "compaction" && message.status === "completed"
         || message.type === "synthetic" && message.metadata?.notice === "restart")) continue
-    if (message.type !== "user" || !schedule || schedule.id !== mapping.scheduleID || !Number.isSafeInteger(schedule.run)
-      || Number(schedule.run) < 1 || !Number.isSafeInteger(schedule.dueAt) || Number(schedule.dueAt) < 0
-      || typeof schedule.late !== "boolean" || typeof message.id !== "string") throw new Error("schedule-carrier-wake")
-    const candidate = { ...mapping, run: Number(schedule.run), messageID: message.id, dueAt: Number(schedule.dueAt), late: schedule.late }
+    if (message.type !== "user" || !schedule || !sameMissionAutomation(schedule.id, mapping.scheduleID)) throw new Error("schedule-carrier-wake")
+    const candidate = { ...mapping, run: schedule.run, messageID: missionWakeMessageID(mapping.scheduleID, schedule.run), dueAt: schedule.dueAt, late: schedule.late }
     assertNativeScheduleWake(candidate)
     if (candidate.run <= highWater) continue
     const previous = candidates.get(candidate.run)

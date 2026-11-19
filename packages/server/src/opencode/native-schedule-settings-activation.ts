@@ -3,7 +3,7 @@ import type { PluginControlLocation, PluginControlScope } from "../api-types"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { readRuntimeContract } from "./compatibility/negotiate"
 import { encodePluginControlOriginal } from "./plugin-control-document"
-import { editMissionExperimental, inheritedMissionExperimental,
+import { configuredMissionAutomation, editMissionExperimental, inheritedMissionExperimental,
   nativeExperimentalTargetPosition, nativeSettingExpectation, readMissionExperimental } from "./native-experimental-settings"
 import { readNativeScheduleFlag, nativeScheduleFlagOrigin, type NativeScheduleFlag } from "./native-schedule-flag"
 import { nativeScheduleCapability } from "./native-schedule-capability"
@@ -42,9 +42,9 @@ export function planNativeScheduleActivation(view: NativeConfigDocuments, flag: 
   // Inspect every discovered layer, including OFF hidden by a higher ON; the
   // owned raw documents also fence native watcher lag before a write.
   for (const entry of view.entries)
-    if (entry.type === "document" && entry.info.experimental?.schedules === false) refuse(entry.path)
+    if (entry.type === "document" && configuredMissionAutomation(entry.info.experimental ?? {}) === false) refuse(entry.path)
   for (const item of view.documents)
-    if (readMissionExperimental(item.document).schedules === false) refuse(item.path)
+    if (configuredMissionAutomation(readMissionExperimental(item.document)) === false) refuse(item.path)
   if (!flag.enabled && flag.provenance === "environment")
     throw new NativeScheduleActivationRefused({ reason: "explicit-off", provenance: "environment", layer: "environment" })
   if (flag.enabled) return []
@@ -52,7 +52,7 @@ export function planNativeScheduleActivation(view: NativeConfigDocuments, flag: 
   const position = nativeExperimentalTargetPosition(view.entries, project.path, view.location.directory)
   const imposed = view.entries.slice(position.after).find(entry => entry.type === "document" && entry.info.experimental !== undefined)
   if (imposed?.type === "document") refuse(imposed.path, "masked")
-  const updated = editMissionExperimental(project.document, "schedules", true,
+  const updated = editMissionExperimental(project.document, "automations", true,
     inheritedMissionExperimental(view.entries, project.path, view.location.directory))
   return [{ scope: "project", path: project.path, expectation: nativeSettingExpectation(project.document), updated }]
 }
@@ -125,7 +125,7 @@ export class NativeScheduleSettingsActivation {
           throw new PluginControlsError("Original native schedule activation requires observation of its attempted effects", "conflict")
         if (nativeSettingExpectation(actual.document) !== target.expectation)
           throw new PluginControlsError("OpenCode configuration changed; activation remains paused", "conflict")
-        const updated = editMissionExperimental(actual.document, "schedules", true,
+        const updated = editMissionExperimental(actual.document, "automations", true,
           inheritedMissionExperimental(view.entries, actual.path, view.location.directory), target.scope)
         if (hash(updated) !== target.resultDigest)
           throw new PluginControlsError("OpenCode configuration inheritance changed", "conflict")

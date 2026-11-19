@@ -20,8 +20,8 @@ never upgrade or restart a user's service.
   separately from an untested version. Optional configuration reload follows
   its own route presence. Never probe support with a write.
 
-Scheduled Missions additionally require the consumed Schedule contract and an enabled
-effective native `experimental.schedules` flag in the acquired Location. Play/Resume
+Scheduled Missions additionally require the consumed Automation contract and an enabled
+effective native `experimental.automations` flag in the acquired Location. Play/Resume
 prepare project-only activation automatically, preserving every discovered explicit
 OFF and native environment OFF. An already enabled Location receives a ready proof
 without configuration writes. Native flag resolution, targeted activation and exact

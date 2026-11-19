@@ -103,7 +103,7 @@ test("context bounds precede SQL; classification and recovery have separate read
   const bounded = nativeReads(t), absent = await bounded.reader(), wake = { ...mapping, run: 1, messageID: "msg_sch_owned_1" }
   for (let n = 0; n < 9; n++) assert.equal(await absent.message(wake), undefined)
   await assert.rejects(absent.message(wake), /coverage/)
-  assert.equal(bounded.queries.length, 9)
+  assert.equal(bounded.queries.length, 18)
 })
 
 test("product and foundation hooks use exact bounded classifications and keep deterministic compaction recovery", async t => {
@@ -125,17 +125,18 @@ test("product and foundation hooks use exact bounded classifications and keep de
     const event = (messages: unknown[]) => ({ sessionID: calendar.sessionID, model: NATIVE_SCHEDULE_CARRIER_MODEL,
       messages, tools: {} }) as SessionContext
     const invoke = (messages: unknown[]) => f.run(Effect.scoped(hooks.get("context")!(event(messages))))
+    const legacy = `msg_${calendar.scheduleID}_1`, migrated = legacy.replace(/^msg_sch_/, "msg_aut_")
     await invoke([hint("msg_restart"), hint(`msg_${calendar.scheduleID}_1`)])
-    assert.deepEqual(f.queries.map(q => q.params[0]), ["msg_restart", `msg_${calendar.scheduleID}_1`])
+    assert.deepEqual(f.queries.map(q => q.params[0]), kind === "product" ? ["msg_restart", legacy, migrated] : ["msg_restart", legacy])
     f.queries.length = 0
     await invoke([hint("msg_compact")])
-    assert.deepEqual(f.queries.map(q => q.params[0]), kind === "product" ? ["msg_compact", `msg_${calendar.scheduleID}_1`] : ["msg_compact"])
+    assert.deepEqual(f.queries.map(q => q.params[0]), kind === "product" ? ["msg_compact", legacy, migrated] : ["msg_compact"])
     if (kind === "foundation") assert.ok(observed.some(item => item.kind === "compacted-wake-point-read"
       && (item.result as { state: string }).state === "not-dispatched")) // The fixture has no service registration.
     f.queries.length = 0
     const recoveries = observed.filter(item => item.kind === "compacted-wake-point-read").length
     await invoke([]) // A checkpoint may absorb the wake without retaining a model-facing ID.
-    assert.deepEqual(f.queries.map(q => q.params[0]), kind === "product" ? [`msg_${calendar.scheduleID}_1`] : [])
+    assert.deepEqual(f.queries.map(q => q.params[0]), kind === "product" ? [legacy, migrated] : [])
     if (kind === "foundation") assert.equal(observed.filter(item => item.kind === "compacted-wake-point-read").length, recoveries + 1)
     await assert.rejects(invoke([hint("msg_unknown")]), /coverage/)
     await assert.rejects(invoke([hint(`msg_${calendar.scheduleID}_2`)]), /coverage/)
@@ -156,15 +157,14 @@ test("128 user wake entries reuse their proof and leave all eight principal reco
   const [candidate] = nativeScheduleCarrierWakes(mapping, 127, window)
   assert.equal(candidate.run, 128)
   assert.equal((await reader.message(candidate))?.run, 128)
-  assert.equal(f.queries.length, 128)
+  assert.equal(f.queries.length, 129)
   for (let index = 0; index < 8; index++) {
     const scheduleID = `sch_principal_${index}`, sessionID = `ses_principal_${index}`, messageID = `msg_${scheduleID}_1`
     f.put(messageID, "user", nativeWake(scheduleID, 1), sessionID)
     assert.equal((await reader.message({ ...mapping, scheduleID, sessionID, messageID, run: 1 }))?.run, 1)
   }
-  assert.equal(f.queries.length, 136)
+  assert.equal(f.queries.length, 145)
   const absent = { ...mapping, run: 129, messageID: "msg_sch_owned_129" }
-  assert.equal(await reader.message(absent), undefined)
   await assert.rejects(reader.message(absent), /coverage/)
 })
 
@@ -224,6 +224,7 @@ test("an attempted auxiliary resolves its schedule ID from native records, retai
   assert.equal(f.queries.length, 0) // No known calendar or deterministic wake hint: stay quiet.
   await f.run(nativeMissionScheduleWakeContext(ctx, { sessionID: descriptor.sessionID, model: NATIVE_SCHEDULE_CARRIER_MODEL,
     messages: [hint(id)], tools: {} } as unknown as SessionContext))
-  assert.deepEqual(f.queries.map(query => query.params.slice(0, 2)), [[id, descriptor.sessionID]])
+  assert.deepEqual(f.queries.map(query => query.params.slice(0, 2)),
+    [[id, descriptor.sessionID], [id.replace(/^msg_sch_/, "msg_aut_"), descriptor.sessionID]])
   assert.deepEqual(await owner.read(), doc) // No service registration: no native adoption or dispatch.
 })
