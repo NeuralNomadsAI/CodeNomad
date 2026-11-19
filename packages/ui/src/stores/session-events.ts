@@ -351,7 +351,7 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
   speakCompletedAssistantText(instanceId, sessionId)
 }
 
-function ownsSessionDirectory(instanceId: string, directory: string): boolean {
+function listsSessionDirectory(instanceId: string, directory: string): boolean {
   const instance = instances().get(instanceId)
   return Boolean(instance) && isWorkspaceSessionDirectory(directory, instance!.folder, getWorktrees(instanceId))
 }
@@ -389,7 +389,7 @@ function refreshSelectedMoveCatalog(instanceId: string, sessionId: string): void
 
 function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {
   const { sessionID: sessionId, location } = data
-  const targetInstanceIds = Array.from(instances().keys()).filter((instanceId) => ownsSessionDirectory(instanceId, location.directory))
+  const targetInstanceIds = Array.from(instances().keys()).filter((instanceId) => listsSessionDirectory(instanceId, location.directory))
 
   // A location can be open in several instances. Keep the native event with
   // its source whenever that source still owns the destination instead of
@@ -429,7 +429,7 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
   const current = () => !!instance?.client && instances().get(instanceId)?.client === instance.client
     && isInstanceGenerationCurrent(instanceId, generation) && getPendingSessionMove(instanceId, sessionId) === move
   if (!current()) return false
-  const needsFresh = move.unresolved || !servesSessionDirectory(instanceId, move.data.location.directory)
+  const needsFresh = move.unresolved || !listsSessionDirectory(instanceId, move.data.location.directory)
   move.unresolved = false
   let inventoryKnown = fresh || !needsFresh
   if (!inventoryKnown) {
@@ -444,10 +444,10 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
     move.unresolved = true
     return false
   }
-  if (inventoryKnown && servesSessionDirectory(instanceId, move.data.location.directory)) {
+  if (inventoryKnown && listsSessionDirectory(instanceId, move.data.location.directory)) {
     return finishSessionMove(instanceId, sessionId, move, move.data)
   }
-  // The proxy resolves filesystem aliases that the display inventory cannot.
+  // Containment alone cannot distinguish a registered checkout alias from a nested repo.
   try {
     const session = await readWorkspaceSessionPlacement(instanceId, sessionId)
     if (current()) {

@@ -335,7 +335,7 @@ const moved = (id: string, sessionID: string, directory: string, created = 1) =>
 // Outside the opened folder: only its registration makes it owned.
 const newWorktree = { slug: "new", directory: "/repo-worktrees/new", kind: "worktree" } as const
 
-it("lists a standalone incoming move at a registered checkout alias, not a nested repository", async (t) => {
+for (const alias of ["/checkout-alias", "/repo/checkout-alias"]) it(`lists a standalone incoming move at ${alias}, not a nested repository`, async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] })
   const destination = setup("move-incoming-alias", "/repo")
   const id = destination.session.instanceId
@@ -344,7 +344,7 @@ it("lists a standalone incoming move at a registered checkout alias, not a neste
   const row = (sessionID: string, directory: string) => ({
     ...destination.session, id: sessionID, parentID: undefined, location: { directory }, projectID: "project",
   })
-  const incoming = row("incoming", "/checkout-alias"), nested = row("nested", "/nested-alias")
+  const incoming = row("incoming", alias), nested = row("nested", "/repo/independent-repository")
   let listed = incoming
   let departed = false
   try {
@@ -372,7 +372,7 @@ it("lists a standalone incoming move at a registered checkout alias, not a neste
     t.mock.timers.tick(100)
     await new Promise<void>(resolve => setImmediate(resolve))
     assert.deepEqual(listedIds(id), ["incoming", "restored"])
-    assert.equal(sessions().get(id)?.get("incoming")?.location.directory, "/checkout-alias")
+    assert.equal(sessions().get(id)?.get("incoming")?.location.directory, alias)
     assert.equal(sessions().get(id)?.has("nested"), false, "proxy eligibility alone does not admit a nested repository")
     assert.equal(activeSessionId().get(id), "restored")
 
