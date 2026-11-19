@@ -90,7 +90,7 @@ import {
 
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
-import { clearPendingSessionMove, getPendingSessionMove, isSessionMovePending } from "./session-events"
+import { clearPendingSessionMove, getPendingSessionMove, hasConfirmedMovePlacement, isSessionMovePending } from "./session-events"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
@@ -819,7 +819,9 @@ async function fetchSessions(instanceId: string, options?: {
         if (captured.catalogSnapshot && !fetchedIds.has(id) && currentSessions.get(id) === captured) staleIds.add(id)
       }
       for (const sessionId of staleIds) {
-        if (currentSessions.get(sessionId) !== existingSessions.get(sessionId) || isSessionMovePending(instanceId, sessionId)) continue
+        const current = currentSessions.get(sessionId)
+        if (current !== existingSessions.get(sessionId) || isSessionMovePending(instanceId, sessionId)
+          || hasConfirmedMovePlacement(instanceId, sessionId, current)) continue
         // An absent row may still exist in another workspace.
         removeSessionProjection(instanceId, sessionId)
       }
@@ -829,6 +831,7 @@ async function fetchSessions(instanceId: string, options?: {
       for (const { id, location } of inventory) {
         const directory = currentSessions.get(id)?.location.directory
         if (isSessionMovePending(instanceId, id) || directory !== location.directory
+          || hasConfirmedMovePlacement(instanceId, id, currentSessions.get(id))
           || isWorkspaceServedDirectory(directory, instance.folder, worktrees)) continue
         if (!getMovedAwaySessions(instanceId).has(id)) markSessionMovedAway(instanceId, id, directory)
         if (capturedSelection.includes(id) || activeParentSessionId().get(instanceId) === id || activeSessionId().get(instanceId) === id) {

@@ -12,7 +12,7 @@ import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { setInstanceMetadata } from "./instance-metadata.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { handleNativeSessionEvent, handleSessionDeleted } from "./session-events.ts"
+import { handleNativeSessionEvent, handleSessionDeleted, isSessionMovePending } from "./session-events.ts"
 
 const getMovedAwaySessionIds = (instanceId: string): Iterable<string> =>
   (sessionState as { getMovedAwaySessionIds?: (id: string) => Iterable<string> }).getMovedAwaySessionIds?.(instanceId) ?? ["<no record getter>"]
@@ -21,6 +21,12 @@ import { activeSessionId, getSessionDraftPrompt, getSessionListError, getSession
 import { ensureWorktreesLoaded, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
+
+async function movedOutsideWorkspace() {
+  throw Object.assign(new Error("Session does not belong to workspace"), {
+    _tag: "SessionNotFoundError", reason: SESSION_LOCATED_ELSEWHERE_REASON,
+  })
+}
 
 function setup(id: string, folder: string) {
   const session = {
@@ -127,6 +133,7 @@ it("still removes the old instance projection when the session really leaves its
   serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
   setInstanceMetadata(source.session.instanceId, { project: { id: "source-project", canonical: "/repo" } as any })
   source.client.session.list = async () => ({ data: [] })
+  source.client.session.get = movedOutsideWorkspace
   try {
     handleNativeSessionEvent(source.session.instanceId, {
       id: "different-location", type: "session.moved", created: 1,
@@ -168,7 +175,7 @@ it("removes a single moved session from its old instance while its children stay
     assert.equal(activeSessionId().get(source.session.instanceId), undefined)
     assert.deepEqual(getSessionListIds(source.session.instanceId), [])
     assert.equal(getSessionListError(source.session.instanceId), undefined)
-    assert.deepEqual(reads, ["restored"], "only as the parent left behind, read as absent")
+    assert.deepEqual(reads, ["restored", "restored"], "the move probe and the child’s parent read both see the departure")
 
     // Moving back makes it a session of this workspace again.
     const returned = { ...source.session, parentID: undefined }
@@ -278,6 +285,7 @@ it("renders no row through an ancestor located elsewhere, like a child whose par
   const row = (sessionId: string, directory: string, parentID?: string) => ({ ...source.session, id: sessionId, title: sessionId,
     parentId: parentID ?? null, parentID, location: { directory } })
   let middleDirectory = "/repo"
+  source.client.session.get = movedOutsideWorkspace
   source.client.session.list = async (input: any) => {
     const native = [row("restored", "/repo"), row("middle", middleDirectory, "restored"), row("grandchild", "/repo", "middle"),
       row("local-child", "/repo", "restored")]
@@ -305,6 +313,7 @@ it("releases a moved-away record on deletion, on a refresh that lists the sessio
     const original = serverApi.fetchWorktrees
     serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
     source.client.session.list = async () => ({ data: [] })
+    source.client.session.get = movedOutsideWorkspace
     try {
       await ensureWorktreesLoaded(id)
       handleNativeSessionEvent(id, moved("away", "restored", "/foreign"))
@@ -324,7 +333,58 @@ const moved = (id: string, sessionID: string, directory: string, created = 1) =>
   id, type: "session.moved", created, data: { sessionID, location: { directory } },
 }) as any
 // Outside the opened folder: only its registration makes it owned.
-const newWorktree = { slug: "new", directory: "/repo-worktrees/new" }
+const newWorktree = { slug: "new", directory: "/repo-worktrees/new", kind: "worktree" } as const
+
+it("uses the workspace proxy to keep a session moved to an owned worktree alias", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const source = setup("move-owned-alias", "/repo")
+  const id = source.session.instanceId
+  const originalWorktrees = serverApi.fetchWorktrees
+  const originalFetch = globalThis.fetch
+  const alias = "/worktree-alias", canonical = newWorktree.directory
+  const root = { slug: "root", directory: "/repo", kind: "root" } as const
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [root, newWorktree] })
+  const row = { ...source.session, parentID: undefined, location: { directory: alias } }
+  const child = { ...source.session, id: "local-child", parentID: "restored", location: { directory: canonical } }
+  setInstanceMetadata(id, { project: { id: "project", canonical: "/repo" } as any })
+  source.client.session.list = async (input: any) => ({ data: input.project ? [row, child] : [] })
+  const baseUrl = buildInstanceBaseUrl(`/workspaces/${id}/instance`, "http://fixture")
+  const proxy = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+  let reads = 0
+  let proxyReady = false
+  source.client.session.get = (...args: Parameters<typeof proxy.session.get>) => { reads++; return proxy.session.get(...args) }
+  globalThis.fetch = async () => proxyReady ? Response.json({ data: row }) : Response.json({ error: "Forbidden" }, { status: 403 })
+  try {
+    await ensureWorktreesLoaded(id)
+    setActiveSession(id, "restored")
+    setSessionDraftPrompt(id, "restored", "keep draft")
+    handleNativeSessionEvent(id, moved("into-alias", "restored", alias))
+    t.mock.timers.tick(100)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(activeSessionId().get(id), "restored", "a generic 403 does not confirm departure")
+    assert.ok(isSessionMovePending(id, "restored"))
+    assert.deepEqual([...getMovedAwaySessionIds(id)], [])
+    proxyReady = true
+    await reloadWorktrees(id, true)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(activeSessionId().get(id), "restored")
+    assert.equal(sessions().get(id)?.get("restored")?.location.directory, alias)
+    assert.equal(reads, 2, "only the workspace-scoped read confirms the alias")
+    // Exercise both a catalogue with local descendants and a standalone alias
+    // excluded from the lexical project inventory.
+    await fetchSessions(id, { strictStatus: true })
+    source.client.session.list = async (input: any) => ({ data: input.project ? [row] : [] })
+    await fetchSessions(id, { strictStatus: true })
+    assert.equal(activeSessionId().get(id), "restored")
+    assert.deepEqual(listedIds(id), ["restored"])
+    assert.deepEqual([...getMovedAwaySessionIds(id)], [])
+    assert.equal(getSessionDraftPrompt(id, "restored"), "keep draft")
+  } finally {
+    globalThis.fetch = originalFetch
+    serverApi.fetchWorktrees = originalWorktrees
+    source.cleanup()
+  }
+})
 
 for (const registered of [true, false]) {
   it(`keeps placement unresolved until the worktree inventory recovers (${registered ? "local" : "departed"})`, async (t) => {
@@ -344,6 +404,11 @@ for (const registered of [true, false]) {
     // The local case is standalone: the old inventory can't include the moved
     // row through a child, so it retains the original checkout until recovery.
     source.client.session.list = async (input: any) => ({ data: input.project ? registered ? [row] : [row, child] : [] })
+    source.client.session.get = async () => {
+      if (!recovered) throw Object.assign(new Error("Forbidden"), { status: 403 })
+      if (!registered) return movedOutsideWorkspace()
+      return row
+    }
     const agentDirectories: string[] = []
     source.client.agent = { list: async ({ location }: any) => { agentDirectories.push(location.directory); return [] } }
     setInstanceMetadata(id, { project: { id: "project" } as any })
@@ -405,7 +470,8 @@ it("lists a moved-away session again after a later inventory change or session r
     source.client.session.list = async () => ({ data: registered ? [listed] : [] })
     try {
       await ensureWorktreesLoaded(source.session.instanceId)
-      // Even the fresh inventory has not registered the destination yet.
+      // The proxy confirms the destination is elsewhere until registration.
+      source.client.session.get = movedOutsideWorkspace
       handleNativeSessionEvent(source.session.instanceId, moved("into-unregistered", "restored", newWorktree.directory))
       await delay(200)
       assert.equal(sessions().get(source.session.instanceId)?.has("restored") ?? false, false)
@@ -430,6 +496,7 @@ it("keeps the unsent draft and attachments of a moved-away session for its retur
     addAttachment(id, "restored", attachment)
     const list = source.client.session.list
     source.client.session.list = async () => ({ data: [] })
+    source.client.session.get = movedOutsideWorkspace
     handleNativeSessionEvent(id, moved("away", "restored", "/elsewhere"))
     await delay(200)
     assert.equal(sessions().get(id)?.has("restored") ?? false, false)

@@ -59,18 +59,15 @@ Implementation:
   returned identifier rather than guessing it from the branch name.
 - Native worktree events invalidate ownership and UI state. Opening the selector also
   discovers external Git changes. Native session moves refresh the catalogue before
-  list reconciliation. A moved session is located elsewhere when neither the catalogue
-  nor a fresh inventory read (`?fresh=true`, only when the catalogue does not serve
-  it) serves its destination: the opened folder or a directory within a registered
-  checkout, an exact-folder (`directoryOnly`) entry owning only itself
-  (`stores/workspace-served-directory.ts`, mirroring `WorkspaceManager.ownsDirectory`
-  over the same inventory). Whatever started the move, the instance then records it
-  as moved away and removes its list, selection and transcript caches
-  (`removeSessionProjection`). A failed fresh read keeps the move unresolved
-  across catalogue refreshes. A later worktree publication resumes the fresh
-  check; confirmation applies the placement and refreshes the session list and
-  selected composer catalogue. A typed departure can settle the same move
-  directly. Its draft and attachments stay, and no deletion marker is set.
+  list reconciliation. When a move's destination is absent from the display
+  inventory, consult a fresh inventory and use a workspace-scoped session read
+  if placement remains uncertain. The proxy resolves aliases such as symlinks
+  and junctions. A successful read confirms the exact placement across catalogue
+  refreshes; a typed departure removes the old list, selection and transcript
+  projection (`removeSessionProjection`). Other read failures keep the move
+  unresolved until a later worktree publication retries it. Confirmation updates
+  the session list and selected composer catalogue. Drafts and attachments stay,
+  and no deletion marker is set.
   The record keeps the session out
   of the scope (below) and makes a later published inventory serving the destination
   list it again; it is released when a session refresh reads it at a served

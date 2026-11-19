@@ -52,7 +52,7 @@ test("an external move of the selected conversation leaves its old tab and appea
     await page.evaluate(() => (window as any).fixture.move("moving", "/projects/b"))
     await row(page, "b", "moving").waitFor()
     await settled(page, errors)
-    assert.deepEqual(refused, [parentRead], "only its children's parent read, refused and treated as absent")
+    assert.deepEqual(refused, [parentRead, parentRead], "the move probe and the child’s parent read both see the departure")
     assert.equal(await page.evaluate(() => (window as any).fixture.selected("b")), null, "the destination keeps its own selection")
   } finally { await page.close() }
 })
@@ -62,7 +62,7 @@ test("an external move to a folder open in no tab only leaves the old tab", asyn
   try {
     await page.evaluate(() => (window as any).fixture.move("moving", "/projects/elsewhere"))
     await settled(page, errors)
-    assert.deepEqual(refused, [parentRead])
+    assert.deepEqual(refused, [parentRead, parentRead])
     assert.equal(await row(page, "b", "moving").count(), 0)
     await row(page, "b", "resident").waitFor()
   } finally { await page.close() }

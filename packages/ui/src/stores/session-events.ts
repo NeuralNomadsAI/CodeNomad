@@ -1,3 +1,4 @@
+import { isSessionNotFoundError } from "@opencode/client"
 import type {
   PermissionAsked,
   PermissionReplied,
@@ -53,6 +54,9 @@ import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
 import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
 import { isWorkspaceServedDirectory } from "./workspace-served-directory"
+import { locationAuthorityKey } from "./request-locations"
+import { parentSessionReadHeaders } from "../lib/sdk-manager"
+import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
 import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
@@ -81,6 +85,14 @@ interface SessionMove { data: SessionMoved["data"]; unresolved?: boolean }
 const pendingSessionMoves = new Map<string, Map<string, SessionMove>>()
 /** A move remains current until its placement is settled or superseded. */
 const latestSessionMoves = new Map<string, Map<string, SessionMove>>()
+type SessionPlacement = Pick<Session, "location" | "projectID" | "subpath">
+const confirmedMovePlacements = new Map<string, Map<string, SessionPlacement>>()
+
+export function hasConfirmedMovePlacement(instanceId: string, sessionId: string, placement: SessionPlacement | undefined): boolean {
+  const confirmed = confirmedMovePlacements.get(instanceId)?.get(sessionId)
+  return !!confirmed && !!placement && locationAuthorityKey(confirmed.location) === locationAuthorityKey(placement.location)
+    && confirmed.projectID === placement.projectID && confirmed.subpath === placement.subpath
+}
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
   const key = `${instanceId}\0${sessionId}`
@@ -275,7 +287,7 @@ function ownsSessionDirectory(instanceId: string, directory: string): boolean {
   return Boolean(instance) && isWorkspaceSessionDirectory(directory, instance!.folder, getWorktrees(instanceId))
 }
 
-/** Whether the workspace proxy serves a session there; otherwise it is located elsewhere. */
+/** Whether the display inventory recognizes this directory spelling. */
 function servesSessionDirectory(instanceId: string, directory: string): boolean {
   const instance = instances().get(instanceId)
   return Boolean(instance) && isWorkspaceServedDirectory(directory, instance!.folder, getWorktrees(instanceId))
@@ -318,6 +330,7 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
   const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]
   for (const instanceId of new Set(affectedInstanceIds)) {
     const move: SessionMove = { data }
+    confirmedMovePlacements.get(instanceId)?.delete(sessionId)
     const latest = latestSessionMoves.get(instanceId) ?? new Map()
     latest.set(sessionId, move)
     latestSessionMoves.set(instanceId, latest)
@@ -337,33 +350,56 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
   }
 }
 
-/** A session moved to a directory the workspace proxy does not serve is
- * located elsewhere: it is recorded as such, so no path lists it here, and it
- * leaves the list and selection; its draft and attachments stay for its return.
- * Only a fresh inventory decides, and only for the latest move of that session. */
-async function settleSessionMove(instanceId: string, sessionId: string, move: SessionMove): Promise<boolean> {
-  if (getPendingSessionMove(instanceId, sessionId) !== move) return false
+async function settleSessionMove(instanceId: string, sessionId: string, move: SessionMove, fresh = false): Promise<boolean> {
+  const instance = instances().get(instanceId)
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  const current = () => !!instance?.client && instances().get(instanceId)?.client === instance.client
+    && isInstanceGenerationCurrent(instanceId, generation) && getPendingSessionMove(instanceId, sessionId) === move
+  if (!current()) return false
   const needsFresh = move.unresolved || !servesSessionDirectory(instanceId, move.data.location.directory)
   move.unresolved = false
-  if (needsFresh) {
+  let inventoryKnown = fresh || !needsFresh
+  if (!inventoryKnown) {
     try {
       await reloadWorktrees(instanceId, true)
+      inventoryKnown = true
     } catch (error) {
       log.warn("Failed to read the inventory for a moved session", { instanceId, sessionId, error })
-      move.unresolved = true
-      return false
     }
   }
-  return finishSessionMove(instanceId, sessionId, move)
+  if (!current()) {
+    move.unresolved = true
+    return false
+  }
+  if (inventoryKnown && servesSessionDirectory(instanceId, move.data.location.directory)) {
+    return finishSessionMove(instanceId, sessionId, move, move.data)
+  }
+  // The proxy resolves filesystem aliases that the display inventory cannot.
+  try {
+    const session = await getRootClient(instanceId).session.get({ sessionID: sessionId }, { headers: parentSessionReadHeaders })
+    if (current() && session?.location) return finishSessionMove(instanceId, sessionId, move, session, true)
+  } catch (error) {
+    if (current() && isSessionNotFoundError(error) && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
+      return finishSessionMove(instanceId, sessionId, move, null)
+    }
+    log.warn("Failed to confirm moved session placement", { instanceId, sessionId, error })
+  }
+  move.unresolved = true
+  return false
 }
 
-function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove): boolean {
+function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove, placement: SessionPlacement | null, verified = false): boolean {
   if (getPendingSessionMove(instanceId, sessionId) !== move) return false
   clearPendingSessionMove(instanceId, sessionId)
   if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return false
   const { directory } = move.data.location
-  if (servesSessionDirectory(instanceId, directory)) {
-    applySessionMovePlacement(instanceId, move.data)
+  if (placement) {
+    if (verified) {
+      const placements = confirmedMovePlacements.get(instanceId) ?? new Map()
+      placements.set(sessionId, { location: placement.location, projectID: placement.projectID, subpath: placement.subpath })
+      confirmedMovePlacements.set(instanceId, placements)
+    }
+    applySessionMovePlacement(instanceId, { ...placement, sessionID: sessionId })
     return true
   }
   markSessionMovedAway(instanceId, sessionId, directory)
@@ -379,6 +415,9 @@ export function getPendingSessionMove(instanceId: string, sessionId: string): Se
 }
 
 export function clearPendingSessionMove(instanceId: string, sessionId?: string): void {
+  const confirmed = confirmedMovePlacements.get(instanceId)
+  if (sessionId !== undefined) confirmed?.delete(sessionId)
+  if (sessionId === undefined || !confirmed?.size) confirmedMovePlacements.delete(instanceId)
   const moves = latestSessionMoves.get(instanceId)
   if (sessionId !== undefined) moves?.delete(sessionId)
   if (sessionId === undefined || !moves?.size) latestSessionMoves.delete(instanceId)
@@ -451,10 +490,10 @@ function notifySessionAttention(category: "needsInput" | "sessionDone", instance
 queueMicrotask(() => {
   onWorktreesPublished((instanceId, fresh) => {
     relistReturnedSessions(instanceId)
-    const retries: Array<boolean | Promise<boolean>> = []
+    const retries: Promise<boolean>[] = []
     for (const [sessionId, move] of latestSessionMoves.get(instanceId) ?? []) {
       if (!move.unresolved) continue
-      retries.push(fresh ? finishSessionMove(instanceId, sessionId, move) : settleSessionMove(instanceId, sessionId, move))
+      retries.push(settleSessionMove(instanceId, sessionId, move, fresh))
     }
     if (retries.length) void Promise.all(retries).then(results => {
       if (results.some(Boolean)) return refreshMovedSessions(instanceId)
