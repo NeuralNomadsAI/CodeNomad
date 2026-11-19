@@ -572,7 +572,9 @@ test("non-cold actual document and snapshot export only typed metadata without I
     db.prepare("UPDATE session_message SET data=? WHERE id='start'").run(JSON.stringify({ text: encoded, description: "privateletters",
       metadata: { [encoded]: encoded, "codenomad.mission": { document: { objective: encoded } } } }))
     db.prepare("UPDATE session_inbox SET delivery=?").run(encoded)
-    db.prepare("UPDATE schedule SET last_outcome=?").run(encoded)
+    db.exec('ALTER TABLE schedule RENAME TO automation; ALTER TABLE automation RENAME COLUMN "when" TO trigger;')
+    db.prepare("UPDATE automation SET last_outcome=?").run(encoded)
+    db.prepare("UPDATE session_message SET data=json_set(json_remove(data,'$.metadata.schedule'),'$.metadata.automation',json_extract(data,'$.metadata.schedule')) WHERE id='msg_schedule_1'").run()
   })
   const definitions = driver.slice(driver.indexOf("  const document ="), driver.indexOf("  const technicalRows ="))
   const readSQL = use => { const db = new DatabaseSync(f.databaseFile, { readOnly: true, timeout: 100 }); try { db.exec("BEGIN"); return use(db) } finally { db.close() } }
