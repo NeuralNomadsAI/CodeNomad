@@ -83,13 +83,13 @@ test("listening and Remote Control locks preserve only device-local SideCar admi
 for (const mode of ["servers", "servers-readonly", "servers-refused"]) test(`home uses host server capabilities (${mode}) with the strict flag`, async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: "en-US" })
   try {
-    for (const scenario of ["ssh", "saved"]) {
-      await page.goto(`${url}?mode=${mode}&surface=home&scenario=${scenario}`)
+    for (const relay of [true, false]) {
+      await page.goto(`${url}?mode=${mode}&surface=home&scenario=saved&relay=${relay}`)
       await page.locator("html[data-meta-settled=true]").waitFor()
       await page.waitForFunction(() => (window as any).hostControlsConfig.isLoaded())
       await page.getByRole("tab", { name: "Browse" }).click()
-      assert.equal(await page.locator(".browse-menu-row[data-remote-server]").count(), Number(scenario === "ssh" && mode !== "servers-refused"))
-      assert.equal(await page.locator(".browse-menu [data-server-add-field]").count(), Number(scenario === "ssh" && mode === "servers"))
+      assert.equal(await page.getByRole("button", { name: "Open a project on Desk", exact: true }).count(), Number(relay && mode !== "servers-refused"))
+      assert.equal(await page.getByRole("textbox", { name: "Server address or link", exact: true }).count(), Number(relay && mode === "servers"))
       assert.equal(await page.getByRole("button", { name: /Fixture SideCar/ }).count(), 0)
     }
   } finally { await page.close() }

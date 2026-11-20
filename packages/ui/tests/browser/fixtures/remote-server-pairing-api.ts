@@ -4,9 +4,10 @@ import { serverApi } from "../../../src/lib/api-client"
 // ?scenario=saved: the tunnel server is already saved, as when pairing it again.
 export const TUNNEL = "https://codenomad-fixture.device.opentunnel.test"
 const fixture = window as unknown as { probes: string[]; uiState: () => string }
-const scenario = new URLSearchParams(location.search).get("scenario")
+const query = new URLSearchParams(location.search)
+const scenario = query.get("scenario")
 fixture.probes = []
-let uiBucket: Record<string, unknown> = new URLSearchParams(location.search).get("scenario") === "saved"
+let uiBucket: Record<string, unknown> = scenario === "saved"
   ? { remoteServers: [{ id: "saved-tunnel", name: "Desk", baseUrl: TUNNEL, skipTlsVerify: false, createdAt: "2026-10-12T10:00:00.000Z", updatedAt: "2026-10-12T10:00:00.000Z" }] }
   : {}
 fixture.uiState = () => JSON.stringify(uiBucket)
@@ -22,7 +23,7 @@ if (scenario === "ssh-launch") {
   })
 }
 
-serverApi.fetchConfigOwner = (async () => ({ settings: { multiBackend: new URLSearchParams(location.search).get("scenario") === "ssh" } })) as typeof serverApi.fetchConfigOwner
+serverApi.fetchConfigOwner = (async () => ({ settings: { multiBackend: scenario === "ssh" || query.get("relay") === "true" } })) as typeof serverApi.fetchConfigOwner
 serverApi.listSshHosts = async () => ({ hosts: ["lab", "other"] })
 serverApi.fetchStateOwner = (async (owner: string) => (owner === "ui" ? uiBucket : {})) as typeof serverApi.fetchStateOwner
 serverApi.patchStateOwner = (async (owner: string, patch: unknown) => {
