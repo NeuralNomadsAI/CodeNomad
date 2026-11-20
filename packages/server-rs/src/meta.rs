@@ -40,6 +40,7 @@ pub fn document(
         "linked-worktrees",
         "sidecars",
         "service-usage",
+        "provider-usage",
     ];
     if bench::missions_run() {
         capabilities.push("missions");
