@@ -29,34 +29,22 @@ export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "שפה",
 
   "folderSelection.logoAlt": "לוגו CodeNomad",
-  "folderSelection.tagline": "בחר תיקייה כדי להתחיל לתכנת עם AI",
 
   "folderSelection.links.github": "CodeNomad GitHub",
   "folderSelection.links.githubStars": "כוכבי CodeNomad ב-GitHub",
   "folderSelection.links.discord": "CodeNomad Discord",
 
-  "folderSelection.empty.title": "אין תיקיות אחרונות",
 
-  "folderSelection.recent.title": "תיקיות אחרונות",
-  "folderSelection.recent.subtitle.one": "{count} תיקייה זמינה",
-  "folderSelection.recent.subtitle.other": "{count} תיקיות זמינות",
   "folderSelection.recent.rename": "שנה שם סביבת עבודה",
   "folderSelection.recent.remove": "הסר מהרשימה האחרונה",
   "folderSelection.recent.openBadge": "פתוח",
-  "newInstanceLauncher.title": "כרטיסיות אחרונות",
-  "newInstanceLauncher.description": "בחר פרויקט אחרון.",
   "newInstanceLauncher.searchLabel": "חיפוש בפרויקטים אחרונים",
   "newInstanceLauncher.searchPlaceholder": "חיפוש בכרטיסיות אחרונות…",
   "newInstanceLauncher.recentTitle": "כרטיסיות אחרונות",
   "newInstanceLauncher.empty": "עדיין אין פרויקטים אחרונים.",
   "newInstanceLauncher.noMatch": "אין פרויקט תואם.",
-  "folderSelection.recent.openNewInstance": "פתיחת מופע חדש",
   "folderSelection.recent.switchToOpenProject": "עבור לפרויקט הפתוח",
 
-  "folderSelection.browse.title": "עיון בתיקייה",
-  "folderSelection.browse.subtitle": "בחר כל תיקייה במחשב שלך",
-  "folderSelection.browse.button": "עיון בתיקיות",
-  "folderSelection.browse.buttonOpening": "פותח...",
   "folderSelection.clone.button": "שכפל מאגר Git",
   "folderSelection.temporary.button": "לשונית זמנית חדשה",
   "folderSelection.temporary.description": "התחל בתיקייה ריקה שמנוהלת על ידי CodeNomad; בסגירת הלשונית תוכל לשמור או למחוק אותה",
@@ -75,13 +63,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "כתובת המאגר ותיקיית היעד הן שדות חובה.",
   "folderSelection.actions.connectButton": "התחבר לשרת CodeNomad",
 
-  "folderSelection.advancedSettings": "הגדרות מתקדמות",
   "folderSelection.opencode": "OpenCode",
 
-  "folderSelection.hints.navigate": "ניווט",
-  "folderSelection.hints.select": "בחירה",
-  "folderSelection.hints.remove": "הסרה",
-  "folderSelection.hints.browse": "עיון",
 
   "folderSelection.loading.title": "מפעיל מופע...",
 
@@ -92,18 +75,11 @@ export const folderSelectionMessages = {
   "folderSelection.dialog.title": "בחר סביבת עבודה",
   "folderSelection.dialog.description": "בחר סביבת עבודה כדי להתחיל לתכנת.",
 
-  "folderSelection.tabs.local": "תיקיות מקומיות",
   "folderSelection.tabs.servers": "שרתים",
   "folderSelection.servers.title": "שרתים שמורים",
-  "folderSelection.servers.subtitle": "פתח שרת CodeNomad מרוחק שמור בחלון חדש",
-  "folderSelection.servers.count": "{count} שרתים",
   "folderSelection.servers.empty.title": "אין שרתים שמורים",
-  "folderSelection.servers.connectTitle": "התחבר לשרת",
-  "folderSelection.servers.connectSubtitle": "שמור שרת CodeNomad מרוחק ופתח אותו בחלון חדש",
-  "folderSelection.servers.connectButton": "התחבר לשרת",
   "settings.servers.addSsh": "הוספת שרת SSH",
   "folderSelection.servers.remove": "הסרה",
-  "folderSelection.servers.skipTls": "TLS בחתימה עצמית",
   "folderSelection.servers.errorTitle": "החיבור המרוחק נכשל",
   "folderSelection.servers.dialog.title": "התחבר לשרת",
   "folderSelection.servers.dialog.name": "שם השרת",
@@ -128,7 +104,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.launch.error.credentials": "\"{value}\" כוללת פרטי התחברות או קוד צימוד. כתובות הפעלה אינן יכולות לכלול אותם: צמדו את השרת דרך התחבר לשרת.",
   "folderSelection.servers.launch.error.unknown": "אין שרת שמור בשם \"{value}\". השתמשו בשם של שרת שמור או בכתובת http(s).",
   "folderSelection.servers.launch.error.ambiguous": "כמה שרתים שמורים נקראים \"{value}\". שנו את שמו של אחד מהם או השתמשו בכתובת שלו.",
-  "folderSelection.sidecars.button": "פתח SideCar",
 
   "projectRenameDialog.title": "שנה שם סביבת עבודה",
   "projectRenameDialog.description.withLabel": "עדכן את שם סביבת העבודה עבור \"{label}\".",

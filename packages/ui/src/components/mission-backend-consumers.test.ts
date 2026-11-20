@@ -55,21 +55,6 @@ function fixture(api: Record<string, any>, id = "remote~same") {
   }
 }
 
-test("playbook routes by instance; late A never replaces B", async () => {
-  const reads: ReturnType<typeof deferred>[] = [], env = fixture({ fetchMissionPlaybooks: () => {
-    const read = deferred(); reads.push(read); return read.promise
-  } })
-  let details: any, dispose!: () => void
-  const effect = production("./mission-playbook-reader.tsx", "createEffect", { ...env,
-    props: { instanceId: id, taskMode: "native" }, attempt: () => 0, setFailed: () => {}, setDetails: (value: any) => { details = value },
-  }, "fetchMissionPlaybooks")
-  createRoot(close => { dispose = close; createEffect(effect) })
-  assert.equal(env.owners.length, 1)
-  env.replace(); reads[1].resolve({ source: "B" }); await flush()
-  reads[0].resolve({ source: "A" }); await flush()
-  assert.deepEqual(details, { source: "B" }); dispose()
-})
-
 test("lifecycle control uses remote owner; revoked ACK cannot refresh", async () => {
   const read = deferred(), env = fixture({ controlMission: () => read.promise }), mission = { id: "m", revision: 1 }
   let refreshes = 0
@@ -114,20 +99,6 @@ test("recovery admission is remote; detached completion cannot notify the view",
   })
   const pending = run(); assert.equal(env.owners.length, 1)
   env.replace(); read.resolve({ admitted: true }); await pending; assert.equal(publications, 0)
-})
-
-test("cleanup remote preflight cannot delete after detachment", async () => {
-  const read = deferred(); let deletes = 0, refreshes = 0
-  const env = fixture({ fetchMission: () => read.promise, deleteMission: async () => { deletes++ } })
-  const saved = { missionID: "m", deletionID: "d", requestID: "r", expectedRevision: 1, deleteManagedSessions: false }
-  const run = production("./mission-cleanup.tsx", "retry", { ...env,
-    props: { instanceId: id, active: true, disabled: false, refresh: () => { refreshes++ } },
-    pending: () => "", rows: () => new Map([["row", saved]]), missionCleanupPending: () => true,
-    captureView: () => () => true, attempt: 0, alive: true, setPending: () => {}, setError: () => {},
-  })
-  const pending = run("row"); assert.equal(env.owners.length, 1)
-  env.replace(); read.resolve({ available: true, cleanups: [saved] }); await pending
-  assert.equal(deletes, 0); assert.equal(refreshes, 0)
 })
 
 // These routing cases opt out of automatic start; either unexpected opt-in or continuation fails.

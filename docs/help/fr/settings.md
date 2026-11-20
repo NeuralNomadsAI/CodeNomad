@@ -1,6 +1,6 @@
 # Paramètres et disposition
 
-Preferences utilise le serveur du projet sélectionné pour ses réglages, fournisseurs, statistiques et sa mémoire, y compris **Ranger**. Si le serveur est indisponible, les commandes du projet restent inactives. Les réglages de l’appareil et les SideCars restent locaux.
+Preferences utilise le serveur du projet sélectionné pour ses réglages, fournisseurs, statistiques et sa mémoire, y compris **Ranger**. Si le serveur est indisponible, les commandes du projet restent inactives. Les réglages de l’appareil et les SideCars restent locaux. Les réglages Images et Recherche web suivent le serveur du projet, y compris ses valeurs globales.
 
 ## Ouvrir les paramètres et identifier leur portée {#open-settings}
 
@@ -42,7 +42,7 @@ Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que C
 
 ## Mémoire persistante de l’agent {#agent-memory}
 
-Les utilisateurs authentifiés via le Contrôle à distance, HTTPS vérifié, le réseau local ou une PWA installée peuvent consulter et modifier la mémoire du projet local ou distant sélectionné, et utiliser **Ranger**. Le projet sélectionné détermine le backend qui gère la mémoire.
+Les utilisateurs authentifiés via le Contrôle à distance, HTTPS vérifié, le réseau local ou une PWA installée peuvent consulter et modifier la mémoire du projet local ou distant sélectionné, et utiliser **Ranger**.
 
 CodeNomad tente de retirer les instructions mémoire périmées de la session ; si ce nettoyage échoue aussi, les instructions précédentes peuvent rester jusqu’à une actualisation réussie.
 
@@ -91,7 +91,7 @@ La hauteur de saisie suit la conversation visible, y compris le clavier logiciel
 
 ## Notifications et badges {#notifications}
 
-Pour un onglet de projet sur un autre serveur CodeNomad, les notifications indiquent le nom du serveur. **Voir la conversation** ouvre ce projet et cette conversation précis ; détacher le serveur efface ses notifications. Les réglages Images et Recherche web suivent le serveur du projet, y compris ses valeurs globales.
+Pour un onglet de projet sur un autre serveur CodeNomad, les notifications indiquent le nom du serveur. **Voir la conversation** ouvre ce projet et cette conversation précis ; détacher le serveur efface ses notifications.
 
 La compaction des sessions techniques des Missions reste silencieuse.
 

@@ -1350,8 +1350,7 @@ async function saveRemoteServerProfile(input: RemoteServerProfileInput, current?
 
 async function confirmRemoteServerPolicy(profile: RemoteServerProfile): Promise<RemoteServerProfile | undefined> {
   const previous = remoteServers().find(value => value.id === profile.id)
-  if (preferences().multiBackend === true && previous && (previous.baseUrl !== profile.baseUrl
-    || previous.skipTlsVerify !== profile.skipTlsVerify || previous.ssh?.host !== profile.ssh?.host)) {
+  if (preferences().multiBackend === true && previous && !sameServerSelection(previous, profile)) {
     if (!await (await import("./remote-server-usage")).confirmRemoteServerChange(profile.id)) return previous
   }
 }

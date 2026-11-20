@@ -69,7 +69,7 @@ function Fixture() {
     ;(sseManager as any).handleEvent(id.slice("instance:".length), {
       id: "notice", type: "tui.toast.show", created: 1, data: { message: "Remote notice", variant: "info" },
     })
-    retainedNotice = getToastHistory().find(item => item.action?.target?.instanceId === id.slice("instance:".length))?.action
+    retainedNotice = getToastHistory().find(item => item.message === "Remote notice")?.action
     if (!retainedNotice) throw new Error("Remote notice action missing")
   },
   activateNotice: () => retainedNotice && runToastAction(retainedNotice),
@@ -89,4 +89,4 @@ function Fixture() {
     ...preferencesForBackend("local").remoteServers().find(profile => profile.id === "a")!, baseUrl: "https://changed.test",
   }, () => true),
 }
-;(window as any).disposeRestoreFixture = render(() => <Fixture />, document.getElementById("root")!)
+render(() => <Fixture />, document.getElementById("root")!)

@@ -215,7 +215,7 @@ An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mut
 | Agent memory | UI clients use exact POST `/api/memory` and GET/PUT `/api/memory/settings`; remote browser admission requires the strict host flag and channel provenance. Relayed memory requires its current proof. The explicit server-device catalog retains its authenticated direct transport and ingress boundary. Project-directory ownership and strict schemas apply at the destination. |
 | Native workspace API | `/workspaces/:id/instance/api/…` under the existing `isAllowedInstanceApiRoute()` allowlist and workspace/location ownership checks in `http-server.ts`. |
 
-The Mission creation receipt uses `GET /api/workspaces/:id/missions/creation/:requestId` on the original backend. The destination reads the original request in its captured project/Location; an uncertain receipt retains the hold without resending creation.
+Read the creation receipt on its original backend and project Location. See [Missions](MISSIONS.md#backend-routing) for request ownership and reconciliation.
 
 Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership or a verified direct HTTPS origin.
 
@@ -249,9 +249,7 @@ Where the tunnel is blocked but a direct HTTPS deployment exists (a TLS-terminat
 
 ### Isolated remote preview capabilities
 
-See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
-for capability APIs, exclusive content origins, sandbox/resource policy,
-revocation, original-client cleanup, logical history and service-worker refusal.
+The [Browser Automation contract](BROWSER_AUTOMATION.md#remote-preview-content-transport) defines capability APIs and lifetime.
 Local management requires the host's local-origin guard and current relay proof;
 ingress content follows Remote Control's **Web previews** switch. Remote clients
 receive host path capabilities instead, bound to their principal, channel and
@@ -372,12 +370,12 @@ credentials follow their separate registry lifetime and revocation rules.
   with colliding raw IDs over ingress, a TLS reverse proxy and non-loopback LAN,
   including destination-owned Tidy up eligibility and strict mutation revisions.
 - `remote-control/security-sentinels.test.ts` scans admitted Remote Control, TLS reverse-proxy and non-loopback LAN flows over direct and injected SSH TCP-forward transports. Controlled A/B destinations exercise stored password/device identities, private SSH/TLS material, pairing tokens and relay proofs. Captured response bodies/headers, redirect failures, rejected raw targets, exposed URL carriers, persisted state and trace-level application logs are checked together. Relay proofs retain their authorized bootstrap-header/resource-query contract; every other response, state/log field and upstream request keeps them private. Rejected targets retain the fixed namespace log treatment even when path admission refuses their syntax.
-- `remote-control/remote-client-previews.test.ts` exercises remote-client path previews over RC, TLS reverse proxy and real LAN against A/B remotes with identical tokens: content, rewriting, SSE/WS, hostile and cross-channel refusals before remote IO, trace logs, and revocation by logout, password change, idle expiry, device revocation, the Web previews switch, Stop, Forget and owner deletion.
+- Remote preview coverage: [Browser Automation](BROWSER_AUTOMATION.md#focused-validation).
 - `codenomad-servers/relay-principal.test.ts` drives real HTTP streams through logout, idle/absolute session expiry, persistent password replacement, device revocation/expiry and tunnel Stop, checking bounded upstream/client closure and isolation of other principals and local-loopback authority.
 
 - `codenomad-servers/ssh-manager.test.ts` exercises private authentication restoration through the owned SSH dial, single business dispatch and stale-proof refusal before IO after SSH retargeting. Concurrent mutations, direct status reads and post-401 observations share the renewal identity gate; a changed, missing or refused identity prevents status dispatch through the replacement forward.
 
-- `codenomad-servers/review-regressions.test.ts` covers queued credentials across address/TLS changes, persisted TLS binding, cross-listener Forget, shared-owner shutdown and direct browser-pairing refusal. `remote-control/device-relay-r1.test.ts` exercises the closed route/method catalog and preserves browser pairing on the ingress.
+- `codenomad-servers/review-regressions.test.ts` covers queued credentials across address/TLS changes, persisted TLS binding, cross-listener Forget, and shared-owner shutdown. `remote-control/device-relay-admission.test.ts` exercises the closed route/method catalog and preserves browser pairing on the ingress.
 
 - `remote-surface.test.ts` drives the real `createHttpServer` through the
   ingress. It covers unpaired access, pairing, `Origin`/`Host` checks,

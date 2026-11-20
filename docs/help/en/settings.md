@@ -1,6 +1,6 @@
 # Settings and layout
 
-Preferences uses the selected project's server for project settings, providers, statistics and memory, including **Tidy up**. An unavailable server keeps project controls inactive. Device settings and SideCars stay local.
+Preferences uses the selected project's server for project settings, providers, statistics and memory, including **Tidy up**. An unavailable server keeps project controls inactive. Device settings and SideCars stay local. Images and Web search settings follow the project's server, including that server's global defaults.
 
 ## Open settings and identify the scope {#open-settings}
 
@@ -42,7 +42,7 @@ In **Settings → General**, **Keep the computer awake while CodeNomad is runnin
 
 ## Persistent agent memory {#agent-memory}
 
-Authenticated users over Remote Control, verified HTTPS, LAN or an installed PWA can review, edit and **Tidy up** memory for the selected local or remote project. The selected project determines which backend handles memory.
+Authenticated users over Remote Control, verified HTTPS, LAN or an installed PWA can review, edit and **Tidy up** memory for the selected local or remote project.
 
 CodeNomad attempts to remove the session's stale memory instructions; if that cleanup also fails, the previous instructions can remain until a successful refresh.
 
@@ -91,7 +91,7 @@ Composer height follows the visible conversation, including the software keyboar
 
 ## Notifications and badges {#notifications}
 
-For a project tab on another CodeNomad server, notifications include the server name. **View conversation** opens that exact project and conversation; detaching the server clears its notices. Images and Web search settings follow the project's server, including that server's global defaults.
+For a project tab on another CodeNomad server, notifications include the server name. **View conversation** opens that exact project and conversation; detaching the server clears its notices.
 
 Compaction of technical Mission sessions is silent.
 

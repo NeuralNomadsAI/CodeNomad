@@ -1,6 +1,6 @@
 # Ayarlar ve düzen
 
-Tercihler, proje ayarları, sağlayıcılar, istatistikler ve bellek düzenleme için seçili projenin sunucusunu kullanır. Sunucu kullanılamıyorsa proje denetimleri devre dışı kalır. Cihaz ayarları ve SideCars yerel kalır.
+Tercihler, proje ayarları, sağlayıcılar, istatistikler ve bellek düzenleme için seçili projenin sunucusunu kullanır. Sunucu kullanılamıyorsa proje denetimleri devre dışı kalır. Cihaz ayarları ve SideCars yerel kalır. Görseller ve Web araması ayarları, genel varsayılanlar dahil projenin sunucusuna aittir.
 
 ## Ayarları açın ve kapsamını belirleyin {#open-settings}
 
@@ -42,7 +42,7 @@ Renklerin okunması zorlaşırsa **Kontrast → Açık** seçin. Yerleşik bir p
 
 ## Kalıcı ajan belleği {#agent-memory}
 
-Uzaktan Kontrol, doğrulanmış HTTPS, LAN veya yüklü PWA üzerinden kimliği doğrulanmış kullanıcılar seçili yerel ya da uzak projenin belleğini inceleyebilir, değiştirebilir ve **Düzenle** işlemini kullanabilir. Seçili proje, belleği hangi arka ucun yöneteceğini belirler.
+Uzaktan Kontrol, doğrulanmış HTTPS, LAN veya yüklü PWA üzerinden kimliği doğrulanmış kullanıcılar seçili yerel ya da uzak projenin belleğini inceleyebilir, değiştirebilir ve **Düzenle** işlemini kullanabilir.
 
 CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir.
 
@@ -91,7 +91,7 @@ Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, 
 
 ## Bildirimler ve rozetler {#notifications}
 
-Başka bir CodeNomad sunucusundaki proje sekmesinin bildirimleri sunucu adını içerir. **Sohbeti görüntüle** tam olarak o projeyi ve konuşmayı açar; sunucuyu ayırmak bildirimlerini temizler. Görseller ve Web araması ayarları, genel varsayılanlar dahil projenin sunucusuna aittir.
+Başka bir CodeNomad sunucusundaki proje sekmesinin bildirimleri sunucu adını içerir. **Sohbeti görüntüle** tam olarak o projeyi ve konuşmayı açar; sunucuyu ayırmak bildirimlerini temizler.
 
 Görevlerin teknik oturumları sıkıştırıldığında bildirim gösterilmez.
 

@@ -7,7 +7,7 @@ import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHis
 import { remotePreviewContent, remotePreviewSource } from "../lib/remote-preview-address"
 import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
 import { adoptLegacyTabPreview, getTabViewState, updateTabViewState } from "./tab-view-state"
-import { parseLegacySessionPreviews, type RestorableTabPreview } from "./tab-view-state-codec"
+import type { RestorableTabPreview } from "./tab-view-state-codec"
 import { isInstanceOccurrenceOpen, onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { onInstanceTabDetached } from "./app-tab-membership"
 import { parseInstanceKey } from "../lib/backend-identity"
@@ -54,7 +54,6 @@ function finishOperation(storageKey: string, operation: PreviewOperation) {
 }
 export const getPendingPreviewOperationCount = () => operations.size
 
-export const parseStoredSessionPreviews = parseLegacySessionPreviews
 const local = (instanceId: string) => parseInstanceKey(instanceId).backendId === "local"
 export const previewKey = (sessionId: string, instanceId: string) => local(instanceId) ? sessionId : JSON.stringify([instanceId, sessionId])
 const tabPreview = (sessionId: string, instanceId: string) => getTabViewState(instanceId).previews?.[sessionId]
@@ -109,11 +108,6 @@ function publishPreview(record: SessionPreviewRecord) {
   record.owner.signal.addEventListener("abort", revoke, { once: true })
   previewRevocations.set(record.storageKey, () => record.owner.signal.removeEventListener("abort", revoke))
   setSessionPreviews(previous => new Map(previous).set(record.storageKey, withLiveMode(record)))
-}
-
-export function getPreviewSessionIds(instanceId: string): string[] {
-  return [...sessionPreviews().values()].filter(preview => !preview.owner.signal.aborted
-    && (preview.owner.client.id === "local" ? localOwners.get(instanceId)?.has(preview.sessionId) : preview.instanceId === instanceId)).map(preview => preview.sessionId)
 }
 
 function getSessionPreview(sessionId: string, instanceId = ""): SessionPreviewRecord | null {

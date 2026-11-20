@@ -149,8 +149,9 @@ test("the host creates a direct HTTPS link with the tunnel off, and devices show
     await link.waitFor()
     assert.deepEqual(await page.evaluate(() => (window as unknown as { pairingOrigins: unknown[] }).pairingOrigins), ["https://ui.example.test:8443"])
     // A direct link does not depend on the tunnel, so a refresh while it is off keeps it.
-    await page.getByRole("button", { name: "Refresh" }).click()
-    await page.waitForTimeout(200)
+    const refresh = page.getByRole("button", { name: "Refresh" })
+    await refresh.click()
+    await refresh.and(page.locator(":enabled")).waitFor()
     assert.equal(await link.isVisible(), true)
     await page.getByText("HTTPS · https://code.example.test", { exact: true }).waitFor()
     assert.equal(await page.getByText("Remote Control", { exact: true }).count(), 2, "card title and the tunnel device's label")

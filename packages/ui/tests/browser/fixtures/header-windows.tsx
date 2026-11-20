@@ -181,11 +181,6 @@ bootStage("preferences-after")
     setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
     setSessionPage(id, [...fixtureSessions.keys()], false, true)
   },
-  moveSession: (sid: string, directory: string) => {
-    const current = fixtureSessions.get(sid)!
-    fixtureSessions.set(sid, { ...current, location: { directory } })
-    setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
-  },
   selectSession: (sid: string | null) => { if (sid === null) clearSelectedSession(id); else selectActiveParentSession(id, sid) },
   selectedSession: () => activeSessionId().get(id) ?? null,
   focusRequest: (sid?: string, requestId?: string) => focusInterruption(id, sid, requestId),

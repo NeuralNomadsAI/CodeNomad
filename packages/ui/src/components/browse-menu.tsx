@@ -99,7 +99,7 @@ export default function BrowseMenu(props: BrowseMenuProps) {
 
   const sidecarRunning = (sidecar: SideCar) => sidecar.status === "running"
   const AddField = () => <Show when={remoteRecentProjectsUsable() && serversManageable() && !selectedServer()}>
-    <ServerAddField navAttribute="data-browse-nav" disabled={props.isLoading}
+    <ServerAddField browseNav disabled={props.isLoading}
       onPairingFailure={(id) => setConnectionFailures(ids => ids.includes(id) ? ids : [...ids, id])}
       onAdded={(id, mayFocus) => {
         setConnectionFailures(ids => ids.filter(value => value !== id))

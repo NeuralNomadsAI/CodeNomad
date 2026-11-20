@@ -11,13 +11,13 @@ Le Contrôle à distance permet à un navigateur ou client de bureau appairé d�
 
 Le lien est valable **cinq minutes** et réussit **une seule fois**. Traitez-le comme un identifiant : quiconque le consomme peut devenir un appareil appairé. Le code se trouve dans le fragment d’URL, pas dans la chaîne de requête. **Créer un nouveau lien d’appairage** invalide immédiatement le lien inutilisé précédent. La fermeture du backend annule le lien d’appairage en attente ; l’arrêt et une panne du tunnel annulent un lien de tunnel.
 
-Sur un autre CodeNomad de bureau, collez le lien d’appairage dans **Paramètres → Serveurs → Adresse ou lien du serveur**. Le champ est vidé avant la requête ; seule l’origine est enregistrée. Le backend local conserve son identité d’appareil privée entre les lancements ; **Supprimer le serveur enregistré** oublie la connexion de ce profil avant son retrait. L’appairage vérifie TLS et n’ouvre aucun projet.
+Sur un autre CodeNomad de bureau, collez le lien d’appairage dans **Paramètres → Serveurs → Adresse ou lien du serveur**.
 
 Pour refaire l’appairage, collez le nouveau lien dans le formulaire de connexion du serveur ou du projet.
 
 ## Appairer en HTTPS direct {#direct-https}
 
-Lorsque le tunnel est bloqué mais que le backend est joignable en HTTPS de confiance, par exemple derrière un proxy inverse doté d’un vrai certificat, les appareils peuvent s’appairer sur cette adresse. Les adresses admises sont les adresses HTTPS propres à ce backend et les origines HTTPS de `CODENOMAD_ALLOWED_ORIGINS` (voir [Mise à niveau](remote-access.md#upgrading)) ; les noms de boucle locale et le HTTP simple ne s’appairent jamais. Le Contrôle à distance n’a pas besoin d’être démarré.
+Lorsque le tunnel est bloqué mais que le backend est joignable en HTTPS de confiance, par exemple derrière un proxy inverse doté d’un vrai certificat, les appareils peuvent s’appairer sur cette adresse. Les adresses admises sont les adresses HTTPS propres à ce backend et les origines HTTPS de `CODENOMAD_ALLOWED_ORIGINS` (voir [Origines autorisées](remote-access.md#upgrading)) ; les noms de boucle locale et le HTTP simple ne s’appairent jamais. Le Contrôle à distance n’a pas besoin d’être démarré.
 
 1. Sur l’hôte, ouvrez **Paramètres → Accès distant → Contrôle à distance**.
 2. Sous **Appairage HTTPS direct**, choisissez l’**Adresse HTTPS** si plusieurs sont proposées, puis **Créer un lien d’appairage HTTPS**.
@@ -44,7 +44,7 @@ Changer le mot de passe d’accès direct ne révoque **pas** les appareils. **A
 ### Réappairer sans perdre sa place {#re-pair}
 
 1. Si le client affiche **Appairer à nouveau cet appareil**, laissez cette page ouverte.
-2. Sur l’hôte, choisissez **Créer un nouveau lien d’appairage** et ouvrez-le dans le **même navigateur/profil client**. Pour un serveur de bureau enregistré, reconnectez-vous avec le lien récent afin de réutiliser le stockage existant de sa fenêtre distante.
+2. Sur l’hôte, choisissez **Créer un nouveau lien d’appairage** et ouvrez-le dans le **même navigateur/profil client**. Dans une fenêtre distante séparée, un nouveau lien réutilise le stockage de cette fenêtre.
 3. Revenez à la page en attente et choisissez **Vérifier la connexion** ; la vérification se refait aussi quand la page reprend le focus.
 
 La récupération préserve la page ouverte et les brouillons ; elle ne rejoue pas une action échouée. Vérifiez si un envoi, une réponse ou une suppression a pris effet avant de réessayer. Un mot de passe d’accès direct ne peut pas récupérer un appairage de Contrôle à distance.
@@ -77,7 +77,7 @@ Les appareils appairés peuvent utiliser les API ordinaires de projet/conversati
 | Pont d’automatisation | Indisponible (`/api/opencode-plugin/`). Les capacités natives de bureau ne deviennent pas des capacités navigateur. |
 | Mises à niveau WebSocket | Disponibles pour les aperçus web et, sur les appareils appairés, pour les [conversations vocales en direct](voice.md#conversation). |
 
-Utilisez une connexion en boucle locale sur l’hôte pour les proxys/WebSockets réservés à l’hôte et la gestion du Contrôle à distance (`/api/remote-control/`). L’accès LAN direct exige lui aussi la boucle locale pour ces opérations ; voir [Mise à niveau](remote-access.md#upgrading). Les aperçus web du Contrôle à distance utilisent un jeton de capacité dans leur adresse et restent disponibles lorsqu’ils sont activés sur l’hôte ; gardez cette adresse privée.
+Utilisez une connexion en boucle locale sur l’hôte pour les proxys/WebSockets réservés à l’hôte et la gestion du Contrôle à distance (`/api/remote-control/`). L’accès LAN direct exige lui aussi la boucle locale pour ces opérations ; voir [Origines autorisées](remote-access.md#upgrading). Les aperçus web du Contrôle à distance utilisent un jeton de capacité dans leur adresse et restent disponibles lorsqu’ils sont activés sur l’hôte ; gardez cette adresse privée.
 
 ## Relais et confidentialité {#relay-privacy}
 

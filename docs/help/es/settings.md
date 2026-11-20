@@ -1,6 +1,6 @@
 # Configuración y disposición
 
-Preferencias usa el servidor del proyecto seleccionado para sus ajustes, proveedores, estadísticas y memoria, incluida la limpieza. Si el servidor no está disponible, los controles del proyecto permanecen inactivos. Los ajustes del dispositivo y los SideCars siguen siendo locales.
+Preferencias usa el servidor del proyecto seleccionado para sus ajustes, proveedores, estadísticas y memoria, incluida la limpieza. Si el servidor no está disponible, los controles del proyecto permanecen inactivos. Los ajustes del dispositivo y los SideCars siguen siendo locales. Los ajustes de Imágenes y Búsqueda web corresponden al servidor del proyecto, incluidos sus valores globales.
 
 ## Abrir la configuración e identificar el ámbito {#open-settings}
 
@@ -42,7 +42,7 @@ En **Configuración → General**, **Mantener el ordenador activo mientras CodeN
 
 ## Memoria persistente del agente {#agent-memory}
 
-Los usuarios autenticados mediante Control remoto, HTTPS verificado, LAN o una PWA instalada pueden revisar y editar la memoria del proyecto local o remoto seleccionado y usar **Ordenar**. El proyecto seleccionado determina qué backend gestiona la memoria.
+Los usuarios autenticados mediante Control remoto, HTTPS verificado, LAN o una PWA instalada pueden revisar y editar la memoria del proyecto local o remoto seleccionado y usar **Ordenar**.
 
 CodeNomad intenta retirar las instrucciones de memoria obsoletas de la sesión; si esa limpieza también falla, las anteriores pueden permanecer hasta una actualización correcta.
 
@@ -91,7 +91,7 @@ La altura del editor sigue la conversación visible, incluido el teclado en pant
 
 ## Notificaciones e indicadores {#notifications}
 
-Para una pestaña de proyecto en otro servidor CodeNomad, las notificaciones incluyen el nombre del servidor. **Ver conversación** abre ese proyecto y esa conversación exactos; desconectar el servidor elimina sus avisos. Los ajustes de Imágenes y Búsqueda web corresponden al servidor del proyecto, incluidos sus valores globales.
+Para una pestaña de proyecto en otro servidor CodeNomad, las notificaciones incluyen el nombre del servidor. **Ver conversación** abre ese proyecto y esa conversación exactos; desconectar el servidor elimina sus avisos.
 
 La compactación de las sesiones técnicas de las misiones no genera avisos.
 

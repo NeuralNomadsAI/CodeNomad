@@ -17,9 +17,8 @@ export const PREVIEW_PREFIX = `/previews/${PREVIEW_TOKEN}`
 /**
  * A remote CodeNomad's preview surface on real sockets: creation/deletion, HTML/JS
  * referencing its own prefix, JSON, redirects, SSE and a WebSocket that streams its label.
- * `page` may serve extra HTML documents.
  */
-export async function startPreviewRemote(t: TestContext, label: string, page?: (pathname: string) => string | undefined) {
+export async function startPreviewRemote(t: TestContext, label: string) {
   const requests: { path: string; headers: IncomingHttpHeaders }[] = []
   const streams = new Set<http.ServerResponse | Socket>()
   let live = true
@@ -40,8 +39,6 @@ export async function startPreviewRemote(t: TestContext, label: string, page?: (
     if (!live || !url.startsWith(`${PREVIEW_PREFIX}/`)) return reply.writeHead(404).end()
     reply.setHeader("set-cookie", "remote-app=private-cookie-sentinel; HttpOnly")
     const pathname = url.slice(PREVIEW_PREFIX.length)
-    const custom = page?.(pathname)
-    if (custom !== undefined) { reply.setHeader("content-type", "text/html"); return reply.end(custom) }
     if (pathname === "/start" || pathname === "/next") {
       reply.setHeader("content-type", "text/html")
       return reply.end(`<!doctype html><head><script src="${PREVIEW_PREFIX}/app.js"></script><script>const base=${JSON.stringify(PREVIEW_PREFIX)}</script></head><body>${label}${pathname}</body>`)

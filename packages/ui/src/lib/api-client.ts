@@ -21,7 +21,6 @@ import type {
   ConfigFileListResponse,
   FileSystemEntry,
   FileSystemCreateFolderResponse,
-  FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
   MissionListResponse,
@@ -427,8 +426,8 @@ export function createServerApi(ctx: BackendHttp) {
     connectRemoteServer(id: string, input: RemoteServerConnectInput, signal?: AbortSignal) {
       return remoteServerRequest(ctx, id, "connect", input, signal)
     },
-    browseRemoteServer(id: string, path?: string, signal?: AbortSignal, options?: { foldersOnly: true }) {
-      return remoteServerRequest(ctx, id, "browse", { path, ...options }, signal)
+    browseRemoteServer(id: string, path?: string, signal?: AbortSignal) {
+      return remoteServerRequest(ctx, id, "browse", { path }, signal)
     },
     forgetRemoteServer(id: string, signal?: AbortSignal) {
       return remoteServerRequest(ctx, id, "forget", {}, signal)
@@ -835,13 +834,6 @@ export function createServerApi(ctx: BackendHttp) {
         method: "POST",
         body: JSON.stringify({ parentPath, name }),
       })
-    },
-    readFileSystemFile(path: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
-      const params = new URLSearchParams({ path })
-      if (options?.encoding) {
-        params.set("encoding", options.encoding)
-      }
-      return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
     },
     readInstanceData(id: string): Promise<InstanceData> {
       return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)

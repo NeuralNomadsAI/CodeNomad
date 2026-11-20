@@ -4,7 +4,7 @@ import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { serverDisplayName } from "../../lib/codenomad-link"
 import { useRelayServerProfiles, remoteServerErrorKey, type RemoteServerInput } from "../../lib/hooks/use-remote-server-profiles"
-import { RemoteServerDialog } from "../remote-server-dialog"
+import { ServerEditor } from "../remote-server-dialog"
 import ServerAddField from "../server-add-field"
 import { serversUsable, serversManageable } from "../../lib/server-meta"
 
@@ -17,8 +17,8 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
   const [error, setError] = createSignal<string>()
   const usable = () => enabled() && serversUsable()
   const manageable = () => usable() && serversManageable()
-  const submit = (input: RemoteServerInput, open = false, current: () => boolean = () => true) =>
-    submitServer(input, open, () => manageable() && current())
+  const submit = (input: RemoteServerInput, current: () => boolean) =>
+    submitServer(input, () => manageable() && current())
   const displayName = (server: RemoteServerProfile) => serverDisplayName(server, remoteServers())
   async function remove(server: RemoteServerProfile) {
     if (!manageable()) return
@@ -78,7 +78,7 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
           </Show>
         </div>
       </div>
-      <Show when={manageable()}><RemoteServerDialog open={dialog() !== null} initial={dialog()?.initial} onOpenChange={open => { if (!open) setDialog(null) }} onSubmit={submit} onEditSubmit={(input, current) => submit(input, false, current)} /></Show>
+      <Show when={manageable()}><ServerEditor open={dialog() !== null} initial={dialog()?.initial} onOpenChange={open => { if (!open) setDialog(null) }} onSubmit={submit} /></Show>
     </div></Show>
   )
 }

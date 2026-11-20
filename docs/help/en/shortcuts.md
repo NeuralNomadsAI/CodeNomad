@@ -74,4 +74,4 @@ Digit-row and square-bracket shortcuts use physical key positions for recording,
 
 During IME composition, text entry takes precedence. Prompt history and Escape actions also depend on focus, picker/shell state and the current operation; do not assume every ArrowUp or Escape is an unconditional global action. On desktop, sending moves focus to the conversation so arrows, paging keys and Space scroll it; typing a character returns to the composer with that character, and **Focus prompt** returns there before using prompt history.
 
-Press Tab from the launcher menu to search. Use arrows and Enter to choose, or Escape to return to `+`.
+[New instance](projects.md#new-instance-launcher).

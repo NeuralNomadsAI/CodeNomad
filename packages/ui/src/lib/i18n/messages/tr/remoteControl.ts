@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "Kopyalandı",
   "remoteControl.pairing.expires": "Bu bağlantı {time} saatinde sona erer.",
   "remoteControl.devices.title": "Eşleştirilmiş cihazlar",
-  "remoteControl.devices.description": "Bu cihazlar CodeNomad ana makinesine Uzaktan Kontrol veya HTTPS adresleri üzerinden erişebilir.",
   "remoteControl.devices.empty": "Henüz eşleştirilmiş cihaz yok.",
   "remoteControl.devices.lastSeen": "Son görülme: {time}",
   "remoteControl.devices.revoke": "İptal et",

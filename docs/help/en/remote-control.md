@@ -11,13 +11,13 @@ Remote Control lets a paired browser or desktop client use your running CodeNoma
 
 The link is valid for **five minutes** and succeeds **once**. Treat it as a credential: anyone who consumes it can become a paired device. The code lives in the URL fragment, not the query string. **Create new pairing link** immediately invalidates the preceding unused link. Backend shutdown cancels an outstanding pairing link; Stop and tunnel failure cancel a tunnel link.
 
-On another desktop running CodeNomad, paste the pairing link into **Settings → Servers → Server address or link**. The field clears before the request; only the origin is saved. The local backend retains its private device identity across launches, and **Remove saved server** forgets that profile's connection before removing it. Pairing keeps TLS verification enabled and does not open a project.
+On another desktop running CodeNomad, paste the pairing link into **Settings → Servers → Server address or link**.
 
 To pair again, paste the new link into the connection form on the server or project row.
 
 ## Pair over direct HTTPS {#direct-https}
 
-Where the tunnel is blocked but the backend is reachable over trusted HTTPS, for example through a reverse proxy with a real certificate, devices can pair on that address instead. Eligible addresses are this backend's own HTTPS addresses and the HTTPS origins in `CODENOMAD_ALLOWED_ORIGINS` (see [Upgrading](remote-access.md#upgrading)); loopback names and plain HTTP never pair. Remote Control need not be started.
+Where the tunnel is blocked but the backend is reachable over trusted HTTPS, for example through a reverse proxy with a real certificate, devices can pair on that address instead. Eligible addresses are this backend's own HTTPS addresses and the HTTPS origins in `CODENOMAD_ALLOWED_ORIGINS` (see [Allowed origins](remote-access.md#upgrading)); loopback names and plain HTTP never pair. Remote Control need not be started.
 
 1. On the host, open **Settings → Remote Access → Remote Control**.
 2. Under **Direct HTTPS pairing**, pick the **HTTPS address** when several are listed, then choose **Create HTTPS pairing link**.
@@ -44,7 +44,7 @@ Changing the direct-access password does **not** revoke devices. **Stop Remote C
 ### Re-pair without losing your place {#re-pair}
 
 1. If the client shows **Pair this device again**, leave that page open.
-2. On the host, choose **Create new pairing link** and open it in the **same client browser/profile**. For a saved desktop server, reconnect using the fresh pairing link so its existing remote-window storage is reused.
+2. On the host, choose **Create new pairing link** and open it in the **same client browser/profile**. For a separate remote window, a fresh link reuses that window’s storage.
 3. Return to the waiting page and choose **Check connection**; it also checks again when the page regains focus.
 
 Recovery preserves the open page and drafts; it does not replay a failed action. Check whether a send, answer or delete took effect before retrying it. A direct-access password cannot recover Remote Control pairing.
@@ -77,7 +77,7 @@ Paired devices can use ordinary project/conversation APIs, send prompts, inspect
 | Automation bridge | Unavailable (`/api/opencode-plugin/`). Native desktop capabilities do not become browser capabilities. |
 | WebSocket upgrades | Available for web previews and, on paired devices, [live voice conversations](voice.md#conversation). |
 
-Use a loopback connection on the host for host-only proxy/WebSocket surfaces and Remote Control management (`/api/remote-control/`). Direct LAN access also requires loopback for these operations; see [Upgrading](remote-access.md#upgrading). Remote Control web previews use a capability token in the preview address and remain available while enabled on the host; keep that address private.
+Use a loopback connection on the host for host-only proxy/WebSocket surfaces and Remote Control management (`/api/remote-control/`). Direct LAN access also requires loopback for these operations; see [Allowed origins](remote-access.md#upgrading). Remote Control web previews use a capability token in the preview address and remain available while enabled on the host; keep that address private.
 
 ## Relay and privacy {#relay-privacy}
 

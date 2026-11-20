@@ -48,7 +48,7 @@ La fenêtre Preferences ne possède pas d’état de restauration séparé : ces
 
 Les clients navigateur et distants utilisent les paramètres intégrés.
 
-Un onglet distant indisponible reste en place avec ses brouillons. Sélectionnez-le pour réessayer ou vous connecter.
+[Restaurer les onglets distants](projects.md#restore-remote-tabs).
 
 ## Profils de données de bureau {#data-profiles}
 

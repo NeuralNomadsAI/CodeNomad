@@ -742,14 +742,13 @@ for (const held of [false, true]) test(`source keyboard navigation scrolls the r
       const released = await page.evaluate(() => window.sourceScrollDelivery.release())
       assert.ok(released.retained > 0); assert.equal(released.pending, 0)
     }
-    let geometryError: unknown
-    try { await page.waitForFunction(() => {
+    await page.waitForFunction(() => {
       const field = document.querySelector<HTMLInputElement>('.mission-source-popover input[role="combobox"]')!
       const option = document.getElementById(field.getAttribute("aria-activedescendant") ?? ""), list = document.querySelector('.mission-source-popover [role="listbox"]')!
       if (!option) return false
       const box = option.getBoundingClientRect(), port = list.getBoundingClientRect()
       return list.scrollTop > 0 && box.top >= port.top - 1 && box.bottom <= port.bottom + 1
-    }) } catch (error) { geometryError = error }
+    })
     const snapshot = await page.evaluate(() => {
       const field = document.querySelector<HTMLInputElement>('.mission-source-popover input[role="combobox"]')!
       const list = document.querySelector('.mission-source-popover [role="listbox"]')!
@@ -763,16 +762,6 @@ for (const held of [false, true]) test(`source keyboard navigation scrolls the r
     t.diagnostic(JSON.stringify(snapshot))
     assert.equal(snapshot.focusedKey, "ses_23"); assert.equal(snapshot.selected, 0); assert.equal(snapshot.focus, true)
     assert.equal(nativeReads, beforeReads)
-    if (geometryError) {
-      // Preserve the original oracle failure after observing the same single Enter.
-      await page.keyboard.press("Enter")
-      assert.equal(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).getAttribute("data-source-id"), snapshot.focusedKey)
-      assert.equal((await page.evaluate(() => (window as any).sourceSubmitCount)), 0)
-      assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
-      assert.deepEqual(posts, [])
-      assert.deepEqual(consoleErrors, []); assert.deepEqual(failed, [])
-      throw geometryError
-    }
     assert.equal(snapshot.aria, snapshot.actualID)
     assert.deepEqual(await page.locator('.mission-source-select input[role="combobox"], .mission-source-popover input[role="combobox"]').evaluateAll(fields => fields.map(field => field.getAttribute("aria-activedescendant"))), [snapshot.actualID, snapshot.actualID])
     const id = await search.evaluate(field => document.getElementById(field.getAttribute("aria-activedescendant")!)!.getAttribute("data-source-id"))

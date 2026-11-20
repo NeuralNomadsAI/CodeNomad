@@ -698,9 +698,8 @@ function getInstanceDisplayName(instanceId: string, detail?: string): string {
 function showInstanceToast(instanceId: string, sessionId: string | undefined | null, payload: ToastPayload): ToastHandle {
   if (parseInstanceKey(instanceId).backendId === "local") return showToastNotification(payload)
   const authority = captureEventAuthority(instanceId)
-  const target = { backendId: parseInstanceKey(instanceId).backendId, instanceId, ...(sessionId ? { sessionId } : {}) }
   return showToastNotification({ ...payload, signal: authority.signal, action: {
-    label: tGlobal(sessionId ? "interruption.viewConversation" : "folderSelection.recent.switchToOpenProject"), target,
+    label: tGlobal(sessionId ? "interruption.viewConversation" : "folderSelection.recent.switchToOpenProject"),
     onClick: async () => {
       if (!authority.current()) return
       const { appTabs, selectAppTab, selectInstanceTab } = await import("./app-tabs")

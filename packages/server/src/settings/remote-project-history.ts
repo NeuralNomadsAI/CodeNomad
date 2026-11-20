@@ -56,7 +56,7 @@ export function readRemoteProjectHistory(legacy: unknown, keyed: unknown, before
 export function compactRemoteProjectHistory(doc: SettingsDoc, beforeMerge?: SettingsDoc): SettingsDoc {
   if (!isPlainObject(doc.ui)) return doc
   const ui = doc.ui
-  if (!("remoteProjectHistory" in ui || "remoteProjectRecents" in ui || "remoteProjectHistoryExplicitOnly" in ui)) return doc
+  if (!("remoteProjectHistory" in ui || "remoteProjectRecents" in ui)) return doc
   const previous = isPlainObject(beforeMerge?.ui) ? beforeMerge.ui.remoteProjectHistory : undefined
   const { recents, edits } = readRemoteProjectHistory(
     ui.remoteProjectRecents, ui.remoteProjectHistory, isPlainObject(previous) ? previous : undefined,
@@ -89,7 +89,6 @@ export function compactRemoteProjectHistory(doc: SettingsDoc, beforeMerge?: Sett
   }
   const next: SettingsDoc = { ...ui, remoteProjectHistory: history }
   delete next.remoteProjectRecents
-  delete next.remoteProjectHistoryExplicitOnly
   return { ...doc, ui: next }
 }
 

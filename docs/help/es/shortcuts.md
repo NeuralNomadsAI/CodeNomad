@@ -74,4 +74,4 @@ Los atajos de la fila de dígitos y los corchetes usan las posiciones físicas d
 
 Durante la composición IME, la entrada de texto tiene prioridad. El historial de entradas y las acciones de Escape también dependen del foco, el estado del selector/shell y la operación actual; no supongas que cada ArrowUp o Escape es una acción global incondicional. En el escritorio, enviar mueve el foco a la conversación para que las flechas, las teclas de página y Espacio la desplacen; escribir un carácter vuelve al editor con ese carácter, y **Enfocar entrada** vuelve a él antes de usar el historial de entradas.
 
-En el lanzador, Tab lleva a la búsqueda, las flechas y Entrar eligen una pestaña y Escape vuelve a `+`.
+[Nueva instancia](projects.md#new-instance-launcher).

@@ -11,13 +11,13 @@ Fernsteuerung ermöglicht einem gekoppelten Browser- oder Desktop-Client die Nut
 
 Der Link gilt **fünf Minuten** und funktioniert **einmal**. Behandeln Sie ihn als Zugangsdaten: Wer ihn einlöst, kann ein gekoppeltes Gerät werden. Der Code steht im URL-Fragment, nicht in der Abfragezeichenfolge. **Neuen Kopplungslink erstellen** macht den vorherigen ungenutzten Link sofort ungültig. Das Backend-Ende storniert den offenen Kopplungslink; Stop und Tunnelfehler stornieren einen Tunnel-Link.
 
-Fügen Sie auf dem anderen Computer den Kopplungslink in **Einstellungen → Server → Serveradresse oder -link** ein. Das Feld wird vor der Anfrage geleert; gespeichert wird nur der Ursprung. Das lokale Backend bewahrt seine private Geräteidentität über Neustarts hinweg auf. **Gespeicherten Server entfernen** vergisst zuerst die Verbindung dieses Profils. Die Kopplung prüft TLS und öffnet kein Projekt.
+Fügen Sie auf dem anderen Computer den Kopplungslink in **Einstellungen → Server → Serveradresse oder -link** ein.
 
 Fügen Sie zum erneuten Koppeln den neuen Link in das Anmeldeformular des Servers oder Projekts ein.
 
 ## Über direktes HTTPS koppeln {#direct-https}
 
-Wenn der Tunnel blockiert ist, das Backend aber über vertrauenswürdiges HTTPS erreichbar ist, etwa über einen Reverse-Proxy mit echtem Zertifikat, können Geräte stattdessen über diese Adresse koppeln. Zulässig sind die eigenen HTTPS-Adressen dieses Backends und die HTTPS-Origins in `CODENOMAD_ALLOWED_ORIGINS` (siehe [Aktualisieren](remote-access.md#upgrading)); Loopback-Namen und einfaches HTTP koppeln nie. Die Fernsteuerung muss nicht gestartet sein.
+Wenn der Tunnel blockiert ist, das Backend aber über vertrauenswürdiges HTTPS erreichbar ist, etwa über einen Reverse-Proxy mit echtem Zertifikat, können Geräte stattdessen über diese Adresse koppeln. Zulässig sind die eigenen HTTPS-Adressen dieses Backends und die HTTPS-Origins in `CODENOMAD_ALLOWED_ORIGINS` (siehe [Erlaubte Ursprünge](remote-access.md#upgrading)); Loopback-Namen und einfaches HTTP koppeln nie. Die Fernsteuerung muss nicht gestartet sein.
 
 1. Öffnen Sie auf dem Host **Einstellungen → Remote-Zugriff → Fernsteuerung**.
 2. Wählen Sie unter **Direkte HTTPS-Kopplung** bei mehreren Einträgen die **HTTPS-Adresse** und dann **HTTPS-Kopplungslink erstellen**.
@@ -44,7 +44,7 @@ Eine Änderung des Direktzugriffspassworts widerruft Geräte **nicht**. **Fernst
 ### Ohne Positionsverlust erneut koppeln {#re-pair}
 
 1. Zeigt der Client **Dieses Gerät erneut koppeln**, lassen Sie diese Seite offen.
-2. Wählen Sie auf dem Host **Neuen Kopplungslink erstellen** und öffnen Sie ihn im **selben Client-Browser/-Profil**. Verbinden Sie bei gespeichertem Desktop-Server mit dem frischen Link neu, damit der vorhandene Remote-Fensterspeicher wiederverwendet wird.
+2. Wählen Sie auf dem Host **Neuen Kopplungslink erstellen** und öffnen Sie ihn im **selben Client-Browser/-Profil**. Für ein separates Remote-Fenster verwendet ein neuer Link dessen vorhandenen Speicher.
 3. Kehren Sie zur wartenden Seite zurück und wählen Sie **Verbindung prüfen**; sie prüft auch erneut, wenn die Seite wieder den Fokus erhält.
 
 Die Wiederherstellung bewahrt die geöffnete Seite und Entwürfe; sie wiederholt keine fehlgeschlagene Aktion. Prüfen Sie vor Wiederholung, ob Senden, Antworten oder Löschen wirksam war. Ein Direktzugriffspasswort kann die Fernsteuerungskopplung nicht wiederherstellen.
@@ -77,7 +77,7 @@ Gekoppelte Geräte können normale Projekt-/Unterhaltungs-APIs verwenden, Prompt
 | Automatisierungsbrücke | Nicht verfügbar (`/api/opencode-plugin/`). Native Desktop-Fähigkeiten werden nicht zu Browserfähigkeiten. |
 | WebSocket-Upgrades | Für Web-Vorschauen und auf gekoppelten Geräten für [Live-Sprachgespräche](voice.md#conversation) verfügbar. |
 
-Verwenden Sie eine Loopback-Verbindung auf dem Host für hostgebundene Proxy-/WebSocket-Funktionen und die Fernsteuerungsverwaltung (`/api/remote-control/`). Auch direkter LAN-Zugriff erfordert dafür Loopback; siehe [Aktualisieren](remote-access.md#upgrading). Web-Vorschauen der Fernsteuerung verwenden ein Berechtigungstoken in ihrer Adresse und bleiben verfügbar, solange sie auf dem Host aktiviert sind; halten Sie diese Adresse privat.
+Verwenden Sie eine Loopback-Verbindung auf dem Host für hostgebundene Proxy-/WebSocket-Funktionen und die Fernsteuerungsverwaltung (`/api/remote-control/`). Auch direkter LAN-Zugriff erfordert dafür Loopback; siehe [Erlaubte Ursprünge](remote-access.md#upgrading). Web-Vorschauen der Fernsteuerung verwenden ein Berechtigungstoken in ihrer Adresse und bleiben verfügbar, solange sie auf dem Host aktiviert sind; halten Sie diese Adresse privat.
 
 ## Relay und Datenschutz {#relay-privacy}
 

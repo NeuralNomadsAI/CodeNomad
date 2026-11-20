@@ -12,6 +12,7 @@ import { requestServerRemoval } from "../native/server-selection"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { normalizeExplicitOrigin } from "../../../../server/src/opencode/servers/origin"
 import { secretEntryAllowed } from "../server-meta"
+import { sameServerSelection } from "../native/server-selection-intent"
 
 function assertRemoteSecretEntry() {
   if (!secretEntryAllowed()) throw new RemoteServerProbeError("secret_entry_forbidden")
@@ -50,8 +51,7 @@ export function useRelayServerProfiles() {
   let alive = true
   const controllers = new Set<AbortController>()
   const enabled = () => alive && config.preferences().multiBackend === true
-  const same = (a: RemoteServerProfile | undefined, b: RemoteServerProfile | undefined) =>
-    a === b || !!a && !!b && a.id === b.id && a.baseUrl === b.baseUrl && a.skipTlsVerify === b.skipTlsVerify && a.ssh?.host === b.ssh?.host
+  const same = (a: RemoteServerProfile, b?: RemoteServerProfile) => !!b && sameServerSelection(a, b)
   const capture = (profile?: RemoteServerProfile) => {
     const controller = new AbortController()
     controllers.add(controller)
@@ -61,7 +61,7 @@ export function useRelayServerProfiles() {
   }
   createEffect(() => { if (!enabled()) for (const controller of controllers) controller.abort() })
   onCleanup(() => { alive = false; for (const controller of controllers) controller.abort(); controllers.clear() })
-  const submitServer = async (input: RemoteServerInput, _open = false, viewCurrent: () => boolean = () => true) => {
+  const submitServer = async (input: RemoteServerInput, viewCurrent: () => boolean = () => true) => {
     input = { ...input, ssh: input.ssh ? { ...input.ssh } : undefined }
     if (!enabled()) throw new DOMException("Server settings disabled", "AbortError")
     if (!input.baseUrl.trim()) throw new RemoteServerProbeError("required")

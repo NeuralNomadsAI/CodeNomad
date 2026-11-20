@@ -31,34 +31,22 @@ export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "Язык",
 
   "folderSelection.logoAlt": "Логотип CodeNomad",
-  "folderSelection.tagline": "Выберите папку, чтобы начать писать код с AI",
 
   "folderSelection.links.github": "GitHub CodeNomad",
   "folderSelection.links.githubStars": "Звезды GitHub CodeNomad",
   "folderSelection.links.discord": "Discord CodeNomad",
 
-  "folderSelection.empty.title": "Нет недавних папок",
 
-  "folderSelection.recent.title": "Недавние папки",
-  "folderSelection.recent.subtitle.one": "Доступна {count} папка",
-  "folderSelection.recent.subtitle.other": "Доступно {count} папок",
   "folderSelection.recent.rename": "Переименовать рабочее пространство",
   "folderSelection.recent.remove": "Убрать из недавних",
   "folderSelection.recent.openBadge": "Открыта",
-  "newInstanceLauncher.title": "Недавние вкладки",
-  "newInstanceLauncher.description": "Выберите недавний проект.",
   "newInstanceLauncher.searchLabel": "Поиск по недавним проектам",
   "newInstanceLauncher.searchPlaceholder": "Поиск по недавним вкладкам…",
   "newInstanceLauncher.recentTitle": "Недавние вкладки",
   "newInstanceLauncher.empty": "Недавних проектов пока нет.",
   "newInstanceLauncher.noMatch": "Нет подходящих проектов.",
-  "folderSelection.recent.openNewInstance": "Открыть новый экземпляр",
   "folderSelection.recent.switchToOpenProject": "Перейти к открытому проекту",
 
-  "folderSelection.browse.title": "Выбрать папку",
-  "folderSelection.browse.subtitle": "Выберите любую папку на компьютере",
-  "folderSelection.browse.button": "Обзор папок",
-  "folderSelection.browse.buttonOpening": "Открытие…",
   "folderSelection.clone.button": "Клонировать Git-репозиторий",
   "folderSelection.temporary.button": "Новая временная вкладка",
   "folderSelection.temporary.description": "Начать в пустой папке под управлением CodeNomad; при закрытии вкладки её можно сохранить или удалить",
@@ -77,13 +65,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "URL репозитория и папка назначения обязательны.",
   "folderSelection.actions.connectButton": "Подключить сервер CodeNomad",
 
-  "folderSelection.advancedSettings": "Расширенные настройки",
   "folderSelection.opencode": "OpenCode",
 
-  "folderSelection.hints.navigate": "Навигация",
-  "folderSelection.hints.select": "Выбрать",
-  "folderSelection.hints.remove": "Убрать",
-  "folderSelection.hints.browse": "Обзор",
 
   "folderSelection.loading.title": "Запуск экземпляра…",
 
@@ -94,18 +77,11 @@ export const folderSelectionMessages = {
   "folderSelection.dialog.title": "Выберите рабочее пространство",
   "folderSelection.dialog.description": "Выберите рабочее пространство, чтобы начать писать код.",
 
-  "folderSelection.tabs.local": "Локальные папки",
   "folderSelection.tabs.servers": "Серверы",
   "folderSelection.servers.title": "Сохраненные серверы",
-  "folderSelection.servers.subtitle": "Откройте сохраненный удаленный сервер CodeNomad в новом окне",
-  "folderSelection.servers.count": "{count} серверов",
   "folderSelection.servers.empty.title": "Нет сохраненных серверов",
-  "folderSelection.servers.connectTitle": "Подключиться к серверу",
-  "folderSelection.servers.connectSubtitle": "Сохраните удаленный сервер CodeNomad и откройте его в новом окне",
-  "folderSelection.servers.connectButton": "Подключиться к серверу",
   "settings.servers.addSsh": "Добавить SSH-сервер",
   "folderSelection.servers.remove": "Удалить",
-  "folderSelection.servers.skipTls": "Самоподписанный TLS",
   "folderSelection.servers.errorTitle": "Ошибка удаленного подключения",
   "folderSelection.servers.dialog.title": "Подключиться к серверу",
   "folderSelection.servers.dialog.name": "Имя сервера",
@@ -130,7 +106,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.launch.error.credentials": "«{value}» содержит учётные данные или код сопряжения. Адрес запуска не может их содержать: выполните сопряжение через «Подключиться к серверу».",
   "folderSelection.servers.launch.error.unknown": "Нет сохранённого сервера с именем «{value}». Укажите имя сохранённого сервера или URL http(s).",
   "folderSelection.servers.launch.error.ambiguous": "Несколько сохранённых серверов называются «{value}». Переименуйте один из них или укажите его URL.",
-  "folderSelection.sidecars.button": "Открыть SideCar",
 
   "projectRenameDialog.title": "Переименовать рабочее пространство",
   "projectRenameDialog.description.withLabel": "Обновите имя рабочего пространства для \"{label}\".",

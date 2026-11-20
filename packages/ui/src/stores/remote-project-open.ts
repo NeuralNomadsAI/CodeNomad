@@ -3,7 +3,7 @@ import { backendIdOf } from "../lib/backend-identity"
 import type { BackendId } from "../lib/backend-transport"
 import { backendRegistry } from "./remote-backends"
 import { createInstance, instances, type WorkspaceCreationOwnership } from "./instances"
-import { activeAppTabId, appTabs, openBlankTab, selectAppTab, selectInstanceTab, type InstanceAppTab } from "./app-tabs"
+import { activeAppTabId, appTabs, getInstanceAppTabId, openBlankTab, selectAppTab, selectInstanceTab, type InstanceAppTab } from "./app-tabs"
 import { workspaceIdentity } from "./app-session-reconciliation"
 import type { RemoteRestoreTab } from "./remote-restore-tabs"
 import { closeSettings } from "./settings-screen"
@@ -19,10 +19,10 @@ export function selectRemoteServer(value: unknown): void {
 }
 
 /** Matches visible tab membership, never unselected backend inventory records. */
-export function findOpenProjectTab(path: string, backendId: BackendId, { includeLive = true } = {}): InstanceAppTab | RemoteRestoreTab | undefined {
+export function findOpenProjectTab(path: string, backendId: BackendId): InstanceAppTab | RemoteRestoreTab | undefined {
   const identity = workspaceIdentity(path, backendId)
   const matches = appTabs().filter((tab): tab is InstanceAppTab | RemoteRestoreTab => {
-    if (tab.kind === "blank" || tab.kind === "sidecar" || tab.kind === "instance" && (!includeLive || tab.instance.status === "stopped")) return false
+    if (tab.kind === "blank" || tab.kind === "sidecar" || tab.kind === "instance" && tab.instance.status === "stopped") return false
     const project = tab.kind === "instance" ? tab.instance : tab.snapshot
     return backendIdOf(project) === backendId && workspaceIdentity(project.folder, backendId) === identity
   })
@@ -32,8 +32,8 @@ export function findOpenProjectTab(path: string, backendId: BackendId, { include
 const liveProjectTab = (tab: InstanceAppTab | RemoteRestoreTab): tab is InstanceAppTab => tab.kind === "instance" && tab.instance.status !== "error"
 
 /** Selects the folder's visible tab; only a live project counts as an opening in Recents. */
-export function selectOpenProjectTab(intent: ServerSelectionIntent, path: string, includeLive: boolean, projectName?: string): boolean {
-  const tab = findOpenProjectTab(path, intent.id, { includeLive })
+export function selectOpenProjectTab(intent: ServerSelectionIntent, path: string, projectName?: string): boolean {
+  const tab = findOpenProjectTab(path, intent.id)
   if (!tab || selectAppTab(tab.id) !== true) return false
   if (liveProjectTab(tab)) recordRemoteProjectLaunch(intent, tab.instance.folder, path, projectName)
   return true
@@ -42,17 +42,10 @@ export function selectOpenProjectTab(intent: ServerSelectionIntent, path: string
 type OpenOptions = { projectName?: string; current?: () => boolean; onOpened?: (instanceId: string) => void }
 
 /** Open with the caller's immutable policy and cancellation, without changing the server picker. */
-export function openRemoteProjectForProfile(profile: ServerSelectionIntent, path: string, signal: AbortSignal, options?: OpenOptions): Promise<boolean> {
+export async function openRemoteProjectForProfile(profile: ServerSelectionIntent, path: string, signal: AbortSignal, options?: OpenOptions): Promise<boolean> {
   const { id, baseUrl, skipTlsVerify, ssh } = profile
   const intent = normalizeServerSelection({ id, baseUrl, skipTlsVerify, ssh })
-  return openCapturedRemoteProject(intent, path, signal, remoteRecentProjectsUsable, options)
-}
-
-/** Caller cancellation belongs only to this opening, never another occurrence. */
-async function openCapturedRemoteProject(
-  intent: ServerSelectionIntent | undefined, path: string, signal: AbortSignal, guard: () => boolean, options?: OpenOptions,
-): Promise<boolean> {
-  const current = () => !signal.aborted && guard() && (options?.current?.() ?? true) && !!intent && !!savedProjectProfile(intent)
+  const current = () => !signal.aborted && remoteRecentProjectsUsable() && (options?.current?.() ?? true) && !!intent && !!savedProjectProfile(intent)
   if (!intent || !current() || !path.trim()) throw new Error("Server selection changed")
   let client = await backendRegistry.ensure(intent.id)
   if (!current()) return false
@@ -68,7 +61,7 @@ async function openCapturedRemoteProject(
     transferred = selectInstanceTab(result.instanceId, creation)
     if (!transferred) return false
     recordRemoteProjectLaunch(intent, instances().get(result.instanceId)?.folder ?? path, path, options?.projectName)
-    if (activeAppTabId() === `instance:${result.instanceId}`) options?.onOpened?.(result.instanceId)
+    if (activeAppTabId() === getInstanceAppTabId(result.instanceId)) options?.onOpened?.(result.instanceId)
     return true
   } finally {
     if (!transferred) await creation?.discard()

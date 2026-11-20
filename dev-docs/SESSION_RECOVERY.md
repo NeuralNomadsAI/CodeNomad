@@ -47,13 +47,7 @@ interrupts, updates a session or replays anything automatically.
 
 ## Display acknowledgement
 
-Remote app-tab recovery preserves the complete saved workspace snapshot in a
-selectable placeholder while its owner is unavailable. Admission and Retry bind
-inventory records on the saved installation, then run this same read-only session
-hydration. Explicit Open can create a missing record on that installation. Authentication is scoped to that server;
-successful connection re-admits its client and resumes open placeholders.
-User closure revokes the occurrence's commit guard, including pending creates.
-Uncertain creation outcomes stay parked for authoritative inventory reconciliation.
+Remote app-tab Retry rebinds the saved server's inventory and runs this same read-only hydration. Explicit Open can create a missing workspace. See [remote opening ownership](PROJECTS.md#remote-opening-ownership) for placeholder preservation, cancellation and uncertain creation.
 
 `session-interruption-seen.ts` owns per-window, per-project-tab acknowledgement
 watermarks keyed by session ID and the native `time.idle` boundary. The session

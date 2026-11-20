@@ -147,6 +147,12 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       if (["offline", "auth", "pairing", "refused", "absent"].includes(mode)) {
         assert.equal(await page.getByRole("tab").count(), 3)
         assert.equal(await page.locator('[data-remote-restore="a"]').count(), 1)
+        if (mode === "absent") {
+          const restore = page.locator('[data-remote-restore="a"]')
+          assert.equal(await restore.getByRole("status").textContent(), "Server not found")
+          assert.ok(await restore.getByRole("button", { name: "Retry" }).isDisabled())
+          assert.ok(await restore.getByRole("button", { name: "Connect" }).isDisabled())
+        }
         const snapshot = await page.evaluate(() => (window as any).restoreFixture.snapshot())
         assert.equal(snapshot.tabs[2].drafts.__no_session_draft__, "draft-2")
         if (mode === "offline") {

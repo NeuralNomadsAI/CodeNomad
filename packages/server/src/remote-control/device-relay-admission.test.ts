@@ -43,7 +43,7 @@ function send(target: string, path: string, requestHeaders: Record<string, strin
   })
 }
 
-test("R3 browser pairing stays ingress-only with a valid device, server marker and public Origin", async t => {
+test("a rejected direct browser pairing leaves the code usable on ingress", async t => {
   const f = await startRemoteSurface(t)
   const paired = await send(f.target(), SERVER_PAIR_PATH, {
     host: FAKE_TUNNEL_HOST, "x-codenomad-server-pairing": "1", "content-type": "application/json",

@@ -48,7 +48,7 @@ Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: bu kontroller, Ter
 
 Tarayıcı ve uzak istemciler gömülü ayarları kullanır.
 
-Erişilemeyen uzak sekme taslaklarıyla birlikte yerinde kalır. Yeniden denemek veya oturum açmak için sekmeyi seçin.
+[Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
 
 ## Masaüstü veri profilleri {#data-profiles}
 

@@ -29,34 +29,22 @@ export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "Idioma",
 
   "folderSelection.logoAlt": "Logo de CodeNomad",
-  "folderSelection.tagline": "Selecciona una carpeta para empezar a programar con IA",
 
   "folderSelection.links.github": "GitHub de CodeNomad",
   "folderSelection.links.githubStars": "Estrellas de GitHub de CodeNomad",
   "folderSelection.links.discord": "Discord de CodeNomad",
 
-  "folderSelection.empty.title": "No hay carpetas recientes",
 
-  "folderSelection.recent.title": "Carpetas recientes",
-  "folderSelection.recent.subtitle.one": "{count} carpeta disponible",
-  "folderSelection.recent.subtitle.other": "{count} carpetas disponibles",
   "folderSelection.recent.rename": "Renombrar workspace",
   "folderSelection.recent.remove": "Eliminar de recientes",
   "folderSelection.recent.openBadge": "Abierta",
-  "newInstanceLauncher.title": "Pestañas recientes",
-  "newInstanceLauncher.description": "Elige un proyecto reciente.",
   "newInstanceLauncher.searchLabel": "Buscar proyectos recientes",
   "newInstanceLauncher.searchPlaceholder": "Buscar pestañas recientes…",
   "newInstanceLauncher.recentTitle": "Pestañas recientes",
   "newInstanceLauncher.empty": "Todavía no hay proyectos recientes.",
   "newInstanceLauncher.noMatch": "Ningún proyecto coincide.",
-  "folderSelection.recent.openNewInstance": "Abrir una nueva instancia",
   "folderSelection.recent.switchToOpenProject": "Cambiar al proyecto abierto",
 
-  "folderSelection.browse.title": "Buscar carpeta",
-  "folderSelection.browse.subtitle": "Selecciona cualquier carpeta en tu ordenador",
-  "folderSelection.browse.button": "Buscar carpetas",
-  "folderSelection.browse.buttonOpening": "Abriendo...",
   "folderSelection.clone.button": "Clonar repo Git",
   "folderSelection.temporary.button": "Nueva pestaña temporal",
   "folderSelection.temporary.description": "Empieza en una carpeta vacía gestionada por CodeNomad; al cerrar la pestaña podrás conservarla o descartarla",
@@ -75,13 +63,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "La URL del repositorio y la carpeta de destino son obligatorias.",
   "folderSelection.actions.connectButton": "Conectar servidor CodeNomad",
 
-  "folderSelection.advancedSettings": "Configuración avanzada",
   "folderSelection.opencode": "OpenCode",
 
-  "folderSelection.hints.navigate": "Navegar",
-  "folderSelection.hints.select": "Seleccionar",
-  "folderSelection.hints.remove": "Eliminar",
-  "folderSelection.hints.browse": "Buscar",
 
   "folderSelection.loading.title": "Iniciando instancia...",
 
@@ -92,18 +75,11 @@ export const folderSelectionMessages = {
   "folderSelection.dialog.title": "Seleccionar workspace",
   "folderSelection.dialog.description": "Selecciona un workspace para empezar a programar.",
 
-  "folderSelection.tabs.local": "Carpetas locales",
   "folderSelection.tabs.servers": "Servidores",
   "folderSelection.servers.title": "Servidores guardados",
-  "folderSelection.servers.subtitle": "Abre un servidor remoto de CodeNomad guardado en una ventana nueva",
-  "folderSelection.servers.count": "{count} servidores",
   "folderSelection.servers.empty.title": "No hay servidores guardados",
-  "folderSelection.servers.connectTitle": "Conectar a un servidor",
-  "folderSelection.servers.connectSubtitle": "Guarda un servidor remoto de CodeNomad y ábrelo en una ventana nueva",
-  "folderSelection.servers.connectButton": "Conectar a un servidor",
   "settings.servers.addSsh": "Añadir servidor SSH",
   "folderSelection.servers.remove": "Eliminar",
-  "folderSelection.servers.skipTls": "TLS autofirmado",
   "folderSelection.servers.errorTitle": "Falló la conexión remota",
   "folderSelection.servers.dialog.title": "Conectar a un servidor",
   "folderSelection.servers.dialog.name": "Nombre del servidor",
@@ -128,7 +104,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.launch.error.credentials": "\"{value}\" contiene credenciales o un código de emparejamiento. Las direcciones de inicio no pueden incluirlos: empareja el servidor desde Conectar a un servidor.",
   "folderSelection.servers.launch.error.unknown": "Ningún servidor guardado se llama \"{value}\". Usa el nombre de un servidor guardado o una URL http(s).",
   "folderSelection.servers.launch.error.ambiguous": "Varios servidores guardados se llaman \"{value}\". Cambia el nombre de uno o usa su URL.",
-  "folderSelection.sidecars.button": "Abrir SideCar",
 
   "projectRenameDialog.title": "Renombrar workspace",
   "projectRenameDialog.description.withLabel": "Actualiza el nombre del workspace para \"{label}\".",

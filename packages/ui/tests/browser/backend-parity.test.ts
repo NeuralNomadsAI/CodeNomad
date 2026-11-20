@@ -101,18 +101,18 @@ test("homonymous sessions on two servers have independent notices, exact navigat
   let history = await page.evaluate(() => (window as any).parity.history())
   assert.deepEqual(history.map((item: any) => item.title).sort(), ["Server A · A", "Server B · B"])
   for (const owner of ["A", "B"]) {
-    assert.deepEqual(history.find((item: any) => item.target.backendId === owner).target,
-      { backendId: owner, instanceId: `${owner}~same`, sessionId: "ses_homonym" })
-    await page.evaluate(owner => (window as any).parity.action(owner), owner)
-    assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, `${owner}~same`)
+    await page.evaluate(title => (window as any).parity.action(title), `Server ${owner} · ${owner}`)
+    const selected = await page.evaluate(() => (window as any).parity.selected())
+    assert.equal(selected.instance, `${owner}~same`)
+    assert.equal(selected[`session${owner}`], "ses_homonym")
   }
-  await page.evaluate(() => (window as any).parity.action("A"))
+  await page.evaluate(() => (window as any).parity.action("Server A · A"))
   await page.evaluate(() => (window as any).parity.detach())
   history = await page.evaluate(() => (window as any).parity.history())
   assert.equal(history.length, 1)
-  assert.equal(history[0].target.backendId, "B")
+  assert.equal(history[0].title, "Server B · B")
   await page.waitForFunction(() => [...document.querySelectorAll("p")].filter(el => el.textContent === 'Session "Same session" was compacted').length === 1)
-  await page.evaluate(() => (window as any).parity.action("B"))
+  await page.evaluate(() => (window as any).parity.action("Server B · B"))
   await page.evaluate(() => { (window as any).parity.reattach(); return (window as any).parity.staleAction() })
   assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, "B~same")
   await page.evaluate(() => (window as any).parity.notify("A", "session.execution.succeeded", 2))
@@ -120,8 +120,9 @@ test("homonymous sessions on two servers have independent notices, exact navigat
   history = await page.evaluate(() => (window as any).parity.history())
   const done = history.find((item: any) => item.message.includes("finished"))
   assert.equal(done.title, "Server A · A")
-  assert.deepEqual(done.target, { backendId: "A", instanceId: "A~same", sessionId: "ses_homonym" })
   assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, "B~same")
+  await page.evaluate(() => (window as any).parity.action("Server A · A"))
+  assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, "A~same")
 }))
 
 test("web system notification clicks navigate to the qualified session and revoked attachment clicks stay fenced", async () => fixturePage(async page => {

@@ -340,10 +340,6 @@ jobs:
           download = tempfile.mkdtemp(prefix='electron-arm-download-', dir=e['RUNNER_TEMP'])
           with open(e['GITHUB_OUTPUT'], 'a') as output:
               output.write('download=' + download + '\n')
-          receipt = {k: e.get(k) for k in ('PRODUCER_SHA', 'WORKFLOW_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'ARTIFACT_ID', 'ARTIFACT_NAME', 'ARTIFACT_DIGEST', 'ImageOS', 'ImageVersion')}
-          print(json.dumps(receipt, sort_keys=True))
-          with open(e['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('Electron ARM producer receipt\n```json\n' + json.dumps(receipt, sort_keys=True) + '\n```\n')
           PY
 
       - name: Download exact producer artifact without extraction

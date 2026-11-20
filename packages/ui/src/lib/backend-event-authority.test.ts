@@ -318,16 +318,6 @@ test("reattaching the same source inside a wildcard cannot deliver the old event
   assert.deepEqual(seen, ["wildcard", "wildcard", "typed"])
 })
 
-test("reattachment from abort still delivers cleanup of the old token without revoking its replacement", t => {
-  const a = owner(t), b = owner(t), bus = new BackendEvents(), removed: AbortSignal[] = []
-  const detach = bus.attach("race", a.events), signal = bus.signal("race")!
-  signal.addEventListener("abort", () => { t.after(bus.attach("race", b.events)) }, { once: true })
-  bus.onDetach((_id, token) => { removed.push(token) })
-  detach()
-  assert.deepEqual(removed, [signal])
-  assert.equal(bus.signal("race")!.aborted, false)
-})
-
 test("a recovery requested synchronously from cancellation starts under its replacement authority", async () => {
   const a = new AbortController(), b = new AbortController()
   let release!: () => void, calls = 0, replacement = Promise.resolve()

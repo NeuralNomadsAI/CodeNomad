@@ -4,13 +4,14 @@ Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. S
 
 ## Bir proje açın {#open-project}
 
-1. **Yeni instance** (`+`) veya `Ctrl/Cmd+N` boş bir sekme açar. Ortalanmış logo ve CodeNomad adının altında **Geçici**, ardından **Klonla** düğmeleri, onların altında solda **Son sekmeler**, sağda **Gözat** vardır. **Sunucu adresi veya bağlantısı** Gözat'ın alt tarafında kalır. Sayfa arka planı etkin sekmeyle aynıdır. Dar ekranlarda sütunlar alt alta dizilir. Logo ana sayfayı açar: solda **Git Deposunu Klonla**, **Yeni geçici sekme**, **Yeni SideCar** ve OpenCode satırı; sağda başlıkların altında sayılarla **Son sekmeler | Gözat**. Sağ panelin alt kenarı sol sütunla hizalanır ve liste panel içinde kayar. Ana sayfada dil, ayarlar, **Sponsor** ([CodeNomad'i destekleyin](sponsor.md)), GitHub, yıldızlar ve Discord vardır. Klonlama ve geçici klasörler yerel arka ucu hedefler. Proje veya SideCar seçimi boş sekmeyi yerinde doldurur. Boş sekmeler yeniden yüklemeye kadar yaşar ve proje bırakmadan kapanır.
-2. **Son sekmeler** içinde bir proje seçin; ya da **Gözat** bölümünü açıp **Bu bilgisayar** seçin, ardından arka uç klasörünü seçip açın. **Gözat** kayıtlı CodeNomad sunucularını ([uzak proje sekmeleri](remote-access.md#remote-project-tabs)) ve SideCar'ları ([SideCar'lar](browser-sidecars.md#register-sidecar)) da listeler.
-3. Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
+Boş sekme açmak için **Yeni instance** (`+`) veya `Ctrl/Cmd+N` kullanın. **Son sekmeler** ya da **Gözat** üzerinden proje seçin. CodeNomad logosu Ana Sayfayı açar. Klonlama ve geçici sekmeler yerel sunucuyu kullanır.
+
+
+[Uzak projeyi sekmede açma](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
+
+Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
 
 Uzak bir sunucuya göz atmak, telefonunuzun veya dizüstü bilgisayarınızın değil, o sunucunun dosya sistemine göz atmak anlamına gelir. Bir projeyi açmak, her sekme için ayrı bir OpenCode arka plan programı oluşturmaz. Konuşmalar yerel OpenCode oturumlarıdır; bunların ömrü sekmenin ömrü değildir.
-
-**Gözat** içinde sunucu seçmek klasörlerini gösterir; adı giriş ve gezinme boyunca görünür kalır. Son projeleri yalnızca **Son sekmeler** içinde, boş sekmenin solunda, ayrı **Aç** eylemiyle görünür. Ana sayfada **Son sekmeler** ile **Gözat** arasında geçiş sunucuyu ve klasörü korur. Sunucu seçiliyken liste yalnızca o sunucuya aittir ve açma eylemleri sunar; Gözat'a dönüş normal karma listeyi geri getirir. Giriş alanları etiketlidir. Klasör satırları yalnızca gezinmek içindir; yol alanında gösterilen klasörü açmak için Enter tuşuna veya alanın sonundaki oka basın. Yalnızca proje seçimi boş sekmeyi doldurur.
 
 Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın.** yıkıcıdır: yalnızca zaten orada olan her şeyin silinebildiği durumlarda etkinleştirin. Emin değilseniz yeni bir hedef kullanın. Başarısız bir klon, mevcut bir projeyi silmek için bir neden değildir; yeniden denemeden önce bildirilen hedefi ve hatayı inceleyin.
 
@@ -20,12 +21,8 @@ Açık sekmeye geçme eylemi sunucusunu bekleyen sekmeyi de seçer ve başlangı
 
 ## Yeni örnek başlatıcıyı kullanın {#new-instance-launcher}
 
-Açılışta odak menüdedir. Tab veya tıklama ile aramaya geçilir. Ok tuşları son öğelerde gezinir; Escape menüyü kapatır.
-
-1. `+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
-2. **Son sekmeler** aramayı, son yerel ve uzak projeleri ve SideCar'ları, ayrı **Aç** eylemleriyle birlikte içerir. Satır yeni örnek oluşturur; **Aç** mevcut örneğe geçer. Başlık çubuğundaki kum saati simgeli **Yeni geçici sekme** düğmesi geçici bir sekme oluşturur.
-
-Normal tıklama boş sekme açar. Son kullanılanları ana sayfa veya boş sekmede, sunucuları **Ayarlar → Sunucular**, SideCar'ları **Ayarlar → SideCars** bölümünde yönetin. Ana sayfa, boş sekmeler ve hızlı başlatıcıda satır seçimi yalnızca klavyeyle gezinirken korunur; işaretçi satırdan çıkınca üzerine gelme vurgusu kaybolur. Escape başlatıcıyı kapatır ve odağı `+` düğmesine döndürür.
+`+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
+Tab aramayı açar, oklar ve Enter seçim yapar, Escape odağı `+` düğmesine döndürür.
 
 ## Bir projeyi kapatın {#close-stop}
 
@@ -46,13 +43,9 @@ Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, 
 
 ## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
 
-Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçimi ve taslakları korunur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya yeni bir **Eşleştirme bağlantısı** ile **Bağlan** seçin. Diğer sunucular kullanılabilir kalır.
+Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçimi ve taslakları korunur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya yeni bir **Eşleştirme bağlantısı** ile **Bağlan** seçin. Diğer sunucular kullanılabilir kalır. **Sunucu bulunamadı**, kayıtlı sunucunun eksik olduğunu gösterir.
 
 **Yeniden dene**, başlangıçta otomatik geri yükleme kapalıyken de bekleyen sekmeleri kurtarır. Bildirimler mevcut bekleyen sekmeyi seçer. Onaylanmamış bir konuşma işlemini yeniden göndermeden önce sonucunu kontrol edin.
-
-**Ayarlar → Sunucular** altında **Aç**, sunucuyu **Gözat** bölümünde seçer. `+` ve `Ctrl/Cmd+N` gibi penceredeki boş sekmeyi kullanır. Bir proje seçtikten sonra `+` yeni bir boş sekme açar.
-
-**Kaldır**, kapanacak sekmelerin ve listeden kaldırılacak son projelerin sayısını gösterir. Kayıtlı bağlantı **Gözat** bölümünden kalkar; projeler ve konuşmalar sunucuda kalır. Geçici projeler için olağan kapatma seçenekleri gösterilir.
 
 ## Geçici çalışma alanları {#temporary-workspaces}
 

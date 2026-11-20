@@ -6,6 +6,7 @@ import { backendCompatibility } from "../lib/backend-compatibility"
 import { backendEvents, type BackendEvents } from "../lib/backend-events"
 import { isBackendId, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import { RELAY_AUTHORITY_HEADER } from "../../../server/src/codenomad-servers/relay-authority"
+import { sameServerSelection } from "../lib/native/server-selection-intent"
 
 export type BackendAdmissionState = "idle" | "admitting" | "compatible" | "refused" | "unauthorized" | "unreachable"
 type Entry = {
@@ -42,7 +43,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
   let disposed = false
   const profileFor = (id: string) => options.enabled() === true ? options.profiles().find(p => p.id === id) : undefined
   const sameTarget = (a: RemoteServerProfile, b?: RemoteServerProfile) =>
-    b !== undefined && a.baseUrl === b.baseUrl && a.skipTlsVerify === b.skipTlsVerify && a.ssh?.host === b.ssh?.host
+    b !== undefined && sameServerSelection(a, b)
   const current = (id: string, entry: Entry) => !disposed && !entry.revoked && entries.get(id) === entry
     && !entry.controller.signal.aborted && sameTarget(entry.profile, profileFor(id))
 

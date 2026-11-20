@@ -127,7 +127,7 @@ struct Inner {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Record {
-    logical_address: Option<String>,
+    restricted: bool,
     owner: String,
     token: u64,
     document: u64,
@@ -147,7 +147,7 @@ impl EmbeddedViews {
             inner
                 .records
                 .get(label)
-                .is_some_and(|record| record.logical_address.is_some())
+                .is_some_and(|record| record.restricted)
         })
     }
 
@@ -159,19 +159,14 @@ impl EmbeddedViews {
         logical: Option<&str>,
     ) -> Result<(), String> {
         let record = self.owned(view.window().label(), view.label())?;
-        let address = if let Some(value) = logical {
+        if let Some(value) = logical {
             let parsed = tauri::Url::parse(value).map_err(|_| "Invalid logical browser address")?;
             if !is_allowed_url(&parsed) || private_preview_url(&parsed) {
                 return Err("Invalid logical browser address".into());
             }
-            Some(parsed.origin().ascii_serialization())
-        } else if private_preview_url(source) {
-            Some("CodeNomad".into())
-        } else {
-            record.logical_address.clone()
-        };
-        let restricted = address.is_some();
-        if restricted != record.logical_address.is_some() {
+        }
+        let restricted = record.restricted || logical.is_some() || private_preview_url(source);
+        if restricted != record.restricted {
             #[cfg(windows)]
             windows::privacy(view, restricted)?;
             #[cfg(target_os = "linux")]
@@ -185,7 +180,7 @@ impl EmbeddedViews {
             .get_mut(view.label())
             .filter(|current| current.token == record.token)
             .ok_or("Expired browser view")?
-            .logical_address = address;
+            .restricted = restricted;
         Ok(())
     }
 
@@ -208,7 +203,7 @@ impl EmbeddedViews {
         }
         inner.sequence = inner.sequence.wrapping_add(1);
         let record = Record {
-            logical_address: None,
+            restricted: false,
             owner: owner.into(),
             token: inner.sequence,
             document: 0,

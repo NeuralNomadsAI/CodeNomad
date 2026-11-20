@@ -108,6 +108,8 @@ test('opening the context menu focuses its container, not search, and arrows and
   try {
     await plus(page).click({ button: 'right' })
     await openedWithFocus(page)
+    assert.equal(await options(page).count(), 15)
+    assert.equal(await launcher(page).locator(".browse-menu-row, .new-tab-actions, [data-server-add-field]").count(), 0)
     await page.keyboard.press('ArrowDown')
     assert.equal(await options(page).first().evaluate(node => document.activeElement === node), true)
     await page.keyboard.press('Escape')
@@ -371,14 +373,14 @@ test("the new-instance button follows the last tab like a browser", async () => 
   } finally { await page.close() }
 })
 
-test("Home owns browsing and creation; quick recents contain neither", async () => {
+test("Home owns browsing and creation", async () => {
   const home = await prepare(1100, true)
-  const tabs = await prepare()
   try {
     const { page, errors } = home
     // The old framed Browse button, Servers tab, Connect and Open SideCar buttons are gone.
     assert.equal(await page.getByRole("button", { name: /^(Browse Folders|Servers|Remotes|Connect CodeNomad Server|Open SideCar)/ }).count(), 0)
     const actions = page.locator(".folder-home-creation-actions")
+    await actions.getByRole("button", { name: "Clone Git Repo", exact: true }).waitFor()
     assert.deepEqual(await actions.getByRole("button").allTextContents(), CREATE)
 
     // Right: two tabs, Recent tabs first; search stays in the quick launcher.
@@ -418,29 +420,8 @@ test("Home owns browsing and creation; quick recents contain neither", async () 
     await page.keyboard.press("ArrowDown")
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Open a project on Saved remote")
 
-    await plus(tabs.page).click({ button: "right" })
-    await openedWithFocus(tabs.page)
-    assert.equal(await launcher(tabs.page).locator(".browse-menu-row, .new-tab-actions, [data-server-add-field]").count(), 0)
-    assert.equal(await launcher(tabs.page).getByRole("button", { name: "Open another project…", exact: true }).count(), 0)
-    assert.deepEqual([...errors, ...tabs.errors], [])
-  } finally { await home.page.close(); await tabs.page.close() }
-})
-
-test("quick recents are always visible and Escape dismisses them in one step", async () => {
-  const { page, errors } = await prepare()
-  try {
-    await plus(page).click({ button: "right" })
-    await openedWithFocus(page)
-    assert.equal(await options(page).count(), 15)
-    await page.keyboard.press("Escape")
-    await launcher(page).waitFor({ state: "detached" })
-
-    await plus(page).click({ button: "right" })
-    await openedWithFocus(page)
-    await launcher(page).getByRole("searchbox").fill("blend")
-    await page.waitForFunction(() => document.querySelectorAll(".new-instance-launcher-recent-primary").length === 1)
     assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally { await home.page.close() }
 })
 
 test("recent hover clears on pointer exit and keyboard highlighting is limited to keyboard navigation", async () => {

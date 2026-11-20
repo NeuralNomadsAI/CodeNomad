@@ -4,13 +4,13 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 ## Projekt öffnen {#open-project}
 
-1. **Neue Instanz** (`+`) oder `Ctrl/Cmd+N` öffnet einen leeren Tab. Unter Logo und CodeNomad-Name stehen **Temporär** und **Klonen**, dann zwei Spalten: links **Zuletzt verwendete Tabs**, rechts **Durchsuchen** mit **Serveradresse oder -link** am unteren Rand. Der Seitenhintergrund entspricht dem aktiven Tab. Auf schmalen Bildschirmen stehen die Spalten untereinander. Das Logo öffnet die Startseite mit **Git-Repo klonen**, **Neuer temporärer Tab**, **Neuer SideCar** und der OpenCode-Zeile links sowie **Zuletzt verwendete Tabs | Durchsuchen** rechts. Die Anzahl steht unter dem jeweiligen Titel. Der rechte Bereich endet auf Höhe der linken Spalte; die Liste scrollt darin. Die Startseite zeigt Sprache, Einstellungen, **Sponsor** ([CodeNomad unterstützen](sponsor.md)), GitHub-Sterne und Discord. Klonen und temporäre Ordner verwenden das lokale Backend. Die Projekt- oder SideCar-Auswahl füllt den leeren Tab an seiner Position. Leere Tabs bestehen bis zum Neuladen und schließen ohne Projekt.
-2. Wählen Sie unter **Zuletzt verwendete Tabs** ein Projekt; oder öffnen Sie **Durchsuchen**, wählen Sie **Dieser Computer**, dann den Backend-Ordner, und öffnen Sie ihn. **Durchsuchen** listet auch gespeicherte CodeNomad-Server ([Remote-Projekt-Tabs](remote-access.md#remote-project-tabs)) und SideCars ([SideCars](browser-sidecars.md#register-sidecar)) auf.
-3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
+Klicken Sie auf **Neue Instanz** (`+`) oder drücken Sie `Ctrl/Cmd+N` für einen leeren Tab. Wählen Sie ein Projekt unter **Zuletzt verwendete Tabs** oder **Durchsuchen**. Das CodeNomad-Logo öffnet die Startseite. Klonen und temporäre Tabs verwenden das lokale Backend.
+
+[Ein Remote-Projekt in einem Tab öffnen](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
+
+Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
 
 Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, nicht Ihr Telefon oder Notebook. Das Öffnen eines Projekts erzeugt keinen separaten OpenCode-Daemon pro Tab. Unterhaltungen sind native OpenCode-Sitzungen; ihre Lebensdauer entspricht nicht der des Tabs.
-
-Die Serverwahl in **Durchsuchen** öffnet dessen Ordner; sein Name bleibt bei Anmeldung und Navigation sichtbar. Seine letzten Projekte erscheinen nur unter **Zuletzt verwendete Tabs**, im leeren Tab links, mit der separaten Aktion **Offen**. Auf der Startseite bleiben Server und Ordner beim Wechsel zwischen **Zuletzt verwendete Tabs** und **Durchsuchen** erhalten. Bei gewähltem Server stammen die Einträge ausschließlich von ihm und bieten Öffnungsaktionen; Zurück zu Durchsuchen stellt die gemischte Liste wieder her. Die Anmeldefelder sind beschriftet. Ordnerzeilen dienen nur der Navigation; drücken Sie die Eingabetaste oder den Pfeil am Ende des Pfadfelds, um den angezeigten Ordner zu öffnen. Erst die Projektwahl füllt den leeren Tab.
 
 Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entfernen, falls er bereits existiert.** ist destruktiv: Aktivieren Sie dies nur, wenn alles dort Vorhandene gelöscht werden darf. Verwenden Sie im Zweifel ein neues Ziel. Ein fehlgeschlagener Klon ist kein Grund, ein vorhandenes Projekt zu löschen; prüfen Sie vor dem Wiederholen das gemeldete Ziel und den Fehler.
 
@@ -20,12 +20,8 @@ Die Aktion zum Wechseln wählt auch einen Tab aus, der auf seinen Server wartet,
 
 ## Schnellstarter für neue Instanzen verwenden {#new-instance-launcher}
 
-Beim Öffnen erhält das Menü den Fokus. Tab oder ein Klick erreicht die Suche. Pfeiltasten navigieren durch die Einträge; Escape schließt das Menü.
-
-1. Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
-2. **Zuletzt verwendete Tabs** enthält die Suche und zuletzt verwendete lokale Projekte, Remote-Projekte und SideCars mit der separaten Aktion **Offen**. Eine Zeile öffnet ein neues Vorkommen; **Offen** wechselt zum vorhandenen. Die Sanduhr-Schaltfläche **Neuer temporärer Tab** in der Titelleiste erstellt einen temporären Tab.
-
-Ein normaler Klick öffnet einen leeren Tab. Verwalten Sie letzte Einträge auf Startseite oder leeren Tabs, Server unter **Einstellungen → Server** und SideCars unter **Einstellungen → SideCars**. Auf Startseite, leeren Tabs und im Schnellstarter bleibt die Zeilenauswahl nur bei Tastaturnavigation bestehen; die Hervorhebung beim Überfahren endet, sobald der Zeiger die Zeile verlässt. Escape schließt den Starter und gibt den Fokus an `+` zurück.
+Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
+Tab öffnet die Suche, Pfeiltasten und Enter wählen aus, Escape setzt den Fokus zurück auf `+`.
 
 ## Projekt-Tab schließen {#close-stop}
 
@@ -46,13 +42,9 @@ Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigen
 
 ## Remote-Tabs wiederherstellen {#restore-remote-tabs}
 
-Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und Entwürfe der Remote-Tabs erhalten. Ein unerreichbarer Server hinterlässt einen wartenden Tab: Wählen Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Benutzername/Passwort oder einem neuen **Kopplungslink**. Andere Server bleiben nutzbar.
+Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und Entwürfe der Remote-Tabs erhalten. Ein unerreichbarer Server hinterlässt einen wartenden Tab: Wählen Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Benutzername/Passwort oder einem neuen **Kopplungslink**. Andere Server bleiben nutzbar. **Server nicht gefunden** bedeutet, dass der gespeicherte Server fehlt.
 
 **Wiederholen** stellt wartende Tabs auch bei deaktivierter automatischer Startwiederherstellung wieder her. Benachrichtigungen wählen den vorhandenen wartenden Tab aus. Prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie erneut senden.
-
-Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** aus. Wie `+` und `Ctrl/Cmd+N` verwendet es den leeren Tab des Fensters. Nach der Projektauswahl öffnet `+` einen weiteren leeren Tab.
-
-**Entfernen** zeigt, wie viele Tabs geschlossen und wie viele zuletzt geöffnete Projekte aus der Liste entfernt werden. Die gespeicherte Verbindung verschwindet aus **Durchsuchen**; Projekte und Unterhaltungen bleiben auf dem Server. Für temporäre Projekte gelten die üblichen Optionen beim Schließen.
 
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 

@@ -18,7 +18,7 @@ export function assertRemoteServerCredentials(input: RemoteServerConnectInput) {
   }
 }
 
-type RemoteServerBrowseInput = { path?: string; foldersOnly?: true }
+type RemoteServerBrowseInput = { path?: string }
 
 /** Host-only browsing and credential operations; failures expose only stable codes. */
 export function remoteServerRequest(ctx: BackendHttp, id: string, action: "browse", body: RemoteServerBrowseInput, signal?: AbortSignal): Promise<RemoteServerBrowseResponse>
