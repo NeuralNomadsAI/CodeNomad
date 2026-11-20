@@ -78,3 +78,50 @@ fn the_foreign_notice_has_the_reference_shape() {
     );
     assert_eq!(plan::notice(&plan::Plan::default()), json!({}));
 }
+
+/// A command that starts a grandchild, then waits: once the probe expires, neither remains.
+#[tokio::test]
+async fn an_expired_probe_ends_its_whole_process_family() {
+    let dir = crate::shared::test_dir("probe-family");
+    #[cfg(windows)]
+    let (command, members) = {
+        // Copies of ping: a running image cannot be opened for writing, a stopped one can.
+        let ping = std::path::Path::new(&std::env::var("SystemRoot").unwrap()).join("System32\\PING.EXE");
+        for name in ["waiter.exe", "grandchild.exe"] {
+            std::fs::copy(&ping, dir.join(name)).unwrap();
+        }
+        let script = "@echo off\r\nstart \"\" /b \"%~dp0grandchild.exe\" -n 60 127.0.0.1 >nul\r\n\"%~dp0waiter.exe\" -n 60 127.0.0.1 >nul\r\n";
+        std::fs::write(dir.join("fake.cmd"), script).unwrap();
+        (dir.join("fake.cmd"), [dir.join("waiter.exe"), dir.join("grandchild.exe")])
+    };
+    #[cfg(unix)]
+    let (command, members) = {
+        use std::os::unix::fs::PermissionsExt;
+        let script = "#!/bin/sh\nsleep 60 &\necho $! > \"$(dirname \"$0\")/grandchild\"\necho $$ > \"$(dirname \"$0\")/waiter\"\nsleep 60\n";
+        std::fs::write(dir.join("fake"), script).unwrap();
+        std::fs::set_permissions(dir.join("fake"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        (dir.join("fake"), [dir.join("waiter"), dir.join("grandchild")])
+    };
+    #[cfg(windows)]
+    let alive = |member: &std::path::Path| std::fs::OpenOptions::new().write(true).open(member).is_err();
+    #[cfg(unix)]
+    let alive = |member: &std::path::Path| {
+        let pid: i32 = std::fs::read_to_string(member).ok().and_then(|p| p.trim().parse().ok()).unwrap_or(0);
+        // SAFETY: signal 0 only checks that the process exists.
+        pid > 0 && unsafe { libc::kill(pid, 0) } == 0
+    };
+    let during = async {
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        members.iter().map(|m| alive(m)).collect::<Vec<_>>()
+    };
+    let command = command.to_string_lossy().into_owned();
+    let (probed, running) = tokio::join!(probe_version(&command, Duration::from_secs(4)), during);
+    assert!(matches!(probed, Probed::Unknown));
+    assert_eq!(running, [true, true], "both members ran during the probe");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while members.iter().any(|m| alive(m)) {
+        assert!(std::time::Instant::now() < deadline, "a member of the expired probe still runs");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
