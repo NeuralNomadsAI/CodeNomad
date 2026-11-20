@@ -61,7 +61,8 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
   const session = exists ? await native.get({ sessionID: request.id }, { signal }) : await native.create(request, { signal }, effectCurrent)
   if (session.id !== request.id || session.parentID || session.projectID !== doc.projectID
     || session.location.directory !== native.location.directory || session.location.workspaceID !== native.location.workspaceID
-    || !matchesExecution(coordinator, session) || canonicalAuthority(session.metadata) !== canonicalAuthority(metadata))
+    // The profile gates admission; afterwards the coordinator's model is its user's choice.
+    || !admitted && !matchesExecution(coordinator, session) || canonicalAuthority(session.metadata) !== canonicalAuthority(metadata))
     throw new Error("Passage coordinator differs")
   const exact: NativeRootPlacement = { ...request, projectID: doc.projectID, location: session.location }
   const productive = nativePassageTransport(input, passage)
