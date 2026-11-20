@@ -15,6 +15,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
+import { serverEvents } from "../lib/server-events"
 import { createAttachmentPlaceholderRegex, getAttachmentPlaceholder } from "../lib/attachment-placeholders"
 import { preferences } from "../stores/preferences"
 import { openSettingsRow } from "../stores/settings-screen"
@@ -23,6 +24,7 @@ import { useLiveVoiceConversation } from "../lib/hooks/use-live-voice-conversati
 import LiveVoiceConversationWindow, { LIVE_VOICE_CONVERSATION_WINDOW_ID } from "./live-voice-conversation-window"
 import DictationNotice from "./prompt-input/DictationNotice"
 import { sessionPromptAwaitingExecution } from "../stores/session-prompt-ack"
+import { isSessionBusy } from "../stores/session-status"
 import type { PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
 import { usePromptState } from "./prompt-input/usePromptState"
@@ -463,16 +465,22 @@ export default function PromptInput(props: PromptInputProps) {
   )
 
   async function handleSend(alternate = false) {
+    const { instanceId, sessionId } = props
+    const hadSession = sessions().get(instanceId)?.has(sessionId)
+    // The optimistic echo must use the lifecycle events already received.
+    serverEvents.flushPendingBatch()
+    if (props.instanceId !== instanceId || props.sessionId !== sessionId
+      || (hadSession && !sessions().get(instanceId)?.has(sessionId))) return
     const draftText = prompt()
     const text = draftText.trim()
     const currentAttachments = attachments()
     if (props.disabled || props.sendBlocked || isReadingFiles() || submissionsInFlight() > 0 || (!text && currentAttachments.length === 0)) return
-    const { instanceId, sessionId } = props
     const followUp = preferences().followUpBehavior
-    const admitDelivery = () => resolvePromptDelivery(
-      Boolean(props.isSessionBusy || sessionPromptAwaitingExecution(instanceId, sessionId)), followUp, alternate,
+    const deliveryFor = (busy: boolean) => resolvePromptDelivery(
+      busy || sessionPromptAwaitingExecution(instanceId, sessionId), followUp, alternate,
     )
-    const resolvedDelivery = admitDelivery()
+    const resolvedDelivery = deliveryFor(Boolean(props.isSessionBusy))
+    const admitDelivery = () => deliveryFor(isSessionBusy(instanceId, sessionId))
     const restoredPayload = restoredQueuedPayload
 
     const isShellMode = mode() === "shell"

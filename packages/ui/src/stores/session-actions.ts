@@ -24,6 +24,7 @@ import { messageStoreBus } from "./message-v2/bus"
 import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
+import { serverEvents } from "../lib/server-events"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { syncSessionInstructions } from "./session-instructions"
 import { serializeSessionAction } from "./session-action-queue"
@@ -383,7 +384,12 @@ async function sendMessage(
       const client = getRootClient(instanceId)
       await syncSessionInstructions(client, instanceId, sessionId)
       if (resolveDelivery) {
+        // Accepted lifecycle events outrank the display frame, including those
+        // received while admission waited for native preparation.
+        serverEvents.flushPendingBatch()
         if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
+        if (instances().get(instanceId)?.client !== currentInstance.client) throw new Error("Instance not ready")
+        if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
         delivery = resolveDelivery()
       }
       if (resolveDelivery || options.prepareAdmission) reconcileSend()

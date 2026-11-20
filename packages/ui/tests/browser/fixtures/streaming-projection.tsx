@@ -1,5 +1,6 @@
 import { createSignal, Show } from "solid-js"
 import { render } from "solid-js/web"
+import { OpenCode } from "@opencode/client"
 import SessionView from "../../../src/components/session/session-view"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -11,6 +12,7 @@ import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { getOpenCodeMessageRevision } from "../../../src/stores/opencode-data"
 import { serverApi } from "../../../src/lib/api-client"
+import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
 // Real SessionView, real native SSE dispatcher, real reducer and projection:
@@ -24,13 +26,15 @@ let sequence = 1000, messageLists = 0, projections = 0
 const [selected, select] = createSignal(sessionId)
 const [visible, show] = createSignal(true)
 serverApi.fetchSessionOutline = async () => ({ status: "outline", entries: [], checkpoints: [], total: 0, cursor: null })
+const native = OpenCode.make({ baseUrl: window.location.origin })
 const client: any = {
   session: {
     active: async () => ({}), inbox: { list: async () => [] },
     form: { list: async () => [] },
     get: async ({ sessionID }: any) => ({ id: sessionID, title: sessionID,
       location: { directory: "/fixture" }, time: { created: 1, updated: 1 } }),
-    instructions: { entry: { remove: async () => {}, put: async () => {} } },
+    instructions: { entry: { remove: async () => {}, put: native.session.instructions.entry.put } },
+    switchAgent: async () => {}, switchModel: async () => {}, prompt: native.session.prompt,
   },
   model: { default: async () => ({ data: model }) },
   permission: { list: async () => [] },
@@ -81,9 +85,11 @@ let currentStream = streamId
 const storeText = () => Object.values(store.getMessage(currentStream)?.parts ?? {})
   .filter(part => part.data.type === "text").map(part => (part.data as any).text).join("")
 ;(window as any).streamingFixture = {
+  setPreferences: applyUiSettings,
   resetCounts: () => { projections = 0; messageLists = 0; longtasks.length = 0 },
   snapshot: () => ({ projections, messageLists, revision: getOpenCodeMessageRevision(instanceId, sessionId),
-    longtasks: [...longtasks], text: storeText(), ids: store.getSessionMessageIds(sessionId) }),
+    longtasks: [...longtasks], text: storeText(), ids: store.getSessionMessageIds(sessionId),
+    status: sessions().get(instanceId)?.get(sessionId)?.status }),
   startReply: (messageId = streamId) => {
     currentStream = messageId
     emit("session.step.started", { assistantMessageID: messageId, agent: "build", model, started: 500 })

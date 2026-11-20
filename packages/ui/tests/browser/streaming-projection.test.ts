@@ -171,6 +171,57 @@ test("an SSE reply projects once, in its delivery frame", { timeout: 120_000 }, 
   assert.equal((await snapshot(page)).projections, 1, "there is no later projection frame or fallback replay")
 }))
 
+for (const timing of ["before the frame", "after the frame", "during prompt preparation"] as const) {
+  test(`Enter honors Queue when execution starts ${timing}`, { timeout: 120_000 }, () => open(async page => {
+    await page.evaluate(() => (window as any).streamingFixture.setPreferences({ followUpBehavior: "queue" }))
+    const input = page.locator(".session-view textarea").first()
+    await input.fill("Follow-up")
+
+    const time = Date.now()
+    await page.clock.install({ time })
+    await page.clock.pauseAt(time + 60_000)
+    const preparing = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    await page.route("**/api/experimental/session/active/instructions/entries/codenomad.session-placement", async route => {
+      preparing.resolve()
+      await release.promise
+      await route.fulfill({ status: 204 })
+    })
+    const prompt = page.waitForRequest(request => request.method() === "POST"
+      && new URL(request.url()).pathname === "/api/session/active/prompt", { timeout: 15_000 })
+    void prompt.catch(() => undefined)
+
+    try {
+      if (timing === "during prompt preparation") {
+        await input.press("Enter")
+        await preparing.promise
+      }
+      const id = "evt_execution_started"
+      await observeSse(page, id)
+      stream.send({ type: "instance.event", instanceId: "streaming-fixture", event: {
+        id, type: "session.execution.started", created: 1, location: { directory: "/fixture" },
+        durable: { aggregateID: "active", seq: 1, version: 1 }, data: { sessionID: "active" },
+      } })
+      await waitForSse(page)
+      assert.equal((await snapshot(page)).status, "idle", "the received event is still waiting for its frame")
+      if (timing === "after the frame") {
+        await page.clock.runFor(16)
+        assert.equal((await snapshot(page)).status, "working")
+      }
+      if (timing !== "during prompt preparation") {
+        await input.press("Enter")
+        await preparing.promise
+        assert.deepEqual((await snapshot(page)).ids, [], "a follow-up known to be queued has no optimistic transcript row")
+      }
+      release.resolve()
+      const { text, delivery, resume } = (await prompt).postDataJSON()
+      assert.deepEqual({ text, delivery, resume }, { text: "Follow-up", delivery: "queue", resume: false })
+    } finally {
+      release.resolve()
+    }
+  }))
+}
+
 test("switching sessions before the first SSE frame publishes to the session being left", { timeout: 120_000 }, () => open(async page => {
   await queueSseReply(page)
   assert.equal(await page.evaluate(() => (window as any).streamingFixture.activate("other")), "other")
