@@ -1,4 +1,5 @@
 import { createMemo } from "solid-js"
+import type { RemoteServerBrowseResponse, RemoteServerProfile } from "../../../server/src/api-types"
 import { LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import { qualifiedServerDisplayName } from "../lib/codenomad-link"
 import { getLogger } from "../lib/logger"
@@ -32,6 +33,21 @@ const eligibleRemoteRecents = createMemo(() => remoteProjectHistory().recents.fi
 
 export function latestRemoteProjectPath(policy: ServerSelectionIntent): string | undefined {
   return eligibleRemoteRecents().find(item => sameServerSelection(item.policy, policy))?.path
+}
+
+/** Browse combines destination shortcuts with this host's opens for the exact saved profile. */
+export function browsedRemoteRecents(profile: RemoteServerProfile, shortcuts: RemoteServerBrowseResponse["recents"]): RemoteRecentProject[] {
+  const serverLabel = qualifiedServerDisplayName(profile, remoteServers())
+  const rows = new Map<string, RemoteRecentProject>()
+  const opened = eligibleRemoteRecents().filter(item => sameServerSelection(item.policy, profile))
+  for (const recent of [...opened, ...shortcuts]) {
+    const key = JSON.stringify([profile.id, normalizeWorkspacePath(recent.path)])
+    const before = rows.get(key)
+    rows.set(key, { ...recent, ...before, projectName: before?.projectName ?? recent.projectName,
+      lastAccessed: Math.max(before?.lastAccessed ?? recent.lastAccessed, recent.lastAccessed),
+      kind: "remote", backendId: profile.id, serverLabel, policy: profile, key })
+  }
+  return [...rows.values()].sort((a, b) => b.lastAccessed - a.lastAccessed)
 }
 
 export const recentProjects = createMemo<readonly RecentProject[]>((previous = []) => {

@@ -189,8 +189,8 @@ export class RemoteServerBrowseManager {
       const entry = this.client(profile)
       const suffix = body.path === undefined ? "" : `?path=${encodeURIComponent(body.path)}`
       if (!this.credentials.has(id, profile.scope, profile.skipTlsVerify)) {
-        const status = await entry.client.json<{ pairingRequired?: unknown }>("/api/auth/status", { signal }, observeStatus ? "observe-status" : undefined)
-        if (status.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
+        const status = await entry.client.json<{ authenticated?: unknown; pairingRequired?: unknown }>("/api/auth/status", { signal }, observeStatus ? "observe-status" : undefined)
+        if (status.body?.authenticated === false || status.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
       }
       const folders = await entry.client.json<unknown>(`/api/filesystem${suffix}`, { signal }, observeStatus ? "observe-status" : undefined)
       this.assertCurrent(profile)

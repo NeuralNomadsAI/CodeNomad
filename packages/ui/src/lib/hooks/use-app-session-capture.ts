@@ -18,7 +18,9 @@ import {
   settleRestoredTab as settlePreservedTab, type RestorableSessionPreservation,
   type RestorableWorkspaceRuntimeAuthority,
 } from "../../stores/app-session-snapshot-merge"
-import { activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
+import { activeAppTab, activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
+import { appSessionRestoreGateActive } from "../../stores/app-session-restore-gate"
+import { saveReloadTabSelection } from "../native/reload-tab-selection"
 import { showFolderSelection } from "../../stores/ui"
 import { instances } from "../../stores/instances"
 import {
@@ -377,12 +379,26 @@ export function useAppSessionCapture() {
   onMount(() => {
     const flushNow = () => void flush()
     const useBrowserLifecycleFlush = !isLocalWindow()
+    const electronLocal = isElectronHost() && isLocalWindow()
+    const saveSelection = () => {
+      const tab = enabled() && !appSessionRestoreGateActive()
+        ? activeAppTab()
+        : undefined
+      saveReloadTabSelection(tab?.kind === "instance"
+        ? { kind: "workspace", workspaceId: tab.instance.id, backendId: tab.instance.backendId, serverId: tab.instance.serverId, folder: tab.instance.folder }
+        : tab?.kind === "remote-restore" ? tab.snapshot
+        : tab?.kind === "sidecar" ? { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId } : undefined)
+    }
     if (useBrowserLifecycleFlush) {
       window.addEventListener("pagehide", flushNow)
       window.addEventListener("beforeunload", flushNow)
     }
-    if (isElectronHost() && isLocalWindow()) window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
+    if (electronLocal) {
+      window.addEventListener("pagehide", saveSelection)
+      window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
+    }
     onCleanup(() => {
+      if (electronLocal) window.removeEventListener("pagehide", saveSelection)
       if (useBrowserLifecycleFlush) {
         window.removeEventListener("pagehide", flushNow)
         window.removeEventListener("beforeunload", flushNow)

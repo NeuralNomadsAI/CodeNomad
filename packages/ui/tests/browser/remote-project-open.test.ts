@@ -159,6 +159,27 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   const blank = (page: Page) => page.locator("[data-fixture-blank]:visible")
   const openSame = (page: Page) => blank(page).getByRole("button", { name: /^Same ·/ })
   const serverName = (page: Page, name: string) => blank(page).locator(".remote-server-navigation bdi", { hasText: name })
+  await t.test("Browse lists the first opened project even when the chosen server has no recents", async () => {
+    const shortcuts = a.state.recents
+    a.state.recents = []
+    const page = await prepare()
+    page.setDefaultTimeout(10_000)
+    try {
+      await select(page, "a")
+      const browse = blank(page).locator(".remote-server-browser")
+      await browse.getByRole("button", { name: "app", exact: true }).click()
+      await browse.getByRole("button", { name: "Open", exact: true }).click()
+      await page.getByRole("tab", { name: /Alpha/ }).waitFor()
+      await select(page, "a")
+      const recents = blank(page).getByRole("region", { name: "Recent tabs", exact: true })
+      await recents.getByRole("button", { name: /^app · Alpha ·/ }).waitFor()
+      assert.equal(await recents.locator(".folder-home-recent-item").count(), 1)
+    } finally {
+      a.state.recents = shortcuts
+      await page.close()
+      delete state.remoteProjectHistory
+    }
+  })
   await t.test("the Open action selects the restore placeholder without creation or implicit retry", async () => {
     const page = await prepare(), before = mutations.length
     try {
