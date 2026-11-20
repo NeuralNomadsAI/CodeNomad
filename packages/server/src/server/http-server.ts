@@ -363,11 +363,11 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   const liveVoice = deps.liveVoice ?? new LiveVoiceGateway(deps.speechService)
   app.server.on("upgrade", (request, socket: Socket, head) => {
-    if (!isLiveVoiceRoute(request.url) || socket.destroyed || socket.writableEnded || parsePreviewCapabilityHost(request.headers.host)) return
+    if (!isLiveVoiceRoute(request.url) || socket.destroyed || socket.writableEnded) return
     try {
       const raw = { raw: request, headers: request.headers }
       const origin = voiceSource(request.headers.origin)
-      if (isRemoteRequest(raw) || !origin || !allowsDirectSource(raw)
+      if (isRemoteRequest(raw) || parsePreviewCapabilityHost(request.headers.host) || !origin || !allowsDirectSource(raw)
         || (!deps.authManager.isAuthEnabled() && (!isLocalRequest(raw) || !isLoopbackHost(origin.hostname)))) {
         return refuseVoiceUpgrade(socket, "403 Forbidden")
       }
@@ -906,8 +906,8 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
   app.server.on("upgrade", (request, socket, head) => {
     if (socket.destroyed || socket.writableEnded) return
     const rawUrl = request.url ?? "/"
+    if (isLiveVoiceRoute(rawUrl)) return
     const capabilityToken = parsePreviewCapabilityHost(request.headers.host)
-    if (!capabilityToken && isLiveVoiceRoute(rawUrl)) return
     let parsed = parsePreviewUpgradePath(rawUrl)
     if (capabilityToken) {
       try {

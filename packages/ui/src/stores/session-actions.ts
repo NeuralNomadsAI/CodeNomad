@@ -393,11 +393,10 @@ async function sendMessage(
         signal.throwIfAborted()
         if (!operation.current()) throw new Error("Session action view changed")
       }
+      // Preparation can establish the view predicate (for example, load the latest message window).
+      operation.signal.throwIfAborted()
+      if (options.prepareAdmission) await options.prepareAdmission()
       assertCurrent()
-      if (options.prepareAdmission) {
-        await options.prepareAdmission()
-        assertCurrent()
-      }
       const currentInstance = instances().get(instanceId)
       const currentSession = sessions().get(instanceId)?.get(sessionId)
       if (!currentInstance?.client) throw new Error("Instance not ready")

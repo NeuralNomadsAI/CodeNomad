@@ -4,7 +4,7 @@ import { liveVoiceAgent, liveVoiceContext, liveVoiceTargetSession } from "../../
 import type { FollowUpBehavior } from "../../stores/preferences"
 import { speechCapabilities } from "../../stores/speech"
 import { voiceConversationEngine, voiceConversationEngineLoaded, voiceConversationReadFailed } from "../../stores/voice-conversation-engine"
-import { CODENOMAD_API_BASE } from "../api-base"
+import { localTransport } from "../backend-transport"
 import { LOCAL_BACKEND_ID, parseInstanceKey } from "../backend-identity"
 import { liveVoiceAudioUnavailable, startLiveVoiceAudio } from "../live-voice-audio"
 import { hasLiveVoiceConsent, rememberLiveVoiceConsent } from "../live-voice-consent"
@@ -36,7 +36,7 @@ export function useLiveVoiceConversation(options: {
   // The socket belongs to this renderer's server; never send a relayed session to it.
   const target = () => options.active() && belongsToRendererServer()
     ? liveVoiceTargetSession(options.instanceId(), options.sessionId()) : undefined
-  const server = () => new URL(CODENOMAD_API_BASE ?? window.location.origin).origin
+  const server = () => new URL(localTransport.baseUrl ?? window.location.origin).origin
   const needsConsent = () => {
     const engine = selectedEngine()
     return !!engine && !hasLiveVoiceConsent(server(), engine)
