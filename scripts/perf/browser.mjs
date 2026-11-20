@@ -1,3 +1,5 @@
+import { mkdtemp, rm } from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium } from "playwright"
@@ -8,10 +10,14 @@ import { withBackend } from "./stacks.mjs"
 export async function withBrowser(daemon, tree, root, run) {
   return withBackend(daemon, tree, root, async (url, cookie) => {
     const profile = privatePath(path.join(root, "chromium"))
-    const context = await chromium.launchPersistentContext(profile, {
-      headless: true, channel: "chromium", env: daemon.env, viewport: { width: 1440, height: 960 }, locale: "en-US", serviceWorkers: "block",
-    })
+    // Chromium puts its Linux singleton socket under TMPDIR; keep it short.
+    const socketDir = process.platform === "linux" ? await mkdtemp(path.join(os.tmpdir(), "cn-perf-")) : undefined
+    let context
     try {
+      context = await chromium.launchPersistentContext(profile, {
+        headless: true, channel: "chromium", env: { ...daemon.env, ...(socketDir && { TMPDIR: socketDir }) },
+        viewport: { width: 1440, height: 960 }, locale: "en-US", serviceWorkers: "block",
+      })
       await context.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
       await context.addCookies([{ name: "codenomad_session", value: cookie, url }])
       const page = context.pages()[0] ?? await context.newPage()
@@ -67,6 +73,10 @@ export async function withBrowser(daemon, tree, root, run) {
           if (failures.length) throw Error(`Renderer error: ${failures.join("; ")}`)
         },
       })
-    } finally { await context.close() }
+    } finally {
+      try { await context?.close() } finally {
+        if (socketDir) await rm(socketDir, { recursive: true, force: true })
+      }
+    }
   })
 }

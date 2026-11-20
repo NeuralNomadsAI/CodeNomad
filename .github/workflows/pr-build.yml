@@ -88,6 +88,7 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test scripts/perf/budget-report.test.mjs
       - run: npm run build --workspace @neuralnomads/codenomad
       - name: Install Chromium and the pinned benchmark tools
         run: |
