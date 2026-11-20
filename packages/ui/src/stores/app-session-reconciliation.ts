@@ -1,11 +1,18 @@
-import { backendScoped } from "../lib/backend-identity"
+import { backendIdOf, backendScoped, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import type { BackendId } from "../lib/backend-transport"
 import { normalizeWorkspacePath } from "../../../server/src/workspaces/workspace-path-key"
 
 export { normalizeWorkspacePath }
 
-export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number; backendId?: BackendId; workspaceId?: string }
-type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string; backendId?: BackendId }
+export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number; backendId?: BackendId; workspaceId?: string; serverId?: string }
+type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string; backendId?: BackendId; serverId?: string }
+export function matchesRestoredServer(tab: { backendId?: BackendId; serverId?: string }, serverId?: string): boolean {
+  return backendIdOf(tab) === LOCAL_BACKEND_ID || !!tab.serverId && tab.serverId === serverId
+}
+
+export function mayCreateRestoredWorkspace(remote: boolean, web: boolean, explicitlyOpened: boolean): boolean {
+  return explicitlyOpened || (!remote && !web)
+}
 export type SessionDescriptor = { id: string; parentId?: string | null }
 export interface RestoredSessionReferences {
   activeParentSessionId?: string
@@ -21,6 +28,9 @@ export interface RestoredSessionReferences {
 export function workspaceIdentity(folderPath: string, backendId?: BackendId): string {
   return backendScoped(backendId, normalizeWorkspacePath(folderPath))
 }
+export function workspaceInstallationKey(folder: string, backendId?: BackendId, serverId?: string): string {
+  return JSON.stringify([workspaceIdentity(folder, backendId), serverId])
+}
 export function getUnavailableWorkspaceIds(
   localIds: Iterable<string>,
   remoteIds: ReadonlySet<string>,
@@ -35,7 +45,7 @@ export function reconcileWorkspaceTabs(
   const liveByPath = new Map<string, LiveWorkspaceDescriptor[]>()
   for (const workspace of liveWorkspaces) {
     if (workspace.status === "stopped" || workspace.status === "error") continue
-    const path = workspaceIdentity(workspace.folderPath, workspace.backendId)
+    const path = workspaceInstallationKey(workspace.folderPath, workspace.backendId, workspace.serverId)
     liveByPath.set(path, [...(liveByPath.get(path) ?? []), workspace])
   }
   const nextOccurrences = new Map<string, number>()
@@ -44,22 +54,23 @@ export function reconcileWorkspaceTabs(
   const byId = new Map<number, string>()
   for (const [tabIndex, tab] of tabs.entries()) {
     if (tab.kind !== "workspace" || typeof tab.folderPath !== "string" || !tab.workspaceId) continue
-    const path = workspaceIdentity(tab.folderPath, tab.backendId)
-    if (liveByPath.get(path)?.some(workspace => workspace.id === tab.workspaceId) && ![...byId.values()].includes(tab.workspaceId)) {
+    const path = workspaceInstallationKey(tab.folderPath, tab.backendId, tab.serverId)
+    if (liveByPath.get(path)?.some(workspace => workspace.id === tab.workspaceId && matchesRestoredServer(tab, workspace.serverId))
+      && ![...byId.values()].includes(tab.workspaceId)) {
       byId.set(tabIndex, tab.workspaceId)
     }
   }
   const claimed = new Set<string>(byId.values())
   return tabs.flatMap((tab, tabIndex) => {
     if (tab.kind !== "workspace" || typeof tab.folderPath !== "string") return []
-    const path = workspaceIdentity(tab.folderPath, tab.backendId)
+    const path = workspaceInstallationKey(tab.folderPath, tab.backendId, tab.serverId)
     const inferred = nextOccurrences.get(path) ?? 0
     const occurrence = Number.isInteger(tab.occurrence) && Number(tab.occurrence) >= 0 ? Number(tab.occurrence) : inferred
     nextOccurrences.set(path, Math.max(inferred, occurrence) + 1)
     const savedId = byId.get(tabIndex)
     if (savedId) return [{ tabIndex, descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence, ...(tab.backendId ? { backendId: tab.backendId } : {}) }, existingWorkspaceId: savedId }]
     const workspace = liveByPath.get(path)?.[occurrence]
-    const existingWorkspaceId = workspace && !claimed.has(workspace.id) ? workspace.id : null
+    const existingWorkspaceId = workspace && matchesRestoredServer(tab, workspace.serverId) && !claimed.has(workspace.id) ? workspace.id : null
     if (existingWorkspaceId) claimed.add(existingWorkspaceId)
     return [{
       tabIndex,

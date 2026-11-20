@@ -10,7 +10,7 @@ import { backendEvents as serverEvents } from "../lib/server-events"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import type { BackendEventPayload } from "../lib/backend-events"
-import { backends, backendOf, type BackendClient } from "../lib/backend-client"
+import { admittedServerIds, backends, backendOf, type BackendClient } from "../lib/backend-client"
 import { captureWorkspaceOperation, workspaceRequestKey, type WorkspaceOperationReceipt } from "./workspace-operation-receipt"
 import type { WorkspaceDescriptor, WorkspaceLogEntry } from "../../../server/src/api-types"
 import { PENDING_RECONCILIATION_HEADER, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
@@ -697,12 +697,12 @@ function reconcilePendingSessionIndicators(instanceId: string): void {
   )
 }
 
-function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName?: string, backendId: BackendId = LOCAL_BACKEND_ID): Instance {
+function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName: string | undefined, backendId: BackendId, serverId?: string): Instance {
   const existing = instances().get(descriptor.id)
   const environment = preferencesForBackend(backendId).serverSettings().environmentVariables
   return {
     id: descriptor.id,
-    ...(backendId !== LOCAL_BACKEND_ID ? { backendId } : {}),
+    ...(backendId !== LOCAL_BACKEND_ID ? { backendId, serverId } : {}),
     folder: descriptor.path,
     projectName: projectName ?? existing?.projectName ?? descriptor.name,
     port: descriptor.port ?? existing?.port ?? 0,
@@ -724,7 +724,13 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
 function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string, backendId: BackendId = LOCAL_BACKEND_ID) {
   // A workspace (re)created after a stop event keeps its instance.
   pendingWorkspaceStops.delete(descriptor.id)
-  const mapped = workspaceDescriptorToInstance(descriptor, projectName, backendId)
+  const backend = backends.get(backendId)
+  const serverId = backend && admittedServerIds.get(backend)
+  const previous = instances().get(descriptor.id)
+  if (previous && serverId && previous.serverId !== serverId) {
+    removeInstance(descriptor.id, { authoritative: false })
+  }
+  const mapped = workspaceDescriptorToInstance(descriptor, projectName, backendId, serverId)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
   } else {
@@ -1743,6 +1749,7 @@ function addInstance(instance: Instance) {
     folder: instance.folder,
     occurrence,
     ...(instance.backendId ? { backendId: instance.backendId } : {}),
+    ...(instance.serverId ? { serverId: instance.serverId } : {}),
   })
   syncHasInstancesFlag()
 }
@@ -1790,6 +1797,7 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
       ...(removedInstance.backendId ? { backendId: removedInstance.backendId } : {}),
+      ...(removedInstance.serverId ? { serverId: removedInstance.serverId } : {}),
     })
   }
   detachInstanceTabMembership(id)
@@ -1851,7 +1859,8 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   clearCacheForInstance(id)
   messageStoreBus.unregisterInstance(id)
   if (removedInstance) retainClosedWorkspaceDrafts(id, removedInstance.folder,
-    remoteRestoreTabs().some(tab => tab.instanceId === id) && options.drafts !== "discard" ? "suspend" : options.drafts)
+    remoteRestoreTabs().some(tab => tab.instanceId === id) && options.drafts !== "discard" ? "suspend" : options.drafts,
+    removedInstance.serverId)
   clearInstanceDraftPrompts(id)
   clearInstanceSeenInterruptions(id)
   clearSessionListRequestState(id)
@@ -1870,6 +1879,7 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
       ...(removedInstance.backendId ? { backendId: removedInstance.backendId } : {}),
+      ...(removedInstance.serverId ? { serverId: removedInstance.serverId } : {}),
     })
   }
   syncHasInstancesFlag()

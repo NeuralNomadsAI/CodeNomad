@@ -6,6 +6,7 @@ import { preferencesForBackend } from "../stores/preferences"
 import type { RemoteRestoreTab } from "../stores/remote-restore-tabs"
 import { secretEntryAllowed } from "../lib/server-meta"
 import { backendIdOf, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import { matchesRestoredServer } from "../stores/app-session-reconciliation"
 
 export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
   const { t } = useI18n()
@@ -13,6 +14,12 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
   const local = () => id() === LOCAL_BACKEND_ID
   const available = () => local() || !!profile()
   const profile = () => preferencesForBackend("local").remoteServers().find(profile => profile.id === id())
+  const status = () => {
+    if (local()) return "compatible"
+    if (!profile()) return "absent"
+    const state = backendRegistry.state(id())
+    return state === "compatible" && !matchesRestoredServer(props.tab.snapshot, backendRegistry.serverId(id())) ? "refused" : state
+  }
   const [busy, setBusy] = createSignal(false)
   const [connecting, setConnecting] = createSignal(false)
   const [username, setUsername] = createSignal("")
@@ -44,7 +51,7 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
   return <section class="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 p-4" data-remote-restore={id()}>
     <h2 class="text-primary">{local() ? props.tab.snapshot.projectName ?? props.tab.snapshot.folder : profile()?.name ?? id()}</h2>
     <Show when={!local()}><span class="text-secondary">{props.tab.snapshot.folder}</span></Show>
-    <span role="status">{t(`remoteRestore.${local() ? "compatible" : !profile() ? "absent" : backendRegistry.state(id())}`)}</span>
+    <span role="status">{t(`remoteRestore.${status()}`)}</span>
     <Show when={error()}><span role="alert">{t(error())}</span></Show>
     <Show when={!local() && connecting()}>
       <form class="flex flex-col gap-3" onSubmit={event => { event.preventDefault(); void run(true) }}>
@@ -56,7 +63,7 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
       </form>
     </Show>
     <div class="flex gap-3">
-      <Show when={props.tab.open && (local() || backendRegistry.state(id()) === "compatible")}>
+      <Show when={props.tab.open && status() === "compatible"}>
         <button class="selector-button" disabled={busy() || !available()} onClick={() => void run(false, true)}>{t("directoryBrowser.openCurrent")}</button>
       </Show>
       <button class="selector-button" disabled={busy() || !available()} onClick={() => void run(false)}>{t("filesystemBrowser.actions.retry")}</button>

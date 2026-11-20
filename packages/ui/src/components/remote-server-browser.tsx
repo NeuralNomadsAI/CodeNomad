@@ -5,6 +5,7 @@ import type { RemoteServerBrowseResponse, RemoteServerProfile } from "../../../s
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { serverDisplayName } from "../lib/codenomad-link"
+import { supportsPairingLink } from "../lib/remote-pairing-link"
 import { useConfig } from "../stores/preferences"
 import { closeRemoteServer, openRemoteProject, remoteServerSelection, selectedRemoteProfile } from "../stores/remote-project-open"
 import { backendRegistry } from "../stores/remote-backends"
@@ -30,7 +31,8 @@ function RemoteServerBrowser(props: { profile: RemoteServerProfile; onOpened?: (
   let generation = 0
   const name = () => serverDisplayName(props.profile, remoteServers())
   const needsCredentials = () => ["needs_credentials", "auth", "pairing_unavailable", "unauthorized"].includes(error())
-  const pairing = () => needsCredentials() && new URL(props.profile.baseUrl).hostname.endsWith(".opentunnel.xyz")
+  const pairing = () => needsCredentials() && supportsPairingLink(props.profile.baseUrl)
+  const password = () => needsCredentials() && !new URL(props.profile.baseUrl).hostname.endsWith(".opentunnel.xyz")
   const canOpen = () => !!path().trim() && !(result()?.listing.metadata.pathKind === "drives" && path() === result()?.listing.metadata.currentPath)
   async function browse(folder?: string) {
     const focus = captureRequestFocus()
@@ -90,7 +92,7 @@ function RemoteServerBrowser(props: { profile: RemoteServerProfile; onOpened?: (
       <Show when={pairing()}>
         <ServerAddField pairingProfile={props.profile} onAdded={() => void connected()} />
       </Show>
-      <Show when={needsCredentials() && !pairing()}>
+      <Show when={password()}>
         <RemoteServerSignin busy={busy()} onConnect={credentials => void connect(credentials)} />
       </Show>
       <Show when={error()}><p role="alert" class="server-add-field-error">{t(error() === "refused" || error().includes("426")

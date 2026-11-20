@@ -111,8 +111,10 @@ Only if `multiBackend` is set to `false`, use the separate desktop-window flow b
 
 Select a saved server on the home page's **Servers** tab to open it again. Bookmarks belong to this CodeNomad configuration, not the remote server's projects. Saving a URL does not start the server or grant access. **Remove saved server** removes the bookmark, not remote conversations, the backend or its credentials.
 
-To open a saved server straight from the command line, start the desktop app with `--connect-server <name>` (or `--connect-server=<name>`), using the server's saved name, or with its `https://` URL. CodeNomad opens only the remote window, with the same checks and sign-in as **Connect**; when CodeNomad is already running, its current window opens it instead of a new one. A URL that matches no saved server is saved under its host name. Launch values never carry credentials: a URL with a user name, password or pairing code is refused. On Windows, the Tauri build refuses to start when a launch argument contains `|`; use the server's URL instead, or rename the server.
-
 Closing the last local window while remote windows stay open keeps its tabs: **Window → New Window** in a remote window, or starting CodeNomad again, reopens it.
 
 For Remote Control, paste a fresh pairing link into **Server URL** instead. The bookmark retains only the tunnel origin, never the one-use pairing code; see [Remote Control](remote-control.md) for re-pairing after device-cookie loss.
+
+### `--connect-server` {#connect-server}
+
+This command opens a separate remote window regardless of `multiBackend`. To open a saved server straight from the command line, start the desktop app with `--connect-server <name>` (or `--connect-server=<name>`), using the server's saved name, or with its `https://` URL. On a command-only start, CodeNomad opens just the remote window; if it is already running, the current local window handles the request. A URL that matches no saved server is saved under its host name. Launch values never carry credentials: a URL with a user name, password or pairing code is refused. On Windows, the Tauri build refuses to start when a launch argument contains `|`; use the server's URL instead, or rename the server.

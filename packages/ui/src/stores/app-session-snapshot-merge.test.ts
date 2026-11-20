@@ -40,6 +40,21 @@ function workspaceAt(state: RestorableSessionState, index = 0): RestorableWorksp
 }
 
 describe("app session snapshot merge", () => {
+  it("keeps the old installation's drafts apart even if the replacement reuses the runtime key", () => {
+    const old = workspace("/same", 0, {
+      backendId: "remote", serverId: "old", workspaceId: "remote~record",
+      drafts: { session: "unsubmitted" }, attachments: { session: [attachment("file")] },
+    })
+    const preservation = createRestorableSessionPreservation(session([old]))
+    const runtimeTabId = "instance:remote~record"
+    recordRestoredTab(preservation, 0, runtimeTabId)
+    const current = workspace("/same", 0, { backendId: "remote", serverId: "new", workspaceId: old.workspaceId })
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, {
+      runtimeTabId, folder: current.folder, occurrence: 0, backendId: current.backendId, serverId: current.serverId,
+    }), null)
+    const merged = mergeRestorableSessionState(session([current]), preservation, { currentTabIds: [runtimeTabId] })
+    assert.deepEqual(merged.tabs, [current, old])
+  })
   it("preserves a live workspace opened after the startup snapshot when the backend loses it", () => {
     const preservation = createRestorableSessionPreservation(session([workspace("/old")]))
     const current = workspace("/new", 0, { drafts: { prompt: "fresh draft" }, attachments: { prompt: [attachment("file")] } })

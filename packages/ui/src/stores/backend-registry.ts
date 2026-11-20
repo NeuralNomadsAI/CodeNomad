@@ -1,7 +1,7 @@
 import { createComputed, createRoot, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { RemoteServerProfile, ServerMeta } from "../../../server/src/api-types"
-import { createRemoteBackendClient, registerBackendClient, type BackendClient } from "../lib/backend-client"
+import { admittedServerIds, createRemoteBackendClient, registerBackendClient, type BackendClient } from "../lib/backend-client"
 import { backendCompatibility } from "../lib/backend-compatibility"
 import { backendEvents, type BackendEvents } from "../lib/backend-events"
 import { isBackendId, LOCAL_BACKEND_ID } from "../lib/backend-identity"
@@ -13,7 +13,6 @@ type Entry = {
   client: BackendClient
   controller: AbortController
   pending: Promise<BackendClient | undefined>
-  serverId?: string
   detach?: () => void
   remove?: () => void
   revoked: boolean
@@ -101,15 +100,16 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       const meta: ServerMeta | null = await response.json()
       if (!active()) return superseded()
       signal.throwIfAborted()
-      if (backendCompatibility(meta) !== "compatible" || entry.serverId && entry.serverId !== meta?.serverId) {
+      const admittedId = admittedServerIds.get(entry.client)
+      if (backendCompatibility(meta) !== "compatible" || admittedId && admittedId !== meta?.serverId) {
         detach(id, "refused")
         return false
       }
-      entry.serverId = meta!.serverId
       if (entry.client.admitRelayAuthority && !entry.client.admitRelayAuthority(response.headers.get(RELAY_AUTHORITY_HEADER))) {
         detach(id, "refused")
         return false
       }
+      admittedServerIds.set(entry.client, meta!.serverId!)
       if (entry.detach && publish && !entry.inventoryFailed) setState(id, "compatible")
       return active()
     } catch (error) {
@@ -227,7 +227,10 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       }
     },
     state: (id: string): BackendAdmissionState => states[id] ?? "idle",
-    serverId: (id: string) => entries.get(id)?.serverId,
+    serverId: (id: string) => {
+      const entry = entries.get(id)
+      return entry && admittedServerIds.get(entry.client)
+    },
     dispose() {
       if (disposed) return
       disposed = true

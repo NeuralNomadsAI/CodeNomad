@@ -74,6 +74,10 @@ function Fixture() {
   },
   activateNotice: () => retainedNotice && runToastAction(retainedNotice),
   retry: async () => { await Promise.all(appTabs().filter(tab => tab.kind === "remote-restore").map(tab => tab.retry())) },
+  openSaved: (index: number) => {
+    const tab = appTabs()[index]
+    if (tab?.kind === "remote-restore") return tab.open?.()
+  },
   restartBackend: async () => { const client = backends.get("a")!; await refreshWorkspaceList("a", client.api) },
   disconnect: () => backends.get("a")!.events.restart(),
   state: () => backendRegistry.state("a"),

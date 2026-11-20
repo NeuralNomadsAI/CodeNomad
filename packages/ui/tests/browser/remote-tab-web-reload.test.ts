@@ -32,8 +32,8 @@ for (const offline of [false, true]) test(`web reload retains backend-owned reco
     sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
       version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: [
         { workspaceId: "survivor", occurrence: 0 },
-        { workspaceId: "a~survivor", backendId: "a", occurrence: 1 },
-        { workspaceId: "b~gone", backendId: "b", occurrence: 0 },
+        { workspaceId: "a~survivor", backendId: "a", serverId: "a", occurrence: 1 },
+        { workspaceId: "b~gone", backendId: "b", serverId: "b", occurrence: 0 },
       ].map((owner, index) => ({ kind: "workspace", folder: "/same", ...owner,
         drafts: { __no_session_draft__: `owner-${index}` }, attachments: {},
         scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} })) },

@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify"
 import { routedPath } from "../server/routed-path"
 import { isRemoteSocket } from "./request-origin"
+import { verifiedDirectServerOrigin } from "./direct-https"
 
 export const SERVER_PAIR_PATH = "/api/remote-control/server-pair"
 const forbidden = /^(origin|cookie2?|authorization|proxy-authorization|referer|sec-fetch-.*|access-control-request-.*)$/i
@@ -20,13 +21,18 @@ export function validServerPairRequest(request: FastifyRequest): boolean {
 }
 
 /** Runs globally before CORS, including its wildcard OPTIONS route and direct listeners. */
-export function guardServerPairRequest(request: FastifyRequest, reply: FastifyReply): boolean {
+export function guardServerPairRequest(request: FastifyRequest, reply: FastifyReply, origins: readonly string[]): boolean {
   if (routedPath(request.raw.url ?? request.url) !== SERVER_PAIR_PATH) return false
   reply.header("Cache-Control", "no-store")
-  const ingress = isRemoteSocket(request.raw.socket)
-  if (!ingress || !validServerPairRequest(request)) {
-    reply.header("connection", "close").code(!ingress ? 404 : 403).send(request.method === "HEAD" ? "" : { error: "Server pairing request rejected" })
+  const admittedHost = isRemoteSocket(request.raw.socket) || !!verifiedDirectServerOrigin(request, origins)
+  if (!admittedHost || !validServerPairRequest(request)) {
+    reply.header("connection", "close").code(!admittedHost ? 404 : 403).send(request.method === "HEAD" ? "" : { error: "Server pairing request rejected" })
     return true
   }
   return false
+}
+
+/** Later hooks only use this after the global pairing guard has checked the target. */
+export function isServerPairExchange(request: FastifyRequest, pathname: string | null): boolean {
+  return pathname === SERVER_PAIR_PATH && validServerPairRequest(request)
 }

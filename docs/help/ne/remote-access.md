@@ -111,8 +111,10 @@ SSH बाट मात्र पहुँच हुने गन्तव्य
 
 सुरक्षित सर्भर फेरि खोल्न गृह पृष्ठको **सर्भरहरू** ट्याबमा त्यसलाई चयन गर्नुहोस्। bookmark यो CodeNomad कन्फिगरेसनका हुन्, remote server का project होइनन्। URL बचतले server सुरु वा access प्रदान गर्दैन। **बचत गरिएको सर्भर हटाउनुहोस्** ले bookmark हटाउँछ, remote कुराकानी, backend वा credential होइन।
 
-सुरक्षित सर्भर command line बाट सिधै खोल्न, सर्भरको सुरक्षित नाम वा यसको `https://` URL सहित desktop app लाई `--connect-server <name>` (वा `--connect-server=<name>`) सँग सुरु गर्नुहोस्। CodeNomad ले remote window मात्र खोल्छ, **जडान गर्नुहोस्** जस्तै उही जाँच र sign in सहित; CodeNomad पहिले नै चलिरहेको छ भने, नयाँ window को सट्टा यसको हालको window ले त्यसलाई खोल्छ। कुनै सुरक्षित सर्भरसँग नमिल्ने URL यसको host नाममा बचत हुन्छ। सुरु गर्दा दिइने मानमा credential कहिल्यै हुँदैन: user नाम, password वा pairing code भएको URL अस्वीकार हुन्छ। Windows मा, सुरु गर्ने argument मा `|` भए Tauri build सुरु हुँदैन; बरु सर्भरको URL प्रयोग गर्नुहोस्, वा सर्भरको नाम बदल्नुहोस्।
-
 रिमोट विन्डोहरू खुला रहँदा अन्तिम स्थानीय विन्डो बन्द गर्दा त्यसका ट्याबहरू रहन्छन्: रिमोट विन्डोमा **सञ्झ्याल → नयाँ विन्डो**, वा CodeNomad फेरि सुरु गर्दा त्यो फेरि खुल्छ।
 
 Remote Control मा **सर्भर URL** मा नयाँ pairing link paste गर्नुहोस्। bookmark ले tunnel origin मात्र राख्छ, one-use code कहिल्यै होइन; device-cookie हराएपछि पुनःpair गर्न [Remote Control](remote-control.md) हेर्नुहोस्।
+
+### `--connect-server` {#connect-server}
+
+यो आदेशले `multiBackend` को सेटिङ जेसुकै भए पनि छुट्टै रिमोट विन्डो खोल्छ। सुरक्षित सर्भर command line बाट सिधै खोल्न, सर्भरको सुरक्षित नाम वा यसको `https://` URL सहित desktop app लाई `--connect-server <name>` (वा `--connect-server=<name>`) सँग सुरु गर्नुहोस्। CodeNomad ले remote window मात्र खोल्छ, **जडान गर्नुहोस्** जस्तै उही जाँच र sign in सहित; CodeNomad पहिले नै चलिरहेको छ भने, नयाँ window को सट्टा यसको हालको window ले त्यसलाई खोल्छ। कुनै सुरक्षित सर्भरसँग नमिल्ने URL यसको host नाममा बचत हुन्छ। सुरु गर्दा दिइने मानमा credential कहिल्यै हुँदैन: user नाम, password वा pairing code भएको URL अस्वीकार हुन्छ। Windows मा, सुरु गर्ने argument मा `|` भए Tauri build सुरु हुँदैन; बरु सर्भरको URL प्रयोग गर्नुहोस्, वा सर्भरको नाम बदल्नुहोस्।
