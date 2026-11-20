@@ -1,6 +1,12 @@
 # codenomad-rs
 
-Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It already runs as a remote backend; it does not replace the TypeScript server inside the desktop hosts yet.
+Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It runs as a remote backend, and `codenomad-rs serve [options]` honours the launch contract Tauri uses with the TypeScript server; Tauri still starts the TypeScript server.
+
+## Launch
+
+`serve` takes the reference's options and variables with its grammar and defaults (`packages/server/src/index.ts`), keeps its files in the config folder (`~/.config/codenomad`: `config.yaml.server-id`, `auth.json`, `tls/`, `memory/`, `permission-receipts/`, plus Rust-only `devices/`, `*-ui.json`, `instance-*.json`), prints `CODENOMAD_BOOTSTRAP_TOKEN:`, `Local Connection URL :` and `Remote Connection URL :`, stops on `codenomad:shutdown` with `CODENOMAD_SHUTDOWN_STATUS:complete|incomplete`, and answers native requests (`src/host/native_parent.rs`) when `CODENOMAD_NATIVE_PARENT=1`. Refused at start: `--launch`, `--upgrade`, a hostname or all interfaces for `--host`, HTTP on a non-loopback address. Accepted without effect: the remote UI update options, `--log-level`, `--log-destination`; `CODENOMAD_ALLOWED_ORIGINS` is not read. The HTTPS listener admits paired devices only, and the local URL is always the loopback HTTP listener.
+
+The positional launch `codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>` (bench and user service, `src/bench.rs`) keeps its data beside the identity file and reads `CNRS_SERVER_PASSWORD`, `CNRS_HTTPS_*` and `CNRS_TLS_*`.
 
 ## Architecture
 
@@ -13,10 +19,11 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | Path | Role |
 |---|---|
 | `src/main.rs` | Startup and route assembly per domain; local and HTTPS listeners |
+| `src/host/` | `serve` options, stdout lines and stdin commands, native requests to the desktop host, UI bundle and dev proxy |
 | `src/app.rs`, `config.rs` | Shared state and JSON error shape; production settings from the environment |
-| `src/bench.rs` | Only reader of the comparison bench variables (`CNRS_FIXTURE_*`, traces) |
+| `src/bench.rs` | Positional launch and only reader of the comparison bench variables (`CNRS_FIXTURE_*`, traces) |
 | `src/meta.rs`, `service.rs`, `workspaces.rs`, `storage.rs` | Server identity, user service mode, workspace lifecycle, UI preferences |
-| `src/auth/` | Local password session; paired devices, HTTPS admission, TLS |
+| `src/auth/` | Local password session (`auth.json`, bootstrap token, `/login`); paired devices, HTTPS admission, TLS |
 | `src/opencode/` | Native client, `/instance` relay, cursors |
 | `src/events/` | SSE to the UI, bridge from the daemon stream |
 | `src/files/`, `search/`, `git/` | Project files and links, file search, Git status/diff/history/mutations |
