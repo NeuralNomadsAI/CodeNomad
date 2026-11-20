@@ -16,6 +16,8 @@ Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entferne
 
 Zuletzt verwendete Einträge sind Verknüpfungen. Die direkten Schaltflächen auf der Startseite und das Aktionsmenü leerer Tabs bieten je nach Eintrag **Arbeitsbereich umbenennen** und **Aus Liste entfernen**; Dateien und Unterhaltungen bleiben erhalten. Auf Startseite, leeren Tabs und im Schnellstarter erzeugt ein Klick auf lokale/entfernte Projekte oder SideCars ein neues Vorkommen, auch wenn sie geöffnet sind. Die separate Aktion **Offen** (**Zum offenen Projekt wechseln**) wählt das vorhandene Vorkommen.
 
+Die Aktion zum Wechseln wählt auch einen Tab aus, der auf seinen Server wartet, und schließt den leeren Ausgangstab.
+
 ## Schnellstarter für neue Instanzen verwenden {#new-instance-launcher}
 
 Beim Öffnen erhält das Menü den Fokus. Tab oder ein Klick erreicht die Suche. Pfeiltasten navigieren durch die Einträge; Escape schließt das Menü.

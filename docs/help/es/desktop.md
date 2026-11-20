@@ -48,6 +48,8 @@ La ventana de Preferencias no tiene un estado de restauración independiente: es
 
 Los clientes de navegador y remotos usan la configuración integrada.
 
+Una pestaña remota no disponible permanece en su sitio con sus borradores. Selecciónala para reintentar o iniciar sesión.
+
 ## Perfiles de datos de escritorio {#data-profiles}
 
 1. En **Configuración → General** nativo, bajo **Restaurar el estado anterior**, despliega **Perfil de datos**. Muestra todos los perfiles de este equipo con su tamaño, fecha de creación y último uso, con el abierto primero.

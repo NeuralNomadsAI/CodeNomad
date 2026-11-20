@@ -32,11 +32,11 @@ serverApi.fetchServerMeta = async () => ({ serversUsable: true }) as never
 serverApi.createWorkspace = async () => { throw new Error("Unexpected local creation") }
 
 const { recentProjects, recordRemoteProjectLaunch, removeRecentProject, renameRecentProject, latestRemoteProjectPath } = await import("./recent-projects")
-const { findOpenProjectTab, openRemoteProjectForProfile, selectOpenProjectTab, selectRemoteServer, remoteServerSelection } = await import("./remote-project-open")
+const { findOpenProjectTab, openRemoteProjectForProfile, selectOpenProjectTab, selectRemoteServer } = await import("./remote-project-open")
 const { preferencesForBackend, editRemoteProjectRecents, updatePreferences } = await import("./preferences")
 const { backendRegistry } = await import("./remote-backends")
 const { addInstance, removeInstance } = await import("./instances")
-const { attachInstanceTab, activeAppTabId, selectAppTab } = await import("./app-tabs")
+const { attachInstanceTab, activeAppTab, appTabs, activeAppTabId, closeBlankTab, selectAppTab } = await import("./app-tabs")
 const { addRemoteRestoreTab, removeRemoteRestoreTab, remoteRestoreTabs } = await import("./remote-restore-tabs")
 const { serverEvents } = await import("../lib/server-events")
 const host = preferencesForBackend("local")
@@ -84,7 +84,7 @@ test("host reload metadata stays visible disconnected; only current exact saved 
       disk.remoteServers = changed ? [changed, profiles[1]] : [profiles[1]]
       resume()
       assert.equal(remote(policyA.id), undefined)
-      await assert.rejects(openRemoteProjectForProfile(old.policy, old.path, new AbortController().signal, { focusExisting: true, projectName: old.projectName }), /selection changed/)
+      await assert.rejects(openRemoteProjectForProfile(old.policy, old.path, new AbortController().signal, { projectName: old.projectName }), /selection changed/)
     }
     disk.remoteServers = [{ ...profiles[0], name: "Renamed" }, profiles[1]]
     resume()
@@ -196,7 +196,7 @@ test("the display cap never cuts off the last folder of an exact server", () => 
   } finally { disk = saved; resume() }
 })
 
-test("launcher reuses qualified actual tabs; Home opens a new occurrence unless a restore tab owns it", async t => {
+test("the Open action joins actual tabs including a waiting tab; the row always opens another occurrence", async t => {
   const ensure = t.mock.method(backendRegistry, "ensure", async (_id: string) => undefined)
   const signal = new AbortController().signal
   const add = (id: string, backendId?: string) => addInstance({ id, backendId, folder: path, port: 0, pid: 0, proxyPath: "", status: "ready", client: null })
@@ -206,11 +206,13 @@ test("launcher reuses qualified actual tabs; Home opens a new occurrence unless 
   attachInstanceTab("local-live")
   attachInstanceTab(`${policyB.id}~live`)
   selectRemoteServer(policyB)
+  const blank = activeAppTab()
+  assert.equal(blank?.kind === "blank" && blank.server?.id, policyB.id)
   try {
     assert.equal(findOpenProjectTab(path, "local")?.id, "instance:local-live")
     assert.equal(findOpenProjectTab(path, policyA.id), undefined, "inventory-only records do not own tabs")
     attachInstanceTab(`${policyA.id}~inventory`)
-    assert.equal(await openRemoteProjectForProfile(policyA, "d:/same/", signal, { focusExisting: true }), true)
+    assert.equal(selectOpenProjectTab(policyA, "d:/same/", true), true)
     assert.equal(activeAppTabId(), `instance:${policyA.id}~inventory`)
     assert.equal(ensure.mock.callCount(), 0)
     await assert.rejects(openRemoteProjectForProfile(policyA, path, signal), /idle/)
@@ -221,13 +223,16 @@ test("launcher reuses qualified actual tabs; Home opens a new occurrence unless 
       snapshot: { kind: "workspace", backendId: policyA.id, folder: path, occurrence: 1, drafts: { saved: "draft" },
         attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} },
     })
-    assert.equal(await openRemoteProjectForProfile(policyA, path, signal), true)
+    await assert.rejects(openRemoteProjectForProfile(policyA, path, signal), /idle/)
+    assert.equal(ensure.mock.callCount(), 2, "the row does not join a restore placeholder either")
+    assert.equal(selectOpenProjectTab(policyA, path, false), true)
     assert.equal(activeAppTabId(), "waiting-a")
     assert.equal(remoteRestoreTabs()[0]?.snapshot.drafts.saved, "draft")
-    assert.equal(ensure.mock.callCount(), 1)
-    assert.equal(remoteServerSelection()?.id, policyB.id, "an explicit recent never changes another picker")
+    assert.equal(ensure.mock.callCount(), 2, "joining never starts recovery or opens a project")
+    assert.ok(appTabs().includes(blank!), "another tab's Browse selection is unchanged")
     await idle()
   } finally {
+    if (blank) closeBlankTab(blank.id)
     removeRemoteRestoreTab("waiting-a")
     for (const id of ["local-live", `${policyA.id}~inventory`, `${policyB.id}~live`]) removeInstance(id, { authoritative: false, drafts: "skip" })
   }

@@ -68,6 +68,8 @@ En Electron y Tauri para Windows, las plantillas móviles establecen identidad A
 3. Establece **Protocolo** para que coincida con el servicio de destino y elige **Modo de prefijo**.
 4. Elige **Añadir SideCar** y ábrelo desde **Explorar** en Inicio o una pestaña vacía; aparecerá en **Pestañas recientes** y en la búsqueda del lanzador rápido. **Nuevo SideCar**, en la columna de acciones a la izquierda de Inicio, abre este formulario. Elegir un SideCar crea una nueva instancia; su acción separada **Abierta** selecciona la existente ([pestañas de proyecto](projects.md#open-project)).
 
+Un SideCar en ejecución permanece en las pestañas recientes tras cerrar su pestaña.
+
 | Opción | Efecto exacto |
 | --- | --- |
 | HTTPS (predeterminado del formulario) | CodeNomad conecta al destino como `https://127.0.0.1:<port>`. |

@@ -68,6 +68,8 @@ Sur Electron et Tauri Windows, les modèles mobiles définissent identité Andro
 3. Réglez **Protocole** selon le service amont et choisissez **Mode de préfixe**.
 4. Choisissez **Ajouter un SideCar**, puis ouvrez-le depuis **Parcourir** sur l'accueil ou un onglet vide ; il rejoint **Onglets récents** et la recherche du lanceur rapide. **Nouveau SideCar**, dans la colonne d'actions à gauche de l'accueil, ouvre ce formulaire. Choisir un SideCar crée une nouvelle occurrence ; son action séparée **Ouvert** rejoint l'existante ([onglets de projet](projects.md#open-project)).
 
+Un SideCar en cours d’exécution reste dans **Onglets récents** après la fermeture de son onglet.
+
 | Choix | Effet exact |
 | --- | --- |
 | HTTPS (défaut du formulaire) | CodeNomad se connecte à l’amont via `https://127.0.0.1:<port>`. |

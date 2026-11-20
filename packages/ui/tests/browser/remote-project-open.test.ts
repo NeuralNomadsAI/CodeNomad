@@ -156,15 +156,17 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     return page
   }
   const select = (page: Page, id: string) => page.evaluate(id => (window as any).remoteOpenFixture.select(id), id)
-  const dialog = (page: Page) => page.getByRole("dialog")
-  await t.test("opening a waiting project selects its restore placeholder without creation or implicit retry", async () => {
+  const blank = (page: Page) => page.locator("[data-fixture-blank]:visible")
+  const openSame = (page: Page) => blank(page).getByRole("button", { name: /^Same ·/ })
+  const serverName = (page: Page, name: string) => blank(page).locator(".remote-server-navigation bdi", { hasText: name })
+  await t.test("the Open action selects the restore placeholder without creation or implicit retry", async () => {
     const page = await prepare(), before = mutations.length
     try {
       await page.evaluate(() => (window as any).remoteOpenFixture.addWaiting("a"))
       await select(page, "a")
       const waiting = await page.evaluate(() => (window as any).remoteOpenFixture.waiting())
-      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
-      await dialog(page).waitFor({ state: "detached" })
+      await blank(page).getByRole("button", { name: /^Switch to open project · Same ·/ }).click()
+      await blank(page).waitFor({ state: "detached" })
       assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
         tabs: [{ id: "instance:w", kind: "instance" }, { id: "waiting:a", kind: "remote-restore" }], active: "waiting:a",
       })
@@ -187,7 +189,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       await select(page, "a")
       const cancel = page.waitForResponse(response => response.url().includes("/backends/a/api/workspaces/creation/cancel"))
       void cancel.catch(() => undefined)
-      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      await openSame(page).click()
       if (boundary !== "commit-microtask") {
         await page.waitForFunction(() => !!(window as any).__boundary)
         if (boundary === "inventory") {
@@ -199,13 +201,13 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
         await select(page, "b")
         await page.evaluate(() => (window as any).__boundary.resume())
       }
-      await dialog(page).getByRole("heading", { name: "Beta", exact: true }).waitFor()
+      await serverName(page, "Beta").waitFor()
       const records = await page.evaluate(() => (window as any).remoteOpenFixture.records())
       assert.deepEqual(records, ["w"], "stale A leaves no orphan occurrence")
       if (boundary !== "ensure" && boundary !== "inventory") await cancel
-      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
-        tabs: [{ id: "instance:w", kind: "instance" }], active: "instance:w",
-      })
+      const snapshot = await page.evaluate(() => (window as any).remoteOpenFixture.snapshot())
+      assert.deepEqual(snapshot.tabs.map((tab: { kind: string }) => tab.kind), ["instance", "blank", "blank"])
+      assert.equal(snapshot.active, snapshot.tabs.at(-1).id)
       const receipts = await page.evaluate(async () => (await import("/src/stores/instances.ts") as any).__openingReceipts())
       assert.equal(receipts.some((r: any) => r.backendId === "a"), false, "the exact stale receipt is settled")
       assert.deepEqual(mutations.slice(before), boundary === "ensure" || boundary === "inventory" ? [] : ["a:POST", "a:/creation/cancel:POST"])
@@ -225,13 +227,13 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       await select(page, "a")
       const released = page.waitForResponse(response => response.url().includes("/backends/a/api/workspaces/w/creation/release"))
       void released.catch(() => undefined)
-      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
-      await dialog(page).getByRole("heading", { name: "Beta", exact: true }).waitFor()
+      await openSame(page).click()
+      await serverName(page, "Beta").waitFor()
       await released
       await page.waitForFunction(() => !(window as any).__openingReceipts().some((r: any) => r.backendId === "a"))
-      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
-        tabs: [{ id: "instance:w", kind: "instance" }, { id: "instance:a~w", kind: "instance" }], active: "instance:a~w",
-      })
+      const snapshot = await page.evaluate(() => (window as any).remoteOpenFixture.snapshot())
+      assert.deepEqual(snapshot.tabs.slice(0, 2).map((tab: { id: string }) => tab.id), ["instance:w", "instance:a~w"])
+      assert.equal(snapshot.active, snapshot.tabs.at(-1).id)
       assert.deepEqual(mutations.slice(before), ["a:POST", "a:/w/creation/release:POST"])
     } finally { await page.close() }
   })
@@ -253,18 +255,18 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
         void w.__reply.catch(() => undefined)
       }, { host, intent: { id: "a", baseUrl: a.origin, skipTlsVerify: false } })
       await delivered
-      await dialog(main).getByRole("heading", { name: "Alpha", exact: true }).waitFor()
+      await serverName(main, "Alpha").waitFor()
       const released = main.waitForResponse(response => response.url().includes("/backends/a/api/workspaces/w/creation/release"))
       void released.catch(() => undefined)
-      await dialog(main).getByRole("button", { name: "Same", exact: true }).click()
-      await dialog(main).waitFor({ state: "detached" })
+      await openSame(main).click()
+      await blank(main).waitFor({ state: "detached" })
       await released
       await select(main, "b")
       accept(); await preferences.evaluate(() => (window as any).__reply)
-      await dialog(main).getByRole("heading", { name: "Beta", exact: true }).waitFor()
+      await serverName(main, "Beta").waitFor()
       assert.equal(await main.locator(".remote-server-browser").count(), 1)
       assert.deepEqual(await main.evaluate(() => (window as any).remoteOpenFixture.records()), ["w", "a~w"])
-      assert.equal(await main.evaluate(() => (window as any).remoteOpenFixture.snapshot().active), "instance:a~w")
+      assert.match(await main.evaluate(() => (window as any).remoteOpenFixture.snapshot().active), /^blank:/)
       assert.deepEqual(mutations.slice(before), ["a:POST", "a:/w/creation/release:POST"])
     } finally { accept(); await preferences.close(); await main.close() }
   })
@@ -296,7 +298,9 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     await inline.getByRole("button", { name: "app", exact: true }).click()
     await inline.getByRole("button", { name: "Open", exact: true }).click()
     await page.waitForFunction(() => (window as any).remoteOpenFixture.snapshot().active === "instance:a~w", undefined, { timeout: 5_000 })
-    await page.getByRole("tab", { name: /Alpha/ }).waitFor({ timeout: 5_000 })
+    const alphaTab = page.getByRole("tab", { name: /Alpha/ })
+    await alphaTab.waitFor({ timeout: 5_000 })
+    assert.equal(await alphaTab.locator(".tab-label").textContent(), "app")
     await page.evaluate(() => (window as any).remoteOpenFixture.home())
     await browse.click()
     await page.getByRole("button", { name: "Open a project on Beta" }).click()
@@ -319,8 +323,8 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     await alpha.waitFor()
     assert.equal(await actions.count(), 2, "the persisted recent has both actions")
     await page.getByRole("button", { name: /^app · Beta ·/ }).waitFor()
-    await select(page, "a"); await dialog(page).getByRole("button", { name: /Close/ }).click()
-    assert.equal(await page.locator(".tab-pill").count(), 3)
+    await select(page, "a"); await blank(page).getByRole("button", { name: "Close new tab" }).click()
+    assert.equal(await page.locator("[data-project-tabs]").getByRole("tab").count(), 3)
     const persisted = readRemoteProjectHistory(state.remoteProjectRecents, state.remoteProjectHistory).recents
     assert.ok(Array.isArray(persisted) && persisted.length === 2)
     assert.doesNotMatch(JSON.stringify(persisted), /must-not-leak/)

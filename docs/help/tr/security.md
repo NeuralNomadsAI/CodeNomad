@@ -29,7 +29,7 @@ Komut bağımsız değişkenlerine veya kabuk geçmişine parola eklemek yerine 
 
 ## Tarayıcı oturumları ve iptali {#sessions}
 
-Doğrudan giriş, arka uç belleğinde opak bir oturum ve `codenomad_session` çerezi (veya yapılandırılan adla çerez) oluşturur. Çerezler `HttpOnly`, `SameSite=Lax` özelliklerine sahiptir, `/` kapsamındadır ve HTTPS üzerinden verildiğinde `Secure` olarak işaretlenir. Bunlar tarayıcı oturumu çerezleridir; arka ucun yeniden başlatılması bellekteki oturumları geçersiz kılar. Başarısız değişiklik işlemlerini yeniden göndermek yerine istendiğinde aynı sayfada yeniden kimlik doğrulayın.
+Doğrudan giriş, arka uç belleğinde opak bir oturum ve `codenomad_session` çerezi (veya yapılandırılan adla çerez) oluşturur. Çerezler `HttpOnly`, `SameSite=Lax` özelliklerine sahiptir, `/` kapsamındadır ve HTTPS üzerinden verildiğinde `Secure` olarak işaretlenir. Çerez, tarayıcı yeniden başlatılsa da yedi gün saklanır; arka ucun yeniden başlatılması bellekteki oturumları geçersiz kılar. Başarısız değişiklik işlemlerini yeniden göndermek yerine istendiğinde aynı sayfada yeniden kimlik doğrulayın.
 
 Çıkış, mevcut doğrudan oturumu iptal eder. Ana bilgisayarda başarılı parola değişikliği, mevcut oturum dahil kullanıcının tüm doğrudan oturumlarını iptal eder; yeniden giriş yapın. Oturumlar, kimliği doğrulanmış istek olmadan 24 saat veya oluşturulduktan yedi gün sonra sona erer. Sınırları değiştirmek için arka uç başlamadan `CODENOMAD_SESSION_IDLE_SECONDS` ve `CODENOMAD_SESSION_ABSOLUTE_SECONDS` değişkenlerini pozitif tam sayı saniye olarak ayarlayın. Uzaktan Kontrol cihazları ayrı iptal edilir.
 

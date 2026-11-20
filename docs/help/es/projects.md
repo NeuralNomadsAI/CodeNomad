@@ -16,6 +16,8 @@ La clonación escribe un repositorio en el destino. **Eliminar primero la carpet
 
 Los recientes son accesos directos. Los botones en línea de Inicio y el menú de acciones de las pestañas vacías ofrecen **Renombrar workspace** y **Eliminar de recientes** cuando corresponde; conserva archivos y conversaciones. En Inicio, pestañas vacías y lanzador rápido, pulsar un proyecto local, remoto o SideCar crea una nueva instancia aunque ya esté abierto. La acción separada **Abierta** (**Cambiar al proyecto abierto**) selecciona la existente.
 
+La acción para cambiar de pestaña también selecciona una pestaña que espera a su servidor y cierra la pestaña vacía de origen.
+
 ## Usar el lanzador de nuevas instancias {#new-instance-launcher}
 
 Al abrir, el foco queda en el menú. Tab o un clic accede a la búsqueda. Las flechas recorren los recientes; Escape cierra el menú.

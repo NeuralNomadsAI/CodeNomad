@@ -91,13 +91,15 @@ El certificado de servidor generado dura 30 días. El inicio lo renueva si falta
 
 Si un cliente muestra una advertencia de certificado, detente y comprueba el nombre de host, los SAN, el almacén de confianza y la caducidad. No desactives la verificación ni conviertas saltarse advertencias en tu procedimiento de despliegue. HTTPS de confianza también es necesario para funciones de navegador remoto como la [instalación PWA y el acceso al micrófono](mobile.md).
 
-## Guardar un servidor remoto {#saved-servers}Los clientes remotos autenticados pueden usar y administrar todos los servidores guardados en el anfitrión; el inicio y **Configuración → Servidores** muestran las acciones permitidas por las capacidades del anfitrión. HTTP sin cifrar en la LAN desactiva la entrada de nuevas contraseñas de servidor y enlaces de vinculación: «Usa HTTPS o Control remoto para introducir credenciales.» Las conexiones con credenciales guardadas y la adición, edición o eliminación de perfiles sin secretos siguen disponibles.
+## Guardar un servidor remoto {#saved-servers}
 
-Para un destino accesible solo por SSH en **Configuración → Servidores**, elija **Añadir servidor**, introduzca su **URL** y **Host SSH (opcional)** y pulse **Guardar**. El perfil se guarda sin conexión; la conexión utiliza el relé SSH del backend.
+Los clientes remotos autenticados pueden usar y administrar todos los servidores guardados en el anfitrión; el inicio y **Configuración → Servidores** muestran las acciones permitidas por las capacidades del anfitrión. HTTP sin cifrar en la LAN desactiva la entrada de nuevas contraseñas de servidor y enlaces de vinculación: «Usa HTTPS o Control remoto para introducir credenciales.» Las conexiones con credenciales guardadas y la adición, edición o eliminación de perfiles sin secretos siguen disponibles.
 
-Abre **Configuración → Servidores**: pega una dirección o enlace de vinculación en **Dirección o enlace del servidor**, o pulsa Intro. Añadir guarda un perfil en el anfitrión sin abrir un proyecto. **Editar servidor** cambia la **URL** o el **Nombre** opcional; renombrar con la misma URL y política TLS funciona sin conexión. **Eliminar servidor guardado** pide confirmación, olvida su conexión y guarda la eliminación; si falla el guardado, el perfil permanece para reintentar. Las otras conexiones se mantienen.
+Para un destino accesible solo por SSH en **Configuración → Servidores**, elija **Añadir servidor SSH**, introduzca su **URL** y **Host SSH (opcional)** y pulse **Guardar**. El perfil se guarda sin conexión; la conexión utiliza el relé SSH del backend.
 
-**Omitir la verificación TLS** aparece tras un fallo de certificado para esa dirección; cambiar la dirección borra el consentimiento. La vinculación siempre verifica TLS. **Abrir** muestra los proyectos del servidor.
+Abre **Configuración → Servidores**: pega una dirección o enlace de vinculación en **Dirección o enlace del servidor**, o pulsa Intro. Añadir guarda un perfil en el anfitrión sin abrir un proyecto. **Editar servidor** cambia la **URL** o el **Nombre** opcional; renombrar con la misma URL y política TLS funciona sin conexión. **Eliminar** pide confirmación, olvida su conexión y guarda la eliminación; si falla el guardado, el perfil permanece para reintentar. Las otras conexiones se mantienen.
+
+**Omitir la verificación TLS** aparece tras un fallo de certificado para esa dirección; cambiar la dirección borra el consentimiento. La vinculación siempre verifica TLS.
 
 **Host SSH (opcional)** guarda un host o alias de OpenSSH para el relé del backend. Las sugerencias proceden del archivo `~/.ssh/config` de la cuenta del backend local. Introduzca la dirección de CodeNomad vista desde ese host (por ejemplo, `https://127.0.0.1:9898`, con su puerto real) y pulse **Guardar**. Los perfiles SSH usan el relé. CodeNomad debe estar instalado y ejecutándose allí. Se requieren OpenSSH local, autenticación por clave y una clave de host verificada en `known_hosts`; siguen aplicándose la autenticación de CodeNomad y la verificación de certificados HTTPS.
 
@@ -117,6 +119,8 @@ Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL
 En Inicio o en una pestaña nueva, elige **Explorar** y selecciona un servidor. Pega la dirección o el enlace de emparejamiento en **Dirección o enlace del servidor** para guardarlo. Inicia sesión si se te pide. Selecciona una carpeta para explorarla; pulsa Intro en el campo de ruta o elige **Abrir** para abrirla. **Volver a Explorar** vuelve a la lista de servidores.
 
 Los proyectos locales y remotos comparten ventana. **Pestañas recientes** muestra los accesos directos del servidor seleccionado mientras exploras. Los proyectos abiertos aquí conservan el icono y el nombre del servidor en la lista mixta. Si una pestaña restaurada espera al servidor, usa **Reintentar** o **Conectar** en esa pestaña. Los borradores se conservan.
+
+En **Configuración → Servidores**, **Abrir** abre una pestaña nueva con ese servidor seleccionado en **Explorar**. **Eliminar** olvida la conexión y oculta sus accesos recientes; se conservan las pestañas abiertas, los proyectos y las conversaciones.
 
 ### `--connect-server` {#connect-server}
 

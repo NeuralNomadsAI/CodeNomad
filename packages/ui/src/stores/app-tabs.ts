@@ -14,6 +14,7 @@ import { workspaceIdentity } from "./app-session-reconciliation"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { remoteRestoreTabs, type RemoteRestoreTab } from "./remote-restore-tabs"
 import { generateUUID } from "../lib/client-identity"
+import type { ServerSelectionIntent } from "../lib/native/server-selection-intent"
 
 export interface InstanceAppTab {
   id: string
@@ -27,13 +28,13 @@ export interface SideCarAppTab {
   sidecarTab: SideCarTabRecord
 }
 
-interface BlankAppTab { id: string; kind: "blank" }
+interface BlankAppTab { id: string; kind: "blank"; server?: ServerSelectionIntent }
 export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab | BlankAppTab
 
 const [blankTabs, setBlankTabs] = createSignal<BlankAppTab[]>([])
 
-export function openBlankTab(): void {
-  const tab: BlankAppTab = { id: `blank:${generateUUID()}`, kind: "blank" }
+export function openBlankTab(server?: ServerSelectionIntent): void {
+  const tab: BlankAppTab = { id: `blank:${generateUUID()}`, kind: "blank", server }
   batch(() => {
     setBlankTabs(tabs => [...tabs, tab])
     selectAppTab(tab.id)

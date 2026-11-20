@@ -13,6 +13,8 @@ The link is valid for **five minutes** and succeeds **once**. Treat it as a cred
 
 On another desktop running CodeNomad, paste the pairing link into **Settings → Servers → Server address or link**. The field clears before the request; only the origin is saved. The local backend retains its private device identity across launches, and **Remove saved server** forgets that profile's connection before removing it. Pairing keeps TLS verification enabled and does not open a project.
 
+To pair again, paste the new link into the connection form on the server or project row.
+
 ## Pair over direct HTTPS {#direct-https}
 
 Where the tunnel is blocked but the backend is reachable over trusted HTTPS, for example through a reverse proxy with a real certificate, devices can pair on that address instead. Eligible addresses are this backend's own HTTPS addresses and the HTTPS origins in `CODENOMAD_ALLOWED_ORIGINS` (see [Upgrading](remote-access.md#upgrading)); loopback names and plain HTTP never pair. Remote Control need not be started.

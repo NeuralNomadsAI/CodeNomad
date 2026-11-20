@@ -48,6 +48,8 @@ Das Einstellungsfenster hat keinen separaten Wiederherstellungszustand: Diese Be
 
 Browser- und Remote-Clients verwenden eingebettete Einstellungen.
 
+Ein nicht verfügbarer Remote-Tab bleibt mit seinen Entwürfen an seiner Position. Wählen Sie ihn zum erneuten Versuch oder zur Anmeldung aus.
+
 ## Desktop-Datenprofile {#data-profiles}
 
 1. Klappen Sie in den nativen **Einstellungen → Allgemein** unter **Vorherigen Zustand wiederherstellen** den Eintrag **Datenprofil** auf. Er listet alle Profile auf diesem Computer mit Größe, Erstellungsdatum und letzter Verwendung auf, das geöffnete zuerst.

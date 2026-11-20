@@ -1,14 +1,13 @@
 import { For, Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import FolderSelectionView from "../../../src/components/folder-selection-view"
-import RemoteServerProjectDialog from "../../../src/components/remote-server-browser"
 import NewInstanceLauncher from "../../../src/components/new-instance-launcher"
 import InstanceTab from "../../../src/components/instance-tab"
 import { SettingsScreen } from "../../../src/components/settings-screen"
 import { ConfigProvider, preferencesForBackend, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider, preloadLocaleMessages } from "../../../src/lib/i18n"
 import { instances, refreshWorkspaceList } from "../../../src/stores/instances"
-import { appTabs, activeAppTabId, selectInstanceTab } from "../../../src/stores/app-tabs"
+import { appTabs, activeAppTabId, closeBlankTab, replaceBlankTab, selectInstanceTab } from "../../../src/stores/app-tabs"
 import { selectRemoteServer } from "../../../src/stores/remote-project-open"
 import { backendRegistry } from "../../../src/stores/remote-backends"
 import { setActiveSettingsSection } from "../../../src/stores/settings-screen"
@@ -34,10 +33,18 @@ render(() => <ConfigProvider><I18nProvider>
     <button type="button" ref={launcherAnchor} onClick={() => setLauncherOpen(true)}>Fixture launcher</button>
     <NewInstanceLauncher open={launcherOpen()} anchor={launcherAnchor} isLoading={false} onOpenChange={setLauncherOpen}
       onSelectFolder={() => { throw new Error("Unexpected local opening") }}
-      onSelectExistingInstance={id => selectInstanceTab(id)} onNewTemporaryInstance={() => {}} />
-    <Show when={home()}><FolderSelectionView onSelectFolder={() => { throw new Error("Unexpected local opening") }}
+      onSelectExistingInstance={id => selectInstanceTab(id)} onNewTemporary={() => {}} />
+    <Show when={home() && !appTabs().some(tab => tab.kind === "blank" && tab.id === activeAppTabId())}><FolderSelectionView onSelectFolder={() => { throw new Error("Unexpected local opening") }}
       onSelectExistingInstance={() => {}} onRemoteOpened={() => setHome(false)} onClose={() => setHome(false)} /></Show>
-    <RemoteServerProjectDialog onOpened={() => setHome(false)} />
+    <For each={appTabs()}>{tab => tab.kind === "blank" &&
+      <div data-fixture-blank hidden={tab.id !== activeAppTabId()}>
+        <button onClick={() => closeBlankTab(tab.id)}>Close new tab</button>
+        <FolderSelectionView blank initialServer={tab.server} active={tab.id === activeAppTabId()}
+          onSelectFolder={() => { throw new Error("Unexpected local opening") }} onSelectExistingInstance={() => {}}
+          onJoined={() => closeBlankTab(tab.id)}
+          onRemoteOpened={id => { replaceBlankTab(tab.id, `instance:${id}`); setHome(false) }} />
+      </div>
+    }</For>
   </>}><SettingsScreen standalone /></Show>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).remoteOpenFixture = {

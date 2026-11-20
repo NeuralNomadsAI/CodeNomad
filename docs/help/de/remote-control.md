@@ -13,6 +13,8 @@ Der Link gilt **fünf Minuten** und funktioniert **einmal**. Behandeln Sie ihn a
 
 Fügen Sie auf dem anderen Computer den Kopplungslink in **Einstellungen → Server → Serveradresse oder -link** ein. Das Feld wird vor der Anfrage geleert; gespeichert wird nur der Ursprung. Das lokale Backend bewahrt seine private Geräteidentität über Neustarts hinweg auf. **Gespeicherten Server entfernen** vergisst zuerst die Verbindung dieses Profils. Die Kopplung prüft TLS und öffnet kein Projekt.
 
+Fügen Sie zum erneuten Koppeln den neuen Link in das Anmeldeformular des Servers oder Projekts ein.
+
 ## Über direktes HTTPS koppeln {#direct-https}
 
 Wenn der Tunnel blockiert ist, das Backend aber über vertrauenswürdiges HTTPS erreichbar ist, etwa über einen Reverse-Proxy mit echtem Zertifikat, können Geräte stattdessen über diese Adresse koppeln. Zulässig sind die eigenen HTTPS-Adressen dieses Backends und die HTTPS-Origins in `CODENOMAD_ALLOWED_ORIGINS` (siehe [Aktualisieren](remote-access.md#upgrading)); Loopback-Namen und einfaches HTTP koppeln nie. Die Fernsteuerung muss nicht gestartet sein.

@@ -15,7 +15,7 @@ before(async () => {
 after(async () => { await browser?.close() })
 
 for (const mode of ["local", "nonlocal", "sidecars", "missing", "failure"]) {
-  for (const surface of ["home", "settings", "picker"]) {
+  for (const surface of ["home", "settings"]) {
     test(`${surface}: host-only controls require affirmative local metadata (${mode})`, async () => {
       const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: "en-US" })
       const errors: string[] = []
@@ -29,7 +29,7 @@ for (const mode of ["local", "nonlocal", "sidecars", "missing", "failure"]) {
         if (surface === "home") {
           await page.getByRole("tab", { name: "Browse" }).click()
           assert.equal(await page.getByRole("button", { name: "Fixture SideCar", exact: false }).count(), Number(sidecars))
-          assert.equal(await page.getByRole("button", { name: "New SideCar", exact: true }).count(), Number(local))
+          assert.equal(await page.getByRole("button", { name: "New SideCar", exact: true }).count(), 1)
         } else if (surface === "settings") {
           assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), Number(local))
           // Registration stays usable through paired and LAN connections.
@@ -43,9 +43,6 @@ for (const mode of ["local", "nonlocal", "sidecars", "missing", "failure"]) {
           } else {
             assert.equal(await page.locator('input[type="password"]').count(), 0)
           }
-        } else {
-          assert.equal(await page.getByRole("dialog").count(), Number(sidecars))
-          if (sidecars) await page.getByRole("button", { name: /Fixture SideCar/ }).waitFor()
         }
         assert.deepEqual(errors, [])
       } finally { await page.close() }

@@ -52,6 +52,9 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
     let generation = 0
     let profileWrites = 0
     let forgets = 0
+    let savedServers = mode === "absent" ? [] : [
+      { id: "a", name: "Server A", baseUrl: "https://a.test", skipTlsVerify: false, createdAt: "", updatedAt: "" },
+    ]
     const explicitlyOpen = ["create", "closed", "uncertain", "partial-refusal"].includes(mode)
     const projects: any[] = explicitlyOpen ? [] : [0, 1].map(index => descriptor(`existing-${index}`, "/same"))
     let releaseCreate!: () => void
@@ -63,15 +66,16 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       const remote = pathname.startsWith("/api/backends/a/")
       const path = remote ? pathname.slice("/api/backends/a".length) : pathname
       let body: any = {}
-      if (path === "/api/remote-servers/a/forget") forgets++
-      if (path.startsWith("/api/storage/")) {
-        if (!remote && path.endsWith("/state/ui") && request.method() !== "GET") profileWrites++
+      if (path === "/api/remote-servers/a/forget") { forgets++; body = { ok: true } }
+      else if (path.startsWith("/api/storage/")) {
+        if (!remote && path.endsWith("/state/ui") && request.method() !== "GET") {
+          profileWrites++
+          savedServers = request.postDataJSON().remoteServers ?? savedServers
+        }
         body = remote ? {} : path.endsWith("/config/ui") ? { settings: { multiBackend: mode !== "disabled" } }
-          : path.endsWith("/state/ui") ? { remoteServers: mode === "absent" ? [] : [
-            { id: "a", name: "Server A", baseUrl: "https://a.test", skipTlsVerify: false, createdAt: "", updatedAt: "" },
-          ] } : {}
-      } else if (path === "/api/auth/login") {
-        assert.equal(remote, true)
+          : path.endsWith("/state/ui") ? { remoteServers: savedServers } : {}
+      } else if (path === "/api/remote-servers/a/connect") {
+        assert.equal(remote, false)
         assert.deepEqual(request.postDataJSON(), mode === "pairing" ? { pairingLink: `https://a.test/remote-pair#${"p".repeat(32)}` } : { username: "user", password: "secret" })
         healthy = true; body = { ok: true }
       }
@@ -142,22 +146,26 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         assert.equal(snapshot.tabs[2].drafts.__no_session_draft__, "draft-2")
         if (mode === "offline") {
           const writes = profileWrites
-          for (const action of ["removeServerQueued", "retargetServerQueued"]) {
+          for (const action of ["retargetServerQueued"]) {
             const editing = page.evaluate(action => (window as any).restoreFixture[action](), action)
             await page.getByRole("button", { name: "Cancel", exact: true }).click()
             await editing
           }
-          assert.equal(forgets, 0, "cancelling offline removal keeps the saved connection")
-          assert.equal(profileWrites, writes, "cancelling either confirmation keeps the saved profile")
+          assert.equal(forgets, 0, "cancelling an address change keeps the saved connection")
+          assert.equal(profileWrites, writes, "cancelling keeps the saved profile")
         }
         if (mode === "auth" || mode === "pairing") {
           await page.getByRole("button", { name: "Connect", exact: true }).click()
-          if (mode === "pairing") await page.getByLabel("Pairing link", { exact: true }).fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
-          else {
+          if (mode === "pairing") {
+            const field = page.getByLabel("Pairing link", { exact: true })
+            await field.fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
+            await field.press("Enter")
+          } else {
+            assert.equal(await page.getByLabel("Username", { exact: true }).inputValue(), "codenomad")
             await page.getByLabel("Username", { exact: true }).fill("user")
             await page.getByLabel("Password", { exact: true }).fill("secret")
+            await page.getByRole("button", { name: "Sign in", exact: true }).click()
           }
-          await page.getByRole("button", { name: "Connect", exact: true }).first().click()
         } else if (mode !== "absent") {
           healthy = true
           await page.evaluate(() => Promise.all([(window as any).restoreFixture.retry(), (window as any).restoreFixture.retry()]))
@@ -217,8 +225,9 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
           assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), suspended[2].id)
           if (mode === "pairing") {
             await page.getByRole("button", { name: "Connect", exact: true }).click()
-            await page.getByLabel("Pairing link", { exact: true }).fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
-            await page.getByRole("button", { name: "Connect", exact: true }).first().click()
+            const field = page.getByLabel("Pairing link", { exact: true })
+            await field.fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
+            await field.press("Enter")
           } else {
             healthy = true
             await page.evaluate(() => (window as any).restoreFixture.retry())
@@ -227,19 +236,15 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
           assert.equal(creates.filter(value => value.startsWith("a:")).length, count, "reconnect reuses the retained occurrences")
           assert.deepEqual((await page.evaluate(() => (window as any).restoreFixture.tabs())).map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         }
-        assert.equal(await page.evaluate(() => (window as any).restoreFixture.removeServer().then(() => false, () => true)), true)
         if (mode === "create") {
-          await page.evaluate(() => { const f = (window as any).restoreFixture; for (const tab of f.tabs().filter((tab: any) => tab.id.includes("a~"))) f.close(tab.id) })
-          await page.waitForFunction(() => (window as any).restoreFixture.snapshot().tabs.every((tab: any) => !tab.backendId))
-          const beforeWrites = profileWrites
-          const cancelled = page.evaluate(() => (window as any).restoreFixture.removeServer())
-          await page.getByRole("button", { name: "Cancel", exact: true }).click()
-          await cancelled
-          assert.equal(profileWrites, beforeWrites)
-          const accepted = page.evaluate(() => (window as any).restoreFixture.removeServer())
-          await page.getByRole("button", { name: "Confirm", exact: true }).click()
-          await accepted
+          const beforeWrites = profileWrites, beforeForgets = forgets, beforeRecords = projects.length
+          await page.evaluate(() => (window as any).restoreFixture.removeServerQueued())
+          await page.waitForFunction(() => (window as any).restoreFixture.tabs().filter((tab: any) => tab.kind === "remote-restore").length === 2)
+          assert.equal(await page.getByRole("tab").count(), 3, "forgetting a server keeps its tabs")
+          assert.equal(forgets, beforeForgets + 1)
           assert.equal(profileWrites, beforeWrites + 1)
+          assert.equal(projects.length, beforeRecords, "forgetting a server does not delete its records")
+          assert.equal(await page.getByText("Sign-in required", { exact: true }).isVisible(), true)
         }
       }
       assert.equal(creates.filter(value => value.startsWith("local:")).every(value => value === "local:/local"), true)

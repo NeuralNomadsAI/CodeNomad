@@ -11,7 +11,7 @@ import { serversUsable, serversManageable } from "../../lib/server-meta"
 
 import type { ServerSelectionIntent } from "../../lib/native/server-selection-intent"
 export type { ServerSelectionIntent } from "../../lib/native/server-selection-intent"
-export const ServersSettingsSection: Component<{ onSelectServer?: (profile: ServerSelectionIntent) => void }> = (props) => {
+export const ServersSettingsSection: Component<{ onSelectServer?: (profile: ServerSelectionIntent) => Promise<void> }> = (props) => {
   const { t } = useI18n()
   const { remoteServers, enabled, capture, submitServer, removeServer } = useRelayServerProfiles()
   const [dialog, setDialog] = createSignal<{ initial: RemoteServerInput } | null>(null)
@@ -35,11 +35,13 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
       catch (failure) { if (op.current()) setError(remoteServerErrorKey(failure)) }
     } finally { op.dispose() }
   }
-  function open(server: RemoteServerProfile) {
+  async function open(server: RemoteServerProfile) {
     if (!usable() || !props.onSelectServer) return
     const op = capture({ ...server })
-    try { if (op.current()) props.onSelectServer(Object.freeze({ id: server.id, baseUrl: server.baseUrl, skipTlsVerify: server.skipTlsVerify,
+    setError(undefined)
+    try { if (op.current()) await props.onSelectServer(Object.freeze({ id: server.id, baseUrl: server.baseUrl, skipTlsVerify: server.skipTlsVerify,
       ...(server.ssh ? { ssh: Object.freeze({ ...server.ssh }) } : {}) })) }
+    catch (failure) { if (op.current()) setError(remoteServerErrorKey(failure)) }
     finally { op.dispose() }
   }
   return (
@@ -48,14 +50,16 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
         <div class="settings-card-header"><div class="settings-card-heading-with-icon">
           <Server class="settings-card-heading-icon" /><h3 class="settings-card-title">{t("folderSelection.servers.title")}</h3>
         </div>
-          <Show when={manageable()}><button type="button" class="window-icon-button"
-            aria-label={t("folderSelection.browseMenu.add")} title={t("folderSelection.browseMenu.add")}
-            onClick={() => { if (manageable()) setDialog({ initial: { name: "", baseUrl: "", skipTlsVerify: false } }) }}>
-            <Terminal class="w-4 h-4" aria-hidden="true" />
-          </button></Show>
         </div>
         <div class="settings-card-content">
-          <Show when={manageable()}><ServerAddField /></Show>
+          <Show when={manageable()}><div class="flex items-start gap-2">
+            <div class="flex-1 min-w-0"><ServerAddField /></div>
+            <button type="button" class="window-icon-button"
+              aria-label={t("settings.servers.addSsh")} title={t("settings.servers.addSsh")}
+              onClick={() => { if (manageable()) setDialog({ initial: { name: "", baseUrl: "", skipTlsVerify: false } }) }}>
+              <Terminal class="w-4 h-4" aria-hidden="true" />
+            </button>
+          </div></Show>
           <Show when={error()}>{key => <p class="server-add-field-error" role="alert">{t(key())}</p>}</Show>
           <Show when={remoteServers().length > 0} fallback={<div class="settings-card-message">{t("folderSelection.servers.empty.title")}</div>}>
             <For each={remoteServers()}>{server => (
@@ -66,7 +70,7 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
                   <button type="button" class="selector-button selector-button-secondary w-auto" disabled={!props.onSelectServer || !usable()}
-                    aria-label={`${t("settings.servers.open")}: ${displayName(server)}`} title={`${t("settings.servers.open")}: ${displayName(server)}`} onClick={() => open(server)}><ExternalLink class="w-4 h-4" /></button>
+                    aria-label={`${t("settings.servers.open")}: ${displayName(server)}`} title={`${t("settings.servers.open")}: ${displayName(server)}`} onClick={() => void open(server)}><ExternalLink class="w-4 h-4" /></button>
                   <Show when={manageable()}><button type="button" class="selector-button selector-button-secondary w-auto"
                     aria-label={`${t("folderSelection.remoteProject.edit")}: ${displayName(server)}`} title={`${t("folderSelection.remoteProject.edit")}: ${displayName(server)}`}
                     onClick={() => { if (manageable()) setDialog({ initial: { id: server.id, name: displayName(server), baseUrl: server.baseUrl, skipTlsVerify: server.skipTlsVerify,

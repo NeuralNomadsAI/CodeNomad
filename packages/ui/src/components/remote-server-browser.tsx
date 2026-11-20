@@ -1,5 +1,4 @@
-import { Dialog } from "@kobalte/core/dialog"
-import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js"
+import { For, Show, createSignal, onCleanup, onMount } from "solid-js"
 import { ArrowLeft, ArrowRight, ArrowUp, Folder, Loader2, Server } from "lucide-solid"
 import type { RemoteServerBrowseResponse, RemoteServerProfile } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
@@ -7,32 +6,34 @@ import { useI18n } from "../lib/i18n"
 import { qualifiedServerDisplayName } from "../lib/codenomad-link"
 import { supportsPairingLink } from "../lib/remote-pairing-link"
 import { useConfig } from "../stores/preferences"
-import { closeRemoteServer, openRemoteProject, openRemoteProjectForProfile, remoteServerSelection, selectedRemoteProfile } from "../stores/remote-project-open"
+import { openRemoteProjectForProfile } from "../stores/remote-project-open"
 import { backendRegistry } from "../stores/remote-backends"
 import { backends } from "../lib/backend-client"
 import { remoteServerErrorKey, RemoteServerProbeError } from "../lib/hooks/use-remote-server-profiles"
 import { captureRequestFocus } from "../lib/request-focus"
 import ServerAddField from "./server-add-field"
 import RemoteServerSignin from "./remote-server-signin"
-import WindowCloseButton from "./window-close-button"
 import { secretEntryAllowed } from "../lib/server-meta"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { latestRemoteProjectPath, type RemoteRecentProject } from "../stores/recent-projects"
+import { appTabSelectionRevision } from "../stores/app-tabs"
 
 /** Saved-server folder navigation with ordinary project tabs (#1236). */
 export function RemoteServerBrowser(props: {
   profile: RemoteServerProfile
   recent?: RemoteRecentProject
   active?: boolean
-  onBack?: () => void
-  onOpened?: () => void
-  onListing?: (listing: RemoteServerBrowseResponse) => void
+  onBack: () => void
+  onOpened?: (instanceId: string) => void
+  onListing?: (listing: RemoteServerBrowseResponse | undefined) => void
+  onConnectionRequired?: () => void
 }) {
   const { t } = useI18n()
   const { remoteServers } = useConfig()
   const [result, setResult] = createSignal<RemoteServerBrowseResponse>()
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
+  const [signInError, setSignInError] = createSignal("")
   const [path, setPath] = createSignal("")
   let root!: HTMLDivElement
   let controller: AbortController | undefined
@@ -64,20 +65,25 @@ export function RemoteServerBrowser(props: {
   }
   function showFailure(failure: unknown, mayFocus?: () => boolean) {
     setError(failure instanceof Error ? failure.message : "unreachable")
-    if (needsCredentials()) queueMicrotask(() => {
-      if (!opening.signal.aborted && props.active !== false && (mayFocus?.() ?? true)) {
-        root.querySelector<HTMLElement>(pairing() ? "[data-server-add-field]" : 'input[type="password"]')?.focus()
-      }
-    })
+    if (needsCredentials()) {
+      props.onListing?.(undefined)
+      props.onConnectionRequired?.()
+      queueMicrotask(() => {
+        if (!opening.signal.aborted && props.active !== false && (mayFocus?.() ?? true)) {
+          root.querySelector<HTMLElement>(password() ? "[data-remote-password]" : "[data-server-add-field]")?.focus()
+        }
+      })
+    } else if (error() !== "path_unavailable") props.onListing?.(undefined)
   }
   async function connect(credentials: { username: string; password: string }) {
     if (busy()) return
     setBusy(true)
+    setSignInError("")
     try {
-      if (!secretEntryAllowed()) { setError("secret_entry_forbidden"); return }
+      if (!secretEntryAllowed()) { setSignInError("remoteBrowse.secretEntryForbidden"); return }
       await serverApi.connectRemoteServer(props.profile.id, credentials, opening.signal)
       await connected()
-    } catch (failure) { if (!opening.signal.aborted) setError(failure instanceof Error ? failure.message : "unreachable") }
+    } catch (failure) { if (!opening.signal.aborted) setSignInError(remoteServerErrorKey(failure)) }
     finally { if (!opening.signal.aborted) setBusy(false) }
   }
   async function connected() {
@@ -93,13 +99,14 @@ export function RemoteServerBrowser(props: {
   async function open(folder = path()) {
     if (busy() || !folder.trim()) return
     const focus = captureRequestFocus()
+    const revision = appTabSelectionRevision()
     setPendingOpen(folder)
     setBusy(true); setError("")
     try {
-      const opened = props.onBack
-        ? await openRemoteProjectForProfile(props.profile, folder.trim(), opening.signal, { projectName: props.recent?.projectName })
-        : await openRemoteProject(folder.trim(), opening.signal)
-      if (opened) props.onOpened?.()
+      await openRemoteProjectForProfile(props.profile, folder.trim(), opening.signal, {
+        projectName: props.recent?.projectName, current: () => props.active !== false && revision === appTabSelectionRevision(),
+        onOpened: props.onOpened,
+      })
     }
     catch (failure) { if (!opening.signal.aborted) showFailure(failure, focus.retained) }
     finally { focus.dispose(); if (!opening.signal.aborted) setBusy(false) }
@@ -112,44 +119,36 @@ export function RemoteServerBrowser(props: {
       if (opening.signal.aborted) return
       if (pendingOpen()) { setBusy(false); await open(pendingOpen()) }
       else await browse(requestedPath())
-    } catch (failure) { if (!opening.signal.aborted) setError(failure instanceof Error ? failure.message : "unreachable") }
+    } catch (failure) { if (!opening.signal.aborted) showFailure(failure) }
     finally { if (!opening.signal.aborted) setBusy(false) }
   }
   onMount(() => {
-    if (props.onBack && props.active !== false) root.querySelector<HTMLElement>("[data-remote-back]")?.focus()
+    if (props.active !== false) root.querySelector<HTMLElement>("[data-remote-back]")?.focus()
     if (props.recent) void open(props.recent.path)
-    else void browse(props.onBack ? latestRemoteProjectPath(props.profile) : undefined)
+    else void browse(latestRemoteProjectPath(props.profile))
   })
   onCleanup(() => { ++generation; controller?.abort(); opening.abort() })
   return <div ref={root} class="remote-server-browser" aria-busy={busy()}>
-    <Show when={props.onBack} fallback={<header class="window-header">
-      <Server class="w-4 h-4 shrink-0" aria-hidden="true" />
-      <Dialog.Title class="window-title flex-1 min-w-0 truncate"><bdi>{name()}</bdi></Dialog.Title>
-      <WindowCloseButton onClose={closeRemoteServer} />
-    </header>}>
       <div class="remote-server-navigation">
         <button type="button" class="window-icon-button" data-browse-nav data-remote-back onClick={props.onBack} aria-label={t("remoteBrowse.back")} title={t("remoteBrowse.back")}>
           <ArrowLeft class="w-4 h-4" aria-hidden="true" />
         </button>
         <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
-        <bdi class="browse-menu-name" dir="auto">{name()}</bdi>
+        <bdi class="browse-menu-name" dir="auto" tabIndex={0} title={name()}>{name()}</bdi>
         <SettingsInfoTip text={`${name()} — ${props.profile.baseUrl}`} />
       </div>
-    </Show>
-    <div class={props.onBack ? undefined : "window-body"}>
       <Show when={pairing()}>
         <p role="alert" class="server-add-field-error">{t("remoteBrowse.pairAgain", { name: name() })}</p>
         <ServerAddField pairingProfile={props.profile} navAttribute="data-browse-nav" onAdded={() => void connected()} />
       </Show>
       <Show when={password()}>
-        <RemoteServerSignin busy={busy()} onConnect={credentials => void connect(credentials)} />
+        <RemoteServerSignin busy={busy()} error={signInError()} onConnect={credentials => void connect(credentials)} />
       </Show>
-      <Show when={error() && error() !== "needs_credentials" && !pairing()}><p role="alert" class="server-add-field-error">{t(error() === "refused" || error().endsWith(": 426")
-        ? "remoteBrowse.incompatible" : error() === "unauthorized" ? "authRecovery.credentials"
+      <Show when={error() && !needsCredentials()}><p role="alert" class="server-add-field-error">{t(error() === "refused"
+        ? "remoteBrowse.incompatible"
           : remoteServerErrorKey(new RemoteServerProbeError(error())))}</p>
-        <Show when={!needsCredentials()}><button type="button" class="browse-menu-row" data-browse-nav disabled={busy()} onClick={() => void retry()}>{t("filesystemBrowser.actions.retry")}</button>
+        <button type="button" class="browse-menu-row" data-browse-nav disabled={busy()} onClick={() => void retry()}>{t("filesystemBrowser.actions.retry")}</button>
           <Show when={error() === "path_unavailable"}><button type="button" class="browse-menu-row" data-browse-nav disabled={busy()} onClick={() => void browse()}>{t("remoteBrowse.serverRoot")}</button></Show>
-        </Show>
       </Show>
       <Show when={busy()}><Loader2 class="w-4 h-4 animate-spin" aria-label={t("authRecovery.pending")} /></Show>
       <Show when={result() && !error()}>
@@ -171,26 +170,6 @@ export function RemoteServerBrowser(props: {
             <Folder class="w-4 h-4 shrink-0" /><bdi class="browse-menu-name">{entry.name}</bdi>
           </button>
         }</For>
-        <Show when={!props.onBack}><h3 class="window-title">{t("folderSelection.recent.title")}</h3>
-        <For each={result()?.recents}>{recent =>
-          <button type="button" class="browse-menu-row" disabled={busy()} title={recent.path} onClick={() => void open(recent.path)}>
-            <ArrowLeft class="w-4 h-4 shrink-0" /><bdi class="truncate">{recent.projectName || recent.path}</bdi>
-          </button>
-        }</For></Show>
       </Show>
-    </div>
   </div>
-}
-
-export default function RemoteServerProjectDialog(props: { onOpened?: () => void }) {
-  createEffect(() => { if (remoteServerSelection() && !selectedRemoteProfile()) closeRemoteServer() })
-  return <Show when={selectedRemoteProfile()} keyed>{profile =>
-    <Dialog open onOpenChange={open => { if (!open) closeRemoteServer() }}>
-      <Dialog.Portal><Dialog.Overlay class="modal-overlay" />
-        <Dialog.Content class="modal-surface window-shell remote-server-project-window">
-          <RemoteServerBrowser profile={profile} onOpened={props.onOpened} />
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog>
-  }</Show>
 }

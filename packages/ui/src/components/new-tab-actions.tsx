@@ -2,7 +2,6 @@ import { Show } from "solid-js"
 import { GitBranch, Globe, Hourglass } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { openSettingsRow } from "../stores/settings-screen"
-import { localRequest } from "../lib/server-meta"
 
 interface NewTabActionsProps {
   isLoading: boolean
@@ -32,7 +31,7 @@ export default function NewTabActions(props: NewTabActionsProps) {
       <Show when={props.blank}><Temporary /></Show>
       <Action label={t(props.blank ? "folderSelection.clone.dialog.clone" : "folderSelection.clone.button")} title={t("folderSelection.clone.button")} icon={GitBranch} onClick={props.onClone} />
       <Show when={!props.blank}><Temporary /></Show>
-      <Show when={!props.hideSidecar && localRequest()}>
+      <Show when={!props.hideSidecar}>
         <Action label={t("folderSelection.newSidecar")} icon={Globe} onClick={() => void openSettingsRow("sidecars", "sidecar-add")} />
       </Show>
     </>

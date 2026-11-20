@@ -4,6 +4,7 @@ import { appTabs, selectAppTab } from "../stores/app-tabs"
 import { findOpenProjectTab, selectOpenProjectTab } from "../stores/remote-project-open"
 import { recentProjects, type RecentProject } from "../stores/recent-projects"
 import { sidecarTabs, sidecars } from "../stores/sidecars"
+import { preferencesForBackend } from "../stores/preferences"
 import { createMemo } from "solid-js"
 import { sidecarsAllowed } from "./server-meta"
 
@@ -13,12 +14,15 @@ export type LaunchableRecent = RecentProject | {
 
 export const launchableRecents = createMemo<readonly LaunchableRecent[]>(() => {
   const seen = new Set<string>()
-  const openedSidecars = (sidecarsAllowed() ? sidecarTabs().slice().reverse() : []).flatMap(tab => {
-    if (seen.has(tab.sidecarId) || sidecars().get(tab.sidecarId)?.status !== "running") return []
-    seen.add(tab.sidecarId)
-    return [{ kind: "sidecar" as const, key: `sidecar:${tab.sidecarId}`, path: tab.sidecarId, projectName: tab.name,
-      lastAccessed: parseInt(tab.token.split(":").at(-2) ?? "", 36) || 0 }]
-  })
+  const openedSidecars = sidecarsAllowed() ? [
+    ...preferencesForBackend("local").sidecarRecents(),
+    ...sidecarTabs().slice().reverse().map(tab => [tab.sidecarId, parseInt(tab.token.split(":").at(-2) ?? "", 36) || 0] as const),
+  ].flatMap(([id, lastAccessed]) => {
+    const sidecar = sidecars().get(id)
+    if (seen.has(id) || sidecar?.status !== "running") return []
+    seen.add(id)
+    return [{ kind: "sidecar" as const, key: `sidecar:${id}`, path: id, projectName: sidecar.name, lastAccessed }]
+  }) : []
   return [...recentProjects(), ...openedSidecars].sort((a, b) => b.lastAccessed - a.lastAccessed)
 })
 

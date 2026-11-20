@@ -48,6 +48,8 @@ La fenêtre Preferences ne possède pas d’état de restauration séparé : ces
 
 Les clients navigateur et distants utilisent les paramètres intégrés.
 
+Un onglet distant indisponible reste en place avec ses brouillons. Sélectionnez-le pour réessayer ou vous connecter.
+
 ## Profils de données de bureau {#data-profiles}
 
 1. Dans les paramètres natifs **Paramètres → Général**, sous **Restaurer l’état précédent**, dépliez **Profil de données**. Il liste tous les profils de cet ordinateur avec leur taille, leur date de création et leur dernière utilisation, le profil ouvert en premier.

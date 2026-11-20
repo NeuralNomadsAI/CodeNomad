@@ -29,7 +29,7 @@ Ersteinrichtung wird nur vom eigenen Loopback-Listener des Hosts angenommen, nic
 
 ## Browsersitzungen und Widerruf {#sessions}
 
-Direkte Anmeldung erzeugt eine undurchsichtige Backend-Sitzung im Arbeitsspeicher und ein `codenomad_session`-Cookie (oder den konfigurierten Cookie-Namen). Cookies sind `HttpOnly`, `SameSite=Lax`, auf `/` begrenzt und bei Ausgabe über HTTPS als `Secure` markiert. Es sind Browsersitzungs-Cookies; ein Backend-Neustart macht die Sitzungen im Speicher ungültig. Authentifizieren Sie sich bei Aufforderung an Ort und Stelle neu, statt fehlgeschlagene Änderungen erneut zu senden.
+Direkte Anmeldung erzeugt eine undurchsichtige Backend-Sitzung im Arbeitsspeicher und ein `codenomad_session`-Cookie (oder den konfigurierten Cookie-Namen). Cookies sind `HttpOnly`, `SameSite=Lax`, auf `/` begrenzt und bei Ausgabe über HTTPS als `Secure` markiert. Das Cookie bleibt auch nach einem Browser-Neustart sieben Tage gespeichert; ein Backend-Neustart macht die Sitzungen im Speicher ungültig. Authentifizieren Sie sich bei Aufforderung an Ort und Stelle neu, statt fehlgeschlagene Änderungen erneut zu senden.
 
 Abmelden widerruft die aktuelle direkte Sitzung. Ein erfolgreicher Passwortwechsel auf dem Host widerruft alle direkten Sitzungen dieses Benutzers einschließlich der aufrufenden Sitzung; melden Sie sich erneut an. Sitzungen laufen nach 24 Stunden ohne authentifizierte Anfrage oder sieben Tagen seit Erstellung ab. Passen Sie diese Grenzen vor dem Backend-Start mit `CODENOMAD_SESSION_IDLE_SECONDS` und `CODENOMAD_SESSION_ABSOLUTE_SECONDS` als positive ganze Sekunden an. Fernsteuerungsgeräte werden separat widerrufen.
 

@@ -209,6 +209,7 @@ interface UiStateBucket {
   colorSchemePresets?: unknown
   activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
+  sidecarRecents?: Record<string, number>
   remoteProjectRecents?: unknown
   remoteProjectHistory?: unknown
   /** The folder the last clone was created in, where the next clone is suggested. */
@@ -741,6 +742,15 @@ const uiState: Accessor<NormalizedUiState> = createMemo<NormalizedUiState>(() =>
 
 const preferences = uiSettings
 const recentFolders: Accessor<RecentFolder[]> = createMemo<RecentFolder[]>(() => uiState().recentFolders)
+const sidecarRecents = createMemo(() => Object.entries(uiStateBucket().sidecarRecents ?? {})
+  .filter((entry): entry is [string, number] => Number.isFinite(entry[1]))
+  .sort((a, b) => b[1] - a[1]))
+function recordSidecarRecent(id: string): void {
+  const overflow = sidecarRecents().filter(([key]) => key !== id).slice(MAX_RECENT_FOLDERS - 1)
+  const patch = Object.fromEntries(overflow.map(([key]) => [key, null] as const))
+  void patchStateOwner("ui", { sidecarRecents: { ...patch, [id]: Date.now() } })
+    .catch(error => log.warn("Failed to record recent SideCar", error))
+}
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
 const remoteServers: Accessor<RemoteServerProfile[]> = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
 
@@ -1365,7 +1375,6 @@ async function removeRemoteServerProfile(id: string): Promise<void> {
 
 function removeRemoteServerProfileAsync(id: string, current: () => boolean, beforeRemove?: () => Promise<void>): Promise<void> {
   return queueRemoteServerEdit(current, async () => {
-    if (preferences().multiBackend === true && !await (await import("./remote-server-usage")).confirmRemoteServerChange(id)) return
     if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
     await beforeRemove?.()
     await patchStateOwner("ui", { remoteServers: remoteServers().filter(entry => entry.id !== id) }, current)
@@ -1751,7 +1760,7 @@ function subscribe() {
       unsubStateUi()
     }
 }
-return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, remoteProjectHistory, editRemoteProjectRecents, patchHotkeyPreferences, setUpdateFeed, setSidecarsOverDirectHttps, subscribe, ensureEditDocument,
+return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, sidecarRecents, recordSidecarRecent, remoteProjectHistory, editRemoteProjectRecents, patchHotkeyPreferences, setUpdateFeed, setSidecarsOverDirectHttps, subscribe, ensureEditDocument,
   settleStateWrite: async () => { await Promise.all([favoritesOnlyWriteQueue, cloneParentSaves]); await stateWrite } }
 }
 

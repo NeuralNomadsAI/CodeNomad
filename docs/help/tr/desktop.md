@@ -48,6 +48,8 @@ Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: bu kontroller, Ter
 
 Tarayıcı ve uzak istemciler gömülü ayarları kullanır.
 
+Erişilemeyen uzak sekme taslaklarıyla birlikte yerinde kalır. Yeniden denemek veya oturum açmak için sekmeyi seçin.
+
 ## Masaüstü veri profilleri {#data-profiles}
 
 1. Yerel **Ayarlar → Genel** bölümünde, **Önceki durumu geri yükle** altında **Veri profili** öğesini genişletin. Bu bilgisayardaki tüm profiller boyutu, oluşturulma tarihi ve son kullanımıyla listelenir; açık olan en baştadır.

@@ -6,7 +6,6 @@ import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
 import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
-import RemoteServerProjectDialog from "./components/remote-server-browser"
 import { selectRemoteServer } from "./stores/remote-project-open"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
@@ -55,7 +54,7 @@ import {
   showFolderSelection,
   setShowFolderSelection,
 } from "./stores/ui"
-import { recentFolders, useConfig } from "./stores/preferences"
+import { preferencesForBackend, recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
   instances,
@@ -625,6 +624,7 @@ const App: Component = () => {
       selectSidecarTab(tab.token)
       replaceBlankTab(blankId ?? undefined, getSidecarAppTabId(tab.token))
       setShowFolderSelection(false)
+      preferencesForBackend("local").recordSidecarRecent(sidecarId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       showAlertDialog(message, {
@@ -895,17 +895,13 @@ const App: Component = () => {
                       data-tab-visible={isVisible() ? "true" : "false"}
                     >
                       {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : tab.kind === "remote-restore" ? <RemoteRestoreView tab={tab} /> :
-                        <FolderSelectionView blank active={isVisible()} isLoading={isSelectingFolder()}
+                        <FolderSelectionView blank initialServer={tab.server} active={isVisible()} isLoading={isSelectingFolder()}
                           onSelectFolder={path => void handleSelectFolder(path, tab.id)}
                           onSelectExistingInstance={handleSelectExistingInstance}
                           onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)}
                           onOpenSidecar={id => void handleOpenSidecar(id, tab.id)}
                           onJoined={() => closeBlankTab(tab.id)}
-                          onRemoteOpened={() => {
-                            const chosen = activeAppTab()
-                            if (chosen?.kind === "remote-restore") closeBlankTab(tab.id)
-                            else if (chosen) replaceBlankTab(tab.id, chosen.id)
-                          }} />}
+                          onRemoteOpened={id => replaceBlankTab(tab.id, `instance:${id}`)} />}
                     </div>
                   )
                 }}
@@ -955,7 +951,6 @@ const App: Component = () => {
           onNewTemporary={() => void handleNewTemporaryInstance(null)}
           onOpenSidecar={id => void handleOpenSidecar(id, null)}
         />
-        <RemoteServerProjectDialog onOpened={() => setShowFolderSelection(false)} />
         <SettingsScreen />
         <AlertDialog />
         <SessionPreviewHost />

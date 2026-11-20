@@ -13,6 +13,8 @@ El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo 
 
 En otro CodeNomad de escritorio, pega el enlace de emparejamiento en **Configuración → Servidores → Dirección o enlace del servidor**. El campo se vacía antes de la solicitud; solo se guarda el origen. El backend local conserva su identidad privada de dispositivo entre inicios. **Eliminar servidor guardado** olvida primero la conexión de ese perfil. La vinculación verifica TLS y no abre un proyecto.
 
+Para volver a vincularlo, pega el nuevo enlace en el formulario de conexión del servidor o del proyecto.
+
 ## Emparejar por HTTPS directo {#direct-https}
 
 Cuando el túnel está bloqueado pero el backend es accesible por HTTPS de confianza, por ejemplo tras un proxy inverso con un certificado real, los dispositivos pueden emparejarse en esa dirección. Se admiten las direcciones HTTPS propias de este backend y los orígenes HTTPS de `CODENOMAD_ALLOWED_ORIGINS` (consulta [Actualizar](remote-access.md#upgrading)); los nombres de bucle local y HTTP sin cifrar nunca emparejan. No hace falta iniciar el control remoto.

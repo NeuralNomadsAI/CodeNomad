@@ -16,6 +16,8 @@ Le clonage écrit un dépôt dans la destination. **Supprimer d'abord le dossier
 
 Les récents sont des raccourcis. Les boutons en ligne sur l'accueil et le menu d'actions des onglets vides proposent **Renommer l'espace de travail** et **Retirer des récents** selon l'entrée ; retirer conserve fichiers et conversations. Partout, accueil, onglet vide et lanceur rapide, cliquer sur un projet local, distant ou un SideCar crée une nouvelle occurrence, même déjà ouvert. L'action séparée **Ouvert** (**Basculer vers le projet ouvert**) rejoint l'occurrence existante.
 
+L’action **Ouvert** sélectionne aussi un onglet qui attend son serveur et ferme l’onglet vide de départ.
+
 ## Utiliser le lanceur de nouvelle instance {#new-instance-launcher}
 
 L'ouverture place le focus sur le menu ; Tab ou un clic permet d'accéder à la recherche. Les flèches parcourent les récents ; Échap ferme le menu.

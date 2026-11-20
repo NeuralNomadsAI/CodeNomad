@@ -276,6 +276,9 @@ Control administrator policy unchanged.
 
 ## Direct listener origins and password sessions
 
+The password session cookie persists for seven days across browser restarts.
+The backend enforces idle and absolute deadlines and revokes the session on sign-out.
+
 The direct listener grants credentialed CORS to its advertised local and remote
 origins, reachable interface addresses and explicit `CODENOMAD_ALLOWED_ORIGINS`.
 This environment variable is a comma-separated list of exact HTTP(S) origins,

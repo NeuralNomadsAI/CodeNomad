@@ -2,6 +2,7 @@ import { Component, createMemo, createSignal, createUniqueId, Show, For, onMount
 import { Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Pencil, Laptop, Server } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import type { RemoteServerBrowseResponse, RemoteServerProfile } from "../../../server/src/api-types"
+import type { ServerSelectionIntent } from "../lib/native/server-selection-intent"
 import { qualifiedServerDisplayName } from "../lib/codenomad-link"
 import { captureRequestFocus } from "../lib/request-focus"
 import BrowseMenu, { createBrowseEntryCount } from "./browse-menu"
@@ -43,10 +44,11 @@ interface FolderSelectionViewProps {
   isLoading?: boolean
   onClose?: () => void
   blank?: boolean
+  initialServer?: ServerSelectionIntent
   active?: boolean
   onOpenSidecar?: (id: string) => void
   onJoined?: () => void
-  onRemoteOpened?: () => void
+  onRemoteOpened?: (instanceId: string) => void
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
@@ -54,7 +56,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const { t, locale } = useI18n()
   const [remoteSource, setRemoteSource] = createSignal<{ profile: RemoteServerProfile; listing?: RemoteServerBrowseResponse }>()
   const browseEntryCount = createBrowseEntryCount()
-  const browseCount = () => remoteSource() ? remoteSource()?.listing?.listing.entries.length : browseEntryCount()
   const viewId = createUniqueId()
   const tabId = (tab: string) => `folder-home-tab-${viewId}-${tab}`
   const panelId = (tab: string) => `folder-home-panel-${viewId}-${tab}`
@@ -488,7 +489,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                             type="button"
                             role="tab"
                             aria-label={t(tab === "recent" ? "newInstanceLauncher.recentTitle" : "folderSelection.browseMenu.title")}
-                            aria-description={tab === "recent" && recentsAvailable() ? t(allRecents().length === 1 ? "newTab.items.one" : "newTab.items.other", { count: allRecents().length }) : undefined}
+                            aria-description={tab === "recent" && !recentsAvailable() ? undefined : t((tab === "recent" ? allRecents().length : browseEntryCount()) === 1 ? "newTab.items.one" : "newTab.items.other", { count: tab === "recent" ? allRecents().length : browseEntryCount() })}
                             id={tabId(tab)}
                             data-home-tab={tab}
                             aria-selected={homeTab() === tab}
@@ -502,7 +503,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                             <div class="flex items-center justify-between gap-2 min-w-0"><div class="shrink-0"><span class="panel-title text-base" style={{ color: homeTab() === tab ? "var(--text-primary)" : "var(--text-secondary)" }}>
                               {t(tab === "recent" ? "newInstanceLauncher.recentTitle" : "folderSelection.browseMenu.title")}
                             </span>
-                            <Show when={tab === "recent" ? recentsAvailable() : browseCount() !== undefined}><EntryCount count={tab === "recent" ? allRecents().length : browseCount()!} /></Show>
+                            <Show when={tab !== "recent" || recentsAvailable()}><EntryCount count={tab === "recent" ? allRecents().length : browseEntryCount()} /></Show>
                             </div><Show when={tab === "recent"}><RecentSource /></Show></div>
                           </button>
                         )}
@@ -669,7 +670,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                               </div>}>
                                 {target => <RemoteRecentSession recent={target} active={props.active !== false}
                                   onBack={() => { setConnectingRecent(undefined); queueMicrotask(() => scrollToIndex(index())) }}
-                                  onOpened={() => { setConnectingRecent(undefined); props.onRemoteOpened?.() }} />}
+                                  onOpened={id => { setConnectingRecent(undefined); props.onRemoteOpened?.(id) }} />}
                               </Show>
                             </div>
                           }}
@@ -684,8 +685,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
               <Show when={props.blank}>
                 <div class="folder-dashboard-servers panel window-shell flex flex-col min-w-0">
-                  <header class="panel-header !px-4 !py-3"><h2 class="panel-title text-base">{t("folderSelection.browseMenu.title")}</h2><Show when={browseCount() !== undefined}><EntryCount count={browseCount()!} /></Show></header>
-                  <BrowseMenu isLoading={isLoading()} active={props.active !== false} onSourceChange={setRemoteSource} onBrowseLocal={() => void handleBrowse()} pinAddField
+                  <header class="panel-header !px-4 !py-3"><h2 class="panel-title text-base">{t("folderSelection.browseMenu.title")}</h2><EntryCount count={browseEntryCount()} /></header>
+                  <BrowseMenu initialServer={props.initialServer} isLoading={isLoading()} active={props.active !== false} onSourceChange={setRemoteSource} onBrowseLocal={() => void handleBrowse()} pinAddField
                     onOpenSidecar={id => props.onOpenSidecar?.(id)} onJoined={props.onJoined} onRemoteOpened={props.onRemoteOpened} />
                 </div>
               </Show>

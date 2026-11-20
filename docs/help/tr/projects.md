@@ -16,6 +16,8 @@ Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın
 
 Son kullanılanlar kısayoldur. Ana sayfanın satır içi düğmeleri ve boş sekmelerin eylem menüsü uygun olduğunda **Workspace'i yeniden adlandır** ve **Son kullanılanlardan kaldır** sunar; dosyalar ve konuşmalar korunur. Ana sayfa, boş sekme ve hızlı başlatıcıda yerel/uzak proje veya SideCar satırına tıklamak, zaten açık olsa da yeni bir örnek oluşturur. Ayrı **Aç** eylemi (**Açık projeye geç**) mevcut örneği seçer.
 
+Açık sekmeye geçme eylemi sunucusunu bekleyen sekmeyi de seçer ve başlangıçtaki boş sekmeyi kapatır.
+
 ## Yeni örnek başlatıcıyı kullanın {#new-instance-launcher}
 
 Açılışta odak menüdedir. Tab veya tıklama ile aramaya geçilir. Ok tuşları son öğelerde gezinir; Escape menüyü kapatır.

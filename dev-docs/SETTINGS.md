@@ -19,7 +19,7 @@
 
 - `openSettingsConfigFile(id)` opens Configuration files and selects only an ID present in the editor's server catalogue. It shares `openSettingsRow`'s short-lived same-origin hint with native Preferences on Electron and Tauri. A reopened editor preserves its dirty-discard confirmation; unavailable IDs preserve the current file. The editor consumes each target once and focuses its file selector.
 
-- Multi-backend profile removal and URL/TLS/SSH target edits use `confirmRemoteServerChange`: refuse known tabs/drafts or occupied/unavailable remote inventory, then confirm the connection change for saved tabs in other windows. Rename preserves the connection. Profile operations retain their asynchronous result so callers can display a refused change.
+- Servers opens a new tab with the chosen server selected in Browse. Removing a profile confirms once, forgets its connection and keeps the open tabs. URL/TLS/SSH target edits use `confirmRemoteServerChange`: check tabs, drafts and remote inventory, then confirm the connection change for saved tabs in other windows. Rename preserves the connection. Profile operation errors stay in Servers.
 
 - The usage check reserves the Preferences renderer's current native remote context, including an unavailable project, before remote IO and after the inventory read. Reopening Settings from another project releases that context; native context read failures refuse the change.
 

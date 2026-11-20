@@ -3,7 +3,7 @@ import { remoteRecentProjectsUsable, savedProjectProfile, type RemoteRecentProje
 import { RemoteServerBrowser } from "./remote-server-browser"
 
 export default function RemoteRecentSession(props: {
-  recent: RemoteRecentProject; active: boolean; onBack: () => void; onOpened: () => void
+  recent: RemoteRecentProject; active: boolean; onBack: () => void; onOpened: (instanceId: string) => void
 }) {
   const profile = () => remoteRecentProjectsUsable() && savedProjectProfile(props.recent.policy)
   createEffect(() => { if (!profile()) props.onBack() })

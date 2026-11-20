@@ -1,28 +1,22 @@
-import { createSignal } from "solid-js"
 import { normalizeServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
 import { backendIdOf } from "../lib/backend-identity"
 import type { BackendId } from "../lib/backend-transport"
 import { backendRegistry } from "./remote-backends"
 import { createInstance, instances, type WorkspaceCreationOwnership } from "./instances"
-import { activeAppTabId, appTabs, selectAppTab, selectInstanceTab, type InstanceAppTab } from "./app-tabs"
+import { activeAppTabId, appTabs, openBlankTab, selectAppTab, selectInstanceTab, type InstanceAppTab } from "./app-tabs"
 import { workspaceIdentity } from "./app-session-reconciliation"
 import type { RemoteRestoreTab } from "./remote-restore-tabs"
 import { closeSettings } from "./settings-screen"
+import { setShowFolderSelection } from "./ui"
 import { recordRemoteProjectLaunch, remoteRecentProjectsUsable, savedProjectProfile } from "./recent-projects"
 
-const [selection, setSelection] = createSignal<ServerSelectionIntent>()
-export const remoteServerSelection = selection
-export function selectedRemoteProfile(intent = selection()) {
-  return intent ? savedProjectProfile(intent) : undefined
-}
 export function selectRemoteServer(value: unknown): void {
   const intent = normalizeServerSelection(value)
-  if (!intent || !selectedRemoteProfile(intent)) throw new Error("Server selection changed")
-  // Same-policy reselection keeps the mounted browser's opening authority.
-  if (selectedRemoteProfile() !== selectedRemoteProfile(intent)) setSelection(intent)
+  if (!intent || !savedProjectProfile(intent)) throw new Error("Server selection changed")
   closeSettings()
+  openBlankTab(intent)
+  setShowFolderSelection(false)
 }
-export const closeRemoteServer = () => setSelection(undefined)
 
 /** Matches visible tab membership, never unselected backend inventory records. */
 export function findOpenProjectTab(path: string, backendId: BackendId, { includeLive = true } = {}): InstanceAppTab | RemoteRestoreTab | undefined {
@@ -45,7 +39,7 @@ export function selectOpenProjectTab(intent: ServerSelectionIntent, path: string
   return true
 }
 
-type OpenOptions = { focusExisting?: boolean; projectName?: string }
+type OpenOptions = { projectName?: string; current?: () => boolean; onOpened?: (instanceId: string) => void }
 
 /** Open with the caller's immutable policy and cancellation, without changing the server picker. */
 export function openRemoteProjectForProfile(profile: ServerSelectionIntent, path: string, signal: AbortSignal, options?: OpenOptions): Promise<boolean> {
@@ -54,31 +48,17 @@ export function openRemoteProjectForProfile(profile: ServerSelectionIntent, path
   return openCapturedRemoteProject(intent, path, signal, remoteRecentProjectsUsable, options)
 }
 
-export function openRemoteProject(path: string, signal: AbortSignal): Promise<boolean> {
-  const intent = selection()
-  const ownsSelection = () => selection() === intent
-  return openCapturedRemoteProject(intent, path, signal, ownsSelection, undefined, closeRemoteServer)
-}
-
 /** Caller cancellation belongs only to this opening, never another occurrence. */
 async function openCapturedRemoteProject(
   intent: ServerSelectionIntent | undefined, path: string, signal: AbortSignal, guard: () => boolean, options?: OpenOptions,
-  onOpened?: () => void,
 ): Promise<boolean> {
-  const current = () => !signal.aborted && guard() && !!selectedRemoteProfile(intent)
+  const current = () => !signal.aborted && guard() && (options?.current?.() ?? true) && !!intent && !!savedProjectProfile(intent)
   if (!intent || !current() || !path.trim()) throw new Error("Server selection changed")
-  const selectExisting = () => {
-    if (!selectOpenProjectTab(intent, path, options?.focusExisting === true, options?.projectName)) return false
-    if (current()) onOpened?.()
-    return true
-  }
-  if (selectExisting()) return true
   let client = await backendRegistry.ensure(intent.id)
   if (!current()) return false
   // Opening is an explicit demand: recover one superseded/failed initial inventory.
   if (client && backendRegistry.state(intent.id) === "unreachable") client = await backendRegistry.retryWorkspaces(intent.id)
   if (!current()) return false
-  if (selectExisting()) return true
   if (!client || backendRegistry.state(intent.id) !== "compatible") throw new Error(backendRegistry.state(intent.id))
   let creation: WorkspaceCreationOwnership | undefined
   let transferred = false
@@ -88,7 +68,7 @@ async function openCapturedRemoteProject(
     transferred = selectInstanceTab(result.instanceId, creation)
     if (!transferred) return false
     recordRemoteProjectLaunch(intent, instances().get(result.instanceId)?.folder ?? path, path, options?.projectName)
-    if (current()) onOpened?.()
+    options?.onOpened?.(result.instanceId)
     return true
   } finally {
     if (!transferred) await creation?.discard()

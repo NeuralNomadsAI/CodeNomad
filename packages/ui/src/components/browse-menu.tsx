@@ -4,24 +4,25 @@ import type { RemoteServerBrowseResponse, RemoteServerProfile, SideCar } from ".
 import { useI18n } from "../lib/i18n"
 import { qualifiedServerDisplayName } from "../lib/codenomad-link"
 import { withHotkey } from "../lib/hotkeys"
-import { sameServerSelection } from "../lib/native/server-selection-intent"
+import { sameServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
 import { getServerMeta, serversManageable, sidecarsAllowed } from "../lib/server-meta"
 import ServerAddField from "./server-add-field"
 import { RemoteServerBrowser } from "./remote-server-browser"
 import { useConfig } from "../stores/preferences"
-import { remoteRecentProjectsUsable } from "../stores/recent-projects"
+import { remoteRecentProjectsUsable, savedProjectProfile } from "../stores/recent-projects"
 import { ensureSidecarsLoaded, sidecars } from "../stores/sidecars"
 import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget, type LaunchableRecent } from "../lib/recent-open-target"
 
 interface BrowseMenuProps {
   isLoading: boolean
   active?: boolean
+  initialServer?: ServerSelectionIntent
   onSourceChange: (source: { profile: RemoteServerProfile; listing?: RemoteServerBrowseResponse } | undefined) => void
   /** Browses this computer's folders (native dialog or folder browser). */
   onBrowseLocal: () => void
   onOpenSidecar: (id: string) => void
   onJoined?: () => void
-  onRemoteOpened?: () => void
+  onRemoteOpened?: (instanceId: string) => void
   pinAddField?: boolean
 }
 
@@ -34,15 +35,17 @@ export function createBrowseEntryCount() {
 /**
  * Browse in the canonical project selector: this computer's folders, saved
  * CodeNomad servers, configured SideCars, then the inline server-add field.
- * Only host windows (never a web client, a Remote Control device or a remote
- * page) list or add servers.
  */
 export default function BrowseMenu(props: BrowseMenuProps) {
   const { t } = useI18n()
   const { remoteServers } = useConfig()
   const [selectedServer, setSelectedServer] = createSignal<RemoteServerProfile>()
-  const [pairingFailures, setPairingFailures] = createSignal<string[]>([])
-  onMount(() => void getServerMeta().catch(() => {}))
+  const [connectionFailures, setConnectionFailures] = createSignal<string[]>([])
+  onMount(() => {
+    void getServerMeta().catch(() => {})
+    const initial = props.initialServer && savedProjectProfile(props.initialServer)
+    if (initial) selectServer(initial)
+  })
   createEffect(() => {
     const selected = selectedServer()
     if (selected && (!remoteRecentProjectsUsable() || !remoteServers().some(profile => sameServerSelection(profile, selected)))) selectServer(undefined)
@@ -92,9 +95,9 @@ export default function BrowseMenu(props: BrowseMenuProps) {
   const sidecarRunning = (sidecar: SideCar) => sidecar.status === "running"
   const AddField = () => <Show when={remoteRecentProjectsUsable() && serversManageable() && !selectedServer()}>
     <ServerAddField navAttribute="data-browse-nav" disabled={props.isLoading}
-      onPairingFailure={(id) => setPairingFailures(ids => ids.includes(id) ? ids : [...ids, id])}
+      onPairingFailure={(id) => setConnectionFailures(ids => ids.includes(id) ? ids : [...ids, id])}
       onAdded={(id, mayFocus) => {
-        setPairingFailures(ids => ids.filter(value => value !== id))
+        setConnectionFailures(ids => ids.filter(value => value !== id))
         queueMicrotask(() => { if (props.active !== false && (mayFocus?.() ?? true)) bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id)}"]`)?.focus() })
       }} />
   </Show>
@@ -106,8 +109,9 @@ export default function BrowseMenu(props: BrowseMenuProps) {
             onListing={listing => {
               if (selectedServer() !== profile) return
               props.onSourceChange({ profile, listing })
-              setPairingFailures(ids => ids.filter(id => id !== profile.id))
-            }} onOpened={props.onRemoteOpened} />}</Show>
+              if (listing) setConnectionFailures(ids => ids.filter(id => id !== profile.id))
+            }} onConnectionRequired={() => setConnectionFailures(ids => ids.includes(profile.id) ? ids : [...ids, profile.id])}
+            onOpened={props.onRemoteOpened} />}</Show>
           <Show when={!selectedServer()}>
           <button type="button" class="browse-menu-row" data-browse-nav disabled={props.isLoading}
             title={withHotkey(t("folderSelection.browseMenu.thisComputer"), "browse-folder")}
@@ -122,7 +126,7 @@ export default function BrowseMenu(props: BrowseMenuProps) {
                 aria-label={t("folderSelection.remoteProject.openProject", { name: displayName(profile) })}>
                 <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
                 <bdi class="browse-menu-name" dir="auto">{displayName(profile)}</bdi>
-                <Show when={pairingFailures().includes(profile.id)}><span class="browse-menu-meta">{t("remoteBrowse.connectionRequired")}</span></Show>
+                <Show when={connectionFailures().includes(profile.id)}><span class="browse-menu-meta">{t("remoteBrowse.connectionRequired")}</span></Show>
               </button>
             )}
           </For>
@@ -138,7 +142,7 @@ export default function BrowseMenu(props: BrowseMenuProps) {
                 <span class="browse-menu-meta" data-status={sidecar.status}>{t(`sidecars.status.${sidecar.status}`)}</span>
               </button>
               <Show when={recentOpenTarget(recent)}>
-                <button type="button" class="window-action shrink-0" data-browse-nav disabled={props.isLoading}
+                <button type="button" class="folder-home-open-instance-button shrink-0" data-browse-nav disabled={props.isLoading}
                   aria-label={`${t("folderSelection.recent.switchToOpenProject")} · ${recentAccessibleName(recent)}`}
                   onClick={() => run(() => { if (joinRecentOpenTarget(recent, () => {})) props.onJoined?.() })}>
                   {t("folderSelection.recent.openBadge")}

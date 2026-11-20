@@ -48,6 +48,8 @@ The Preferences window does not own a separate restore state: these controls tar
 
 Browser and remote clients use embedded settings.
 
+An unavailable remote tab stays in place with its drafts. Select it to retry or sign in.
+
 ## Desktop data profiles {#data-profiles}
 
 1. In native **Settings → General**, under **Restore previous state**, unfold **Data profile**. It lists every profile on this computer with its size, creation date and last use, the open one first.

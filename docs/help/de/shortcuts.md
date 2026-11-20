@@ -73,3 +73,5 @@ Normale Browserfenster behalten ebenfalls ihre Browserkürzel. Erreicht eine Bel
 Kürzel der Ziffernreihe und eckigen Klammern verwenden physische Tastenpositionen für Aufzeichnen, Ausführen und Konfliktprüfung, auch bei AZERTY/QWERTZ. Andere Tasten verwenden logische Werte. Zeichnen Sie auf der vorgesehenen Tastatur auf und prüfen Sie das angezeigte Ergebnis.
 
 Während IME-Komposition hat Texteingabe Vorrang. Prompt-Verlauf und Escape-Aktionen hängen ebenfalls von Fokus, Auswahl-/Shell-Zustand und aktuellem Vorgang ab; nehmen Sie nicht an, dass jedes ArrowUp oder Escape bedingungslos global wirkt. Auf dem Desktop verschiebt Senden den Fokus in die Unterhaltung, sodass Pfeiltasten, Bildlauftasten und Leertaste sie scrollen; das Tippen eines Zeichens kehrt mit diesem Zeichen zum Eingabefeld zurück, und **Eingabe fokussieren** kehrt dorthin zurück, bevor Sie den Prompt-Verlauf nutzen.
+
+Im Schnellstarter führt Tab zur Suche, Pfeiltasten und Eingabe wählen den Eintrag, Escape kehrt zu `+` zurück.

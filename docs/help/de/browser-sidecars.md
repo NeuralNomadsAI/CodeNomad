@@ -68,6 +68,8 @@ Unter Electron und Windows-Tauri setzen Mobilvorlagen Android-/Chromium-Identit�
 3. Setzen Sie **Protokoll** passend zum Upstream-Dienst und wählen Sie **Präfix-Modus**.
 4. Wählen Sie **SideCar hinzufügen** und öffnen Sie ihn über **Durchsuchen** auf Startseite oder leerem Tab; danach erscheint er unter **Zuletzt verwendete Tabs** und in der Schnellstartersuche. **Neuer SideCar** in der linken Aktionsspalte der Startseite öffnet dieses Formular. Die SideCar-Auswahl erzeugt ein neues Vorkommen; die separate Aktion **Offen** wählt ein bestehendes ([Projekt-Tabs](projects.md#open-project)).
 
+Ein laufender SideCar bleibt nach dem Schließen seines Tabs in der Liste der letzten Tabs.
+
 | Auswahl | Exakte Wirkung |
 | --- | --- |
 | HTTPS (Formularstandard) | CodeNomad verbindet sich zum Upstream als `https://127.0.0.1:<port>`. |

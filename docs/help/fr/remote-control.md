@@ -13,6 +13,8 @@ Le lien est valable **cinq minutes** et réussit **une seule fois**. Traitez-le 
 
 Sur un autre CodeNomad de bureau, collez le lien d’appairage dans **Paramètres → Serveurs → Adresse ou lien du serveur**. Le champ est vidé avant la requête ; seule l’origine est enregistrée. Le backend local conserve son identité d’appareil privée entre les lancements ; **Supprimer le serveur enregistré** oublie la connexion de ce profil avant son retrait. L’appairage vérifie TLS et n’ouvre aucun projet.
 
+Pour refaire l’appairage, collez le nouveau lien dans le formulaire de connexion du serveur ou du projet.
+
 ## Appairer en HTTPS direct {#direct-https}
 
 Lorsque le tunnel est bloqué mais que le backend est joignable en HTTPS de confiance, par exemple derrière un proxy inverse doté d’un vrai certificat, les appareils peuvent s’appairer sur cette adresse. Les adresses admises sont les adresses HTTPS propres à ce backend et les origines HTTPS de `CODENOMAD_ALLOWED_ORIGINS` (voir [Mise à niveau](remote-access.md#upgrading)) ; les noms de boucle locale et le HTTP simple ne s’appairent jamais. Le Contrôle à distance n’a pas besoin d’être démarré.

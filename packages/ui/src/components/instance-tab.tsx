@@ -56,13 +56,14 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
         return null
     }
   })
-  const tabLabel = createMemo(() => getInstanceLabel(props.instance))
   const serverName = createMemo(() => {
     const id = backendIdOf(props.instance)
     if (id === "local") return
     const profile = remoteServers().find(p => p.id === id)
     return profile ? qualifiedServerDisplayName(profile, remoteServers()) : id
   })
+  const tabLabel = createMemo(() => getInstanceLabel(props.instance) || serverName() || "")
+  const remoteDetail = () => serverName() ? `${tabLabel()} · ${serverName()} · ${props.instance.folder}` : undefined
   const requestRename = () => props.onRename(tabLabel())
   // The menu restores focus to the tab when it closes; open the dialog after
   // that so the dialog keeps focus on its input.
@@ -84,7 +85,8 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             event.stopPropagation()
             requestRename()
           }}
-          title={serverName() ? `${tabLabel()} — ${serverName()}\n${props.instance.folder}` : props.instance.temporary ? t("instanceTab.temporary.title") : props.instance.folder}
+          title={remoteDetail() ?? (props.instance.temporary ? t("instanceTab.temporary.title") : props.instance.folder)}
+          aria-label={remoteDetail()}
           role="tab"
           aria-selected={props.active}
         >
@@ -94,7 +96,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             </Show>
           </Show>
           <span class="tab-label">
-            {tabLabel()}{serverName() ? ` — ${serverName()}` : ""}
+            {tabLabel()}
           </span>
           <Show when={statusClassName() && statusTitle()}>
             <span

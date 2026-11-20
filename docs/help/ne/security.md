@@ -29,7 +29,7 @@ bootstrap host कै loopback listener बाट मात्र स्वी�
 
 ## browser session र revocation {#sessions}
 
-direct sign-in ले opaque in-memory backend session र `codenomad_session` cookie (वा configured नाम) बनाउँछ। cookie `HttpOnly`, `SameSite=Lax`, `/` दायराका र HTTPS बाट जारी हुँदा `Secure` हुन्छन्। browser-session cookie हुन्; backend restart ले in-memory session अमान्य गर्छ। माग्दा असफल परिवर्तन फेरि पठाउनुको सट्टा त्यहीं reauthenticate गर्नुहोस्।
+direct sign-in ले opaque in-memory backend session र `codenomad_session` cookie (वा configured नाम) बनाउँछ। cookie `HttpOnly`, `SameSite=Lax`, `/` दायराका र HTTPS बाट जारी हुँदा `Secure` हुन्छन्। ब्राउजर फेरि खोल्दा पनि cookie सात दिनसम्म रहन्छ; backend restart ले in-memory session अमान्य गर्छ। माग्दा असफल परिवर्तन फेरि पठाउनुको सट्टा त्यहीं reauthenticate गर्नुहोस्।
 
 logout ले हालको direct session रद्द गर्छ। host मा password सफलतापूर्वक बदल्दा त्यस प्रयोगकर्ताका सबै direct session, हालको समेत, रद्द हुन्छन्; फेरि sign-in गर्नुहोस्। authenticated request नभएको 24 घण्टा वा सिर्जनादेखि सात दिनमा session म्याद सकिन्छ। सीमा बदल्न backend सुरु गर्नुअघि `CODENOMAD_SESSION_IDLE_SECONDS` र `CODENOMAD_SESSION_ABSOLUTE_SECONDS` धनात्मक पूर्णाङ्क सेकेन्डमा सेट गर्नुहोस्। Remote Control device छुट्टै रद्द गरिन्छन्।
 

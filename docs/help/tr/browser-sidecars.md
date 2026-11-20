@@ -68,6 +68,8 @@ Electron ve Windows Tauri'de mobil şablonlar Android/Chromium kimliğini, yöne
 3. **Protokol** öğesini yukarı akış hizmetiyle eşleşecek şekilde ayarlayın ve **Ön ek modu** öğesini seçin.
 4. **SideCar ekle** seçip ana sayfa veya boş sekmenin **Gözat** bölümünden açın; **Son sekmeler** ve hızlı başlatıcı aramasına katılır. Ana sayfanın sol eylem sütunundaki **Yeni SideCar** bu formu açar. SideCar seçmek yeni örnek oluşturur; ayrı **Aç** eylemi mevcut örneğe geçer ([proje sekmeleri](projects.md#open-project)).
 
+Çalışan SideCar, sekmesi kapatıldıktan sonra da son sekmeler listesinde kalır.
+
 | Seçim | Kesin etki |
 | --- | --- |
 | HTTPS (varsayılan biçim) | CodeNomad, `https://127.0.0.1:<port>` olarak yukarı akışa bağlanır. |

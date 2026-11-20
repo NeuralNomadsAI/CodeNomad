@@ -16,6 +16,8 @@ Cloning writes a repository to the destination. **Remove the destination folder 
 
 Recent entries are shortcuts. Home's inline controls and empty tabs' project-actions menu offer **Rename workspace** and **Remove from recent** where available; removal keeps files and conversations. Across Home, empty tabs and the quick launcher, clicking a local project, remote project or SideCar creates a new occurrence, even when already open. Its separate **Open** action (**Switch to open project**) selects the existing occurrence instead.
 
+The **Open** action also selects a tab waiting for its server and closes the originating empty tab.
+
 ## Use the new-instance launcher {#new-instance-launcher}
 
 Opening focuses the menu, leaving search available through Tab or a click. Arrow keys navigate recents; Escape closes the menu.

@@ -6,6 +6,8 @@ import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget, launchabl
 import RemoteRecentSession from "./remote-recent-session"
 import RecentTabIcon from "./recent-tab-icon"
 import { remoteRecentProjectsUsable } from "../stores/recent-projects"
+import { ensureSidecarsLoaded } from "../stores/sidecars"
+import { sidecarsAllowed } from "../lib/server-meta"
 
 /** The quick launcher's recent choices, with a separate action to join an open tab. */
 export default function RecentTabsMenu(props: {
@@ -31,6 +33,7 @@ export default function RecentTabsMenu(props: {
     setIndex(0)
     setKeyboardNavigation(false)
   }))
+  createEffect(() => { if (props.active && sidecarsAllowed()) void ensureSidecarsLoaded() })
   createEffect(on(matches, () => setIndex(0), { defer: true }))
   createEffect(() => { if (!remoteRecentProjectsUsable()) setConnectingRecent(undefined) })
   function open(recent: LaunchableRecent) {

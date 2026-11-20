@@ -21,6 +21,10 @@ import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
 import type { AppTabRecord } from "../stores/app-tabs"
 import type { BackendId } from "../lib/backend-transport"
+import { backendIdOf, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import { getInstanceLabel } from "../lib/instance-label"
+import { qualifiedServerDisplayName } from "../lib/codenomad-link"
+import { useConfig } from "../stores/preferences"
 
 interface InstanceTabsProps {
   tabs: AppTabRecord[]
@@ -44,6 +48,18 @@ interface SortableAppTabProps {
 
 const AppTabContent: Component<SortableAppTabProps> = (props) => {
   const { t } = useI18n()
+  const { remoteServers } = useConfig()
+  const snapshot = () => props.tab.kind === "remote-restore" ? props.tab.snapshot : undefined
+  const server = () => {
+    const saved = snapshot()
+    if (!saved) return
+    const id = backendIdOf(saved)
+    if (id === LOCAL_BACKEND_ID) return
+    const profile = remoteServers().find(entry => entry.id === id)
+    return profile ? qualifiedServerDisplayName(profile, remoteServers()) : id
+  }
+  const restoreLabel = () => getInstanceLabel(snapshot()!) || server()
+  const remoteDetail = () => server() ? `${restoreLabel()} · ${server()} · ${snapshot()!.folder}` : undefined
   return (
     <>
       {props.tab.kind === "instance" ? (
@@ -60,6 +76,8 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           role="tab"
           tabIndex={0}
           aria-selected={props.tab.id === props.activeTabId}
+          aria-label={remoteDetail()}
+          title={remoteDetail()}
           onClick={() => props.onSelect(props.tab.id)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return
@@ -68,9 +86,9 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           }}
         >
           <span class="tab-pill-button">
-            <Show when={props.tab.kind === "remote-restore"}><Server class="w-4 h-4 shrink-0" aria-hidden="true" /></Show>
+            <Show when={server()}><Server class="w-4 h-4 shrink-0" aria-hidden="true" /></Show>
             <span class="truncate max-w-[180px]">{props.tab.kind === "sidecar" ? props.tab.sidecarTab.name
-              : props.tab.kind === "blank" ? t("newTab.title") : props.tab.snapshot.projectName ?? props.tab.snapshot.folder}</span>
+              : props.tab.kind === "blank" ? t("newTab.title") : restoreLabel()}</span>
           </span>
           <button
             class="tab-pill-close"

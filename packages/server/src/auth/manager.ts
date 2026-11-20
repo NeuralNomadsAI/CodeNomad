@@ -164,11 +164,11 @@ export class AuthManager {
   }
 
   setSessionCookie(reply: FastifyReply, sessionId: string) {
-    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId))
+    this.setSessionCookieWithOptions(reply, sessionId)
   }
 
   setSessionCookieWithOptions(reply: FastifyReply, sessionId: string, options?: { secure?: boolean }) {
-    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId, options))
+    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId, { ...options, maxAgeSeconds: this.authEnabled ? 7 * 24 * 60 * 60 : undefined }))
   }
 
   clearSessionCookie(reply: FastifyReply) {
