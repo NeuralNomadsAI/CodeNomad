@@ -160,5 +160,10 @@ let retainedAction: any
     setShowSettings(true)
     await openSettings("missions")
   },
+  clearSelection: (owner: string) => setActiveSessionId(previous => {
+    const next = new Map(previous)
+    next.delete(`${owner}~same`)
+    return next
+  }),
   selected: () => ({ instance: activeInstanceId(), sessionA: activeSessionId().get("A~same"), sessionB: activeSessionId().get("B~same") }),
 }

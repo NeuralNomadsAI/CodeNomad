@@ -73,11 +73,11 @@ Les appareils appairés peuvent utiliser les API ordinaires de projet/conversati
 | Serveurs enregistrés et relais | Les clients distants authentifiés peuvent utiliser/gérer tous les serveurs enregistrés sur l’hôte si la fonction et ses capacités l’autorisent. Les nouveaux mots de passe/liens d’appairage nécessitent le Contrôle à distance ou HTTPS, pas le HTTP simple sur le réseau local. Voir [Serveurs enregistrés](remote-access.md#saved-servers). |
 | Fenêtres distantes de bureau et leur proxy | Réservés à l’hôte (`/api/remote-proxy/`). |
 | **Proxy de contenu** SideCar | Exige la boucle locale (`/sidecars/`), comme les WebSockets SideCar. Les API d’enregistrement `/api/sidecars` sont accessibles aux appareils appairés et aux clients LAN directs authentifiés. |
-| Contenu des aperçus web | Disponible tant que **Aperçus web** est activé (par défaut) dans **Paramètres → Accès distant → Contrôle à distance** sur l’hôte. Chaque adresse d’aperçu ouvre sa page sans appairage : gardez-la privée. Désactiver l’interrupteur arrête les aperçus servis et leurs WebSockets ; les appareils appairés masquent **Ouvrir l'aperçu web** une fois rechargés. |
+| Contenu des aperçus web | [Ouvrir un navigateur de session](browser-sidecars.md#session-browser) |
 | Pont d’automatisation | Indisponible (`/api/opencode-plugin/`). Les capacités natives de bureau ne deviennent pas des capacités navigateur. |
 | Mises à niveau WebSocket | Disponibles pour les aperçus web et, sur les appareils appairés, pour les [conversations vocales en direct](voice.md#conversation). |
 
-Utilisez une connexion en boucle locale sur l’hôte pour les proxys/WebSockets réservés à l’hôte et la gestion du Contrôle à distance (`/api/remote-control/`). L’accès LAN direct exige lui aussi la boucle locale pour ces opérations ; voir [Origines autorisées](remote-access.md#upgrading). Les aperçus web du Contrôle à distance utilisent un jeton de capacité dans leur adresse et restent disponibles lorsqu’ils sont activés sur l’hôte ; gardez cette adresse privée.
+Utilisez une connexion en boucle locale sur l’hôte pour les proxys/WebSockets réservés à l’hôte et la gestion du Contrôle à distance (`/api/remote-control/`). L’accès LAN direct exige lui aussi la boucle locale pour ces opérations ; voir [Origines autorisées](remote-access.md#upgrading).
 
 ## Relais et confidentialité {#relay-privacy}
 

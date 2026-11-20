@@ -16,11 +16,13 @@ Yerel önizlemeyi kapatmak sohbete döndürür. Yinelenen sekmeler sonuncusu kap
 
 Her sekme sohbet/önizleme seçimini kaydeder; oturum ortak URL'yi, görünüm şablonunu ve geçmişi kaydeder. Kaydedilen sayfalar yalnızca oturum tarayıcısını açıkça yeniden açtığınızda yüklenir. URL'ler ve imleç saklanır; canlı formlar, DOM, POST gövdeleri ve JavaScript belleği belgeyle birlikte sona erer. Geçmiş, oturum başına 32 URL ve ortak pencere bütçesiyle sınırlıdır; eski girişler kırpılabilir. URL geri yüklendiğinde sayfa yeniden yüklenebilir.
 
-Uzak önizleme, proje sunucusunu kullanır ve uygulamanın URL’sini gösterir. Önizlemeyi veya sekmeyi kapatmak, sunucu bağlantısını kesmek ya da uygulamadan çıkmak canlı sayfayı sonlandırır. Yeniden açtığınızda adres ve geçmiş yüklenir, kaydedilmemiş çalışmalar yüklenmez. Dahili yükleme adreslerini gizli tutun. [Mevcut ve mevcut olmayan yüzeyler](remote-control.md#remote-surface).
+Uzak önizleme, proje sunucusunu kullanır ve uygulamanın URL’sini gösterir. Önizlemeyi veya sekmeyi kapatmak, sunucu bağlantısını kesmek ya da uygulamadan çıkmak canlı sayfayı sonlandırır. Yeniden açtığınızda adres ve geçmiş yüklenir, kaydedilmemiş çalışmalar yüklenmez. Dahili yükleme adreslerini gizli tutun.
 
 Yerel motorlu uzak önizlemeler dahili yükleme adreslerini gizli tutmak için bağlam menülerini, panoya dışa aktarmayı, bağlantı sürüklemeyi, yazdırmayı, açılır pencereleri, indirmeleri, sayfa iletişim kutularını ve izin istemlerini kapatır. Kapatmadan önce sayfadaki çalışmanızı kaydedin.
 
 Önizleme denetimleri, ana bilgisayar ve uzak proje sunucusu önizlemelerin kullanılabildiğini doğruladığında görünür.
+
+Uzaktan Kontrol için **Web önizlemeleri**, ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında varsayılan olarak açıktır. Kapatıldığında önizlemeler ve WebSocket bağlantıları sonlanır; yeniden yüklemeden sonra **Web önizlemesini aç** gizlenir. Oturumu kapatmak veya eşleştirilmiş bir cihazın erişimini iptal etmek, o cihazın önizlemelerini ve WebSocket bağlantılarını sonlandırır.
 
 ## Paylaşılan oturum açma işlemleri ve otomasyon sınırları {#signins-automation}
 

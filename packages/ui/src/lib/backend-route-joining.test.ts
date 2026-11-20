@@ -2,13 +2,11 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createBackendClient } from "./backend-client"
 import { createPanelExtensionsApi } from "./panel-extensions-api"
-import { toolImageSource } from "./tool-content"
 import { SDKManager } from "./sdk-manager"
 import { fetchIntegrations, fetchIntegrationBinding, installIntegration, integrationAttachmentRequest } from "./integrations-api"
 
 const bases = ["https://b.invalid", "https://b.invalid/", "https://b.invalid/tenant", "https://b.invalid/tenant/"]
 const signal = () => new AbortController().signal
-const image = { type: "file" as const, mime: "image/png", uri: `/api/workspaces/w/session-media/s/m/0/0/${"a".repeat(64)}` }
 
 for (const baseUrl of bases) {
   test(`panel extension API and API4 resolve from the origin: ${baseUrl}`, async () => {
@@ -31,14 +29,12 @@ for (const baseUrl of bases) {
     ])
   })
 
-  test(`images and a directly constructed SDK manager share the route resolver: ${baseUrl}`, async () => {
+  test(`a directly constructed SDK manager resolves from the origin: ${baseUrl}`, async () => {
     const requests: string[] = []
     const client = createBackendClient({ id: "b", baseUrl, fetcher: async input => {
       requests.push(String(input))
       return Response.json({})
     } })
-    assert.equal(toolImageSource(image, baseUrl), `https://b.invalid${image.uri}`)
-    assert.equal(toolImageSource(image, client), `https://b.invalid${image.uri}`)
     await new SDKManager(client).createClient("w", "workspaces//w/instance/").session.prompt({ sessionID: "s", text: "fixture" })
     assert.deepEqual(requests, ["https://b.invalid/workspaces/w/instance/api/session/s/prompt"])
   })

@@ -132,17 +132,19 @@ override them. An unknown value refuses startup.
   only once Remote Control is used.
 - Remote devices authenticate even with `--dangerously-skip-auth`, and the
   local session cookie is never accepted on the ingress.
-- A desktop CodeNomad pairs as a device: pasting a pairing link into Add server
-  saves only the tunnel origin and opens the remote window once on the link
-  (`lib/remote-pairing-link.ts`). The profile keeps TLS verification on, since
-  a Tauri TLS-proxy window uses an incognito store without the device cookie.
-  The code is never stored with the server;
-  re-pairing a saved server reuses its window storage, which keeps the device
-  cookie across launches. Covered by `tests/browser/remote-server-pairing.test.ts`.
+- With `multiBackend` enabled, paste a pairing link into the server address field
+  in Browse or Settings → Servers. The host relay pairs as a device, keeps TLS
+  verification on and retains the device credential in its private store. The
+  profile saves the origin; the one-use code is cleared before network dispatch.
+- With `multiBackend` off, paste the link into the separate-window server dialog
+  (`lib/remote-pairing-link.ts`). It saves the origin and opens the link once in
+  the remote window. TLS verification stays on; a Tauri TLS-proxy window uses an
+  incognito store. Re-pairing against the same origin reuses that window's
+  device-cookie storage. See `tests/browser/remote-server-pairing.test.ts`.
 - `--connect-server` opens a saved server or URL at launch through that same
   connect flow ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
   It refuses URLs with user info or a fragment, so a pairing code or password
-  never travels on a command line; pair from Add server instead.
+  never travels on a command line; use the pairing field instead.
 
 ## Saved-profile relay
 

@@ -65,7 +65,7 @@ test("replacement and unmount revoke every backend-owned object URL", async () =
   assert.equal(await page.locator("[data-owner] img").count(), 0)
 }))
 
-for (const phase of ["fetch", "blob"] as const) {
+for (const phase of ["fetch", "body"] as const) {
   test(`detach during ${phase} fences media publication and reattachment recovers`, async () => fixturePage(async page => {
     await page.evaluate(phase => { (window as any).media.hold(phase); (window as any).media.replace() }, phase)
     await page.waitForFunction(() => (window as any).media.pending >= 3)

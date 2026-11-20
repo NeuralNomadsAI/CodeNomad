@@ -206,10 +206,9 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
 
 pub(super) fn privacy<R: tauri::Runtime>(
     view: &tauri::Webview<R>,
-    restricted: bool,
 ) -> Result<(), String> {
     use gtk::prelude::WidgetExt;
-    view.with_webview(move |native| native.inner().set_has_tooltip(!restricted))
+    view.with_webview(|native| native.inner().set_has_tooltip(false))
         .map_err(|error| error.to_string())
 }
 

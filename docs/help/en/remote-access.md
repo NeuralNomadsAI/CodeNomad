@@ -95,9 +95,9 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 Authenticated remote clients can use and manage all servers saved on the host; Home and **Settings → Servers** show the actions allowed by the host's capabilities. Plain LAN HTTP disables new server password and pairing-link entry: “Use HTTPS or Remote Control to enter credentials.” Connections using saved credentials and adding, editing or removing profiles without secrets remain available.
 
-In **Settings → Servers**, choose **Add SSH server**. Enter the CodeNomad **URL** as seen from the SSH host, then the **SSH host (optional)** or alias, and choose **Save**. The profile saves offline. OpenSSH requires key authentication and a verified host key in `known_hosts`. Sign in to CodeNomad on that server; HTTPS certificate checks still apply.
+Use **Settings → Servers**: paste an address or pairing link into **Server address or link**, or press Enter to add it. Adding saves a host-owned profile without opening a project. **Edit server** changes its **URL** or optional **Name**; renaming with the same URL and TLS policy works offline. After confirmation, **Remove** closes that server’s tabs in this window and removes its recent shortcuts. Projects and conversations remain on the server.
 
-Use **Settings → Servers**: paste an address or pairing link into **Server address or link**, or press Enter to add it. Adding saves a host-owned profile without opening a project. **Edit server** changes its **URL** or optional **Name**; renaming with the same URL and TLS policy works offline. **Remove** asks for confirmation, forgets this profile's connection and saves its removal; a save error leaves the profile available to retry. Other profiles keep their connections.
+The CodeNomad host needs OpenSSH, and CodeNomad must already be running at the destination. In **Settings → Servers**, choose **Add SSH server**. Enter the CodeNomad **URL** as seen from the SSH host, then the **SSH host (optional)** or alias, and choose **Save**. The profile saves offline. OpenSSH requires key authentication and a verified host key in `known_hosts`. Sign in to CodeNomad on that server; HTTPS certificate checks still apply.
 
 **Skip TLS verification** is offered after a certificate failure for that address; changing the address clears the consent. Pairing always verifies TLS.
 
@@ -115,10 +115,10 @@ For Remote Control, paste a fresh pairing link into **Server URL** instead. The 
 
 On Home or in a new tab, choose **Browse**, then a server. Paste an address or pairing link into **Server address or link** to save a server. Sign in if asked. Click a folder to enter it; press Enter in the path field or choose **Open** (the arrow) to open it. **Back to Browse** returns to the server list.
 
-Local and remote projects share the same window. **Recent tabs** shows the selected server’s shortcuts while you browse; mixed recents show the server icon and name for projects opened here. If a saved remote tab is waiting for its server, select it and use **Retry** or **Connect**. Its drafts stay with that tab.
+Local and remote projects share the same window. **Recent tabs** shows the selected server’s shortcuts while you browse; mixed recents show the server icon and name for projects opened here. [Restore remote tabs](projects.md#restore-remote-tabs).
 
-In **Settings → Servers**, **Open** selects the server in **Browse**, reusing the empty tab if present. **Remove** closes that server’s tabs and removes its recent shortcuts. Projects and conversations stay on the server. Temporary tabs keep their usual close choices.
+In **Settings → Servers**, **Open** selects the server in **Browse**, reusing the empty tab if present. Temporary tabs keep their usual close choices.
 
 ### `--connect-server` {#connect-server}
 
-This command opens a separate remote window regardless of `multiBackend`. To open a saved server straight from the command line, start the desktop app with `--connect-server <name>` (or `--connect-server=<name>`), using the server's saved name, or with its `https://` URL. On a command-only start, CodeNomad opens just the remote window; if it is already running, the current local window handles the request. A URL that matches no saved server is saved under its host name. Launch values never carry credentials: a URL with a user name, password or pairing code is refused. On Windows, the Tauri build refuses to start when a launch argument contains `|`; use the server's URL instead, or rename the server.
+This opens a separate remote window. If CodeNomad is already running, its local window handles the request. To open a saved server straight from the command line, start the desktop app with `--connect-server <name>` (or `--connect-server=<name>`), using the server's saved name, or with its `https://` URL. A URL that matches no saved server is saved under its host name. Launch values never carry credentials: a URL with a user name, password or pairing code is refused. On Windows, the Tauri build refuses to start when a launch argument contains `|`; use the server's URL instead, or rename the server.

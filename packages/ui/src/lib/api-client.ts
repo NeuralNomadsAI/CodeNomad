@@ -439,10 +439,6 @@ export function createServerApi(ctx: BackendHttp) {
         signal,
       })
     },
-    async connectRemoteBackend(id: string, payload: { username?: string; password?: string; pairingLink?: string }, signal?: AbortSignal): Promise<{ ok: boolean }> {
-      assertRemoteServerCredentials(payload)
-      return request(`/api/backends/${encodeURIComponent(id)}/api/auth/login`, { method: "POST", body: JSON.stringify(payload), signal })
-    },
     listSshHosts(signal?: AbortSignal): Promise<{ hosts: string[] }> {
       return request("/api/remote-servers/ssh-hosts", { signal })
     },

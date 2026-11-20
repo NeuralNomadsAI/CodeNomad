@@ -121,8 +121,13 @@ test("homonymous sessions on two servers have independent notices, exact navigat
   const done = history.find((item: any) => item.message.includes("finished"))
   assert.equal(done.title, "Server A · A")
   assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, "B~same")
-  await page.evaluate(() => (window as any).parity.action("Server A · A"))
-  assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, "A~same")
+  await page.evaluate(() => (window as any).parity.clearSelection("A"))
+  const finishedNotice = page.getByText(done.message, { exact: true }).locator("..")
+  await finishedNotice.getByRole("button").click()
+  await page.waitForFunction(() => (window as any).parity.selected().sessionA === "ses_homonym")
+  const selected = await page.evaluate(() => (window as any).parity.selected())
+  assert.equal(selected.instance, "A~same")
+  assert.equal(selected.sessionA, "ses_homonym")
 }))
 
 test("web system notification clicks navigate to the qualified session and revoked attachment clicks stay fenced", async () => fixturePage(async page => {

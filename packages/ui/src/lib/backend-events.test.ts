@@ -155,10 +155,12 @@ test("two real streams fan in in order; subscriptions, status, generations, 401 
     owner.client.events.start()
   }
   await settle(() => a.sources.length === 1 && b.sources.length === 1)
-  const observedKeys: string[][] = []
+  const observedStatuses: unknown[] = []
+  let localStatusReads = 0
   createRoot(dispose => {
     t.after(dispose)
-    createComputed(() => { observedKeys.push([...sseManager.getStatuses().keys()]) })
+    createComputed(() => { observedStatuses.push(sseManager.getRawStatus("b~ws")) })
+    createComputed(() => { sseManager.getBackendStatuses(); localStatusReads++ })
   })
   const seen: string[] = [], aOnly: string[] = [], opens: string[] = [], statuses: string[] = []
   t.after(bus.on("*", event => { seen.push(`*:${event.backendId}:${event.type}`) }))
@@ -181,8 +183,9 @@ test("two real streams fan in in order; subscriptions, status, generations, 401 
   assert.notEqual(getSseManager("a"), getSseManager("b"))
   assert.equal(sseManager.getStatus("a~ws"), "connected")
   assert.equal(sseManager.getStatus("b~ws"), "connected")
-  assert.equal(sseManager.getStatuses().get("b~ws"), "connected")
-  assert.ok(observedKeys.some(keys => keys.includes("b~ws")), "existing observers discover new backend managers")
+  assert.equal(sseManager.getRawStatus("b~ws"), "connected")
+  assert.equal(observedStatuses.at(-1), "connected", "existing observers discover new backend managers")
+  assert.equal(localStatusReads, 1, "remote status changes do not invalidate host setup")
   const previousHandler = sseManager.onNativeSessionEvent, nativeOwners: string[] = []
   sseManager.onNativeSessionEvent = (id, event) => { nativeOwners.push(`${id}:${event.type}`) }
   t.after(() => { sseManager.onNativeSessionEvent = previousHandler })

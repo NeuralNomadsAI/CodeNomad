@@ -250,7 +250,7 @@ test("captured relay hook rechecks secret capability after a held profile PATCH,
   await f.check()
 })
 
-for (const api of ["connectRemoteServer", "connectRemoteBackend", "relaySignIn"] as const) {
+for (const api of ["connectRemoteServer", "relaySignIn"] as const) {
   test(`captured ${api} refuses typed credentials after revocation at the dispatch boundary`, { timeout: 60_000 }, async t => {
     const f = await fixture(t, "dispatch", { localRequest: false, secretEntryAllowed: true })
     await f.page.evaluate(async api => {
@@ -268,8 +268,7 @@ for (const api of ["connectRemoteServer", "connectRemoteBackend", "relaySignIn"]
           return { accepted: false, typed: error instanceof RemoteServerRequestError, code: (error as any).code }
         }
       }
-      ;(window as any).capturedSecretFreeDispatch = () => (api === "connectRemoteBackend"
-        ? captured("a", {}) : serverApi.connectRemoteServer("a", {}))
+      ;(window as any).capturedSecretFreeDispatch = () => serverApi.connectRemoteServer("a", {})
     }, api)
     await f.revoke()
     for (const value of api === "relaySignIn" ? [sentinel] : [sentinel, pairing]) {

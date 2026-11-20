@@ -16,11 +16,13 @@ Fermer l’aperçu local ramène au chat. Les onglets en double partagent la pag
 
 Chaque onglet enregistre son choix chat/aperçu ; la session enregistre l’URL, le modèle de viewport et l’historique partagés. Les pages enregistrées se chargent seulement à la réouverture explicite du navigateur de session. La persistance conserve les URL et un curseur ; formulaires actifs, DOM, corps POST et mémoire JavaScript disparaissent avec le document. L’historique est limité à 32 URL par session et à un budget partagé par fenêtre ; les anciennes entrées peuvent être retirées. Restaurer une URL peut recharger la page.
 
-L’aperçu distant passe par le serveur du projet et affiche l’URL de l’application. Fermer l’aperçu ou l’onglet, déconnecter le serveur ou quitter termine la page active. À la réouverture, l’adresse et l’historique reviennent, sans le travail non enregistré. Gardez les adresses internes privées. [Surfaces disponibles et indisponibles](remote-control.md#remote-surface).
+L’aperçu distant passe par le serveur du projet et affiche l’URL de l’application. Fermer l’aperçu ou l’onglet, déconnecter le serveur ou quitter termine la page active. À la réouverture, l’adresse et l’historique reviennent, sans le travail non enregistré. Gardez les adresses internes privées.
 
 Les commandes d’aperçu s’affichent lorsque l’hôte et le serveur du projet distant confirment que les aperçus sont disponibles.
 
 Les aperçus distants natifs désactivent les menus contextuels, l’export vers le presse-papiers, le glisser de liens, l’impression, les fenêtres surgissantes, les téléchargements, les dialogues de page et les demandes de permission afin de garder les adresses internes privées. Enregistrez le travail de la page avant de fermer.
+
+Pour le Contrôle à distance, **Aperçus web** est activé par défaut dans **Paramètres → Accès distant → Contrôle à distance** sur l’hôte. Désactiver l’interrupteur arrête les aperçus et leurs WebSockets ; le rechargement masque **Ouvrir l'aperçu web**. Se déconnecter ou révoquer un appareil appairé arrête ses aperçus et leurs WebSockets.
 
 ## Connexions partagées et limites d’automatisation {#signins-automation}
 

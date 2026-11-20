@@ -8,7 +8,7 @@ export const folderSelectionMessages = {
   "remoteBrowse.pairingLink": "Nouveau lien d’appairage",
   "remoteBrowse.pairingExpired": "Lien d’appairage invalide ou expiré.",
   "remoteBrowse.pairingRateLimited": "Trop de tentatives d’appairage. Réessayez plus tard.",
-  "remoteBrowse.pairingUnavailable": "Appairage Remote Control côté serveur indisponible.",
+  "remoteBrowse.pairingUnavailable": "Appairage du Contrôle à distance côté serveur indisponible.",
   "remoteBrowse.tlsError": "Échec de la vérification du certificat.",
   "folderSelection.remoteProject.removeConfirm": "Retirer {name} ?",
   "settings.servers.remove.impact": "Supprimer {name} va {impact} : continuer ?",

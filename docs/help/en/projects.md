@@ -44,6 +44,8 @@ With startup restoration enabled, each remaining tab restores its own panel choi
 
 When you reload with restoration enabled, remote tabs keep their order, selection and drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh link in **New pairing link**. Other servers remain usable. **Server not found** means the saved server is missing.
 
+**Retry** reconnects to an existing project. If the server is reachable but the project is missing, choose **Open**.
+
 **Retry** also recovers waiting tabs when automatic startup restoration is off. Notifications select the existing waiting tab. Check an unconfirmed conversation action's outcome before sending it again.
 
 ## Temporary workspaces {#temporary-workspaces}

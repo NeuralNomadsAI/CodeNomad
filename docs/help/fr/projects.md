@@ -44,6 +44,8 @@ Lorsque la restauration au démarrage est activée, chaque onglet restant retrou
 
 Au rechargement, si la restauration est activée, les onglets distants retrouvent leur ordre, leur sélection et leurs brouillons. Un serveur indisponible laisse un onglet en attente : choisissez **Réessayer** à son retour, ou **Se connecter** avec son nom d’utilisateur/mot de passe ou un lien dans **Nouveau lien d’appairage**. Les autres serveurs restent utilisables. **Serveur introuvable** signifie que le serveur enregistré est introuvable.
 
+**Réessayer** reconnecte un projet existant. Si le serveur est joignable mais que le projet manque, choisissez **Ouvrir**.
+
 **Réessayer** reprend aussi les onglets en attente lorsque la restauration automatique au démarrage est désactivée. Les notifications sélectionnent l’onglet en attente existant. Vérifiez le résultat d’une action de conversation incertaine avant de la renvoyer.
 
 ## Espaces de travail temporaires {#temporary-workspaces}

@@ -73,11 +73,11 @@
 | 已保存的服务器和后端中继 | 功能已启用且主机能力允许时，已认证的远程客户端可以使用和管理主机保存的所有服务器。新的服务器密码或配对链接需要远程控制或 HTTPS，不能通过普通 LAN HTTP 输入。请参阅[已保存服务器](remote-access.md#saved-servers)。 |
 | 桌面远程窗口及窗口代理 | 仅限主机（`/api/remote-proxy/`）。 |
 | SideCar **内容代理** | 要求回环连接（`/sidecars/`），SideCar WebSocket 也一样。`/api/sidecars` 注册 API 可供已配对设备和已认证的局域网直连客户端使用。 |
-| 网页预览内容 | 主机上**设置 → 远程访问 → 远程控制**中的**网页预览**开启时（默认）可用。每个预览地址无需配对即可打开对应页面，请勿泄露。关闭该开关会停止已提供的预览及其 WebSocket；已配对设备重新加载后不再显示**打开网页预览**。 |
+| 网页预览内容 | [打开会话浏览器](browser-sidecars.md#session-browser) |
 | 自动化桥接 | 不可用（`/api/opencode-plugin/`）。原生桌面能力不会变成浏览器能力。 |
 | WebSocket 升级 | 适用于网页预览，以及已配对设备上的[实时语音对话](voice.md#conversation)。 |
 
-仅限主机的代理/WebSocket 功能和远程控制管理（`/api/remote-control/`）需要在主机上使用回环连接。通过局域网直接访问时，这些操作也要求回环连接；请参阅[允许的来源](remote-access.md#upgrading)。远程控制网页预览使用地址中的能力令牌，在主机启用时仍然可用；请勿泄露该地址。
+仅限主机的代理/WebSocket 功能和远程控制管理（`/api/remote-control/`）需要在主机上使用回环连接。通过局域网直接访问时，这些操作也要求回环连接；请参阅[允许的来源](remote-access.md#upgrading)。
 
 ## 中继与隐私 {#relay-privacy}
 

@@ -73,11 +73,11 @@ Gekoppelte Geräte können normale Projekt-/Unterhaltungs-APIs verwenden, Prompt
 | Gespeicherte Server und Backend-Relay | Authentifizierte Remote-Clients können alle Host-Server nutzen/verwalten, wenn Funktion und Host-Fähigkeiten dies erlauben. Neue Serverpasswörter/Kopplungslinks erfordern Fernsteuerung oder HTTPS statt unverschlüsseltem LAN-HTTP. Siehe [gespeicherte Server](remote-access.md#saved-servers). |
 | Desktop-Remote-Fenster und Fenster-Proxy | Nur auf dem Host (`/api/remote-proxy/`). |
 | SideCar-**Inhaltsproxy** | Erfordert Loopback (`/sidecars/`), ebenso wie SideCar-WebSockets. Die Registrierungs-APIs `/api/sidecars` sind für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. |
-| Inhalt der Web-Vorschau | Verfügbar, solange **Web-Vorschauen** (Standard) unter **Einstellungen → Remote-Zugriff → Fernsteuerung** auf dem Host eingeschaltet ist. Jede Vorschauadresse öffnet ihre Seite ohne Kopplung; halten Sie sie privat. Das Ausschalten beendet ausgelieferte Vorschauen und ihre WebSockets; gekoppelte Geräte blenden **Web-Vorschau öffnen** nach dem Neuladen aus. |
+| Inhalt der Web-Vorschau | [Sitzungsbrowser öffnen](browser-sidecars.md#session-browser) |
 | Automatisierungsbrücke | Nicht verfügbar (`/api/opencode-plugin/`). Native Desktop-Fähigkeiten werden nicht zu Browserfähigkeiten. |
 | WebSocket-Upgrades | Für Web-Vorschauen und auf gekoppelten Geräten für [Live-Sprachgespräche](voice.md#conversation) verfügbar. |
 
-Verwenden Sie eine Loopback-Verbindung auf dem Host für hostgebundene Proxy-/WebSocket-Funktionen und die Fernsteuerungsverwaltung (`/api/remote-control/`). Auch direkter LAN-Zugriff erfordert dafür Loopback; siehe [Erlaubte Ursprünge](remote-access.md#upgrading). Web-Vorschauen der Fernsteuerung verwenden ein Berechtigungstoken in ihrer Adresse und bleiben verfügbar, solange sie auf dem Host aktiviert sind; halten Sie diese Adresse privat.
+Verwenden Sie eine Loopback-Verbindung auf dem Host für hostgebundene Proxy-/WebSocket-Funktionen und die Fernsteuerungsverwaltung (`/api/remote-control/`). Auch direkter LAN-Zugriff erfordert dafür Loopback; siehe [Erlaubte Ursprünge](remote-access.md#upgrading).
 
 ## Relay und Datenschutz {#relay-privacy}
 

@@ -26,7 +26,7 @@ const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(
 URL.createObjectURL = blob => { const url = create(blob); created.push(url); createdTypes.push(blob instanceof Blob ? blob.type : ""); return url }
 URL.revokeObjectURL = url => { revoked.push(url); revoke(url) }
 HTMLAnchorElement.prototype.click = function () { downloads.push(this.href) }
-let held: "fetch" | "blob" | undefined
+let held: "fetch" | "body" | undefined
 const pending: (() => void)[] = []
 const wait = async (phase: typeof held) => { if (held === phase) await new Promise<void>(resolve => pending.push(resolve)) }
 const relay = new URLSearchParams(location.search).has("relay")
@@ -37,7 +37,8 @@ const fetcher: typeof fetch = async (input, init) => {
   await wait("fetch")
   if (bindRelayAuthority) return plainFetch(input, init)
   const response = new Response(bytes, { headers: { "Content-Type": "image/png" } })
-  response.blob = async () => { await wait("blob"); return new Blob([bytes], { type: "image/png" }) }
+  const readBody = response.arrayBuffer.bind(response)
+  response.arrayBuffer = async () => { await wait("body"); return readBody() }
   return response
 }
 const remote = relay ? createRemoteBackendClient("lab", { fetcher, bindRelayAuthority }) : createBackendClient({ id: "lab", baseUrl: "https://media.example.invalid", fetcher })

@@ -97,6 +97,7 @@ import { captureBackendOperation } from "./lib/backend-operation"
 import {
   activeAppTab,
   activeAppTabId,
+  allowsAutomaticLocalSetup,
   appTabs,
   activeBlankTabId,
   closeBlankTab,
@@ -360,9 +361,7 @@ const App: Component = () => {
   })
   const automaticLocalSetup = () => {
     const tab = activeAppTab()
-    if (tab) return tab.kind === "instance"
-      ? parseInstanceKey(tab.instance.id).backendId === "local"
-      : tab.kind !== "remote-restore"
+    if (tab) return allowsAutomaticLocalSetup(tab)
     const saved = loadedRestorableSession()
     const selected = saved?.tabs[saved.activeTabIndex]
     return selected?.kind !== "workspace" || backendIdOf(selected) === "local"

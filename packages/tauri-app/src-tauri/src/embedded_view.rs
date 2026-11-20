@@ -168,11 +168,11 @@ impl EmbeddedViews {
         let restricted = record.restricted || logical.is_some() || private_preview_url(source);
         if restricted != record.restricted {
             #[cfg(windows)]
-            windows::privacy(view, restricted)?;
+            windows::privacy(view)?;
             #[cfg(target_os = "linux")]
-            linux::privacy(view, restricted)?;
+            linux::privacy(view)?;
             #[cfg(target_os = "macos")]
-            macos::privacy(view, restricted)?;
+            macos::privacy(view)?;
         }
         let mut inner = self.0.lock().map_err(|error| error.to_string())?;
         inner

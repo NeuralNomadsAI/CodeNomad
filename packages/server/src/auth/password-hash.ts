@@ -20,7 +20,6 @@ const DEFAULT_SCRYPT_PARAMS = {
   maxmem: 32 * 1024 * 1024,
 }
 
-// Auth initialization and cached runtime push credential identity use the same scrypt parameters.
 export function hashPasswordSync(password: string): PasswordHashRecord {
   const salt = crypto.randomBytes(16)
   const params = DEFAULT_SCRYPT_PARAMS

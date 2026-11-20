@@ -199,6 +199,9 @@ def smoke(app, source, node, private, runner_arch):
     exe, resources = app / "Contents/MacOS/CodeNomad", app / "Contents/Resources"
     require(exe.is_file() and os.access(exe, os.X_OK) and resources.is_dir(), "missing bundle runtime")
     require((resources / "app.asar").is_file(), "missing bundle resource: app.asar")
+    require((resources / "server/dist/bin.js").is_file()
+            and (resources / "node/darwin-arm64/npm/bin/npm-cli.js").is_file(),
+            "missing bundle runtime files")
     run(["/usr/bin/codesign", "--verify", "--deep", "--strict", app], env, private)
     require(run(["/usr/bin/lipo", "-archs", exe], env, private) == "arm64", "non-ARM executable slice")
     require(run([exe, "-p", "process.platform + '/' + process.arch"], env, private) == "darwin/arm64",

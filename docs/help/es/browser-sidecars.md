@@ -16,11 +16,13 @@ Cerrar la vista previa local devuelve la pestaña al chat. Las pestañas duplica
 
 Cada pestaña guarda su elección de chat/vista previa; la sesión guarda la URL, la plantilla de viewport y el historial compartidos. Las páginas guardadas se cargan solo al reabrir explícitamente el navegador de sesión. Se conservan URL y un cursor; formularios activos, DOM, cuerpos POST y memoria JavaScript terminan con el documento. El historial se limita a 32 URL por sesión y a un presupuesto compartido por ventana; las entradas antiguas pueden recortarse. Restaurar una URL puede cargar de nuevo la página.
 
-Las vistas previas remotas usan el servidor del proyecto y muestran la URL de la aplicación. Cerrar la vista previa o su pestaña, desconectar el servidor o salir termina la página activa. Al reabrir se cargan la dirección y el historial, no los cambios sin guardar. Mantén privadas las direcciones internas. [Superficies disponibles y no disponibles](remote-control.md#remote-surface).
+Las vistas previas remotas usan el servidor del proyecto y muestran la URL de la aplicación. Cerrar la vista previa o su pestaña, desconectar el servidor o salir termina la página activa. Al reabrir se cargan la dirección y el historial, no los cambios sin guardar. Mantén privadas las direcciones internas.
 
 Las vistas previas remotas nativas desactivan menús contextuales, exportación al portapapeles, arrastre de enlaces, impresión, ventanas emergentes, descargas, diálogos de página y solicitudes de permisos para mantener privadas las direcciones internas. Guarda el trabajo de la página antes de cerrarla.
 
 Los controles aparecen cuando el anfitrión y el servidor del proyecto remoto confirman que las vistas previas están disponibles.
+
+En Control remoto, **Vistas previas web** está activado por defecto en **Configuración → Acceso remoto → Control remoto** en el equipo anfitrión. Al desactivarlo se cierran las vistas previas y sus WebSockets; al recargar se oculta **Abrir vista previa web**. Cerrar sesión o revocar un dispositivo emparejado cierra sus vistas previas y sus WebSockets.
 
 ## Inicios de sesión compartidos y límites de automatización {#signins-automation}
 
