@@ -245,6 +245,9 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       { taskKey: "refused_task", title: "Refused", brief: "Do bounded work", role: "specialist", blockedBy: [] }))))
     assert.equal((await owner.read("review") as MissionDocument).everCreatedTask, false)
     assert.equal(environments, 2); assert.equal(sends, 1)
+    // The user may switch the coordinator conversation's model after admission.
+    const coordinator = sessions.get(pending.coordinatorSessionID)!
+    sessions.set(coordinator.id, { ...coordinator, model: { providerID: "other", id: "chat", variant: "high" } } as unknown as Session.Info)
     await invoke(async runtime => {
       assert.equal((await runtime.businessSelection(pending.coordinatorSessionID, entry))?.readSessionID, pending.coordinatorSessionID)
       const result = await runtime.executeBusiness(pending.coordinatorSessionID, entry, control => control.report(pending.coordinatorSessionID,
