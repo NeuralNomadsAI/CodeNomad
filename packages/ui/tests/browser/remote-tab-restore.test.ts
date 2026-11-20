@@ -162,7 +162,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         if (mode === "auth" || mode === "pairing") {
           await page.getByRole("button", { name: "Connect", exact: true }).click()
           if (mode === "pairing") {
-            const field = page.getByLabel("Pairing link", { exact: true })
+            const field = page.locator('[data-remote-restore="a"]').getByLabel("New pairing link", { exact: true })
             await field.fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
             await field.press("Enter")
           } else {
@@ -249,7 +249,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
           assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), suspended[2].id)
           if (mode === "pairing") {
             await page.getByRole("button", { name: "Connect", exact: true }).click()
-            const field = page.getByLabel("Pairing link", { exact: true })
+            const field = page.locator('[data-remote-restore="a"]').getByLabel("New pairing link", { exact: true })
             await field.fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
             await field.press("Enter")
           } else {

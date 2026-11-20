@@ -85,9 +85,10 @@ function Fixture() {
     <For each={appTabs()}>{tab => <button
       role="tab"
       aria-selected={activeAppTabId() === tab.id}
+      data-tab-kind={tab.kind}
       data-session-selection={tab.kind === "instance" ? activeSessionId().get(tab.instance.id) : undefined}
       onClick={() => selectAppTab(tab.id)}
-     >{tab.kind === "instance" ? tab.instance.folder : tab.kind === "sidecar" ? tab.sidecarTab.sidecarId : tab.snapshot.folder}
+     >{tab.kind === "instance" ? tab.instance.folder : tab.kind === "sidecar" ? tab.sidecarTab.sidecarId : tab.kind === "remote-restore" ? tab.snapshot.folder : ""}
        {location.search.includes("git") && tab.kind === "instance" ? <GitPanel instanceId={tab.instance.id} /> : null}
      </button>}</For>
     <Show when={location.search.includes("catalog")}><ConfigProvider><I18nProvider><ThemeProvider>

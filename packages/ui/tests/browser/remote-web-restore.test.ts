@@ -90,7 +90,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
       assert.equal(state[1].kind, "remote-restore")
       await page.getByRole("button", { name: "Connect", exact: true }).click()
       assert.equal(await page.getByLabel("Password", { exact: true }).isDisabled(), true)
-      assert.equal(await page.getByLabel("Pairing link", { exact: true }).isDisabled(), true)
+      assert.equal(await page.getByLabel("New pairing link", { exact: true }).isDisabled(), true)
       healthy = true
       await page.getByRole("button", { name: "Retry", exact: true }).click()
     } else if (!["reuse", "offline"].includes(mode)) {

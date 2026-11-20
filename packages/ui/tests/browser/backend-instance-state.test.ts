@@ -76,7 +76,10 @@ for (const host of ["electron", "tauri"] as const) for (const savedRemote of [fa
         const tab = await page.evaluate(() => (window as any).savedSnapshot.session.tabs[0])
         assert.equal(tab.backendId, "lab")
         assert.equal(tab.drafts.s1, "remote unsent draft")
-        assert.equal(await page.getByRole("tab").count(), 0)
+        const tabs = page.getByRole("tab")
+        assert.equal(await tabs.count(), 1)
+        assert.equal(await tabs.getAttribute("data-tab-kind"), "remote-restore")
+        assert.equal(await tabs.textContent(), "/same")
       }
       assert.deepEqual(creations, [], "no remote folder is opened on the local backend")
       assert.deepEqual(errors, [])

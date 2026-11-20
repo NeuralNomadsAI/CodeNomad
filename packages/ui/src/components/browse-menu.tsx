@@ -42,7 +42,11 @@ export default function BrowseMenu(props: BrowseMenuProps) {
   const [selectedServer, setSelectedServer] = createSignal<RemoteServerProfile>()
   const [connectionFailures, setConnectionFailures] = createSignal<string[]>([])
   onMount(() => { void getServerMeta().catch(() => {}) })
-  createEffect(on(() => props.initialServer, intent => {
+  // A delayed capability read must admit the native intent once, without replaying it after Back.
+  let appliedIntent: ServerSelectionIntent | undefined
+  createEffect(on([() => props.initialServer, remoteRecentProjectsUsable], ([intent, usable]) => {
+    if (!usable || intent === appliedIntent) return
+    appliedIntent = intent
     const profile = intent && savedProjectProfile(intent)
     const selected = selectedServer()
     if (profile && (!selected || !sameServerSelection(profile, selected))) selectServer(profile)
