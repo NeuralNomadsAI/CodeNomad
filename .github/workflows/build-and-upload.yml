@@ -95,11 +95,6 @@ jobs:
           node-version-file: .node-version
           cache: npm
 
-      - name: Setup Rust (Rust server)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
-
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
         shell: bash
@@ -396,9 +391,6 @@ jobs:
           node-version-file: .node-version
           cache: npm
 
-      - name: Setup Rust (Rust server)
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
         run: npm version ${{ env.VERSION }} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
@@ -504,9 +496,6 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-
-      - name: Setup Rust (Rust server)
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}

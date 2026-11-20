@@ -1,10 +1,10 @@
 # codenomad-rs
 
-Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It runs as a remote backend, and the desktop hosts launch it instead of the TypeScript server when started with `CODENOMAD_SERVER_IMPL=rust`.
+Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It runs as a remote backend, and the Tauri desktop host launches it instead of the TypeScript server when started with `CODENOMAD_SERVER_IMPL=rust`.
 
-## Desktop hosts
+## Desktop host
 
-Electron (`electron/main/server-impl.ts`) and Tauri (`cli_manager.rs`, `Runner::Rust`) run the binary directly with the TypeScript server's arguments, environment and stdio contract. Packaged builds stage it in `server/dist/codenomad-rs[.exe]` beside `dist/bin.js` (`scripts/rust-server-binary.cjs`, called by Electron's `prepare-resources.js` and Tauri's `prebuild.js`), so `../public` and `plugins/` resolve as for the Node entry. Development runs the newest `debug` or `release` build under `CARGO_TARGET_DIR` or `packages/server-rs/target`, then the staged copy.
+Tauri (`cli_manager.rs`, `Runner::Rust`) runs the binary directly with the TypeScript server's arguments, environment (including `RUST_BACKTRACE=1`) and stdio contract. Packaged builds stage it in `server/dist/codenomad-rs[.exe]` beside `dist/bin.js` (`scripts/rust-server-binary.cjs`, called by `prebuild.js`), so `../public` and `plugins/` resolve as for the Node entry; its debug info (`codenomad_rs.pdb`, `codenomad-rs.dSYM`; inside the binary on Linux) is staged beside it so release panic backtraces name files and lines. Development runs the newest `debug` or `release` build under `CARGO_TARGET_DIR` or `packages/server-rs/target`, then the staged copy. `CNRS_FIXTURE_PANIC=1` (bench only) panics at startup to check the backtrace the host logs.
 
 ## Architecture
 

@@ -25,7 +25,6 @@ import { getUserShellEnv, supportsUserShell } from "./user-shell"
 import { resolveShellEnvironment, restoreDesktopProfileEnvironment } from "./shell-environment"
 import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
 import { startNativeService } from "./native-service-start"
-import { resolveRustServer, usesRustServer } from "./server-impl"
 
 const nodeRequire = createRequire(import.meta.url)
 const mainFilename = fileURLToPath(import.meta.url)
@@ -57,9 +56,8 @@ interface StartOptions {
 
 interface CliEntryResolution {
   entry: string
-  runner: "node" | "tsx" | "rust"
+  runner: "node" | "tsx"
   runnerPath?: string
-  /** Node for the server, and the runtime the user-shell probe runs (also for the Rust server). */
   nodeBinaryPath: string
   nodeArgs?: string[]
 }
@@ -263,8 +261,6 @@ export class CliProcessManager extends EventEmitter {
       env,
       shell: false,
       detached: process.platform !== "win32",
-      // Electron's executable is a GUI program; the Rust binary is a console one.
-      windowsHide: cliEntry.runner === "rust",
     })
 
     console.info(`[cli] spawn command: ${spawnDetails.command} ${spawnDetails.args.join(" ")}`)
@@ -609,7 +605,6 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private buildDirectSpawn(cliEntry: CliEntryResolution, args: string[]) {
-    if (cliEntry.runner === "rust") return { command: cliEntry.entry, args }
     if (cliEntry.runner === "tsx") {
       return { command: cliEntry.nodeBinaryPath, args: [...(cliEntry.nodeArgs ?? []), cliEntry.runnerPath!, cliEntry.entry, ...args] }
     }
@@ -618,15 +613,6 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private async resolveCliEntry(options: StartOptions): Promise<CliEntryResolution> {
-    if (usesRustServer()) {
-      const entry = resolveRustServer({
-        dev: options.dev,
-        resourceRoots: [process.resourcesPath, path.join(mainDirname, "../resources")],
-        workspaceRoot: path.resolve(process.cwd(), "..", ".."),
-      })
-      if (!entry) throw new Error("Unable to locate the CodeNomad Rust server (codenomad-rs). Build packages/server-rs or rebuild the desktop bundle.")
-      return { entry, runner: "rust", nodeBinaryPath: process.execPath }
-    }
     if (options.dev) {
       const tsxPath = this.resolveTsx()
       if (!tsxPath) {

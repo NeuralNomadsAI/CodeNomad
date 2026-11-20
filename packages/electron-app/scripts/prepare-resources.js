@@ -14,7 +14,6 @@ const resourcesRoot = join(appDir, "electron", "resources")
 const serverDest = join(resourcesRoot, "server")
 const { prepareBundledNodeRuntime } = require(join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
 const { copyPackagedServerResources, stagePackagedServer } = require(join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
-const { stageRustServer } = require(join(workspaceRoot, "scripts", "rust-server-binary.cjs"))
 
 function log(message) {
   console.log(`[prepare-resources] ${message}`)
@@ -36,7 +35,6 @@ async function main() {
   } finally {
     fs.rmSync(staged.stagingRoot, { recursive: true, force: true })
   }
-  stageRustServer({ workspaceRoot, serverDest, target: staged.target, log })
   await prepareBundledNodeRuntime({ resourcesRoot, target: staged.target, npmOnly: true })
 }
 
