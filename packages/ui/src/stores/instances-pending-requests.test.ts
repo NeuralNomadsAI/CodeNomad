@@ -15,7 +15,7 @@ import {
 } from "./instances"
 import { getFormQueue, type FormWithLocation } from "./forms"
 import { markFormSettled } from "./form-settlements"
-import { sessions, seedRestoredSessionSelection, setSessions } from "./session-state"
+import { sessions, seedRestoredSessionSelection, setSessions, selectActiveSession } from "./session-state"
 import { createClientSession } from "../types/session"
 import { captureWorktreeMoveReconciliation, getPendingWorktreeLocations, getPendingWorktreeSlug, getWorktrees, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees"
 import { sseManager } from "../lib/sse-manager"
@@ -1176,4 +1176,28 @@ test("ambiguous global Form reply is not replayed and recovery keeps location au
     assert.equal(replies, 1)
     assert.equal(getFormQueue(h.id)[0]?.location?.directory, h.directory)
   } finally { sdkManager.createClient = originalClient; h.cleanup() }
+})
+
+test("activating a session in a directory the last recovery never covered triggers a fresh scan", async () => {
+  const h = harness()
+  try {
+    const batches: string[][] = []
+    serverApi.getPendingRequests = async (_id, directories) => {
+      batches.push([...directories])
+      return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok", locations: [emptyLocation(directory)] })) }
+    }
+    // A first completed scan covers only the root (no sessions loaded yet).
+    await syncPendingRequests(h.id)
+    assert.deepEqual(batches.flat(), [h.directory])
+    // Opening a session whose worktree directory was never scanned must not
+    // wait for the slow liveness sweep: activation itself starts a new scan.
+    setSessions(new Map([[h.id, new Map([["ses-worktree", createClientSession(
+      { id: "ses-worktree", title: "Worktree", location: { directory: `${h.directory}/unscanned-tree` }, time: { created: 1, updated: 1 } } as any, h.id)]])]]))
+    selectActiveSession(h.id, "ses-worktree")
+    for (let i = 0; i < 1000 && !batches.flat().includes(`${h.directory}/unscanned-tree`); i++) {
+      await new Promise<void>((done) => setImmediate(done))
+    }
+    assert.ok(batches.flat().includes(`${h.directory}/unscanned-tree`),
+      "session activation must scan the session's own directory")
+  } finally { h.cleanup() }
 })
