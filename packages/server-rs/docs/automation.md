@@ -62,24 +62,24 @@ Risks: WebView2 calls hop to the UI thread (keep the engine on a worker, as the 
 
 ## 4. Server in the Tauri process
 
-Linking `server-rs` as a library inside the Tauri host removes the stdout readiness line, the bootstrap token and its exchange, the stdin shutdown line and the native-parent stdin/stdout channel: native requests become function calls and `developer.execute` a direct call. The automation bridge stays an HTTP loopback endpoint because the plugin lives in the OpenCode daemon. Electron keeps the separate binary, and so do `npx @neuralnomads/codenomad` and the bench, so the crate becomes a library plus a thin `main`.
+`server-rs` linked as a library inside the Tauri host, with the same code built as the separate binary for remote use. For option B this turns the native requests into direct calls through a trait instead of the stdio channel; the plugin bridge stays an HTTP loopback endpoint because the plugin lives in the OpenCode daemon.
 
-Estimate: 8–10 days, plus about 2 days of qualification on three OSes.
+Estimate: 8–11 days, then qualification on three systems.
 
-- Configuration from an explicit struct instead of process environment (`config.rs` and scattered `env::var`; `set_var` is unsafe in edition 2024 and racy): 2–3 days.
-- Host integration (start, stop, restart, session cookie handoff, direct native calls): 2–3 days.
-- Profile transitions and shutdown ordering, with tests: 2 days.
-- Child environment on macOS/Linux, where GUI apps lack the login shell's `PATH`: the host resolves it and the server passes it explicitly to OpenCode, git and npm: 1–2 days.
+| Work | Days |
+| --- | --- |
+| Library/binary split: `start(config, host) -> Handle` and `stop()`, no environment reads or `process::exit` after start | 2–3 |
+| Tauri: in-process start and stop, native calls through a trait, session cookie injected into the webview, restart on profile change, TS/Rust switch | 3–5 |
+| Build and CI: path dependency, one lock file, unified `reqwest`/`rustls`/`tokio`, longer Tauri compile | 1 |
+| Lifecycle tests | 2 |
 
-Risks:
+Removed on the Tauri side: the child-process launch in `cli_manager.rs`, `cli_output.rs`, `native_request.rs`, most of the stdin protocol in `shutdown.rs`, `cli_drain_tests.rs`, the internal Windows launcher, the Job Object and POSIX group for the server, the 60 s start-up wait, the TCP token exchange and `resources/server` (`managed_node.rs` stays only if OpenCode still needs npm). On the server side: the stdio transport of `native_parent` (replaced by a trait), the token and status lines, the stdin reader, `--generate-token` and `--auth-cookie-name`.
 
-- **Shared crash**: an abort, stack overflow or OOM in the server closes every window; the host can no longer show an error and restart the server. Requires `panic = "unwind"`, per-task containment and a review of `abort` paths.
-- **Lifecycle and globals**: profile switch and server restart need a clean in-process stop and restart; process-wide statics (`OnceLock` caches, bench flags) must be resettable or removed.
-- **Shutdown**: `ExitRequested` must wait for the graceful stop (OpenCode daemon, receipts), bounded like today's 30 s; the Job Object must still cover OpenCode children.
-- **Updates**: the server ships with the host, as today; only an independent server hotfix becomes impossible.
-- **Profiles**: config and TLS directories come from the host's profile scope instead of `CLI_CONFIG`.
-- **WSL**: unchanged; the Windows host still reaches WSL daemons through `wsl.exe`, and the WSL plugin still reaches the bridge through `curl.exe`.
-- **Memory and isolation**: the server's heap joins the host process; the remote-access listener runs inside the GUI process (same user, small delta).
-- **Tests**: server tests are unchanged as a library; host integration tests gain a real server; build time and dependency versions (tokio, rustls, `windows` crates) unify with the Tauri crate.
+Kept for the remote binary: `serve` and its useful options, HTTPS and pairing, the password and `/login`, the static UI, SIGTERM, `install/`, the bench's stdin stop. The loopback HTTP listener also stays in library mode: the webview loads the UI and API from it.
 
-[`host-cli` opinion to be integrated here.]
+A server panic does not close the windows, under four conditions: `panic = "unwind"` enforced (`compile_error!` under `abort`); the server on its own thread and runtime, never inside tao/webview callbacks, where a panic crossing FFI aborts the process; no `process::exit` or signal handler left in the library (four today); `catch_unwind` around the server thread, to observe its death and restart it. Tokio and hyper already contain panics per task, and `panic_guard` answers 500. Still fatal: stack overflow, OOM, double panic, undefined behaviour in FFI (Windows ACLs).
+
+Main risk: restarting the server inside the same process. Globals survive it (native bridge `PENDING`, extensions `STATE`/`DESIGN`, memory `CACHE`/`SEEN`, search `CACHE`, worktree fence `STATE`/`QUEUES`, Git `SLOTS`), and a poisoned lock leaves the server answering 500 for good. They must move into `App`, which is also what a profile change without restart needs. Updates are unchanged; WSL is unchanged while the server runs on Windows; a server leak becomes a host leak.
+
+Recommendation: first Tauri trial with the separate binary (ready); move to the library only once globals are per instance and a "panic in a handler, then in-process restart" test passes.
+
