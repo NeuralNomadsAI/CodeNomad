@@ -52,7 +52,10 @@ incarnation guard before every CAS; one of this process registers its own Promis
 for its whole lifetime (`native-mission-schedule-wake-flight.ts`, shared across bundle
 reloads) and also fails once its signed preflight expires before it consumes the run.
 Such a dispatch consumed nothing, so the caller re-claims that same identity (`retry`), rechecking abandonment
-under the Mission exclusion, and dispatches it with a fresh preflight. A pre-dispatch
+under the Mission exclusion, and dispatches it with a fresh preflight. The run counts as
+consumed once its high-water commits: claim closure and reconciliation no longer need the
+preflight. The caller's eight-second deadline can still cancel that request; the next
+wake then reconciles. A pre-dispatch
 refusal describes only the current attempt; preserve earlier uncertainty for that identity.
 
 One process-wide lane per Mission spans bundle incarnations. The whole operation

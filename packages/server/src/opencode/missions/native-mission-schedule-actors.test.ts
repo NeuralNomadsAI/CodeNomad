@@ -420,13 +420,16 @@ test("a specialist whose frozen profile changed stays pending while the qualifie
   assert.ok(f.active.has(id)); assert.ok(!f.calls.some(call => call.kind === "interrupt" && call.id === id))
 })
 
-test("a changed desired state, profile or native incarnation blocks every later effect and a retired port cannot execute", async t => {
+test("an admitted coordinator that switched model can still be paused", async t => {
+  const f = await fixture(t)
+  f.sessions.get(f.coordinatorID).model.id = "changed"
+  const request = await f.prepare("pause")
+  await f.invoke(() => f.control.lifecycle(request))
+  assert.ok(f.calls.some(call => call.kind === "interrupt" && call.id === f.coordinatorID))
+})
+
+test("a changed desired state or native incarnation blocks every later effect and a retired port cannot execute", async t => {
   const f = await fixture(t), request = await f.prepare("pause")
-  const selected = f.sessions.get(f.coordinatorID)
-  selected.model.id = "changed"
-  await assert.rejects(f.invoke(() => f.control.lifecycle(request)))
-  assert.deepEqual(f.calls, [])
-  selected.model.id = "model"
   await f.change(next => { next.state = "running" })
   await assert.rejects(f.invoke(() => f.control.lifecycle(request)))
   assert.deepEqual(f.calls, [])

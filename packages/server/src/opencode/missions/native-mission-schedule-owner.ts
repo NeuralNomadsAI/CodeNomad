@@ -66,8 +66,8 @@ export const acquireNativeMissionScheduleOwner = Effect.fn("missions.acquireSche
       const guard = (): true => { locked.assertActive(); current(); return assertMissionCalendarPlacement(owner.placement, doc.configuration.roots) }
       guard()
       const session = await service.get({ sessionID: pending.coordinatorSessionID })
-      const selected = pending.configuration.profiles?.coordinator
-      if (!selected || !matchesExecution(selected, session) || session.parentID || session.projectID !== doc.projectID
+      // Admitted (checked above): the coordinator's model is its user's choice.
+      if (session.parentID || session.projectID !== doc.projectID
         || session.location.directory !== ctx.location.directory || session.location.workspaceID !== ctx.location.workspaceID)
         return undefined
       const original = documentPassageStartInput(doc)

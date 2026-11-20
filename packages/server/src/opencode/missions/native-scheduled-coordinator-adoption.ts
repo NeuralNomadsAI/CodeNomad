@@ -77,25 +77,21 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
   // Saving records a future selection; it does not adopt or dispatch into the current turn.
   const savingSelf = input.preparing && id === author.coordinatorSessionID
   if (!savingSelf) fence.family(id, undefined, true)
-  fence.coordinator(id, savingSelf)
+  fence.coordinator(id)
   const session = await input.native.get({ sessionID: id }, { signal: input.signal })
   if (session.id !== id || session.parentID || session.projectID !== doc.projectID
     || session.location.directory !== input.native.location.directory || session.location.workspaceID !== input.native.location.workspaceID
     || isReservedMissionScheduleSessionID(id) || session.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER] !== undefined)
     throw new ScheduledCoordinatorRefusal("coordinator-owned")
+  // An active conversation queues the passage prompt natively; only ownership is checked here.
   const family = [id], seen = new Set(family)
   for (let index = 0; index < family.length; index++) {
     input.signal.throwIfAborted(); input.current()
-    if (!savingSelf) {
-      const state = await observation.session(family[index])
-      if (state.inbox || state.active || state.suspended || state.runningTools) throw new ScheduledCoordinatorRefusal("coordinator-busy")
-    }
     for (const child of await observation.children(family[index])) {
       if (seen.has(child) || seen.size >= MAX_CONTROL_FAMILY_SESSIONS) throw new Error("Coordinator family coverage unavailable")
       seen.add(child); family.push(child)
     }
   }
-  if (!savingSelf && await observation.requests(family)) throw new ScheduledCoordinatorRefusal("coordinator-busy")
   const journal = new MissionJournal({ ...storage, set: async () => { throw new Error("Coordinator validation is read-only") } },
     doc.projectID, doc.projectCanonical)
   const snapshot = await journal.snapshot()

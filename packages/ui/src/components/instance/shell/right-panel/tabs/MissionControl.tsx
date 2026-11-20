@@ -478,10 +478,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // A schedule's current passage: its selected task takes the toolbar from the schedule's.
   const passageTask = createMemo(() => passageSchedule() ? taskSelection(mission(), observedActivity(), passageStore()) : undefined)
   const tracking = () => <>
-    <Show when={passageSchedule()}>
-      <Show when={currentPassage.loading() && !currentPassage.snapshot()?.mission}><p role="status">{props.t("missions.control.loading")}</p></Show>
-      <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot()?.mission ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-    </Show>
     <MissionPanelScope value={passageStore}><Show when={mission()}>{selected => <>
       <Show when={passageTask()?.task.key} keyed>{_key => <MissionTaskActions readOnly instanceId={props.instanceId} mission={selected()}
         selection={passageTask()!} disabled onAdmitted={refreshVisible}

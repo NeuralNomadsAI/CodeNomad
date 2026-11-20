@@ -57,6 +57,7 @@ test("current reader uses pending identity and real passage journal, with no sig
     const reserved = await read()
     assert.equal(reserved.passageID, f.passage.passageID)
     assert.equal("mission" in reserved, false)
+    assert.equal(reserved.source, undefined, "a passage awaiting admission has no readable content yet")
     await f.start()
     await f.finish()
     const result = await read()
