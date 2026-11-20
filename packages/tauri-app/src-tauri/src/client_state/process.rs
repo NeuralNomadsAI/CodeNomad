@@ -14,6 +14,9 @@ const REGISTRATION_LOCK_TIMEOUT: Duration = Duration::from_millis(250);
 const REGISTRATION_LOCK_RETRY_DELAY: Duration = Duration::from_millis(10);
 pub(super) const RUNNING_MARKER_PREFIX: &str = "client-state.running.";
 pub(super) const RUNNING_MARKER_SUFFIX: &str = ".lock";
+/// Tells Electron this marker belongs to an election-aware host, never a legacy one.
+/// The marker is locked, so the flag lives in its name.
+const CROSS_HOST_MARKER: &str = ".cross-host";
 
 static NEXT_RUNNING_MARKER_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -66,11 +69,6 @@ impl Registration {
         } else {
             read_registration_owner(&registration_owner_path)
         };
-        let participant =
-            cross_host::Participant::publish(cross_host_election_dir).unwrap_or_else(|err| {
-                eprintln!("[client-state] failed to publish cross-host participant: {err}");
-                None
-            });
         let running_marker =
             create_running_marker(app_data_dir, acknowledged_registration.as_deref())?;
         let lock_path = app_data_dir.join(PRIMARY_LOCK_FILENAME);
@@ -112,17 +110,14 @@ impl Registration {
             }
         };
 
-        let cross_host_registration = match participant.map(|participant| {
-            cross_host::Registration::register_participant(
-                cross_host_election_dir,
-                participant,
-                primary_lock.is_some(),
-                legacy_electron_data_dir,
-            )
-        }) {
-            Some(Ok(Some(registration))) => Some(registration),
-            Some(Ok(None)) | None => None,
-            Some(Err(err)) => {
+        let cross_host_registration = match cross_host::Registration::register(
+            cross_host_election_dir,
+            primary_lock.is_some(),
+            legacy_electron_data_dir,
+        ) {
+            Ok(Some(registration)) => Some(registration),
+            Ok(None) => None,
+            Err(err) => {
                 eprintln!("[client-state] failed to register cross-host ownership: {err}");
                 None
             }
@@ -310,7 +305,7 @@ fn create_running_marker(
             .map(|registration_id| format!(".acknowledges.{registration_id}"))
             .unwrap_or_default();
         let path = app_data_dir.join(format!(
-            "{RUNNING_MARKER_PREFIX}{}.{marker_id}{acknowledgement}{RUNNING_MARKER_SUFFIX}",
+            "{RUNNING_MARKER_PREFIX}{}.{marker_id}{CROSS_HOST_MARKER}{acknowledgement}{RUNNING_MARKER_SUFFIX}",
             std::process::id()
         ));
         match marker.persist_noclobber(&path) {
@@ -469,7 +464,9 @@ mod tests {
             .file_name()
             .unwrap()
             .to_string_lossy();
-        assert!(marker_name.contains(&format!(".acknowledges.{registration_id}")));
+        assert!(marker_name.contains(&format!(
+            "{CROSS_HOST_MARKER}.acknowledges.{registration_id}"
+        )));
 
         FileExt::unlock(&owner).unwrap();
         registration.finish().release_locks();

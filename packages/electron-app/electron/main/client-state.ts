@@ -15,8 +15,6 @@ import {
 import { getProcessStartIdentity } from "./client-state-process-identity"
 import {
   CrossHostRegistration,
-  publishCrossHostParticipant,
-  removeCrossHostParticipant,
   crossHostParticipants,
   resolveCrossHostElectionDirectory,
   resolveCrossHostStatePath,
@@ -158,11 +156,6 @@ export class ClientStateManager {
     this.lockPath = join(userDataPath, PRIMARY_LOCK_FILENAME)
     const registrationLockPath = join(userDataPath, REGISTRATION_LOCK_FILENAME)
 
-    try {
-      publishCrossHostParticipant(crossHostElectionDirectory, this.owner)
-    } catch (error) {
-      console.warn("[client-state] failed to publish cross-host participant", error)
-    }
     const election = electClientStateProcess(
       userDataPath,
       this.owner,
@@ -202,7 +195,6 @@ export class ClientStateManager {
       )
     } catch (error) {
       console.warn("[client-state] failed to register cross-host ownership", error)
-      try { removeCrossHostParticipant(crossHostElectionDirectory, this.owner) } catch {}
     }
     if (!this.crossHostRegistration?.isPrimary) {
       if (election) removeProcessOwnerLockIfOwned(this.lockPath, this.owner)

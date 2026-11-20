@@ -33,6 +33,9 @@ struct LegacyOwner {
     pid: u32,
     run_token: String,
     process_start_identity: Option<String>,
+    /// Set by Electron builds that join the cross-host election; absent in legacy ones.
+    #[serde(default)]
+    cross_host: bool,
 }
 
 pub(super) struct Registration {
@@ -195,74 +198,22 @@ fn resolve_legacy_electron_data_directory_for(
     }
 }
 
-/// This process's cross-host participant, published before its running marker so
-/// a peer never sees that marker without it and mistakes it for a legacy host.
-/// Dropped unregistered, it removes itself.
-pub(super) struct Participant {
-    path: PathBuf,
-    owner: Option<Owner>,
-}
-
-impl Participant {
-    pub(super) fn publish(election_directory: &Path) -> Result<Option<Self>, String> {
-        let Some(current_identity) = process_start_identity(std::process::id()) else {
-            return Ok(None);
-        };
-        let owner = Owner {
-            pid: std::process::id(),
-            run_token: uuid::Uuid::new_v4().to_string(),
-            process_start_identity: current_identity,
-        };
-        fs::create_dir_all(election_directory)
-            .map_err(|err| format!("failed to create cross-host election directory: {err}"))?;
-        let path = participant_path(election_directory, &owner);
-        publish_participant(&path, &owner)?;
-        Ok(Some(Self {
-            path,
-            owner: Some(owner),
-        }))
-    }
-}
-
-impl Drop for Participant {
-    fn drop(&mut self) {
-        if let Some(owner) = self.owner.take() {
-            let _ = remove_participant_if_owned(&self.path, &owner);
-        }
-    }
-}
-
 impl Registration {
-    #[cfg(test)]
     pub(super) fn register(
         election_directory: &Path,
         primary_candidate: bool,
         legacy_electron_data: Option<&Path>,
     ) -> Result<Option<Self>, String> {
-        let Some(participant) = Participant::publish(election_directory)? else {
+        let Some(current_identity) = process_start_identity(std::process::id()) else {
             return Ok(None);
         };
-        Self::register_participant(
-            election_directory,
-            participant,
-            primary_candidate,
-            legacy_electron_data,
-        )
-    }
-
-    pub(super) fn register_participant(
-        election_directory: &Path,
-        mut participant: Participant,
-        primary_candidate: bool,
-        legacy_electron_data: Option<&Path>,
-    ) -> Result<Option<Self>, String> {
-        let owner = participant
-            .owner
-            .take()
-            .ok_or_else(|| "cross-host participant was already registered".to_string())?;
         Self::register_with_legacy(
             election_directory,
-            owner,
+            Owner {
+                pid: std::process::id(),
+                run_token: uuid::Uuid::new_v4().to_string(),
+                process_start_identity: current_identity,
+            },
             primary_candidate,
             legacy_electron_data,
             pid_is_alive,
@@ -797,6 +748,11 @@ fn has_live_legacy_electron_with(
         if marker.pid != pid || marker.run_token != run_token {
             return Ok(true);
         }
+        // An election-aware host is arbitrated by the election, even before its
+        // participant appears; only markers without the flag can be legacy.
+        if marker.cross_host {
+            continue;
+        }
         let live_identity = identity(pid);
         if let Some(marker_identity) = marker.process_start_identity.as_deref() {
             let Some(live_identity) = live_identity.as_deref() else {
@@ -1130,24 +1086,6 @@ mod tests {
         assert_ne!(node_primary, rust.is_primary());
         rust.release_locks();
         stop_node(node);
-    }
-
-    #[test]
-    fn an_early_participant_is_reused_or_removed() {
-        let directory = tempfile::tempdir().unwrap();
-        let count = || participants(directory.path()).unwrap().len();
-        drop(Participant::publish(directory.path()).unwrap().unwrap());
-        assert_eq!(count(), 0);
-
-        let participant = Participant::publish(directory.path()).unwrap().unwrap();
-        let registration =
-            Registration::register_participant(directory.path(), participant, true, None)
-                .unwrap()
-                .unwrap();
-        assert!(registration.is_primary());
-        assert_eq!(count(), 1);
-        drop(registration);
-        assert_eq!(count(), 0);
     }
 
     #[test]
@@ -1516,6 +1454,20 @@ mod tests {
         fs::write(
             legacy.path().join("client-state.running.701.electron.json"),
             serialize_owner(&upgraded).unwrap(),
+        )
+        .unwrap();
+        assert!(!has_live_legacy_electron_with(
+            legacy.path(),
+            election.path(),
+            |_| true,
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        )
+        .unwrap());
+        // An election-aware Electron does not veto before its participant appears.
+        fs::write(
+            legacy.path().join("client-state.running.703.starting.json"),
+            r#"{"pid":703,"runToken":"starting","processStartIdentity":"electron-start","crossHost":true}"#,
         )
         .unwrap();
         assert!(!has_live_legacy_electron_with(

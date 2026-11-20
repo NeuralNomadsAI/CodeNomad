@@ -1,34 +1,13 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { writeFile } from "node:fs/promises"
-import { syncBuiltinESMExports } from "node:module"
 import { tmpdir } from "node:os"
-import { basename, join } from "node:path"
+import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager, type ClientStateWriter } from "./client-state"
 import { deterministicLegacyWindowId, parseClientState } from "./client-state-envelope"
 import { MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES } from "./client-state-partitions"
-
-test("the cross-host participant exists before the running marker a peer may read", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "codenomad-participant-order-"))
-  const electron = join(root, "electron"), election = join(root, "shared", "election")
-  t.after(() => rmSync(root, { recursive: true, force: true }))
-  const markerChecks: boolean[] = []
-  const openSync = fs.openSync
-  t.mock.method(fs, "openSync", (path: fs.PathLike, ...rest: any[]) => {
-    if (basename(String(path)).startsWith("client-state.running.")) {
-      markerChecks.push(existsSync(election) && fs.readdirSync(election).some((name) => name.startsWith("participant.")))
-    }
-    return (openSync as (...args: any[]) => number)(path, ...rest)
-  })
-  syncBuiltinESMExports()
-  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
-  const manager = new ClientStateManager(electron, undefined, { crossHostElectionDirectory: election, legacyTauriDataPath: null })
-  assert.deepEqual(markerChecks, [true])
-  assert.equal(manager.isPrimary, true)
-  await manager.drainAndReleasePrimary()
-})
 
 test("legacy migration UUIDs are deterministic from exact envelope bytes", () => {
   const vectors = [

@@ -285,19 +285,6 @@ export function crossHostParticipants(directory: string): ProcessOwner[] {
   }
 }
 
-/** Published before the running marker so a peer never sees that marker without
- * its participant and mistakes this host for a legacy one. Registration reuses it. */
-export function publishCrossHostParticipant(directory: string, owner: ProcessOwner): boolean {
-  if (!owner.processStartIdentity || !/^[A-Za-z0-9_-]+$/.test(owner.runToken)) return false
-  mkdirSync(directory, { recursive: true, mode: 0o700 })
-  publishParticipant(participantPath(directory, owner), owner)
-  return true
-}
-
-export function removeCrossHostParticipant(directory: string, owner: ProcessOwner): void {
-  removeParticipantIfOwned(participantPath(directory, owner), owner)
-}
-
 export class CrossHostRegistration {
   private released = false
 
