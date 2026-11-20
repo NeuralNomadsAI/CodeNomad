@@ -7,7 +7,7 @@ import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { out, repo, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateHost, out, repo, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 await useBenchTemp()
 const cookieName = `codenomad_session_${process.pid}_1700000000000`
@@ -22,10 +22,13 @@ async function observe(label, command, prefix) {
   for (const dir of [config, path.join(ui, "assets"), cwd]) await mkdir(dir, { recursive: true })
   await writeFile(path.join(ui, "index.html"), "<!doctype html><title>bench ui</title>")
   await writeFile(path.join(ui, "assets", "app.js"), "console.log(1)")
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(CODENOMAD_|CLI_|CNRS_)/.test(key)))
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|SYSTEMDRIVE|OS|LANG|TZ)$/i.test(key)))
   Object.assign(env, { CODENOMAD_NATIVE_PARENT: "1", CLI_CONFIG: config, CLI_UI_DIR: ui, CLI_UI_NO_UPDATE: "1",
     HOME: home, USERPROFILE: home, APPDATA: path.join(home, "AppData", "Roaming"), LOCALAPPDATA: path.join(home, "AppData", "Local"),
-    XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local", "share"), XDG_STATE_HOME: path.join(home, ".local", "state") })
+    XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local", "share"),
+    XDG_STATE_HOME: path.join(home, ".local", "state"), XDG_CACHE_HOME: path.join(home, ".cache"),
+    ProgramData: path.join(home, "ProgramData"), TEMP: home, TMP: home, TMPDIR: home })
+  await assertPrivateHost(env, home)
   const child = spawn(command, [...prefix, ...args], { cwd, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
   let buffer = "", log = ""
   const lines = [], waiters = []

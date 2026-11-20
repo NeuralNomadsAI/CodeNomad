@@ -11,7 +11,7 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium } from "playwright"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { out, privateGit, productRuntime, repo, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateHost, out, privateGit, productRuntime, repo, useBenchTemp, writeJson } from "./fixtures.mjs"
 import { populate } from "./files.mjs"
 
 const [exe] = process.argv.slice(2)
@@ -58,6 +58,7 @@ try {
     const info = await fixture.client.server.info()
     const env = { ...fixture.env, CNRS_FIXTURE_URL: fixture.connection.endpoint.url, CNRS_FIXTURE_PASSWORD: fixture.connection.endpoint.auth.password,
       CNRS_FIXTURE_PID: String(info.pid), CODENOMAD_SERVER_PASSWORD: password, CODENOMAD_REMOTE_CONTROL: "disabled" }
+    await assertPrivateHost(env, fixture.root, path.join(fixture.root, "ts.yaml"))
     const child = spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", path.join(repo, "packages/server/public"), "--config", path.join(fixture.root, "ts.yaml"), "--unrestricted-root"],
       { env, cwd: fixture.root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })

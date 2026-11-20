@@ -2,8 +2,9 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises"
 import { register } from "node:module"
+import os from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { promisify } from "node:util"
@@ -19,6 +20,51 @@ register(new URL("loader.js", dist), import.meta.url)
 export async function useBenchTemp() {
   process.env.TMP = process.env.TEMP = process.env.TMPDIR = path.join(out, "tmp")
   await mkdir(process.env.TMP, { recursive: true })
+}
+
+const forbiddenHomes = [os.homedir(), ...(process.platform === "win32" ? ["C:\\Users\\Admin"] : [])]
+const within = (root, target) => {
+  const relative = path.relative(root, target)
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+}
+
+// Resolve even a missing leaf, including dangling links; never create a directory to check it.
+async function canonical(file, hops = 0) {
+  assert(hops < 64, "Fixture profile path could not be resolved")
+  try {
+    return await realpath(file)
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error
+  }
+  const info = await lstat(file).catch(error => { if (error.code !== "ENOENT") throw error })
+  if (info?.isSymbolicLink()) return canonical(path.resolve(path.dirname(file), await readlink(file)), hops + 1)
+  const parent = path.dirname(file)
+  assert.notEqual(parent, file, "Fixture profile path has no existing ancestor")
+  return path.join(await canonical(parent, hops + 1), path.basename(file))
+}
+
+/** Check the actual home and selected config before spawning either local host. */
+export async function assertPrivateHost(env, root, config = env.CLI_CONFIG) {
+  const forbidden = await Promise.all(forbiddenHomes.map(home => canonical(home)))
+  const allowed = value => ![...forbidden, ...forbiddenHomes].some(home => within(home, value))
+  assert(allowed(root), "Host fixture root is not private")
+  const base = await canonical(root)
+  const check = async value => {
+    assert(typeof value === "string" && path.isAbsolute(value), "Host fixture needs an explicit private profile")
+    assert(allowed(value), "Host fixture profile is not private")
+    const resolved = await canonical(value)
+    assert(within(base, resolved) && allowed(resolved), "Host fixture profile is not private")
+    return resolved
+  }
+  await check(root)
+  const home = await check(env.HOME)
+  assert.equal(await check(env.USERPROFILE), home, "Host home must match the fixture on both platforms")
+  await Promise.all(["APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"].map(key => check(env[key])))
+  for (const [key, value] of Object.entries(env)) if (key.toUpperCase().startsWith("XDG_")) await check(value)
+  await check(config)
+  const folder = /\.(?:json|ya?ml)$/i.test(config) ? path.dirname(config) : config
+  await check(folder)
+  await check(/\.ya?ml$/i.test(config) ? config : path.join(folder, "config.yaml"))
 }
 const assertFixtureRoot = root => assert(path.resolve(root).startsWith(path.join(out, "tmp", "opencode")), `Not a bench fixture: ${root}`)
 

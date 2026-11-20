@@ -10,7 +10,7 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium } from "playwright"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateHost, installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
@@ -64,6 +64,7 @@ async function start(label, fixture, folder, password, trustedCA) {
     ...(mode === "memory" ? provisionEnv(root, "memory") : mode === "design" || mode === "host" ? provisionEnv(root) : {}) })
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
   if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CODENOMAD_REMOTE_CONTROL: "disabled", CLI_CONFIG: path.join(root, label === "ts" ? "ts.yaml" : "rust.yaml") })
+  await assertPrivateHost(env, root, env.CLI_CONFIG ?? path.join(root, label === "ts" ? "ts.yaml" : "rust.data"))
   const child = label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", path.join(out, "ui"), "--config", path.join(root, "ts.yaml"), "--workspace-root", folder],
