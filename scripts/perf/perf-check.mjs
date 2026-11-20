@@ -1,0 +1,97 @@
+// node scripts/perf/perf-check.mjs <results dir> [--tree <build>] [--client cn0] [--summary <file>]
+// Add --calibrate to print a budget candidate; never recalibrate on ordinary PR validation.
+import assert from "node:assert/strict"
+import { appendFileSync, readFileSync, readdirSync } from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
+import { parseArgs } from "node:util"
+import { byFile, byFunction } from "./coverage-top.mjs"
+import { solidCounters } from "./solid-counters.mjs"
+import { assetsDirectory } from "./stacks.mjs"
+
+const { values, positionals: [directory] } = parseArgs({
+  allowPositionals: true, options: {
+    tree: { type: "string", default: fileURLToPath(new URL("../..", import.meta.url)) },
+    client: { type: "string", default: "cn0" }, summary: { type: "string" },
+    calibrate: { type: "boolean" }, measure: { type: "boolean" },
+  },
+})
+assert(directory, "Pass the benchmark results directory")
+const load = file => JSON.parse(readFileSync(file, "utf8"))
+const median = values => {
+  assert(values.length && values.every(Number.isFinite), "Missing or invalid measurement")
+  return [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
+}
+const records = readdirSync(directory).filter(file => /-r\d+-L\d+\.json$/.test(file)).map(file => ({ ...load(path.join(directory, file)), file }))
+const counters = records.filter(r => r.scenario === "counters" && r.label === values.client)
+const assets = assetsDirectory(values.tree)
+const solidDir = path.join(values.tree, "node_modules/solid-js")
+const byLevel = {}
+for (const level of new Set(counters.map(r => r.level))) {
+  const samples = counters.filter(r => r.level === level)
+  const functions = samples.map(r => byFunction(path.join(directory, r.file.replace(/\.json$/, "-coverage.json")), assets, r.daemonFrames))
+  const metrics = samples.map((r, i) => ({ ...r.counters, ...solidCounters(functions[i], solidDir) }))
+  const files = functions.map(byFile)
+  byLevel[level] = {
+    rounds: samples.length,
+    metrics: Object.fromEntries(Object.keys(metrics[0]).map(key => [key, median(metrics.map(row => row[key]))])),
+    files: Object.fromEntries([...new Set(files.flatMap(m => [...m.keys()]))].sort().map(key => [key, median(files.map(m => m.get(key) ?? 0))])),
+  }
+}
+if (values.measure) {
+  console.log(JSON.stringify(Object.fromEntries(Object.entries(byLevel).map(([level, { rounds, metrics }]) => [level, { rounds, metrics }])), null, 2))
+  process.exit(0)
+}
+function latency(level, selector) {
+  const rows = records.filter(r => r.scenario === "latency" && r.level === level)
+  const read = kind => {
+    const matches = rows.filter(r => r.label === kind)
+    assert.equal(matches.length, 3, `Missing ${kind} latency rounds at L${level}`)
+    return median(matches.map(selector))
+  }
+  const cn = read(values.client), tui = read("tui")
+  return { cn, tui, ratio: Math.max(cn, 50) / Math.max(tui, 50) }
+}
+const counter = byLevel[8]
+assert.equal(counter?.rounds, 3, "Expected three counter rounds at L8")
+const ratios = Object.fromEntries([8, 32].map(level => [level, {
+  daemonToShownP95: latency(level, r => r.stages.daemonToShown.p95),
+  keysP95: latency(level, r => r.keys.p95),
+}]))
+const roundUp = value => Math.ceil(value * 10_000) / 10_000
+if (values.calibrate) {
+  const limits = metrics => Object.fromEntries(Object.entries(metrics).map(([key, baseline]) => [key, { baseline, max: roundUp(baseline * 1.15) }]))
+  console.log(JSON.stringify({
+    counters: limits(counter.metrics),
+    latency: Object.fromEntries(Object.entries(ratios).map(([level, metrics]) => [level, limits(Object.fromEntries(Object.entries(metrics).map(([key, v]) => [key, v.ratio])))])),
+    callsByFile: Object.fromEntries(Object.entries(counter.files).filter(([, calls]) => calls > 0).map(([file, calls]) => [file, +calls.toFixed(2)])),
+  }, null, 2))
+  process.exit(0)
+}
+
+const budgets = load(new URL("./perf-budgets.json", import.meta.url))
+assert.deepEqual(Object.keys(budgets.counters).sort(), Object.keys(counter.metrics).sort(), "Counter budget keys differ from observed metrics")
+const failures = [], rows = []
+function check(name, value, { max }, detail = "") {
+  assert(Number.isFinite(max) && max >= 0, `Invalid budget: ${name}`)
+  const ok = Number.isFinite(value) && value <= max
+  rows.push(`| ${ok ? "OK" : "**FAIL**"} | ${name} | ${value.toFixed(2)} | ${max.toFixed(2)} | ${detail} |`)
+  if (!ok) failures.push(`${name}: ${value.toFixed(2)} exceeds ${max.toFixed(2)}`)
+}
+for (const [key, value] of Object.entries(counter.metrics)) check(`L8 ${key}`, value, budgets.counters[key])
+const counterExceeded = failures.length > 0
+for (const [level, metrics] of Object.entries(ratios)) for (const [name, value] of Object.entries(metrics)) {
+  check(`L${level} ${name} CodeNomad/TUI`, value.ratio, budgets.latency[level][name], `${value.cn.toFixed(1)} ms / ${value.tui.toFixed(1)} ms`)
+}
+const lines = ["### Performance guard", "", "| | Metric | Value | Limit | Detail |", "|---|---|---:|---:|---|", ...rows]
+if (counterExceeded) {
+  const growth = Object.entries(counter.files).map(([file, now]) => [file, now - (budgets.callsByFile[file] ?? 0)])
+    .filter(([, delta]) => delta >= .01).sort((a, b) => b[1] - a[1]).slice(0, 12)
+  lines.push("", "Largest increases in JavaScript calls per native event:", "", "| Source file | +calls/event |", "|---|---:|",
+    ...(growth.length ? growth.map(([file, delta]) => `| ${file} | ${delta.toFixed(2)} |`) : ["| No measured source-file increase | — |"]))
+}
+const report = lines.join("\n") + "\n"
+console.log(report)
+if (values.summary) appendFileSync(values.summary, report)
+for (const failure of failures) console.error(`::error title=Performance budget exceeded::${failure}`)
+if (failures.length) process.exitCode = 1

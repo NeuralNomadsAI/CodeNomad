@@ -76,6 +76,24 @@ admitted Location before their first RPC, and surface failed setup immediately.
   registration (`writeFixtureServiceRegistration`). [OpenCode integrations](OPENCODE_INTEGRATIONS.md#test-fixtures)
   describes their options and commands.
 
+## Renderer performance guard
+
+The PR build runs `scripts/perf/bench.mjs` on Linux against a pinned OpenCode
+binary, a loopback provider, an owned daemon and a private headless Chromium
+profile. The foreground session has 300 history turns. The guard compares three
+8-session samples of JavaScript calls, Solid computations and DOM mutations per
+native event, and measures p95 display and key latency against the TUI on the
+same runner at 8 and 32 sessions. Ratios floor both inputs at 50 ms.
+
+Reproduce with the tools and build steps from `pr-build.yml`, then run
+`node scripts/perf/bench.mjs /absolute/path/to/opencode`. Run
+`node scripts/perf/perf-check.mjs <printed results directory>` for the verdict.
+Counter failures include the largest per-file JavaScript call increases.
+After a renderer improvement merges, generate a candidate from three Linux
+samples of `dev` with `perf-check.mjs <results> --calibrate`. Lower the budgets
+for improved metrics to the new median plus 15% and refresh the per-file
+reference. Review any proposed increase separately.
+
 ## Agent conventions
 
 - Mermaid initialization-deadline checks use the file preview's single renderer
