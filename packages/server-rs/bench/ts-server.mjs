@@ -21,6 +21,24 @@ if (process.env.CNRS_FIXTURE_URL) {
   OpenCodeCliService.prototype.discover = async () => endpoint
   for (const action of ["ensure", "restart"]) OpenCodeCliService.prototype[action] = async () => { throw new Error(`Fixture forbids service ${action}`) }
 }
+// `providers` mode: every HTTPS request goes to the bench's fake provider (`https://host/path` →
+// `<fake>/host/path`), so no provider is ever contacted.
+if (process.env.CNRS_FIXTURE_PROVIDERS) {
+  const fake = new URL(process.env.CNRS_FIXTURE_PROVIDERS)
+  assert(fake.hostname === "127.0.0.1" && fake.protocol === "http:")
+  const real = globalThis.fetch
+  const { googleOAuthClients } = await fromDist("usage/google-credential.js")
+  googleOAuthClients.get = () => ({ client_id: "fixture-client-id", client_secret: "fixture-client-secret" })
+  globalThis.fetch = (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    if (url.protocol === "https:") {
+      input = `${fake.origin}/${url.host}${url.pathname}${url.search}`
+      return real(input, { ...init, redirect: init?.redirect === "error" ? "error" : "manual" })
+    }
+    assert(url.protocol === "http:" && url.hostname === "127.0.0.1", "Provider bench refuses external HTTP")
+    return real(input, init)
+  }
+}
 // The saved Rust profile is verified against the bench's private CA, in this child only.
 if (process.env.CNRS_FIXTURE_TRUSTED_CA)
   tls.setDefaultCACertificates([...tls.getCACertificates("bundled"), await readFile(process.env.CNRS_FIXTURE_TRUSTED_CA, "utf8")])

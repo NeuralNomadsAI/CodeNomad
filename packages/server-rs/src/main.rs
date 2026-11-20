@@ -16,6 +16,7 @@ mod meta;
 mod missions;
 mod opencode;
 mod previews;
+mod provider_usage;
 mod search;
 mod service;
 mod sessions;
@@ -139,6 +140,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(missions::routes())
         .merge(sidecars::routes())
         .merge(usage::routes())
+        .merge(provider_usage::routes())
         .merge(opencode::routes());
 
     let shutdown = CancellationToken::new();

@@ -46,6 +46,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("PUT DELETE",r"^/workspaces/[^/]+/instance/api/experimental/session/[^/]+/instructions/entries/[^/]+$"),
     ("GET PUT",r"^/api/workspaces/[^/]+/subagent-depth$"),
     ("GET POST",r"^/api/sidecars$"),
+    ("GET",r"^/api/usage/[^/]+$"),
     ("PUT DELETE",r"^/api/sidecars/[^/]+$"),
     ("GET",r"^/api/workspaces/[^/]+/service-usage(?:/(?:owner|cache))?$"),
     // `isMemoryRelayRoute`: browser devices only (`memory::routes` refuses server devices).

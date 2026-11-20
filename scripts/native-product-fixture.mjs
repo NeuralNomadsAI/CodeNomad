@@ -104,7 +104,7 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     } catch (error) { providerError = error; res.destroy(error) }
   })
   await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
-  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...configuration, model: "fixture/fixture", providers: { fixture: {
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...configuration, model: "fixture/fixture", providers: { ...configuration?.providers, fixture: {
     package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {} },
   } } })
   let output = "", spawnError

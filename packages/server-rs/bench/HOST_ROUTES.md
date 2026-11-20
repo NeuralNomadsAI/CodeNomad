@@ -38,6 +38,7 @@ Rust state: **ported** before this change, **here** ported for this usage, **hos
 | GET | `/api/sidecars` | SideCars | 200 | here, with POST, PUT, DELETE and the `/sidecars/:id/*` proxy (HTTP, WebSocket), compared by `sidecars` |
 | POST | `/api/storage/binaries/validate` | Providers | 200 | to decide |
 | GET | `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Stats | 200 | here, compared by `usage` |
+| GET | `/api/usage/:provider` | Conversation Status › Provider Usage | 200 | compared by `providers` against synthetic credentials and provider responses |
 | POST, DELETE, * | `/api/previews`, `/api/previews/:token`, `/previews/:token/*` | Local preview | 200, 204, upstream | source HTTP/WS compared by `previews` |
 | POST, DELETE | `/api/backends/:id/preview-capabilities` | Preview of a remote project | 200, 204 | requires the backend relay and generation owner |
 
@@ -54,7 +55,6 @@ Observed but not ported, then not observed and therefore not kept. Opinion: usef
 | Route | Called by, when | Reference behaviour | Opinion |
 |---|---|---|---|
 | GET `/api/opencode/update` | start-up, opening a project, Settings › OpenCode | installed and latest OpenCode versions, update availability | useful (with the OpenCode service work) |
-| GET `/api/usage/:provider` | Conversation Status › Provider Usage | per-provider balances and quotas | pending |
 | GET `/api/config-files`, `/:id/content` | Settings › Config Files | lists and reads the raw `opencode.json(c)` files (non-atomic editor) | doubtful |
 | GET `/api/opencode/login-start` | Settings › Missions | OpenCode start at login for Mission calendars | doubtful while Missions are frozen |
 | GET `/api/remote-control/status` | Settings › Remote Access | Remote Access listener and tunnel state | useful (remote access) |

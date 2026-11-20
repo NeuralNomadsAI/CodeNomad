@@ -15,7 +15,7 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "previews", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "providers", "previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
@@ -71,6 +71,7 @@ async function start(label, fixture, folder, password, trustedCA) {
     ...(mode === "memory" ? provisionEnv(root, "memory") : mode === "design" ? provisionEnv(root) : {}) })
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
   if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true" })
+  Object.assign(env, bench?.environment?.(root) ?? {})
   // Modes that seed `config.yaml` start both servers on equal settings.
   // Keep the Rust settings at their private positional default in modes without a seeded YAML.
   env.CLI_CONFIG = label === "ts" ? path.join(root, "ts.yaml")
@@ -90,7 +91,10 @@ async function start(label, fixture, folder, password, trustedCA) {
   const request = (route, init) => fetch(`${listen}${route}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT), redirect: "manual", ...init })
   const close = async () => {
     if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
-    await writeFile(path.join(out, `${mode}-${label}.log`), output.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
+    const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
+    const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
+    await writeFile(path.join(out, `${mode}-${label}.log`), safe.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
+    if (leaked.length) (result.leaks ??= []).push({ label, count: leaked.length })
   }
   try {
     await eventually(async () => {
@@ -368,7 +372,7 @@ async function solid({ ts, rs, local, remote, tsRoot, rsRoot, password }) {
 let rustPruning, missionsPresence
 const prepare = async fixture => {
   if (mode === "depth") await (await import("./depth.mjs")).prepare(fixture)
-  return {}
+  return (await bench?.prepare?.(fixture)) ?? {}
 }
 try {
   await withProductRuntime(exe, async fixture => {
@@ -412,6 +416,7 @@ try {
         { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, data: path.join(remote.root, "rust.data") },
       ])
     } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
+    assert(!result.leaks, "A server logged a synthetic provider credential")
   }))
 } catch (error) {
   result.error = String(error.stack)
