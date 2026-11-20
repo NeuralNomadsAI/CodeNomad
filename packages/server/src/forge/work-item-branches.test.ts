@@ -7,6 +7,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { after, before, describe, it } from "node:test"
 import { createWorkItemBranch, lookupWorkItemBranch, readWorkItemBranches, type WorkItemBranchSource } from "./work-item-branches"
+import { runWorktreeGit } from "../workspaces/git-process"
 
 const roots: string[] = []
 // Results without the tip and repository identity, asserted separately.
@@ -18,15 +19,18 @@ const commit = (directory: string, message: string) => git(directory, "-c", "use
 
 // Remotes are served over Git's dumb HTTP protocol, so URLs parse as forge repositories.
 let server: Server, origin = ""
+const held: import("node:http").ServerResponse[] = []
 before(async () => {
   server = createServer((request, response) => {
     const [, root, repository, ...rest] = decodeURIComponent(new URL(request.url!, "http://x").pathname).split("/")
+    // `/hang/…` never answers, as a stalled forge.
+    if (root === "hang") { held.push(response); return }
     try { response.end(readFileSync(path.join(tmpdir(), root!, repository!, ...rest))) } catch { response.statusCode = 404; response.end() }
   })
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 })
-after(() => { server.close(); for (const root of roots) rmSync(root, { recursive: true, force: true }) })
+after(() => { for (const response of held) response.destroy(); server.close(); for (const root of roots) rmSync(root, { recursive: true, force: true }) })
 
 /** A clone of `<root>/app.git`, which publishes `refs/pull/7/head` and `refs/merge-requests/8/head` off every branch. */
 async function project(label = "") {
@@ -90,7 +94,7 @@ describe("work item branches", () => {
     const { clone, source } = await project()
     const other = await project()
     git(clone, "remote", "set-url", "origin", git(other.clone, "remote", "get-url", "origin"))
-    assert.deepEqual(await create(clone, source, "pullRequest", 7), { status: "unavailable" })
+    assert.deepEqual(await create(clone, source, "pullRequest", 7), { status: "changed" })
     assert.equal(git(clone, "for-each-ref", "refs/heads/pr-7"), "")
   })
 
@@ -109,8 +113,55 @@ describe("work item branches", () => {
     const { clone, source } = await project()
     let checks = 0
     const retarget = async () => { if (++checks === 2) git(clone, "remote", "set-url", "origin", "https://github.com/o/other.git") }
-    assert.deepEqual(await create(clone, source, "issue", 15, { check: retarget }), { status: "unavailable" })
+    assert.deepEqual(await create(clone, source, "issue", 15, { check: retarget }), { status: "changed" })
     assert.equal(git(clone, "for-each-ref", "refs/heads/issue-15"), "")
+  })
+
+  it("undoes the write when consent is withdrawn while the last checks run", async () => {
+    const { clone, source } = await project()
+    let checks = 0
+    // The third check runs after the write: consent was withdrawn during the final remote check.
+    await assert.rejects(create(clone, source, "issue", 16, { check: async () => { if (++checks === 3) throw new Error("revoked") } }), /revoked/)
+    assert.equal(git(clone, "for-each-ref", "refs/heads/issue-16"), "")
+    assert.equal(git(clone, "config", "--list", "--local").includes("branch.issue-16."), false, "nor its link")
+  })
+
+  it("follows the remote Git selects now: an upstream added after discovery is a change", async () => {
+    const { clone, source } = await project()
+    git(clone, "remote", "add", "upstream", "https://github.com/parent/repo.git")
+    assert.deepEqual(await create(clone, source, "issue", 17), { status: "changed" })
+    assert.deepEqual(await create(clone, source, "pullRequest", 7), { status: "changed" })
+    assert.equal(git(clone, "for-each-ref", "refs/heads/issue-17", "refs/heads/pr-7"), "")
+  })
+
+  it("a name recreated by hand at the start commit, then advanced, is not CodeNomad's branch", async () => {
+    const { clone, base, source } = await project()
+    assert.equal((await createWorkItemBranch(clone, source, "issue", 18)).status, "ok")
+    git(clone, "update-ref", "-d", "refs/heads/issue-18")
+    git(clone, "branch", "issue-18", base)
+    git(clone, "switch", "-q", "issue-18"); commit(clone, "someone else's work"); git(clone, "switch", "-q", "main")
+    assert.deepEqual(await lookup(clone, source, "issue", 18), { status: "conflict", branch: "issue-18" })
+  })
+
+  it("a stalled pull request fetch neither holds the shared Git worker nor outlives its caller", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codenomad-item-branches-hang-"))
+    roots.push(root)
+    git(root, "init", "-q", "-b", "main", path.join(root, "repo"))
+    const repo = path.join(root, "repo")
+    commit(repo, "base")
+    git(repo, "remote", "add", "origin", `${origin}/hang/app.git`)
+    const source: WorkItemBranchSource = { provider: "github", host: new URL(origin).host, path: "hang/app", name: "origin" }
+    const controllers = [new AbortController(), new AbortController()]
+    const before = held.length
+    const pending = controllers.map(controller => createWorkItemBranch(repo, source, "pullRequest", 7, { signal: controller.signal }).catch(error => error))
+    while (held.length < before + 1) await new Promise(resolve => setTimeout(resolve, 20))
+    const read = await Promise.race([runWorktreeGit(repo, ["rev-parse", "HEAD"]).then(() => "read"),
+      new Promise(resolve => setTimeout(() => resolve("queued"), 2_000))])
+    assert.equal(read, "read", "local reads keep their worker slots during a fetch")
+    for (const controller of controllers) controller.abort(new Error("gone"))
+    const settled = await Promise.race([Promise.all(pending).then(() => "settled"), new Promise(resolve => setTimeout(() => resolve("running"), 5_000))])
+    assert.equal(settled, "settled", "an abandoned fetch stops")
+    assert.equal(git(repo, "for-each-ref", "refs/heads/pr-7", "refs/codenomad/"), "")
   })
 
   it("writes nothing once the guard refuses, even after the fetch", async () => {
@@ -157,8 +208,8 @@ describe("work item branches", () => {
     const { clone, source } = await project()
     assert.equal((await createWorkItemBranch(clone, source, "issue", 5)).status, "ok")
     git(clone, "remote", "set-url", "origin", "https://github.com/team/new.git")
-    assert.deepEqual(await create(clone, source, "issue", 6), { status: "unavailable" })
-    assert.deepEqual(await create(clone, source, "issue", 5), { status: "unavailable" })
+    assert.deepEqual(await create(clone, source, "issue", 6), { status: "changed" })
+    assert.deepEqual(await create(clone, source, "issue", 5), { status: "changed" })
     assert.deepEqual(await lookup(clone, source, "issue", 5), { status: "unavailable" })
     assert.equal(git(clone, "for-each-ref", "refs/heads/issue-6"), "")
   })

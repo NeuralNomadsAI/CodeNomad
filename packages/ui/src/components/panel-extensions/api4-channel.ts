@@ -171,7 +171,7 @@ export function useApi4Channel(props: {
     worktrees: table({
       list: async (input, signal) => {
         empty.parse(input)
-        const linked = await itemWorktrees(signal)
+        const linked = await linkedWorktrees(signal)
         return { result: linked ?? "unavailable" }
       },
       open: (input, signal) => openWorktree(input, signal),
@@ -183,14 +183,10 @@ export function useApi4Channel(props: {
     const [answer] = await Promise.all([panelExtensionsApi4.workItemBranches(authority, signal), ensureWorktreesLoaded(props.instanceId)])
     if (answer.status !== "ok") return null
     const worktrees = getWorktrees(props.instanceId).filter(worktree => !worktree.nestedFolderMissing), current = familyWorktree()?.slug
-    return answer.branches.map(link => {
+    return answer.branches.map((link): PanelWorkItemWorktree => {
       const slug = worktrees.find(worktree => worktree.branch === link.branch)?.slug
-      return { ...link, slug, current: slug !== undefined && slug === current }
+      return { ...link, worktree: slug !== undefined, current: slug !== undefined && slug === current }
     })
-  }
-
-  async function itemWorktrees(signal: AbortSignal): Promise<PanelWorkItemWorktree[] | null> {
-    return (await linkedWorktrees(signal))?.map(({ slug, ...link }) => ({ ...link, worktree: slug !== undefined })) ?? null
   }
 
   // The item's own link, looked up exactly on the server (the listing is bounded); a name that

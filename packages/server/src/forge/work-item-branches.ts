@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import { promisify } from "node:util"
 import type { ForgeProvider, ForgeWorkItemKind } from "../panel-extensions/contract"
 import { runGitProcess } from "../workspaces/git-process"
-import { parseRemoteUrl } from "./remote"
+import { parseRemoteUrl, readForgeRemote } from "./remote"
 
 /** The project's forge repository and the remote it is fetched from. */
 export interface WorkItemBranchSource { provider: ForgeProvider; host: string; path: string; name: string }
@@ -67,36 +69,47 @@ export async function readWorkItemBranches(directory: string, source: Pick<WorkI
   return (await links(directory, source)).slice(0, MAX_LISTED).map(({ start: _start, ...link }) => link)
 }
 
+
 /**
- * The selected remote's configured URL when its expansion still names `source`'s repository.
- * Fetching that same configured URL lets Git apply `insteadOf` once, as the validation did.
+ * The remote Git selects for the repository right now (no cache: an `upstream` added
+ * meanwhile wins) when it is still `source`'s, with its configured URL. Fetching that
+ * configured URL lets Git apply `insteadOf` once, as this validation did.
  */
-async function remoteUrl(directory: string, source: WorkItemBranchSource) {
+async function remoteUrl(directory: string, source: WorkItemBranchSource, signal?: AbortSignal): Promise<string | "changed" | undefined> {
+  const selected = await readForgeRemote(directory, signal).catch(() => undefined)
+  if (!selected) return undefined
+  if (selected.name !== source.name || workItemRepository(selected) !== workItemRepository(source)) return "changed"
   const configured = (await git(directory, ["config", "--get-all", `remote.${source.name}.url`]).catch(() => "")).split(/\r?\n/)[0] ?? ""
   if (!configured) return undefined
   const remote = parseRemoteUrl(await git(directory, ["ls-remote", "--get-url", "--", configured]).catch(() => ""))
-  return remote && workItemRepository(remote) === workItemRepository(source) ? configured : undefined
+  return remote && workItemRepository(remote) === workItemRepository(source) ? configured : "changed"
 }
 
+// The reflog message of every branch CodeNomad creates: Git's own creations read
+// `branch: Created from …`, so a name recreated by hand never passes for ours.
+const creationMarker = (kind: ForgeWorkItemKind, number: number) => `codenomad: work item ${kind.toLowerCase()}/${number}`
+
 /**
- * The item's own linked branch, however many links exist, once the remote still names the
- * repository; `conflict` when its name now holds another branch: one that no longer contains
- * the start commit, or whose reflog begins with another creation (a stale link, its ref
- * deleted without Git's branch command, then the name recreated).
+ * The item's own linked branch, however many links exist, once the selected remote still names
+ * the repository; `conflict` when its name now holds another branch: one that no longer contains
+ * the start commit, or whose reflog begins with any other creation than CodeNomad's (a stale link,
+ * its ref deleted without Git's branch command, then the name recreated). An expired reflog
+ * leaves the ancestry check alone.
  */
-export async function lookupWorkItemBranch(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number): Promise<WorkItemBranchLookup> {
-  if (!await remoteUrl(directory, source)) return { status: "unavailable" }
+export async function lookupWorkItemBranch(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number,
+  signal?: AbortSignal): Promise<WorkItemBranchLookup> {
+  const url = await remoteUrl(directory, source, signal)
+  if (!url || url === "changed") return { status: "unavailable" }
   const link = (await links(directory, source)).find(candidate => candidate.kind === kind && candidate.number === number)
   if (!link) return { status: "ok", repository: workItemRepository(source), branch: null }
   const ref = `refs/heads/${link.branch}`
   const [contains, reflog] = await Promise.all([
     git(directory, ["merge-base", "--is-ancestor", link.start, ref])
       .then(() => true, (error: { code?: unknown }) => { if (error.code === 1 || error.code === 128) return false; throw error }),
-    // Absent or expired reflogs leave the ancestry check alone.
     git(directory, ["reflog", "show", "--format=%gs", ref, "--"]).catch(() => ""),
   ])
   const created = reflog.split(/\r?\n/).at(-1) ?? ""
-  const recreated = created.startsWith("branch: Created from ") && created !== `branch: Created from ${link.start}`
+  const recreated = /^branch: (Created from|copied|renamed)/i.test(created) && created !== creationMarker(kind, number)
   return contains && !recreated ? { status: "ok", repository: workItemRepository(source), branch: link.branch } : { status: "conflict", branch: link.branch }
 }
 
@@ -115,12 +128,26 @@ export function createWorkItemBranch(directory: string, source: WorkItemBranchSo
   return run
 }
 
+/**
+ * The pull request fetch, a network process outside the shared Git worker (whose two
+ * slots serve local reads), killed when the caller goes away or after 15 s.
+ */
+async function fetchHead(directory: string, url: string, head: string, scratch: string, signal?: AbortSignal) {
+  const cleared = Object.fromEntries(Object.keys(process.env)
+    .filter(key => key.toUpperCase().startsWith("GIT_") && !/^GIT_SSH(_COMMAND)?$/i.test(key)).map(key => [key, undefined]))
+  await promisify(execFile)("git", ["-C", directory, "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--refmap=", "--", url, `${head}:${scratch}`], {
+    windowsHide: true, timeout: FETCH_TIMEOUT_MS, maxBuffer: 1024 * 1024, signal,
+    env: { ...process.env, ...cleared, GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
+  })
+}
+
 async function create(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number,
   guard: WorkItemBranchGuard): Promise<WorkItemBranchResult> {
   const ready = async () => { guard.signal?.throwIfAborted(); await guard.check?.(); guard.signal?.throwIfAborted() }
   await ready()
   // The remote must still name the confirmed repository, whether the branch is reused or created.
-  const found = await lookupWorkItemBranch(directory, source, kind, number)
+  if (await remoteUrl(directory, source, guard.signal) === "changed") return { status: "changed" }
+  const found = await lookupWorkItemBranch(directory, source, kind, number, guard.signal)
   if (found.status !== "ok") return found
   if (found.branch) return { status: "ok", branch: found.branch, revision: await git(directory, ["rev-parse", "--verify", `refs/heads/${found.branch}^{commit}`]), created: false }
   const branch = `${kind === "issue" ? "issue" : "pr"}-${number}`
@@ -130,28 +157,42 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
   else {
     // Fetch from the URL that still names the confirmed repository, never through
     // the remote's configured refspecs (`--refmap=`), into a scratch ref only.
-    const url = await remoteUrl(directory, source)
+    const url = await remoteUrl(directory, source, guard.signal)
+    if (url === "changed") return { status: "changed" }
     if (!url) return { status: "unavailable" }
     const head = source.provider === "gitlab" ? `refs/merge-requests/${number}/head` : `refs/pull/${number}/head`
     const scratch = `refs/codenomad/fetch/${randomUUID()}`
     try {
-      await git(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--refmap=", "--", url, `${head}:${scratch}`], FETCH_TIMEOUT_MS)
+      await fetchHead(directory, url, head, scratch, guard.signal)
       revision = await git(directory, ["rev-parse", "--verify", `${scratch}^{commit}`])
     } catch {
+      guard.signal?.throwIfAborted()
       return { status: "unavailable" }
     } finally {
       await git(directory, ["update-ref", "-d", scratch]).catch(() => {})
     }
   }
-  await ready()
-  // The last check before writing: the remote must still name the confirmed repository.
-  if (!await remoteUrl(directory, source)) return { status: "unavailable" }
-  // Fails, without force, when the name was taken meanwhile.
-  try { await git(directory, ["branch", "--no-track", branch, revision]) } catch { return { status: "conflict", branch } }
+  // The selected remote and consent are checked right before the write and again after
+  // it: a change during either check undoes the write (only that ref at that tip).
+  const admitted = async (): Promise<WorkItemBranchResult | undefined> => {
+    const url = await remoteUrl(directory, source, guard.signal)
+    if (url === "changed") return { status: "changed" }
+    if (!url) return { status: "unavailable" }
+    await ready()
+    return undefined
+  }
+  const refused = await admitted()
+  if (refused) return refused
+  // Created only if absent (empty old value), with CodeNomad's own reflog marker.
+  try { await git(directory, ["update-ref", "-m", creationMarker(kind, number), `refs/heads/${branch}`, revision, ""]) } catch { return { status: "conflict", branch } }
+  const undo = () => git(directory, ["config", "--local", "--remove-section", `branch.${branch}`]).catch(() => {})
+    .then(() => git(directory, ["update-ref", "-d", `refs/heads/${branch}`, revision])).catch(() => {})
   try {
     await git(directory, ["config", "--local", `branch.${branch}.${KEY}`, `${workItemRepository(source)}#${kind.toLowerCase()}/${number}@${revision}/${branch}`])
+    const late = await admitted()
+    if (late) { await undo(); return late }
   } catch (error) {
-    await git(directory, ["update-ref", "-d", `refs/heads/${branch}`, revision]).catch(() => {})
+    await undo()
     throw error
   }
   return { status: "ok", branch, revision, created: true }

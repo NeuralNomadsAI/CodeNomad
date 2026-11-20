@@ -23,7 +23,9 @@ the project's GitHub, GitLab or Gitea/Forgejo repository, read by the host, and
 opening one item's page in the browser. API 4 carries `session.context` plus any
 non-empty subset of a finite permission set used by the independent **Design**
 image companion ([API 4](#api-4)): read-back images of the displayed conversation, their prompts,
-composer prefill, the Images conversation, the Design agent and panel preferences.
+composer prefill, the Images conversation, the Design agent and panel preferences, and by the
+**Contribute** addon: the repository's work items, their linked worktrees and, after
+CodeNomad's own confirmation, creating one and moving the conversation there.
 
 ## Package layout
 
@@ -319,7 +321,7 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   with the branch and never follows a copy or rename (`git branch -c`/`-m`); a branch name alone is never proof, and links of another repository identity
   or whose ref is gone are ignored. The exact lookup (`workItemBranchLookup`, used to open)
   answers `conflict` when the name now holds another branch: one that no longer contains the
-  start commit, or whose reflog begins with another creation. `list` joins the links to the worktree inventory;
+  start commit, or whose reflog begins with another creation than CodeNomad's own (`codenomad: work item <kind>/<number>`, written by `update-ref -m` when it creates the branch). `list` joins the links to the worktree inventory;
   `current` is the inventory's match for the displayed family, never the `root` fallback of
   a miss. `onChanged` fires when the inventory, a worktree's branch or the family's worktree
   changes, not when a link alone changes.
@@ -332,10 +334,10 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   linked branch or creates one under a per-repository lock, never forced: `issue-N` at the HEAD
   of the family's worktree (`fromSlug`, as the worktree selector creates), or `pr-N` at
   `refs/pull/N/head` (GitHub, Gitea) or `refs/merge-requests/N/head` (GitLab), fetched with
-  `--refmap=` (no configured refspec applies) into a scratch ref, from the remote's configured
-  URL whose single `insteadOf` expansion must name the repository; then `git branch` (an
-  unlinked branch of that name is a `conflict`). Consent and the project are checked again
-  right before any ref is written, and by the host again before it creates the worktree and before it moves the family. Lookups and writes first require that remote check; they
+  `--refmap=` (no configured refspec applies) into a scratch ref, by its own process outside the shared Git worker, killed when the caller goes away or after 15 s, from the remote's configured
+  URL whose single `insteadOf` expansion must name the repository; then `git update-ref` creates it only if absent (an
+  unlinked branch of that name is a `conflict`). The selected remote is read again without the forge cache (an `upstream` added meanwhile answers `changed`), and consent and the project are checked
+  right before the write and again right after it, a late change undoing the write (that ref at that tip only); the host checks consent again before it creates the worktree and before it moves the family. Lookups and writes first require that remote check; they
   see every link, and only `list` stops at 200. `createWorktree` then checks out that branch
   only at the returned tip (`revision`: a missing or moved branch is refused, never recreated or
   guessed from a remote-tracking branch) and `setWorktreeSlugForParentSession` moves the family

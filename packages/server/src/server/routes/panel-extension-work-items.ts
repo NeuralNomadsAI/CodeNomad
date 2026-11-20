@@ -67,7 +67,7 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
   // Opening looks up the item's own link, beyond the listing's bound.
   route("workItemBranchLookup", "repository.worktrees.read", urlSchema, async (directory, input, signal) => {
     const source = await deps.forge.branchSource(directory, signal)
-    return source ? lookupWorkItemBranch(directory, source, input.kind, input.number) : { status: "unavailable" }
+    return source ? lookupWorkItemBranch(directory, source, input.kind, input.number, signal) : { status: "unavailable" }
   })
   // `fromSlug` is the host's displayed worktree, whose HEAD a new issue branch starts from.
   route("workItemBranch", "repository.worktrees.write", branchSchema, async (directory, input, signal, current) => {
