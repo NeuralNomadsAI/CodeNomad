@@ -4,7 +4,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
 import { PanelExtensionError } from "../../panel-extensions/archive"
 import { FORGE_MAX_PAGE, type ForgeWorkItems } from "../../forge/work-items"
-import { createWorkItemBranch, readWorkItemBranches } from "../../forge/work-item-branches"
+import { createWorkItemBranch, lookupWorkItemBranch, readWorkItemBranches } from "../../forge/work-item-branches"
 import type { PanelExtensionPermission } from "../../panel-extensions/contract"
 
 const kind = z.enum(["issue", "pullRequest"])
@@ -62,6 +62,11 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
   route("workItemBranches", "repository.worktrees.read", z.object(authority).strict(), async (directory, _input, signal) => {
     const source = await deps.forge.branchSource(directory, signal)
     return source ? { status: "ok", branches: await readWorkItemBranches(directory, source) } : { status: "unavailable" }
+  })
+  // Opening looks up the item's own link, beyond the listing's bound.
+  route("workItemBranchLookup", "repository.worktrees.read", urlSchema, async (directory, input, signal) => {
+    const source = await deps.forge.branchSource(directory, signal)
+    return source ? lookupWorkItemBranch(directory, source, input.kind, input.number) : { status: "unavailable" }
   })
   // `fromSlug` is the host's displayed worktree, whose HEAD a new issue branch starts from.
   route("workItemBranch", "repository.worktrees.write", branchSchema, async (directory, input, signal, current) => {

@@ -75,7 +75,8 @@ test("API 4 reads work items with their own permission; item branches each need 
   try {
     for (const pkg of [items, reader, writer]) { await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true) }
     assert.deepEqual(await Promise.all([post(items, "workItems", page), post(items, "workItemBranches"), post(items, "workItemBranch", item)]), [200, 403, 403])
-    assert.deepEqual(await Promise.all([post(reader, "workItemBranches"), post(reader, "workItemBranch", item)]), [200, 403])
+    assert.deepEqual(await Promise.all([post(reader, "workItemBranches"), post(reader, "workItemBranchLookup", item), post(reader, "workItemBranch", item)]), [200, 200, 403])
+    assert.equal(await post(items, "workItemBranchLookup", item), 403)
     assert.deepEqual(await Promise.all([post(writer, "workItemBranches"), post(writer, "workItemBranch", item)]), [200, 200])
     assert.equal(await post(writer, "workItemBranch", { kind: "pullRequest", number: 0 }), 400)
     assert.equal(await post(writer, "workItemBranch", { ...item, branch: "main" }), 400, "addons never name the branch")
@@ -88,6 +89,7 @@ test("a branch write starts from the displayed worktree and writes nothing once 
   const project = path.join(directory, "project"), displayed = path.join(directory, "displayed")
   git(directory, "init", "-q", "-b", "main", project)
   git(project, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "base")
+  git(project, "remote", "add", "origin", "https://github.com/o/r.git")
   git(project, "worktree", "add", "-q", "-b", "feature", displayed)
   git(displayed, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "displayed")
   const writer = await readPanelExtensionArchive(fixtureArchive("<p>Write</p>", { apiVersion: 4,

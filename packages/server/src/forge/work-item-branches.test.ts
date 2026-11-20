@@ -6,7 +6,7 @@ import { createServer, type Server } from "node:http"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { after, before, describe, it } from "node:test"
-import { createWorkItemBranch, readWorkItemBranches, type WorkItemBranchSource } from "./work-item-branches"
+import { createWorkItemBranch, lookupWorkItemBranch, readWorkItemBranches, type WorkItemBranchSource } from "./work-item-branches"
 
 const roots: string[] = []
 const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" }).trim()
@@ -106,10 +106,41 @@ describe("work item branches", () => {
     assert.equal(git(clone, "for-each-ref", "refs/heads/pr-9", "refs/codenomad/"), "")
   })
 
+  it("keeps a linked branch the user advanced, but never relinks a name recreated after its ref was deleted", async () => {
+    const { clone, source } = await project()
+    assert.equal((await createWorkItemBranch(clone, source, "issue", 7)).status, "ok")
+    git(clone, "switch", "-q", "issue-7"); commit(clone, "work"); git(clone, "switch", "-q", "main")
+    assert.deepEqual(await lookupWorkItemBranch(clone, source, "issue", 7), { status: "ok", branch: "issue-7" })
+    git(clone, "update-ref", "-d", "refs/heads/issue-7")
+    commit(clone, "unrelated")
+    git(clone, "branch", "issue-7")
+    assert.deepEqual(await lookupWorkItemBranch(clone, source, "issue", 7), { status: "conflict", branch: "issue-7" })
+    assert.deepEqual(await createWorkItemBranch(clone, source, "issue", 7), { status: "conflict", branch: "issue-7" })
+  })
+
+  it("revalidates the repository before an issue branch is created or reused", async () => {
+    const { clone, source } = await project()
+    assert.equal((await createWorkItemBranch(clone, source, "issue", 5)).status, "ok")
+    git(clone, "remote", "set-url", "origin", "https://github.com/team/new.git")
+    assert.deepEqual(await createWorkItemBranch(clone, source, "issue", 6), { status: "unavailable" })
+    assert.deepEqual(await createWorkItemBranch(clone, source, "issue", 5), { status: "unavailable" })
+    assert.deepEqual(await lookupWorkItemBranch(clone, source, "issue", 5), { status: "unavailable" })
+    assert.equal(git(clone, "for-each-ref", "refs/heads/issue-6"), "")
+  })
+
+  it("an exact lookup sees links beyond the listing's 200", async () => {
+    const { clone, base, source } = await project()
+    const value = (i: number) => `${source.host}/${source.path}#issue/${i}@${base}`.toLowerCase()
+    execFileSync("git", ["-C", clone, "update-ref", "--stdin"], { input: Array.from({ length: 201 }, (_, i) => `create refs/heads/issue-${i + 1} ${base}\n`).join("") })
+    appendFileSync(path.join(clone, ".git", "config"), Array.from({ length: 201 }, (_, i) => `\n[branch "issue-${i + 1}"]\n\tcodenomad-work-item = \"${value(i + 1)}\"\n`).join(""))
+    assert.equal((await readWorkItemBranches(clone, source)).length, 200)
+    assert.deepEqual(await lookupWorkItemBranch(clone, source, "issue", 201), { status: "ok", branch: "issue-201" })
+  })
+
   it("finds the item's link however many others exist, and forgets links whose branch is gone", async () => {
     const { clone, base, source } = await project()
     execFileSync("git", ["-C", clone, "update-ref", "--stdin"], { input: Array.from({ length: 250 }, (_, i) => `create refs/heads/old-${i} ${base}\n`).join("") })
-    appendFileSync(path.join(clone, ".git", "config"), Array.from({ length: 250 }, (_, i) => `[branch "old-${i}"]\n\tcodenomad-work-item = github.com/o/old#issue/${i + 1}\n`).join(""))
+    appendFileSync(path.join(clone, ".git", "config"), Array.from({ length: 250 }, (_, i) => `\n[branch "old-${i}"]\n\tcodenomad-work-item = \"github.com/o/old#issue/${i + 1}\"\n`).join(""))
     assert.equal((await createWorkItemBranch(clone, source, "issue", 201)).status, "ok")
     assert.deepEqual(await readWorkItemBranches(clone, source), [{ kind: "issue", number: 201, branch: "issue-201" }])
     assert.deepEqual(await createWorkItemBranch(clone, source, "issue", 201), { status: "ok", branch: "issue-201", created: false })

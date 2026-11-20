@@ -192,9 +192,14 @@ export function useApi4Channel(props: {
     return (await linkedWorktrees(signal))?.map(({ slug, ...link }) => ({ ...link, worktree: slug !== undefined })) ?? null
   }
 
+  // The item's own link, looked up exactly on the server (the listing is bounded); a name that
+  // now holds another branch counts as no worktree, and creating it then reports the conflict.
   async function itemWorktree(kind: ForgeWorkItemKind, number: number, signal: AbortSignal) {
-    const links = (await linkedWorktrees(signal))?.filter(link => link.kind === kind && link.number === number)
-    return links && { slug: links.find(link => link.current)?.slug ?? links.find(link => link.slug)?.slug, current: links.some(link => link.current) }
+    const [answer] = await Promise.all([panelExtensionsApi4.workItemBranchLookup(authority, kind, number, signal), ensureWorktreesLoaded(props.instanceId)])
+    if (answer.status === "unavailable") return null
+    const slug = answer.status === "ok" && answer.branch !== null
+      ? getWorktrees(props.instanceId).find(worktree => !worktree.nestedFolderMissing && worktree.branch === answer.branch)?.slug : undefined
+    return { slug, current: slug !== undefined && slug === familyWorktree()?.slug }
   }
 
   // The frame only asks; the host's own dialog decides, then creates and moves.

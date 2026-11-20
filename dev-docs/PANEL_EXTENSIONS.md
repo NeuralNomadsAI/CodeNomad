@@ -315,16 +315,18 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   file. An invalid stored entry alone reads `{}`. Panels keep only their own display
   settings there; never treat preferences as a security boundary.
 - **Worktrees**: an item's link is host-owned data, `branch.<name>.codenomad-work-item`
-  (`<host>/<path>#<kind>/<number>`) in the repository's config, so Git drops it with the
-  branch; a branch name alone is never proof, and links of another repository identity or
-  whose ref is gone are ignored. `list` joins the links to the worktree inventory;
+  (`<host>/<path>#<kind>/<number>@<start commit>`) in the repository's config, so Git drops it
+  with the branch; a branch name alone is never proof, and links of another repository identity
+  or whose ref is gone are ignored. The exact lookup (`workItemBranchLookup`, used to open)
+  answers `conflict` when the name now holds another branch: one that no longer contains the
+  start commit, or whose reflog begins with another creation. `list` joins the links to the worktree inventory;
   `current` is the inventory's match for the displayed family, never the `root` fallback of
   a miss. `onChanged` fires when the inventory, a worktree's branch or the family's worktree
   changes, not when a link alone changes.
   `open` answers `confirming` and then shows the host's own confirmation (title: the
   extension's name), one at a time and never over another host dialog, aborted on unmount;
   after a refusal the mounting answers `busy` for 10 s, so a panel cannot hold the modal up.
-  On acceptance the host reads the links again (consent rechecked) and refuses a changed
+  Opening and acceptance look the item up exactly (consent rechecked) and refuse a changed
   target; without a worktree, `workItemBranch` returns the linked branch or creates one
   under a per-repository lock, never forced: `issue-N` at the HEAD of the family's worktree
   (`fromSlug`, as the worktree selector creates), or `pr-N` at `refs/pull/N/head` (GitHub,
@@ -332,7 +334,8 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   refspec applies) from the selected remote's current URL, which must still name the
   repository, into a scratch ref; then `git branch` (an unlinked branch of that name is a
   `conflict`). Consent and the project are checked again right before any ref is written.
-  Exact lookups see every link; only `list` stops at 200. Then `createWorktree` reuses that branch and `setWorktreeSlugForParentSession`
+  Lookups and writes first require the selected remote's current URL to name the repository;
+  they see every link, and only `list` stops at 200. Then `createWorktree` reuses that branch and `setWorktreeSlugForParentSession`
   moves the family, reporting its own failure; the created worktree stays.
 - **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
   and method names select only own entries of `Map`s; never index an object with frame
