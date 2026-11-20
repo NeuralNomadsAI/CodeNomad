@@ -20,7 +20,7 @@ export function OpenCodeSetupProgress() {
   return <Show when={openCodeSetupPhase()}>
     <div class="opencode-setup-progress">
       <div class="opencode-setup-progress-heading" role="status">
-        <Loader2 class="w-5 h-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        <span class="inline-flex animate-spin motion-reduce:animate-none"><Loader2 class="w-5 h-5" aria-hidden="true" /></span>
         <strong>{t(label())}</strong>
       </div>
       <p class="settings-toggle-caption" role="timer" aria-live="off">{t("settings.opencode.setup.elapsed", { elapsed: elapsed() })}</p>
