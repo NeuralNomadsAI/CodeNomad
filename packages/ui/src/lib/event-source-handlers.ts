@@ -22,7 +22,11 @@ export function attachEventSourceHandlers(source: EventSource, options: EventSou
   source.onmessage = (event) => {
     let payload: WorkspaceEventPayload
     try {
-      payload = JSON.parse(event.data) as WorkspaceEventPayload
+      const value = JSON.parse(event.data)
+      if (!value || typeof value !== "object" || typeof value.type !== "string") {
+        throw new Error("Expected an event object with a type")
+      }
+      payload = value as WorkspaceEventPayload
     } catch (error) {
       options.logger.error("Failed to parse event", error)
       return

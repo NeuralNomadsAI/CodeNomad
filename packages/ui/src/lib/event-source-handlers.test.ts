@@ -25,8 +25,10 @@ describe("attachEventSourceHandlers", () => {
       logger: { warn() {}, error(message) { errors.push(message) } },
     })
     source.onmessage!(new MessageEvent("message", { data: "malformed" }))
+    source.onmessage!(new MessageEvent("message", { data: "null" }))
+    source.onmessage!(new MessageEvent("message", { data: "{}" }))
     source.onmessage!(new MessageEvent("message", { data: '{"type":"fixture"}' }))
-    assert.deepEqual(errors, ["Failed to parse event", "Failed to dispatch event"])
+    assert.deepEqual(errors, ["Failed to parse event", "Failed to parse event", "Failed to parse event", "Failed to dispatch event"])
     assert.deepEqual(received, [{ type: "fixture" }])
     assert.equal(reconnects, 0)
   })
