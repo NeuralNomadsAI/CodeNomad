@@ -318,6 +318,7 @@ pub(crate) fn open_speech(app: &AppHandle) -> Result<(), String> {
             section: "speech".into(),
             scroll_top: None,
             instance_id: None,
+            server_id: None,
             workspace_path: None,
             location: None,
         },
