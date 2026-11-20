@@ -105,7 +105,6 @@ export interface PanelWorkItemWorktree {
   current: boolean
 }
 
-export type PanelWorktreeOpenStatus = "confirming" | "current" | "conflict" | "busy" | "no-session" | "unavailable"
 
 export type ForgeWorkItemsResult =
   | { status: "ok"; repository: ForgeRepository; items: ForgeWorkItem[]; page: number; hasMore: boolean; total?: number }

@@ -221,6 +221,8 @@ export function useApi4Channel(props: {
     if ("conflict" in target) return { result: "conflict" }
     if (target.current) return { result: "current" }
     // Reserved before answering, so a concurrent open answers `busy`; released if the answer never lands.
+    // An answer the dispatcher will drop (deadline, unmount) must not hold the reservation.
+    signal.throwIfAborted()
     if (confirming || reserved || !connected || !nativeConnected) return { result: "busy" }
     reserved = true
     setTimeout(() => { reserved = false }, API4_HOST_DEADLINE_MS)

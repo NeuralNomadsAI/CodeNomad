@@ -88,8 +88,7 @@ async function remoteUrl(directory: string, source: WorkItemBranchSource, signal
   return selected.name === source.name && workItemRepository(selected) === workItemRepository(source) ? "ok" : "changed"
 }
 
-// The reflog message of every branch CodeNomad creates. Git's own creation, copy and
-// rename messages start with `branch:`, so a name recreated by hand never passes for ours.
+// The reflog message of every branch CodeNomad creates: a branch whose reflog starts otherwise is not ours.
 const creationMarker = (kind: ForgeWorkItemKind, number: number) => `codenomad: work item ${kind.toLowerCase()}/${number}`
 
 /**
@@ -123,7 +122,9 @@ async function linkedBranch(directory: string, source: WorkItemBranchSource, kin
     git(directory, ["reflog", "show", "--format=%gs", ref, "--"]).catch(() => ""),
   ])
   const created = reflog.split(/\r?\n/).at(-1) ?? ""
-  const recreated = /^branch: (Created from|copied|renamed)/i.test(created)
+  // Positive proof: a reflog that begins with anything but CodeNomad's marker belongs to another
+  // creation (git branch, fetch, copy…). Without a reflog (disabled, or wholly expired) ancestry alone decides.
+  const recreated = reflog !== "" && created !== creationMarker(kind, number)
   return contains && !recreated ? { status: "ok", repository: workItemRepository(source), branch: link.branch } : { status: "conflict", branch: link.branch }
 }
 

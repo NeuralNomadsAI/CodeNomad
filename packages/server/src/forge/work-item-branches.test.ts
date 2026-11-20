@@ -146,6 +146,15 @@ describe("work item branches", () => {
     assert.equal(git(clone, "config", "--list", "--local").includes("codenomad-work-item"), false)
   })
 
+  it("a name recreated by a fetch is not CodeNomad's branch either: only its own reflog marker proves it", async () => {
+    const { clone, source } = await project()
+    assert.equal((await createWorkItemBranch(clone, source, "issue", 20)).status, "ok")
+    git(clone, "update-ref", "-d", "refs/heads/issue-20")
+    commit(clone, "unrelated main work")
+    git(clone, "fetch", "-q", ".", "refs/heads/main:refs/heads/issue-20")
+    assert.deepEqual(await lookup(clone, source, "issue", 20), { status: "conflict", branch: "issue-20" })
+  })
+
   it("follows the remote Git selects now: an upstream added after discovery is a change", async () => {
     const { clone, source } = await project()
     git(clone, "remote", "add", "upstream", "https://github.com/parent/repo.git")
@@ -258,7 +267,7 @@ describe("work item branches", () => {
   it("an exact lookup sees links beyond the listing's 200", async () => {
     const { clone, base, source } = await project()
     const value = (i: number) => `${source.host}/${source.path}#issue/${i}@${base}/issue-${i}`
-    execFileSync("git", ["-C", clone, "update-ref", "--stdin"], { input: Array.from({ length: 201 }, (_, i) => `create refs/heads/issue-${i + 1} ${base}\n`).join("") })
+    execFileSync("git", ["-C", clone, "update-ref", "-m", "codenomad: work item issue/201", "--stdin"], { input: Array.from({ length: 201 }, (_, i) => `create refs/heads/issue-${i + 1} ${base}\n`).join("") })
     appendFileSync(path.join(clone, ".git", "config"), Array.from({ length: 201 }, (_, i) => `\n[branch "issue-${i + 1}"]\n\tcodenomad-work-item = \"${value(i + 1)}\"\n`).join(""))
     assert.equal((await readWorkItemBranches(clone, source))!.length, 200)
     assert.deepEqual(await lookup(clone, source, "issue", 201), { status: "ok", branch: "issue-201" })
