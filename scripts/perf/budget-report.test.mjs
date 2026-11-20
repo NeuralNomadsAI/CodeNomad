@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { budgetReport } from "./budget-report.mjs"
+import { assertRatchet, budgetReport } from "./budget-report.mjs"
 
 const budgets = {
   counters: { "solid.createComputation": { max: 115 } },
@@ -25,4 +25,11 @@ test("a timing-only failure reports both latencies and the separately measured c
   assert.deepEqual(failures, ["L8 shownP95 CodeNomad/TUI (50 ms floor): 1.20 exceeds 1.15"])
   assert.match(report, /60\.0 ms \/ 50\.0 ms; raw 1\.20×/)
   assert.match(report, /Largest increases/)
+})
+
+test("a PR can tighten a dev budget but cannot raise it or drop a metric", () => {
+  const make = max => ({ ...budgets, counters: { "solid.createComputation": { max } } })
+  assert.doesNotThrow(() => assertRatchet(budgets, make(114)))
+  assert.throws(() => assertRatchet(budgets, make(116)), /budget increased above dev/)
+  assert.throws(() => assertRatchet(budgets, { ...budgets, counters: {} }), /budget keys changed/)
 })

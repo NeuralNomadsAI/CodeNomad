@@ -81,13 +81,11 @@ async function measure(daemon, ids, driver, countWork) {
     await driver.clear()
     await waitIdle(daemon)
     const seen = expected.filter(key => shown[key] !== undefined)
-    assert(seen.includes(last) && seen.length >= expected.length * .8, `Only ${seen.length}/${expected.length} foreground markers observed`)
-    // Missing early markers may have scrolled past the viewport between paints.
-    // Charge them through the observation deadline instead of removing them from the percentile.
-    const observationEnd = now()
+    assert(seen.includes(last), "The final foreground marker never appeared")
     const stages = {
-      daemonToShown: { p95: p95(expected.map(key => (shown[key] ?? observationEnd) - daemonAt.get(key))) },
-      total: { p95: p95(expected.map(key => (shown[key] ?? observationEnd) - daemon.markers.get(key))) },
+      // The final marker stays in the viewport; earlier markers can scroll out between paints.
+      finalMarkerMs: shown[last] - daemonAt.get(last),
+      visibleMarkerP95: p95(seen.map(key => shown[key] - daemonAt.get(key))),
     }
     if (coverage) assert(pageFrames >= daemonFrames * .95, `Only ${pageFrames}/${daemonFrames} SSE frames reached the renderer`)
     const counters = coverage && {

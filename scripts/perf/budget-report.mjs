@@ -1,5 +1,18 @@
 import assert from "node:assert/strict"
 
+export function assertRatchet(base, candidate) {
+  function constrain(previous, next, context) {
+    assert.deepEqual(Object.keys(next ?? {}).sort(), Object.keys(previous).sort(), `${context} budget keys changed`)
+    for (const [name, { max }] of Object.entries(previous)) {
+      const proposed = next[name].max
+      assert(Number.isFinite(proposed) && proposed <= max, `${context} ${name} budget increased above dev (${proposed} > ${max})`)
+    }
+  }
+  constrain(base.counters, candidate.counters, "Renderer counter")
+  assert.deepEqual(Object.keys(candidate.latency).sort(), Object.keys(base.latency).sort(), "Latency levels changed")
+  for (const [level, metrics] of Object.entries(base.latency)) constrain(metrics, candidate.latency[level], `L${level} latency`)
+}
+
 export function budgetReport(budgets, counter, ratios) {
   assert.deepEqual(Object.keys(budgets.counters).sort(), Object.keys(counter.metrics).sort(), "Counter budget keys differ from observed metrics")
   const failures = [], rows = []

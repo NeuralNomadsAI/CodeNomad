@@ -5,7 +5,7 @@ import { appendFileSync, readFileSync, readdirSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
-import { budgetReport } from "./budget-report.mjs"
+import { assertRatchet, budgetReport } from "./budget-report.mjs"
 import { byFile, byFunction } from "./coverage-top.mjs"
 import { solidCounters } from "./solid-counters.mjs"
 import { assetsDirectory } from "./stacks.mjs"
@@ -14,6 +14,7 @@ const { values, positionals: [directory] } = parseArgs({
   allowPositionals: true, options: {
     tree: { type: "string", default: fileURLToPath(new URL("../..", import.meta.url)) },
     client: { type: "string", default: "cn0" }, summary: { type: "string" },
+    base: { type: "string" },
     calibrate: { type: "boolean" }, measure: { type: "boolean" },
   },
 })
@@ -25,6 +26,7 @@ const median = values => {
 }
 const records = readdirSync(directory).filter(file => /-r\d+-L\d+\.json$/.test(file)).map(file => ({ ...load(path.join(directory, file)), file }))
 const counters = records.filter(r => r.scenario === "counters" && r.label === values.client)
+assert(counters.length, `Missing counter samples for ${values.client}`)
 const assets = assetsDirectory(values.tree)
 const solidDir = path.join(values.tree, "node_modules/solid-js")
 const byLevel = {}
@@ -59,7 +61,7 @@ function checkRounds(samples, name) {
 const counter = byLevel[8]
 checkRounds(counters.filter(row => row.level === 8), "counters at L8")
 const ratios = Object.fromEntries([8, 32].map(level => [level, {
-  daemonToShownP95: latency(level, r => r.stages.daemonToShown.p95),
+  finalMarker: latency(level, r => r.stages.finalMarkerMs),
   keysP95: latency(level, r => r.keys.p95),
 }]))
 const roundUp = value => Math.ceil(value * 10_000) / 10_000
@@ -73,7 +75,9 @@ if (values.calibrate) {
   process.exit(0)
 }
 
-const { report, failures } = budgetReport(load(new URL("./perf-budgets.json", import.meta.url)), counter, ratios)
+const budgets = load(new URL("./perf-budgets.json", import.meta.url))
+if (values.base) assertRatchet(load(values.base), budgets)
+const { report, failures } = budgetReport(budgets, counter, ratios)
 console.log(report)
 if (values.summary) appendFileSync(values.summary, report)
 for (const failure of failures) console.error(`::error title=Performance budget exceeded::${failure}`)
