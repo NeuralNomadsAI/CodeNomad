@@ -40,7 +40,8 @@ pub async fn set_enabled(app: &App, value: bool, cancel: Option<&CancellationTok
     let outcome = (|| {
         check(cancel)?;
         // The owner merge starts from the document on disk, preserving external fields.
-        crate::settings::patch_owner(app, "server", json!({"memoryEnabled": value})).map_err(|_| preference())?;
+        crate::settings::patch_owner(app, crate::settings::Kind::Config, "server", json!({"memoryEnabled": value}))
+            .map_err(|_| preference())?;
         invalidate(app);
         enabled(app)
     })();

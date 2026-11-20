@@ -38,13 +38,16 @@ pub enum Failure {
     Unreadable,
 }
 impl Failure {
-    fn response(self) -> Error {
+    pub fn message(self) -> String {
         match self {
-            Failure::Invalid(message) => error(Status::BAD_REQUEST, &message),
-            Failure::Unreadable => {
-                error(Status::SERVICE_UNAVAILABLE, "Settings document could not be read authoritatively")
-            }
+            Failure::Invalid(message) => message,
+            Failure::Unreadable => "Settings document could not be read authoritatively".into(),
         }
+    }
+    fn response(self) -> Error {
+        let status =
+            if matches!(self, Failure::Invalid(_)) { Status::BAD_REQUEST } else { Status::SERVICE_UNAVAILABLE };
+        error(status, &self.message())
     }
 }
 impl From<Unreadable> for Failure {
@@ -205,10 +208,10 @@ fn sanitized(name: &str, value: Value) -> Value {
     }
 }
 
-/// A configuration owner merge for other domains (memory), published like the reference's.
-pub fn patch_owner(app: &App, name: &str, patch: Value) -> Result<Value, Failure> {
-    let saved = app.settings.patch(Kind::Config, name, &patch)?;
-    publish(app, Kind::Config, name, saved.clone());
+/// `mergePatchOwner` for other domains (memory, SideCars, Stats), published like the reference's.
+pub fn patch_owner(app: &App, kind: Kind, name: &str, patch: Value) -> Result<Value, Failure> {
+    let saved = app.settings.patch(kind, name, &patch)?;
+    publish(app, kind, name, saved.clone());
     Ok(saved)
 }
 

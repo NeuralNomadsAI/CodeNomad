@@ -14,7 +14,7 @@ import { installMissions, installPruning, measurePair, memory, out, privateGit, 
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
@@ -63,7 +63,9 @@ async function start(label, fixture, folder, password, trustedCA) {
     CNRS_FIXTURE_MISSIONS_REGISTRY: path.join(fixture.env.LOCALAPPDATA, "CodeNomad", "automation-bridges"),
     ...(mode === "memory" ? provisionEnv(root, "memory") : mode === "design" ? provisionEnv(root) : {}) })
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
-  if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CLI_CONFIG: path.join(root, label === "ts" ? "ts.yaml" : "rust.yaml") })
+  if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true" })
+  // Modes that seed `config.yaml` start both servers on equal settings.
+  if (mode === "host" || bench?.configure) Object.assign(env, { CLI_CONFIG: path.join(root, label === "ts" ? "ts.yaml" : "rust.yaml") })
   const child = label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", path.join(out, "ui"), "--config", path.join(root, "ts.yaml"), "--workspace-root", folder],
@@ -375,9 +377,10 @@ try {
     await populate(path.join(rsRoot, "Rust Project"))
     await populate(path.join(tsRoot, "Local Project"))
     await rustPruning.ready(remote.client, path.join(rsRoot, "Rust Project"))
-    const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\nui:\n  settings:\n    multiBackend: true\n    locale: en\n`
+    const seeded = (await bench?.configure?.()) ?? ""
+    const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\n${seeded}ui:\n  settings:\n    multiBackend: true\n    locale: en\n`
     await writeFile(path.join(local.root, "ts.yaml"), settings)
-    if (mode === "host") await writeFile(path.join(remote.root, "rust.yaml"), settings)
+    if (mode === "host" || bench?.configure) await writeFile(path.join(remote.root, "rust.yaml"), settings)
     let ts, rs
     try {
       rs = await start("rs", remote, rsRoot, password)
@@ -389,14 +392,14 @@ try {
       const hosts = []
       for (const host of [ts, rs]) {
         const cookie = await signIn(host, password)
-        hosts.push({ call: (route, init) => host.request(route, withCookie(cookie, init)) })
+        hosts.push({ call: (route, init) => host.request(route, withCookie(cookie, init)), origin: host.origin, cookie })
       }
       if (bench.pair) { result[mode] = await bench.pair(...hosts); return }
       await compareSides([
         { ...hosts[0], fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid },
         { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, data: path.join(remote.root, "rust.data") },
       ])
-    } finally { await Promise.all([ts?.close(), rs?.close()]) }
+    } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
   }))
 } catch (error) {
   result.error = String(error.stack)
