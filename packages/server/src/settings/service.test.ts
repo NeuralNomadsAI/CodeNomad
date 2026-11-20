@@ -126,6 +126,15 @@ describe("SettingsService config persistence", () => {
     assert.deepEqual(owner(null), {})
   })
 
+  it("keeps the desktop host's server.implementation choice", () => {
+    const service = serviceWithStore({
+      reloadAuthoritative: () => ({}),
+      getOwner: () => ({ implementation: "rust" }),
+      replaceOwner: (_owner: string, value: unknown) => value,
+    })
+    assert.deepEqual(service.mergePatchOwner("config", "server", { logLevel: "info" }), { implementation: "rust", logLevel: "INFO" })
+  })
+
   it("does not report a persisted patch as failed when an event listener throws", () => {
     let warnings = 0
     const service = serviceWithStore({
