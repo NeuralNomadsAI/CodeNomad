@@ -1,12 +1,13 @@
 //! Pending questions and permissions of a workspace, from the native pending-requests plugin.
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, RawQuery, State},
     http::{StatusCode as Status, header},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 use crate::{Error, Shared, error, unavailable};
 
@@ -61,7 +62,17 @@ pub async fn snapshot(
     State(app): State<Shared>,
     Path(id): Path<String>,
     RawQuery(query): RawQuery,
+    Extension(shutdown): Extension<CancellationToken>,
 ) -> Result<Response, Error> {
+    // A read waiting for plugin readiness outlives the desktop host's shutdown grace.
+    tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => Err(error(Status::SERVICE_UNAVAILABLE, "Server is shutting down")),
+        result = read_snapshot(app, id, query) => result,
+    }
+}
+
+async fn read_snapshot(app: Shared, id: String, query: Option<String>) -> Result<Response, Error> {
     let bad = || error(Status::BAD_REQUEST, "Invalid pending request directories");
     let mut parsed = app.native.url();
     parsed.set_query(query.as_deref());
