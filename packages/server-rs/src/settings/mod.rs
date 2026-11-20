@@ -1,13 +1,15 @@
-//! `settings/service.ts` for the owners the UI reads at start-up and writes while opening projects:
-//! `config.yaml` (`server`, `ui`) and `state.yaml` (`ui`), shared with the TypeScript server.
+//! `settings/service.ts` and `server/routes/settings.ts` for the owners the UI uses: `config.yaml`
+//! owners and `state.yaml`'s `ui`, shared with the TypeScript server, and the OpenCode config files.
+mod conditional;
+pub mod config_files;
 pub mod document;
 
 use std::sync::Mutex;
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode as Status},
     response::{IntoResponse, Response},
     routing::get,
@@ -36,6 +38,9 @@ pub enum Kind {
 pub enum Failure {
     Invalid(String),
     Unreadable,
+    HostOnly,
+    /// `MissionPreferenceConflictError`
+    Conflict,
 }
 impl Failure {
     fn response(self) -> Error {
@@ -44,6 +49,8 @@ impl Failure {
             Failure::Unreadable => {
                 error(Status::SERVICE_UNAVAILABLE, "Settings document could not be read authoritatively")
             }
+            Failure::HostOnly => error(Status::FORBIDDEN, "This setting can be changed on the host only"),
+            Failure::Conflict => error(Status::CONFLICT, "Mission preferences changed; reload before saving"),
         }
     }
 }
@@ -167,15 +174,27 @@ impl Settings {
     /// `mergePatchOwner`: the merge starts from the document on disk now (an unreadable state
     /// document is refused rather than overwritten). Returns the saved owner.
     pub fn patch(&self, kind: Kind, name: &str, patch: &Value) -> Result<Value, Failure> {
+        self.patch_checked(kind, name, patch, |_, _| Ok(()))
+    }
+    /// `mergePatchOwner` with its `ConfigWriteCheck`: `check` sees the document on disk and the result.
+    pub fn patch_checked(
+        &self,
+        kind: Kind,
+        name: &str,
+        patch: &Value,
+        check: impl FnOnce(&Doc, &Doc) -> Result<(), Failure>,
+    ) -> Result<Value, Failure> {
         if !patch.is_object() {
             return Err(Failure::Invalid("Patch must be a JSON object".into()));
         }
         let _write = self.write.lock().unwrap();
         let file = self.file(kind);
-        let mut doc = document::read(file)?;
-        let merged = owner(Some(&merge(&Value::Object(owner(doc.get(name))), patch)));
+        let before = document::read(file)?;
+        let merged = owner(Some(&merge(&Value::Object(owner(before.get(name))), patch)));
         let merged = if kind == Kind::Config && name == "server" { normalize_server(merged) } else { merged };
+        let mut doc = before.clone();
         doc.insert(name.into(), Value::Object(merged.clone()));
+        check(&before, &doc)?;
         document::write(file, &doc).map_err(|e| Failure::Invalid(e.to_string()))?;
         Ok(Value::Object(merged))
     }
@@ -215,8 +234,9 @@ pub fn patch_owner(app: &App, name: &str, patch: Value) -> Result<Value, Failure
 pub fn routes() -> Router<Shared> {
     let unavailable = || async { unavailable() };
     Router::new()
-        .route("/api/storage/config/{owner}", get(read_config).fallback(unavailable))
+        .route("/api/storage/config/{owner}", get(read_config).patch(patch_config).fallback(unavailable))
         .route("/api/storage/state/ui", get(read_state).patch(patch_state).fallback(unavailable))
+        .merge(config_files::routes())
 }
 
 async fn read_config(State(app): State<Shared>, Path(name): Path<String>) -> Result<Response, Error> {
@@ -226,6 +246,79 @@ async fn read_config(State(app): State<Shared>, Path(name): Path<String>) -> Res
         _ => unavailable(),
     })
 }
+/// `HOST_ONLY_SERVER_KEYS` and `hostOnlyServerCheck`: a non-local request may not flip them.
+const HOST_ONLY: &[&str] = &["sidecarsOverDirectHttps"];
+fn host_only(before: &Doc, after: &Doc) -> Result<(), Failure> {
+    let enabled = |doc: &Doc, key: &str| doc.get("server").and_then(|s| s.get(key)) == Some(&json!(true));
+    match HOST_ONLY.iter().all(|key| enabled(before, key) == enabled(after, key)) {
+        true => Ok(()),
+        false => Err(Failure::HostOnly),
+    }
+}
+
+/// `enforceSpeechCredentialPairing`: a changed base URL saved without its key clears the stored key.
+fn speech_pairing(patch: &Value, current: &Doc) -> Value {
+    let mut patch = patch.clone();
+    let Some(Value::Object(speech)) = patch.get_mut("speech") else { return patch };
+    let current = current.get("speech").and_then(Value::as_object);
+    let current = current.and_then(|c| c.get("speech").and_then(Value::as_object)).or(current);
+    let url = |o: Option<&Doc>| o.and_then(|o| o.get("baseUrl")).filter(|v| !v.is_null()).cloned().unwrap_or(json!(""));
+    let unpaired = |patch: &Doc, current: Option<&Doc>| {
+        patch.contains_key("baseUrl") && !patch.contains_key("apiKey") && url(Some(patch)) != url(current)
+    };
+    if unpaired(speech, current) {
+        speech.insert("apiKey".into(), Value::Null);
+    }
+    for direction in ["stt", "tts"] {
+        if let Some(sub) = speech.get_mut(direction) {
+            let mut fields = sub.as_object().cloned().unwrap_or_default();
+            if fields.contains_key("baseUrl") && !fields.contains_key("apiKey") {
+                if unpaired(&fields, current.and_then(|c| c.get(direction)).and_then(Value::as_object)) {
+                    fields.insert("apiKey".into(), Value::Null);
+                }
+                *sub = Value::Object(fields);
+            }
+        }
+    }
+    patch
+}
+
+/// `PATCH /api/storage/config/:owner`, or `?conditional=missions-v1` for the Missions preferences.
+async fn patch_config(
+    State(app): State<Shared>,
+    Path(name): Path<String>,
+    Query(query): Query<Vec<(String, String)>>,
+    channel: Option<Extension<crate::auth::tls::Channel>>,
+    headers: HeaderMap,
+    bytes: Bytes,
+) -> Result<Response, Error> {
+    let mut patch = match fastify::body(&headers, &bytes)? {
+        None => json!({}),
+        Some(fastify::Body::Json(value)) => value,
+        Some(fastify::Body::Text(text)) => Value::String(text),
+    };
+    let conditional = query.into_iter().find(|(key, _)| key == "conditional").map(|(_, mode)| mode);
+    let saved = match conditional {
+        Some(mode) if mode != "missions-v1" => Err(Failure::Invalid("Unknown conditional patch mode".into())),
+        Some(_) => conditional::apply(&app.settings, &name, &patch),
+        None => {
+            if name == "server" {
+                let current = app.settings.raw_config_owner("server").map_err(|e| Failure::from(e).response())?;
+                patch = speech_pairing(&patch, &current);
+            }
+            // Requests through the HTTPS listener are never local.
+            let remote = channel.is_some();
+            app.settings.patch_checked(Kind::Config, &name, &patch, |before, after| match remote {
+                true => host_only(before, after),
+                false => Ok(()),
+            })
+        }
+    };
+    let saved = saved.map_err(Failure::response)?;
+    publish(&app, Kind::Config, &name, saved.clone());
+    Ok(Json(sanitized(&name, saved)).into_response())
+}
+
 async fn read_state(State(app): State<Shared>) -> Json<Doc> {
     Json(app.settings.owner(Kind::State, "ui"))
 }
@@ -264,6 +357,28 @@ mod tests {
             json!({"hasApiKey": true,
             "stt": {"apiKey": "", "hasApiKey": false}, "tts": {"hasApiKey": true}})
         );
+    }
+
+    #[test]
+    fn speech_keys_follow_their_base_url() {
+        let current = owner(Some(&json!({"speech": {"baseUrl": "a", "stt": {"baseUrl": "s"}}})));
+        let patch = json!({"speech": {"baseUrl": "b", "stt": {"baseUrl": "s"}, "tts": {"baseUrl": "t"}}});
+        assert_eq!(
+            speech_pairing(&patch, &current),
+            json!({"speech": {"baseUrl": "b", "apiKey": null,
+            "stt": {"baseUrl": "s"}, "tts": {"baseUrl": "t", "apiKey": null}}})
+        );
+        let kept = json!({"speech": {"baseUrl": "a", "apiKey": "new"}});
+        assert_eq!(speech_pairing(&kept, &current), kept);
+    }
+
+    #[test]
+    fn remote_writes_cannot_flip_host_only_settings() {
+        let doc = |value: Value| owner(Some(&value));
+        let (off, on) = (doc(json!({"server": {}})), doc(json!({"server": {"sidecarsOverDirectHttps": true}})));
+        assert!(matches!(host_only(&off, &on), Err(Failure::HostOnly)));
+        assert!(matches!(host_only(&on, &doc(json!({}))), Err(Failure::HostOnly)));
+        assert!(host_only(&on, &doc(json!({"server": {"sidecarsOverDirectHttps": true, "x": 1}}))).is_ok());
     }
 
     #[test]

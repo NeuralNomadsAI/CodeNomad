@@ -63,7 +63,7 @@ async function start(label, fixture, folder, password, trustedCA) {
     CNRS_FIXTURE_MISSIONS_REGISTRY: path.join(fixture.env.LOCALAPPDATA, "CodeNomad", "automation-bridges"),
     ...(mode === "memory" ? provisionEnv(root, "memory") : mode === "design" ? provisionEnv(root) : {}) })
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
-  if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CLI_CONFIG: path.join(root, label === "ts" ? "ts.yaml" : "rust.yaml") })
+  if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CODENOMAD_REMOTE_CONTROL: "disabled", CLI_CONFIG: path.join(root, label === "ts" ? "ts.yaml" : "rust.yaml") })
   const child = label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", path.join(out, "ui"), "--config", path.join(root, "ts.yaml"), "--workspace-root", folder],

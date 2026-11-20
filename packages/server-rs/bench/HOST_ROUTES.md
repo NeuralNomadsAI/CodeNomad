@@ -2,7 +2,7 @@
 
 Recorded by `node host-survey.mjs <opencode>`: the TS server of this checkout serves its own UI as the desktop hosts start it (`--unrestricted-root`, private profile, isolated daemon); the journey is start-up, folder picker (navigation, new folder, selection), conversation, Files, Git (Changes, Commits), worktree selector and creation dialog, recents, then every Settings section once. `:id`, `:ses` and `:slug` stand for identifiers; query keys are listed without values.
 
-Rust state: **ported** before this change, **here** ported for this usage, **host-cli** served by the UI host work, **decided** not ported by decision, **to decide** not ported (below).
+Rust state: **ported** before this survey, **here** ported for this usage, **host-cli** served by the UI host work, **decided** not ported (below).
 
 | Method | Route | Steps | TS | Rust |
 |---|---|---|---|---|
@@ -30,39 +30,23 @@ Rust state: **ported** before this change, **here** ported for this usage, **hos
 | GET | `/api/remote-control/devices` | Remote Access | 200 | ported |
 | * | `/workspaces/:id/instance/api/*` (agent, command, location, mcp, model, provider, project, session, prompt, model, inbox, instructions, integration, websearch/provider) | conversation, Providers | 200, 204 | ported (allow list) |
 | GET | `/workspaces/:id/yolo/sessions/:ses` | conversation | 200 | decided |
-| GET | `/api/opencode/update` | start-up, project, OpenCode | 200 | to decide |
-| GET | `/api/speech/capabilities` | start-up | 200 | to decide |
-| GET | `/api/config-files`, `/api/config-files/:id/content` | Config Files | 200 | to decide |
-| GET | `/api/opencode/login-start` | Missions | 200 | to decide |
-| GET | `/api/remote-control/status` | Remote Access | 200 | to decide |
-| GET | `/api/sidecars` | SideCars | 200 | to decide |
-| POST | `/api/storage/binaries/validate` | Providers | 200 | to decide |
-| GET | `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Stats | 200 | to decide |
+| GET | `/api/opencode/update` | start-up, project, OpenCode | 200 | here |
+| POST | `/api/storage/binaries/validate` | Providers | 200 | here |
+| PATCH | `/api/storage/config/:owner` (preferences, `?conditional=missions-v1`) | any preference change | 200 | here |
+| GET, PUT | `/api/config-files`, `/api/config-files/:id/content` | Config Files | 200 | here |
+| GET | `/api/remote-control/status` | Remote Access | 200 | here |
+| GET | `/api/opencode/login-start` | Missions | 200 | frozen with the Missions |
+| GET | `/api/speech/capabilities` | start-up | 200 | separate work |
+| GET | `/api/sidecars` | SideCars | 200 | separate work |
+| GET | `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Stats | 200 | separate work |
 
 The TS worktree creation with a session move stayed pending on this fixture (over 120 s), so the journey stops at the dialog; the TS instance storage answered GET 403 and PUT 404 once the conversation started.
 
-## Not ported, by decision
+## Not ported
 
-Yolo (its read is removed from Rust), sign-out (`/api/auth/logout` and its relayed form), the remote window proxy (`remote-proxy`, `--connect-server`), the downloaded UI (`--ui-auto-update`), the release monitor, old migrations (`settings/migrate.ts`, legacy and retired installations), and the dead code of the usage audit's section 2: among ported routes, the reads `GET /api/workspaces/:id/files/content` (its `PUT` stays) and `GET /api/filesystem/files/content` are removed from Rust; `GET`/`PATCH /api/storage/config` and `/api/storage/state` stay unported. The bench no longer compares them (Yolo in `http`, file content reads in `files`, `links` and `hardening`, sign-out in every mode's qualification and in `launch`).
-
-## To decide
-
-Observed but not ported, then not observed and therefore not kept. Opinion: useful, doubtful or dead.
-
-| Route | Called by, when | Reference behaviour | Opinion |
-|---|---|---|---|
-| GET `/api/opencode/update` | start-up, opening a project, Settings › OpenCode | installed and latest OpenCode versions, update availability | useful (with the OpenCode service work) |
-| GET `/api/speech/capabilities` | start-up | which speech providers are configured | useful if voice is kept |
-| GET `/api/config-files`, `/:id/content` | Settings › Config Files | lists and reads the raw `opencode.json(c)` files (non-atomic editor) | doubtful |
-| GET `/api/opencode/login-start` | Settings › Missions | OpenCode start at login for Mission calendars | doubtful while Missions are frozen |
-| GET `/api/remote-control/status` | Settings › Remote Access | Remote Access listener and tunnel state | useful (remote access) |
-| GET `/api/sidecars` | Settings › SideCars | configured SideCars | useful if SideCars are kept |
-| POST `/api/storage/binaries/validate` | Settings › Providers / OpenCode binary | probes an OpenCode executable (`--version`) | useful (with the OpenCode service work) |
-| GET `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Settings › Stats | aggregated usage of the OpenCode service | doubtful |
-| PATCH `/api/storage/config/:owner` | Preferences store, when a preference changes (not exercised by the journey) | merge patch with normalization, speech key pairing, host-only check, Missions conditional mode | useful |
-| GET, PATCH `/api/storage/state/:owner` other than `ui` | not observed (`sessionFavorites` is refused) | owner merge patch | dead |
-| GET `/api/workspaces/:id/git-branches` | Mission editor sources only | local `refs/heads/*` of an owned checkout inside the deletion fence | doubtful while Missions are frozen |
-| `.git` in GET `/api/workspaces/:id/files` (and its reads and writes) | the Files panel tree, on opening a project and expanding folders (seen under Tauri) | lists `.git` like any folder and lets the editor read and write inside it | Rust omits it and refuses `.git` paths, since an edited Git configuration or hook runs during later Git commands: keep the Rust behaviour |
+- **By decision**: Yolo, sign-out (`/api/auth/logout` and its relayed form), the remote window proxy (`remote-proxy`, `--connect-server`), the downloaded UI (`--ui-auto-update`), the release monitor, old migrations (`settings/migrate.ts`, legacy and retired installations), the dead code of the usage audit's section 2 (`GET /api/workspaces/:id/files/content`, whose `PUT` is served; `GET /api/filesystem/files/content`; `GET`/`PATCH /api/storage/config` and `/api/storage/state`), and `GET`/`PATCH /api/storage/state/:owner` for owners other than `ui` (no caller).
+- **Frozen with the Missions**: `GET`/`POST /api/opencode/login-start` (Mission calendars) and `GET /api/workspaces/:id/git-branches` (Mission editor sources).
+- **Voice, SideCars and usage statistics** (`/api/speech/*`, `/api/sidecars`, `/api/workspaces/:id/service-usage*`): separate work.
 
 ## Differences kept on purpose
 
@@ -70,3 +54,6 @@ Observed but not ported, then not observed and therefore not kept. Opinion: usef
 - `PATCH /api/storage/state/ui` touching multi-backend profiles (`remoteServers`, remote project history) answers 501: this host does not serve them and does not compact their history.
 - The unrestricted folder browser and workspace creation still refuse UNC shares and device paths (audit M2).
 - Session favorites stay in the data folder rather than in `state.yaml`.
+- The Files tree omits `.git` and refuses paths inside it (the reference lists and edits it): an edited Git configuration or hook would run during later Git commands.
+- `/api/opencode/update`: installing, upgrading, restarting and reloading OpenCode are not served, so `canUpgrade`, `canRestart` and `canReload` are false and no 1.x or foreign installation notice is reported; the status probes the executable saved in `config.yaml` (else the default installation) and discovers the daemon of the executable the server started with.
+- `/api/remote-control/status`: this server has no tunnel and serves no web previews, so Remote Control is stopped, never resumes, and `previews` is false; the direct HTTPS origin and paired devices come from its own registry.

@@ -1,18 +1,23 @@
 //! The OpenCode daemon: the shared connection (`opencode-service.ts`) found or started through
 //! its CLI (`daemon`, `launch`) and admitted (`admission`), bounded native reads and the workspace
-//! relay (`proxy`) with its session-list scope (`scope`).
+//! relay (`proxy`) with its session-list scope (`scope`), the executable's update status (`update`).
 pub mod admission;
 pub mod daemon;
 pub mod launch;
 pub mod proxy;
 pub mod scope;
+pub mod update;
 
 use std::{
     sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 
-use axum::{Json, Router, http::StatusCode as Status, routing::any};
+use axum::{
+    Json, Router,
+    http::StatusCode as Status,
+    routing::{any, get, post},
+};
 use reqwest::{Client, Method, RequestBuilder, Url};
 use serde_json::{Value, json};
 use tokio::time::Instant;
@@ -106,6 +111,21 @@ impl Native {
         *self.validated.lock().unwrap() = Some(Instant::now());
         Ok(found)
     }
+    /// `lifecycle.discover()`: the running daemon, never started. The bench's fixture endpoint
+    /// reports the version its `/api/info` declares, as the reference remembers it.
+    pub async fn discover(&self, deadline: Instant) -> Result<Option<Endpoint>, String> {
+        if let Some(lifecycle) = &self.lifecycle {
+            return lifecycle.discover(deadline).await;
+        }
+        let Some(mut endpoint) = self.endpoint().map(|e| (*e).clone()) else { return Ok(None) };
+        let info = self.get("/api/info").timeout(Duration::from_secs(5)).send().await.map_err(|e| e.to_string())?;
+        endpoint.version = read_json(info, 64 * 1024)
+            .await
+            .ok()
+            .and_then(|v| v["version"].as_str().map(str::to_owned))
+            .unwrap_or_default();
+        Ok(Some(endpoint))
+    }
     /// The event stream of `endpoint` ended or failed: the next acquisition discovers again
     /// (and starts the daemon when it is gone). Requests keep it until then.
     pub fn invalidate(&self, endpoint: &Arc<Endpoint>) {
@@ -132,6 +152,8 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/workspaces/{id}/instance", any(proxy::relay))
         .route("/workspaces/{id}/instance/{*route}", any(proxy::relay))
+        .route("/api/opencode/update", get(update::status))
+        .route("/api/storage/binaries/validate", post(update::validate))
 }
 
 /// Marks a relayed native body whose content type must stay untouched.

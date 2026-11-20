@@ -9,6 +9,9 @@ import path from "node:path"
 const send = (body, method = "PATCH", type = "application/json") =>
   ({ method, headers: { "content-type": type }, body: typeof body === "string" ? body : JSON.stringify(body) })
 
+/** Rust serves no install, restart, reload or web preview: those flags differ by design (HOST_ROUTES.md). */
+export const comparable = ({ updateActions, remoteControlPreviews, ...rest }) => rest
+
 export async function run({ call, fixture, folder, root }) {
   const home = fixture.root
   const scrub = value => {
@@ -50,6 +53,54 @@ export async function run({ call, fixture, folder, root }) {
   // The reference re-reads its cached document on the authoritative UI owner read, as the UI does first.
   out.configUiEdited = await read("/api/storage/config/ui")
   out.configServerEdited = await read("/api/storage/config/server")
+
+  // Owner merge patches: normalization, speech key pairing, refusals, Missions conditions.
+  const owner = (name, body, query = "") => read(`/api/storage/config/${name}${query}`, typeof body === "string" ? send(body, "PATCH", "text/plain") : send(body))
+  const statusOnly = async pending => { const { status, body } = await pending; return { status, error: typeof body?.error === "string" } }
+  out.serverPatch = await owner("server", { logLevel: "error", updateFeed: "nightly", opencodeBinary: "opencode", extra: { a: 1, b: null } })
+  out.speechRebased = await owner("server", { speech: { baseUrl: "http://other.invalid", stt: { baseUrl: "http://stt.invalid" }, tts: { baseUrl: "" } } })
+  out.speechKept = await owner("server", { speech: { baseUrl: "http://third.invalid", apiKey: "k2" } })
+  out.hostOnlyLocal = await owner("server", { sidecarsOverDirectHttps: true })
+  out.ownerArray = await owner("ui", [1])
+  out.ownerText = await owner("ui", "plain")
+  out.ownerEmpty = await read("/api/storage/config/ui", { method: "PATCH" })
+  out.uiPatch = await owner("ui", { settings: { theme: "dark", nested: { keep: 1, drop: null } } })
+  const condition = (value, expected) => ({ patch: { settings: { missionModels: value } }, expected })
+  out.conditionAbsent = await owner("ui", condition({ a: 1 }, [{ key: "missionModels", present: false }]), "?conditional=missions-v1")
+  out.conditionStale = await owner("ui", condition(2, [{ key: "missionModels", present: false }]), "?conditional=missions-v1")
+  out.conditionValue = await owner("ui", condition(3, [{ key: "missionModels", present: true, value: { a: 1 } }]), "?conditional=missions-v1")
+  out.conditionInvalid = await statusOnly(owner("ui", condition(4, [{ key: "missionDeleteSessions", present: false }]), "?conditional=missions-v1"))
+  out.conditionOwner = await statusOnly(owner("server", condition(4, [{ key: "missionModels", present: false }]), "?conditional=missions-v1"))
+  out.conditionMode = await owner("ui", {}, "?conditional=other")
+  out.configUiPatched = await read("/api/storage/config/ui")
+  out.configServerPatched = await read("/api/storage/config/server")
+
+  // OpenCode's global config files, through the editor's inventory only.
+  out.configFiles = await read("/api/config-files")
+  out.configFileMissing = await read("/api/config-files/opencode-global-config/content")
+  out.configFileSaved = await read("/api/config-files/opencode-global-config/content", send({ contents: "{\n  // edited\n}\n", extra: 1 }, "PUT"))
+  out.configFileRead = await read("/api/config-files/opencode-global-config/content")
+  out.configFileDisk = await readFile(path.join(home, ".config", "opencode", "opencode.json"), "utf8")
+  out.configFileInvalid = await statusOnly(read("/api/config-files/opencode-global-config/content", send({ contents: 1 }, "PUT")))
+  out.configFileUnknown = await read("/api/config-files/other/content")
+  out.configFileForeign = await read("/api/config-files/other/content", send({ contents: "x" }, "PUT"))
+
+  // The selected OpenCode executable, its update status and Remote Control.
+  const binary = process.argv[3]
+  out.binaryValid = await read("/api/storage/binaries/validate", send({ path: binary }, "POST"))
+  out.binaryMissing = await read("/api/storage/binaries/validate", send({ path: path.join(home, "missing", "opencode.exe") }, "POST"))
+  out.binaryDefault = await read("/api/storage/binaries/validate", send({ path: "opencode2" }, "POST"))
+  out.binaryInvalid = await statusOnly(read("/api/storage/binaries/validate", send({}, "POST")))
+  await owner("server", { opencodeBinary: binary })
+  const update = (await read("/api/opencode/update")).body
+  // Not served by this server (no install, restart or reload); required false.
+  out.updateActions = ["canUpgrade", "canRestart", "canReload"].map(key => [key, update[key]])
+  for (const key of ["canUpgrade", "canRestart", "canReload"]) delete update[key]
+  out.update = update
+  const remote = (await read("/api/remote-control/status")).body
+  out.remoteControlPreviews = remote.previews
+  delete remote.previews
+  out.remoteControl = remote
 
   // state.yaml's UI owner: recents and models.
   const recent = [{ path: path.join(root, folder), projectName: "Project", lastAccessed: 1767225600000 }]

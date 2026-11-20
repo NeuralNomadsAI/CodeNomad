@@ -36,7 +36,10 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("GET POST",r"^/api/workspaces/[^/]+/missions/msn_[a-z0-9]+/schedule-settings$"),
     ("POST",r"^/api/workspaces/[^/]+/missions(?:/panel-page|/msn_[a-z0-9]+/control)?$"),
     ("GET PUT DELETE",r"^/api/storage/instances/[^/]+$"),
-    ("PATCH",r"^/api/storage/state/ui$"),
+    ("PATCH",r"^/api/storage/(?:state/ui|config/[^/]+)$"),
+    ("GET",r"^/api/(?:remote-control/status|config-files|opencode/update)$"),
+    ("GET PUT",r"^/api/config-files/[^/]+/content$"),
+    ("POST",r"^/api/storage/binaries/validate$"),
     ("POST",r"^/api/(?:client-connections/pong|workspaces(?:/creation/cancel|/[^/]+/creation/release)?)$"),
     ("POST",r"^/api/workspaces/[^/]+/session-history/(?:outline|outlinePreview|window)$"),
     ("DELETE",r"^/api/workspaces/[^/]+$"),
@@ -186,7 +189,8 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     }
     if path.starts_with("/api/auth/") && path != "/api/auth/status"
         || path.starts_with("/api/backends/")
-        || path.starts_with("/api/remote-control/")
+        // `REMOTE_MANAGEMENT_READS`: the status is the one management read open to devices.
+        || path.starts_with("/api/remote-control/") && path != "/api/remote-control/status"
         || path == "/api/remote-control"
         || path.starts_with("/api/push/")
     {
