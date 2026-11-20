@@ -149,6 +149,7 @@ export const RemoteControlSettingsSection: Component = () => {
       await serverApi.revokeRemoteControlDevice(id)
       setDevices((current) => current.filter((device) => device.id !== id))
     } catch (cause) {
+      await refresh()
       setError(message(cause))
     }
   }
@@ -272,7 +273,8 @@ export const RemoteControlSettingsSection: Component = () => {
                   <div class="remote-control-device">
                     <div>
                       <strong>{device.name}</strong>
-                      <p>{t("remoteControl.devices.lastSeen", { time: new Date(device.lastSeenAt).toLocaleString() })}</p>
+                      <p>{device.revocationPending ? t("remoteControl.devices.revocationPending")
+                        : t("remoteControl.devices.lastSeen", { time: new Date(device.lastSeenAt).toLocaleString() })}</p>
                     </div>
                     <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void revoke(device.id)}>
                       {t("remoteControl.devices.revoke")}

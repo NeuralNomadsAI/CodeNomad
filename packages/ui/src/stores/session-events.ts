@@ -197,8 +197,12 @@ function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
   return generation
 }
 
+export function nativeSessionLifecycleGeneration(instanceId: string, sessionId: string): number {
+  return nativeLifecycleGenerations.get(`${instanceId}\0${sessionId}`) ?? 0
+}
+
 function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generation: number): boolean {
-  return nativeLifecycleGenerations.get(`${instanceId}\0${sessionId}`) === generation
+  return nativeSessionLifecycleGeneration(instanceId, sessionId) === generation
 }
 
 function dismissRetryToast(instanceId: string, sessionId: string): void {

@@ -23,8 +23,10 @@ export function packageIdentity(manifest) {
   return { name: section.match(/^name = "([^"]+)"/m)?.[1], version: section.match(/^version = "([^"]+)"/m)?.[1] }
 }
 
+const packageEntries = lock => lock.split("\n[[package]]\n").slice(1)
+
 export function lockedPackages(lock, name) {
-  return lock.split("\n[[package]]\n").slice(1)
+  return packageEntries(lock)
     .map(entry => ({
       name: entry.match(/^name = "([^"]+)"/m)?.[1],
       version: entry.match(/^version = "([^"]+)"/m)?.[1],
@@ -42,8 +44,21 @@ test("vendored crates are the resolved implementations", () => {
     const identity = packageIdentity(read(path.join(dir, "Cargo.toml")))
     assert.equal(identity.name, name)
     assert.equal(path.basename(dir), `${name}-${identity.version}`, `${dir} must be named after its crate version`)
-    assert.deepEqual(lockedPackages(lock, name), [{ name, version: identity.version, source: undefined }],
-      `${name} must resolve only to ${dir}; re-vendor it for the dependency update (vendor/README.md)`)
+    const packages = lockedPackages(lock, name)
+    if (name === "glib") {
+      // The native audio pipeline has its own GLib bindings; GTK and WebKit
+      // consumers must continue to use the patched bindings.
+      for (const entry of packages.filter(entry => entry.version !== identity.version)) {
+        const consumers = packageEntries(lock)
+          .filter(pkg => pkg.includes(`\n "glib ${entry.version}",\n`))
+          .map(pkg => pkg.match(/^name = "([^"]+)"/m)?.[1])
+        assert.ok(consumers.length && consumers.every(consumer => /^gstreamer(?:-|$)/.test(consumer)),
+          `only GStreamer can use an unpatched GLib; ${entry.version} consumers: ${consumers.join(", ")}`)
+      }
+    }
+    assert.deepEqual(name === "glib" ? packages.filter(entry => entry.version === identity.version) : packages,
+      [{ name, version: identity.version, source: undefined }],
+      `${name} must resolve to ${dir}; re-vendor it for the dependency update (vendor/README.md)`)
   }
 })
 

@@ -32,6 +32,14 @@ const api4Objects = (permissions: readonly string[]) => [
       get: () => request('api4', 'Preferences unavailable', 'get', {}, 'preferences'),
       set: value => request('api4', 'Preferences unavailable', 'set', { value }, 'preferences')
     }),` : "",
+  permissions.includes("panel.notes") ? `notes: Object.freeze({
+      get: () => request('api4', 'Notes unavailable', 'get', {}, 'notes'),
+      set: (text, revision) => request('api4', 'Notes unavailable', 'set', { text, revision }, 'notes'),
+      list: cursor => request('api4', 'Notes unavailable', 'list', cursor === undefined ? {} : { cursor }, 'notes'),
+      delete: (sessionID, revision) => request('api4', 'Notes unavailable', 'delete', { sessionID, revision }, 'notes'),
+      open: sessionID => request('api4', 'Notes unavailable', 'open', { sessionID }, 'notes'),
+      onChanged: listener => { noteChanges.add(listener); return () => noteChanges.delete(listener); }
+    }),` : "",
   permissions.includes("repository.workItems.read") ? workItems : "",
   permissions.includes("repository.worktrees.read") ? `worktrees: Object.freeze({
       list: () => request('api4', 'Worktrees unavailable', 'list', {}, 'worktrees'),${permissions.includes("repository.worktrees.write") ? `
@@ -46,7 +54,7 @@ const bridge = (handshake: string, apiVersion: PanelExtensionApiVersion, permiss
   let context = null;
   let channel;
   let sequence = 0;
-  const pending = new Map(), changes = new Set(), worktreeChanges = new Set();
+  const pending = new Map(), changes = new Set(), noteChanges = new Set(), worktreeChanges = new Set();
   const request = (capability, failure, method, input, scope) => new Promise((resolve, reject) => {
     if (!channel || !context || pending.size >= 4) { reject(new Error(failure)); return; }
     const id = ++sequence;
@@ -79,6 +87,7 @@ const bridge = (handshake: string, apiVersion: PanelExtensionApiVersion, permiss
         for (const listener of changes) { try { listener(detail); } catch {} }
         return;
       }
+      if (event.data?.type === 'notes:changed') { for (const listener of noteChanges) { try { listener(); } catch {} } return; }
       if (event.data?.type === 'worktrees:changed') { for (const listener of worktreeChanges) { try { listener(); } catch {} } return; }
       if (event.data?.type === 'assets:result' || event.data?.type === 'workItems:result' || event.data?.type === 'api4:result') {
         const request = pending.get(event.data.id); if (!request) return;

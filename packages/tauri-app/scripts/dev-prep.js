@@ -10,6 +10,7 @@ const workspaceRoot = path.resolve(root, "..", "..")
 const uiRoot = path.resolve(root, "..", "ui")
 const uiDist = path.resolve(uiRoot, "src", "renderer", "dist")
 const uiLoadingDest = path.resolve(root, "src-tauri", "resources", "ui-loading")
+const { buildTauriSystemSpeech } = require(path.join(workspaceRoot, "scripts", "desktop-system-speech.cjs"))
 
 async function ensureMonacoAssets() {
   const helperPath = path.join(uiRoot, "scripts", "monaco-public-assets.js")
@@ -58,6 +59,7 @@ function copyUiLoadingAssets() {
 }
 
 ;(async () => {
+  buildTauriSystemSpeech(path.dirname(uiLoadingDest), `${process.platform}-${process.arch}`)
   await ensureMonacoAssets()
   ensureUiBuild()
   copyUiLoadingAssets()

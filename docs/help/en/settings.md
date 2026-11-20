@@ -6,11 +6,12 @@
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
 
-Most choices apply immediately, including Mission preferences, which save each change as you make it. Speech, custom palette colors and Config Files keep an explicit **Save**. Hover or focus the **i** beside a setting's title for a short explanation. When it links to help, click, press Enter or tap to open the relevant section in your interface language, in the system browser or a separate browser tab. Tooltip-only icons show their explanation on tap. **Settings → Info** also holds the **Support CodeNomad** card: **Sponsor or contribute** opens the [Support CodeNomad](sponsor.md) page.
+Most choices apply immediately, including Mission preferences, which save each change as you make it. Voice API settings, custom palette colors and Config Files keep an explicit **Save**. Hover or focus the **i** beside a setting's title for a short explanation. When it links to help, click, press Enter or tap to open the relevant section in your interface language, in the system browser or a separate browser tab. Tooltip-only icons show their explanation on tap. **Settings → Info** also holds the **Support CodeNomad** card: **Sponsor or contribute** opens the [Support CodeNomad](sponsor.md) page.
 
 | State | What it controls |
 | --- | --- |
-| CodeNomad configuration | UI preferences, speech, SideCars and server settings for clients using that configuration. Preferences without a badge are not stored per device either; **Server setting** marks server-side configuration such as Speech, SideCars, Remote Control and Environment Variables. |
+| CodeNomad configuration | Shared UI preferences and **Server setting** controls, including Voice API settings, SideCars, Remote Control and Environment Variables. |
+| Voice engines | The [desktop dictation engine](voice.md#desktop-dictation) applies across projects on this device. The [conversation engine](voice.md#conversation) is selected for the desktop profile or the browser profile and connected server. |
 | Window/project-tab layout | Open panels, selected tabs, reader state and restorable drafts/layout. These are not OpenCode configuration. |
 | Global/Project OpenCode settings | Native plugin/configuration changes at their displayed scope. Project controls require an active project/Location. |
 | Desktop data profile | Native windows, restore state and browser storage, independently of the configuration file and shared OpenCode service. See [Desktop windows and data](desktop.md). |
@@ -111,4 +112,4 @@ The bell/history unread count, which only counts notifications routed to History
 | Hold long assistant replies | Stops automatic following when a streaming reply grows beyond the viewport. |
 | Environment Variables | Applied server-side before each prompt or session command; reads do not update already-running execution. See [OpenCode setup](opencode.md). |
 
-For keyboard configuration use [Keyboard shortcuts](shortcuts.md); for voice controls use [Voice input and playback](voice.md). Startup restore and desktop data profiles are covered in [Desktop windows and data](desktop.md).
+For keyboard configuration use [Keyboard shortcuts](shortcuts.md); **Voice** groups [Dictation, Playback and Conversation](voice.md). Startup restore and desktop data profiles are covered in [Desktop windows and data](desktop.md).

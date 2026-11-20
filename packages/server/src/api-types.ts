@@ -756,6 +756,11 @@ export interface SpeechSegment {
   text: string
 }
 
+export type VoiceConversationEngine = "classic" | "gemini-live" | "openai-realtime"
+export type VoiceConversationProvider = "geminiLive" | "openaiRealtime"
+export type PublicVoiceConversationConfig = Record<VoiceConversationProvider, { hasApiKey: boolean; model?: string; voice?: string }>
+export type VoiceConversationCapabilities = Record<VoiceConversationProvider, { configured: boolean }>
+
 export interface SpeechCapabilitiesResponse {
   available: boolean
   configured: boolean
@@ -774,6 +779,9 @@ export interface SpeechCapabilitiesResponse {
   ttsConfigured?: boolean
   sttBaseUrl?: string
   ttsBaseUrl?: string
+  voiceConversation?: VoiceConversationCapabilities
+  desktopVoiceConversationEngine?: boolean
+  desktopLiveVoiceConsent?: Partial<Record<Exclude<VoiceConversationEngine, "classic">, number>>
 }
 
 export interface SpeechTranscriptionResponse {
@@ -856,6 +864,7 @@ export interface RemoteControlDevice {
   name: string
   createdAt: string
   lastSeenAt: string
+  revocationPending?: true
 }
 
 export interface RemoteControlStartResponse {
@@ -883,6 +892,7 @@ export type WorkspaceEventType =
   | "yolo.autoAccepted"
   | "permission.receiptsChanged"
   | "memory.changed"
+  | "panelExtensions.notesChanged"
 
 export interface PermissionReceipt {
   requestId: string
@@ -926,6 +936,8 @@ export type WorkspaceEventPayload =
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
   | { type: "permission.receiptsChanged"; instanceId: string; sessionId: string; messageId?: string }
+  /** A package's `panel.notes` changed in some project; frames re-read their own. */
+  | { type: "panelExtensions.notesChanged"; id: string }
 
 export interface NetworkAddress {
   ip: string

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/capabilities.json",
+  "identifier": "remote-window-dictation",
+  "description": "Allow remote primary webviews to request local dictation.",
+  "local": false,
+  "remote": {
+    "urls": ["http://*:*", "https://*:*"]
+  },
+  "webviews": ["remote-*"],
+  "permissions": ["allow-remote-dictation-request"]
+}
