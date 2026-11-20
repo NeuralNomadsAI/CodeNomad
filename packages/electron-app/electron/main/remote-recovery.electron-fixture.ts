@@ -16,6 +16,7 @@ const recovery = new RemoteRecoveryPages()
 const counts = { opened: 0, retried: 0 }
 setupCliIPC({} as never, {
   resolveLocal: () => undefined,
+  resolveRemote: (sender) => remoteWindows.resolve(sender),
   getAllowedOrigins: () => [],
   openRemoteWindow: async () => {}, newWindow: async () => {},
   // The same expression as main.ts.

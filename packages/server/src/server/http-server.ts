@@ -90,6 +90,7 @@ import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
+import { isLiveVoiceRoute, LiveVoiceGateway, refuseVoiceUpgrade, voiceSource } from "../speech/live-voice-gateway"
 import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import { sidecarRequestCookies, sidecarResponseCookies } from "../sidecars/proxy-cookies"
@@ -150,6 +151,7 @@ interface HttpServerDeps {
   serverMeta: ServerMeta
   instanceStore: InstanceStore
   speechService: SpeechService
+  liveVoice?: LiveVoiceGateway
   sidecarManager: SideCarManager
   previewManager: PreviewManager
   remoteControlManager: RemoteControlManager
@@ -218,11 +220,13 @@ export function createHttpServer(deps: HttpServerDeps) {
   // upgrades (for example Vite HMR). Server.close() cannot drain them itself.
   const upgrades = new Set<Socket>()
   let closing = false
-  app.server.on("upgrade", (_request, socket: Socket) => {
-    if (closing) { socket.destroy(); return }
+  const trackUpgrade = (socket: Socket) => {
+    if (closing) { socket.destroy(); return false }
     upgrades.add(socket)
     socket.once("close", () => upgrades.delete(socket))
-  })
+    return true
+  }
+  app.server.on("upgrade", (_request, socket: Socket) => { trackUpgrade(socket) })
   app.addHook("preClose", async () => {
     closing = true
     closeSseClients()
@@ -273,6 +277,28 @@ export function createHttpServer(deps: HttpServerDeps) {
     meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, devServerUrl: deps.uiDevServerUrl,
     publicHost: () => remoteGate.publicHost(), isPreview: isLivePreview,
   })
+  const liveVoice = deps.liveVoice ?? new LiveVoiceGateway(deps.speechService)
+  app.server.on("upgrade", (request, socket: Socket, head) => {
+    if (!isLiveVoiceRoute(request.url) || socket.destroyed) return
+    try {
+      const raw = { raw: request, headers: request.headers }
+      const origin = voiceSource(request.headers.origin)
+      if (isRemoteRequest(raw) || parsePreviewCapabilityHost(request.headers.host) || !origin || !allowsDirectSource(raw)
+        || (!deps.authManager.isAuthEnabled() && (!isLocalRequest(raw) || !isLoopbackHost(origin.hostname)))) {
+        return refuseVoiceUpgrade(socket, "403 Forbidden")
+      }
+      const session = deps.authManager.getSessionFromHeaders(request.headers)
+      if (!session) return refuseVoiceUpgrade(socket, "401 Unauthorized")
+      liveVoice.upgrade(request, socket, head, {
+        identity: `direct:${session.username}`,
+        watchRevocation: stop => deps.authManager.watchSessionRevocation(session.sessionId, stop),
+      })
+    } catch { socket.destroy() }
+  })
+  const remoteVoiceUpgrade = (request: import("http").IncomingMessage, socket: Socket, head: Buffer, deviceId: string) => {
+    if (!trackUpgrade(socket)) return
+    liveVoice.upgrade(request, socket, head, { identity: `remote-device:${deviceId}` })
+  }
 
   app.register(replyFrom, {
     contentTypesToEncode: [],
@@ -503,6 +529,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   return {
     instance: app,
     previewUpgrade,
+    remoteVoiceUpgrade,
     start: async (): Promise<HttpServerStartResult> => {
       const attemptListen = async (requestedPort: number) => {
         const dualStackWildcard = isWildcardHost(deps.bindHost) && isIP(stripHostBrackets(deps.bindHost)) === 6
@@ -758,6 +785,7 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
   }
   app.server.on("upgrade", (request, socket, head) => {
     const rawUrl = request.url ?? "/"
+    if (isLiveVoiceRoute(rawUrl)) return
     const capabilityToken = parsePreviewCapabilityHost(request.headers.host)
     let parsed = parsePreviewUpgradePath(rawUrl)
     if (capabilityToken) {

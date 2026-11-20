@@ -14,6 +14,7 @@ import { canonicalScope } from "../host-lifetime/protocol"
 import { createHash } from "node:crypto"
 import path from "node:path"
 import { lstatSync, statSync } from "node:fs"
+import { assertVoiceConversationPatch } from "../speech/voice-conversation-config"
 
 export type DocKind = "config" | "state"
 export const SESSION_FAVORITES_OWNER = "sessionFavorites"
@@ -156,6 +157,20 @@ export class SettingsService {
     return this.location.configYamlPath
   }
 
+  desktopVoiceConversationEngineStore(): YamlDocStore | undefined {
+    if (!process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY) return undefined
+    const { key } = this.getProfileScope()
+    return new YamlDocStore(path.join(this.location.baseDir, "voice", key, "engine.yaml"), this.logger,
+      { throwOnPersistError: true })
+  }
+
+  desktopLiveVoiceConsentStore(engine: "gemini-live" | "openai-realtime"): YamlDocStore | undefined {
+    if (!process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY) return undefined
+    const { key } = this.getProfileScope()
+    return new YamlDocStore(path.join(this.location.baseDir, "voice", key, `consent-${engine}.yaml`), this.logger,
+      { throwOnPersistError: true })
+  }
+
   /**
    * Config writes start from the document as it is on disk now (`reloadAuthoritative`), so a
    * stale cache is never written back; an unreadable or invalid document refuses the write
@@ -167,6 +182,7 @@ export class SettingsService {
     }
     let updated: SettingsDoc
     if (kind === "config") {
+      assertVoiceConversationPatch(patch.server)
       const before = this.configStore.reloadAuthoritative()
       const after = normalizeConfigDoc(applyMergePatch(before, patch) as SettingsDoc)
       check?.(before, after)
@@ -174,7 +190,7 @@ export class SettingsService {
     } else {
       updated = this.stateStore.mergePatch(patch)
     }
-    this.publish(kind, "*")
+    this.publish(kind, "*", kind === "config" ? {} : undefined)
     return updated
   }
 
@@ -189,8 +205,8 @@ export class SettingsService {
   }
 
   /** Fresh read-only authority, without unrelated normalization or error fallbacks. */
-  getRawConfigOwner(owner: string): SettingsDoc {
-    const value = this.configStore.getAuthoritativeOwner(owner)
+  getRawConfigOwner(owner: string, options?: { refreshCache?: boolean }): SettingsDoc {
+    const value = this.configStore.getAuthoritativeOwner(owner, options)
     if (owner === "ui" && value.settings !== undefined && !isPlainObject(value.settings)) throw new SettingsReadError()
     return value
   }
@@ -233,6 +249,7 @@ export class SettingsService {
     }
     let updated: SettingsDoc
     if (kind === "config") {
+      if (owner === "server") assertVoiceConversationPatch(patch)
       const before = this.configStore.reloadAuthoritative()
       const merged = applyMergePatch(this.configStore.getOwner(owner), patch) as SettingsDoc
       const next = owner === "server" ? normalizeServerConfigOwner(merged) : merged

@@ -35,6 +35,7 @@ import type {
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
+  VoiceConversationEngine,
   SideCar,
   PreviewSession,
   PluginActivationMutationRequest,
@@ -734,22 +735,32 @@ export const serverApi = {
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
   },
+  getDesktopVoiceConversationEngine() {
+    return request<{ engine: VoiceConversationEngine }>("/api/speech/conversation/engine")
+  },
+  setDesktopVoiceConversationEngine(engine: VoiceConversationEngine) {
+    return request<{ engine: VoiceConversationEngine }>("/api/speech/conversation/engine", {
+      method: "PATCH", body: JSON.stringify({ engine }),
+    })
+  },
   transcribeAudio(payload: {
     audioBase64: string
     mimeType: string
     filename?: string
     language?: string
     prompt?: string
-  }): Promise<SpeechTranscriptionResponse> {
+  }, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
     return request<SpeechTranscriptionResponse>("/api/speech/transcribe", {
       method: "POST",
       body: JSON.stringify(payload),
+      signal,
     })
   },
-  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }): Promise<SpeechSynthesisResponse> {
+  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
     return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
       method: "POST",
       body: JSON.stringify(payload),
+      signal,
     })
   },
   synthesizeSpeechStream(

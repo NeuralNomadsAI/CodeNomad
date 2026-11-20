@@ -62,11 +62,9 @@ override them. An unknown value refuses startup.
 
 - `ingress.ts` marks every accepted socket as remote before any request is
   parsed and routes requests into the same Fastify application, with the
-  local listener's timeouts (no request timeout, 72 s keep-alive). Its only
-  WebSocket endpoints are web previews: `gate.ts` `admitRemoteUpgrade()` parses
-  the target as the preview proxy does, then the manager hands the socket to the
-  application's path-preview upgrade handler, never to the shared upgrade event.
-  Every other upgrade gets 404.
+   local listener's timeouts (no request timeout, 72 s keep-alive). Its two
+   WebSocket surfaces are live web preview capabilities and voice. The manager
+   routes each to its dedicated handler; other upgrades get 404.
 - `request-origin.ts` is the only authority for local privileges:
   `isLocalRequest()` requires a loopback peer **and** a non-ingress socket.
 - The direct listener applies the shared host-only paths to every non-local
@@ -194,6 +192,35 @@ password change revokes every session for that user, including the caller.
 A failed password change preserves the existing sessions. Remote Control device
 credentials follow their separate registry lifetime and revocation rules.
 
+- Desktop remote windows delegate [device-engine dictation](DESKTOP_SPEECH.md#remote-server-windows)
+   to the client without sending capture audio through the tunnel. Paired
+   browsers can use the configured API path.
+
+### Live voice upgrades
+
+- `/api/speech/conversation/live?engine=…` accepts only the canonical URL
+  for Gemini Live or OpenAI Realtime. It requires an exact secure-context
+  `Origin` (HTTPS or loopback HTTP). The direct listener uses its normal
+  origin policy and password session; when direct authentication is explicitly
+  disabled, voice is limited to loopback peers and loopback origins. Opaque
+  documents and preview capability hosts cannot upgrade. Logout, password
+  changes, session expiry and listener shutdown terminate those connections.
+- Remote Control checks the exact tunnel `Host` and HTTPS `Origin`, plus its
+  paired-device cookie on every voice upgrade. It binds the socket to the
+  device, independently of the local authentication setting. The gateway's
+  single-conversation slot is keyed by paired device at this ingress and by
+  username on the direct listener. Device revocation or tunnel shutdown ends
+  voice; the preview switch affects previews alone. A failed revocation write
+  denies the device in memory and keeps its row marked as pending so the host
+  can retry Revoke. Any successful registry write also commits the removal.
+- The Tauri TLS-exception proxy accepts this one upgrade from its exact window
+  origin and checks a per-window HttpOnly credential from bootstrap. The proxy
+  connects only to that window's configured HTTPS target via the pinned DNS
+  destination guard, sending the target's origin and its rewritten login cookies.
+  It relays bounded WebSocket messages without forwarding handshake headers or
+  provider credentials. The target performs voice admission as usual. Disposing
+  the window proxy ends both streams.
+
 ## Validation
 
 - `remote-surface.test.ts` drives the real `createHttpServer` through the
@@ -201,6 +228,8 @@ credentials follow their separate registry lifetime and revocation rules.
   host-only paths including encoded ones, loopback privileges, spoofed headers,
   upgrades, web previews and their switch, revocation of a live stream, skipped
   local auth and tunnel failure.
+- `speech/live-voice-gateway.test.ts` uses both simulated providers over the
+  direct listener, the Remote Control ingress and a TLS-exception window proxy.
 - `server/preview-proxy-boundary.test.ts` uses simulated DNS and local listeners
   to check refusal before upstream contact, password-enabled and skipped-auth
   previews, capability hosts, Referer fallback, SideCar HTTP and both WebSocket

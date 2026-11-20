@@ -62,7 +62,10 @@ before(async () => {
        getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) as any,
       ownsLocation: async (id: string, location: { directory: string }) => id === instanceId && location.directory === "/fixture",
       desktopPluginsReady: async () => {}, getWorktreeIdentityForPath: async () => "/fixture", getServiceWslDistro: () => undefined,
-      getHostPathForServicePath: async (_id: string, value: string) => value } })
+      getHostPathForServicePath: async (_id: string, value: string) => value,
+      getServiceDirectoryForPath: async (id: string, value: string) => id === instanceId && value === "/fixture" ? value : undefined,
+      list: () => [workspace as any] },
+    projectIdentity: async () => ({ id: "f".repeat(64), source: "local" }) })
   fixture = await startProductFixture("panel-extension-api4")
   const canvas = await fixture.browser.newPage()
   realPng = await canvas.evaluate(() => { const element = document.createElement("canvas"); element.width = 400; element.height = 300; return element.toDataURL("image/png") })
@@ -82,7 +85,7 @@ const panel = `<p id="ctx"></p><script>
   window.call = (path, ...args) => { const [object, method] = path.split('.');
     return Promise.resolve().then(() => codenomad[object][method](...args)).then(ok => ({ ok }), error => ({ error: error.message })); };
   window.report = (path, ...args) => { void window.call(path, ...args).then(answer => parent.postMessage({ fixtureAnswer: answer }, '*')); };
-  window.objects = () => ['images', 'composer', 'conversation', 'preferences', 'assets', 'workItems'].filter(name => codenomad[name]);
+  window.objects = () => ['images', 'composer', 'conversation', 'preferences', 'notes', 'assets', 'workItems'].filter(name => codenomad[name]);
   if (codenomad.images) codenomad.images.onChanged(detail => window.changes.push(detail));
   codenomad.onContext(context => { document.querySelector('#ctx').textContent = String(context.sessionId) + ':' + context.apiVersion; });
 </script>`
@@ -472,5 +475,30 @@ test("preferences: saved through the real store, kept across mountings, bounded 
     await show(page, "ses_other"); await showPanel(page, "ses_other")
     assert.deepEqual(await call(page, "preferences.get"), { ok: { imagesPerTurn: 2 } })
     assert.deepEqual(await store.preferences(installed!.manifest.id, installed!.digest), { imagesPerTurn: 2 })
+  } finally { await page.close() }
+})
+
+test("notes: one per displayed conversation through the real store, listed for the project, opened and deleted", async () => {
+  await install()
+  const { page, errors } = await open()
+  try {
+    await showPanel(page)
+    assert.deepEqual(await call(page, "notes.get"), { ok: null })
+    const saved = (await call(page, "notes.set", "Plan", 0)).ok
+    assert.equal(saved.status, "saved")
+    assert.equal((await call(page, "notes.set", "Late", 0)).ok.status, "conflict", "a stale revision never overwrites")
+    assert.deepEqual(await call(page, "notes.set", "x".repeat(32 * 1024 + 1), saved.revision), { ok: { status: "too-large" } })
+    await show(page, "ses_other"); await showPanel(page, "ses_other")
+    assert.deepEqual(await call(page, "notes.get"), { ok: null }, "each conversation has its own note")
+    const listed = (await call(page, "notes.list")).ok
+    assert.deepEqual(listed.notes.map((note: any) => [note.sessionID, note.text, note.orphan]), [["ses_work", "Plan", false]])
+    assert.equal(listed.cursor, null)
+    assert.deepEqual(await call(page, "notes.open", "ses_without_note"), { ok: { opened: false } })
+    await report(page, "notes.open", "ses_work")
+    await page.waitForFunction(() => (window as any).fixture.snapshot().active === "ses_work")
+    await showPanel(page)
+    assert.deepEqual(await call(page, "notes.delete", "ses_work", saved.revision), { ok: { status: "deleted" } })
+    assert.deepEqual(await call(page, "notes.get"), { ok: null })
+    assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

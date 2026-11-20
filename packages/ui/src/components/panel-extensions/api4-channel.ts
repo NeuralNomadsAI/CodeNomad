@@ -6,6 +6,7 @@ import { PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/
 import { panelExtensionsApi4 } from "../../lib/panel-extensions-api"
 import { serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/session-api"
+import { openListedSession } from "../../stores/history-search-sessions"
 import { requestComposerFocus } from "../../stores/composer-focus"
 import { resolveImagesConversation, showImagesConversation } from "../../stores/images-conversation"
 import { beginGesture } from "../../stores/session-surface"
@@ -19,11 +20,16 @@ export const API4_HOST_DEADLINE_MS = 19_500
 const MAX_PENDING = 4, PREFILL_INTERVAL_MS = 1_000, CHANGE_DELAY_MS = 300
 
 const requestSchema = z.object({ type: z.literal("api4:request"), id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  capability: z.enum(["images", "composer", "conversation", "preferences"]), method: z.string().max(32), input: z.unknown() }).strict()
-const grants = { images: "session.images.read", composer: "composer.prefill", conversation: "images.conversation", preferences: "panel.preferences" } as const
+  capability: z.enum(["images", "composer", "conversation", "preferences", "notes"]), method: z.string().max(32), input: z.unknown() }).strict()
+const grants = { images: "session.images.read", composer: "composer.prefill", conversation: "images.conversation", preferences: "panel.preferences",
+  notes: "panel.notes" } as const
 const empty = z.object({}).strict()
 const listSchema = z.object({ cursor: z.string().max(4096).optional() }).strict()
 const readSchema = z.object({ target: assetTargetSchema, thumbnail: z.boolean() }).strict()
+const Session = z.string().min(1).max(256), Revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+// Text is measured in UTF-8 bytes below, so an oversized note answers `too-large`.
+const noteSetSchema = z.object({ text: z.string(), revision: Revision }).strict()
+const noteDeleteSchema = z.object({ sessionID: Session, revision: Revision.min(1) }).strict()
 const prefillSchema = z.object({ text: z.string().max(64 * 1024), refs: z.array(z.union([assetTargetSchema, generationTargetSchema])).max(PREFILL_LIMITS.refs).optional() }).strict()
 
 // Displayed-session transcript changes restart the gallery; catalogue, configuration,
@@ -61,43 +67,63 @@ export function useApi4Channel(props: {
   const authority = { instanceId: props.instanceId, id: props.id, digest: props.digest }
   const session = props.sessionId && props.sessionId !== "info" ? props.sessionId : null
   const granted = (permission: string) => props.permissions.includes(permission)
-  let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined
-  let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false }
+  // `epoch` counts disconnections: an approval taken before one never comes back with the reconnection.
+  let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined, epoch = 0
+  let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false, notes: false }
   const current = () => !disposed && connected && nativeConnected && (props.host.activeSessionId() ?? null) === props.sessionId
   const abort = () => { for (const request of pending) request.abort() }
-  const invalidate = (gallery: boolean, status: boolean) => {
-    if (disposed || !granted("session.images.read")) return
-    changes = { gallery: changes.gallery || gallery, status: changes.status || status }
+  // Each kind only for its own permission, over one coalescing window.
+  const invalidate = (gallery: boolean, status: boolean, notes = false) => {
+    const images = granted("session.images.read")
+    const next = { gallery: changes.gallery || (images && gallery), status: changes.status || (images && status),
+      notes: changes.notes || (notes && granted("panel.notes")) }
+    if (disposed || !(next.gallery || next.status || next.notes)) return
+    changes = next
     timer ??= setTimeout(() => {
       timer = undefined
-      const detail = changes
-      changes = { gallery: false, status: false }
-      if (!disposed && connected && nativeConnected) props.send({ type: "images:changed", ...detail })
+      const { notes, ...detail } = changes
+      changes = { gallery: false, status: false, notes: false }
+      if (disposed || !connected || !nativeConnected) return
+      if (detail.gallery || detail.status) props.send({ type: "images:changed", ...detail })
+      if (notes) props.send({ type: "notes:changed" })
     }, CHANGE_DELAY_MS)
   }
   onCleanup(serverEvents.on("instance.event", payload => {
-    if (payload.type !== "instance.event" || payload.instanceId !== props.instanceId) return
+    if (payload.type !== "instance.event") return
     const event = payload.event as { type?: string; data?: { sessionID?: string } }
     const type = event.type ?? ""
+    // A deleted session leaves an orphan note, in any window sharing the project (another
+    // clone, another instance); other title changes show on the next read.
+    if (type === "session.deleted") invalidate(false, false, true)
+    if (payload.instanceId !== props.instanceId) return
     const own = Boolean(session) && event.data?.sessionID === session
     if (own && GALLERY_EVENTS.has(type)) invalidate(true, type === "session.updated" || type === "session.moved")
     else if (STATUS_EVENTS.has(type)) invalidate(false, true)
   }))
+  // Data-free and per package: the frame re-reads what its own authority shows.
+  onCleanup(serverEvents.on("panelExtensions.notesChanged", event => {
+    if (event.type === "panelExtensions.notesChanged" && event.id === props.id) invalidate(false, false, true)
+  }))
   onCleanup(serverEvents.on("instance.eventStatus", event => {
-    if (event.type !== "instance.eventStatus" || event.instanceId !== props.instanceId) return
+    if (event.type !== "instance.eventStatus") return
+    // Another instance resynchronized: it may have missed a deletion in a project these notes share.
+    if (event.instanceId !== props.instanceId) { if (event.status === "connected") invalidate(false, false, true); return }
     nativeConnected = event.status === "connected"
+    if (!nativeConnected) epoch++
     if (!nativeConnected || nativeGeneration !== event.generation) abort()
     nativeGeneration = event.generation
-    if (nativeConnected) invalidate(true, true)
+    if (nativeConnected) invalidate(true, true, true)
   }))
   onCleanup(serverEvents.onTransportStatus(status => {
     connected = status === "connected"
-    if (!connected) abort()
-    else invalidate(true, true)
+    if (!connected) { epoch++; abort() }
+    else invalidate(true, true, true)
   }))
   onCleanup(() => { disposed = true; clearTimeout(timer); abort(); pending.clear() })
 
   const location = () => getActiveCatalogLocation(props.instanceId).directory
+  /** The project's anchor: the displayed conversation, else the instance's Location. */
+  const displayed = () => session ? { sessionID: session } : {}
   // Frame-supplied names select only these own entries (Maps, never property lookups on objects).
   const table = (entries: Record<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>) => new Map(Object.entries(entries))
   const methods = new Map<keyof typeof grants, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>>(Object.entries({
@@ -147,6 +173,46 @@ export function useApi4Channel(props: {
         try { text = JSON.stringify(value) } catch { return { result: "invalid" } }
         if (text !== undefined && new TextEncoder().encode(text).length > PANEL_EXTENSION_LIMITS.preferencesBytes) return { result: "too-large" }
         return { result: (await panelExtensionsApi4.preferencesSet(authority, value, signal)).status }
+      },
+    }),
+    // The displayed conversation's note; its project (the agent-memory identity) lists every note.
+    notes: table({
+      get: async (input, signal) => {
+        empty.parse(input)
+        if (!session) return { result: null }
+        return { result: (await panelExtensionsApi4.notes<{ note: unknown }>(authority, "notesGet", { sessionID: session }, signal)).note }
+      },
+      set: async (input, signal) => {
+        const { text, revision } = noteSetSchema.parse(input)
+        if (!session) return { result: { status: "no-session" } }
+        if (new TextEncoder().encode(text).length > PANEL_EXTENSION_LIMITS.noteBytes) return { result: { status: "too-large" } }
+        return { result: await panelExtensionsApi4.notes(authority, "notesSet", { sessionID: session, text, revision }, signal) }
+      },
+      list: async (input, signal) => {
+        const { cursor } = listSchema.parse(input)
+        return { result: await panelExtensionsApi4.notes(authority, "notesList", { ...displayed(), cursor }, signal) }
+      },
+      delete: async (input, signal) => {
+        const { sessionID, revision } = noteDeleteSchema.parse(input)
+        return { result: await panelExtensionsApi4.notes(authority, "notesDelete", { ...displayed(), target: sessionID, revision }, signal) }
+      },
+      open: async (input, signal) => {
+        const { sessionID } = z.object({ sessionID: Session }).strict().parse(input)
+        // Taken now, so anything the user does while the host checks wins over this navigation.
+        const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.sessionId ?? null })
+        const { openable } = await panelExtensionsApi4.notes<{ openable: boolean }>(authority, "notesOpen", { ...displayed(), target: sessionID }, signal)
+        if (!openable) return { result: { opened: false } }
+        // Answer first: showing the session remounts the panel.
+        // The approval holds only for this mounting, transport and native generation.
+        const selected = props.sessionId, generation = nativeGeneration, approved = epoch
+        const valid = () => !disposed && connected && nativeConnected && nativeGeneration === generation && epoch === approved
+          && (props.host.activeSessionId() ?? null) === selected
+        return { result: { opened: true }, after: () => {
+          void openListedSession(props.instanceId, sessionID, valid,
+            undefined, intent).then(opened => {
+            if (opened && props.host.isPhoneLayout()) props.host.closePanel()
+          }, () => {})
+        } }
       },
     }),
   }) as Array<[keyof typeof grants, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>]>)

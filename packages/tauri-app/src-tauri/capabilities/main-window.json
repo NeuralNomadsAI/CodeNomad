@@ -19,6 +19,7 @@
     "allow-notification-badge-set",
     "notification:allow-show",
     "allow-cli-get-status",
+    "allow-device-speech-request",
     "allow-cli-restart",
     "allow-read-clipboard-attachments",
     "allow-wake-lock-start",

@@ -27,4 +27,5 @@ export const remoteControlMessages = {
   "remoteControl.devices.empty": "ペアリング済み端末はありません。",
   "remoteControl.devices.lastSeen": "最終アクセス: {time}",
   "remoteControl.devices.revoke": "取り消す",
+  "remoteControl.devices.revocationPending": "アクセス取り消し保留中",
 } as const

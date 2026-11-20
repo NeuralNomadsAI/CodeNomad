@@ -4,7 +4,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { instances } from "./instances"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
-import { applySurface, beginGesture } from "./session-surface"
+import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
 import { setSessionSearchDestination } from "./session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -107,9 +107,22 @@ export function createHistorySessionLabels(instanceId: () => string) {
  * parents, then let the destination transcript restore the anchor through its
  * normal bounded window load. `current` fences the caller's view.
  */
-export async function openHistoryMatchSession(instanceId: string, sessionId: string, messageId: string, current: () => boolean,
+export function openHistoryMatchSession(instanceId: string, sessionId: string, messageId: string, current: () => boolean,
   highlight?: { query: string; match: SessionSearchMatch }): Promise<boolean> {
-  const intent = beginGesture({ instanceId, sessionId })
+  return openListedSession(instanceId, sessionId, current, () => {
+    messageStoreBus.getOrCreate(instanceId).setScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE,
+      { scrollTop: 0, atBottom: false, anchorKey: messageId, anchorOffset: 0, followModeType: "escaped" })
+    if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
+  })
+}
+
+/**
+ * Shows another session of the instance, hydrating only it and its parents, as
+ * its conversation; `prepare` runs in the same batch, before it is selected. A
+ * deferred caller passes the gesture it took when the user acted.
+ */
+export async function openListedSession(instanceId: string, sessionId: string, current: () => boolean, prepare?: () => void,
+  intent: SurfaceGesture = beginGesture({ instanceId, sessionId })): Promise<boolean> {
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const admitted = () => intent.current() && current() && instances().get(instanceId)?.client === client
@@ -118,11 +131,9 @@ export async function openHistoryMatchSession(instanceId: string, sessionId: str
   if (!admitted()) return false
   await hydrateRestoredSessionChain(instanceId, [sessionId], undefined, admitted)
   if (!admitted() || !sessions().get(instanceId)?.has(sessionId)) return false
-  messageStoreBus.getOrCreate(instanceId).setScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE,
-    { scrollTop: 0, atBottom: false, anchorKey: messageId, anchorOffset: 0, followModeType: "escaped" })
   // A destination left on its browser preview would hide the transcript.
   batch(() => {
-    if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
+    prepare?.()
     setActiveSessionFromList(instanceId, sessionId, intent)
     applySurface({ instanceId, sessionId }, { kind: "conversation" }, intent)
   })

@@ -51,6 +51,9 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "cli_get_status",
+            "device_speech_request",
+            "remote_dictation_request",
+            "settle_remote_dictation",
             "cli_restart",
             "read_clipboard_attachments",
             "wake_lock_start",

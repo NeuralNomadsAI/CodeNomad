@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify"
+import type { FastifyInstance, RouteShorthandOptions } from "fastify"
 import { z } from "zod"
 import type { BinaryValidationResult } from "../../api-types"
 import { probeOpenCodeBinary } from "../../workspaces/spawn"
@@ -10,6 +10,7 @@ import { applyConditionalMissionPreferences, MissionPreferenceConflictError } fr
 import { SettingsReadError } from "../../settings/yaml-doc-store"
 import { HostOnlySettingError, hostOnlyServerCheck } from "../../settings/host-only-settings"
 import { isLocalRequest } from "../../remote-control/request-origin"
+import { isPlainObject } from "../../settings/merge-patch"
 import { NEW_CONVERSATION_PERMISSIONS, newConversationMode } from "../../permissions/session-mode"
 
 const privateStateOwners = [SESSION_FAVORITES_OWNER, SESSION_PERMISSION_BLOCKS_OWNER]
@@ -33,12 +34,22 @@ const ValidateBinarySchema = z.object({
   path: z.string(),
 })
 
+const configPatchOptions: RouteShorthandOptions = {
+  errorHandler(error, _request, reply) {
+    // JSON syntax errors can quote the submitted credentials before the handler runs.
+    if (error instanceof SyntaxError && error.statusCode === 400) {
+      return reply.code(400).send({ error: "Invalid settings patch" })
+    }
+    throw error
+  },
+}
+
 function validateBinaryPath(binaryPath: string): Promise<BinaryValidationResult> {
   return probeOpenCodeBinary(binaryPath)
 }
 
 export function enforceSpeechCredentialPairing(body: unknown, currentSpeech?: unknown): unknown {
-  if (!body || typeof body !== "object") return body
+  if (!isPlainObject(body)) return body
   const patch = { ...(body as Record<string, unknown>) }
   const speech = patch.speech
   if (!speech || typeof speech !== "object") return patch
@@ -75,14 +86,14 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   const withConfigLock = deps.withConfigLock ?? (async <T>(action: () => T): Promise<T> => action())
   // Full-document access
   app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
-  app.patch("/api/storage/config", async (request, reply) => {
+  app.patch("/api/storage/config", configPatchOptions, async (request, reply) => {
     try {
       let body = request.body ?? {}
       const saved = await withConfigLock(() => {
         if (body && typeof body === "object" && "server" in body) {
           const bodyObj = { ...(body as Record<string, unknown>) }
           const serverPatch = bodyObj.server
-          if (serverPatch && typeof serverPatch === "object") {
+          if (isPlainObject(serverPatch)) {
             const currentServer = deps.settings.getRawConfigOwner("server")
             bodyObj.server = enforceSpeechCredentialPairing(serverPatch, currentServer)
           }
@@ -115,7 +126,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
   })
 
-  app.patch<{ Params: { owner: string }; Querystring: { conditional?: unknown } }>("/api/storage/config/:owner", async (request, reply) => {
+  app.patch<{ Params: { owner: string }; Querystring: { conditional?: unknown } }>("/api/storage/config/:owner", configPatchOptions, async (request, reply) => {
     try {
       if (Object.prototype.hasOwnProperty.call(request.query, "conditional")) {
         if (request.query.conditional !== "missions-v1") throw new Error("Unknown conditional patch mode")
