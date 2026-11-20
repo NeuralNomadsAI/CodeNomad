@@ -12,7 +12,7 @@ use axum::{
     extract::{DefaultBodyLimit, Request, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode as Status, header},
     middleware::Next,
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -557,12 +557,13 @@ pub async fn login_page(State(app): State<Shared>, Extension(principal): Extensi
         app.auth.identity().0.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
     let page =
         include_str!("../../../server/src/server/routes/auth-pages/login.html").replace("{{DEFAULT_USERNAME}}", &name);
-    (NO_STORE, Html(page)).into_response()
+    (NO_STORE, [(header::CONTENT_TYPE, "text/html")], page).into_response()
 }
 
 pub async fn token_page(State(app): State<Shared>) -> Response {
     if !app.auth.settings.token || app.auth.settings.skip {
         return error(Status::NOT_FOUND, "Not found").into_response();
     }
-    (NO_STORE, Html(include_str!("../../../server/src/server/routes/auth-pages/token.html"))).into_response()
+    let page = include_str!("../../../server/src/server/routes/auth-pages/token.html");
+    (NO_STORE, [(header::CONTENT_TYPE, "text/html")], page).into_response()
 }

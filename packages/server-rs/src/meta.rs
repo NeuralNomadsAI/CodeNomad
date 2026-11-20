@@ -50,9 +50,15 @@ pub fn document(
         "serverVersion": config::VERSION, "ui": ui, "updateFeed": "stable"
     });
     if let Some(tls) = tls {
+        let address = tls.socket.local_addr()?;
         meta["remoteUrl"] = json!(tls.origin);
-        meta["remotePort"] = json!(tls.socket.local_addr()?.port());
+        meta["remotePort"] = json!(address.port());
         meta["tlsFingerprint"] = json!(tls.fingerprint);
+        // The remote listener's interface, as `serverMeta.host` and `listeningMode` follow it.
+        if !address.ip().is_loopback() {
+            (meta["host"], meta["hostLabel"], meta["listeningMode"]) =
+                (json!(address.ip()), json!(address.ip()), json!("all"));
+        }
     }
     Ok(meta)
 }

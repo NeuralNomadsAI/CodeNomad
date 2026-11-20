@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     extract::Request,
     http::{HeaderValue, Method, StatusCode as Status, header},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
 
@@ -34,8 +34,11 @@ impl Source {
                     .ok()
                     .and_then(|bytes| serde_json::from_slice(&bytes).ok())
                     .unwrap_or_default();
-                let version = file.get("uiVersion").or(file.get("version")).and_then(Value::as_str);
-                json!({"source": kind, "version": version})
+                let mut meta = json!({"source": kind});
+                if let Some(version) = file.get("uiVersion").or(file.get("version")).and_then(Value::as_str) {
+                    meta["version"] = json!(version);
+                }
+                meta
             }
         }
     }
@@ -60,7 +63,7 @@ pub async fn serve(source: &Source, req: Request) -> Response {
         {
             Some(response) => response,
             None => match tokio::fs::read_to_string(dir.join("index.html")).await {
-                Ok(page) => Html(page).into_response(),
+                Ok(page) => ([(header::CONTENT_TYPE, "text/html")], page).into_response(),
                 Err(_) => (Status::NOT_FOUND, axum::Json(json!({"message": "UI bundle missing"}))).into_response(),
             },
         },
