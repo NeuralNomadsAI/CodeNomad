@@ -259,6 +259,7 @@ export function useCommands(options: UseCommandsOptions) {
       category: "Instance",
       keywords: () => splitKeywords("commands.instanceInfo.keywords"),
       shortcutId: "switch-to-info",
+      disabled: () => !hostSupports("opencode-admin"),
       action: () => {
         void openSettings("opencode")
       },
