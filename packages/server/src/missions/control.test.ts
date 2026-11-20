@@ -1017,6 +1017,9 @@ test("Debugging can finish with a verified no-change result before any task is d
     reason: "Withdraw the diagnosis", retireTasks: [{ taskKey: "diagnose" }], addTasks: [], dependencyUpdates: [],
   })
   await assert.rejects(withTask.report("ses_coordinator", report), /requires the latest live implementation/)
+  const verified = { ...report, artifact: { kind: "verified-completion" } }
+  await assert.rejects(withTask.report("ses_coordinator", verified), /requires the latest live implementation/)
+  await assert.rejects(control.report("ses_coordinator", { ...verified, evidence: [" "] }), /requires completed diagnostician evidence/)
   const result = await control.report("ses_coordinator", report)
   assert.equal(result.disposition, "finished")
   assert.equal(result.mission.status, "completed")
