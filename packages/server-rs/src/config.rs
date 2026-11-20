@@ -8,53 +8,11 @@ pub const VERSION: &str = match option_env!("CNRS_BUILD_VERSION") {
     None => env!("CARGO_PKG_VERSION"),
 };
 
-/// `codenomad-rs --version` prints the build version and exits.
-pub fn print_version() -> bool {
-    let asked = env::args().nth(1).as_deref() == Some("--version") && env::args().len() == 2;
-    if asked {
-        println!("{VERSION}");
-    }
-    asked
-}
-
-/// `CLI_CONFIG`: the settings location (a folder, a YAML file or a legacy JSON file).
-pub fn settings_location() -> Option<String> {
-    env::var("CLI_CONFIG").ok()
-}
-/// `CLI_UNRESTRICTED_ROOT`: the folder browser and workspaces may use the whole filesystem.
-pub fn unrestricted_root() -> Result<bool, String> {
-    switch("CLI_UNRESTRICTED_ROOT")
-}
-/// `parseBooleanSwitchEnv`: unset is off; other values follow the reference grammar.
-fn switch(name: &str) -> Result<bool, String> {
-    match env::var(name).map(|v| v.trim().to_lowercase()).as_deref() {
-        Err(_) | Ok("0" | "false" | "no" | "off" | "") => Ok(false),
-        Ok("1" | "true" | "yes" | "on") => Ok(true),
-        Ok(_) => Err(format!("{name} must be 1, true, yes, on, 0, false, no, off, or empty (case-insensitive)")),
-    }
-}
-
-pub fn server_password() -> Result<String, env::VarError> {
-    env::var("CNRS_SERVER_PASSWORD")
-}
 /// The `service.json` that `opencode serve --service` writes under its own `XDG_STATE_HOME`.
 pub fn opencode_service_file() -> Option<OsString> {
     env::var_os("CNRS_OPENCODE_SERVICE_FILE")
 }
 
-/// HTTPS listener: interface, public name, extra certificate names and supplied PEM files.
-pub fn https_bind() -> Option<String> {
-    env::var("CNRS_HTTPS_BIND").ok()
-}
-pub fn https_name() -> Result<String, env::VarError> {
-    env::var("CNRS_HTTPS_NAME")
-}
-pub fn tls_sans() -> String {
-    env::var("CNRS_TLS_SANS").unwrap_or_default()
-}
-pub fn tls_files() -> [Option<OsString>; 3] {
-    ["CNRS_TLS_KEY", "CNRS_TLS_CERT", "CNRS_TLS_CA"].map(env::var_os)
-}
 pub fn remote_control() -> String {
     env::var("CODENOMAD_REMOTE_CONTROL").unwrap_or_default()
 }

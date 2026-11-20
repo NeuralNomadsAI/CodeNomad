@@ -1,6 +1,8 @@
-//! The local password session (`/api/auth/*`, loopback only) and the paired-device
-//! admission of the HTTPS listener (`devices`, `remote`, `tls`).
+//! The local password session (`/api/auth/*`, `/login`, `/auth/token`; loopback only) with the
+//! reference's `auth.json`, bootstrap token and named cookie, and the paired-device admission of
+//! the HTTPS listener (`devices`, `remote`, `tls`).
 pub mod devices;
+pub mod password;
 pub mod remote;
 pub mod tls;
 pub mod tls_admission;
@@ -18,6 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -39,15 +42,18 @@ pub fn remote_routes() -> Router<Shared> {
         .route("/api/remote-control/server-pair", post(devices::exchange))
         .route("/remote-pair", get(devices::page))
 }
-/// Device management, served on the loopback listener only.
+/// Device management, bootstrap and password pages, served on the loopback listener only.
 pub fn local_routes() -> Router<Shared> {
     Router::new()
         .route("/api/remote-control/pairings", post(devices::issue).layer(DefaultBodyLimit::max(4096)))
         .route("/api/remote-control/devices", get(devices::list))
         .route("/api/remote-control/devices/{id}", delete(devices::revoke))
+        .route("/api/auth/token", post(token).layer(DefaultBodyLimit::max(4096)))
+        .route("/api/auth/password", post(set_password).layer(DefaultBodyLimit::max(24 * 1024)))
+        .route("/login", get(login_page))
+        .route("/auth/token", get(token_page))
 }
 
-const NAME: &str = "codenomad";
 /// Proxy and routing headers no client may supply: refused locally, stripped from paired devices.
 pub const AUTHORITY_HEADERS: [&str; 7] = [
     "forwarded",
@@ -58,7 +64,9 @@ pub const AUTHORITY_HEADERS: [&str; 7] = [
     "x-codenomad-remote-control",
     "x-codenomad-backend-authority",
 ];
-const COOKIE: &str = "codenomad_session";
+pub const DEFAULT_COOKIE: &str = "codenomad_session";
+pub const DEFAULT_USERNAME: &str = "codenomad";
+const TOKEN_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 pub struct Principal(pub CancellationToken);
@@ -74,46 +82,105 @@ pub fn unauthorized() -> Error {
 struct Session {
     born: Instant,
     seen: Instant,
+    username: String,
     principal: Principal,
 }
 
-pub struct Auth {
-    salt: [u8; 16],
-    hash: [u8; 64],
-    sessions: Mutex<HashMap<String, Session>>,
-    login_budget: tokio::sync::Semaphore,
+/// Startup choices (`AuthManagerInit`).
+pub struct Settings {
+    pub username: String,
+    /// `--password`: hashed for this run, `auth.json` ignored.
+    pub password: Option<String>,
+    /// `auth.json` beside `config.yaml`; `None` keeps the runtime password only.
+    pub file: Option<PathBuf>,
+    pub cookie: String,
+    pub token: bool,
+    pub skip: bool,
+    pub idle: Duration,
+    pub absolute: Duration,
 }
 
-fn derive(value: &str, salt: &[u8; 16]) -> [u8; 64] {
-    let mut output = [0; 64];
-    scrypt::scrypt(value.as_bytes(), salt, &scrypt::Params::new(14, 8, 1, 64).unwrap(), &mut output)
-        .expect("fixed scrypt parameters");
-    output
+struct Credentials {
+    username: String,
+    record: password::Record,
+    user_provided: bool,
+}
+
+pub struct Auth {
+    settings: Settings,
+    /// `None`: bootstrap only, until a password is set.
+    credentials: Mutex<Option<Credentials>>,
+    token: Mutex<Option<(String, Instant)>>,
+    /// The single principal of `--dangerously-skip-auth`.
+    open: Principal,
+    sessions: Mutex<HashMap<String, Session>>,
+    login_budget: tokio::sync::Semaphore,
+    password_change: tokio::sync::Mutex<()>,
+}
+
+fn random_id() -> Option<String> {
+    let mut entropy = [0; 32];
+    getrandom::fill(&mut entropy).ok()?;
+    Some(URL_SAFE_NO_PAD.encode(entropy))
 }
 
 impl Auth {
-    pub fn new(secret: &str) -> Result<Self, &'static str> {
-        let value = secret.trim();
-        if value.is_empty() {
-            return Err("CNRS_SERVER_PASSWORD must be nonempty");
+    /// `AuthStore.ensureInitialized`: the runtime password, else `auth.json`, else bootstrap-only with a token.
+    pub fn new(settings: Settings) -> Result<Self, String> {
+        let runtime = settings.password.as_deref().map(str::trim).filter(|p| !p.is_empty());
+        let credentials = match (runtime, &settings.file) {
+            _ if settings.skip => None,
+            (Some(value), _) => Some(Credentials {
+                username: settings.username.clone(),
+                record: password::Record::new(value)?,
+                user_provided: true,
+            }),
+            (None, Some(file)) => password::load(file).map(|f| Credentials {
+                username: f.username,
+                record: f.password,
+                user_provided: f.user_provided,
+            }),
+            (None, None) => None,
+        };
+        if credentials.is_none() && !settings.token && !settings.skip {
+            return Err(match &settings.file {
+                Some(file) => format!(
+                    "No server password configured. Create {} or start with --password / CODENOMAD_SERVER_PASSWORD.",
+                    file.display()
+                ),
+                None => "CNRS_SERVER_PASSWORD must be nonempty".into(),
+            });
         }
-        let mut salt = [0; 16];
-        getrandom::fill(&mut salt).map_err(|_| "Secure random source unavailable")?;
+        let token = if settings.token && !settings.skip {
+            Some((random_id().ok_or("Secure random source unavailable")?, Instant::now()))
+        } else {
+            None
+        };
         Ok(Self {
-            salt,
-            hash: derive(value, &salt),
+            settings,
+            credentials: Mutex::new(credentials),
+            token: Mutex::new(token),
+            open: Principal(CancellationToken::new()),
             sessions: Mutex::default(),
             login_budget: tokio::sync::Semaphore::new(4),
+            password_change: Default::default(),
         })
     }
-    fn expired(s: &Session) -> bool {
-        s.seen.elapsed() >= Duration::from_secs(86400) || s.born.elapsed() >= Duration::from_secs(7 * 86400)
+    /// The one-time desktop token, printed once as `CODENOMAD_BOOTSTRAP_TOKEN:<token>`.
+    pub fn bootstrap_token(&self) -> Option<String> {
+        self.token.lock().unwrap().as_ref().map(|(token, _)| token.clone())
+    }
+    pub fn cookie_name(&self) -> &str {
+        &self.settings.cookie
+    }
+    fn expired(&self, s: &Session) -> bool {
+        s.seen.elapsed() >= self.settings.idle || s.born.elapsed() >= self.settings.absolute
     }
     pub async fn sweep(app: Shared) {
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
             app.auth.sessions.lock().unwrap().retain(|_, s| {
-                if !Self::expired(s) {
+                if !app.auth.expired(s) {
                     return true;
                 }
                 s.principal.0.cancel();
@@ -121,20 +188,61 @@ impl Auth {
             });
         }
     }
-    fn principal(&self, key: &str) -> Option<Principal> {
+    fn principal(&self, key: Option<&str>) -> Option<Principal> {
+        if self.settings.skip {
+            return Some(self.open.clone());
+        }
         let mut sessions = self.sessions.lock().unwrap();
-        let s = sessions.get_mut(key)?;
-        if Self::expired(s) {
+        let s = sessions.get_mut(key?)?;
+        if self.expired(s) {
             s.principal.0.cancel();
-            sessions.remove(key);
+            sessions.remove(key?);
             return None;
         }
         s.seen = Instant::now();
         Some(s.principal.clone())
     }
+    /// `{username, passwordUserProvided}` of the reference's `getStatus`.
+    fn identity(&self) -> (String, bool) {
+        match &*self.credentials.lock().unwrap() {
+            Some(c) if !self.settings.skip => (c.username.clone(), c.user_provided),
+            _ => (self.settings.username.clone(), false),
+        }
+    }
+    fn open_session(&self, username: String) -> Result<String, Error> {
+        let id = random_id().ok_or_else(|| error(Status::SERVICE_UNAVAILABLE, "Login unavailable"))?;
+        let now = Instant::now();
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.retain(|_, s| {
+            let live = !self.expired(s);
+            if !live {
+                s.principal.0.cancel();
+            }
+            live
+        });
+        sessions.insert(
+            id.clone(),
+            Session { born: now, seen: now, username, principal: Principal(CancellationToken::new()) },
+        );
+        Ok(id)
+    }
+    /// Values are base64url session ids, which `encodeURIComponent` leaves unchanged.
+    fn session_cookie(&self, value: &str, max_age: Option<u8>) -> String {
+        let tail = max_age.map(|age| format!("; Max-Age={age}")).unwrap_or_default();
+        format!("{}={value}; HttpOnly; Path=/; SameSite=Lax{tail}", self.settings.cookie)
+    }
 }
 
-pub fn cookies(headers: &HeaderMap) -> Result<(Option<String>, Option<String>), Error> {
+/// `--auth-cookie-name`, made a cookie token like `sanitizeCookieName`.
+pub fn cookie_name(value: Option<&str>) -> String {
+    let value = value.map(str::trim).unwrap_or("");
+    if value.is_empty() {
+        return DEFAULT_COOKIE.into();
+    }
+    value.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()
+}
+
+pub fn cookies(headers: &HeaderMap, session: &str) -> Result<(Option<String>, Option<String>), Error> {
     let (mut key, mut device) = (None, None);
     for value in headers.get_all(header::COOKIE) {
         for field in value.to_str().map_err(|_| invalid_cookie())?.split(';') {
@@ -147,10 +255,12 @@ pub fn cookies(headers: &HeaderMap) -> Result<(Option<String>, Option<String>), 
                 return Err(invalid_cookie());
             }
             let value = percent_encoding::percent_decode_str(value).decode_utf8().map_err(|_| invalid_cookie())?;
-            let slot = match name {
-                devices::COOKIE => &mut device,
-                COOKIE => &mut key,
-                _ => continue,
+            let slot = if name == devices::COOKIE {
+                &mut device
+            } else if name == session {
+                &mut key
+            } else {
+                continue;
             };
             if slot.replace(value.into_owned()).is_some() {
                 return Err(invalid_cookie());
@@ -163,8 +273,20 @@ fn invalid_cookie() -> Error {
     error(Status::BAD_REQUEST, "Invalid cookie")
 }
 
+/// Fastify's `reply.redirect`: 302.
+pub fn found(to: &'static str) -> Response {
+    (Status::FOUND, [(header::LOCATION, to)]).into_response()
+}
+
+fn wants_html(headers: &HeaderMap) -> bool {
+    headers.get_all(header::ACCEPT).iter().filter_map(|v| v.to_str().ok()).any(|v| {
+        let v = v.to_ascii_lowercase();
+        v.contains("text/html") || v.contains("application/xhtml")
+    })
+}
+
 pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> Result<Response, Error> {
-    let (key, device) = cookies(req.headers())?;
+    let (key, device) = cookies(req.headers(), app.auth.cookie_name())?;
     let host = req.headers().get(header::HOST).and_then(|x| x.to_str().ok()).unwrap_or("");
     let selected = [format!("127.0.0.1:{}", app.port), format!("localhost:{}", app.port)];
     if !selected.iter().any(|expected| expected == host) || req.headers().get_all(header::HOST).iter().count() != 1 {
@@ -204,7 +326,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     }) {
         return Err(error(Status::FORBIDDEN, "Unsupported authority"));
     }
-    let path = req.uri().path();
+    let path = req.uri().path().to_owned();
     if device.is_some() || req.headers().contains_key("x-codenomad-server-request") {
         return Err(error(Status::UNAUTHORIZED, "This device is not paired"));
     }
@@ -240,23 +362,40 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
             response
         }
     } else {
-        let principal = key.as_deref().and_then(|key| app.auth.principal(key));
-        if matches!(path, "/api/auth/login" | "/api/auth/status" | "/api/auth/logout") {
-            req.extensions_mut().insert(principal);
+        // The reference's `preHandler`: public auth routes and pages, then the session; pages
+        // without one go to `/login`, other non-API paths reach the UI only.
+        let principal = app.auth.principal(key.as_deref());
+        let public =
+            matches!(path.as_str(), "/api/auth/login" | "/api/auth/status" | "/api/auth/logout" | "/api/auth/token")
+                || path == "/login"
+                || path == "/auth/token" && app.auth.settings.token;
+        let api = ["/api/", "/workspaces/", "/sidecars/", "/previews/"].iter().any(|p| path.starts_with(p));
+        let html = wants_html(req.headers());
+        if public || principal.is_some() {
+            req.extensions_mut().insert(principal.clone());
+            if let Some(principal) = principal {
+                req.extensions_mut().insert(principal);
+            }
             next.run(req).await
-        } else if let Some(principal) = principal {
-            req.extensions_mut().insert(principal);
-            next.run(req).await
-        } else {
+        } else if path == "/" || html && (!api || req.method() == Method::GET && !path.starts_with("/api/")) {
+            found("/login")
+        } else if api {
             unauthorized().into_response()
+        } else {
+            req.extensions_mut().insert(None::<Principal>);
+            next.run(req).await
         }
     };
     Ok(remote::cors(response, origin))
 }
 
-pub async fn status(Extension(principal): Extension<Option<Principal>>) -> impl IntoResponse {
+pub async fn status(
+    State(app): State<Shared>,
+    Extension(principal): Extension<Option<Principal>>,
+) -> impl IntoResponse {
     let data = if principal.is_some() {
-        json!({"authenticated":true,"username":NAME,"passwordUserProvided":true})
+        let (username, provided) = app.auth.identity();
+        json!({"authenticated":true,"username":username,"passwordUserProvided":provided})
     } else {
         json!({"authenticated":false})
     };
@@ -277,34 +416,154 @@ pub async fn login(
     if username.is_empty() || password.is_empty() || username.len() > 1024 || password.len() > 8192 {
         return Err(error(Status::BAD_REQUEST, "Invalid login body"));
     }
-    let _permit = app.auth.login_budget.try_acquire().map_err(|_| error(Status::TOO_MANY_REQUESTS, "Login busy"))?;
-    let salt = app.auth.salt;
-    let guess = tokio::task::spawn_blocking(move || derive(&password, &salt))
-        .await
-        .map_err(|_| error(Status::SERVICE_UNAVAILABLE, "Login unavailable"))?;
-    if !bool::from(app.auth.hash.ct_eq(&guess)) || username != NAME {
-        return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
+    if !app.auth.settings.skip {
+        let _permit =
+            app.auth.login_budget.try_acquire().map_err(|_| error(Status::TOO_MANY_REQUESTS, "Login busy"))?;
+        let Some((expected, record)) =
+            app.auth.credentials.lock().unwrap().as_ref().map(|c| (c.username.clone(), c.record.clone()))
+        else {
+            return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
+        };
+        let valid = tokio::task::spawn_blocking(move || record.verify(&password))
+            .await
+            .map_err(|_| error(Status::SERVICE_UNAVAILABLE, "Login unavailable"))?;
+        if !valid || username != expected {
+            return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
+        }
     }
-    let mut entropy = [0; 32];
-    getrandom::fill(&mut entropy).map_err(|_| error(Status::SERVICE_UNAVAILABLE, "Login unavailable"))?;
-    let id = URL_SAFE_NO_PAD.encode(entropy);
-    let now = Instant::now();
-    app.auth
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(id.clone(), Session { born: now, seen: now, principal: Principal(CancellationToken::new()) });
-    Ok(([(header::SET_COOKIE, format!("{COOKIE}={id}; HttpOnly; Path=/; SameSite=Lax"))], Json(json!({"ok":true}))))
+    let id = app.auth.open_session(username)?;
+    Ok(([(header::SET_COOKIE, app.auth.session_cookie(&id, None))], Json(json!({"ok":true}))))
+}
+
+#[derive(Deserialize)]
+pub struct Token {
+    token: String,
+}
+
+/// `POST /api/auth/token`: the bootstrap token, once and within a minute, opens a session.
+pub async fn token(
+    State(app): State<Shared>,
+    payload: Result<Json<Token>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    if !app.auth.settings.token || app.auth.settings.skip {
+        return error(Status::NOT_FOUND, "Not found").into_response();
+    }
+    let token = match payload {
+        Ok(Json(Token { token })) if !token.is_empty() => token,
+        _ => return error(Status::BAD_REQUEST, "Invalid token body").into_response(),
+    };
+    let accepted = {
+        let mut slot = app.auth.token.lock().unwrap();
+        let valid = slot.as_ref().is_some_and(|(expected, issued)| {
+            issued.elapsed() <= TOKEN_TTL && bool::from(expected.as_bytes().ct_eq(token.as_bytes()))
+        });
+        if valid {
+            slot.take();
+        }
+        valid
+    };
+    if !accepted {
+        return error(Status::UNAUTHORIZED, "Invalid token").into_response();
+    }
+    match app.auth.open_session(app.auth.identity().0) {
+        Ok(id) => {
+            ([(header::SET_COOKIE, app.auth.session_cookie(&id, None))], Json(json!({"ok":true}))).into_response()
+        }
+        Err(e) => e.into_response(),
+    }
 }
 
 pub async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Result<impl IntoResponse, Error> {
-    if let Some(key) = cookies(&headers)?.0 {
+    if let Some(key) = cookies(&headers, app.auth.cookie_name())?.0 {
         if let Some(record) = app.auth.sessions.lock().unwrap().remove(&key) {
             record.principal.0.cancel();
         }
     }
-    Ok((
-        [(header::SET_COOKIE, format!("{COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"))],
-        Json(json!({"ok":true})),
-    ))
+    Ok(([(header::SET_COOKIE, app.auth.session_cookie("", Some(0)))], Json(json!({"ok":true}))))
+}
+
+#[derive(Deserialize)]
+pub struct NewPassword {
+    password: String,
+}
+
+/// `POST /api/auth/password`: writes `auth.json` and ends every session of that user.
+pub async fn set_password(
+    State(app): State<Shared>,
+    principal: Option<Extension<Principal>>,
+    payload: Result<Json<NewPassword>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    if principal.is_none() {
+        return unauthorized().into_response();
+    }
+    let password = match payload {
+        Ok(Json(NewPassword { password })) if password.chars().count() >= 8 && password.len() <= 8192 => password,
+        _ => return error(Status::BAD_REQUEST, "Invalid password body").into_response(),
+    };
+    let conflict =
+        |message: &str| (Status::CONFLICT, [(header::CONTENT_TYPE, "text/plain")], message.to_owned()).into_response();
+    let settings = &app.auth.settings;
+    if settings.skip {
+        return conflict("Internal authentication is disabled");
+    }
+    let Some(file) =
+        settings.file.as_ref().filter(|_| settings.password.as_deref().is_none_or(|p| p.trim().is_empty()))
+    else {
+        return conflict(
+            "Server password is provided via CLI/env and cannot be changed while running. Restart without --password / CODENOMAD_SERVER_PASSWORD to use auth.json.",
+        );
+    };
+    let _change = app.auth.password_change.lock().await;
+    let record = match tokio::task::spawn_blocking(move || password::Record::new(&password)).await {
+        Ok(Ok(record)) => record,
+        _ => return conflict("Password hashing failed"),
+    };
+    let username = app.auth.identity().0;
+    let stored = password::AuthFile {
+        version: 1,
+        username: username.clone(),
+        password: record.clone(),
+        user_provided: true,
+        updated_at: crate::now(),
+    };
+    if let Err(e) = password::save(file, &stored) {
+        return conflict(&e.to_string());
+    }
+    *app.auth.credentials.lock().unwrap() =
+        Some(Credentials { username: username.clone(), record, user_provided: true });
+    app.auth.sessions.lock().unwrap().retain(|_, s| {
+        let keep = s.username != username;
+        if !keep {
+            s.principal.0.cancel();
+        }
+        keep
+    });
+    (
+        [(header::SET_COOKIE, app.auth.session_cookie("", Some(0)))],
+        Json(json!({"ok":true,"username":username,"passwordUserProvided":true})),
+    )
+        .into_response()
+}
+
+const NO_STORE: [(header::HeaderName, &str); 3] =
+    [(header::CACHE_CONTROL, "no-store"), (header::PRAGMA, "no-cache"), (header::EXPIRES, "0")];
+
+/// `/login`: the reference page with the configured user name, or `/` once signed in.
+pub async fn login_page(State(app): State<Shared>, Extension(principal): Extension<Option<Principal>>) -> Response {
+    if principal.is_some() {
+        return found("/");
+    }
+    let name =
+        app.auth.identity().0.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let page =
+        include_str!("../../../server/src/server/routes/auth-pages/login.html").replace("{{DEFAULT_USERNAME}}", &name);
+    (NO_STORE, [(header::CONTENT_TYPE, "text/html")], page).into_response()
+}
+
+pub async fn token_page(State(app): State<Shared>) -> Response {
+    if !app.auth.settings.token || app.auth.settings.skip {
+        return error(Status::NOT_FOUND, "Not found").into_response();
+    }
+    let page = include_str!("../../../server/src/server/routes/auth-pages/token.html");
+    (NO_STORE, [(header::CONTENT_TYPE, "text/html")], page).into_response()
 }

@@ -29,6 +29,7 @@ pub fn document(
     port: u16,
     root: &Path,
     tls: Option<&tls::Listener>,
+    ui: Value,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let mut capabilities = vec!["workspaces", "events", "workspace-files", "workspace-git", "linked-worktrees"];
     if bench::missions_run() {
@@ -42,12 +43,18 @@ pub fn document(
         "serversUsable": false, "serversManageable": false, "secretEntryAllowed": false,
         "system": { "platform": if cfg!(windows) { "win32" } else { std::env::consts::OS },
             "arch": if cfg!(target_arch = "x86_64") { "x64" } else { std::env::consts::ARCH } },
-        "serverVersion": config::VERSION, "ui": { "source": "missing" }
+        "serverVersion": config::VERSION, "ui": ui
     });
     if let Some(tls) = tls {
+        let address = tls.socket.local_addr()?;
         meta["remoteUrl"] = json!(tls.origin);
-        meta["remotePort"] = json!(tls.socket.local_addr()?.port());
+        meta["remotePort"] = json!(address.port());
         meta["tlsFingerprint"] = json!(tls.fingerprint);
+        // The remote listener's interface, as `serverMeta.host` and `listeningMode` follow it.
+        if !address.ip().is_loopback() {
+            (meta["host"], meta["hostLabel"], meta["listeningMode"]) =
+                (json!(address.ip()), json!(address.ip()), json!("all"));
+        }
     }
     Ok(meta)
 }
