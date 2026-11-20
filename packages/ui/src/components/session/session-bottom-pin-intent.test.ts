@@ -10,7 +10,9 @@ describe("session bottom pin intent", () => {
     const start = source.indexOf("async function handleSendMessage(")
     const submit = source.slice(start, source.indexOf("function showQueueError", start))
 
-    assert.match(submit, /const initialPinIntent = startSubmitBottomPinIntent/)
+    assert.match(submit, /const preparePin = \(\) => \{[\s\S]*?intent: startSubmitBottomPinIntent/)
+    assert.match(submit, /let pin = isLatestMessageWindow\(instanceId, sessionId\) \? preparePin\(\) : undefined/)
+    assert.match(submit, /prepareAdmission: pin \? undefined : async \(\) => \{[\s\S]*?await loadLatestMessageWindow[\s\S]*?if \(operation.current\(\)\) pin = preparePin\(\)/)
     assert.doesNotMatch(submit, /delivery === "queue"/)
     // The intent starts the pin itself; a second bottom jump would duplicate it.
     assert.doesNotMatch(submit, /scrollToBottom|jumpToBottom|settleAtBottom/)
