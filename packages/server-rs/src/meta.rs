@@ -33,6 +33,7 @@ pub fn document(
     port: u16,
     root: &Path,
     tls: Option<&tls::Listener>,
+    ui: Value,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let mut capabilities = vec!["workspaces", "events", "workspace-files", "workspace-git", "linked-worktrees"];
     if bench::missions_run() {
@@ -46,7 +47,7 @@ pub fn document(
         "serversUsable": false, "serversManageable": false, "secretEntryAllowed": false,
         "system": { "platform": if cfg!(windows) { "win32" } else { std::env::consts::OS },
             "arch": if cfg!(target_arch = "x86_64") { "x64" } else { std::env::consts::ARCH } },
-        "serverVersion": config::VERSION, "ui": { "source": "missing" }, "updateFeed": "stable"
+        "serverVersion": config::VERSION, "ui": ui, "updateFeed": "stable"
     });
     if let Some(tls) = tls {
         meta["remoteUrl"] = json!(tls.origin);
@@ -56,19 +57,33 @@ pub fn document(
     Ok(meta)
 }
 
+/// `{"serverId"}` in a `.json` file (bench), else the reference's bare UUID (`config.yaml.server-id`).
 fn server_id(path: &Path) -> Result<Uuid, Box<dyn std::error::Error>> {
+    let json = path.extension().is_some_and(|e| e == "json");
+    if let Some(parent) = path.parent().filter(|_| !json) {
+        fs::create_dir_all(parent)?;
+    }
     match fs::OpenOptions::new().create_new(true).write(true).open(path) {
         Ok(mut file) => {
             let id = Uuid::new_v4();
-            file.write_all(serde_json::to_string(&json!({"serverId": id}))?.as_bytes())?;
+            let text = if json { json!({"serverId": id}).to_string() } else { id.to_string() };
+            file.write_all(text.as_bytes())?;
             file.sync_all()?;
             Ok(id)
         }
         Err(e) if e.kind() == ErrorKind::AlreadyExists => {
             // An independent boot may still be writing its exclusive claim.
             for _ in 0..50 {
-                if let Ok(value) = serde_json::from_str::<Value>(&fs::read_to_string(path)?) {
-                    return Ok(serde_json::from_value(value["serverId"].clone())?);
+                let text = fs::read_to_string(path)?;
+                let id = if json {
+                    serde_json::from_str::<Value>(&text)
+                        .ok()
+                        .and_then(|v| serde_json::from_value(v["serverId"].clone()).ok())
+                } else {
+                    Uuid::parse_str(text.trim()).ok()
+                };
+                if let Some(id) = id {
+                    return Ok(id);
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
