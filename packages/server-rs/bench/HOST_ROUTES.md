@@ -2,7 +2,7 @@
 
 Recorded by `node host-survey.mjs <opencode>`: the TS server of this checkout serves its own UI as the desktop hosts start it (`--unrestricted-root`, private profile, isolated daemon); the journey is start-up, folder picker (navigation, new folder, selection), conversation, Files, Git (Changes, Commits), worktree selector and creation dialog, recents, then every Settings section once. `:id`, `:ses` and `:slug` stand for identifiers; query keys are listed without values.
 
-Rust state: **ported** before this change, **here** ported for this usage, **host-cli** served by the UI host work, **to decide** not ported (below).
+Rust state: **ported** before this change, **here** ported for this usage, **host-cli** served by the UI host work, **decided** not ported by decision, **to decide** not ported (below).
 
 | Method | Route | Steps | TS | Rust |
 |---|---|---|---|---|
@@ -29,7 +29,7 @@ Rust state: **ported** before this change, **here** ported for this usage, **hos
 | GET | `/api/panel-extensions` | project | 200 | ported |
 | GET | `/api/remote-control/devices` | Remote Access | 200 | ported |
 | * | `/workspaces/:id/instance/api/*` (agent, command, location, mcp, model, provider, project, session, prompt, model, inbox, instructions, integration, websearch/provider) | conversation, Providers | 200, 204 | ported (allow list) |
-| GET | `/workspaces/:id/yolo/sessions/:ses` | conversation | 200 | ported (read only) |
+| GET | `/workspaces/:id/yolo/sessions/:ses` | conversation | 200 | decided |
 | GET | `/api/opencode/update` | start-up, project, OpenCode | 200 | to decide |
 | GET | `/api/speech/capabilities` | start-up | 200 | to decide |
 | GET | `/api/config-files`, `/api/config-files/:id/content` | Config Files | 200 | to decide |
@@ -40,6 +40,10 @@ Rust state: **ported** before this change, **here** ported for this usage, **hos
 | GET | `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Stats | 200 | to decide |
 
 The TS worktree creation with a session move stayed pending on this fixture (over 120 s), so the journey stops at the dialog; the TS instance storage answered GET 403 and PUT 404 once the conversation started.
+
+## Not ported, by decision
+
+Yolo (its read is removed from Rust), sign-out (`/api/auth/logout` and its relayed form), the remote window proxy (`remote-proxy`, `--connect-server`), the downloaded UI (`--ui-auto-update`), the release monitor, old migrations (`settings/migrate.ts`, legacy and retired installations), and the dead code of the usage audit's section 2: among ported routes, the reads `GET /api/workspaces/:id/files/content` (its `PUT` stays) and `GET /api/filesystem/files/content` are removed from Rust; `GET`/`PATCH /api/storage/config` and `/api/storage/state` stay unported. The bench no longer compares them (Yolo in `http`, file content reads in `files`, `links` and `hardening`, sign-out in every mode's qualification and in `launch`).
 
 ## To decide
 
@@ -56,10 +60,9 @@ Observed but not ported, then not observed and therefore not kept. Opinion: usef
 | POST `/api/storage/binaries/validate` | Settings › Providers / OpenCode binary | probes an OpenCode executable (`--version`) | useful (with the OpenCode service work) |
 | GET `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Settings › Stats | aggregated usage of the OpenCode service | doubtful |
 | PATCH `/api/storage/config/:owner` | Preferences store, when a preference changes (not exercised by the journey) | merge patch with normalization, speech key pairing, host-only check, Missions conditional mode | useful |
-| GET, PATCH `/api/storage/config`, `/api/storage/state` | never called by the UI | whole documents | dead |
 | GET, PATCH `/api/storage/state/:owner` other than `ui` | not observed (`sessionFavorites` is refused) | owner merge patch | dead |
 | GET `/api/workspaces/:id/git-branches` | Mission editor sources only | local `refs/heads/*` of an owned checkout inside the deletion fence | doubtful while Missions are frozen |
-| GET `/api/filesystem/files/content` with `--unrestricted-root` | `readFileSystemFile` has no caller | reads any file up to 5 MiB | dead (restricted form kept as before) |
+| `.git` in GET `/api/workspaces/:id/files` (and its reads and writes) | the Files panel tree, on opening a project and expanding folders (seen under Tauri) | lists `.git` like any folder and lets the editor read and write inside it | Rust omits it and refuses `.git` paths, since an edited Git configuration or hook runs during later Git commands: keep the Rust behaviour |
 
 ## Differences kept on purpose
 

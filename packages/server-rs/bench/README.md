@@ -31,7 +31,7 @@ node launch.mjs
 | Mode | Covers |
 |---|---|
 | (every mode) | Sign-in on both servers, then the Rust local admission surface (device, authority and server-pairing refusals; workspace claims, instance storage, `pending-requests`). |
-| `http` | Linked worktrees: creation, session move, evacuation on deletion, refusal of a modified checkout; owned locations, Yolo and VCS reads. |
+| `http` | Linked worktrees: creation, session move, evacuation on deletion, refusal of a modified checkout; owned locations and VCS reads. |
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
 | `depth` | `subagent-depth` on subfolders, linked worktree, junctions, written documents, worktree deletion fence. |

@@ -5,11 +5,7 @@ pub mod scope;
 
 use std::time::Duration;
 
-use axum::{
-    Json, Router,
-    http::StatusCode as Status,
-    routing::{any, get},
-};
+use axum::{Json, Router, http::StatusCode as Status, routing::any};
 use reqwest::{Client, Method, RequestBuilder, Url};
 use serde_json::{Value, json};
 
@@ -65,7 +61,6 @@ impl Native {
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/workspaces/{id}/instance", any(proxy::relay))
-        .route("/workspaces/{id}/yolo/sessions/{session}", get(proxy::yolo_read))
         .route("/workspaces/{id}/instance/{*route}", any(proxy::relay))
 }
 

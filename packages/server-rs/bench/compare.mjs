@@ -108,8 +108,11 @@ async function qualify(ts, rs, password, rsRoot) {
     const cookie = await signIn(host, password)
     assert.deepEqual(await (await host.request("/api/auth/status", withCookie(cookie))).json(), { authenticated: true, username: "codenomad", passwordUserProvided: true })
     assert.equal(await statusOf(host.request("/api/meta", withCookie(cookie))), 200)
-    assert.equal(await statusOf(host.request("/api/auth/logout", withCookie(cookie, { method: "POST" }))), 200)
-    assert.equal(await statusOf(host.request("/api/meta", withCookie(cookie))), 401)
+    // Sign-out is not ported (decision): its route answers on the reference only.
+    if (host === ts) {
+      assert.equal(await statusOf(host.request("/api/auth/logout", withCookie(cookie, { method: "POST" }))), 200)
+      assert.equal(await statusOf(host.request("/api/meta", withCookie(cookie))), 401)
+    }
   }
   const cookie = await signIn(rs, password)
   const call = (route, init) => rs.request(route, withCookie(cookie, init))
@@ -118,7 +121,7 @@ async function qualify(ts, rs, password, rsRoot) {
   assert.equal(await callStatus("/api/meta", { headers: { "x-codenomad-backend-authority": "bootstrap" } }), 403)
   assert.equal(await callStatus("/api/auth/login", { ...jsonBody({ username: "codenomad", password }), headers: { "content-type": "application/json", "x-forwarded-proto": "https" } }), 403)
   assert.equal(await callStatus("/api/remote-control/server-pair", { ...jsonBody({ code: "a".repeat(32) }), headers: { "content-type": "application/json", "x-codenomad-server-pairing": "1" } }), 404)
-  result.tests.push("password, cookies, logout, cross-origin and Referer (TS + RS), unsupported device/authority/pairing (RS)")
+  result.tests.push("password, cookies, cross-origin and Referer (TS + RS), logout (TS), unsupported device/authority/pairing (RS)")
   // Lexical refusals before any disk access: outside the root without `--unrestricted-root`; network,
   // verbatim and device paths in both cases.
   const outside = mode === "host" ? [] : [path.dirname(rsRoot)]

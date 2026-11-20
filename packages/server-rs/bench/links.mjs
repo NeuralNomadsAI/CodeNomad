@@ -25,14 +25,12 @@ export async function run({ call, fixture, folder }) {
     const r = await request(`/files?${q({ path: p })}`)
     return { status: r.status, entries: r.status === 200 ? r.body.map(({ name, path, type, size }) => ({ name, path, type, size })).sort((a, b) => a.name.localeCompare(b.name)) : undefined }
   }
-  const content = async p => {
-    const r = await request(`/files/content?${q({ path: p })}`)
-    return { status: r.status, contents: r.status === 200 ? r.body.contents : undefined }
-  }
   const preview = async p => {
     const r = await request(`/files/preview?${q({ path: p })}`)
     return { status: r.status, contents: r.status === 200 ? Buffer.from(r.body.contents, "base64").toString() : undefined }
   }
+  // The UI reads project files through previews only.
+  const content = preview
   const put = async (p, contents) => (await request(`/files/content?${q({ path: p })}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ contents }) })).status
   const diff = async p => {
     const r = await request(`/worktrees/root/git-diff?${q({ path: p, scope: "unstaged" })}`)

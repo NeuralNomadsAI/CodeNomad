@@ -1,5 +1,5 @@
 // Mode `http`: linked worktrees (create, move a session, evacuation on delete, dirty refusal), owned paths,
-// Yolo and VCS reads on both servers; `browserWorktrees` is the Solid step.
+// VCS reads on both servers; `browserWorktrees` is the Solid step.
 import assert from "node:assert/strict"
 import { stat,symlink,writeFile,unlink,rmdir } from "node:fs/promises"
 import path from "node:path"
@@ -27,7 +27,6 @@ export async function pair(ts,rs){
     assert.equal(added.head,inventory.worktrees[0].head)
     assert.equal((await host(tree,post({slug:"fixture-placement"}))).status,400)
     const session=(await call(`${w.proxyPath}/api/session`,post({title:"Worktree HTTP fixture"}),200)).data
-    assert.deepEqual(await call(`/workspaces/${w.id}/yolo/sessions/${session.id}`,{},200),{enabled:false})
     await call(`${w.proxyPath}/api/vcs/status`,{},200)
     const moved=await call(`${base}/sessions/${session.id}/worktree`,post({worktreeSlug:added.slug}),200)
     assert.deepEqual(moved.sessionIds,[session.id])

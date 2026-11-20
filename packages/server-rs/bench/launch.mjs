@@ -79,7 +79,6 @@ async function observe(label, command, prefix) {
     const identity = (await readFile(path.join(config, "config.yaml.server-id"), "utf8")).trim()
     o.files = { identity: meta.serverId === identity && /^[0-9a-f-]{36}$/.test(identity), ui: meta.ui,
       tls: ["ca-cert.pem", "ca-key.pem", "server-cert.pem", "server-key.pem"].map(f => existsSync(path.join(config, "tls", f))) }
-    o.logout = await call("/api/auth/logout", { method: "POST", headers: { cookie: session } })
     child.stdin.write("codenomad:shutdown\n")
     child.stdin.end()
     o.stop = { status: await until(l => l.startsWith("CODENOMAD_SHUTDOWN_STATUS:"), 30000), exit: await exited }
