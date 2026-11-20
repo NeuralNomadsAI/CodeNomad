@@ -11,7 +11,10 @@ const RecordSchema = z.object({ manifest: ManifestSchema, html: z.string().max(P
   // Read old folder grants without broadening consent; discard them on the next explicit write.
   projects: z.array(z.string().min(1).max(4096)).max(128).optional(),
   // API 4 `panel.preferences`: validated on read, so an invalid entry alone reads as `{}`.
-  preferences: z.unknown().optional() }).strict().transform(({ projects: _projects, ...record }) => record)
+  preferences: z.unknown().optional(),
+  // API 4 `panel.notes`: this installation's notes directory, `notes/<key>`. Kept by replacement, gone with the
+  // record: the catalogue write alone commits a removal, and a reinstall never finds the old notes.
+  notes: z.string().uuid().optional() }).strict().transform(({ projects: _projects, ...record }) => record)
 const StoreSchema = z.object({ version: z.literal(1), records: z.array(RecordSchema).max(PANEL_EXTENSION_LIMITS.installed) }).strict()
 type Stored = z.infer<typeof RecordSchema>
 type Preferences = Record<string, unknown>
@@ -55,7 +58,7 @@ export class PanelExtensionStore {
       if (previous?.digest !== previousDigest) throw new PanelExtensionError("conflict")
       if (previous?.digest === pkg.digest) return records
       // Replacing code revokes every grant, even if its declared permissions are unchanged, and resets its preferences.
-      return [...records.filter(record => record !== previous), { ...pkg, global: false }]
+      return [...records.filter(record => record !== previous), { ...pkg, global: false, notes: previous?.notes ?? randomUUID() }]
     })
   }
 
@@ -68,23 +71,17 @@ export class PanelExtensionStore {
   }
 
   /**
-   * Removal also deletes the package's notes; replacement and deactivation keep them. They are
-   * moved aside first and restored if the catalogue write fails, so either both go or neither.
+   * Removal also deletes the package's notes; replacement and deactivation keep them. Dropping the
+   * record drops their key, so they are gone once the catalogue is written; their files go after.
    */
   remove(id: string, digest: string): Promise<void> {
+    let key: string | undefined
     return this.mutate(records => records.filter(record => {
       if (record.manifest.id !== id) return true
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
+      key = record.notes
       return false
-    }), id, true, async () => {
-      const notes = this.notesDirectory(id), aside = path.join(this.directory, "notes", `.removing-${randomUUID()}`)
-      try { await fs.rename(notes, aside) } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
-        throw error
-      }
-      // A leftover that cannot be deleted is never read again: no package ID starts with a dot.
-      return { commit: () => fs.rm(aside, { recursive: true, force: true }).catch(() => {}), undo: () => fs.rename(aside, notes) }
-    })
+    }), id, true, async () => { if (key) await fs.rm(this.notesDirectory(key), { recursive: true, force: true }).catch(() => {}) })
   }
 
   async panel(id: string, digest: string): Promise<string> {
@@ -135,8 +132,8 @@ export class PanelExtensionStore {
   /** The enabled package's notes in `project`, newest first. A corrupt file throws `unavailable` and is kept. */
   async notes(id: string, digest: string, project: string): Promise<PanelStoredNote[]> {
     return this.locked(async () => {
-      granted(await this.read(), id, digest, "panel.notes")
-      return (await this.readNotes(id, project)).notes.sort((a, b) => b.updated - a.updated || b.revision - a.revision)
+      const key = granted(await this.read(), id, digest, "panel.notes").notes
+      return key ? (await this.readNotes(key, project)).notes.sort((a, b) => b.updated - a.updated || b.revision - a.revision) : []
     })
   }
 
@@ -150,57 +147,65 @@ export class PanelExtensionStore {
     if (Buffer.byteLength(next.text) > PANEL_EXTENSION_LIMITS.noteBytes) return { status: "too-large" }
     if (!Project.test(project)) throw new PanelExtensionError("invalid")
     return this.locked(async () => {
-      granted(await this.read(), id, digest, "panel.notes")
-      return this.changeNote(id, project, sessionID, revision, next, guard)
+      let key = granted(await this.read(), id, digest, "panel.notes").notes
+      if (!key) {
+        // A record from before notes had a key gets one now.
+        const created = key = randomUUID()
+        await this.mutateLocked(records => records.map(record => record.manifest.id === id ? { ...record, notes: created } : record), undefined, false)
+      }
+      return this.changeNote(id, key, project, sessionID, revision, next, guard)
     })
   }
 
-  private async changeNote(id: string, project: string, sessionID: string, revision: number,
+  private async changeNote(id: string, key: string, project: string, sessionID: string, revision: number,
     next: { title: string; text: string }, guard?: { check(): Promise<void>; final(): void }): Promise<PanelNoteChange> {
-    const { notes, revision: issued } = await this.readNotes(id, project)
+    const { notes, revision: issued } = await this.readNotes(key, project)
     // The caller's authority, revalidated where nothing else can write first, before any answer.
     await guard?.check()
     const current = notes.find(note => note.sessionID === sessionID)
     if ((current?.revision ?? 0) !== revision) return { status: "conflict", note: current ? { text: current.text, revision: current.revision } : null }
     const others = notes.filter(note => note !== current)
     if (!next.text) {
-      if (current) await this.writeNotes(id, project, others, issued, guard?.final)
+      if (current) await this.writeNotes(id, key, project, others, issued, guard?.final)
       return { status: "saved", revision: 0 }
     }
     if (!current && notes.length >= PANEL_EXTENSION_LIMITS.notes) return { status: "full" }
     const now = Date.now(), note = { sessionID, title: noteTitle(next.title), text: next.text, revision: Math.max(now, issued + 1), updated: now }
-    await this.writeNotes(id, project, [...others, note], note.revision, guard?.final)
+    await this.writeNotes(id, key, project, [...others, note], note.revision, guard?.final)
     return { status: "saved", revision: note.revision }
   }
 
-  private notesDirectory(id: string) { return path.join(this.directory, "notes", id) }
+  private notesDirectory(key: string) { return path.join(this.directory, "notes", key) }
 
   /**
    * `operation` in this store's queue under the profile's cross-process lock (agent memory's), so
-   * backends sharing the profile change the catalogue and notes one at a time. The release runs
-   * beside the answer, so a slow one never delays or changes it; the next acquisition awaits it.
+   * backends sharing the profile change the catalogue and notes one at a time. A slow release (Windows
+   * sharing retries) delays the answer at most 250 ms and never changes it; the next acquisition awaits it.
    */
   private locked<T>(operation: () => Promise<T>): Promise<T> {
     return this.serialize(async () => {
       await this.released
       await fs.mkdir(this.directory, { recursive: true })
       const release = await lockMemoryRepository(path.join(this.directory, "catalogue"))
-      try { return await operation() } finally { this.released = release().catch(() => {}) }
+      try { return await operation() } finally {
+        const releasing = this.released = release().catch(() => {})
+        await Promise.race([releasing, new Promise(resolve => setTimeout(resolve, 250))])
+      }
     })
   }
 
-  private async readNotes(id: string, project: string): Promise<{ notes: PanelStoredNote[]; revision: number }> {
+  private async readNotes(key: string, project: string): Promise<{ notes: PanelStoredNote[]; revision: number }> {
     if (!Project.test(project)) throw new PanelExtensionError("invalid")
     try {
-      return NotesSchema.parse(JSON.parse(await fs.readFile(path.join(this.notesDirectory(id), `${project}.json`), "utf8")))
+      return NotesSchema.parse(JSON.parse(await fs.readFile(path.join(this.notesDirectory(key), `${project}.json`), "utf8")))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { notes: [], revision: 0 }
       throw new PanelExtensionError("unavailable")
     }
   }
 
-  private async writeNotes(id: string, project: string, notes: PanelStoredNote[], revision: number, final?: () => void) {
-    const directory = this.notesDirectory(id)
+  private async writeNotes(id: string, key: string, project: string, notes: PanelStoredNote[], revision: number, final?: () => void) {
+    const directory = this.notesDirectory(key)
     await this.replace(directory, path.join(directory, `${project}.json`), JSON.stringify({ version: 1, revision, notes }), final)
     this.notesChanged(id)
   }
@@ -234,26 +239,22 @@ export class PanelExtensionStore {
     }
   }
 
-  /** `stage` runs once the update is valid; it is undone if the catalogue write fails, else committed. */
-  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true,
-    stage?: () => Promise<{ commit(): Promise<void>; undo(): Promise<void> } | undefined>): Promise<void> {
-    return this.locked(() => this.mutateLocked(update, requiredId, notify, stage))
+  /** `after` runs once the catalogue is written: best-effort cleanup that changes nothing anyone reads. */
+  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true, after?: () => Promise<void>): Promise<void> {
+    return this.locked(async () => {
+      await this.mutateLocked(update, requiredId, notify)
+      await after?.()
+    })
   }
 
-  private async mutateLocked(update: (records: Stored[]) => Stored[], requiredId: string | undefined, notify: boolean,
-    stage?: () => Promise<{ commit(): Promise<void>; undo(): Promise<void> } | undefined>): Promise<void> {
+  private async mutateLocked(update: (records: Stored[]) => Stored[], requiredId: string | undefined, notify: boolean): Promise<void> {
     const records = await this.read()
     if (requiredId && !records.some(record => record.manifest.id === requiredId)) throw new PanelExtensionError("missing")
     const next = update(records)
     if (!StoreSchema.safeParse({ version: 1, records: next }).success) throw new PanelExtensionError("limit")
     const text = JSON.stringify({ version: 1, records: next })
     if (Buffer.byteLength(text) > PANEL_EXTENSION_LIMITS.storageBytes) throw new PanelExtensionError("limit")
-    const staged = await stage?.()
-    try { await this.replace(this.directory, path.join(this.directory, "installed.json"), text) } catch (error) {
-      await staged?.undo()
-      throw error
-    }
-    await staged?.commit()
+    await this.replace(this.directory, path.join(this.directory, "installed.json"), text)
     if (notify) this.changed()
   }
 

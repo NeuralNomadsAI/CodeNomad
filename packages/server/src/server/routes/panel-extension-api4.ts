@@ -49,13 +49,15 @@ interface RouteContext {
   pin(connection: { assertCurrent(): void }): void
   /** A write committed after its own checks: its answer is sent as is, never refused by reads after it. */
   committed(): void
+  /** The commit has started: from now on its own outcome, not the deadline or the caller's departure, settles the route. */
+  committing(): void
 }
 
-/** `work`, or a rejection as soon as `signal` aborts; a late outcome is dropped. */
-function settle<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+/** `work`, or a rejection as soon as `signal` aborts (unless `committing`); a late outcome is dropped. */
+function settle<T>(signal: AbortSignal, work: () => Promise<T>, committing: () => boolean = () => false): Promise<T> {
   signal.throwIfAborted()
   return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason)
+    const abort = () => { if (!committing()) reject(signal.reason) }
     signal.addEventListener("abort", abort, { once: true })
     work().then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
   })
@@ -88,6 +90,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
           if (!workspace || !base || manager.get(input.instanceId) !== workspace || manager.getServiceLocation(input.instanceId) !== base || !display()) throw new Refused(409)
         } }
         // The route settles on the deadline or the caller's departure, whatever its reads still await.
+        let started = false
         return await settle(signal, async () => {
           const entry = permission ? await deps.store.authorize(id, input.digest, permission) : undefined
           const prompts = Boolean(entry && (entry.manifest.permissions as readonly string[]).includes("session.images.prompts"))
@@ -102,7 +105,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
           }
           let written = false
           const result = await run(input, { id, signal, prompts, authorize, fence: (key, check) => { if (!fences.has(key)) fences.set(key, check) },
-            pin: connection => { pinned.add(connection) }, committed: () => { written = true } })
+            pin: connection => { pinned.add(connection) }, committed: () => { written = true }, committing: () => { started = true } })
           if (written) return result
           // After the last read: Location and session ownership, then consent, then (synchronously,
           // with nothing awaited before the answer) every connection the answer was read through.
@@ -111,7 +114,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
           signal.throwIfAborted()
           for (const connection of pinned) connection.assertCurrent()
           return result
-        })
+        }, () => started)
       } catch (error) {
         const code = error instanceof Refused ? error.status : error instanceof z.ZodError ? 400 : error instanceof PanelExtensionError
           ? { missing: 404, disabled: 403, conflict: 409, invalid: 400, limit: 413, unavailable: 503 }[error.code] : 503
@@ -337,17 +340,20 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     context.signal.throwIfAborted()
     // Inside the store queue: the anchor still where it was, then, once the bytes are staged, nothing gone stale.
     const workspace = manager.get(instanceId), base = manager.getServiceLocation(instanceId)
+    // Synchronous, right before the rename; passing it starts the commit.
     const final = () => {
       context.signal.throwIfAborted(); connection.assertCurrent(); displayed()
       if (manager.get(instanceId) !== workspace || manager.getServiceLocation(instanceId) !== base) throw new Refused(409)
+      context.committing()
     }
+    // The slow Git identity first, then the session (or Location ownership) as close to the commit as possible.
     const check = async () => {
+      await sameProject(location.directory)()
       if (session) {
         const latest = readLocationRef((await ownedSession(instanceId, client, sessionID!, context.signal)).location)
         if (JSON.stringify(latest) !== JSON.stringify(location)) throw new Refused(409)
       } else if (!await manager.ownsLocation(instanceId, { directory: location.directory }, client, { signal: context.signal })) throw new Refused(403)
-      await sameProject(location.directory)()
-      final()
+      context.signal.throwIfAborted(); connection.assertCurrent(); displayed()
     }
     return { id, client, session, guard: { check, final }, identityAt, sameProject }
   }
@@ -397,8 +403,13 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     const session = await unlessDeleted(context.signal, ownedSession(input.instanceId, client, input.target, context.signal))
       .catch(error => { if (error instanceof Refused && error.status === 403) return undefined; throw error })
     if (!session || await identityAt(readLocationRef(session.location).directory) !== projectId) return { openable: false }
+    const directory = readLocationRef(session.location).directory
+    // The target's worktree too: a session whose worktree is being deleted is never shown.
+    const display = await captureDisplayIdentities(deps.worktreeDeletionFence, manager, input.instanceId, [directory])
+    if (display && !display()) return { openable: false }
     fenceSession(context, input.instanceId, client, input.target, session.location)
-    context.fence(`identity:${readLocationRef(session.location).directory}`, sameProject(readLocationRef(session.location).directory))
+    context.fence(`identity:${directory}`, sameProject(directory))
+    context.fence(`display:${directory}`, async () => { if (display && !display()) throw new Refused(409) })
     return { openable: true }
   })
 }

@@ -316,7 +316,8 @@ codenomad.notes.onChanged(() => { /* read again */ })
   file. An invalid stored entry alone reads `{}`. Panels keep only their own display
   settings there; never treat preferences as a security boundary.
 - **Notes**: one plain-text note per session, at most 32 KiB UTF-8 and 256 per project,
-  filed in `panel-extensions/notes/<id>/<project>.json` under the agent-memory project
+  filed in `panel-extensions/notes/<key>/<project>.json`, where `<key>` is a random UUID the
+  installed record holds (kept by replacement), under the agent-memory project
   identity of the displayed conversation's Location (else the instance's): worktrees of
   one repository share them, clones only when their selected remotes normalize to the
   same repository (a local-path remote identifies each clone's own root). Like agent
@@ -330,14 +331,15 @@ codenomad.notes.onChanged(() => { /* read again */ })
   read runs in the store queue under one profile-wide cross-process lock (agent memory's
   `memory/lock.ts`, `panel-extensions/catalogue.lock`): across backends sharing the
   profile, the exact grant, the compare and the write are one transaction, and no read
-  sees a removal in progress. The lock is released beside the answer; the next
-  acquisition awaits it. Under it a write rechecks the session's Location (or the
-  instance Location's ownership) and the project identity, read again uncached, before
+  sees a removal in progress. A slow release delays the answer at most 250 ms; the next
+  acquisition awaits it. Under it a write rechecks the project identity, read again
+  uncached, then the session's Location (or the instance Location's ownership), before
   any answer (a `conflict` included), then, once the bytes are staged and right before
   the rename, the request's deadline, connection, instance placement and the anchor
-  worktree's deletion fence. The rename commits: a committed write answers `saved` as
-  is, and no read or cleanup after it turns it into a refusal. Reads recheck the project
-  identity after their last read.
+  worktree's deletion fence. Passing that last check starts the commit: from then on the
+  rename's own outcome settles the route, not the deadline or the caller's departure,
+  and a committed write answers `saved` as is. Reads recheck the project identity after
+  their last read; `open` also its target's, and the target worktree's deletion fence.
 - **Notes reads**: `list` pages the project's notes newest first (16 a page, decimal
   cursor; same-instant writes by revision), with the session's current title while it is
   still in the project as some open window resolves it, else the last title written
@@ -352,9 +354,10 @@ codenomad.notes.onChanged(() => { /* read again */ })
   reconnection (another clone may share the project) into `notes:changed` for that
   package only, and the frame reads again. Another backend sharing the profile sees
   the change on its next read, as for the catalogue and preferences. Deactivation and
-  replacement keep notes. Removal moves them aside before writing the catalogue,
-  restores them if that write fails and deletes them after it; the confirmation names
-  them.
+  replacement keep notes. Removal drops the record and with it the key, so the catalogue
+  write alone commits it (a failure or a crash before it keeps everything, and a
+  reinstall gets a new key); the files are deleted after, best effort. The confirmation
+  names them.
 - **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
   and method names select only own entries of `Map`s; never index an object with frame
   data (inherited names such as `constructor` would run). Inputs are validated per

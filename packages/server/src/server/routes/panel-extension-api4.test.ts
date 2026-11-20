@@ -73,7 +73,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
     excludeDesignFolder: async value => { excluded.push(value.directory); return "excluded" },
     checkDesignFolderExclusion: async value => { checked.push(value.directory); return excluded.includes(value.directory) ? "excluded" : "missing" },
     ...(options.routeBudgetMs ? { routeBudgetMs: options.routeBudgetMs } : {}),
-    projectIdentity: async ({ directory }) => ({ id: (await options.onProjectIdentity?.(directory) as string | undefined) ?? (["/repo", "/clone"].includes(directory) ? "a" : "b").repeat(64), source: "local" }),
+    projectIdentity: async ({ directory }) => ({ id: (await options.onProjectIdentity?.(directory) as string | undefined) ?? (["/repo", "/clone", "/linked"].includes(directory) ? "a" : "b").repeat(64), source: "local" }),
     imageSettings: { read: async (_workspace: string, _location: unknown, signal?: AbortSignal) => {
       await options.onSettingsRead?.(signal)
       return { location: { directory: "/repo" }, mediaStorage: null,
@@ -423,4 +423,36 @@ test("notes: a stale write from a session that just moved is refused, not answer
   const stale = await f.post("notesSet", { sessionID: "ses_work", text: "x", revision: 0 })
   assert.equal(stale.statusCode, 409)
   assert.equal(stale.body.includes("old project"), false)
+})
+
+test("notes: a session moving during the last project check is refused; a started commit settles the route; open skips a worktree being deleted", async t => {
+  // The session moves while the write's in-queue Git check runs.
+  let reads = 0
+  let f: Fixture = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => { if (++reads === 2) f.sessions.ses_work.location = { directory: "/linked" } } })
+  f.owned.add("/linked")
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).statusCode, 409)
+  assert.deepEqual(await f.store.notes(f.pkg.manifest.id, f.pkg.digest, "a".repeat(64)), [])
+
+  // The deadline passes while the rename runs: its outcome, not the deadline, answers.
+  const slow = await fixture(t, ["session.context", "panel.notes"], { routeBudgetMs: 400 })
+  const rename = fs.rename
+  const mock = t.mock.method(fs, "rename", async (from: string, to: string) => {
+    if (to.endsWith(`${"a".repeat(64)}.json`)) await new Promise(resolve => setTimeout(resolve, 600))
+    return rename(from, to)
+  })
+  const committed = await slow.post("notesSet", { sessionID: "ses_work", text: "kept", revision: 0 })
+  mock.mock.restore()
+  assert.equal(committed.json().status, "saved")
+  assert.deepEqual((await slow.store.notes(slow.pkg.manifest.id, slow.pkg.digest, "a".repeat(64))).map(note => note.text), ["kept"])
+
+  // A noted session in a linked worktree being deleted is not opened.
+  const fence = new WorktreeDeletionFence()
+  const g = await fixture(t, ["session.context", "panel.notes"], { fence })
+  g.owned.add("/linked")
+  await g.post("notesSet", { sessionID: "ses_other", text: "aside", revision: 0 })
+  g.sessions.ses_other.location = { directory: "/linked" }
+  let release!: () => void
+  const deleting = fence.run("/linked", ["/linked"], () => new Promise<void>(resolve => { release = resolve }))
+  try { assert.deepEqual((await g.post("notesOpen", { target: "ses_other" })).json(), { openable: false }) }
+  finally { release(); await deleting }
 })

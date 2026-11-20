@@ -13,6 +13,9 @@ import { extensionsRequestDesign } from "../opencode/design/demand"
 
 const api4 = (permissions: unknown, extra = {}) => readPanelExtensionArchive(fixtureArchive("<p>x</p>", { apiVersion: 4, permissions, ...extra }))
 const design = ["session.context", ...PANEL_EXTENSION_API4_PERMISSIONS]
+/** The notes file of `id`'s current installation in `project` (notes live under the record's key). */
+const notesFile = async (directory: string, id: string, project: string) => path.join(directory, "notes",
+  JSON.parse(await readFile(path.join(directory, "installed.json"), "utf8")).records.find((record: any) => record.manifest.id === id).notes, `${project}.json`)
 
 test("API 4 manifests: session.context plus a non-empty subset of the finite set, in any order", async () => {
   assert.deepEqual((await api4(design)).manifest.permissions, design)
@@ -177,7 +180,7 @@ test("notes: one per session and project, revision-checked, empty deletes, cappe
     const replacement = await api4(["session.context", "panel.notes"], { version: "1.1.0" })
     await store.install(replacement, pkg.digest); await store.activate(id, replacement.digest, true)
     assert.equal((await store.notes(id, replacement.digest, project)).length, 1, "disabling and replacing keep notes")
-    const file = path.join(directory, "notes", id, `${project}.json`)
+    const file = await notesFile(directory, id, project)
     const bytes = await readFile(file, "utf8")
     await writeFile(file, "corrupt")
     await assert.rejects(store.setNote(id, replacement.digest, project, "ses_3", 0, { title: "", text: "n" }), { code: "unavailable" })
@@ -202,19 +205,24 @@ test("notes: a recreated note gets a newer revision even at the same instant; a 
     assert.ok(again.revision > first.revision, "a stale writer's revision is never issued again")
     clock.mock.restore()
 
-    // Either the notes or the catalogue cannot move: the package and its notes both stay, and removal can retry.
+    // The catalogue cannot be written: the package and its notes both stay, and removal can retry.
     const rename = fs.rename
-    for (const blocked of [path.join(directory, "notes", id), path.join(directory, "installed.json")]) {
-      const busy = t.mock.method(fs, "rename", async (from: string, to: string) => {
-        if (from === blocked || to === blocked) throw Object.assign(new Error("busy"), { code: "EBUSY" })
-        return rename(from, to)
-      })
-      await assert.rejects(store.remove(id, pkg.digest), { code: "EBUSY" })
-      busy.mock.restore()
-      assert.equal((await store.list())[0]?.digest, pkg.digest)
-      assert.equal((await store.notes(id, pkg.digest, project)).length, 1, `notes kept when ${path.basename(blocked)} cannot move`)
-    }
+    const busy = t.mock.method(fs, "rename", async (from: string, to: string) => {
+      if (to === path.join(directory, "installed.json")) throw Object.assign(new Error("busy"), { code: "EBUSY" })
+      return rename(from, to)
+    })
+    await assert.rejects(store.remove(id, pkg.digest), { code: "EBUSY" })
+    busy.mock.restore()
+    assert.equal((await store.list())[0]?.digest, pkg.digest)
+    assert.equal((await store.notes(id, pkg.digest, project)).length, 1, "notes kept when the catalogue cannot be written")
+    // The notes files cannot be deleted: removal still commits, and a reinstall starts empty.
+    const notes = path.dirname(await notesFile(directory, id, project)), remove = fs.rm
+    const stuck = t.mock.method(fs, "rm", async (target: any, options: any) => {
+      if (target === notes) throw Object.assign(new Error("busy"), { code: "EBUSY" })
+      return remove(target, options)
+    })
     await store.remove(id, pkg.digest)
+    stuck.mock.restore()
     await store.install(pkg); await store.activate(id, pkg.digest, true)
     assert.deepEqual(await store.notes(id, pkg.digest, project), [])
   } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
@@ -225,12 +233,12 @@ test("notes: same-instant writes list newest first, inconsistent files fail clos
     const store = new PanelExtensionStore(directory)
     const pkg = await api4(["session.context", "panel.notes"])
     await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
-    const id = pkg.manifest.id, project = "a".repeat(64), file = path.join(directory, "notes", id, `${project}.json`)
+    const id = pkg.manifest.id, project = "a".repeat(64)
     const clock = t.mock.method(Date, "now", () => 1_800_000_000_000)
     await store.setNote(id, pkg.digest, project, "ses_a", 0, { title: "x".repeat(255) + "😀", text: "first" })
     await store.setNote(id, pkg.digest, project, "ses_z", 0, { title: "", text: "second" })
     clock.mock.restore()
-    const listed = await store.notes(id, pkg.digest, project)
+    const listed = await store.notes(id, pkg.digest, project), file = await notesFile(directory, id, project)
     assert.deepEqual(listed.map(note => note.text), ["second", "first"])
     assert.equal(listed[1]!.title, "x".repeat(255), "never half a surrogate pair")
 
