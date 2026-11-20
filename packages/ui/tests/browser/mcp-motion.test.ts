@@ -45,6 +45,15 @@ for (const motion of ["no-preference", "reduce"] as const) {
     assert.equal(await page.locator(".status-dot.ready").count(), 8)
     assert.equal(await page.getByRole("checkbox").count(), 8)
     assert.equal(await perpetualAnimations(page), 0, "connected servers must not schedule perpetual animation frames")
+    // Witnesses for the shared rule: animation utilities on an SVG and its child stay inert.
+    assert.equal(await page.evaluate(() => {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"), path = document.createElementNS("http://www.w3.org/2000/svg", "path")
+      svg.setAttribute("class", "animate-spin"); path.setAttribute("class", "animate-pulse"); path.setAttribute("d", "M0 0h4")
+      svg.append(path); document.body.append(svg)
+      const running = document.getAnimations().filter(a => (a.effect as KeyframeEffect | null)?.target instanceof SVGElement).length
+      svg.remove()
+      return running
+    }), 0, "SVG icons never animate")
     assert.deepEqual(await page.evaluate(() => (window as any).mcpFixture.calls), [])
     const header = page.locator(".right-panel-accordion-trigger")
     await header.click()
