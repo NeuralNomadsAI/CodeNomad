@@ -2,7 +2,7 @@
 
 ## Fenêtres, onglets et service partagé {#windows-tabs}
 
-1. Utilisez **Nouvelle instance** pour ouvrir un autre onglet projet/accueil dans la fenêtre actuelle.
+1. Utilisez **Nouvelle instance** pour ouvrir un onglet vide dans la fenêtre actuelle, puis choisissez un projet. Le logo CodeNomad ouvre l'accueil.
 2. Utilisez le menu natif **Fenêtre → Nouvelle fenêtre** (`Ctrl+Shift+N` ou `Cmd+Shift+N`) pour une fenêtre d’application séparée.
 3. Dans **Paramètres → Avancé**, activez **Focaliser la fenêtre existante au second lancement** si un autre lancement doit focaliser la dernière fenêtre utilisée au lieu d’en ouvrir une nouvelle.
 

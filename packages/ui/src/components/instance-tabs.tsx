@@ -15,7 +15,7 @@ import AppActions from "./app-actions"
 import { appActionsInTitlebar } from "./native-titlebar"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { renameProject } from "../stores/project-names"
-import { Plus } from "lucide-solid"
+import { Plus, Server } from "lucide-solid"
 import { withHotkey } from "../lib/hotkeys"
 import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
@@ -68,7 +68,9 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           }}
         >
           <span class="tab-pill-button">
-            <span class="truncate max-w-[180px]">{props.tab.kind === "sidecar" ? props.tab.sidecarTab.name : props.tab.snapshot.projectName ?? props.tab.snapshot.folder}</span>
+            <Show when={props.tab.kind === "remote-restore"}><Server class="w-4 h-4 shrink-0" aria-hidden="true" /></Show>
+            <span class="truncate max-w-[180px]">{props.tab.kind === "sidecar" ? props.tab.sidecarTab.name
+              : props.tab.kind === "blank" ? t("newTab.title") : props.tab.snapshot.projectName ?? props.tab.snapshot.folder}</span>
           </span>
           <button
             class="tab-pill-close"

@@ -27,7 +27,7 @@ setActiveSettingsSection("servers")
 window.__CODENOMAD_SELECT_SERVER__ = selectRemoteServer
 render(() => <ConfigProvider><I18nProvider>
   <Show when={native} fallback={<>
-    <div role="tablist"><For each={appTabs()}>{tab => <Show when={tab.kind === "instance" && tab.instance}>
+    <div role="tablist" data-project-tabs><For each={appTabs()}>{tab => <Show when={tab.kind === "instance" && tab.instance}>
       {instance => <InstanceTab instance={instance()} active={activeAppTabId() === tab.id} onSelect={() => selectInstanceTab(instance().id)}
         onClose={() => {}} onRename={() => {}} />}
     </Show>}</For></div>

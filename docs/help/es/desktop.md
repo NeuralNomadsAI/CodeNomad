@@ -2,7 +2,7 @@
 
 ## Ventanas, pestañas y servicio compartido {#windows-tabs}
 
-1. Usa **Nueva instancia** para abrir otra pestaña de proyecto/inicio en la ventana actual.
+1. Usa **Nueva instancia** para abrir una pestaña vacía en la ventana actual y elige un proyecto. El logotipo CodeNomad abre Inicio.
 2. Usa **Ventana → Nueva ventana** nativo (`Ctrl+Shift+N` o `Cmd+Shift+N`) para una ventana de aplicación separada.
 3. En **Configuración → Avanzado**, activa **Enfocar la ventana existente en el segundo inicio** si otro inicio debe enfocar la ventana usada más recientemente en lugar de abrir una nueva.
 

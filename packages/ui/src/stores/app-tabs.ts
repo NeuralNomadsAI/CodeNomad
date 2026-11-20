@@ -1,4 +1,4 @@
-import { createMemo, createSignal } from "solid-js"
+import { batch, createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
 import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId, waitForInstanceInitialSessionHydration, type WorkspaceCreationOwnership } from "./instances"
 import { restoreClosedWorkspaceDrafts } from "./closed-workspace-drafts"
@@ -13,6 +13,7 @@ import {
 import { workspaceIdentity } from "./app-session-reconciliation"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { remoteRestoreTabs, type RemoteRestoreTab } from "./remote-restore-tabs"
+import { generateUUID } from "../lib/client-identity"
 
 export interface InstanceAppTab {
   id: string
@@ -26,7 +27,42 @@ export interface SideCarAppTab {
   sidecarTab: SideCarTabRecord
 }
 
-export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab
+interface BlankAppTab { id: string; kind: "blank" }
+export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab | BlankAppTab
+
+const [blankTabs, setBlankTabs] = createSignal<BlankAppTab[]>([])
+
+export function openBlankTab(): void {
+  const tab: BlankAppTab = { id: `blank:${generateUUID()}`, kind: "blank" }
+  batch(() => {
+    setBlankTabs(tabs => [...tabs, tab])
+    selectAppTab(tab.id)
+  })
+}
+
+export function closeBlankTab(id: string): void {
+  if (!blankTabs().some(tab => tab.id === id)) return
+  const fallback = getAdjacentAppTabId(id)
+  batch(() => {
+    setBlankTabs(tabs => tabs.filter(tab => tab.id !== id))
+    setTabOrder(ids => ids.filter(entry => entry !== id))
+    setAppTabOrderRevision(revision => revision + 1)
+    if (activeAppTabId() === id) selectAppTab(fallback)
+  })
+}
+
+/** A successful choice occupies its originating blank tab's position. */
+export function replaceBlankTab(blankId: string | undefined, chosenId: string): void {
+  if (!blankId || !blankTabs().some(tab => tab.id === blankId) || !getAppTabById(chosenId)) return
+  const ids = appTabs().map(tab => tab.id).filter(id => id !== chosenId)
+  batch(() => {
+    setBlankTabs(tabs => tabs.filter(tab => tab.id !== blankId))
+    setAppTabOrder(ids.map(id => id === blankId ? chosenId : id))
+    setAppTabOrderRevision(revision => revision + 1)
+  })
+}
+
+export const activeBlankTabId = () => activeAppTab()?.kind === "blank" ? activeAppTabId() ?? undefined : undefined
 
 function getInstanceAppTabId(instanceId: string): string {
   return `instance:${instanceId}`
@@ -71,6 +107,7 @@ const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
   // project must not remount every shell (and restart their Git/status reads).
   const previousById = new Map(previous.map((tab) => [tab.id, tab]))
   const currentTabs = [
+    ...blankTabs(),
     ...remoteRestoreTabs(),
     ...Array.from(instances().values())
       .filter((instance) => openInstanceTabIds().has(instance.id))

@@ -24,7 +24,7 @@ Las asignaciones se guardan en la configuración de interfaz de CodeNomad y afec
 | Acción | Valor predeterminado |
 | --- | --- |
 | Abrir paleta de comandos | `Mod+Shift+P` |
-| Nueva instancia / Buscar una carpeta en la página de inicio | `Mod+N` |
+| Nueva instancia / Abrir una pestaña vacía | `Mod+N` |
 | Cerrar pestaña de la aplicación | `Mod+W` |
 | Pestaña anterior / siguiente de la aplicación | `Mod+[` / `Mod+]` |
 | Pestaña 1–9 de la aplicación | `Mod+1` a `Mod+9` |

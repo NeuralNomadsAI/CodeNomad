@@ -91,9 +91,7 @@ The generated server certificate lasts 30 days. Startup renews it within three d
 
 If a client reports a certificate warning, stop and check the hostname, SANs, trust store and expiry. Do not disable verification or make clicking through warnings your deployment procedure. Trusted HTTPS is also required for remote browser features such as [PWA installation and microphone access](mobile.md).
 
-## Save a remote server {#saved-servers}
-
-Authenticated remote clients can use and manage all servers saved on the host; Home and **Settings → Servers** show the actions allowed by the host's capabilities. Plain LAN HTTP disables new server password and pairing-link entry: “Use HTTPS or Remote Control to enter credentials.” Connections using saved credentials and adding, editing or removing profiles without secrets remain available.
+## Save a remote server {#saved-servers}Authenticated remote clients can use and manage all servers saved on the host; Home and **Settings → Servers** show the actions allowed by the host's capabilities. Plain LAN HTTP disables new server password and pairing-link entry: “Use HTTPS or Remote Control to enter credentials.” Connections using saved credentials and adding, editing or removing profiles without secrets remain available.
 
 For an SSH-only destination in **Settings → Servers**, choose **Add server**, enter its **URL** and **SSH host (optional)**, then **Save**. The profile saves offline; its connection uses the backend's SSH relay.
 
@@ -105,14 +103,18 @@ Use **Settings → Servers**: paste an address or pairing link into **Server add
 
 Only if `multiBackend` is set to `false`, use the separate desktop-window flow below:
 
-1. On the desktop home page, choose **Connect CodeNomad Server**. The same button appears on an empty **Servers** tab and in **Settings → Remote Access → Servers**.
+1. **Settings → Remote Access → Servers** → **Connect CodeNomad Server**.
 2. In **Connect to Server**, enter **Server name** and **Server URL** using a trusted HTTPS origin. Leave **Skip TLS verification for self-signed certificates.** unchecked; establish trust instead.
 3. Choose **Save** to bookmark, or **Connect** to save and open it. Sign in on that server.
-
-Select a saved server on the home page's **Servers** tab to open it again. Bookmarks belong to this CodeNomad configuration, not the remote server's projects. Saving a URL does not start the server or grant access. **Remove saved server** removes the bookmark, not remote conversations, the backend or its credentials.
 
 To open a saved server straight from the command line, start the desktop app with `--connect-server <name>` (or `--connect-server=<name>`), using the server's saved name, or with its `https://` URL. CodeNomad opens only the remote window, with the same checks and sign-in as **Connect**; when CodeNomad is already running, its current window opens it instead of a new one. A URL that matches no saved server is saved under its host name. Launch values never carry credentials: a URL with a user name, password or pairing code is refused. On Windows, the Tauri build refuses to start when a launch argument contains `|`; use the server's URL instead, or rename the server.
 
 Closing the last local window while remote windows stay open keeps its tabs: **Window → New Window** in a remote window, or starting CodeNomad again, reopens it.
 
 For Remote Control, paste a fresh pairing link into **Server URL** instead. The bookmark retains only the tunnel origin, never the one-use pairing code; see [Remote Control](remote-control.md) for re-pairing after device-cookie loss.
+
+## Open a remote project in a tab {#remote-project-tabs}
+
+On Home or in a new tab, choose **Browse**, then a server. Paste an address or pairing link into **Server address or link** to save a server. Sign in if asked. Click a folder to enter it; press Enter in the path field or choose **Open** (the arrow) to open it. **Back to Browse** returns to the server list.
+
+Local and remote projects share the same window. **Recent tabs** shows the selected server’s shortcuts while you browse; mixed recents show the server icon and name for projects opened here. If a saved remote tab is waiting for its server, select it and use **Retry** or **Connect**. Its drafts stay with that tab.

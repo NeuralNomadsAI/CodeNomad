@@ -24,7 +24,7 @@ Les affectations sont enregistrées dans la configuration d’interface CodeNoma
 | Action | Valeur par défaut |
 | --- | --- |
 | Ouvrir la palette de commandes | `Mod+Shift+P` |
-| Nouvelle instance / Parcourir les dossiers sur l’accueil | `Mod+N` |
+| Nouvelle instance / Ouvrir un onglet vide | `Mod+N` |
 | Fermer l’onglet de l’application | `Mod+W` |
 | Onglet d’application précédent / suivant | `Mod+[` / `Mod+]` |
 | Onglet d’application 1–9 | `Mod+1` à `Mod+9` |

@@ -14,7 +14,6 @@ interface ServerAddFieldProps {
   onPairingFailure?: (id: string) => void
   navAttribute?: string
   pairingProfile?: RemoteServerProfile
-  compact?: boolean
 }
 
 export default function ServerAddField(props: ServerAddFieldProps) {
@@ -70,7 +69,7 @@ export default function ServerAddField(props: ServerAddFieldProps) {
     const flight = ++generation, focus = captureRequestFocus()
     releaseFocus = focus.dispose
     const current = () => alive && flight === generation && enabled() && !props.disabled
-      && (!props.compact || !!target || serversManageable())
+      && (!!target || serversManageable())
       && (!target || props.pairingProfile?.id === target.id && props.pairingProfile.baseUrl === target.baseUrl && props.pairingProfile.skipTlsVerify === target.skipTlsVerify && props.pairingProfile.ssh?.host === target.ssh?.host)
     if (link.kind === "pairing") setAddress("")
     setBusy(true)
@@ -107,8 +106,8 @@ export default function ServerAddField(props: ServerAddFieldProps) {
     <div class="server-add-field">
       <form class="server-add-field-row" onSubmit={event => { event.preventDefault(); void add(address()) }}>
         <input type="text" class="server-add-field-input" autocomplete="off" spellcheck={false} {...nav()} data-server-add-field
-          aria-label={t(props.pairingProfile ? "remoteBrowse.pairingLink" : props.compact ? "folderSelection.remoteProject.add" : "folderSelection.browseMenu.addField")}
-          placeholder={t(props.pairingProfile ? "remoteBrowse.pairingLink" : props.compact ? "folderSelection.remoteProject.addPlaceholder" : "folderSelection.browseMenu.addField")}
+          aria-label={t(props.pairingProfile ? "remoteBrowse.pairingLink" : "folderSelection.browseMenu.addField")}
+          placeholder={t(props.pairingProfile ? "remoteBrowse.pairingLink" : "folderSelection.browseMenu.addField")}
           aria-describedby={error() ? errorId : undefined} aria-invalid={error() ? "true" : undefined}
           value={address()} readonly={keepBusyFocus()} disabled={fieldDisabled() || busy() && !keepBusyFocus()}
           onKeyDown={event => { if (event.isComposing && event.key === "Enter") event.preventDefault() }}
@@ -121,8 +120,7 @@ export default function ServerAddField(props: ServerAddFieldProps) {
           }} />
         <button type="submit" class="window-icon-button" disabled={fieldDisabled() || !keepBusyFocus() && (busy() || !address().trim())}
           aria-disabled={keepBusyFocus() || undefined}
-          aria-label={t(props.compact ? "folderSelection.remoteProject.add" : "folderSelection.browseMenu.add")}
-          title={t(props.compact ? "folderSelection.remoteProject.add" : "folderSelection.browseMenu.add")}>
+          aria-label={t("folderSelection.browseMenu.add")} title={t("folderSelection.browseMenu.add")}>
           <Show when={busy()} fallback={<Plus class="w-4 h-4" aria-hidden="true" />}><Loader2 class="w-4 h-4 animate-spin" aria-hidden="true" /></Show>
         </button>
       </form>

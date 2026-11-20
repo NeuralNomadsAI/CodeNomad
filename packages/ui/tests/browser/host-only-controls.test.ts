@@ -27,8 +27,9 @@ for (const mode of ["local", "nonlocal", "sidecars", "missing", "failure"]) {
         // A non-local client opens SideCars only when the host allows it over direct HTTPS.
         const sidecars = local || mode === "sidecars"
         if (surface === "home") {
-          assert.equal(await page.getByRole("button", { name: "Open SideCar", exact: true }).count(), Number(sidecars))
-          assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), Number(local))
+          await page.getByRole("tab", { name: "Browse" }).click()
+          assert.equal(await page.getByRole("button", { name: "Fixture SideCar", exact: false }).count(), Number(sidecars))
+          assert.equal(await page.getByRole("button", { name: "New SideCar", exact: true }).count(), Number(local))
         } else if (surface === "settings") {
           assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), Number(local))
           // Registration stays usable through paired and LAN connections.
@@ -89,9 +90,10 @@ for (const mode of ["servers", "servers-readonly", "servers-refused"]) test(`hom
       await page.goto(`${url}?mode=${mode}&surface=home&scenario=${scenario}`)
       await page.locator("html[data-meta-settled=true]").waitFor()
       await page.waitForFunction(() => (window as any).hostControlsConfig.isLoaded())
-      assert.equal(await page.getByRole("button", { name: /^Remotes$/i }).count(), Number(scenario === "ssh" && mode !== "servers-refused"))
-      assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), Number(scenario === "ssh" && mode === "servers"))
-      assert.equal(await page.getByRole("button", { name: "Open SideCar", exact: true }).count(), 0)
+      await page.getByRole("tab", { name: "Browse" }).click()
+      assert.equal(await page.locator(".browse-menu-row[data-remote-server]").count(), Number(scenario === "ssh" && mode !== "servers-refused"))
+      assert.equal(await page.locator(".browse-menu [data-server-add-field]").count(), Number(scenario === "ssh" && mode === "servers"))
+      assert.equal(await page.getByRole("button", { name: /Fixture SideCar/ }).count(), 0)
     }
   } finally { await page.close() }
 })

@@ -24,7 +24,7 @@ Belegungen werden in CodeNomads UI-Konfiguration gespeichert und betreffen Clien
 | Aktion | Standard |
 | --- | --- |
 | Befehlspalette öffnen | `Mod+Shift+P` |
-| Neue Instanz / Ordner auf der Startseite durchsuchen | `Mod+N` |
+| Neue Instanz / Leeren Tab öffnen | `Mod+N` |
 | App-Tab schließen | `Mod+W` |
 | Vorheriger / nächster App-Tab | `Mod+[` / `Mod+]` |
 | App-Tab 1–9 | `Mod+1` bis `Mod+9` |

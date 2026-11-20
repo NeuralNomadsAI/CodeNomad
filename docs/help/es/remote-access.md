@@ -91,9 +91,7 @@ El certificado de servidor generado dura 30 días. El inicio lo renueva si falta
 
 Si un cliente muestra una advertencia de certificado, detente y comprueba el nombre de host, los SAN, el almacén de confianza y la caducidad. No desactives la verificación ni conviertas saltarse advertencias en tu procedimiento de despliegue. HTTPS de confianza también es necesario para funciones de navegador remoto como la [instalación PWA y el acceso al micrófono](mobile.md).
 
-## Guardar un servidor remoto {#saved-servers}
-
-Los clientes remotos autenticados pueden usar y administrar todos los servidores guardados en el anfitrión; el inicio y **Configuración → Servidores** muestran las acciones permitidas por las capacidades del anfitrión. HTTP sin cifrar en la LAN desactiva la entrada de nuevas contraseñas de servidor y enlaces de vinculación: «Usa HTTPS o Control remoto para introducir credenciales.» Las conexiones con credenciales guardadas y la adición, edición o eliminación de perfiles sin secretos siguen disponibles.
+## Guardar un servidor remoto {#saved-servers}Los clientes remotos autenticados pueden usar y administrar todos los servidores guardados en el anfitrión; el inicio y **Configuración → Servidores** muestran las acciones permitidas por las capacidades del anfitrión. HTTP sin cifrar en la LAN desactiva la entrada de nuevas contraseñas de servidor y enlaces de vinculación: «Usa HTTPS o Control remoto para introducir credenciales.» Las conexiones con credenciales guardadas y la adición, edición o eliminación de perfiles sin secretos siguen disponibles.
 
 Para un destino accesible solo por SSH en **Configuración → Servidores**, elija **Añadir servidor**, introduzca su **URL** y **Host SSH (opcional)** y pulse **Guardar**. El perfil se guarda sin conexión; la conexión utiliza el relé SSH del backend.
 
@@ -105,14 +103,18 @@ Abre **Configuración → Servidores**: pega una dirección o enlace de vinculac
 
 Solo si `multiBackend` está en `false`, usa el flujo de ventanas de escritorio separadas que se indica a continuación:
 
-1. En la página de inicio de escritorio, elige **Conectar servidor CodeNomad**. El mismo botón aparece en una pestaña **Servidores** vacía y en **Configuración → Acceso remoto → Servidores**.
+1. **Configuración → Acceso remoto → Servidores** → **Conectar servidor CodeNomad**.
 2. En **Conectar a un servidor**, introduce **Nombre del servidor** y **URL del servidor** usando un origen HTTPS de confianza. Deja sin marcar **Omitir la verificación TLS para certificados autofirmados.**; establece confianza en su lugar.
 3. Elige **Guardar** para crear un marcador o **Conectar** para guardarlo y abrirlo. Inicia sesión en ese servidor.
-
-Selecciona un servidor guardado en la pestaña **Servidores** de la página de inicio para volver a abrirlo. Los marcadores pertenecen a esta configuración de CodeNomad, no a los proyectos del servidor remoto. Guardar una URL no inicia el servidor ni concede acceso. **Eliminar servidor guardado** elimina el marcador, no las conversaciones remotas, el backend ni sus credenciales.
 
 Para abrir un servidor guardado directamente desde la línea de comandos, inicia la aplicación de escritorio con `--connect-server <nombre>` (o `--connect-server=<nombre>`), usando el nombre guardado del servidor o su URL `https://`. CodeNomad abre solo la ventana remota, con las mismas comprobaciones e inicio de sesión que **Conectar**; si CodeNomad ya se está ejecutando, su ventana actual lo abre en lugar de una nueva. Una URL que no coincide con ningún servidor guardado se guarda con su nombre de host. Los valores de inicio nunca llevan credenciales: se rechaza una URL con nombre de usuario, contraseña o código de emparejamiento. En Windows, la compilación Tauri no se inicia si un argumento de inicio contiene `|`; usa en su lugar la URL del servidor o cambia el nombre del servidor.
 
 Cerrar la última ventana local mientras siguen abiertas ventanas remotas conserva sus pestañas: **Ventana → Nueva ventana** en una ventana remota, o iniciar CodeNomad de nuevo, la vuelve a abrir.
 
 Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL del servidor**. El marcador conserva solo el origen del túnel, nunca el código de un solo uso; consulta [Control remoto](remote-control.md) para volver a emparejar tras perder la cookie del dispositivo.
+
+## Abrir un proyecto remoto en una pestaña {#remote-project-tabs}
+
+En Inicio o en una pestaña nueva, elige **Explorar** y selecciona un servidor. Pega la dirección o el enlace de emparejamiento en **Dirección o enlace del servidor** para guardarlo. Inicia sesión si se te pide. Selecciona una carpeta para explorarla; pulsa Intro en el campo de ruta o elige **Abrir** para abrirla. **Volver a Explorar** vuelve a la lista de servidores.
+
+Los proyectos locales y remotos comparten ventana. **Pestañas recientes** muestra los accesos directos del servidor seleccionado mientras exploras. Los proyectos abiertos aquí conservan el icono y el nombre del servidor en la lista mixta. Si una pestaña restaurada espera al servidor, usa **Reintentar** o **Conectar** en esa pestaña. Los borradores se conservan.

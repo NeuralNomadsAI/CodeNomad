@@ -24,7 +24,7 @@ Bindings are saved in CodeNomad UI configuration and affect clients sharing that
 | Action | Default |
 | --- | --- |
 | Open command palette | `Mod+Shift+P` |
-| New instance / Browse for a folder on the home page | `Mod+N` |
+| New instance / Open an empty tab | `Mod+N` |
 | Close app tab | `Mod+W` |
 | Previous / next app tab | `Mod+[` / `Mod+]` |
 | App tab 1–9 | `Mod+1` through `Mod+9` |

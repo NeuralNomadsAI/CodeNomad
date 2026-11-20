@@ -28,7 +28,7 @@ export const closeRemoteServer = () => setSelection(undefined)
 export function findOpenProjectTab(path: string, backendId: BackendId, { includeLive = true } = {}): InstanceAppTab | RemoteRestoreTab | undefined {
   const identity = workspaceIdentity(path, backendId)
   const matches = appTabs().filter((tab): tab is InstanceAppTab | RemoteRestoreTab => {
-    if (tab.kind === "sidecar" || tab.kind === "instance" && (!includeLive || tab.instance.status === "stopped")) return false
+    if (tab.kind === "blank" || tab.kind === "sidecar" || tab.kind === "instance" && (!includeLive || tab.instance.status === "stopped")) return false
     const project = tab.kind === "instance" ? tab.instance : tab.snapshot
     return backendIdOf(project) === backendId && workspaceIdentity(project.folder, backendId) === identity
   })

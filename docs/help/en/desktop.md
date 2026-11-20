@@ -2,7 +2,7 @@
 
 ## Windows, tabs and the shared service {#windows-tabs}
 
-1. Use **New instance** to open another project/home tab in the current window.
+1. Use **New instance** to open an empty tab in the current window, then choose a project. The CodeNomad logo opens Home.
 2. Use native **Window → New Window** (`Ctrl+Shift+N` or `Cmd+Shift+N`) for a separate application window.
 3. In **Settings → Advanced**, enable **Focus existing window on second launch** if another launch should focus the most recently used window rather than open a new one.
 
