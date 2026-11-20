@@ -759,3 +759,16 @@ test("worktrees: acceptance reads a fresh inventory, not the server's cache", as
     assert.deepEqual(await worktreeCalls(page), [])
   } finally { await page.close() }
 })
+test("worktrees: a checkout lacking the opened folder still counts, and is never offered a second checkout", async () => {
+  await install()
+  assert.equal((await createWorkItemBranch(repository, itemSource, "issue", 149)).status, "ok")
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    await fixtureCall(page, "addWorktree", "external", "issue-149", true)
+    assert.deepEqual(((await call(page, "worktrees.list")).ok as any[]).find(entry => entry.number === 149),
+      { kind: "issue", number: 149, branch: "issue-149", worktree: true, current: false })
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 149), { ok: "unavailable" })
+    assert.equal(await page.getByRole("button", { name: "Create and move", exact: true }).count(), 0)
+  } finally { await page.close() }
+})

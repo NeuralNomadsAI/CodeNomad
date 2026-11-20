@@ -329,7 +329,7 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   extension's name; detail: the repository, `<host>/<path>`, the host in lower case and the path as the remote spells it), one at a time and never over
   another host dialog, aborted on unmount, connection loss or the frame navigating away, and reserved before `open` answers (a concurrent `open` answers `busy`); after a refusal the mounting answers `busy` for
   10 s, so a panel cannot hold the modal up. Opening and acceptance look the item up exactly
-  (consent rechecked), against the server's fresh worktree inventory, and refuse a changed repository or target (a worktree that appeared or vanished since the dialog included); a name that already holds another branch answers `conflict` before any dialog; without a worktree,
+  (consent rechecked), against the server's fresh worktree inventory, and refuse a changed repository or target (a worktree that appeared or vanished since the dialog included); a name that already holds another branch answers `conflict` before any dialog, and a branch checked out only where the opened folder is missing answers `unavailable` (`list` still reports it as `worktree: true`); without a worktree,
   `workItemBranch` (given the confirmed repository: another one answers `changed`) returns the
   linked branch or creates one under a lock per Git common directory, never forced: `issue-N` at the HEAD
   of the family's worktree checkout root (`fromSlug`, as the worktree selector creates), or `pr-N` at

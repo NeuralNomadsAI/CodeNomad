@@ -185,7 +185,8 @@ export function useApi4Channel(props: {
   async function linkedWorktrees(signal: AbortSignal) {
     const [answer] = await Promise.all([panelExtensionsApi4.workItemBranches(authority, signal), reloadWorktrees(props.instanceId)])
     if (answer.status !== "ok") return null
-    const worktrees = getWorktrees(props.instanceId).filter(worktree => !worktree.nestedFolderMissing), current = familyWorktree()?.slug
+    // `worktree`: checked out anywhere, even where the opened folder is missing (Git allows one checkout per branch).
+    const worktrees = getWorktrees(props.instanceId), current = familyWorktree()?.slug
     return answer.branches.map((link): PanelWorkItemWorktree => {
       const slug = worktrees.find(worktree => worktree.branch === link.branch)?.slug
       return { ...link, worktree: slug !== undefined, current: slug !== undefined && slug === current }
@@ -201,8 +202,10 @@ export function useApi4Channel(props: {
       serverApi.fetchWorktrees(props.instanceId, true)])
     if (answer.status === "unavailable") return null
     if (answer.status === "conflict") return { conflict: answer.branch }
-    const slug = answer.status === "ok" && answer.branch !== null
-      ? inventory.worktrees.find(worktree => !worktree.nestedFolderMissing && worktree.branch === answer.branch)?.slug : undefined
+    const checkout = answer.branch === null ? undefined : inventory.worktrees.find(worktree => worktree.branch === answer.branch)
+    // Checked out where the opened folder is missing: no conversation can go there, and Git refuses a second checkout.
+    if (checkout?.nestedFolderMissing) return null
+    const slug = checkout?.slug
     return { repository: answer.repository, branch: answer.branch ?? undefined, slug, current: slug !== undefined && slug === familyWorktree()?.slug }
   }
 
@@ -272,6 +275,8 @@ export function useApi4Channel(props: {
       }
       // The target must still check out the item's branch when the family moves; the move reports its own failure.
       await consented(branchName)
+      // The store moves only to a worktree it knows: bring it up to the inventory just validated.
+      await reloadWorktrees(props.instanceId, true)
       // Checked again inside the move queue, right before dispatch.
       await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination,
         { branch: branchName, admit: () => consented(branchName) }).catch(() => {})

@@ -140,7 +140,9 @@ window.addEventListener("message", event => { if (event.data?.fixtureAnswer) fra
   worktreeCalls: () => worktreeCalls.splice(0),
   refuseMoves: (value: boolean) => { refusal.move = value },
   freezeInventory: () => { (window as any).fixture.cachedInventory = [...worktrees] },
-  addWorktree: (slug: string, branch: string) => { worktrees.push({ slug, label: branch, directory: `/fixture/.codenomad/worktrees/${slug}`, kind: "worktree", branch }) },
+  addWorktree: (slug: string, branch: string, nestedFolderMissing = false) => {
+    worktrees.push({ slug, label: branch, directory: `/fixture/.codenomad/worktrees/${slug}`, kind: "worktree", branch, ...(nestedFolderMissing ? { nestedFolderMissing } : {}) })
+  },
   move: (slug: string) => setWorktreeSlugForParentSession(instanceId, "ses_work", slug).catch(() => {}),
   location: (id: string) => infos[id]?.location?.directory ?? "/fixture",
   changed: () => (serverEvents as any).dispatchBatch([{ type: "storage.stateChanged", owner: "panelExtensions", value: {} }]),
