@@ -947,6 +947,7 @@ export default function PromptInput(props: PromptInputProps) {
   return (
     <div class="prompt-input-container">
       <DictationNotice
+        recordingPreview={voiceInput.recordingPreview()}
         recordingLimitReached={voiceInput.state() === "limitReached"}
         focusDraft={() => textareaRef?.focus({ preventScroll: true })}
         onTranscribe={voiceInput.confirmTranscription} onCancelRecording={voiceInput.cancelRecording}

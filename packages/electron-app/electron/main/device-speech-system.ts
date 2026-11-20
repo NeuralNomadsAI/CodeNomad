@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
-import { isSpeechLocale, resolveSystemSpeechLocale, type DeviceSpeechCapabilities, type DeviceSpeechError } from "../../../desktop-speech/contract"
+import { isSpeechLocale, maxDeviceSpeechTextBytes, resolveSystemSpeechLocale, type DeviceSpeechCapabilities, type DeviceSpeechError } from "../../../desktop-speech/contract"
 import type { DeviceSpeechDriver, SpeechOperationControl } from "./device-speech"
 
 const maxFrame = 512 * 1024 // JSON escaping of up to 64 KiB of text.
@@ -58,7 +58,6 @@ export function runSystemDictation(program: string, args: readonly string[], con
     let failure: SystemSpeechFailure | undefined
     let output: string | undefined
     let buffer = Buffer.alloc(0)
-    let frames = 0
     const finish = () => child.stdin.write("finish\n")
     const cancel = () => {
       if (stop) return
@@ -72,23 +71,30 @@ export function runSystemDictation(program: string, args: readonly string[], con
     child.stdout.on("error", fail)
     child.stdout.on("data", (chunk: Buffer) => {
       if (failure || control.signal.aborted) return
-      if (buffer.length + chunk.length > maxFrame) { fail(); return }
       buffer = Buffer.concat([buffer, chunk])
       for (let end = buffer.indexOf(10); end !== -1; end = buffer.indexOf(10)) {
+        if (end >= maxFrame) { fail(); return }
         const frame = buffer.subarray(0, end)
         buffer = buffer.subarray(end + 1)
         try {
-          if (++frames > 3 || output !== undefined) throw new Error()
+          if (output !== undefined || failure) throw new Error()
           const result = JSON.parse(frame.toString("utf8"))
-          if (result?.progress?.state === "recording" || result?.progress?.state === "transcribing") {
-            control.progress({ state: result.progress.state })
-          } else if (typeof result?.value === "string" && Buffer.byteLength(result.value) <= 64 * 1024) {
+          if (result?.progress?.state === "recording") {
+            const text: unknown = result.progress.text
+            if (text === undefined) control.progress({ state: "recording" })
+            else if (typeof text === "string" && Buffer.byteLength(text) <= maxDeviceSpeechTextBytes)
+              control.progress({ state: "recording", text })
+            else throw new Error()
+          } else if (result?.progress?.state === "transcribing") {
+            control.progress({ state: "transcribing" })
+          } else if (typeof result?.value === "string" && Buffer.byteLength(result.value) <= maxDeviceSpeechTextBytes) {
             output = result.value
           } else if (result?.error === "permissionDenied" || result?.error === "localeUnavailable" || result?.error === "failed") {
             failure = new SystemSpeechFailure(result.error)
           } else throw new Error()
         } catch { fail(); return }
       }
+      if (buffer.length >= maxFrame) fail()
     })
     child.once("close", code => {
       clearTimeout(stop)

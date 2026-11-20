@@ -54,6 +54,7 @@ export interface RecordingControllerDeps {
 
 export interface RecordingControllerCallbacks {
   onStateChange: (state: RecordingState) => void
+  onRecordingPreview?: (text: string) => void
   /** The terminal result or error comes before returning to idle. */
   onTranscript: (text: string) => void
   onError: (errorKey: string, detail?: string) => void

@@ -43,6 +43,8 @@ Si l’API utilise le mode WAV de secours sur Tauri sous Linux, **Dicter** et **
 
 Les enregistrements compressés pour l’API s’arrêtent à la taille maximale et proposent les mêmes choix : **Transcrire** ou **Annuler**.
 
+Avec la reconnaissance système, un aperçu s’affiche pendant que vous parlez. Vous pouvez continuer à modifier le brouillon : seul le texte final peut y être inséré.
+
 ### Choisir un moteur sur ordinateur {#desktop-dictation}
 
 Dans **Préférences → Voix → Dictée** sur le bureau local, sélectionnez **Moteur de dictée sur cet appareil**. Ce choix vaut pour tous les projets sur cet appareil. **Fournisseur API** utilise les réglages du serveur connecté et nécessite un contexte sécurisé pour le microphone.

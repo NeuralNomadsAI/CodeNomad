@@ -46,7 +46,7 @@ async function withWindow(use: (page: Page) => Promise<void>, ready = true, loca
                 engine: "system", system: ready ? "ready" : "unavailable", systemLocales: ["en-US"], hex: { state: "unavailable" },
               } }
               case "start": return { ok: true, value: { id } }
-              case "status": return { ok: true, value: { state, text: "Local preview" } }
+              case "status": return { ok: true, value: { state, text: state === "recording" ? "Early result" : "Local preview" } }
               case "finish": state = "transcribing"; return { ok: true, value: null }
               case "cancel": state = "cancelled"; return { ok: true, value: null }
             }
@@ -80,9 +80,13 @@ test("the trusted window requires a real gesture before capture and after previe
   await page.keyboard.press("Enter")
   const stop = page.getByRole("button", { name: "Stop recording and transcribe" })
   await stop.waitFor()
+  const interim = page.getByRole("status").filter({ hasText: "Early result" })
+  await interim.waitFor()
+  assert.equal(await page.getByRole("button", { name: "Insert transcript" }).count(), 0)
   assert.equal(await stop.evaluate(node => node === document.activeElement), true)
   await page.keyboard.down("Enter")
   await page.waitForFunction(() => (window as any).events.some(({ action }: any) => action === "finish"))
+  await interim.waitFor({ state: "hidden" })
   await showPreview(page)
   await page.getByText("Local preview", { exact: true }).waitFor()
   const insert = page.getByRole("button", { name: "Insert transcript", exact: true })

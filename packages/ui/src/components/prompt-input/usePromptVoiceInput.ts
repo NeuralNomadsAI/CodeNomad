@@ -37,6 +37,7 @@ const sameSelection = (field: HTMLTextAreaElement, captured: TextSelection) =>
 export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
   const { t, locale } = useI18n()
   const [state, setState] = createSignal<RecordingState>("idle")
+  const [recordingPreview, setRecordingPreview] = createSignal("")
   const transcript = () => {
     if (!options.active()) return
     const saved = promptTranscript(options.instanceId(), options.sessionId())
@@ -65,6 +66,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     if (!capture) return
     setActiveCapture(undefined)
     capture.controller?.cancelRecording()
+    setRecordingPreview("")
     setState("idle")
   }
 
@@ -133,8 +135,10 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       onStateChange: value => {
         if (activeCapture() !== capture) return
         if (value === "idle") setActiveCapture(undefined)
+        if (value !== "recording") setRecordingPreview("")
         setState(value)
       },
+      onRecordingPreview: text => { if (held()) setRecordingPreview(text) },
       onTranscript: text => {
         if (!held() || delivered || !text) return
         delivered = true
@@ -177,6 +181,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
 
   return {
     state,
+    recordingPreview,
     unavailableKey,
     deviceDictation,
     canStartRecording,

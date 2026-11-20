@@ -69,7 +69,7 @@ impl HexDriver {
     }
 
     pub(crate) fn dictate(&self, control: Control) -> Result<String, SpeechError> {
-        control.progress(Operation::Recording);
+        control.progress(Operation::Recording { text: None });
         let audio = control.wait_for_audio().ok_or(SpeechError::Failed)?;
         control.progress(Operation::Transcribing);
         self.run(

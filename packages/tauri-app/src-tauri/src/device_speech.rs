@@ -20,6 +20,7 @@ use preference::Store;
 mod microphone;
 
 const LEASE: Duration = Duration::from_secs(30);
+const MAX_TEXT: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -178,7 +179,14 @@ pub(crate) enum System {
 #[serde(tag = "state", rename_all = "camelCase")]
 pub(crate) enum Operation {
     Starting,
-    Recording,
+    Recording {
+        #[serde(
+            default,
+            deserialize_with = "recording_text",
+            skip_serializing_if = "Option::is_none"
+        )]
+        text: Option<String>,
+    },
     Transcribing,
     Verifying,
     Downloading {
@@ -194,6 +202,14 @@ pub(crate) enum Operation {
     Error {
         error: SpeechError,
     },
+}
+
+fn recording_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let text = String::deserialize(d)?;
+    if text.len() > MAX_TEXT {
+        return Err(serde::de::Error::custom("oversized recording text"));
+    }
+    Ok(Some(text))
 }
 
 impl Operation {
@@ -259,9 +275,10 @@ impl Control {
                     Operation::Downloading { .. } | Operation::Verifying
                 ) | (
                     Kind::Dictation,
-                    Operation::Recording | Operation::Transcribing
+                    Operation::Recording { .. } | Operation::Transcribing
                 )
             )
+            && !(slot.finish && matches!(value, Operation::Recording { .. }))
         {
             slot.state = value;
         }
@@ -633,7 +650,7 @@ impl DeviceSpeech {
                                 .ok_or(SpeechError::Unavailable)?
                                 .dictate(engine, locale, control)?,
                         };
-                        if text.len() > 64 * 1024 {
+                        if text.len() > MAX_TEXT {
                             return Err(SpeechError::Failed);
                         }
                         Ok(Operation::Transcribed { text })
@@ -681,6 +698,9 @@ impl DeviceSpeech {
                                 return Err(SpeechError::Unavailable);
                             }
                             slot.finish = true;
+                            if let Operation::Recording { text } = &mut slot.state {
+                                *text = None;
+                            }
                             control.0 .1.notify_all();
                             Ok(Value::Null)
                         }

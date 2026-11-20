@@ -43,6 +43,8 @@ Si la API recurre a WAV en Tauri para Linux, el dictado y la prueba de entrada d
 
 Las grabaciones comprimidas para la API también se detienen al alcanzar el límite de tamaño y ofrecen **Transcribir** o **Cancelar**.
 
+Con el reconocimiento del sistema, aparece una vista previa mientras hablas. Puedes seguir editando el borrador: solo se puede insertar la transcripción final.
+
 ### Elegir un motor en el escritorio {#desktop-dictation}
 
 En **Preferencias → Voz → Dictado** de la aplicación de escritorio local, elige el **Motor de dictado en este dispositivo**. La elección se aplica a todos los proyectos del dispositivo. **Proveedor de API** usa los ajustes del servidor conectado y necesita un contexto seguro para el micrófono.

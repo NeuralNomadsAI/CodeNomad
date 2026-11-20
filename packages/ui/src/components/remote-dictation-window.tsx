@@ -22,6 +22,7 @@ export function RemoteDictationWindow() {
   const [snapshot, setSnapshot] = createSignal<DeviceSpeechSnapshot>()
   const [loaded, setLoaded] = createSignal(false)
   const [state, setState] = createSignal<RecordingState>("idle")
+  const [recordingPreview, setRecordingPreview] = createSignal("")
   const [transcript, setTranscript] = createSignal("")
   const [error, setError] = createSignal<string>()
   const [settling, setSettling] = createSignal(false)
@@ -38,6 +39,7 @@ export function RemoteDictationWindow() {
     const capture = controller
     controller = undefined
     capture?.cancelRecording()
+    setRecordingPreview("")
   }
 
   onMount(() => {
@@ -78,8 +80,10 @@ export function RemoteDictationWindow() {
       onStateChange(value) {
         if (controller !== capture) return
         if (value === "idle") controller = undefined
+        if (value !== "recording") setRecordingPreview("")
         setState(value)
       },
+      onRecordingPreview(text) { if (controller === capture) setRecordingPreview(text) },
       onTranscript(text) {
         if (controller !== capture) return
         const source = captureButton
@@ -103,6 +107,7 @@ export function RemoteDictationWindow() {
         <Show when={destination}><bdi id="dictation-destination" class="min-w-0 break-all">{destination}</bdi></Show>
       </header>
       <div class="window-body bg-surface-canvas">
+        <p class="line-clamp-2 break-words" dir="auto" role="status" aria-live="polite" aria-atomic="false">{recordingPreview()}</p>
         <Show when={error()}><p role="alert">{t(error()!)}</p></Show>
         <Show when={!error() && loaded() && !selectedEngine()}>
           <p role="status">{t("promptInput.remoteDictation.unavailable")}</p>

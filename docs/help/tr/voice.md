@@ -43,6 +43,8 @@ API, Linux’ta Tauri ile WAV yedek modunu kullanıyorsa dikte ve giriş testi k
 
 API için sıkıştırılan kayıtlar da boyut sınırında durur ve **Yazıya dök** ile **İptal et** seçeneklerini sunar.
 
+Sistem konuşma tanıma açıkken, konuştukça bir önizleme görünür. Taslağı düzenlemeye devam edebilirsiniz; yalnızca son döküm taslağa eklenebilir.
+
 ### Masaüstünde motor seçin {#desktop-dictation}
 
 Yerel masaüstü uygulamasında **Tercihler → Ses → Dikte** bölümünden **Bu cihazdaki dikte motoru** seçeneğini ayarlayın. Seçim cihazdaki tüm projeler için geçerlidir. **API sağlayıcısı**, bağlı sunucunun ayarlarını kullanır ve mikrofon için güvenli bir bağlam gerektirir.
