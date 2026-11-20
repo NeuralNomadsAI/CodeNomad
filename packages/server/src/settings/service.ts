@@ -185,7 +185,7 @@ export class SettingsService {
   }
 
   multiBackendEnabled(): boolean {
-    return this.serverFlags.enabled("multiBackend", ["ui", "settings"])
+    return this.serverFlags.enabled("multiBackend", ["ui", "settings"], true)
   }
 
   readEnvironmentForAdmission(signal?: AbortSignal): Promise<Record<string, string>> {

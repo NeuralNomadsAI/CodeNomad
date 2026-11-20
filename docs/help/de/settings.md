@@ -1,6 +1,6 @@
 # Einstellungen und Layout
 
-Bei aktiviertem experimentellem Multi-Backend-Modus verwendet das Einstellungsfenster den Server des ausgewählten Projekts für Projekteinstellungen, Anbieter, Statistiken und Gedächtnis, einschließlich der Bereinigung. Bei einem nicht erreichbaren Server bleiben die Projektaktionen inaktiv. Geräteeinstellungen und SideCars bleiben lokal.
+Das Einstellungsfenster den Server des ausgewählten Projekts für Projekteinstellungen, Anbieter, Statistiken und Gedächtnis, einschließlich der Bereinigung. Bei einem nicht erreichbaren Server bleiben die Projektaktionen inaktiv. Geräteeinstellungen und SideCars bleiben lokal.
 
 ## Einstellungen öffnen und Geltungsbereich erkennen {#open-settings}
 
@@ -42,7 +42,7 @@ Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNo
 
 ## Dauerhaftes Agentengedächtnis {#agent-memory}
 
-Bei aktiviertem experimentellem Multi-Backend (`multiBackend`) können authentifizierte Nutzer über Fernsteuerung, verifiziertes HTTPS, LAN oder eine installierte PWA das Gedächtnis des ausgewählten lokalen oder entfernten Projekts prüfen, bearbeiten und **Aufräumen** verwenden. Das ausgewählte Projekt bestimmt das zuständige Backend.
+Authentifizierte Nutzer können über Fernsteuerung, verifiziertes HTTPS, LAN oder eine installierte PWA das Gedächtnis des ausgewählten lokalen oder entfernten Projekts prüfen, bearbeiten und **Aufräumen** verwenden. Das ausgewählte Projekt bestimmt das zuständige Backend.
 
 CodeNomad versucht, veraltete Speicheranweisungen der Sitzung zu entfernen; schlägt auch dies fehl, können die bisherigen Anweisungen bis zur nächsten erfolgreichen Aktualisierung erhalten bleiben.
 

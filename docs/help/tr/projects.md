@@ -1,6 +1,6 @@
 # Projeler ve çalışma ağaçları
 
-Çoklu arka uç etkinse ana sayfada veya `+` başlatıcısında **UZAKLAR** bölümünü genişletin. Kayıtlı CodeNomad sunucusunun yanında **+ Proje**'yi seçin, aynı yerde klasörlere göz atın ve **Aç**'ı seçin. Sunucu eklemek için eşleştirme bağlantısını veya adresi listenin altına yapıştırın. Burada açılan projeler, sunucu çevrimdışı olsa bile simgesi ve adıyla ortak listede kalır. Göz atma, klonlama ve geçici projeler bu bilgisayarı kullanır.
+Ana sayfada veya `+` başlatıcısında **Uzaklar** bölümünü genişletin. Kayıtlı CodeNomad sunucusunun yanında **+ Proje**'yi seçin, aynı yerde klasörlere göz atın ve **Aç**'ı seçin. Proje normal bir sekmede açılır. Sunucu eklemek için eşleştirme bağlantısını veya adresi listenin altına yapıştırın. Burada açılan projeler, sunucu çevrimdışı olsa bile simgesi ve adıyla **Son kullanılanlar** listesinde kalır. Göz atma, klonlama ve geçici projeler bu bilgisayarı kullanır.
 
 Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. Sekme açmak, bir çalışma kopyasına göz atmak ve konuşma ailesini taşımak farklı işlemlerdir.
 
@@ -50,7 +50,7 @@ Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, 
 
 ## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
 
-Çoklu arka uç etkinken kayıtlı uzak projeler sekme sırasını, seçimi ve her sekmenin kendi taslaklarını korur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya yeni bir **Eşleştirme bağlantısı** ile **Bağlan** seçin. Diğer sunucular kullanılabilir kalır.
+Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçimi ve taslakları korunur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya yeni bir **Eşleştirme bağlantısı** ile **Bağlan** seçin. Diğer sunucular kullanılabilir kalır.
 
 **Yeniden dene**, başlangıçta otomatik geri yükleme kapalıyken de bekleyen sekmeleri kurtarır. Bildirimler mevcut bekleyen sekmeyi seçer. Onaylanmamış bir konuşma işlemini yeniden göndermeden önce sonucunu kontrol edin.
 

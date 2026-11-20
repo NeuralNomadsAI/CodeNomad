@@ -1,6 +1,6 @@
 # Paramètres et disposition
 
-Lorsque le mode multi-serveur expérimental est activé, Preferences utilise le serveur du projet sélectionné pour ses réglages, fournisseurs, statistiques et sa mémoire, y compris **Ranger**. Si le serveur est indisponible, les commandes du projet restent inactives. Les réglages de l’appareil et les SideCars restent locaux.
+Preferences utilise le serveur du projet sélectionné pour ses réglages, fournisseurs, statistiques et sa mémoire, y compris **Ranger**. Si le serveur est indisponible, les commandes du projet restent inactives. Les réglages de l’appareil et les SideCars restent locaux.
 
 ## Ouvrir les paramètres et identifier leur portée {#open-settings}
 
@@ -42,7 +42,7 @@ Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que C
 
 ## Mémoire persistante de l’agent {#agent-memory}
 
-Lorsque le multi-backend expérimental (`multiBackend`) est activé, les utilisateurs authentifiés via le Contrôle à distance, HTTPS vérifié, le réseau local ou une PWA installée peuvent consulter et modifier la mémoire du projet local ou distant sélectionné, et utiliser **Ranger**. Le projet sélectionné détermine le backend qui gère la mémoire.
+Les utilisateurs authentifiés via le Contrôle à distance, HTTPS vérifié, le réseau local ou une PWA installée peuvent consulter et modifier la mémoire du projet local ou distant sélectionné, et utiliser **Ranger**. Le projet sélectionné détermine le backend qui gère la mémoire.
 
 CodeNomad tente de retirer les instructions mémoire périmées de la session ; si ce nettoyage échoue aussi, les instructions précédentes peuvent rester jusqu’à une actualisation réussie.
 

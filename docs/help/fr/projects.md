@@ -1,6 +1,6 @@
 # Projets et worktrees
 
-Lorsque le multi-backend est activé, dépliez **DISTANTS** sur l’accueil ou dans le lanceur `+`. Choisissez **+ Projet** sur un serveur CodeNomad enregistré, parcourez ses dossiers sur place, puis choisissez **Ouvrir**. Pour ajouter un serveur, collez son lien d’appairage ou son adresse dans le champ sous la liste. Les projets ouverts ici restent dans la liste des récents avec l’icône et le nom du serveur, même hors connexion. Parcourir, Cloner et Temporaire restent locaux.
+Dépliez **Distants** sur l’accueil ou dans le lanceur `+`. Choisissez **+ Projet** sur un serveur CodeNomad enregistré, parcourez ses dossiers sur place, puis choisissez **Ouvrir**. Le projet s’ouvre dans un onglet ordinaire. Pour ajouter un serveur, collez son lien d’appairage ou son adresse dans le champ sous la liste. Les projets ouverts ici restent dans **Récents** avec l’icône et le nom de leur serveur, même hors connexion. Parcourir, Cloner et Temporaire restent locaux.
 
 Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend. Ouvrir un onglet, parcourir une copie de travail et déplacer une famille de conversations sont des opérations distinctes.
 
@@ -50,7 +50,7 @@ Lorsque la restauration au démarrage est activée, chaque onglet restant retrou
 
 ## Restaurer les onglets distants {#restore-remote-tabs}
 
-Lorsque le multi-backend est activé, les projets distants enregistrés conservent l’ordre des onglets, la sélection et leurs brouillons individuels. Un serveur indisponible laisse un onglet en attente : choisissez **Réessayer** à son retour, ou **Se connecter** avec son nom d’utilisateur/mot de passe ou un nouveau **Lien d’appairage**. Les autres serveurs restent utilisables.
+Au rechargement, si la restauration est activée, les onglets distants retrouvent leur ordre, leur sélection et leurs brouillons. Un serveur indisponible laisse un onglet en attente : choisissez **Réessayer** à son retour, ou **Se connecter** avec son nom d’utilisateur/mot de passe ou un lien dans **Nouveau lien d’appairage**. Les autres serveurs restent utilisables.
 
 **Réessayer** reprend aussi les onglets en attente lorsque la restauration automatique au démarrage est désactivée. Les notifications sélectionnent l’onglet en attente existant. Vérifiez le résultat d’une action de conversation incertaine avant de la renvoyer.
 

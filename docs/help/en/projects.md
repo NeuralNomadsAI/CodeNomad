@@ -1,6 +1,6 @@
 # Projects and worktrees
 
-With multi-backend enabled, expand **REMOTES** on Home or in the `+` launcher. Select **+ Project** beside a saved CodeNomad server, browse its folders in place and choose **Open**. To add a server, paste its pairing link or address into the field below the server list. Recent projects you open here stay in the mixed list with a server icon and name, even while their server is offline. Browse, Clone and Temporary act on this computer.
+Expand **Remotes** on Home or in the `+` launcher. Select **+ Project** beside a saved CodeNomad server, browse its folders in place and choose **Open**. The project opens as a regular tab. To add a server, paste its pairing link or address into the field below the server list. Projects opened here appear in **Recent** with a server icon and name, even while their server is offline. Browse, Clone and Temporary act on this computer.
 
 A project tab connects CodeNomad to a folder on the backend computer. Opening a tab, browsing a checkout and moving a conversation family are different operations.
 
@@ -50,7 +50,7 @@ With startup restoration enabled, each remaining tab restores its own panel choi
 
 ## Restore remote tabs {#restore-remote-tabs}
 
-With multi-backend enabled, saved remote projects retain tab order, selection and per-tab drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh **Pairing link**. Other servers remain usable.
+When you reload with restoration enabled, remote tabs keep their order, selection and drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh link in **New pairing link**. Other servers remain usable.
 
 **Retry** also recovers waiting tabs when automatic startup restoration is off. Notifications select the existing waiting tab. Check an unconfirmed conversation action's outcome before sending it again.
 

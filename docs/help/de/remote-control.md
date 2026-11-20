@@ -11,7 +11,7 @@ Fernsteuerung ermöglicht einem gekoppelten Browser- oder Desktop-Client die Nut
 
 Der Link gilt **fünf Minuten** und funktioniert **einmal**. Behandeln Sie ihn als Zugangsdaten: Wer ihn einlöst, kann ein gekoppeltes Gerät werden. Der Code steht im URL-Fragment, nicht in der Abfragezeichenfolge. **Neuen Kopplungslink erstellen** macht den vorherigen ungenutzten Link sofort ungültig. Das Backend-Ende storniert den offenen Kopplungslink; Stop und Tunnelfehler stornieren einen Tunnel-Link.
 
-Um einen weiteren CodeNomad-Desktop zu koppeln, wählen Sie auf dessen Startseite **CodeNomad-Server verbinden**, fügen den Link in **Server-URL** ein und wählen **Verbinden**. Ein Kopplungslink öffnet sein Fenster auch über **Speichern**, weil das Öffnen den Code einlöst. Nur die Tunnel-Origin wird als Lesezeichen gespeichert; der Code bleibt nicht erhalten. TLS-Prüfung bleibt für Kopplungslinks aktiviert.
+Fügen Sie auf dem anderen Computer den Kopplungslink in **Einstellungen → Server → Serveradresse oder -link** ein. Das Feld wird vor der Anfrage geleert; gespeichert wird nur der Ursprung. Das lokale Backend bewahrt seine private Geräteidentität über Neustarts hinweg auf. **Gespeicherten Server entfernen** vergisst zuerst die Verbindung dieses Profils. Die Kopplung prüft TLS und öffnet kein Projekt.
 
 ## Über direktes HTTPS koppeln {#direct-https}
 
@@ -28,8 +28,6 @@ Ein solches Gerät verbindet sich nur über seine HTTPS-Adresse, nie über den T
 Diese Geräte haben dieselbe [Oberfläche](#remote-surface) wie Tunnel-Geräte und erhalten nie Loopback-Rechte, auch nicht über einen Proxy auf dem Host.
 
 ## Gekoppelte Geräte verwalten {#paired-devices}
-
-Mit experimentellen Multi-Backend-Einstellungen fügen Sie den Desktop-Kopplungslink in **Einstellungen → Server → Serveradresse oder -link** ein. Das Feld wird vor der Anfrage geleert; gespeichert wird nur der Ursprung. Das lokale Backend bewahrt seine private Geräteidentität über Neustarts hinweg auf. **Gespeicherten Server entfernen** vergisst zuerst die Verbindung dieses Profils. Kopplung prüft TLS und öffnet kein Projekt. Die obigen Anweisungen zum Remote-Fenster gelten für den Standardmodus.
 
 1. Kehren Sie auf dem Host zu **Einstellungen → Remote-Zugriff → Fernsteuerung** zurück.
 2. Prüfen Sie **Gekoppelte Geräte** und deren **Zuletzt gesehen:**-Zeit. Jedes Gerät ist nach der Plattform und dem Browser benannt, die es gekoppelt haben, etwa `iPhone · Safari`.
@@ -70,7 +68,7 @@ Gekoppelte Geräte können normale Projekt-/Unterhaltungs-APIs verwenden, Prompt
 | Normale authentifizierte Oberfläche, Arbeitsbereiche, Unterhaltungen und SSE | Für gekoppelte Geräte verfügbar. |
 | Passwortanmeldung/-abmeldung, Passwortänderungen, lokale Token-Ersteinrichtung | Nicht verfügbar; Gerätezugangsdaten sind auch bei deaktivierter direkter Authentifizierung nötig. |
 | Fernsteuerungsstatus | Für gekoppelte Geräte lesbar; Verwaltung nicht verfügbar. Start/Stop, Kopplungserstellung, Geräteliste und Widerruf bleiben auf dem Host-Zugriffsweg. |
-| Experimentelle gespeicherte Server und Backend-Relay | Authentifizierte Remote-Clients können alle Host-Server nutzen/verwalten, wenn Funktion und Host-Fähigkeiten dies erlauben. Neue Serverpasswörter/Kopplungslinks erfordern Fernsteuerung oder HTTPS statt unverschlüsseltem LAN-HTTP. Siehe [gespeicherte Server](remote-access.md#saved-servers). |
+| Gespeicherte Server und Backend-Relay | Authentifizierte Remote-Clients können alle Host-Server nutzen/verwalten, wenn Funktion und Host-Fähigkeiten dies erlauben. Neue Serverpasswörter/Kopplungslinks erfordern Fernsteuerung oder HTTPS statt unverschlüsseltem LAN-HTTP. Siehe [gespeicherte Server](remote-access.md#saved-servers). |
 | Desktop-Remote-Fenster und Fenster-Proxy | Nur auf dem Host (`/api/remote-proxy/`). |
 | SideCar-**Inhaltsproxy** | Erfordert Loopback (`/sidecars/`), ebenso wie SideCar-WebSockets. Die Registrierungs-APIs `/api/sidecars` sind für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. |
 | Inhalt der Web-Vorschau | Verfügbar, solange **Web-Vorschauen** (Standard) unter **Einstellungen → Remote-Zugriff → Fernsteuerung** auf dem Host eingeschaltet ist. Jede Vorschauadresse öffnet ihre Seite ohne Kopplung; halten Sie sie privat. Das Ausschalten beendet ausgelieferte Vorschauen und ihre WebSockets; gekoppelte Geräte blenden **Web-Vorschau öffnen** nach dem Neuladen aus. |

@@ -308,7 +308,13 @@ for (const refused of [false, true]) test(`save A → Escape → edit B ignores 
   f.check()
 })
 
-for (const flag of ["absent", false, "true", 1]) test(`strict off (${String(flag)}) forged Servers section falls back without mounting new IO`, { timeout: 90_000 }, async t => {
+test("Servers settings are available without a saved flag", { timeout: 90_000 }, async t => {
+  const f = await fixture(t, "absent")
+  await field(f.page).waitFor()
+  f.check()
+})
+
+for (const flag of [false, "true", 1]) test(`strict off (${String(flag)}) forged Servers section falls back without mounting new IO`, { timeout: 90_000 }, async t => {
   const f = await fixture(t, flag), { page } = f
   assert.equal(await field(page).count(), 0)
   assert.equal(await page.getByRole("button", { name: "Servers", exact: true }).count(), 0)

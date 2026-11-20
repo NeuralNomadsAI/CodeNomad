@@ -1,6 +1,6 @@
 # Settings and layout
 
-With experimental multi-backend enabled, Preferences uses the selected project's server for project settings, providers, statistics and memory, including **Tidy up**. An unavailable server keeps project controls inactive. Device settings and SideCars stay local.
+Preferences uses the selected project's server for project settings, providers, statistics and memory, including **Tidy up**. An unavailable server keeps project controls inactive. Device settings and SideCars stay local.
 
 ## Open settings and identify the scope {#open-settings}
 
@@ -42,7 +42,7 @@ In **Settings → General**, **Keep the computer awake while CodeNomad is runnin
 
 ## Persistent agent memory {#agent-memory}
 
-With experimental multi-backend (`multiBackend`) enabled, authenticated users over Remote Control, verified HTTPS, LAN or an installed PWA can review, edit and **Tidy up** memory for the selected local or remote project. The selected project determines which backend handles memory.
+Authenticated users over Remote Control, verified HTTPS, LAN or an installed PWA can review, edit and **Tidy up** memory for the selected local or remote project. The selected project determines which backend handles memory.
 
 CodeNomad attempts to remove the session's stale memory instructions; if that cleanup also fails, the previous instructions can remain until a successful refresh.
 
