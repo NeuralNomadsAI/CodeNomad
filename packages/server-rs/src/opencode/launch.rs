@@ -54,7 +54,7 @@ pub fn retired(binary: &str) -> bool {
         value.split('/').collect::<Vec<_>>().windows(4).any(|w| w == [".local", "share", "codenomad", "opencode"])
     };
     lexical(binary)
-        || !(binary.starts_with("\\\\") || binary.starts_with("//"))
+        || !binary.replace('\\', "/").starts_with("//")
             && dunce::canonicalize(binary).is_ok_and(|p| lexical(&p.to_string_lossy()))
 }
 
@@ -170,6 +170,12 @@ pub fn resolve(identifier: &str) -> String {
 
 /// `buildSpawnSpec` for this host (WSL executables are refused before reaching it).
 pub fn spec(binary: &str, args: &[&str]) -> Result<Spec, String> {
+    if binary.contains('\0') || cfg!(windows) && binary.contains(['"', '\r', '\n']) {
+        return Err("The configured OpenCode binary path is invalid".into());
+    }
+    if cfg!(windows) && binary.replace('/', "\\").starts_with("\\\\") {
+        return Err("OpenCode binary must be on a local drive".into());
+    }
     current(binary)?;
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     if !cfg!(windows) {
@@ -180,6 +186,9 @@ pub fn spec(binary: &str, args: &[&str]) -> Result<Spec, String> {
     current(&resolved)?;
     Ok(match extension(&resolved).as_str() {
         ".cmd" | ".bat" => {
+            if resolved.contains(['"', '\r', '\n', '%']) {
+                return Err("The configured OpenCode command path is invalid".into());
+            }
             let comspec = env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
             // cmd.exe takes the whole line as one string: `""<script>" <args>"` keeps spaces.
             let line = format!("\"\"{resolved}\" {}\"", args.join(" "));

@@ -32,14 +32,14 @@ enum Health {
     Failed(String),
 }
 
-struct Output {
-    stdout: String,
-    stderr: String,
+pub struct Output {
+    pub stdout: String,
+    pub stderr: String,
 }
-struct ExecError {
-    code: Option<i32>,
-    detail: String,
-    output: Output,
+pub struct ExecError {
+    pub code: Option<i32>,
+    pub detail: String,
+    pub output: Output,
 }
 
 fn timed_out(label: &str) -> String {
@@ -50,12 +50,17 @@ fn remaining(deadline: Instant, label: &str) -> Result<Duration, String> {
     if left.is_zero() { Err(timed_out(label)) } else { Ok(left) }
 }
 
-/// `isOpenCodeServiceCommandUnavailable`: CLI help whose command list lacks `service`.
-pub fn service_unavailable(stdout: &str, stderr: &str) -> bool {
+/// `helpOutput`: both streams without terminal control sequences or carriage returns.
+pub fn help_output(stdout: &str, stderr: &str) -> String {
     static ANSI: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)").unwrap()
     });
-    let output = ANSI.replace_all(&format!("{stdout}\n{stderr}"), "").replace('\r', "");
+    ANSI.replace_all(&format!("{stdout}\n{stderr}"), "").replace('\r', "")
+}
+
+/// `isOpenCodeServiceCommandUnavailable`: CLI help whose command list lacks `service`.
+pub fn service_unavailable(stdout: &str, stderr: &str) -> bool {
+    let output = help_output(stdout, stderr);
     let Some(start) = output.lines().position(|l| l.trim_end().eq_ignore_ascii_case("commands:")) else { return false };
     let command = |line: &&str, sub: &str| {
         let words: Vec<&str> = line.split_whitespace().collect();
@@ -122,7 +127,7 @@ async fn read_limited(stream: Option<impl tokio::io::AsyncRead + Unpin>) -> std:
 }
 
 /// `execFile` with `windowsHide`, no shell, bounded output and a deadline.
-async fn execute(
+pub async fn execute(
     spec: &launch::Spec,
     env: Option<&[(String, String)]>,
     timeout: Duration,

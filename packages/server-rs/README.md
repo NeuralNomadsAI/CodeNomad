@@ -27,9 +27,9 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/app.rs`, `config.rs` | Shared state and JSON error shape; production settings from the environment |
 | `src/bench.rs` | Positional launch and only reader of the comparison bench variables (`CNRS_FIXTURE_*`, traces) |
 | `src/meta.rs`, `service.rs`, `workspaces.rs`, `storage.rs` | Server identity, user service mode, workspace lifecycle, per-instance documents |
-| `src/settings/` | `config.yaml` / `state.yaml` owners shared with the TypeScript server, server identity |
+| `src/settings/` | `config.yaml` / `state.yaml` owners shared with the TypeScript server (merge patches, Missions conditions), server identity, OpenCode config file editor |
 | `src/auth/` | Local password session (`auth.json`, bootstrap token, `/login`); paired devices, HTTPS admission, TLS |
-| `src/opencode/` | Shared daemon connection found or started through the OpenCode CLI like the TypeScript server (`opencode service status`/`start`/`get password`, minimum version and declared contract), OpenCode installed and updated without Node or npm in npm's global layout (`install/`, `codenomad-rs opencode install|rollback|status`, `POST /api/opencode/update`), `/instance` relay, cursors |
+| `src/opencode/` | Shared daemon connection, `/instance` relay, executable validation and update status, OpenCode installation and updates without Node or npm (`install/`) |
 | `src/events/` | SSE to the UI, bridge from the daemon stream |
 | `src/files/`, `search/`, `git/` | Project files and links, folder browser (any local folder with `--unrestricted-root`), file search, Git status/diff/history/mutations |
 | `src/worktrees/` | Owned checkouts, linked worktrees, location ownership, deletion fence |

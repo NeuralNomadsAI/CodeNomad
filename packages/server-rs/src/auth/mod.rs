@@ -33,6 +33,7 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/api/auth/status", get(status))
         .route("/api/auth/login", post(login).layer(DefaultBodyLimit::max(24 * 1024)))
+        .route("/api/remote-control/status", get(devices::status))
 }
 /// Pairing, served on the HTTPS listener only.
 pub fn remote_routes() -> Router<Shared> {

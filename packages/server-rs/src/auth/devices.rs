@@ -283,6 +283,28 @@ pub async fn issue(State(app): State<Shared>, body: Bytes) -> Response {
         Err(_) => reply(Status::SERVICE_UNAVAILABLE, "Pairing unavailable"),
     }
 }
+/// `GET /api/remote-control/status`: this server has no tunnel, so Remote Control is always stopped
+/// and never resumes; paired devices and the direct HTTPS origin come from this registry.
+pub async fn status(State(app): State<Shared>, channel: Option<Extension<Channel>>) -> Json<Value> {
+    let local = channel.is_none();
+    let (paired, origin) = match &app.devices {
+        Some(d) => {
+            let d = d.lock().unwrap();
+            let origin = (!d.ingress && direct_origin(&d.origin)).then(|| d.origin.clone());
+            (d.doc.devices.iter().filter(|d| d.live()).count(), origin)
+        }
+        None => (0, None),
+    };
+    let mut status = json!({"manageable": local, "enabled": false, "startsOnLaunch": false,
+        "previews": false, "state": "stopped", "pairedDevices": paired});
+    if crate::config::remote_control().trim().eq_ignore_ascii_case("disabled") {
+        status["disabledByAdministrator"] = json!(true);
+    }
+    if let Some(origin) = origin.filter(|_| local) {
+        status["directOrigins"] = json!([origin]);
+    }
+    Json(status)
+}
 pub async fn list(State(app): State<Shared>) -> Response {
     let Some(d) = &app.devices else { return crate::unavailable() };
     let d = d.lock().unwrap();

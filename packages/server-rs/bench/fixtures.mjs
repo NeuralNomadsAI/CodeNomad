@@ -20,6 +20,8 @@ export async function useBenchTemp() {
   process.env.TMP = process.env.TEMP = process.env.TMPDIR = path.join(out, "tmp")
   await mkdir(process.env.TMP, { recursive: true })
 }
+
+export { assertPrivateHost } from "./private-profile.mjs"
 const assertFixtureRoot = root => assert(path.resolve(root).startsWith(path.join(out, "tmp", "opencode")), `Not a bench fixture: ${root}`)
 
 export function rustBinary() {

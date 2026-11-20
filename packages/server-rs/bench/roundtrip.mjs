@@ -12,7 +12,7 @@ import os from "node:os"
 import path from "node:path"
 import { parse as parseYaml } from "yaml"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { fromDist, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateHost, fromDist, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const exe = process.argv[2]
 assert(path.isAbsolute(exe ?? ""), "usage: node roundtrip.mjs <absolute opencode executable>")
@@ -31,10 +31,11 @@ async function serve(label, fixture, config, extra = []) {
   const [httpPort, httpsPort] = [result.httpPort, result.httpsPort]
   const args = ["serve", "--host", ip, "--https", "true", "--http", "true", "--http-port", String(httpPort),
     "--https-port", String(httpsPort), "--generate-token", ...extra]
-  const env = Object.fromEntries(Object.entries({ ...process.env, ...fixture.env }).filter(([k]) => !/^(CODENOMAD_|CLI_|CNRS_)/.test(k)))
+  const env = { ...fixture.env }
   Object.assign(env, { CLI_CONFIG: config, CLI_UI_NO_UPDATE: "1", CNRS_FIXTURE_URL: fixture.connection.endpoint.url,
     CNRS_FIXTURE_PASSWORD: fixture.connection.endpoint.auth.password, CNRS_FIXTURE_PID: String((await fixture.client.server.info()).pid) })
   const [command, prefix] = label.startsWith("ts") ? [process.execPath, [path.join(import.meta.dirname, "ts-server.mjs")]] : [rustBinary(), []]
+  await assertPrivateHost(env, fixture.root)
   const child = spawn(command, [...prefix, ...args], { cwd: fixture.root, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
   let log = "", buffer = ""
   const lines = []

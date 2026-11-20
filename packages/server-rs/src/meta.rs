@@ -38,6 +38,7 @@ pub fn document(
         "workspace-files",
         "workspace-git",
         "linked-worktrees",
+        "config-files",
         "sidecars",
         "service-usage",
     ];

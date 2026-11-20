@@ -39,15 +39,23 @@ struct Server {
 impl Server {
     /// `exe` with the hosts' variables in a private home; the daemon endpoint is a placeholder.
     fn start(root: PathBuf, exe: &Path, args: &[&str]) -> Self {
+        let resolved = dunce::canonicalize(&root)
+            .unwrap_or_else(|_| dunce::canonicalize(root.parent().unwrap()).unwrap().join(root.file_name().unwrap()));
+        if cfg!(windows) {
+            assert!(!resolved.to_string_lossy().to_lowercase().starts_with("c:\\users\\admin\\"));
+        }
         let (home, config, cwd) = (root.join("home"), root.join("config"), root.join("cwd"));
         for dir in [&home, &config, &cwd] {
             fs::create_dir_all(dir).unwrap();
         }
         let mut command = Command::new(exe);
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000);
         command.args(args).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).kill_on_drop(true);
         for (name, _) in std::env::vars_os() {
             let name = name.to_string_lossy().into_owned();
-            if name.starts_with("CODENOMAD_") || name.starts_with("CLI_") || name.starts_with("CNRS_") {
+            let name = name.to_ascii_uppercase();
+            if ["CODENOMAD_", "CLI_", "CNRS_", "XDG_"].iter().any(|prefix| name.starts_with(prefix)) {
                 command.env_remove(name);
             }
         }
@@ -55,7 +63,13 @@ impl Server {
             .env("CODENOMAD_NATIVE_PARENT", "1")
             .env("CLI_CONFIG", &config)
             .env("HOME", &home)
-            .env("USERPROFILE", &home);
+            .env("USERPROFILE", &home)
+            .env("APPDATA", home.join("AppData/Roaming"))
+            .env("LOCALAPPDATA", home.join("AppData/Local"))
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .env("XDG_STATE_HOME", home.join(".local/state"))
+            .env("XDG_CACHE_HOME", home.join(".cache"));
         let mut child = command.spawn().unwrap();
         let (tx, lines) = mpsc::unbounded_channel();
         let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
