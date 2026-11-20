@@ -11,12 +11,12 @@ fn on(name: &str) -> bool {
     env::var(name).as_deref() == Ok("1")
 }
 
-/// `codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>` (bench and user
+/// `codenomad-rs <root> <identity.json> <port or 0> <opencode binary or "">` (bench and user
 /// service): password `CNRS_SERVER_PASSWORD`, HTTPS from `CNRS_HTTPS_BIND`, `CNRS_HTTPS_NAME`,
 /// `CNRS_TLS_KEY`/`CERT`/`CA` and `CNRS_TLS_SANS`, data beside the identity file.
 pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::Error>> {
     let [root, identity, port, binary] = args else {
-        return Err("usage: codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>".into());
+        return Err("usage: codenomad-rs <root> <identity.json> <port or 0> <opencode binary or \"\">".into());
     };
     let identity = PathBuf::from(identity);
     let data = identity.with_extension("data");
@@ -46,7 +46,11 @@ pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::E
     Ok(host::Launch {
         root: root.into(),
         identity,
-        config: data.join("config.yaml"),
+        // `CLI_CONFIG` and `CLI_UNRESTRICTED_ROOT` as `serve` reads them; settings beside the data otherwise.
+        settings: crate::settings::document::Location::resolve(
+            &env::var("CLI_CONFIG").unwrap_or_else(|_| data.to_string_lossy().into_owned()),
+        ),
+        unrestricted: host::cli::switch("CLI_UNRESTRICTED_ROOT")?,
         data,
         binary: binary.into(),
         http: host::Bind { ip: [127, 0, 0, 1].into(), port: port.parse()?, fallback: false },
@@ -57,7 +61,7 @@ pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::E
     })
 }
 
-/// The fixture daemon (`CNRS_FIXTURE_URL`, `CNRS_FIXTURE_PASSWORD`), exclusive with a service record.
+/// The fixture daemon (`CNRS_FIXTURE_URL`, `CNRS_FIXTURE_PASSWORD`), in place of the CLI lifecycle.
 pub fn native_endpoint() -> Result<(String, String), env::VarError> {
     Ok((env::var("CNRS_FIXTURE_URL")?, env::var("CNRS_FIXTURE_PASSWORD")?))
 }

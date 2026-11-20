@@ -60,20 +60,47 @@ Write-Env (Join-Path $L.Config 'install.conf') $conf
 
 $oc = Join-Path $L.State 'opencode'
 $daemon = Read-Env (Join-Path $L.Config 'opencode.env')
+# One profile for every daemon, started by the supervisor or by the backend's CLI discovery:
+# its database and service record keep their defaults inside the profile.
 foreach ($pair in @(@('USERPROFILE', $oc), @('HOME', $oc), @('APPDATA', "$oc\AppData\Roaming"), @('LOCALAPPDATA', "$oc\AppData\Local"),
     @('TEMP', "$oc\tmp"), @('TMP', "$oc\tmp"), @('XDG_DATA_HOME', "$oc\data"), @('XDG_CONFIG_HOME', "$oc\config"),
-    @('XDG_STATE_HOME', "$oc\state"), @('XDG_CACHE_HOME', "$oc\cache"), @('OPENCODE_DB', "$oc\native.db"),
+    @('XDG_CACHE_HOME', "$oc\cache"),
     @('OPENCODE_DISABLE_MODELS_FETCH', '1'), @('OPENCODE_DISABLE_FFF', '1'), @('OPENCODE_CONFIG_PROJECT_DISABLE', '1'))) {
   $daemon[$pair[0]] = $pair[1]
+}
+foreach ($key in 'XDG_STATE_HOME', 'OPENCODE_DB') { $daemon.Remove($key) }
+$db = "$oc\data\opencode\opencode.db"
+if ((Test-Path "$oc\native.db") -and !(Test-Path $db)) {
+  $supervisor = Get-Pid $L 'supervisor'
+  $process = if ($supervisor) { Get-Process -Id $supervisor -ErrorAction SilentlyContinue }
+  if ($process) {
+    Set-Text (Join-Path $L.Run 'stop.request') ''
+    if (!$process.WaitForExit(30000)) { throw 'supervisor did not stop' }
+  }
+  New-Item -ItemType Directory -Force (Split-Path $db) | Out-Null
+  foreach ($suffix in '', '-wal', '-shm') { if (Test-Path "$oc\native.db$suffix") { Move-Item "$oc\native.db$suffix" "$db$suffix" } }
+  Write-Log "moved the daemon database to $db"
 }
 if (!$daemon.Contains('OPENCODE_SERVER_PASSWORD')) { $daemon['OPENCODE_SERVER_PASSWORD'] = & $secret }
 if ($TestMarkers) { $daemon['CNRS_TEST_PLUGIN_MARKERS'] = $TestMarkers; New-Item -ItemType Directory -Force $TestMarkers | Out-Null }
 Write-Env (Join-Path $L.Config 'opencode.env') $daemon
 foreach ($dir in "$oc\AppData\Roaming", "$oc\AppData\Local", "$oc\tmp", (Join-Path $L.State 'projects')) { New-Item -ItemType Directory -Force $dir | Out-Null }
+# A daemon the backend starts listens where the supervisor's does.
+$saved = @{}
+foreach ($key in $daemon.Keys) { $saved[$key] = [Environment]::GetEnvironmentVariable($key); [Environment]::SetEnvironmentVariable($key, $daemon[$key]) }
+try {
+  foreach ($pair in @(@('port', $conf['DAEMON_PORT']), @('hostname', '127.0.0.1'))) {
+    & "$nativeDir\opencode.exe" service set $pair[0] $pair[1] | Out-Null
+    if ($LASTEXITCODE) { throw "opencode service set $($pair[0]) failed" }
+  }
+} finally { foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) } }
 
 $rust = Read-Env (Join-Path $L.Config 'codenomad-rs.env')
 if (!$rust.Contains('CNRS_SERVER_PASSWORD')) { $rust['CNRS_SERVER_PASSWORD'] = & $secret }
-$rust['CNRS_OPENCODE_SERVICE_FILE'] = "$oc\state\opencode\service.json"
+# The backend finds (or starts) the daemon through its CLI, which reads the daemon's profile.
+$rust.Remove('CNRS_OPENCODE_SERVICE_FILE')
+foreach ($key in 'USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
+    'OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_FFF', 'OPENCODE_CONFIG_PROJECT_DISABLE') { $rust[$key] = $daemon[$key] }
 if ($Plugins) { $rust['CNRS_PROVISION_PLUGINS'] = $Plugins } elseif (!$rust.Contains('CNRS_PROVISION_PLUGINS')) { $rust['CNRS_PROVISION_PLUGINS'] = '1' }
 $rust['CNRS_PLUGIN_PROFILE_ROOT'] = $oc
 if ($HttpsBind) {

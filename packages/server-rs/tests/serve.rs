@@ -55,9 +55,7 @@ impl Server {
             .env("CODENOMAD_NATIVE_PARENT", "1")
             .env("CLI_CONFIG", &config)
             .env("HOME", &home)
-            .env("USERPROFILE", &home)
-            .env("CNRS_FIXTURE_URL", "http://127.0.0.1:9/")
-            .env("CNRS_FIXTURE_PASSWORD", "placeholder");
+            .env("USERPROFILE", &home);
         let mut child = command.spawn().unwrap();
         let (tx, lines) = mpsc::unbounded_channel();
         let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();

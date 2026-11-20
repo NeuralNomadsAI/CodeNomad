@@ -188,3 +188,11 @@ fn legacy_automation_entry_is_migrated_and_lease_requests_match_the_reference() 
     assert_eq!(fs::read_to_string(&pruning.lease).unwrap(), "{\"version\":1,\"design\":true}");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn packaged_plugins_beside_the_binary_come_first() {
+    let dir = scratch();
+    assert_eq!(plugin_folder(&dir), dir.join("plugins"));
+    fs::create_dir_all(dir.join("dist").join("plugins")).unwrap();
+    assert_eq!(plugin_folder(&dir), dir.join("dist").join("plugins"));
+}

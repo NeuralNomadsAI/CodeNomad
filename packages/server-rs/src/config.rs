@@ -8,25 +8,36 @@ pub const VERSION: &str = match option_env!("CNRS_BUILD_VERSION") {
     None => env!("CARGO_PKG_VERSION"),
 };
 
-/// The `service.json` that `opencode serve --service` writes under its own `XDG_STATE_HOME`.
-pub fn opencode_service_file() -> Option<OsString> {
-    env::var_os("CNRS_OPENCODE_SERVICE_FILE")
+/// An install environment naming a daemon record instead of the daemon's profile: refused, since
+/// discovery through the CLI without that profile would reach the account's own daemon.
+pub fn service_record_named() -> bool {
+    env::var_os("CNRS_OPENCODE_SERVICE_FILE").is_some()
 }
 
 pub fn remote_control() -> String {
     env::var("CODENOMAD_REMOTE_CONTROL").unwrap_or_default()
 }
 
+/// Launched as `serve`: bundled plugins follow the reference (always its set, payloads beside the
+/// binary, any discovery root), never the positional launch's `CNRS_*` switches.
+static SERVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn set_serve() {
+    SERVE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+pub fn serve() -> bool {
+    SERVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Bundled plugins: `1` (the reference set) or a comma list; payload folder and profile root.
 pub fn provision_plugins() -> Option<String> {
-    env::var("CNRS_PROVISION_PLUGINS").ok()
+    if serve() { Some("1".into()) } else { env::var("CNRS_PROVISION_PLUGINS").ok() }
 }
 pub fn native_parent() -> bool {
     env::var("CODENOMAD_NATIVE_PARENT").as_deref() == Ok("1")
 }
 pub fn plugin_assets() -> Option<OsString> {
-    env::var_os("CNRS_PLUGIN_ASSETS")
+    env::var_os("CNRS_PLUGIN_ASSETS").filter(|_| !serve())
 }
 pub fn plugin_profile_root() -> Option<OsString> {
-    env::var_os("CNRS_PLUGIN_PROFILE_ROOT")
+    env::var_os("CNRS_PLUGIN_PROFILE_ROOT").filter(|_| !serve())
 }

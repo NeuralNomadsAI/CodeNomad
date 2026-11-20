@@ -294,8 +294,8 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
         || main.admin != main.common
         || main.common != local.common
         || main.common_id != local.common_id
-        || !main_path.starts_with(&app.root)
-        || !local.root.starts_with(&app.root)
+        || !main_path.starts_with(&app.scope)
+        || !local.root.starts_with(&app.scope)
     {
         return Err(conflict("Workspace and native project do not share a checkout"));
     }
@@ -315,7 +315,7 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
     for entry in entries {
         let service_root = entry["directory"].as_str().ok_or_else(native_error)?;
         let Some(root) = physical(service_root) else { continue };
-        if !root.starts_with(&app.root) || !seen.insert(root.clone()) {
+        if !root.starts_with(&app.scope) || !seen.insert(root.clone()) {
             continue;
         }
         let Some(meta) = snapshot.get(&root) else { continue };

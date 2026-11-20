@@ -18,6 +18,7 @@ mod opencode;
 mod search;
 mod service;
 mod sessions;
+mod settings;
 mod shared;
 mod storage;
 mod subagent_depth;
@@ -58,6 +59,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Serves until a stop request; true when every listener and task stopped cleanly.
 async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
+    if launch.serve {
+        config::set_serve();
+    }
     let root = dunce::canonicalize(&launch.root)?;
     if !root.is_dir() {
         return Err("Workspace root must be a directory".into());
@@ -69,7 +73,14 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     if let Some(token) = auth.bootstrap_token().filter(|_| launch.serve) {
         host::line(&format!("CODENOMAD_BOOTSTRAP_TOKEN:{token}"));
     }
-    let native = opencode::Native::connect().await?;
+    if !launch.serve && config::service_record_named() {
+        return Err("CNRS_OPENCODE_SERVICE_FILE is not supported: run the install again".into());
+    }
+    // An empty selection is the default OpenCode installation (no saved selection is read yet).
+    let selected = launch.binary.to_string_lossy();
+    let selected = if selected.is_empty() { opencode::launch::default_binary() } else { selected.into_owned() };
+    let binary = opencode::launch::resolve(&selected);
+    let native = opencode::Native::connect(&binary)?;
     let listener = launch.http.listen().await?;
     let port = listener.local_addr()?.port();
     let (identity, data) = (launch.identity.as_path(), launch.data);
@@ -87,13 +98,25 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         Some(tls) => Some(auth::devices::open(&data, tls)?),
         None => None,
     };
-    let meta = meta::document(identity, port, &root, tls.as_ref(), launch.ui.meta())?;
+    let settings = settings::Settings::new(launch.settings);
+    let meta = meta::document(settings.server_id()?, port, &root, tls.as_ref(), launch.ui.meta())?;
     let (watch_tx, watch_rx) = tokio::sync::mpsc::channel(512);
     let calendar_profile = missions::calendar::setup(&data)?;
     let watches = files::watch::Watches::new(watch_tx);
-    let mut app = App::new(auth, port, data, root, meta, native, launch.binary, devices, watches, calendar_profile);
-    app.config = launch.config;
-    let state = Arc::new(app);
+    let state = Arc::new(App::new(
+        auth,
+        port,
+        data,
+        root,
+        launch.unrestricted,
+        settings,
+        meta,
+        native,
+        binary.into(),
+        devices,
+        watches,
+        calendar_profile,
+    ));
 
     let routes = Router::new()
         .merge(meta::routes())
@@ -104,6 +127,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(git::routes())
         .merge(worktrees::routes())
         .merge(storage::routes())
+        .merge(settings::routes())
         .merge(memory::routes())
         .merge(subagent_depth::routes())
         .merge(sessions::routes())

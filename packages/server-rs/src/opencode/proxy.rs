@@ -111,20 +111,6 @@ pub async fn verify_mutation(app: &App, id: &str, directory: &str, record: &Valu
     Ok(())
 }
 
-pub async fn yolo_read(
-    State(app): State<Shared>,
-    axum::extract::Path((id, session)): axum::extract::Path<(String, String)>,
-) -> Result<Json<Value>, Error> {
-    let w = app.workspace(&id)?;
-    let row = session_record(&app, &session).await?;
-    let directory = row["location"]["directory"].as_str().ok_or_else(foreign)?;
-    if row["location"].get("workspaceID").is_some() || !crate::worktrees::owns(&app, &w, directory).await {
-        return Err(foreign());
-    }
-    // This prototype has no automatic permission decisions.
-    Ok(Json(json!({"enabled":false})))
-}
-
 /// The native status and the cache headers a relayed body keeps.
 fn relayed(response: &reqwest::Response) -> axum::http::response::Builder {
     ["content-type", "cache-control", "etag", "last-modified"].into_iter().fold(
@@ -173,7 +159,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if dunce::canonicalize(opened).ok().as_ref() != Some(&workspace.path) {
         return Err(foreign());
     }
-    let mut target = app.native.url.clone();
+    let mut target = app.native.url();
     target.set_query(head.uri.query());
     let requested = target
         .query_pairs()
@@ -344,7 +330,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     if head.method == Method::POST && route.ends_with("/prompt") {
         let session = session.ok_or_else(upstream_error)?;
-        let url = app.native.url.join(&format!("/api/session/{session}/environment")).map_err(|_| upstream_error())?;
+        let url =
+            app.native.url().join(&format!("/api/session/{session}/environment")).map_err(|_| upstream_error())?;
         // Backend secrets and private daemon state never reach a session's environment.
         const PRIVATE: &str = "OPENCODE_PASSWORD OPENCODE_SERVER_PASSWORD CODENOMAD_SERVER_PASSWORD \
             CODENOMAD_AUTOMATION_BRIDGE_TOKEN CODENOMAD_BOOTSTRAP_TOKEN OPENCODE_DB XDG_STATE_HOME OPENCODE_CONFIG_CONTENT";

@@ -33,7 +33,6 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/api/auth/status", get(status))
         .route("/api/auth/login", post(login).layer(DefaultBodyLimit::max(24 * 1024)))
-        .route("/api/auth/logout", post(logout))
 }
 /// Pairing, served on the HTTPS listener only.
 pub fn remote_routes() -> Router<Shared> {
@@ -365,10 +364,9 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         // The reference's `preHandler`: public auth routes and pages, then the session; pages
         // without one go to `/login`, other non-API paths reach the UI only.
         let principal = app.auth.principal(key.as_deref());
-        let public =
-            matches!(path.as_str(), "/api/auth/login" | "/api/auth/status" | "/api/auth/logout" | "/api/auth/token")
-                || path == "/login"
-                || path == "/auth/token" && app.auth.settings.token;
+        let public = matches!(path.as_str(), "/api/auth/login" | "/api/auth/status" | "/api/auth/token")
+            || path == "/login"
+            || path == "/auth/token" && app.auth.settings.token;
         let api = ["/api/", "/workspaces/", "/sidecars/", "/previews/"].iter().any(|p| path.starts_with(p));
         let html = wants_html(req.headers());
         if public || principal.is_some() {
@@ -471,15 +469,6 @@ pub async fn token(
         }
         Err(e) => e.into_response(),
     }
-}
-
-pub async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Result<impl IntoResponse, Error> {
-    if let Some(key) = cookies(&headers, app.auth.cookie_name())?.0 {
-        if let Some(record) = app.auth.sessions.lock().unwrap().remove(&key) {
-            record.principal.0.cancel();
-        }
-    }
-    Ok(([(header::SET_COOKIE, app.auth.session_cookie("", Some(0)))], Json(json!({"ok":true}))))
 }
 
 #[derive(Deserialize)]

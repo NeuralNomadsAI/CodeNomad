@@ -69,18 +69,34 @@ port=$(conf PORT)
 
 oc=$CNRS_STATE/opencode
 daemon_env=$CNRS_CONFIG/opencode.env
-for kv in "HOME=$oc" "TMPDIR=$oc/tmp" "XDG_DATA_HOME=$oc/data" "XDG_CONFIG_HOME=$oc/config" \
-  "XDG_STATE_HOME=$oc/state" "XDG_CACHE_HOME=$oc/cache" "OPENCODE_DB=$oc/native.db" \
+# One profile for every daemon, started by its unit or by the backend's CLI discovery:
+# its database and service record keep their defaults inside the profile.
+profile="HOME TMPDIR XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME OPENCODE_DISABLE_MODELS_FETCH OPENCODE_DISABLE_FFF OPENCODE_CONFIG_PROJECT_DISABLE"
+for kv in "HOME=$oc" "TMPDIR=$oc/tmp" "XDG_DATA_HOME=$oc/data" "XDG_CONFIG_HOME=$oc/config" "XDG_CACHE_HOME=$oc/cache" \
   OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_FFF=1 OPENCODE_CONFIG_PROJECT_DISABLE=1; do
   set_key "$daemon_env" "${kv%%=*}" "${kv#*=}"
 done
+sed -i '/^XDG_STATE_HOME=/d;/^OPENCODE_DB=/d' "$daemon_env"
 grep -q '^OPENCODE_SERVER_PASSWORD=' "$daemon_env" || set_key "$daemon_env" OPENCODE_SERVER_PASSWORD "$(secret)"
 [ -z "$markers" ] || { set_key "$daemon_env" CNRS_TEST_PLUGIN_MARKERS "$markers"; mkdir -p "$markers"; }
 mkdir -p "$oc/tmp"
+db=$oc/data/opencode/opencode.db
+if [ -f "$oc/native.db" ] && [ ! -f "$db" ]; then
+  systemctl --user stop "$RUST_UNIT" "$DAEMON_UNIT" 2>/dev/null || true
+  mkdir -p "$(dirname "$db")"
+  for suffix in '' -wal -shm; do [ ! -f "$oc/native.db$suffix" ] || mv "$oc/native.db$suffix" "$db$suffix"; done
+  log "moved the daemon database to $db"
+fi
+# A daemon the backend starts listens where the unit's does.
+( set -a; . "$daemon_env"; set +a
+  "$CNRS_HOME/opencode/current/bin/opencode" service set port "$daemon_port" >/dev/null &&
+  "$CNRS_HOME/opencode/current/bin/opencode" service set hostname 127.0.0.1 >/dev/null ) || die "opencode service set failed"
 
 rust_env=$CNRS_CONFIG/codenomad-rs.env
 grep -q '^CNRS_SERVER_PASSWORD=' "$rust_env" 2>/dev/null || set_key "$rust_env" CNRS_SERVER_PASSWORD "$(secret)"
-set_key "$rust_env" CNRS_OPENCODE_SERVICE_FILE "$oc/state/opencode/service.json"
+# The backend finds (or starts) the daemon through its CLI, which reads the daemon's profile.
+sed -i '/^CNRS_OPENCODE_SERVICE_FILE=/d' "$rust_env"
+for key in $profile; do set_key "$rust_env" "$key" "$(sed -n "s/^$key=//p" "$daemon_env")"; done
 [ -n "$plugins" ] || plugins=$(sed -n "s/^CNRS_PROVISION_PLUGINS=//p" "$rust_env" 2>/dev/null || true)
 set_key "$rust_env" CNRS_PROVISION_PLUGINS "${plugins:-1}"
 set_key "$rust_env" CNRS_PLUGIN_PROFILE_ROOT "$oc"

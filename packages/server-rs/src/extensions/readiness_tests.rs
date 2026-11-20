@@ -17,12 +17,13 @@ fn follow(
     std::thread::spawn(move || {
         let folder = PathBuf::from(format!("{}.prepare", lease.display()));
         for _ in 0..100 {
+            // Like the plugin follower, a request still being written is read again on the next pass.
             if let Some(entry) = fs::read_dir(&folder)
                 .ok()
                 .and_then(|d| d.flatten().find(|e| e.path().extension().is_some_and(|x| x == "json")))
+                && let Ok(text) = fs::read_to_string(entry.path())
+                && let Ok(mut value) = serde_json::from_str::<Value>(&text)
             {
-                let text = fs::read_to_string(entry.path()).unwrap();
-                let mut value: Value = serde_json::from_str(&text).unwrap();
                 let directory = value["directory"].as_str().unwrap().to_owned();
                 let incarnation = uuid::Uuid::new_v4().to_string();
                 value["incarnation"] = json!(incarnation);

@@ -19,18 +19,9 @@ mod yaml;
 pub use routes::{bridge, lease_requested, sync};
 
 pub fn routes() -> axum::Router<crate::Shared> {
-    use axum::{
-        Json,
-        extract::State,
-        routing::{get, post},
-    };
+    use axum::routing::{get, post};
     let unavailable = || async { crate::unavailable() };
     axum::Router::new()
-        .route(
-            "/api/storage/config/server",
-            get(|State(app): State<crate::Shared>| async move { Json(routes::server_config(&app)) })
-                .fallback(unavailable),
-        )
         .route("/api/memory", post(routes::operation).fallback(unavailable))
         .route("/api/memory/settings", get(routes::settings).put(routes::settings).fallback(unavailable))
 }

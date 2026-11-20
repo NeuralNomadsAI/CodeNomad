@@ -1,5 +1,4 @@
 //! Helpers shared across domains: JavaScript text semantics, clocks and capped reads.
-pub mod config_yaml;
 pub mod data_owner;
 pub mod fastify;
 pub mod panic_guard;

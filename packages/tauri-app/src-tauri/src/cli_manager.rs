@@ -673,6 +673,9 @@ struct PreferencesConfig {
 struct ServerConfig {
     #[serde(rename = "listeningMode")]
     listening_mode: Option<String>,
+    /// `rust` launches the Rust server; any other value, or none, the TypeScript one.
+    /// Untyped so a malformed value cannot hide `listeningMode`.
+    implementation: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -770,6 +773,16 @@ fn resolve_listening_mode() -> String {
         }
     }
     "local".to_string()
+}
+
+/// `server.implementation` in the selected config (YAML, else the legacy JSON).
+fn configured_implementation() -> Option<String> {
+    let (yaml, json) = resolve_config_locations();
+    let config = fs::read_to_string(yaml)
+        .ok()
+        .and_then(|content| serde_yaml::from_str::<AppConfig>(&content).ok())
+        .or_else(|| fs::read_to_string(json).ok().and_then(|content| serde_json::from_str::<AppConfig>(&content).ok()))?;
+    config.server?.implementation?.as_str().map(str::to_owned)
 }
 
 fn resolve_listening_host() -> String {
@@ -1712,16 +1725,17 @@ enum Runner {
     Rust,
 }
 
-/// `CODENOMAD_SERVER_IMPL=rust` launches the Rust server binary instead of the Node server.
-fn uses_rust_server(value: Option<&str>) -> bool {
-    value.is_some_and(|v| v.trim().eq_ignore_ascii_case("rust"))
+/// `rust` from `CODENOMAD_SERVER_IMPL`, else from `server.implementation`, launches the Rust
+/// server binary instead of the Node server.
+fn uses_rust_server(env: Option<&str>, config: Option<&str>) -> bool {
+    env.filter(|v| !v.trim().is_empty()).or(config).is_some_and(|v| v.trim().eq_ignore_ascii_case("rust"))
 }
 
 const RUST_SERVER_FILE: &str = if cfg!(windows) { "codenomad-rs.exe" } else { "codenomad-rs" };
 
 impl CliEntry {
     fn resolve(app: &AppHandle, dev: bool) -> anyhow::Result<Self> {
-        if uses_rust_server(std::env::var("CODENOMAD_SERVER_IMPL").ok().as_deref()) {
+        if uses_rust_server(std::env::var("CODENOMAD_SERVER_IMPL").ok().as_deref(), configured_implementation().as_deref()) {
             let exe_dir = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf));
             let target_dir = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
             let entry = resolve_rust_server(dev, exe_dir, workspace_root(), target_dir)
@@ -2039,6 +2053,27 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn server_implementation_is_read_from_the_selected_config() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let old = std::env::var("CLI_CONFIG").ok();
+        let yaml = temporary.path().join("config.yaml");
+        let json = temporary.path().join("config.json");
+        std::env::set_var("CLI_CONFIG", &yaml);
+        assert_eq!(configured_implementation(), None);
+        fs::write(&json, r#"{"server":{"implementation":"rust"}}"#).unwrap();
+        assert_eq!(configured_implementation().as_deref(), Some("rust"));
+        fs::write(&yaml, "server:\n  implementation: ts\n  listeningMode: all\n").unwrap();
+        assert_eq!(configured_implementation().as_deref(), Some("ts"));
+        // A malformed value is ignored without hiding the listening mode.
+        fs::write(&yaml, "server:\n  implementation: [rust]\n  listeningMode: all\n").unwrap();
+        assert_eq!(configured_implementation(), None);
+        assert_eq!(resolve_listening_mode(), "all");
+        if let Some(value) = old { std::env::set_var("CLI_CONFIG", value); }
+        else { std::env::remove_var("CLI_CONFIG"); }
+    }
+
+    #[test]
     fn publish_error_shows_loading_pages_like_the_exit_path() {
         // The initial document is about:blank with only the static boot splash:
         // a bare cli:status emit cannot display an error there. Only emit_status
@@ -2155,9 +2190,16 @@ pub(crate) mod tests {
 
     #[test]
     fn rust_server_resolves_from_resources_or_the_newest_cargo_build() {
-        assert!(!uses_rust_server(None));
-        assert!(!uses_rust_server(Some("node")));
-        assert!(uses_rust_server(Some(" Rust ")));
+        assert!(!uses_rust_server(None, None));
+        assert!(!uses_rust_server(Some("node"), None));
+        assert!(uses_rust_server(Some(" Rust "), None));
+        // The variable wins over server.implementation; unknown values mean TypeScript.
+        assert!(uses_rust_server(None, Some("rust")));
+        assert!(uses_rust_server(Some(" "), Some("rust")));
+        assert!(!uses_rust_server(Some("ts"), Some("rust")));
+        assert!(uses_rust_server(Some("rust"), Some("ts")));
+        assert!(!uses_rust_server(None, Some("ts")));
+        assert!(!uses_rust_server(None, Some("rust-next")));
 
         let root = tempfile::tempdir().unwrap();
         let place = |dir: &str| {

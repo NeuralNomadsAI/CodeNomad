@@ -20,9 +20,11 @@ pub struct Launch {
     pub root: PathBuf,
     pub identity: PathBuf,
     pub data: PathBuf,
-    /// `config.yaml`, shared with the reference.
-    pub config: PathBuf,
-    /// The OpenCode executable workspaces report.
+    /// `--config`: where `config.yaml` and `state.yaml` live.
+    pub settings: crate::settings::document::Location,
+    /// `--unrestricted-root`: any local folder may be browsed and opened.
+    pub unrestricted: bool,
+    /// The selected OpenCode executable; empty for the default installation.
     pub binary: PathBuf,
     pub http: Bind,
     pub https: Option<crate::auth::tls::Settings>,

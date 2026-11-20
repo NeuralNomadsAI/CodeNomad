@@ -27,9 +27,12 @@ pub struct App {
     pub auth: auth::Auth,
     pub port: u16,
     pub data: PathBuf,
-    /// The reference's `config.yaml`, shared with it (`<data>/config.yaml` unless `--config` names one).
-    pub config: PathBuf,
     pub root: PathBuf,
+    /// `--unrestricted-root`: the folder browser and new workspaces are not limited to `root`.
+    pub unrestricted: bool,
+    /// The authorized filesystem root: `root`, or empty (any local absolute path) when unrestricted.
+    pub scope: PathBuf,
+    pub settings: crate::settings::Settings,
     pub meta: Value,
     pub native: Native,
     pub binary: PathBuf,
@@ -90,6 +93,8 @@ impl App {
         port: u16,
         data: PathBuf,
         root: PathBuf,
+        unrestricted: bool,
+        settings: crate::settings::Settings,
         meta: Value,
         native: Native,
         binary: PathBuf,
@@ -100,9 +105,11 @@ impl App {
         Self {
             auth,
             port,
-            config: data.join("config.yaml"),
             data,
+            scope: if unrestricted { PathBuf::new() } else { root.clone() },
             root,
+            unrestricted,
+            settings,
             meta,
             native,
             binary,

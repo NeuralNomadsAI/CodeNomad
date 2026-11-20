@@ -63,7 +63,7 @@ pub async fn snapshot(
     RawQuery(query): RawQuery,
 ) -> Result<Response, Error> {
     let bad = || error(Status::BAD_REQUEST, "Invalid pending request directories");
-    let mut parsed = app.native.url.clone();
+    let mut parsed = app.native.url();
     parsed.set_query(query.as_deref());
     let items: Vec<_> = parsed.query_pairs().collect();
     if items.is_empty()

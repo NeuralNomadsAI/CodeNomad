@@ -88,7 +88,7 @@ async fn scope(app: &App) -> Result<String, Error> {
         &json!([
             format!("host:{platform}"),
             location,
-            hash(&json!(["basic", "opencode", app.native.password]).to_string())
+            hash(&json!(["basic", "opencode", app.native.password()]).to_string())
         ])
         .to_string(),
     ))
