@@ -34,6 +34,7 @@ use shared::{data_owner, panic_guard};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    bench::panic_on_start();
     let args: Vec<_> = env::args().skip(1).collect();
     let launch = if host::cli::serves(&args) {
         match host::cli::parse(&args) {

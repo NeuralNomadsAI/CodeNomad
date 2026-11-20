@@ -14,6 +14,7 @@ const uiLoadingDest = path.resolve(root, "src-tauri", "resources", "ui-loading")
 const resourcesRoot = path.resolve(root, "src-tauri", "resources")
 const { prepareBundledNodeRuntime } = require(path.join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
 const { copyPackagedServerResources, stagePackagedServer } = require(path.join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
+const { stageRustServer } = require(path.join(workspaceRoot, "scripts", "rust-server-binary.cjs"))
 
 const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
 
@@ -179,6 +180,7 @@ async function main() {
   } finally {
     fs.rmSync(staged.stagingRoot, { recursive: true, force: true })
   }
+  stageRustServer({ workspaceRoot, serverDest, target: staged.target, log: (message) => console.log(`[prebuild] ${message}`) })
   copyUiLoadingAssets()
   await prepareBundledNodeRuntime({ resourcesRoot, target: staged.target })
   execSync(
