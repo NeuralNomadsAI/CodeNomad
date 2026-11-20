@@ -30,7 +30,7 @@ export const instanceMessages = {
   "panelExtensions.confirm": "安装但不启用",
   "panelExtensions.cancel": "取消",
   "panelExtensions.remove": "移除…",
-  "panelExtensions.removeWarning": "从此 CodeNomad 配置中移除扩展及其启用设置？",
+  "panelExtensions.removeWarning": "从此 CodeNomad 配置中移除扩展、其启用设置及其保存的笔记？",
   "panelExtensions.removeConfirm": "确认移除",
   "instanceTabs.new.title": "新建实例",
   "instanceTabs.new.launcherTitle": "新建实例 — 长按或右键查看更多选项",

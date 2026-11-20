@@ -30,7 +30,7 @@ export const instanceMessages = {
   "panelExtensions.confirm": "無効のままインストール",
   "panelExtensions.cancel": "キャンセル",
   "panelExtensions.remove": "削除…",
-  "panelExtensions.removeWarning": "この CodeNomad プロファイルから拡張機能と有効化設定を削除しますか？",
+  "panelExtensions.removeWarning": "この CodeNomad プロファイルから拡張機能、有効化設定、保存されたメモを削除しますか？",
   "panelExtensions.removeConfirm": "削除を確認",
   "instanceTabs.new.title": "新しいインスタンス",
   "instanceTabs.new.launcherTitle": "新しいインスタンス — 長押しまたは右クリックでその他のオプション",

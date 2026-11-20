@@ -30,7 +30,7 @@ export const instanceMessages = {
   "panelExtensions.confirm": "Установить без активации",
   "panelExtensions.cancel": "Отмена",
   "panelExtensions.remove": "Удалить…",
-  "panelExtensions.removeWarning": "Удалить расширение и настройки активации из этого профиля CodeNomad?",
+  "panelExtensions.removeWarning": "Удалить расширение, настройки активации и сохранённые им заметки из этого профиля CodeNomad?",
   "panelExtensions.removeConfirm": "Подтвердить удаление",
   "instanceTabs.new.title": "Новый экземпляр",
   "instanceTabs.new.launcherTitle": "Новый экземпляр — долгое нажатие или правый клик: больше действий",

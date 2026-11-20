@@ -55,6 +55,28 @@ test("notes.open: a user action while the host checks wins over the navigation",
   assert.equal(getSessionSurface(current).kind, "file")
 })
 
+test("notes.open: a native generation change or a disconnect after the answer retires the navigation", async t => {
+  for (const change of ["generation", "transport"] as const) {
+    const instanceId = `notes-${change}`
+    const { receive, reads } = mount(t, async () => ({ openable: true }), instanceId)
+    const status = (generation: number) => (serverEvents as any).dispatch({ type: "instance.eventStatus", instanceId, status: "connected", generation })
+    status(1)
+    await receive(open)
+    if (change === "generation") status(2)
+    else (serverEvents as any).emitTransportStatus("disconnected")
+    await tick()
+    assert.notEqual(activeSessionId().get(instanceId), "ses_other", change)
+    assert.deepEqual(reads, [], change)
+  }
+})
+
+test("another instance resynchronizing invalidates notes: it may have missed a deletion", async t => {
+  const { sent } = mount(t, async () => ({}), "notes-resync")
+  ;(serverEvents as any).dispatch({ type: "instance.eventStatus", instanceId: "notes-other", status: "connected", generation: 3 })
+  await tick(400)
+  assert.deepEqual(sent, [{ type: "notes:changed" }])
+})
+
 test("a session deleted in another instance invalidates notes, never images", async t => {
   const { sent } = mount(t, async () => ({}), "notes-clone")
   ;(serverEvents as any).dispatch({ type: "instance.event", instanceId: "notes-elsewhere", event: { type: "session.deleted", data: { sessionID: "ses_gone" } } })

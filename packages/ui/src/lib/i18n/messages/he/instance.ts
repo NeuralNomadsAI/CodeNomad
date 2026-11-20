@@ -30,7 +30,7 @@ export const instanceMessages = {
   "panelExtensions.confirm": "התקנה ללא הפעלה",
   "panelExtensions.cancel": "ביטול",
   "panelExtensions.remove": "הסרה…",
-  "panelExtensions.removeWarning": "להסיר את ההרחבה ואת הגדרות ההפעלה מפרופיל CodeNomad זה?",
+  "panelExtensions.removeWarning": "להסיר את ההרחבה, את הגדרות ההפעלה ואת ההערות ששמרה מפרופיל CodeNomad זה?",
   "panelExtensions.removeConfirm": "אישור הסרה",
   "instanceTabs.new.title": "מופע חדש",
   "instanceTabs.new.launcherTitle": "מופע חדש — לחיצה ארוכה או לחיצה ימנית לאפשרויות נוספות",

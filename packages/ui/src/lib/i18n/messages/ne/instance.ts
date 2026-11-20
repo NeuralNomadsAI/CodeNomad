@@ -30,7 +30,7 @@ export const instanceMessages = {
   "panelExtensions.confirm": "निष्क्रिय रूपमा स्थापना गर्नुहोस्",
   "panelExtensions.cancel": "रद्द गर्नुहोस्",
   "panelExtensions.remove": "हटाउनुहोस्…",
-  "panelExtensions.removeWarning": "यो CodeNomad प्रोफाइलबाट विस्तार र यसको सक्रियता सेटिङ हटाउने?",
+  "panelExtensions.removeWarning": "यो CodeNomad प्रोफाइलबाट विस्तार, यसको सक्रियता सेटिङ र यसले राखेका नोटहरू हटाउने?",
   "panelExtensions.removeConfirm": "हटाउने पुष्टि गर्नुहोस्",
   "instanceTabs.new.title": "नयाँ उदाहरण",
   "instanceTabs.new.launcherTitle": "नयाँ उदाहरण — थप विकल्पका लागि लामो थिच्नुहोस् वा दायाँ क्लिक गर्नुहोस्",

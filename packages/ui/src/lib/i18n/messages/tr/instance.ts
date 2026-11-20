@@ -30,7 +30,7 @@ export const instanceMessages = {
   "panelExtensions.confirm": "Devre dışı yükle",
   "panelExtensions.cancel": "İptal",
   "panelExtensions.remove": "Kaldır…",
-  "panelExtensions.removeWarning": "Bu uzantı ve etkinleştirme ayarları bu CodeNomad profilinden kaldırılsın mı?",
+  "panelExtensions.removeWarning": "Bu uzantı, etkinleştirme ayarları ve tuttuğu notlar bu CodeNomad profilinden kaldırılsın mı?",
   "panelExtensions.removeConfirm": "Kaldırmayı onayla",
   "instanceTabs.new.title": "Yeni instance",
   "instanceTabs.new.launcherTitle": "Yeni instance — daha fazlası için uzun basın veya sağ tıklayın",

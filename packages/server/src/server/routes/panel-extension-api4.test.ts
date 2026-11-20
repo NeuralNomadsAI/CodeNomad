@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test, type TestContext } from "node:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { promises as fs } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import Fastify from "fastify"
@@ -84,7 +85,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
         assertCurrent() { if (!connection.current) throw new Error("Superseded connection") } } as any : undefined,
       ownsLocation: async (id: string, location: { directory: string }) => id === "i" && owned.has(location.directory),
       desktopPluginsReady: async () => {},
-      getWorktreeIdentityForPath: async () => "/repo",
+      getWorktreeIdentityForPath: async (_id: string, value: string) => value,
       getServiceWslDistro: () => undefined,
       getServiceDirectoryForPath: async (id: string, value: string) => id === "i" && owned.has(value) ? value : undefined,
       getHostPathForServicePath: async (_id: string, value: string) => value,
@@ -342,4 +343,40 @@ test("notes: a session moved while its project resolves is refused before anythi
   assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "stale", revision: 0 })).statusCode, 409)
   assert.deepEqual(await f.store.notes(f.pkg.manifest.id, f.pkg.digest, "a".repeat(64)), [], "the old project stays empty")
   assert.deepEqual(f.notesChanged, [])
+})
+test("notes: a moved session keeps its written title and cannot be opened; late or fenced writes never commit; bytes decide too-large", async t => {
+  const f = await fixture(t, ["session.context", "panel.notes"])
+  const project = "a".repeat(64)
+  await f.post("notesSet", { sessionID: "ses_other", text: "aside", revision: 0 })
+  f.owned.add("/nested")
+  Object.assign(f.sessions.ses_other, { location: { directory: "/nested" }, title: "Renamed elsewhere" })
+  assert.equal((await f.post("notesList", {})).json().notes[0].title, "Other", "no live title from another project")
+  assert.deepEqual((await f.post("notesOpen", { target: "ses_other" })).json(), { openable: false })
+
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "x".repeat(32 * 1024 + 1), revision: 0 })).json().status, "too-large")
+
+  // A worktree under deletion refuses the write.
+  const fence = new WorktreeDeletionFence()
+  const fenced = await fixture(t, ["session.context", "panel.notes"], { fence })
+  let release!: () => void
+  const deleting = fence.run("/repo", ["/repo"], () => new Promise<void>(resolve => { release = resolve }))
+  try {
+    assert.equal((await fenced.post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).statusCode, 409)
+  } finally { release(); await deleting }
+  assert.deepEqual(await fenced.store.notes(fenced.pkg.manifest.id, fenced.pkg.digest, project), [])
+
+  // A write still staging when the route gives up is never renamed into place.
+  const slow = await fixture(t, ["session.context", "panel.notes"], { routeBudgetMs: 300 })
+  const write = fs.writeFile
+  let resume!: () => void
+  const held = new Promise<void>(resolve => { resume = resolve })
+  const mock = t.mock.method(fs, "writeFile", async (file: any, ...rest: any[]) => {
+    if (String(file).includes(`${path.sep}notes${path.sep}`)) await held
+    return (write as any)(file, ...rest)
+  })
+  assert.equal((await slow.post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).statusCode, 503)
+  resume()
+  await new Promise(resolve => setTimeout(resolve, 100))
+  mock.mock.restore()
+  assert.deepEqual(await slow.store.notes(slow.pkg.manifest.id, slow.pkg.digest, project), [])
 })

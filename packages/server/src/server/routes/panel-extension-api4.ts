@@ -286,6 +286,21 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   // panel.notes: one note per session, filed under the agent-memory project identity of the
   // displayed conversation's Location (else the instance's): worktrees share them, clones when their remote normalizes alike.
   const projectIdentity = deps.projectIdentity ?? resolveMemoryProjectIdentity
+  /** Per request: the project identity of a directory this instance owns, else `undefined`. */
+  const identities = (instanceId: string) => {
+    const known = new Map<string, Promise<string | undefined>>()
+    return (directory: string) => {
+      let found = known.get(directory)
+      if (!found) {
+        found = (async () => {
+          const owned = await manager.getServiceDirectoryForPath(instanceId, directory)
+          return owned ? (await projectIdentity({ directory: owned, distro: manager.getServiceWslDistro(instanceId) })).id : undefined
+        })()
+        known.set(directory, found)
+      }
+      return found
+    }
+  }
   const project = async (context: RouteContext, instanceId: string, sessionID: string | undefined) => {
     const connection = await connect(instanceId)
     context.pin(connection)
@@ -295,20 +310,28 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     if (!location) throw new Refused(403)
     if (session) fenceSession(context, instanceId, client, sessionID!, session.location)
     else fenceLocation(context, instanceId, client, location.directory)
-    // The anchor still where it was, for a write about to commit inside the store queue.
-    const recheck = async () => {
+    // A worktree being deleted (the instance's or a linked one) refuses the answer and any write.
+    const display = await captureDisplayIdentities(deps.worktreeDeletionFence, manager, instanceId, [location.directory])
+    const displayed = () => { if (display && !display()) throw new Refused(409) }
+    context.fence(`display:${location.directory}`, async () => displayed())
+    const identityAt = identities(instanceId)
+    const id = await identityAt(location.directory)
+    if (!id) throw new Refused(403)
+    context.signal.throwIfAborted()
+    // Inside the store queue: the anchor still where it was, then, once the bytes are staged, nothing gone stale.
+    const workspace = manager.get(instanceId), base = manager.getServiceLocation(instanceId)
+    const final = () => {
+      context.signal.throwIfAborted(); connection.assertCurrent(); displayed()
+      if (manager.get(instanceId) !== workspace || manager.getServiceLocation(instanceId) !== base) throw new Refused(409)
+    }
+    const check = async () => {
       if (session) {
         const latest = readLocationRef((await ownedSession(instanceId, client, sessionID!, context.signal)).location)
         if (JSON.stringify(latest) !== JSON.stringify(location)) throw new Refused(409)
       } else if (!await manager.ownsLocation(instanceId, { directory: location.directory }, client, { signal: context.signal })) throw new Refused(403)
-      connection.assertCurrent()
-      context.signal.throwIfAborted()
+      final()
     }
-    const directory = await manager.getServiceDirectoryForPath(instanceId, location.directory)
-    if (!directory) throw new Refused(403)
-    const { id } = await projectIdentity({ directory, distro: manager.getServiceWslDistro(instanceId) })
-    context.signal.throwIfAborted()
-    return { id, client, session, recheck }
+    return { id, client, session, guard: { check, final }, identityAt }
   }
   /** The session, or `undefined` once it is deleted; any other failure fails the request. */
   const unlessDeleted = <T>(signal: AbortSignal, read: Promise<T>) => read.catch(error => {
@@ -321,36 +344,38 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     const { id: projectId } = await project(context, input.instanceId, input.sessionID)
     return { note: noteOf((await deps.store.notes(context.id, input.digest, projectId)).find(note => note.sessionID === input.sessionID)) }
   })
-  // JSON escapes can grow the text sixfold; the store measures its UTF-8 bytes.
-  route("notesSet", "panel.notes", { sessionID: Id, text: z.string().max(PANEL_EXTENSION_LIMITS.noteBytes), revision: Revision },
+  // JSON escapes can grow the text sixfold: the body limit bounds it, the store's UTF-8 measure answers `too-large`.
+  route("notesSet", "panel.notes", { sessionID: Id, text: z.string(), revision: Revision },
     6 * PANEL_EXTENSION_LIMITS.noteBytes + 8192, async (input, context) => {
-      const { id: projectId, session, recheck } = await project(context, input.instanceId, input.sessionID)
+      const { id: projectId, session, guard } = await project(context, input.instanceId, input.sessionID)
       await context.authorize()
-      return deps.store.setNote(context.id, input.digest, projectId, input.sessionID, input.revision, { title: session!.title ?? "", text: input.text }, recheck)
+      return deps.store.setNote(context.id, input.digest, projectId, input.sessionID, input.revision, { title: session!.title ?? "", text: input.text }, guard)
     })
+  // A live title only for a session still in this project; a moved one keeps its last written title.
   route("notesList", "panel.notes", { sessionID: Id.optional(), cursor: z.string().regex(/^\d{1,4}$/).optional() }, 8192, async (input, context) => {
-    const { id: projectId, client } = await project(context, input.instanceId, input.sessionID)
+    const { id: projectId, client, identityAt } = await project(context, input.instanceId, input.sessionID)
     const all = await deps.store.notes(context.id, input.digest, projectId)
     const start = Number(input.cursor ?? 0), page = all.slice(start, start + PANEL_EXTENSION_LIMITS.notesPage)
     const notes = await Promise.all(page.map(async note => {
       const live = await unlessDeleted(context.signal, client.session.get({ sessionID: note.sessionID }, { signal: bounded(context.signal) }))
-      return { sessionID: note.sessionID, title: live?.title || note.title, text: note.text, revision: note.revision, updated: note.updated, orphan: !live }
+      const here = live && await identityAt(readLocationRef(live.location).directory).catch(() => undefined) === projectId
+      return { sessionID: note.sessionID, title: (here && live.title) || note.title, text: note.text, revision: note.revision, updated: note.updated, orphan: !live }
     }))
     return { notes, cursor: start + page.length < all.length ? String(start + page.length) : null } satisfies PanelNotesPage
   })
   route("notesDelete", "panel.notes", { sessionID: Id.optional(), target: Id, revision: Revision.min(1) }, 8192, async (input, context) => {
-    const { id: projectId, recheck } = await project(context, input.instanceId, input.sessionID)
+    const { id: projectId, guard } = await project(context, input.instanceId, input.sessionID)
     await context.authorize()
-    const result = await deps.store.setNote(context.id, input.digest, projectId, input.target, input.revision, { title: "", text: "" }, recheck)
+    const result = await deps.store.setNote(context.id, input.digest, projectId, input.target, input.revision, { title: "", text: "" }, guard)
     return { status: result.status === "saved" ? "deleted" as const : "conflict" as const }
   })
-  // Only a session with a note in this project, still owned by this instance, may be shown.
+  // Only a session with a note in this project, owned by this instance and still in the project, may be shown.
   route("notesOpen", "panel.notes", { sessionID: Id.optional(), target: Id }, 8192, async (input, context) => {
-    const { id: projectId, client } = await project(context, input.instanceId, input.sessionID)
+    const { id: projectId, client, identityAt } = await project(context, input.instanceId, input.sessionID)
     if (!(await deps.store.notes(context.id, input.digest, projectId)).some(note => note.sessionID === input.target)) return { openable: false }
     const session = await unlessDeleted(context.signal, ownedSession(input.instanceId, client, input.target, context.signal))
       .catch(error => { if (error instanceof Refused && error.status === 403) return undefined; throw error })
-    if (!session) return { openable: false }
+    if (!session || await identityAt(readLocationRef(session.location).directory) !== projectId) return { openable: false }
     fenceSession(context, input.instanceId, client, input.target, session.location)
     return { openable: true }
   })

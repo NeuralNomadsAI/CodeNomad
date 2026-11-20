@@ -202,16 +202,50 @@ test("notes: a recreated note gets a newer revision even at the same instant; a 
     assert.ok(again.revision > first.revision, "a stale writer's revision is never issued again")
     clock.mock.restore()
 
-    const rm = fs.rm
-    const busy = t.mock.method(fs, "rm", async (file: Parameters<typeof rm>[0], options: Parameters<typeof rm>[1]) => {
-      if (file === path.join(directory, "notes", id)) throw Object.assign(new Error("busy"), { code: "EBUSY" })
-      return rm(file, options)
-    })
-    await assert.rejects(store.remove(id, pkg.digest), { code: "EBUSY" })
-    busy.mock.restore()
-    assert.equal((await store.notes(id, pkg.digest, project)).length, 1, "the package and its notes stay until removal succeeds")
+    // Either the notes or the catalogue cannot move: the package and its notes both stay, and removal can retry.
+    const rename = fs.rename
+    for (const blocked of [path.join(directory, "notes", id), path.join(directory, "installed.json")]) {
+      const busy = t.mock.method(fs, "rename", async (from: string, to: string) => {
+        if (from === blocked || to === blocked) throw Object.assign(new Error("busy"), { code: "EBUSY" })
+        return rename(from, to)
+      })
+      await assert.rejects(store.remove(id, pkg.digest), { code: "EBUSY" })
+      busy.mock.restore()
+      assert.equal((await store.list())[0]?.digest, pkg.digest)
+      assert.equal((await store.notes(id, pkg.digest, project)).length, 1, `notes kept when ${path.basename(blocked)} cannot move`)
+    }
     await store.remove(id, pkg.digest)
     await store.install(pkg); await store.activate(id, pkg.digest, true)
     assert.deepEqual(await store.notes(id, pkg.digest, project), [])
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+test("notes: same-instant writes list newest first, inconsistent files fail closed, titles keep whole characters, backends share one lock", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-file-"))
+  try {
+    const store = new PanelExtensionStore(directory)
+    const pkg = await api4(["session.context", "panel.notes"])
+    await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
+    const id = pkg.manifest.id, project = "a".repeat(64), file = path.join(directory, "notes", id, `${project}.json`)
+    const clock = t.mock.method(Date, "now", () => 1_800_000_000_000)
+    await store.setNote(id, pkg.digest, project, "ses_a", 0, { title: "x".repeat(255) + "😀", text: "first" })
+    await store.setNote(id, pkg.digest, project, "ses_z", 0, { title: "", text: "second" })
+    clock.mock.restore()
+    const listed = await store.notes(id, pkg.digest, project)
+    assert.deepEqual(listed.map(note => note.text), ["second", "first"])
+    assert.equal(listed[1]!.title, "x".repeat(255), "never half a surrogate pair")
+
+    const good = await readFile(file, "utf8"), stored = JSON.parse(good)
+    for (const corrupt of [{ ...stored, notes: [...stored.notes, { ...stored.notes[0], text: "twice" }] }, { ...stored, revision: 1 }]) {
+      await writeFile(file, JSON.stringify(corrupt))
+      await assert.rejects(store.setNote(id, pkg.digest, project, "ses_new", 0, { title: "", text: "n" }), { code: "unavailable" })
+      assert.equal(await readFile(file, "utf8"), JSON.stringify(corrupt), "never rewritten")
+    }
+    await writeFile(file, good)
+
+    // Two backends on one profile: one write wins, the other sees the conflict.
+    const other = new PanelExtensionStore(directory)
+    const results = await Promise.all([store, other].map((writer, index) =>
+      writer.setNote(id, pkg.digest, project, "ses_race", 0, { title: "", text: `writer ${index}` })))
+    assert.deepEqual(results.map(result => result.status).sort(), ["conflict", "saved"])
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

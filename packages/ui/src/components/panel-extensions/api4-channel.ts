@@ -104,7 +104,9 @@ export function useApi4Channel(props: {
     if (event.type === "panelExtensions.notesChanged" && event.id === props.id) invalidate(false, false, true)
   }))
   onCleanup(serverEvents.on("instance.eventStatus", event => {
-    if (event.type !== "instance.eventStatus" || event.instanceId !== props.instanceId) return
+    if (event.type !== "instance.eventStatus") return
+    // Another instance resynchronized: it may have missed a deletion in a project these notes share.
+    if (event.instanceId !== props.instanceId) { if (event.status === "connected") invalidate(false, false, true); return }
     nativeConnected = event.status === "connected"
     if (!nativeConnected || nativeGeneration !== event.generation) abort()
     nativeGeneration = event.generation
@@ -199,9 +201,12 @@ export function useApi4Channel(props: {
         const { openable } = await panelExtensionsApi4.notes<{ openable: boolean }>(authority, "notesOpen", { ...displayed(), target: sessionID }, signal)
         if (!openable) return { result: { opened: false } }
         // Answer first: showing the session remounts the panel.
-        const selected = props.sessionId
+        // The approval holds only for this mounting, transport and native generation.
+        const selected = props.sessionId, generation = nativeGeneration
+        const valid = () => !disposed && connected && nativeConnected && nativeGeneration === generation
+          && (props.host.activeSessionId() ?? null) === selected
         return { result: { opened: true }, after: () => {
-          void openListedSession(props.instanceId, sessionID, () => !disposed && (props.host.activeSessionId() ?? null) === selected,
+          void openListedSession(props.instanceId, sessionID, valid,
             undefined, intent).then(opened => {
             if (opened && props.host.isPhoneLayout()) props.host.closePanel()
           }, () => {})
