@@ -4,6 +4,13 @@ export const PANEL_EXTENSION_CSP = "default-src 'none'; script-src 'unsafe-inlin
 
 export type PanelExtensionApiVersion = 1 | 2 | 3 | 4
 
+// API 3's object; API 4 grants it with `repository.workItems.read`, over the same messages.
+const workItems = `workItems: Object.freeze({
+      list: (options = {}) => request('workItems', 'Work items unavailable', 'list', { kind: options.kind, query: options.query ?? '',
+        page: options.page ?? 1, fresh: options.fresh === true }),
+      open: (kind, number) => request('workItems', 'Work items unavailable', 'open', { kind, number })
+    }),`
+
 // API 4 objects, each present only when its permission is declared (`composer.prefill`
 // gives `composer`, and so on); requests share one `api4:request`/`api4:result` pair.
 const api4Objects = (permissions: readonly string[]) => [
@@ -25,6 +32,20 @@ const api4Objects = (permissions: readonly string[]) => [
       get: () => request('api4', 'Preferences unavailable', 'get', {}, 'preferences'),
       set: value => request('api4', 'Preferences unavailable', 'set', { value }, 'preferences')
     }),` : "",
+  permissions.includes("panel.notes") ? `notes: Object.freeze({
+      get: () => request('api4', 'Notes unavailable', 'get', {}, 'notes'),
+      set: (text, revision) => request('api4', 'Notes unavailable', 'set', { text, revision }, 'notes'),
+      list: cursor => request('api4', 'Notes unavailable', 'list', cursor === undefined ? {} : { cursor }, 'notes'),
+      delete: (sessionID, revision) => request('api4', 'Notes unavailable', 'delete', { sessionID, revision }, 'notes'),
+      open: sessionID => request('api4', 'Notes unavailable', 'open', { sessionID }, 'notes'),
+      onChanged: listener => { noteChanges.add(listener); return () => noteChanges.delete(listener); }
+    }),` : "",
+  permissions.includes("repository.workItems.read") ? workItems : "",
+  permissions.includes("repository.worktrees.read") ? `worktrees: Object.freeze({
+      list: () => request('api4', 'Worktrees unavailable', 'list', {}, 'worktrees'),${permissions.includes("repository.worktrees.write") ? `
+      open: (kind, number) => request('api4', 'Worktrees unavailable', 'open', { kind, number }, 'worktrees'),` : ""}
+      onChanged: listener => { worktreeChanges.add(listener); return () => worktreeChanges.delete(listener); }
+    }),` : "",
 ].join("\n    ")
 
 // API 2 reads session assets and API 3 the repository's work items, each over
@@ -33,7 +54,7 @@ const bridge = (handshake: string, apiVersion: PanelExtensionApiVersion, permiss
   let context = null;
   let channel;
   let sequence = 0;
-  const pending = new Map(), changes = new Set();
+  const pending = new Map(), changes = new Set(), noteChanges = new Set(), worktreeChanges = new Set();
   const request = (capability, failure, method, input, scope) => new Promise((resolve, reject) => {
     if (!channel || !context || pending.size >= 4) { reject(new Error(failure)); return; }
     const id = ++sequence;
@@ -49,11 +70,7 @@ const bridge = (handshake: string, apiVersion: PanelExtensionApiVersion, permiss
       read: (target, options = {}) => request('assets', 'Assets unavailable', 'read', { target, thumbnail: options.thumbnail === true }),
       onChanged: listener => { changes.add(listener); return () => changes.delete(listener); }
     }),` : ""}
-    ${apiVersion === 3 ? `workItems: Object.freeze({
-      list: (options = {}) => request('workItems', 'Work items unavailable', 'list', { kind: options.kind, query: options.query ?? '',
-        page: options.page ?? 1, fresh: options.fresh === true }),
-      open: (kind, number) => request('workItems', 'Work items unavailable', 'open', { kind, number })
-    }),` : ""}
+    ${apiVersion === 3 ? workItems : ""}
     ${apiVersion === 4 ? api4Objects(permissions) : ""}
     getContext: () => context,
     onContext: listener => { listeners.add(listener); if (context) listener(context); return () => listeners.delete(listener); }
@@ -70,6 +87,8 @@ const bridge = (handshake: string, apiVersion: PanelExtensionApiVersion, permiss
         for (const listener of changes) { try { listener(detail); } catch {} }
         return;
       }
+      if (event.data?.type === 'notes:changed') { for (const listener of noteChanges) { try { listener(); } catch {} } return; }
+      if (event.data?.type === 'worktrees:changed') { for (const listener of worktreeChanges) { try { listener(); } catch {} } return; }
       if (event.data?.type === 'assets:result' || event.data?.type === 'workItems:result' || event.data?.type === 'api4:result') {
         const request = pending.get(event.data.id); if (!request) return;
         pending.delete(event.data.id); clearTimeout(request.timeout);

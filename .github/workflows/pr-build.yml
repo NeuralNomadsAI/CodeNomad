@@ -359,6 +359,7 @@ jobs:
             libgtk-3-dev \
             libglib2.0-dev \
             libwebkit2gtk-4.1-dev \
+            libgstreamer-plugins-base1.0-dev \
             libsoup-3.0-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
@@ -571,6 +572,7 @@ jobs:
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/components/panel-extensions/api4-notes-channel.test.ts
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
           packages/ui/src/components/instance/shell/useSessionCache.test.ts
@@ -970,7 +972,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config zsh libgtk-3-dev \
-            libglib2.0-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libglib2.0-dev libwebkit2gtk-4.1-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-good libsoup-3.0-dev \
             libayatana-appindicator3-dev librsvg2-dev
       - run: npm ci --workspaces --include=optional
       - name: Test WebKit qualification workflow contract

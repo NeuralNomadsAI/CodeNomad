@@ -17,7 +17,7 @@ Para emparejar otro CodeNomad de escritorio, elige **Conectar servidor CodeNomad
 
 1. En el equipo anfitrión, vuelve a **Configuración → Acceso remoto → Control remoto**.
 2. Revisa **Dispositivos emparejados** y su hora de **Última actividad**. Cada dispositivo recibe el nombre de la plataforma y el navegador que lo emparejaron, como `iPhone · Safari`.
-3. Elige **Revocar** para un dispositivo que ya no deba conectarse.
+3. Elige **Revocar** para un dispositivo que ya no deba conectarse. Si aparece **Revocación pendiente**, vuelve a seleccionar **Revocar** antes de reiniciar el anfitrión.
 
 La revocación finaliza las conexiones HTTP/SSE actuales del dispositivo y su acceso futuro. Vuelve a emparejarlo con un enlace nuevo para restaurar el acceso. Un dispositivo caduca tras **30 días sin uso**. Al alcanzar el **límite de 32 dispositivos**, un emparejamiento nuevo reemplaza el dispositivo con actividad más antigua y cierra sus conexiones.
 
@@ -58,7 +58,7 @@ Los dispositivos emparejados pueden usar las API normales de proyectos/conversac
 | **Proxy de contenido** de SideCar | Requiere loopback (`/sidecars/`), al igual que los WebSockets de SideCar. Las API de registro `/api/sidecars` están disponibles para dispositivos emparejados y clientes directos de LAN autenticados. |
 | Contenido de vistas previas web | Disponible mientras **Vistas previas web** esté activado (valor predeterminado) en **Configuración → Acceso remoto → Control remoto** en el equipo anfitrión. Cada dirección de vista previa abre su página sin emparejamiento, así que mantenla privada. Desactivar el interruptor detiene las vistas previas servidas y sus WebSockets; los dispositivos emparejados ocultan **Abrir vista previa web** al recargar. |
 | Puente de automatización | No disponible (`/api/opencode-plugin/`). Las capacidades nativas de escritorio no se convierten en capacidades del navegador. |
-| Actualizaciones de conexión a WebSocket | Disponibles solo para vistas previas web. |
+| Actualizaciones de conexión a WebSocket | Disponibles para vistas previas web y, en dispositivos emparejados, para [conversaciones de voz en directo](voice.md#conversation). |
 
 Usa una conexión loopback en el anfitrión para los proxies/WebSockets reservados al anfitrión y la gestión de Control remoto (`/api/remote-control/`). El acceso directo por LAN también requiere loopback para estas operaciones; consulta [Actualizar](remote-access.md#upgrading). Las vistas previas web de Control remoto usan un token de capacidad en su dirección y siguen disponibles mientras estén activadas en el anfitrión; mantén privada esa dirección.
 

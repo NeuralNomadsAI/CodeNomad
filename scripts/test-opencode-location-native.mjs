@@ -38,7 +38,7 @@ export async function testNativeLocationIdentity({ client, root, service }) {
   console.log("PASS: native modern worktree location and obsolete-selector rejection")
 }
 
-export async function runIsolated(cli, run = testNativeLocationIdentity) {
+export async function runIsolated(cli, run = testNativeLocationIdentity, config = {}) {
   if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute isolated CLI executable path")
   const temporaryRoot = path.join(os.tmpdir(), "opencode")
   await mkdir(temporaryRoot, { recursive: true })
@@ -50,7 +50,7 @@ export async function runIsolated(cli, run = testNativeLocationIdentity) {
     HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root,
     OPENCODE_DB: path.join(root, "fixture.db"), OPENCODE_CONFIG_DIR: path.join(root, "config"),
     OPENCODE_SERVER_PASSWORD: password, OPENCODE_CONFIG_PROJECT_DISABLE: "1",
-    OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1", OPENCODE_CONFIG_CONTENT: "{}",
+    OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1", OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
   })
   await mkdir(env.OPENCODE_CONFIG_DIR)
   let output = ""

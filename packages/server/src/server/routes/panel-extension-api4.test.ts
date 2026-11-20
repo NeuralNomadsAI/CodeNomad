@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test, type TestContext } from "node:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { promises as fs } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import Fastify from "fastify"
@@ -23,17 +24,21 @@ async function fixture(t: TestContext, permissions: string[], options: {
   onSessionGet?: (sessionID: string, reads: number, signal?: AbortSignal) => unknown
   onSettingsRead?: (signal?: AbortSignal) => unknown
   onLocationGet?: (signal?: AbortSignal) => unknown
+  /** May return another project ID for this read (a remote that changed). */
+  onProjectIdentity?: (directory: string) => unknown
   routeBudgetMs?: number
   fence?: WorktreeDeletionFence
 } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-route-"))
-  const store = new PanelExtensionStore(directory)
+  const notesChanged: string[] = []
+  const store = new PanelExtensionStore(directory, () => {}, id => notesChanged.push(id))
   const pkg = await readPanelExtensionArchive(fixtureArchive("<p>x</p>", { apiVersion: 4, permissions }))
   await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
   const calls: Array<{ method: string; input: any; directory: string }> = [], excluded: string[] = [], checked: string[] = []
   const sessions: Record<string, any> = {
     ses_images: { id: "ses_images", location: { directory: "/repo" }, metadata: marked, agent: "design", time: { updated: 42 } },
-    ses_work: { id: "ses_work", location: { directory: "/repo" }, agent: "build", ...options.session },
+    ses_work: { id: "ses_work", title: "Work", location: { directory: "/repo" }, agent: "build", ...options.session },
+    ses_other: { id: "ses_other", title: "Other", location: { directory: "/repo" } },
     ses_foreign: { id: "ses_foreign", location: { directory: "/elsewhere" } },
   }
   const connection = { current: true }, owned = new Set(["/repo"]), reads: Record<string, number> = {}
@@ -41,7 +46,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
     session: { get: async ({ sessionID }: any, request?: { signal?: AbortSignal }) => {
       reads[sessionID] = (reads[sessionID] ?? 0) + 1
       await options.onSessionGet?.(sessionID, reads[sessionID]!, request?.signal)
-      return sessions[sessionID] ?? Promise.reject(new Error("missing"))
+      return sessions[sessionID] ?? Promise.reject(Object.assign(new Error("Session not found"), { _tag: "SessionNotFoundError" }))
     } },
     location: { get: async ({ location }: any, request?: { signal?: AbortSignal }) => {
       await options.onLocationGet?.(request?.signal)
@@ -68,6 +73,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
     excludeDesignFolder: async value => { excluded.push(value.directory); return "excluded" },
     checkDesignFolderExclusion: async value => { checked.push(value.directory); return excluded.includes(value.directory) ? "excluded" : "missing" },
     ...(options.routeBudgetMs ? { routeBudgetMs: options.routeBudgetMs } : {}),
+    projectIdentity: async ({ directory }) => ({ id: (await options.onProjectIdentity?.(directory) as string | undefined) ?? (["/repo", "/clone", "/linked"].includes(directory) ? "a" : "b").repeat(64), source: "local" }),
     imageSettings: { read: async (_workspace: string, _location: unknown, signal?: AbortSignal) => {
       await options.onSettingsRead?.(signal)
       return { location: { directory: "/repo" }, mediaStorage: null,
@@ -80,14 +86,17 @@ async function fixture(t: TestContext, permissions: string[], options: {
         assertCurrent() { if (!connection.current) throw new Error("Superseded connection") } } as any : undefined,
       ownsLocation: async (id: string, location: { directory: string }) => id === "i" && owned.has(location.directory),
       desktopPluginsReady: async () => {},
-      getWorktreeIdentityForPath: async () => "/repo",
+      getWorktreeIdentityForPath: async (_id: string, value: string) => value,
       getServiceWslDistro: () => undefined,
+      // `j`: another open window, on a clone of the same project.
+      getServiceDirectoryForPath: async (id: string, value: string) => id === "i" && owned.has(value) || id === "j" && value === "/clone" ? value : undefined,
+      list: () => [{ id: "i" }, { id: "j" }] as any,
       getHostPathForServicePath: async (_id: string, value: string) => value,
     } })
-  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }) })
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) })
   const post = (method: string, body: Record<string, unknown> = {}) => app.inject({ method: "POST", url: `/api/panel-extensions/${pkg.manifest.id}/${method}`,
     payload: { instanceId: "i", digest: pkg.digest, ...body } })
-  return { app, store, pkg, calls, excluded, checked, post, file: path.join(directory, "installed.json"), connection, owned, sessions }
+  return { app, store, pkg, calls, excluded, checked, post, file: path.join(directory, "installed.json"), connection, owned, sessions, notesChanged }
 }
 
 test("each method requires its own declared permission on the enabled exact package", async t => {
@@ -95,7 +104,9 @@ test("each method requires its own declared permission on the enabled exact pack
   for (const [method, body] of [["images", { sessionID: "ses_images" }], ["imageRead", { sessionID: "ses_images", target }],
     ["imagesStatus", { directory: "/repo" }], ["prefillReferences", { sessionID: "ses_images", targets: [target] }],
     ["conversationStatus", { directory: "/repo" }], ["conversationOpen", { directory: "/repo", title: "Images" }],
-    ["conversationNew", { directory: "/repo", title: "Images" }]] as const) {
+    ["conversationNew", { directory: "/repo", title: "Images" }], ["notesGet", { sessionID: "ses_work" }],
+    ["notesSet", { sessionID: "ses_work", text: "x", revision: 0 }], ["notesList", {}], ["notesDelete", { target: "ses_work", revision: 1 }],
+    ["notesOpen", { target: "ses_work" }]] as const) {
     assert.equal((await post(method, body)).statusCode, 403, method)
   }
   assert.equal((await post("preferencesGet")).statusCode, 200)
@@ -299,4 +310,149 @@ test("preferences routes: get/set through the store; a corrupt store answers una
   assert.deepEqual((await post("preferencesGet")).json(), { status: "unavailable" })
   assert.deepEqual((await post("preferencesSet", { value: {} })).json(), { status: "unavailable" })
   assert.equal(await readFile(file, "utf8"), "corrupt")
+})
+
+test("notes routes: the displayed session's note in its project, a paged project list with orphans, delete and open", async t => {
+  const { post, sessions, owned, notesChanged, pkg } = await fixture(t, ["session.context", "panel.notes"])
+  assert.deepEqual((await post("notesGet", { sessionID: "ses_work" })).json(), { note: null })
+  const saved = (await post("notesSet", { sessionID: "ses_work", text: "plan", revision: 0 })).json()
+  assert.equal(saved.status, "saved")
+  assert.deepEqual(notesChanged, [pkg.manifest.id])
+  assert.deepEqual((await post("notesGet", { sessionID: "ses_work" })).json(), { note: { text: "plan", revision: saved.revision } })
+  assert.equal((await post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).json().status, "conflict")
+  assert.equal((await post("notesSet", { sessionID: "ses_foreign", text: "x", revision: 0 })).statusCode, 403, "a foreign session is refused")
+  assert.equal((await post("notesSet", { sessionID: "ses_work", text: "x", revision: 0, directory: "/elsewhere" })).statusCode, 400, "the host chooses the project")
+  const other = (await post("notesSet", { sessionID: "ses_other", text: "aside", revision: 0 })).json()
+
+  // Without a displayed session, the list is the instance's project; a deleted session's note is an orphan with its last title.
+  delete sessions.ses_work
+  const page = (await post("notesList", {})).json()
+  assert.deepEqual(page.notes.map((note: any) => [note.sessionID, note.title, note.orphan]), [["ses_other", "Other", false], ["ses_work", "Work", true]])
+  assert.equal(page.cursor, null)
+  assert.deepEqual((await post("notesOpen", { target: "ses_work" })).json(), { openable: false }, "an orphan cannot be opened")
+  assert.deepEqual((await post("notesOpen", { target: "ses_other" })).json(), { openable: true })
+  assert.deepEqual((await post("notesOpen", { target: "ses_images" })).json(), { openable: false }, "only a session with a note")
+  assert.deepEqual((await post("notesDelete", { target: "ses_work", revision: 1 })).json(), { status: "conflict" })
+  assert.deepEqual((await post("notesDelete", { target: "ses_work", revision: saved.revision })).json(), { status: "deleted" })
+  assert.deepEqual((await post("notesDelete", { target: "ses_other", revision: other.revision })).json(), { status: "deleted" })
+  assert.deepEqual((await post("notesList", { sessionID: "ses_other" })).json(), { notes: [], cursor: null })
+  owned.delete("/repo")
+  assert.equal((await post("notesList", {})).statusCode, 403, "a disowned Location has no project")
+})
+
+test("notes: a session moved while its project resolves is refused before anything is written", async t => {
+  let f: Fixture = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => { f.sessions.ses_work.location = { directory: "/linked" } } })
+  f.owned.add("/linked")
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "stale", revision: 0 })).statusCode, 409)
+  assert.deepEqual(await f.store.notes(f.pkg.manifest.id, f.pkg.digest, "a".repeat(64)), [], "the old project stays empty")
+  assert.deepEqual(f.notesChanged, [])
+})
+test("notes: a moved session keeps its written title and cannot be opened; late or fenced writes never commit; bytes decide too-large", async t => {
+  const f = await fixture(t, ["session.context", "panel.notes"])
+  const project = "a".repeat(64)
+  await f.post("notesSet", { sessionID: "ses_other", text: "aside", revision: 0 })
+  f.owned.add("/nested")
+  Object.assign(f.sessions.ses_other, { location: { directory: "/nested" }, title: "Renamed elsewhere" })
+  assert.equal((await f.post("notesList", {})).json().notes[0].title, "Other", "no live title from another project")
+  assert.deepEqual((await f.post("notesOpen", { target: "ses_other" })).json(), { openable: false })
+  // In a clone of the project open in another window: its live title, but this window cannot open it.
+  Object.assign(f.sessions.ses_other, { location: { directory: "/clone" }, title: "Renamed in the clone" })
+  assert.equal((await f.post("notesList", {})).json().notes[0].title, "Renamed in the clone")
+  assert.deepEqual((await f.post("notesOpen", { target: "ses_other" })).json(), { openable: false })
+
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "x".repeat(32 * 1024 + 1), revision: 0 })).json().status, "too-large")
+
+  // A worktree under deletion refuses the write.
+  const fence = new WorktreeDeletionFence()
+  const fenced = await fixture(t, ["session.context", "panel.notes"], { fence })
+  let release!: () => void
+  const deleting = fence.run("/repo", ["/repo"], () => new Promise<void>(resolve => { release = resolve }))
+  try {
+    assert.equal((await fenced.post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).statusCode, 409)
+  } finally { release(); await deleting }
+  assert.deepEqual(await fenced.store.notes(fenced.pkg.manifest.id, fenced.pkg.digest, project), [])
+
+  // A write still staging when the route gives up is never renamed into place.
+  const slow = await fixture(t, ["session.context", "panel.notes"], { routeBudgetMs: 300 })
+  const write = fs.writeFile
+  let resume!: () => void
+  const held = new Promise<void>(resolve => { resume = resolve })
+  const mock = t.mock.method(fs, "writeFile", async (file: any, ...rest: any[]) => {
+    if (String(file).includes(`${path.sep}notes${path.sep}`)) await held
+    return (write as any)(file, ...rest)
+  })
+  assert.equal((await slow.post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).statusCode, 503)
+  resume()
+  await new Promise(resolve => setTimeout(resolve, 100))
+  mock.mock.restore()
+  assert.deepEqual(await slow.store.notes(slow.pkg.manifest.id, slow.pkg.digest, project), [])
+})
+test("notes: a remote change during a write refuses it; a committed write answers saved; live titles are bounded", async t => {
+  let reads = 0
+  const moved = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => ++reads > 1 ? "c".repeat(64) : undefined })
+  assert.equal((await moved.post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).statusCode, 409)
+  assert.deepEqual(await moved.store.notes(moved.pkg.manifest.id, moved.pkg.digest, "a".repeat(64)), [])
+
+  const f = await fixture(t, ["session.context", "panel.notes"])
+  const setNote = f.store.setNote.bind(f.store)
+  const mock = t.mock.method(f.store, "setNote", async (...args: Parameters<typeof setNote>) => {
+    const result = await setNote(...args)
+    f.sessions.ses_work.location = { directory: "/elsewhere" }
+    return result
+  })
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "kept", revision: 0 })).json().status, "saved", "never refused after it committed")
+  mock.mock.restore()
+  f.sessions.ses_work.location = { directory: "/repo" }
+  f.sessions.ses_work.title = "x".repeat(255) + "😀"
+  assert.equal((await f.post("notesList", {})).json().notes[0].title, "x".repeat(255))
+})
+test("notes: a remote change while a note is read refuses the answer", async t => {
+  let reads = 0
+  // The first read resolves the project; the second, after the note is read, finds another one.
+  const f = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => ++reads === 2 ? "c".repeat(64) : undefined })
+  assert.equal((await f.post("notesGet", { sessionID: "ses_work" })).statusCode, 409)
+  assert.equal((await f.post("notesGet", { sessionID: "ses_work" })).statusCode, 200)
+})
+
+test("notes: a stale write from a session that just moved is refused, not answered with the old project's note", async t => {
+  let move = false
+  let f: Fixture = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => { if (move) f.sessions.ses_work.location = { directory: "/linked" } } })
+  f.owned.add("/linked")
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "old project", revision: 0 })).json().status, "saved")
+  move = true
+  const stale = await f.post("notesSet", { sessionID: "ses_work", text: "x", revision: 0 })
+  assert.equal(stale.statusCode, 409)
+  assert.equal(stale.body.includes("old project"), false)
+})
+
+test("notes: a session moving during the last project check is refused; a started commit settles the route; open skips a worktree being deleted", async t => {
+  // The session moves while the write's in-queue Git check runs.
+  let reads = 0
+  let f: Fixture = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => { if (++reads === 2) f.sessions.ses_work.location = { directory: "/linked" } } })
+  f.owned.add("/linked")
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).statusCode, 409)
+  assert.deepEqual(await f.store.notes(f.pkg.manifest.id, f.pkg.digest, "a".repeat(64)), [])
+
+  // The deadline passes while the rename runs: its outcome, not the deadline, answers.
+  const slow = await fixture(t, ["session.context", "panel.notes"], { routeBudgetMs: 400 })
+  const rename = fs.rename
+  const mock = t.mock.method(fs, "rename", async (from: string, to: string) => {
+    if (to.endsWith(`${"a".repeat(64)}.json`)) await new Promise(resolve => setTimeout(resolve, 600))
+    return rename(from, to)
+  })
+  const committed = await slow.post("notesSet", { sessionID: "ses_work", text: "kept", revision: 0 })
+  mock.mock.restore()
+  assert.equal(committed.json().status, "saved")
+  assert.deepEqual((await slow.store.notes(slow.pkg.manifest.id, slow.pkg.digest, "a".repeat(64))).map(note => note.text), ["kept"])
+
+  // A noted session in a linked worktree being deleted is not opened.
+  const fence = new WorktreeDeletionFence()
+  const g = await fixture(t, ["session.context", "panel.notes"], { fence })
+  g.owned.add("/linked")
+  await g.post("notesSet", { sessionID: "ses_other", text: "aside", revision: 0 })
+  g.sessions.ses_other.location = { directory: "/linked" }
+  let release!: () => void
+  const deleting = fence.run("/linked", ["/linked"], () => new Promise<void>(resolve => { release = resolve }))
+  try { assert.deepEqual((await g.post("notesOpen", { target: "ses_other" })).json(), { openable: false }) }
+  finally { release(); await deleting }
 })

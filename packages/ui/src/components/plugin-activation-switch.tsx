@@ -50,7 +50,7 @@ export function PluginActivationSwitch(props: {
   active?: boolean
   /** Shown but not writable here, with this reason as its tooltip; it stays focusable. */
   lockedReason?: string
-  /** An integration's switch: the accent switch of Yolo and the settings, where a plain plugin's is the green variant. */
+  /** Integrations use the settings accent; plain plugins use the green variant. */
   integration?: boolean
 }) {
   const { t } = useI18n()

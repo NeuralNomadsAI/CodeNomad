@@ -6,6 +6,7 @@ import { Effect } from "effect"
 import { Session } from "@opencode/schema/session"
 import { z } from "zod"
 import { canonicalAuthority } from "../../missions/authority-protocol"
+import { MissionControlError } from "../../missions/control-error"
 import { missionBusinessCall, missionBusinessMethods, missionBusinessResult, type MissionBusinessControl, type MissionBusinessMethod } from "../../missions/business-control"
 import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 import { requiresMissionCalendar } from "../../missions/launch-policy"
@@ -30,14 +31,18 @@ const sameSource = (left: Source | undefined, right: Source | undefined) => isDe
   && isDeepStrictEqual(left?.installation, right?.installation) && left?.requiresCalendar === right?.requiresCalendar
 const baseSchema = z.object({ sessionID: id.regex(/^ses_/), binding: bindingSchema, incarnation: z.unknown() }).strict()
 const executeSchema = baseSchema.extend({ method: z.enum(missionBusinessMethods), args: z.array(z.unknown()).max(4) }).strict()
-const replySchema = z.object({ selected: z.boolean(), readSessionID: id.optional(), value: z.unknown().optional() }).strict()
+// A Mission refusal is model-facing, as on the direct path; every other failure stays generic.
+const refusalSchema = z.object({ message: z.string().min(1).max(4096), code: id }).strict()
+const replySchema = z.object({ selected: z.boolean(), readSessionID: id.optional(), value: z.unknown().optional(), refusal: refusalSchema.optional() }).strict()
 const text = { type: "string", minLength: 1, maxLength: 4096 } as const
 const base = { type: "object", properties: { sessionID: text,
   binding: { type: "object", properties: { documentID: text, passageID: text, missionID: text, rootID: text },
     required: ["documentID", "passageID", "missionID", "rootID"], additionalProperties: false },
   incarnation: { type: "object", properties: { id: text, pid: { type: "integer", minimum: 1 }, url: text, version: text },
     required: ["id", "pid", "url"], additionalProperties: false } }, required: ["sessionID", "binding", "incarnation"], additionalProperties: false } as const
-const output = { type: "object", properties: { selected: { type: "boolean" }, readSessionID: text, value: {} }, required: ["selected"], additionalProperties: false } as const
+const output = { type: "object", properties: { selected: { type: "boolean" }, readSessionID: text, value: {},
+  refusal: { type: "object", properties: { message: text, code: { type: "string", minLength: 1, maxLength: 240 } }, required: ["message", "code"], additionalProperties: false } },
+required: ["selected"], additionalProperties: false } as const
 export const NativeScheduledBusinessRpc = { id: "codenomad.missions.business/v1", methods: {
   select: { input: base, output }, prepare: { input: base, output }, execute: { input: { ...base,
     properties: { ...base.properties, method: { enum: missionBusinessMethods }, args: { type: "array", maxItems: 4, items: {} } },
@@ -138,10 +143,14 @@ export function createNativeScheduledBusinessBridge(ctx: Plugin.Context, invocat
       const rawReply = await client.rpc(NativeScheduledBusinessRpc)[method](payload as never, { location: { directory: ctx.location.directory }, signal })
       live(); guard()
       const reply = replySchema.parse(json(rawReply, false))
+      if (reply.refusal) throw new MissionControlError(reply.refusal.message, reply.refusal.code)
       if (!reply || typeof reply.selected !== "boolean" || reply.selected && method === "select" && reply.readSessionID !== found.binding.rootID)
         throw new Error("Business RPC reply unavailable")
       return { reply, source: { binding: found.binding, installation: found.installation, requiresCalendar: found.requiresCalendar } }
-    } catch { throw new Error("Scheduled Mission business unavailable") }
+    } catch (error) {
+      if (error instanceof MissionControlError) throw error
+      throw new Error("Scheduled Mission business unavailable")
+    }
     finally { clearTimeout(timer); controller.abort() }
   })
   return {
@@ -218,7 +227,10 @@ export const registerNativeScheduledBusinessRpc = Effect.fn("missions.registerSc
         const runtime = yield* acquire(run)
         const result = yield* Effect.tryPromise({ try: async () => {
           if (method === "execute") return executeNativeScheduledBusiness(runtime, entry, executeSchema.parse(input), found.binding,
-            async id => (await source(ctx, id, run, entry.current))?.binding)
+            async id => (await source(ctx, id, run, entry.current))?.binding).catch((error: unknown) => {
+            if (!(error instanceof MissionControlError)) throw error
+            return { selected: true, refusal: { message: error.message.slice(0, 4096) || error.code, code: error.code.slice(0, 240) } }
+          })
           // A resumed original turn can reach context before its lost admission
           // ACK was published to the document. B alone reconciles that identity;
           // its attempted-input guard keeps missing originals uncertain.

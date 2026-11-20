@@ -34,16 +34,14 @@ import { MissionBodyPending } from "./mission-reader-body"
 import { missionTargetState, retryMissionTarget, useTargetBody } from "./mission-target-bodies"
 import { missionScheduleEditorHold } from "../stores/mission-schedule-editor-holds"
 import { createMissionEditorScheduling } from "./mission-editor-schedule"
-import { isMissionEventKind, missionSchedulingPolicy } from "./mission-scheduling-data"
+import { isMissionEventKind, isMissionPickerSource, isRepositoryCriterion, missionSchedulingPolicy } from "./mission-scheduling-data"
 import { MissionScheduling, type MissionSchedulingLock } from "./mission-scheduling"
 import { createMissionEditorSources } from "./mission-editor-sources"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
 import { createMissionCreationStart } from "./mission-creation-start"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { MissionSourceSelect } from "./mission-source-select"
-import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 import { createMissionEditorRepository } from "./mission-editor-repository"
-import { isRepositoryCriterion } from "./mission-scheduling-data"
 import { X } from "lucide-solid"
 
 export type { MissionEditorAction }
@@ -228,7 +226,7 @@ export function MissionEditor(props: {
     kinds: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
       ...(watched().length ? ["conversation-message" as const] : []),
       ...(coordinatorSessionID() !== undefined && mode() === "recurring" ? ["coordinator-session" as const] : [])],
-    selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && row.kind !== "repository-activity" && !isMissionGithubKind(row.kind) && row.source
+     selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionPickerSource(row.kind) && row.source
       ? [{ kind: row.kind, id: row.source }] : []), ...watched().filter(Boolean).map(id => ({ kind: "conversation-message" as const, id })),
       ...(coordinatorSessionID() ? [{ kind: "coordinator-session" as const, id: coordinatorSessionID()! }] : [])],
     active: isActive, captureView })

@@ -27,4 +27,5 @@ export const remoteControlMessages = {
   "remoteControl.devices.empty": "Henüz eşleştirilmiş cihaz yok.",
   "remoteControl.devices.lastSeen": "Son görülme: {time}",
   "remoteControl.devices.revoke": "İptal et",
+  "remoteControl.devices.revocationPending": "İptal beklemede",
 } as const

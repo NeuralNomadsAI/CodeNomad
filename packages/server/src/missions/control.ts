@@ -694,6 +694,7 @@ export class MissionControl {
           location: this.options.project.location,
           metadata: this.metadata(missionID, "coordinator", { role: "coordinator" }),
           ...input.profiles?.coordinator,
+          ...(input.permissions ? { permissions: input.permissions } : {}),
         })
       }
       this.assertOwnedRoot(coordinator)
@@ -1747,7 +1748,8 @@ export class MissionControl {
         throw new MissionControlError("Every mission task must be complete before a green finish", "open-tasks")
       }
       try {
-        validateMissionCompletionPolicy({ template: mission.template, outcome: input.outcome, tasks: mission.tasks })
+        validateMissionCompletionPolicy({ template: mission.template, outcome: input.outcome, tasks: mission.tasks,
+          artifact: input.artifact, evidence: input.evidence })
       } catch (error) {
         throw new MissionControlError(error instanceof Error ? error.message : "Mission completion policy failed", "invalid-role-policy")
       }

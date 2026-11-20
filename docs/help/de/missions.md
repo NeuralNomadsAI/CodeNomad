@@ -88,9 +88,13 @@ Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die 
 
 **Koordinator-Sitzung** verwendet standardmäßig für jeden Durchlauf eine **Neue Sitzung**. Mit einem Zeitplan oder Ereignis können Sie unter **Vorhandene Sitzung** eine Stamm-Unterhaltung dieses Projekts und derselben Ausführungs-Location wählen. Jeder Durchlauf setzt sie mit dem konfigurierten Agenten und Modell fort; Verlauf, Titel und Berechtigungen bleiben erhalten. Missionssteuerungen betreffen auch vorhandene Arbeit darin. Jeder Durchlauf behält sein eigenes Ergebnis und Journal im Verlauf.
 
+Sie können einen Agenten bitten, den Zeitplan mit seiner aktuellen Stamm-Unterhaltung vorzubereiten. Die Durchläufe warten, bis die Unterhaltung inaktiv ist.
+
 Der ausgewählte Zeitplan zeigt Zustand, nächsten Termin beziehungsweise Prüfung, gestartete/erfolgreiche Durchläufe und frühere Ergebnisse. Der Verlauf hält 30 Ergebnisse; Gesamtzähler bleiben. Ein zugelassenes **Jetzt ausführen** zählt mit. Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
 
 Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, auch für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
+
+Wählen Sie **Neue Commits auf einem lokalen Branch**, um eine lokale Git-Referenz zu beobachten, oder **Neue Commits auf einem Remote-Branch** und geben Sie den Branch-Namen ein (z. B. `dev`). Die Prüfung liest das erkannte Repository direkt, ohne lokalen Fetch. Mehrere Commits zwischen Prüfungen ergeben einen Durchlauf.
 
 ### Bestehende tägliche Zeitpläne {#existing-daily-schedules}
 
@@ -110,7 +114,7 @@ Weitere Einträge und Aufgaben laden am Listenende automatisch. Schlägt das Lad
 
 ### Farben und Zustände {#status-colours}
 
-Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, pulsierendes Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause, ein orangefarbenes Warndreieck Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
+Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause, ein orangefarbenes Warndreieck Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
 
 Ein Akzentsymbol mit einem kleinen statischen neutralen Strich darunter bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse, gestoppte Zeitpläne und **Status unbestätigt** sind neutral; lesen Sie den Statustext.
 

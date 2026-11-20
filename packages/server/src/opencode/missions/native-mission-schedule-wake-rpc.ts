@@ -27,7 +27,7 @@ const inputSchema = z.object({ registrationFile: text, incarnation: z.object({ i
   wake: z.object({ missionID: text, generation: z.number().int().positive(), scheduleID: text, run: z.number().int().positive(), sessionID: text, messageID: text }).strict(),
   preflight: z.object({ cutoff: z.number().int().nonnegative(), issuedAt: z.number().int().nonnegative(), signature: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional() }).strict()
 type Input = z.infer<typeof inputSchema>
-type Entry = { current(): true; signal: AbortSignal }
+type Entry = { current(): true; signal: AbortSignal; consumed?(): void }
 export type NativeMissionScheduleWakePorts = { store: NativeMissionDocumentStore; owner: Pick<NativeScheduleCalendarOwner, "adoptAuxiliary" | "reconcile">;
   runtime: Pick<NativeScheduledPassageRuntime, "preflight" | "wake" | "reconcile">;
   read(): Promise<{ binding: NativeScheduleCarrierBinding; wake: MissionWake }>;
@@ -75,6 +75,9 @@ async function receive(mode: "wake" | "status", input: Input, entry: Entry,
       entry.current()
       if (proof.wake.dueAt !== original.dueAt) throw new Error("schedule-wake-original-changed")
       if (current.highWater < wake.run) await locked.change(doc.id, doc.revision, entry.current, value => missionDocumentChanges.processWake(value, original))
+      // The receipt admits consuming the run, committed with its high-water: closure,
+      // owner and passage reconciliation may outlast it.
+      entry.consumed?.()
       return ports.close(locked)
     })
     if (!consumed) return reply("pending")
@@ -108,12 +111,12 @@ export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifact
     const ownership = yield* readNativeScheduleCarrierOwnership(ctx, input.wake.sessionID), doc = ownership?.document
     if (!ownership?.verified || !doc?.calendarOwner || doc.id !== input.wake.missionID || doc.timeGeneration !== input.wake.generation
       || input.registrationFile !== doc.calendarOwner.installation.registrationFile) throw new Error("schedule-wake-owner")
-    let active = true
+    let active = true, consumed = false
     yield* Effect.addFinalizer(() => Effect.sync(() => { active = false }))
     const current = (): true => {
       if (!active) throw new Error("schedule-wake-retired")
       processCurrent(); assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation)
-      if (mode === "wake") assertNativeSchedulePreflight(input.preflight, input.wake, input.incarnation.id)
+      if (mode === "wake" && !consumed) assertNativeSchedulePreflight(input.preflight, input.wake, input.incarnation.id)
       return assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
     }
     current()
@@ -145,7 +148,7 @@ export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifact
       if (!info || !info.code && info.runCount < input.wake.run || !wake) throw new Error("schedule-wake-proof")
       current(); return { binding, wake }
     }
-    return yield* Effect.tryPromise(() => receiveNativeMissionScheduleWake(mode, input, { current, signal: controller.signal }, { store, owner, runtime, read,
+    return yield* Effect.tryPromise(() => receiveNativeMissionScheduleWake(mode, input, { current, signal: controller.signal, consumed: () => { consumed = true } }, { store, owner, runtime, read,
       claim: async () => parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, doc.id))), doc.id),
       close: locked => closeNativeScheduleCarrierClaimLocked(ctx, doc.id, run, current, locked) }))
   })).pipe(Effect.orDie))

@@ -104,8 +104,8 @@ async function journey(kind) {
   const maintenanceLog = path.join(root, "maintenance-events.jsonl")
   let ownedTechnical = []
   let controlTrace
-  let child, client, endpoint, manager, app, plugin, removeBridge, baseURL, workspace, providerError, holdBusiness = true
-  const calls = [], reported = new Set(), providerOpen = new Set(), secrets = new Set(["fixture-only"])
+  let child, client, endpoint, manager, app, plugin, removeBridge, baseURL, workspace, providerError, configureSelf, holdBusiness = true
+  const calls = [], reportedInputs = new Set(), providerOpen = new Set(), secrets = new Set(["fixture-only"])
   const barrierToken = randomUUID(); secrets.add(barrierToken)
   let heldOriginal, pendingHandoff, releaseOriginal, barrierDone = false
   const releaseBarrier = reason => { if (heldOriginal && !heldOriginal.releasedAt) { heldOriginal.releasedAt = Date.now(); heldOriginal.releaseReason = reason }; releaseOriginal?.() }
@@ -136,14 +136,18 @@ async function journey(kind) {
       const input = JSON.parse(raw), sessionID = request.headers["x-fixture-session"]
       assert.equal(request.headers["x-fixture-kind"], "primary", "A technical/auxiliary turn reached the business provider")
       assert.equal(typeof sessionID, "string")
-      const tools = (input.tools ?? []).map(tool => tool.function?.name), first = !reported.has(sessionID)
+      const original = readSQL(db => db.prepare(`SELECT id FROM session_message
+        WHERE session_id=? AND type='synthetic' AND json_extract(data,'$.metadata."codenomad.mission".kind')='lifecycle'
+        ORDER BY seq DESC LIMIT 1`).get(sessionID))
+      assert(original, "Provider call has no scheduled input")
+      const tools = (input.tools ?? []).map(tool => tool.function?.name), first = !reportedInputs.has(original.id)
       if (first) assert(tools.includes("mission_report"), "Actual native mission_report tool unavailable")
       callRecord = { sessionID, first, at: Date.now() }; calls.push(callRecord)
       if (holdBusiness) await new Promise(resolve => { releases.add(resolve); response.once("close", resolve) })
       if (response.destroyed) { callRecord.closedBeforeResponse = true; return }
       const call = { index: 0, id: `fixture_${randomUUID().replaceAll("-", "")}`, type: "function", function: { name: "mission_report",
         arguments: JSON.stringify({ outcome: "completed", summary: "Owned native product passage completed", final: true }) } }
-      reported.add(sessionID)
+      reportedInputs.add(original.id)
       callRecord.reportStreamed = first
       response.writeHead(200, { "content-type": "text/event-stream" })
       for (const [delta, finish_reason] of [[first ? { role: "assistant", tool_calls: [call] } : { role: "assistant", content: "Done" }, null], [{}, first ? "tool_calls" : "stop"]])
@@ -306,7 +310,8 @@ async function journey(kind) {
     const configuration = {
       title: `Native ${label}`, objective: "Use the actual mission_report tool to finalize this owned fixture passage. No helpers or other effects.",
       template: "custom", taskMode: "native", profiles: { coordinator: selected, roles: { specialist: selected } }, watchedConversationIDs: [],
-      launch: { timing, condition: null, ends: { at: null, afterMs: null, maxLaunches } },
+      launch: existing && kind === "paused-manual" ? { when: [{ kind: "cron", expression: "0 0 * * *", zone: "UTC" }] }
+        : { timing, condition: null, ends: { at: null, afterMs: null, maxLaunches } },
       ...(existing ? { coordinatorSessionID: existing.id } : {}),
     }
     let response
@@ -325,6 +330,12 @@ async function journey(kind) {
       assert.equal(calls.length, 0)
       result.conversions ??= []; result.conversions.push({ id: original.mission.id, before, converted })
     } else response = await http("/scheduled", { requestID: `create_${label}_${randomUUID().replaceAll("-", "")}`, expectedRevision: 0, action: "create", configuration })
+    if (existing && kind === "paused-manual") {
+      const updated = await configureSelf(existing.id, response.document)
+      assert.equal(updated.status, 200, "The existing coordinator must be able to save its selection")
+      assert.equal(updated.document.configuration.coordinatorSelectionAuthor?.coordinatorSessionID, existing.id)
+      response = updated
+    }
     assert.equal(response.document.state, "paused"); assert.equal(response.document.launchedCount, 0)
     if (existing) { result.existingCoordinators ??= []; result.existingCoordinators.push({ missionID: response.document.id, id: existing.id, title: existing.title }) }
     return response.document.id
@@ -456,12 +467,22 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       : legacy ? new DesktopPluginLifecycle("missions", () => readFile(legacy)) : new DesktopPluginLifecycle("missions"); await plugin.start(paths)
     await until(async () => (await client.plugin.list({ location: { directory: project } })).data.some(item => item.id === "codenomad.missions" && item.state.status === "active"))
     if (controlsKinds.includes(kind)) {
+      if (kind === "paused-manual" && values["existing-coordinator"]) {
+        const { controlAgentMissionSchedule } = await import("../packages/server/src/server/routes/mission-agent-schedule.ts")
+        configureSelf = (sessionID, doc) => {
+          const { roots: _roots, profileID: _profile, executionHost: _host, ...configuration } = doc.configuration
+          return controlAgentMissionSchedule({ workspaceManager: manager, worktreeDeletionFence: fence, settings, bridgeToken: registration.token },
+            sessionID, { kind: "schedule", input: { action: "configure", missionID: doc.id,
+              requestID: `select_${randomUUID().replaceAll("-", "")}`, expectedRevision: doc.revision, configuration } },
+            AbortSignal.timeout(20_000))
+        }
+      }
       const { runProductControlJourney } = await import("./native-mission-schedule-product-controls.mjs")
       await runProductControlJourney(kind, { result, project, delayMs, create, activate, control, snapshot, save, until, readSQL,
         diagnoseStop: !!values["diagnose-stop"],
         controlTrace,
         technicalRows, learnTechnical, maintenanceEvents, client: () => client, calls, providerOpen: () => providerOpen.size,
-        reported: id => reported.has(id), secret: value => secrets.add(value), hold: enabled => { holdBusiness = enabled; if (!enabled) { for (const release of releases) release(); releases.clear() } },
+         reported: id => calls.some(call => call.sessionID === id && call.reportStreamed), secret: value => secrets.add(value), hold: enabled => { holdBusiness = enabled; if (!enabled) { for (const release of releases) release(); releases.clear() } },
         business: doc => missionDocumentPassage(readOnlyStorage, doc, () => true).journal.snapshot(),
         nativeFlag: async enabled => {
           const response = await fetch(`${baseURL}/fixture/native-schedules`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }), signal: AbortSignal.timeout(15000) })
@@ -611,12 +632,12 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
         return state.document.pending?.id === pending.id && state.document.launchedCount === 1 && state.start.length === 1
           && Number.isSafeInteger(claim?.time_suspended) && claim.time_suspended > 0 && providerOpen.size > 0 ? state : false
       })
-      assert(!reported.has(pending.coordinatorSessionID)); assert(holdBusiness)
+      assert(!reportedInputs.has(pending.messageID)); assert(holdBusiness)
       await save("before-pending-crash", beforeCrash)
       const killedPID = child.pid, owned = children.find(entry => entry.child === child)
       child.kill("SIGKILL"); await owned.closed; client = undefined; endpoint = undefined
       for (const deadline = Date.now() + 5000; providerOpen.size > 0;) { assert(Date.now() < deadline, "Killed provider connection did not close"); await delay(10) }
-      assert(!reported.has(pending.coordinatorSessionID), "The disconnected original HTTP handler must not emit a report")
+      assert(!reportedInputs.has(pending.messageID), "The disconnected original HTTP handler must not emit a report")
       const afterKill = snapshot(id)
       assert.equal(afterKill.document.pending.id, pending.id); assert.equal(afterKill.document.launchedCount, 1)
       assert.deepEqual(afterKill.start, beforeCrash.start); assert.deepEqual(afterKill.sessions, beforeCrash.sessions)

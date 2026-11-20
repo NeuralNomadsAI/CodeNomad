@@ -18,7 +18,7 @@ const [checked, setChecked] = createSignal(false)
 
 function Example() {
   const { t } = useI18n()
-  const sections = createCoreStatusSectionManifest({ renderTokens: () => null, renderYoloModeSection: () => null,
+  const sections = createCoreStatusSectionManifest({ renderTokens: () => null, renderPermissions: () => null, renderPermissionsInfo: () => null,
     renderProviderUsage: () => null, renderBackgroundProcesses: () => null, renderMcpStatus: () => null, renderPluginStatus: () => null }).statusSections
   return <main class="settings-content" style={{ width: "min(700px, 100%)", margin: "auto", padding: "24px" }}>
     <OpenCodeLoginStartCard />

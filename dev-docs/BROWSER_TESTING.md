@@ -144,7 +144,7 @@ admitted Location before their first RPC, and surface failed setup immediately.
   Rail checks compare mounted icons with fresh bounds and unmounted icons with
   independently measured SVG-local anchors; endpoint counts and tolerances stay explicit.
 - Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
-  `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
+  `fixtureEventStream`. Failed initialization,
   navigation and readiness close the page through `runWithDiagnosticCleanup`;
   bounded bootstrap snapshots go to owned TEMP files. The rendered-fixture wait
   retains its 30-second deadline. A held initial HTTP state read exercises that

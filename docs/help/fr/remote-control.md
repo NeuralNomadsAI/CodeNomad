@@ -17,7 +17,7 @@ Pour appairer un autre CodeNomad de bureau, choisissez **Se connecter au serveur
 
 1. Sur l’hôte, revenez à **Paramètres → Accès distant → Contrôle à distance**.
 2. Vérifiez **Appareils appairés** et leur heure **Dernière activité**. Chaque appareil porte le nom de la plateforme et du navigateur qui l’ont appairé, par exemple `iPhone · Safari`.
-3. Choisissez **Révoquer** pour un appareil qui ne doit plus se connecter.
+3. Choisissez **Révoquer** pour un appareil qui ne doit plus se connecter. Si **Révocation en attente** s’affiche, choisissez de nouveau **Révoquer** avant de redémarrer l’hôte.
 
 La révocation termine les connexions HTTP/SSE actuelles de cet appareil ainsi que son accès futur. Appairez-le à nouveau avec un nouveau lien pour rétablir l’accès. Un appareil expire après **30 jours sans utilisation**. À la **limite de 32 appareils**, un nouvel appairage remplace l’appareil vu le moins récemment et ferme ses connexions.
 
@@ -58,7 +58,7 @@ Les appareils appairés peuvent utiliser les API ordinaires de projet/conversati
 | **Proxy de contenu** SideCar | Exige la boucle locale (`/sidecars/`), comme les WebSockets SideCar. Les API d’enregistrement `/api/sidecars` sont accessibles aux appareils appairés et aux clients LAN directs authentifiés. |
 | Contenu des aperçus web | Disponible tant que **Aperçus web** est activé (par défaut) dans **Paramètres → Accès distant → Contrôle à distance** sur l’hôte. Chaque adresse d’aperçu ouvre sa page sans appairage : gardez-la privée. Désactiver l’interrupteur arrête les aperçus servis et leurs WebSockets ; les appareils appairés masquent **Ouvrir l'aperçu web** une fois rechargés. |
 | Pont d’automatisation | Indisponible (`/api/opencode-plugin/`). Les capacités natives de bureau ne deviennent pas des capacités navigateur. |
-| Mises à niveau WebSocket | Disponibles pour les aperçus web uniquement. |
+| Mises à niveau WebSocket | Disponibles pour les aperçus web et, sur les appareils appairés, pour les [conversations vocales en direct](voice.md#conversation). |
 
 Utilisez une connexion en boucle locale sur l’hôte pour les proxys/WebSockets réservés à l’hôte et la gestion du Contrôle à distance (`/api/remote-control/`). L’accès LAN direct exige lui aussi la boucle locale pour ces opérations ; voir [Mise à niveau](remote-access.md#upgrading). Les aperçus web du Contrôle à distance utilisent un jeton de capacité dans leur adresse et restent disponibles lorsqu’ils sont activés sur l’hôte ; gardez cette adresse privée.
 

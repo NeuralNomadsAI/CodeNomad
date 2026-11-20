@@ -5,7 +5,7 @@ export const permissionReceiptMessages = {
   "permissionReceipts.always": "Her zaman izin verildi",
   "permissionReceipts.reject": "Reddedildi",
   "permissionReceipts.origin.codenomad": "CodeNomad'da verilen karar",
-  "permissionReceipts.origin.yolo": "Otomatik · Yolo",
+  "permissionReceipts.origin.automatic": "Otomatik karar",
   "permissionReceipts.origin.native": "Yerel karar",
   "permissionReceipts.more": "Daha fazla karar yükle",
   "permissionReceipts.error": "İzin kararları yüklenemedi.",

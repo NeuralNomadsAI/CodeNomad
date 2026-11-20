@@ -33,9 +33,11 @@ import { registerMissionScheduleActivation } from "./mission-schedule-activation
 import { registerMissionScheduled } from "./mission-scheduled"
 import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
 import { registerMissionScheduleList } from "./mission-schedule-list"
+import type { SessionPermissionModes } from "../../permissions/session-mode"
 import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
 
 export interface MissionRouteDeps {
+  permissionModes?: SessionPermissionModes
   scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
   scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply" | "verify">
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"

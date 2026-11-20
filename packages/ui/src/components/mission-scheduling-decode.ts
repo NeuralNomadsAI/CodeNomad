@@ -67,6 +67,8 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
     switch (event.kind) {
       case "repository-activity": row.repository = { provider: event.provider, host: event.host, repository: event.repository };
         row.event = event.event; row.author = event.author; break
+      case "remote-branch-commits": row.repository = { provider: event.provider, host: event.host, repository: event.repository };
+        row.source = event.ref.slice("refs/heads/".length); break
       case "schedule-success": case "mission-completed": row.source = event.missionID; break
       case "conversation-message": row.source = event.conversationID; break
       case "branch-commits": row.source = event.ref; if (event.directory !== directory) reason ??= "source"; break

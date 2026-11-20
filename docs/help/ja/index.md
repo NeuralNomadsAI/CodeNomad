@@ -55,7 +55,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- |
 | プロジェクトタブ／ワークスペース／インスタンス | 明示的に開いたフォルダーへの CodeNomad の接続。複数のタブが共有サービスを使用できます。 |
 | 会話／セッション | ディレクトリに関連付けられた、OpenCode ネイティブの履歴と実行。 |
-| ファミリー | 会話と、その配下の再帰的なサブセッション。移動、アクティビティ、Yolo、ミッション操作に関係します。 |
+| ファミリー | 会話と、その配下の再帰的なサブセッション。移動、アクティビティ、ミッション操作に関係します。 |
 | ワークツリー | 閲覧またはセッション配置用に選んだ、所有関係が確認されたリポジトリのチェックアウト。閲覧しても会話は移動しません。 |
 | Location | ディレクトリ単位の OpenCode ネイティブ実行コンテキスト。プロジェクトタブを閉じても CodeNomad はこれを解放せず、OpenCode がその寿命を管理します。 |
 | CodeNomad バックエンド | ワークスペース、Git、認証、クライアント接続を提供するサーバー。そのアカウントと環境が、バックエンドのファイルシステムへのアクセスを決めます。 |
@@ -72,7 +72,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | ワークスペースのインストールまたは配信 | [インストール](install.md)、[サーバーリファレンス](server.md)、[ネットワークと TLS](remote-access.md) |
 | 複数のチェックアウトや会話で作業 | [プロジェクト](projects.md)、[会話](conversations.md)、[ファイル](files.md) |
 | 履歴の検索や安全な整理 | [履歴](history.md) |
-| ネイティブの質問や権限リクエストへの回答 | [権限](permissions.md) |
+| 会話の権限を設定する、リクエストに回答する | [権限モード](permissions.md#conversation-mode)、[質問と権限](permissions.md) |
 | 範囲を限定した作業やスケジュールした作業の調整 | [ミッション](missions.md) |
 | 実行環境と連携の設定 | [OpenCode](opencode.md)、[プロバイダー](providers.md)、[連携](integrations.md) |
 | 別の端末からの接続 | [リモートコントロール](remote-control.md)、[セキュリティ](security.md)、[モバイル](mobile.md) |

@@ -29,6 +29,7 @@ import { syncSessionInstructions } from "./session-instructions"
 import { serializeSessionAction } from "./session-action-queue"
 import { beginGesture } from "./session-surface"
 import { activeSessionId } from "./session-selection-state"
+import { capturePromptAcknowledgement } from "./session-prompt-ack"
 
 const log = getLogger("actions")
 const technicalPartUpdates = new Map<string, Promise<void>>()
@@ -216,8 +217,9 @@ async function sendMessage(
   sessionId: string,
   prompt: string,
   attachments: Attachment[] = [],
-  options: { delivery?: SessionInboxDelivery; restoredPayload?: SessionInboxUserPayload;
-    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean } = {},
+  options: { delivery?: SessionInboxDelivery | (() => SessionInboxDelivery); restoredPayload?: SessionInboxUserPayload;
+    pendingDelivery?: SessionInboxDelivery; preserveNativeProfile?: boolean;
+    admissionCurrent?: () => boolean; prepareAdmission?: () => Promise<void> } = {},
 ): Promise<string> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -315,25 +317,41 @@ async function sendMessage(
   }
 
   const store = messageStoreBus.getOrCreate(instanceId)
-  const createdAt = Date.now()
-
-  clearConversationPlaybackForSession(instanceId, sessionId)
-
-  const projectOptimistically = options.delivery !== "queue"
-  if (projectOptimistically) {
+  let projected = false
+  const resolveDelivery = typeof options.delivery === "function" ? options.delivery : undefined
+  let delivery = typeof options.delivery === "function" ? undefined : options.delivery
+  function projectSend() {
+    const existing = projected ? store.getMessage(messageId) : undefined
+    if (existing?.status === "sending") return
+    const now = Date.now()
     store.upsertMessage({
       id: messageId,
       sessionId,
       role: "user",
       status: "sending",
       parts: optimisticParts,
-      createdAt,
-      updatedAt: createdAt,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
       isEphemeral: true,
       clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
     })
-    store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
     store.markSendPending(messageId)
+    projected = true
+  }
+  function reconcileSend() {
+    clearConversationPlaybackForSession(instanceId, sessionId)
+    if (delivery === "queue") {
+      if (projected) store.removeMessage(messageId, sessionId)
+      projected = false
+    } else {
+      projectSend()
+      store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
+    }
+  }
+  if (!options.prepareAdmission) {
+    if (!resolveDelivery) reconcileSend()
+    // Show the draft's immediate echo without dropping an old row until admission commits to steering.
+    else if (options.pendingDelivery === "steer") projectSend()
   }
 
   withSession(instanceId, sessionId, () => {
@@ -352,20 +370,11 @@ async function sendMessage(
     ...(agents.length > 0 ? { agents } : {}),
     ...(skills.length ? { skills } : {}),
     ...(options.restoredPayload ? { metadata: { ...options.restoredPayload.metadata, displayText: prompt } } : {}),
-    ...(options.delivery ? { delivery: options.delivery } : {}),
-    ...(options.delivery === "queue" ? { resume: false } : {}),
   }
 
-  log.info("sendMessage", {
-    instanceId,
-    sessionId,
-    requestBody,
-  })
-
-  let confirmedId = messageId
   try {
-    log.info("session.prompt", { instanceId, sessionId, requestBody })
-    await admitSessionAction(instanceId, sessionId, async () => {
+    return await admitSessionAction(instanceId, sessionId, async () => {
+      if (options.prepareAdmission) await options.prepareAdmission()
       const currentInstance = instances().get(instanceId)
       const currentSession = sessions().get(instanceId)?.get(sessionId)
       if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
@@ -373,25 +382,34 @@ async function sendMessage(
       if (!currentSession) throw new Error("Session not found")
       const client = getRootClient(instanceId)
       await syncSessionInstructions(client, instanceId, sessionId)
-      if (options.delivery !== "queue" && !options.preserveNativeProfile) {
+      if (resolveDelivery) {
+        if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
+        delivery = resolveDelivery()
+      }
+      if (resolveDelivery || options.prepareAdmission) reconcileSend()
+      if (delivery !== "queue" && !options.preserveNativeProfile) {
         if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
         if (currentSession.model.providerId && currentSession.model.modelId) {
           await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, currentSession.model) })
         }
       }
       if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
-      const result = await client.session.prompt({ sessionID: sessionId, ...requestBody })
-      confirmedId = result?.id || messageId
-      if (projectOptimistically && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
-      if (projectOptimistically) store.acceptSend(confirmedId)
+      const input = { sessionID: sessionId, ...requestBody, ...(delivery ? { delivery } : {}),
+        ...(delivery === "queue" ? { resume: false } : {}) }
+      log.info("session.prompt", { instanceId, sessionId, requestBody: input })
+      const onAccepted = delivery !== "queue" ? capturePromptAcknowledgement(instanceId, sessionId) : undefined
+      const result = await client.session.prompt(input)
+      onAccepted?.()
+      const confirmedId = result?.id || messageId
+      if (projected && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
+      if (projected) store.acceptSend(confirmedId)
+      return confirmedId
     })
   } catch (error) {
-    if (projectOptimistically) store.failSend(messageId)
+    if (projected) store.failSend(messageId)
     log.error("Failed to send prompt", error)
     throw error
   }
-
-  return confirmedId
 }
 
 async function executeCustomCommand(

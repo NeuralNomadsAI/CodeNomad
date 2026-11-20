@@ -78,8 +78,9 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} old current 
         changes.reserve(value, { kind: "manual", requestID: "next" }, 140, [])
       })
     }
-    const next = (await f.read()).source!
-    assert.notEqual(next.passageID, source.passageID); assert.notEqual(next.missionID, source.missionID)
+    const next = await f.read()
+    assert.notEqual(next.passageID, source.passageID)
+    assert.equal(next.source, undefined, "the reserved next passage has no readable source before admission")
     const ranges = f.metrics().ranges
     await assert.rejects(f.page({ source, selector: { source: "tasks", task: { missionID: source.missionID, offset: 0 } } }), /passage changed/)
     await assert.rejects(f.page({ source, selector: { source: "mission", missionID: source.missionID, field: "body", window: { offset: 0 } },

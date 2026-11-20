@@ -86,9 +86,13 @@ Baştaki tetikleyiciler 15 dakikada bir kontrol edilir. İlk Başlat referansı 
 
 **Koordinatör oturumu** her geçiş için varsayılan olarak **Yeni oturum** kullanır. Zamanlama veya olay varsa **Mevcut oturum** ile bu projenin aynı yürütme Location’ındaki kök konuşması seçilir. Her geçiş, konuşma geçmişini, başlığı ve izinleri koruyarak yapılandırılmış ajan ve modelle orada sürer. Görev kontrolleri mevcut işleri de etkiler. Her geçişin sonucu ve günlüğü geçmişte ayrı tutulur.
 
+Bir ajandan zamanlamayı kendi geçerli kök konuşmasıyla hazırlamasını isteyebilirsiniz. Geçişler, konuşma boşta kalana kadar bekler.
+
 Seçilen program durumunu, sonraki uyanma/kontrolü, başlatılmış/başarılı geçişleri ve geçmişi gösterir. Son 30 sonuç saklanır; toplam sayaçlar korunur. Kabul edilen **Şimdi çalıştır** sayılır. Gösterilemeyen kayıtlı kural, açıkça değiştirilene kadar korunur; düzenlemeden önce bitiş ve sınırları inceleyin.
 
 **Takip edilen konuşmalar** altında **Konuşma ekle** ile bir konuşma seçin; anında Görev için de kullanılabilir. Başlatmadan önce seçimi değiştirin veya × düğmesiyle kaldırın.
+
+Yerel Git başvurusunu izlemek için **Yerel dalda yeni commit'ler** seçeneğini kullanın. Uzak dal için **Uzak dalda yeni commit'ler** seçeneğini ve `dev` gibi bir dal adı girin. Kontrol, yerel fetch olmadan algılanan depoyu doğrudan okur. İki kontrol arasındaki birden fazla commit tek geçiş başlatır.
 
 ### Mevcut günlük programlar {#existing-daily-schedules}
 
@@ -108,7 +112,7 @@ Liste sonuna yaklaşınca yeni kayıtlar ve işler otomatik yüklenir. İşler y
 
 ### Renkler ve durumlar {#status-colours}
 
-Bayrak Görevin durumunu, şevron işlerinin dikkat durumunu gösterir; tekrarlanan kayıtta tekrar simgesi vardır. Kırmızı yanıt bekler, titreşen sarı gözlenen çalışmayı gösterir. Turuncu duraklatma simgesi duraklamayı, turuncu uyarı üçgeni kesintiyi belirtir. Yeşil, incelenmeyi bekleyen bir Görevi, işi veya başarılı çalıştırmayı gösterir.
+Bayrak Görevin durumunu, şevron işlerinin dikkat durumunu gösterir; tekrarlanan kayıtta tekrar simgesi vardır. Kırmızı yanıt bekler, sarı gözlenen çalışmayı gösterir. Turuncu duraklatma simgesi duraklamayı, turuncu uyarı üçgeni kesintiyi belirtir. Yeşil, incelenmeyi bekleyen bir Görevi, işi veya başarılı çalıştırmayı gösterir.
 
 Altında küçük, sabit ve nötr bir çizgi olan vurgu renkli simge **Zamanlanmış çalıştırma bekleniyor** demektir: sonraki uyanma doğrulanmıştır. Vurgu rengi palete bağlıdır. Çizgisiz vurgu simgesi hazırlığı veya başlamamış işi belirtir. İncelenmiş tamamlanmalar, durdurulmuş zamanlamalar ve **Durum doğrulanmadı** nötrdür; durum metnini okuyun.
 

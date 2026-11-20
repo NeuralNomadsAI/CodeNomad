@@ -28,6 +28,7 @@ import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
+import { LiveVoiceGateway } from "./speech/live-voice-gateway"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { nativeServiceStarter } from "./workspaces/native-service-start"
 import { acceptsIpv4Loopback, resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
@@ -39,11 +40,11 @@ import { PreviewManager } from "./previews/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { runCliUpgrade } from "./cli-upgrade"
 import { createServerShutdownHandler, installShutdownSignalHandlers, installShutdownStdinHandler, orchestrateServerShutdown } from "./shutdown"
-import { AutoAcceptManager } from "./permissions/auto-accept-manager"
-import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { PermissionReceipts } from "./permissions/receipts"
 import { PermissionReceiptStore } from "./permissions/receipt-store"
-import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
+import { SessionPermissionModes } from "./permissions/session-mode"
+import { connectSessionPermissionRefresh } from "./server/routes/session-permission-refresh"
+import { SessionCleanupFence } from "./server/session-cleanup-fence"
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
@@ -428,19 +429,11 @@ async function main() {
     logger: logger.child({ component: "sidecars" }),
   })
   const previewManager = new PreviewManager()
-  const yoloLogger = logger.child({ component: "yolo" })
-  const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager, settings)
   const permissionReceipts = new PermissionReceipts(
-    new PermissionReceiptStore(path.join(configLocation.baseDir, "permission-receipts")), workspaceManager, eventBus, yoloLogger,
+    new PermissionReceiptStore(path.join(configLocation.baseDir, "permission-receipts")), workspaceManager, eventBus,
+    logger.child({ component: "permission-receipts" }),
   )
   permissionReceipts.start()
-  const yoloManager = new AutoAcceptManager({
-    eventBus,
-    logger: yoloLogger,
-    replier: createOpencodePermissionReplier({ workspaceManager, permissionReceipts }),
-    persistence: sessionMetadataPersistence,
-  })
-  yoloManager.start()
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -508,11 +501,13 @@ async function main() {
   // Decrypted Remote Control requests enter the same application as local ones.
   let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
   let remoteControlPreviewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
+  let remoteControlVoiceUpgrade: ReturnType<typeof createHttpServer>["remoteVoiceUpgrade"] | null = null
   const remoteControlManager = new RemoteControlManager({
     registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
     lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
     router: () => remoteControlRouter,
     previewUpgrade: () => remoteControlPreviewUpgrade,
+    voiceUpgrade: () => remoteControlVoiceUpgrade,
     hasPreview: (token) => previewManager.get(token) !== undefined,
     tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
     disabledByAdministrator: options.remoteControlDisabled,
@@ -535,13 +530,16 @@ async function main() {
   const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
     eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
     void refreshDesignRequest()
-  })
+  }, id => eventBus.publish({ type: "panelExtensions.notesChanged", id }))
   // This backend's Design request, carried by each of its session-pruning leases.
   const refreshDesignRequest = designRequestRefresher(panelExtensions, pruningLifecycle)
   void refreshDesignRequest()
   // Every listener admits the same worktrees: one fence (and its mission holds),
   // so a deletion through HTTPS drains a mission admitted through the bridge.
   const worktreeDeletionFence = new WorktreeDeletionFence()
+  const sessionPermissions = { modes: new SessionPermissionModes(settings), cleanup: new SessionCleanupFence() }
+  const stopPermissionRefresh = connectSessionPermissionRefresh(eventBus, workspaceManager, sessionPermissions.modes,
+    worktreeDeletionFence, sessionPermissions.cleanup, logger)
   const missionsHost = () => missionBridge !== "failed"
 
   // The same application behind every listener of this backend.
@@ -555,14 +553,15 @@ async function main() {
     serverMeta,
     instanceStore,
     speechService,
+    liveVoice: new LiveVoiceGateway(speechService),
     sidecarManager,
     previewManager,
     authManager,
     clientConnectionManager,
     remoteProxySessionManager,
     remoteControlManager,
-    yoloManager,
     permissionReceipts,
+    sessionPermissions,
     panelExtensions,
     uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
     logger,
@@ -617,6 +616,7 @@ async function main() {
   const routingServer = options.http || nativeParent.available || !httpsServer ? httpServer : httpsServer
   remoteControlRouter = (request, response) => routingServer.instance.routing(request, response)
   remoteControlPreviewUpgrade = routingServer.previewUpgrade
+  remoteControlVoiceUpgrade = routingServer.remoteVoiceUpgrade
 
   const [httpStart, httpsStart, bridgeStart] = await Promise.all([
     httpServer.start(),
@@ -726,7 +726,7 @@ async function main() {
         {
           stopInstanceEventBridge: async () => {
             instanceEventBridge.shutdown()
-            await Promise.all([yoloManager.stop(), permissionReceipts.stop()])
+            await Promise.all([permissionReceipts.stop(), stopPermissionRefresh()])
           },
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
@@ -734,7 +734,6 @@ async function main() {
           stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: async () => {
             // Accepted HTTP mutations can confirm receipts after observers stop.
-            await yoloManager.stop()
             await permissionReceipts.stop()
             const results = await Promise.allSettled([
               workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(), memoryLifecycle.stop(),

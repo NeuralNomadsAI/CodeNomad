@@ -88,7 +88,8 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
       location: { directory: native.location.directory }, metadata, agent: selected.agent, model: selected.model }, { signal }, effectCurrent)
   if (session.parentID || session.id !== pending.coordinatorSessionID || session.projectID !== doc.projectID
     || session.location.directory !== native.location.directory || session.location.workspaceID !== native.location.workspaceID
-    || !matchesExecution(selected, session) || !(pending.coordinatorReused
+    // The profile gates the first send; afterwards the conversation's model is its user's choice.
+    || pending.admittedAt === null && !pending.admissionAttempted && !matchesExecution(selected, session) || !(pending.coordinatorReused
       ? same(session.metadata?.["codenomad.mission"], metadata["codenomad.mission"]) : same(session.metadata, metadata)))
     throw new Error("Original document coordinator differs")
   const business = nativeScheduledPassageBusiness(input)

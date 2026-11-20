@@ -152,7 +152,7 @@ test("Tokens can be collapsed, hidden and restored across reloads with legacy Pl
     localStorage.setItem("opencode-session-right-panel-tab-v2", "status")
     const key = "opencode-session-right-panel-customization-v1"
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({
-      statusSectionOrder: ["plan", "yolo-mode", "provider-usage"], hiddenStatusSectionIds: ["plan"],
+      statusSectionOrder: ["plan", "permissions", "provider-usage"], hiddenStatusSectionIds: ["plan"],
     }))
   })
   try {

@@ -1,7 +1,7 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
 import { storage, ConfigOwnerReconciliationPendingError, type OwnerBucket } from "../lib/storage"
-import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
+import type { ConversationPermissionMode, RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -121,6 +121,7 @@ export interface UiSettings {
   promptSubmitOnEnter: boolean
   hotkeyOverrides: HotkeyOverrides
   followUpBehavior: FollowUpBehavior
+  newConversationPermissions: ConversationPermissionMode
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
@@ -246,6 +247,7 @@ const defaultUiSettings: UiSettings = {
   promptSubmitOnEnter: true,
   hotkeyOverrides: {},
   followUpBehavior: "steer",
+  newConversationPermissions: "autonomous",
   showPromptVoiceInput: true,
   diffViewMode: "split",
   hideDiffWhitespaceChanges: true,
@@ -365,6 +367,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
         ? sanitized.followUpBehavior
         : defaultUiSettings.followUpBehavior,
+    newConversationPermissions: sanitized.newConversationPermissions === "supervised" ? "supervised" : defaultUiSettings.newConversationPermissions,
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,

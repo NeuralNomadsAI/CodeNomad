@@ -13,6 +13,8 @@ import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../s
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
+  ConversationPermissionMode,
+  ConversationPermissionModeResponse,
   PermissionReceiptPage,
   PruneResult,
   BinaryValidationResult,
@@ -33,6 +35,7 @@ import type {
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
+  VoiceConversationEngine,
   SideCar,
   PreviewSession,
   PluginActivationMutationRequest,
@@ -50,7 +53,6 @@ import type {
   RemoteControlPairing,
   RemoteControlStartResponse,
   RemoteControlStatus,
-  YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
   WorktreeGitCommitRequest,
@@ -246,6 +248,14 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  readConversationPermissionMode(instanceId: string, sessionId: string, signal: AbortSignal): Promise<ConversationPermissionModeResponse> {
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-mode`, { signal }))
+  },
+  setConversationPermissionMode(instanceId: string, sessionId: string, mode: ConversationPermissionMode): Promise<ConversationPermissionModeResponse> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-mode`, {
+      method: "PUT", body: JSON.stringify({ mode }),
+    })
+  },
   fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
     const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
     if (cursor) params.set("cursor", cursor)
@@ -725,22 +735,32 @@ export const serverApi = {
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
   },
+  getDesktopVoiceConversationEngine() {
+    return request<{ engine: VoiceConversationEngine }>("/api/speech/conversation/engine")
+  },
+  setDesktopVoiceConversationEngine(engine: VoiceConversationEngine) {
+    return request<{ engine: VoiceConversationEngine }>("/api/speech/conversation/engine", {
+      method: "PATCH", body: JSON.stringify({ engine }),
+    })
+  },
   transcribeAudio(payload: {
     audioBase64: string
     mimeType: string
     filename?: string
     language?: string
     prompt?: string
-  }): Promise<SpeechTranscriptionResponse> {
+  }, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
     return request<SpeechTranscriptionResponse>("/api/speech/transcribe", {
       method: "POST",
       body: JSON.stringify(payload),
+      signal,
     })
   },
-  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }): Promise<SpeechSynthesisResponse> {
+  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
     return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
       method: "POST",
       body: JSON.stringify(payload),
+      signal,
     })
   },
   synthesizeSpeechStream(
@@ -975,17 +995,6 @@ export const serverApi = {
   },
   deleteInstanceData(id: string): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
-  },
-  getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-    return request<YoloStateResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
-    )
-  },
-  toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-    return request<YoloStateResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
-      { method: "POST" },
-    )
   },
   sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
     const init: RequestInit = {

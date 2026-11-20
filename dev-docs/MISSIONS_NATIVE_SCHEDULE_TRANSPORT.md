@@ -53,9 +53,12 @@ authorize a mutation resend. The one replay is an abandoned claim: status report
 high-water, and its receiver has ended. A receiver of another incarnation fails its
 incarnation guard before every CAS; one of this process registers its own Promise
 for its whole lifetime (`native-mission-schedule-wake-flight.ts`, shared across bundle
-reloads) and also fails once its signed preflight expires. Such a dispatch consumed
-nothing, so the caller re-claims that same identity (`retry`), rechecking abandonment
-under the Mission exclusion, and dispatches it with a fresh preflight. A pre-dispatch
+reloads) and also fails once its signed preflight expires before it consumes the run.
+Such a dispatch consumed nothing, so the caller re-claims that same identity (`retry`), rechecking abandonment
+under the Mission exclusion, and dispatches it with a fresh preflight. The run counts as
+consumed once its high-water commits: claim closure and reconciliation no longer need the
+preflight. The caller's eight-second deadline can still cancel that request; the next
+wake then reconciles. A pre-dispatch
 refusal describes only the current attempt; preserve earlier uncertainty for that identity.
 
 One process-wide lane per Mission spans bundle incarnations. The whole operation
@@ -202,6 +205,9 @@ dispatches retain their original durable preparations and stay read-only. The
 receiver consumes and closes auxiliary technical claims before owner and pending
 business reconciliation, then reapplies owner cleanup after settlement. Its
 business bridge is registered once by `registerNativeScheduledBusinessRpc`.
+A `MissionControlError` refusal crosses that bridge as a bounded `refusal` reply
+(message and code) and is rethrown to the tool as on the direct path; every
+other receiver or transport failure surfaces as "Scheduled Mission business unavailable".
 
 The principal preparation is written by the prompt hook before native inbox
 admission, serialized with Pause and temporal replacement. Context reads the

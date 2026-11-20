@@ -55,7 +55,7 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | --- | --- |
 | Proje sekmesi / çalışma alanı / örnek | Açıkça açılmış bir klasöre CodeNomad bağlantısı; birden fazla sekme paylaşılan hizmeti kullanabilir. |
 | Konuşma / oturum | Yerel OpenCode geçmişi ve dizini ile ilişkili yürütme. |
-| Aile | Konuşma ve tüm alt oturumları; taşıma, etkinlik, Yolo ve Görev kontrolleri açısından önemlidir. |
+| Aile | Konuşma ve tüm alt oturumları; taşıma, etkinlik ve Görev kontrolleri açısından önemlidir. |
 | Çalışma ağacı | Göz atma veya oturum yerleştirme için seçilen, sahipliği doğrulanmış depo çalışma kopyası. Göz atmak konuşmayı taşımaz. |
 | Location | OpenCode'un dizin kapsamlı yerel çalışma zamanı bağlamı; proje sekmesini kapatmak bu bağlamı kaldırmaz veya oturumlarını durdurmaz. |
 | CodeNomad arka uç | Çalışma alanı, Git, kimlik doğrulama ve istemci bağlantısı sağlayan sunucu. Hesabı ve ortamı, arka uç dosya sistemi erişimini belirler. |
@@ -72,7 +72,7 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | Çalışma alanını kurun veya sunun | [Kurulum](install.md), [Sunucu başvurusu](server.md), [Ağ ve TLS](remote-access.md) |
 | Çalışma kopyaları ve konuşmalar arasında çalışın | [Projeler](projects.md), [Konuşmalar](conversations.md), [Dosyalar](files.md) |
 | Geçmişi bulun veya güvenle temizleyin | [Geçmiş](history.md) |
-| Yerel soruları ve izinleri yanıtlayın | [İzinler](permissions.md) |
+| Konuşma izinlerini ayarlayın veya istekleri yanıtlayın | [İzin modları](permissions.md#conversation-mode), [Sorular ve izinler](permissions.md) |
 | Sınırlı veya zamanlanmış işleri koordine edin | [Görevler](missions.md) |
 | Yürütme ve entegrasyonları yapılandırma | [OpenCode](opencode.md), [Sağlayıcılar](providers.md), [Entegrasyonlar](integrations.md) |
 | Başka bir cihaz bağlayın | [Uzaktan Kontrol](remote-control.md), [Güvenlik](security.md), [Mobil](mobile.md) |

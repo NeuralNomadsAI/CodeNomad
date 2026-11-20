@@ -6,7 +6,7 @@
   padding-block: 3px; padding-inline-end: var(--space-sm); text-align: start;
   color: var(--text-secondary); font-size: var(--font-size-xs);
 }
-.workspace-tree-row > svg { flex-shrink: 0; color: var(--text-muted); }
+.workspace-tree-row > :is(svg, .animate-spin) { flex-shrink: 0; color: var(--text-muted); }
 .workspace-tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-tree-label { flex: 1; min-width: 0; }
 .workspace-tree-row[aria-selected="true"] { background: var(--selection-neutral-strong-bg); color: var(--text-primary); }
