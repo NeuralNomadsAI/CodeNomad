@@ -148,9 +148,10 @@ logs separate event age, location resolution, queue wait and ownership time
 ### UI event stream liveness
 
 `lib/server-events.ts` delivers arriving SSE payloads in order in one Solid
-batch per animation frame, with a timer when frames are suspended. Visibility
-changes and transport status transitions drain accepted payloads before
-reconciliation; callbacks from a replaced stream remain fenced.
+batch per animation frame, with a timer when frames are suspended. Transcript
+projections run at the end of that same batch. Session selection, visibility
+changes and transport status transitions drain accepted payloads before changing
+the view or reconciling; callbacks from a replaced stream remain fenced.
 
 `lib/server-events.ts` restarts the shared UI event stream once a connected
 stream has carried no batch, open or ping for 45 s (`lib/stream-staleness.ts`,

@@ -2478,6 +2478,7 @@ sseManager.onInvalidation = handleInstanceInvalidation
 // The frame coalescer re-checks the gates a projection was admitted under when
 // its frame runs; a selection change flushes pending pages first (session-state).
 setTranscriptProjectionGates({
+  deferUntilEventBatchEnd: (callback) => serverEvents.deferUntilBatchEnd(callback),
   // Watched transcripts: the active session's own view plus any child session
   // whose task renderer is mounted (visible) — both admit frame projections.
   isActiveSession: (instanceId, sessionId) =>

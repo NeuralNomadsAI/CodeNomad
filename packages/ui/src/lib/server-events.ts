@@ -1,4 +1,4 @@
-import { batch as solidBatch } from "solid-js"
+import { batch as solidBatch, untrack } from "solid-js"
 import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
@@ -35,6 +35,7 @@ class ServerEvents {
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private pendingBatch: WorkspaceEventPayload[] = []
   private cancelBatchWake: (() => void) | undefined
+  private batchEndCallbacks: Set<() => void> | undefined
   private watchdog = createStreamStalenessWatchdog({
     onStale: () => this.restart("stream stale"),
   })
@@ -217,7 +218,8 @@ class ServerEvents {
     this.cancelBatchWake = cancel
   }
 
-  private flushPendingBatch(): void {
+  /** Delivers accepted events before a synchronous consumer changes their view. */
+  flushPendingBatch(): void {
     this.cancelBatchWake?.()
     this.cancelBatchWake = undefined
     const events = this.pendingBatch
@@ -237,11 +239,24 @@ class ServerEvents {
     }
 
     logSse("event batch", { size: events.length })
-    solidBatch(() => {
-      for (const event of events) {
-        this.dispatch(event)
+    solidBatch(() => untrack(() => {
+      const parent = this.batchEndCallbacks
+      const callbacks = parent ?? new Set<() => void>()
+      this.batchEndCallbacks = callbacks
+      try {
+        for (const event of events) this.dispatch(event)
+      } finally {
+        this.batchEndCallbacks = parent
       }
-    })
+      if (!parent) this.notify(callbacks, undefined, "batch-end")
+    }))
+  }
+
+  /** Coalesces a subscriber's publication inside this batch's Solid update. */
+  deferUntilBatchEnd(callback: () => void): boolean {
+    if (!this.batchEndCallbacks) return false
+    this.batchEndCallbacks.add(callback)
+    return true
   }
 
   private emitTransportStatus(status: WorkspaceEventTransportStatus) {

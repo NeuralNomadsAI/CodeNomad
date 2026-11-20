@@ -6,7 +6,7 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
-import { sessions, setSessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
+import { activeSessionId, sessions, setSessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { getOpenCodeMessageRevision } from "../../../src/stores/opencode-data"
@@ -115,10 +115,12 @@ const storeText = () => Object.values(store.getMessage(currentStream)?.parts ?? 
       tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } })
   },
   activate: (sessionID: string) => {
+    setActiveSession(instanceId, sessionID)
+    if (activeSessionId().get(instanceId) !== sessionID) return activeSessionId().get(instanceId)
     show(false)
     select(sessionID)
-    setActiveSession(instanceId, sessionID)
     show(true)
+    return sessionID
   },
   visibility: () => document.dispatchEvent(new Event("visibilitychange")),
 }

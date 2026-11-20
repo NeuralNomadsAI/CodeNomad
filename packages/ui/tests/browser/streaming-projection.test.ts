@@ -40,6 +40,14 @@ async function open(run: (page: Page) => Promise<void>) {
   })
   try {
     await stream.route(page)
+    await page.addInitScript(() => {
+      window.EventSource = class extends EventSource {
+        constructor(url: string | URL, options?: EventSourceInit) {
+          super(url, options)
+          Object.assign(window, { projectionSource: this })
+        }
+      }
+    })
     const opened = page.waitForResponse(response => new URL(response.url()).pathname === "/api/events")
     await page.goto(url, { waitUntil: "domcontentloaded" })
     assert.match((await opened).headers()["content-type"], /text\/event-stream/)
@@ -100,4 +108,84 @@ test("visibility changes and session switches flush pending pages", () => open(a
   const switched = await snapshot(page)
   assert.equal(switched.projections, 2, "a selection change flushes the pending projection")
   assert.equal(switched.text, joined(60), "the second reply's page flushed with its own stream")
+}))
+
+async function observeSse(page: Page, id: string) {
+  await page.evaluate(id => {
+    const view = window as any
+    // Attach after CodeNomad's handler: the receipt observes actual EventSource
+    // delivery, after the last payload has entered the production queue.
+    view.projectionReceived = new Promise<void>(resolve => {
+      const source: EventSource = view.projectionSource
+      const receipt = new AbortController()
+      source.addEventListener("message", message => {
+        if (JSON.parse(message.data).event?.id !== id) return
+        receipt.abort()
+        resolve()
+      }, { signal: receipt.signal })
+    })
+  }, id)
+}
+
+const waitForSse = (page: Page) => page.evaluate(() => (window as any).projectionReceived)
+
+async function queueSseReply(page: Page) {
+  const time = Date.now()
+  await page.clock.install({ time })
+  await page.clock.pauseAt(time + 60_000)
+  await page.evaluate(() => (window as any).streamingFixture.resetCounts())
+  await observeSse(page, "evt_projection_4")
+  const assistantMessageID = "msg_live"
+  const location = { directory: "/fixture" }
+  const base = { sessionID: "active", assistantMessageID }
+  const durable = { aggregateID: base.sessionID, version: 1 }
+  stream.send({ type: "instance.event", instanceId: "streaming-fixture", event: {
+    id: "evt_projection_1", type: "session.step.started", created: 1, location,
+    durable: { ...durable, seq: 1 },
+    data: { ...base, agent: "build", model: { providerID: "fixture", id: "fixture" }, started: 1 },
+  } })
+  stream.send({ type: "instance.event", instanceId: "streaming-fixture", event: {
+    id: "evt_projection_2", type: "session.text.started", created: 2, location,
+    durable: { ...durable, seq: 2 },
+    data: { ...base, ordinal: 0 },
+  } })
+  for (const [seq, delta] of [[3, "first"], [4, " second"]] as const) {
+    stream.send({ type: "instance.event", instanceId: "streaming-fixture", event: {
+      id: `evt_projection_${seq}`, type: "session.text.delta", created: seq, location,
+      data: { ...base, ordinal: 0, delta },
+    } })
+  }
+  await waitForSse(page)
+  assert.equal((await snapshot(page)).projections, 0, "the reply waits for the first frame or a selection change")
+}
+
+test("an SSE reply projects once, in its delivery frame", { timeout: 120_000 }, () => open(async page => {
+  await queueSseReply(page)
+  await page.clock.runFor(16)
+  const firstFrame = await snapshot(page)
+  assert.ok(firstFrame.revision >= 4, "the reducer admitted both starts and both deltas in the first frame")
+  assert.equal(firstFrame.text, "first second", "the first frame publishes every delta in FIFO order")
+  assert.equal(firstFrame.projections, 1)
+  assert.equal(firstFrame.messageLists, 0)
+  await page.clock.runFor(64)
+  assert.equal((await snapshot(page)).projections, 1, "there is no later projection frame or fallback replay")
+}))
+
+test("switching sessions before the first SSE frame publishes to the session being left", { timeout: 120_000 }, () => open(async page => {
+  await queueSseReply(page)
+  assert.equal(await page.evaluate(() => (window as any).streamingFixture.activate("other")), "other")
+  const switched = await snapshot(page)
+  assert.equal(switched.text, "first second", "the selection barrier publishes accepted SSE to the old page")
+  assert.equal(switched.projections, 1)
+  await page.clock.runFor(64)
+  assert.equal((await snapshot(page)).projections, 1, "the retired frame does not replay after selection")
+
+  await observeSse(page, "evt_projection_5")
+  stream.send({ type: "instance.event", instanceId: "streaming-fixture", event: {
+    id: "evt_projection_5", type: "session.deleted", created: 5, location: { directory: "/fixture" },
+    durable: { aggregateID: "active", version: 1, seq: 3 }, data: { sessionID: "active" },
+  } })
+  await waitForSse(page)
+  assert.equal(await page.evaluate(() => (window as any).streamingFixture.activate("active")), "other",
+    "the selection does not revive a target deleted by the accepted batch")
 }))

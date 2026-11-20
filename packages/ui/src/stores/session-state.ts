@@ -9,6 +9,7 @@ import { messageStoreBus } from "./message-v2/bus"
 import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
+import { serverEvents } from "../lib/server-events"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
@@ -797,8 +798,7 @@ function writeSessionSelection(
   instanceId: string,
   sessionId: string | null,
 ): void {
-  // A coalesced transcript page admitted under the previous selection lands
-  // before the gates move; nothing pending may cross a selection change.
+  // Publish pending transcript pages under the old selection.
   flushTranscriptProjections()
   setter((prev) => {
     const next = new Map(prev)
@@ -817,14 +817,24 @@ function writeActiveParentSession(instanceId: string, parentSessionId: string | 
   writeSessionSelection(setActiveParentSessionId, instanceId, parentSessionId)
 }
 
+function canSelectSession(instanceId: string, sessionId: string, gesture?: SurfaceGesture): boolean {
+  if (gesture && !gesture.current()) return false
+  // Deliver accepted SSE under the old selection and check the target afterwards:
+  // the batch may have deleted or moved it.
+  serverEvents.flushPendingBatch()
+  return (!gesture || gesture.current())
+    && !authoritativelyDeletedSessionKeys().has(getDraftKey(instanceId, sessionId))
+    && !getMovedAwaySessions(instanceId).has(sessionId)
+}
+
 function setActiveSession(instanceId: string, sessionId: string, gesture?: SurfaceGesture): void {
-  if (gesture && !gesture.current()) return
+  if (!canSelectSession(instanceId, sessionId, gesture)) return
   markSessionSelectionAuthoritative(instanceId)
   writeActiveSession(instanceId, sessionId)
 }
 
 function setActiveParentSession(instanceId: string, parentSessionId: string, gesture?: SurfaceGesture): void {
-  if (gesture && !gesture.current()) return
+  if (!canSelectSession(instanceId, parentSessionId, gesture)) return
   batch(() => {
     markSessionSelectionAuthoritative(instanceId)
     writeActiveParentSession(instanceId, parentSessionId)
@@ -850,6 +860,7 @@ function clearActiveParentSession(instanceId: string, gesture?: SurfaceGesture):
 }
 
 export function clearSelectedSession(instanceId: string): void {
+  serverEvents.flushPendingBatch()
   clearActiveParentSession(instanceId, beginGesture({ instanceId, sessionId: null }))
 }
 
@@ -864,6 +875,7 @@ function hydrateActiveSessionSelection(
   sessionId: string | null,
   isCurrent: () => boolean = () => true,
 ): void {
+  serverEvents.flushPendingBatch()
   if (hasAuthoritativeSessionSelection(instanceId)) return
   batch(() => {
     if (!isCurrent()) return
@@ -876,6 +888,7 @@ function hydrateActiveSessionSelection(
 // Restore selection identity before HTTP hydration, without starting any
 // session-scoped effects until the native session has actually been resolved.
 function seedRestoredSessionSelection(instanceId: string, parentSessionId: string | null, sessionId: string | null): void {
+  serverEvents.flushPendingBatch()
   if (hasAuthoritativeSessionSelection(instanceId)) return
   batch(() => {
     const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
@@ -1145,7 +1158,7 @@ function getVisibleSessionIds(instanceId: string): string[] {
 }
 
 function setActiveSessionFromList(instanceId: string, sessionId: string, gesture?: SurfaceGesture): void {
-  if (gesture && !gesture.current()) return
+  if (!canSelectSession(instanceId, sessionId, gesture)) return
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) return
   const root = getSessionRoot(instanceId, sessionId) ?? session

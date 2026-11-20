@@ -108,13 +108,17 @@ test("a transport error drains accepted events before disconnect and fences call
   const { sources, frames, paint } = await setup(t)
   const [previous] = sources
   const order: string[] = []
+  const publish = () => { order.push("published") }
   t.after(serverEvents.on("workspace.worktreesChanged", event => {
-    if (event.type === "workspace.worktreesChanged") order.push(event.workspaceId)
+    if (event.type !== "workspace.worktreesChanged") return
+    order.push(event.workspaceId)
+    assert.ok(serverEvents.deferUntilBatchEnd(publish))
   }))
   t.after(serverEvents.onOpen(() => { order.push("open") }))
   t.after(serverEvents.onTransportStatus(status => { order.push(status) }))
 
-  previous.event("before")
+  previous.event("before-a")
+  previous.event("before-b")
   assert.deepEqual(order, [])
   previous.disconnect()
   assert.ok(previous.closed)
@@ -124,8 +128,8 @@ test("a transport error drains accepted events before disconnect and fences call
   previous.event("obsolete")
   sources[1].onopen!()
   sources[1].event("after")
-  assert.deepEqual(order, ["before", "disconnected", "disconnected", "connected", "open"])
+  assert.deepEqual(order, ["before-a", "before-b", "published", "disconnected", "disconnected", "connected", "open"])
   paint()
   t.mock.timers.tick(1000)
-  assert.deepEqual(order, ["before", "disconnected", "disconnected", "connected", "open", "after"])
+  assert.deepEqual(order, ["before-a", "before-b", "published", "disconnected", "disconnected", "connected", "open", "after", "published"])
 })

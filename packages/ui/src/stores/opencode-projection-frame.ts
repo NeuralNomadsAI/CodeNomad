@@ -19,6 +19,7 @@ const log = getLogger("session")
  * touch arrives through the gates the instance layer registers.
  */
 export type TranscriptProjectionGates = {
+  deferUntilEventBatchEnd(callback: () => void): boolean
   isActiveSession(instanceId: string, sessionId: string): boolean
   isLatestMessageWindow(instanceId: string, sessionId: string): boolean
   /** Inactive-session recovery: the next activation loads the page authoritatively. */
@@ -195,7 +196,10 @@ function applyProjection(entry: PendingProjection, bypassActiveGate: boolean): v
   if (entry.updateUsage) gate.onProjectedUsage(entry.instanceId, entry.sessionId)
 }
 
+const projectEventBatch = () => drain(false)
+
 function requestScheduledRun(): void {
+  if (gates?.deferUntilEventBatchEnd(projectEventBatch)) return
   if (cancelScheduledRun) return
   if (typeof document !== "undefined" && document.hidden) {
     const timer = setTimeout(() => drain(false), HIDDEN_PROJECTION_INTERVAL_MS)
