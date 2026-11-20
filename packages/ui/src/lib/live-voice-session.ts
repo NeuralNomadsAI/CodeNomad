@@ -75,6 +75,7 @@ export function openLiveVoiceSession(options: {
   let responseId: string | undefined
   let discardResponse = false
   let silenceGeminiReply = false
+  let geminiThinking = false
   let idle: ReturnType<typeof setTimeout> | undefined
   let setup: ReturnType<typeof setTimeout> | undefined
   const absolute = setTimeout(() => stop("duration"), LIVE_VOICE_ABSOLUTE_MS)
@@ -158,7 +159,7 @@ export function openLiveVoiceSession(options: {
     if (!ready || signal.aborted) return
     const pending = pendingTool()
     const canInterrupt = playing || (!discardResponse && !silenceGeminiReply && (responseOpen || Boolean(pending?.responseId)))
-    options.onActivity(playing || responseSpoken ? "speaking" : canInterrupt || pending ? "thinking" : "listening", canInterrupt)
+    options.onActivity(playing || responseSpoken ? "speaking" : canInterrupt || pending || geminiThinking ? "thinking" : "listening", canInterrupt)
   }
 
   function saveRow(row: LiveVoiceTranscriptRow) {
@@ -263,9 +264,10 @@ export function openLiveVoiceSession(options: {
     updateActivity()
   }
 
-  function completeTurn() {
+  function completeTurn(thinking: boolean) {
     audio?.turnComplete()
     finishTurn(discardResponse)
+    geminiThinking = thinking
     responseOpen = responseSpoken = discardResponse = silenceGeminiReply = false
     updateActivity()
     publish()
@@ -360,7 +362,8 @@ export function openLiveVoiceSession(options: {
         orderItem(value.itemId, value.previousItemId)
         break
       case "turn-complete":
-        completeTurn()
+        if (value.thinking !== undefined && (options.engine !== "gemini-live" || value.thinking !== true)) return stop("invalid-message")
+        completeTurn(value.thinking === true)
         break
       case "interrupted":
         interrupt(false)

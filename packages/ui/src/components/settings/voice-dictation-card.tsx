@@ -1,4 +1,4 @@
-import { Show, createMemo } from "solid-js"
+import { Show, createMemo, onCleanup } from "solid-js"
 import { Loader2, Mic, Square } from "lucide-solid"
 import { useTranscriptionTest } from "../../lib/hooks/use-transcription-test"
 import { useI18n } from "../../lib/i18n"
@@ -31,7 +31,18 @@ export function VoiceDictationCard(props: {
   }
   let testButton: HTMLButtonElement | undefined
   let transcribeButton: HTMLButtonElement | undefined
+  let restoreAfterTranscribe = false
+  const stopRestoringFocus = () => {
+    restoreAfterTranscribe = false
+    document.removeEventListener("focusin", stopRestoringFocus)
+  }
+  onCleanup(stopRestoringFocus)
   const test = useTranscriptionTest(next => {
+    if (next === "idle" && restoreAfterTranscribe) queueMicrotask(() => {
+      const restore = restoreAfterTranscribe && test.result() !== null && document.activeElement === document.body
+      stopRestoringFocus()
+      if (restore) testButton?.focus({ preventScroll: true })
+    })
     if (next !== "limitReached" || !test.isRecording() || document.activeElement !== testButton) return
     queueMicrotask(() => {
       if (document.activeElement === document.body || document.activeElement === testButton) {
@@ -96,7 +107,11 @@ export function VoiceDictationCard(props: {
           </button>
         }>
           <span class="settings-inline-note" role="status">{t("promptInput.voiceInput.limitReached")}</span>
-          <button ref={transcribeButton} type="button" class="selector-button selector-button-secondary w-auto" onClick={test.confirmTranscription}>
+          <button ref={transcribeButton} type="button" class="selector-button selector-button-secondary w-auto" onClick={({ currentTarget }) => {
+            restoreAfterTranscribe = currentTarget === document.activeElement
+            if (restoreAfterTranscribe) document.addEventListener("focusin", stopRestoringFocus)
+            test.confirmTranscription()
+          }}>
             {t("promptInput.voiceInput.transcribe")}
           </button>
           <button type="button" class="selector-button selector-button-secondary w-auto" onClick={({ currentTarget }) => {

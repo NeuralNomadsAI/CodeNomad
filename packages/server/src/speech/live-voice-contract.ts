@@ -75,7 +75,7 @@ export type LiveVoiceServerMessage =
   | { type: "speech-start" }
   | { type: "thinking"; responseId?: string }
   | { type: "interrupted" }
-  | { type: "turn-complete" }
+  | { type: "turn-complete"; thinking?: true }
   | ({ type: "tool-call"; id: string; responseId?: string } & LiveVoiceTool)
   | { type: "tool-cancel"; id: string }
 

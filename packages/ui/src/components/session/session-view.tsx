@@ -441,6 +441,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     try {
       await sendMessage(instanceId, sessionId, prompt, attachments, {
         delivery: admitDelivery ?? delivery,
+        pendingDelivery: delivery,
         restoredPayload,
         prepareAdmission: pin ? undefined : async () => {
           if (!isLatestMessageWindow(instanceId, sessionId)) await loadLatestMessageWindow(instanceId, sessionId)

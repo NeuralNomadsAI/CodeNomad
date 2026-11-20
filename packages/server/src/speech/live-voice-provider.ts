@@ -208,7 +208,9 @@ export function voiceProviderProtocol(settings: VoiceConversationProviderSetting
     if (user) geminiTranscription(user)
     const assistant = object(content.outputTranscription)
     transcript("assistant", assistant?.text, assistant?.finished === true)
-    if (content.turnComplete === true) io.emit({ type: "turn-complete" })
+    if (content.turnComplete === true) {
+      io.emit(content.interactionStatus === "IN_PROGRESS" ? { type: "turn-complete", thinking: true } : { type: "turn-complete" })
+    }
   }
 
   function cancelOpenAITool(id: string) {

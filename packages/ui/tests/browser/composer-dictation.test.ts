@@ -830,6 +830,29 @@ test("remote Linux Tauri API retains the host-bounded excerpt until explicit tra
   assert.ok(await other.evaluate(el => el === document.activeElement))
 }, false, "tauri-remote-api"))
 
+test("remote Linux API input test restores focus after keyboard transcription only if focus stayed unclaimed", () => withComposer(async page => {
+  await page.evaluate(() => (window as any).fixture.setNativeSettings(true))
+  const startTest = page.getByRole("button", { name: "Test API input", exact: true })
+  const stopTest = page.getByRole("button", { name: "Stop recording", exact: true })
+  const confirm = page.getByRole("button", { name: "Transcribe", exact: true })
+  const other = page.getByRole("button", { name: "Other control" })
+  for (const moveFocus of [false, true]) {
+    await startTest.press("Enter")
+    await stopTest.focus()
+    assert.ok(await stopTest.evaluate(el => el === document.activeElement))
+    await page.evaluate(() => { (window as any).native.microphoneState = "limitReached" })
+    await confirm.waitFor()
+    assert.ok(await confirm.evaluate(el => el === document.activeElement))
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(expected => (window as any).capture.requests.length === expected, moveFocus ? 2 : 1)
+    if (moveFocus) await other.focus()
+    await page.evaluate(() => (window as any).capture.requests.at(-1).resolve("Keyboard test speech"))
+    await page.getByText("Keyboard test speech", { exact: true }).waitFor()
+    await startTest.waitFor()
+    assert.ok(await (moveFocus ? other : startTest).evaluate(el => el === document.activeElement))
+  }
+}, false, "tauri-remote-api"))
+
 test("sending a draft preserves the stopped Linux Tauri excerpt until explicit transcription", () => withComposer(async page => {
   await field(page).fill("send only this draft")
   await start(page)

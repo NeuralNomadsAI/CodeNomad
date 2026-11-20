@@ -342,6 +342,27 @@ test("a typed send queues behind a confirmed voice send before the native start 
   } finally { await context.close() }
 })
 
+test("a typed prompt appears pending before native instruction sync completes", async () => {
+  const { page, context } = await fixture("gemini", true)
+  try {
+    const field = page.getByRole("textbox").first()
+    await field.fill("A typed prompt")
+    await page.evaluate(() => (window as any).fixture.holdAdmission())
+    await field.press("Enter")
+    await page.waitForFunction(() => (window as any).fixture.waitingAdmission())
+    assert.equal(await field.inputValue(), "")
+    const projected = () => page.evaluate(() => (window as any).fixture.userPrompts())
+    const [pending, ...others] = await projected()
+    assert.deepEqual(others, [])
+    assert.equal(pending?.text, "A typed prompt")
+    assert.equal(pending.status, "sending")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.info.prompts), [])
+    await page.evaluate(() => (window as any).fixture.releaseAdmission())
+    await page.waitForFunction(() => (window as any).fixture.userPrompts()[0]?.status === "sent")
+    assert.deepEqual(await projected(), [{ ...pending, status: "sent" }])
+  } finally { await context.close() }
+})
+
 test("a later typed send does not demote the voice prompt awaiting admission on an idle session", async () => {
   const { page, context, openConsent, acceptConsent, waitForSent } = await fixture("gemini", true)
   try {
@@ -364,6 +385,7 @@ test("a later typed send does not demote the voice prompt awaiting admission on 
     await page.waitForFunction(() => (window as any).fixture.info.prompts.length === 2)
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.info.prompts.map((prompt: any) => [prompt.text, prompt.delivery, prompt.resume])),
       [["first", "steer", undefined], ["typed follow-up", "queue", false]])
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.userPrompts().map((prompt: any) => prompt.text)), ["first"])
   } finally { await context.close() }
 })
 
@@ -787,6 +809,23 @@ test("the live window displays the conversation limit if the gateway closes as b
     await consent.locator(".button-primary").click()
     await (await socket).close({ code: 4000, reason: "busy" })
     await live.getByRole("status").getByText("Voice is already in use", { exact: true }).waitFor()
+  } finally { await context.close() }
+})
+
+test("Gemini stays in Thinking after a turn while the interaction is in progress", async () => {
+  const { context, live, openConsent, acceptConsent, waitForSent } = await fixture("gemini", true)
+  try {
+    await openConsent()
+    const send = await acceptConsent()
+    send({ type: "thinking" })
+    await live.getByText("Thinking", { exact: true }).waitFor()
+    send({ type: "turn-complete", thinking: true })
+    send({ type: "tool-call", name: "get_session_status", id: "progress-seen", arguments: {} })
+    await waitForSent(item => item.id === "progress-seen")
+    assert.equal(await live.getByText("Thinking", { exact: true }).isVisible(), true)
+    assert.equal(await live.getByText("Listening", { exact: true }).isVisible(), false)
+    send({ type: "turn-complete" })
+    await live.getByText("Listening", { exact: true }).waitFor()
   } finally { await context.close() }
 })
 

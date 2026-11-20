@@ -199,6 +199,17 @@ test("a pending revocation refuses upgrades and can be retried durably", { timeo
   assert.equal(absent.status, 404)
 })
 
+test("Gemini distinguishes an audio turn boundary from an idle interaction", { timeout: 10000 }, async t => {
+  const fake = await provider(t)
+  const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })
+  const client = connect(t, local, gemini, { origin: `http://${local}` })
+  const upstream = await setupGemini(client, fake)
+  upstream.send({ serverContent: { turnComplete: true, interactionStatus: "IN_PROGRESS" } })
+  assert.deepEqual(await client.next(), { type: "turn-complete", thinking: true })
+  upstream.send({ serverContent: { turnComplete: true, interactionStatus: "IDLE" } })
+  assert.deepEqual(await client.next(), { type: "turn-complete" })
+})
+
 test("Gemini binds late fragments by offset when available and keeps the new utterance open across turnComplete", { timeout: 10000 }, async t => {
   const fake = await provider(t)
   const { local } = await startRemoteSurface(t, { liveVoice: fake.gateway, skipAuth: true })

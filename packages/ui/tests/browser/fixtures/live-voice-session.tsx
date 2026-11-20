@@ -230,6 +230,11 @@ function Interactive() {
     holdAdmission: () => { info.admissionHeld = true },
     waitingAdmission: () => Boolean(releaseAdmission),
     releaseAdmission: () => { info.admissionHeld = false; releaseAdmission?.() },
+    userPrompts: () => store.getSessionMessageIds(sessionId).flatMap(id => {
+      const row = store.getMessage(id)
+      if (row?.role !== "user") return []
+      return [{ id, text: row.parts[row.partIds[0]]?.data.text, status: row.status }]
+    }),
     removeProviderKey: () => { geminiConfigured = false; return loadSpeechCapabilities(true) },
     microphoneEnabled: () => microphone?.enabled,
     async holdClassicSummary() {
@@ -265,7 +270,7 @@ function Interactive() {
     <InterruptionDock instanceId={instanceId} sessionId={current()} />
     <PromptInput instanceId={instanceId} instanceFolder={path} sessionId={current()} isActive
       onSend={async (text, attachments, delivery, restoredPayload, admitDelivery) => {
-        await sendMessage(instanceId, current(), text, attachments, { delivery: admitDelivery ?? delivery, restoredPayload })
+        await sendMessage(instanceId, current(), text, attachments, { delivery: admitDelivery ?? delivery, pendingDelivery: delivery, restoredPayload })
       }} />
     <Show when={settingsOpen() && activeSettingsSection() === "speech"}><SpeechSettingsSection /></Show>
   </main>

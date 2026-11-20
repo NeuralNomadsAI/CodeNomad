@@ -218,7 +218,8 @@ async function sendMessage(
   prompt: string,
   attachments: Attachment[] = [],
   options: { delivery?: SessionInboxDelivery | (() => SessionInboxDelivery); restoredPayload?: SessionInboxUserPayload;
-    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean; prepareAdmission?: () => Promise<void> } = {},
+    pendingDelivery?: SessionInboxDelivery; preserveNativeProfile?: boolean;
+    admissionCurrent?: () => boolean; prepareAdmission?: () => Promise<void> } = {},
 ): Promise<string> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -317,27 +318,41 @@ async function sendMessage(
 
   const store = messageStoreBus.getOrCreate(instanceId)
   let projected = false
+  const resolveDelivery = typeof options.delivery === "function" ? options.delivery : undefined
   let delivery = typeof options.delivery === "function" ? undefined : options.delivery
   function projectSend() {
-    clearConversationPlaybackForSession(instanceId, sessionId)
-    if (delivery === "queue") return
-    const createdAt = Date.now()
+    const existing = projected ? store.getMessage(messageId) : undefined
+    if (existing?.status === "sending") return
+    const now = Date.now()
     store.upsertMessage({
       id: messageId,
       sessionId,
       role: "user",
       status: "sending",
       parts: optimisticParts,
-      createdAt,
-      updatedAt: createdAt,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
       isEphemeral: true,
       clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
     })
-    store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
     store.markSendPending(messageId)
     projected = true
   }
-  if (typeof options.delivery !== "function" && !options.prepareAdmission) projectSend()
+  function reconcileSend() {
+    clearConversationPlaybackForSession(instanceId, sessionId)
+    if (delivery === "queue") {
+      if (projected) store.removeMessage(messageId, sessionId)
+      projected = false
+    } else {
+      projectSend()
+      store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
+    }
+  }
+  if (!options.prepareAdmission) {
+    if (!resolveDelivery) reconcileSend()
+    // Show the draft's immediate echo without dropping an old row until admission commits to steering.
+    else if (options.pendingDelivery === "steer") projectSend()
+  }
 
   withSession(instanceId, sessionId, () => {
     /* trigger reactivity for legacy session data */
@@ -367,11 +382,11 @@ async function sendMessage(
       if (!currentSession) throw new Error("Session not found")
       const client = getRootClient(instanceId)
       await syncSessionInstructions(client, instanceId, sessionId)
-      if (typeof options.delivery === "function") {
+      if (resolveDelivery) {
         if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
-        delivery = options.delivery()
-        projectSend()
-      } else if (options.prepareAdmission) projectSend()
+        delivery = resolveDelivery()
+      }
+      if (resolveDelivery || options.prepareAdmission) reconcileSend()
       if (delivery !== "queue" && !options.preserveNativeProfile) {
         if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
         if (currentSession.model.providerId && currentSession.model.modelId) {
