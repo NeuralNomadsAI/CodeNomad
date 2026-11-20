@@ -29,7 +29,7 @@ L’initialisation n’est acceptée que depuis l’écoute de boucle locale de 
 
 ## Sessions navigateur et révocation {#sessions}
 
-La connexion directe crée une session opaque en mémoire du backend et un cookie `codenomad_session` (ou le nom configuré). Les cookies sont `HttpOnly`, `SameSite=Lax`, limités à `/` et marqués `Secure` s’ils sont émis en HTTPS. Ce sont des cookies de session navigateur ; le redémarrage du backend invalide les sessions en mémoire. Réauthentifiez-vous sur place si demandé plutôt que de renvoyer les modifications échouées.
+La connexion directe crée une session opaque en mémoire du backend et un cookie `codenomad_session` (ou le nom configuré). Les cookies sont `HttpOnly`, `SameSite=Lax`, limités à `/` et marqués `Secure` s’ils sont émis en HTTPS. Le cookie est conservé sept jours, même après fermeture du navigateur ; le redémarrage du backend invalide les sessions en mémoire. Réauthentifiez-vous sur place si demandé plutôt que de renvoyer les modifications échouées.
 
 La déconnexion révoque la session directe courante. Un changement de mot de passe réussi sur l’hôte révoque toutes les sessions directes de cet utilisateur, y compris celle de l’appelant ; reconnectez-vous. Les sessions expirent après 24 heures sans requête authentifiée ou sept jours depuis leur création. Pour ajuster ces limites, définissez `CODENOMAD_SESSION_IDLE_SECONDS` et `CODENOMAD_SESSION_ABSOLUTE_SECONDS` en secondes entières positives avant de démarrer le backend. Les appareils de Contrôle à distance se révoquent séparément.
 

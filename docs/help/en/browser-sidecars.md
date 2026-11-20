@@ -66,7 +66,9 @@ On Electron and Windows Tauri, mobile templates set Android/Chromium identity, o
 1. Start the web tool separately on the CodeNomad backend host, listening on `127.0.0.1:<port>`.
 2. Open **Settings → SideCars**. Enter **Name** and **Port**; check the derived **Base path** (`/sidecars/<id>`).
 3. Set **Protocol** to match the upstream service, and choose **Prefix mode**.
-4. Choose **Add SideCar**, then **Open SideCar** from the home page to open its tab.
+4. Choose **Add SideCar**, then open it from **Browse** on Home or an empty tab; it then joins **Recent tabs** and the quick launcher's search. **New SideCar**, in Home's left-hand action column, opens this form. Selecting a SideCar creates a new occurrence; its separate **Open** action joins an existing one ([project tabs](projects.md#open-project)).
+
+A running SideCar stays in Recent tabs after its tab closes.
 
 | Choice | Exact effect |
 | --- | --- |

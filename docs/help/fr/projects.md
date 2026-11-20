@@ -1,35 +1,31 @@
 # Projets et worktrees
 
-Dépliez **Distants** sur l’accueil ou dans le lanceur `+`. Choisissez **+ Projet** sur un serveur CodeNomad enregistré, parcourez ses dossiers sur place, puis choisissez **Ouvrir**. Le projet s’ouvre dans un onglet ordinaire. Pour ajouter un serveur, collez son lien d’appairage ou son adresse dans le champ sous la liste. Les projets ouverts ici restent dans **Récents** avec l’icône et le nom de leur serveur, même hors connexion. Parcourir, Cloner et Temporaire restent locaux.
-
 Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend. Ouvrir un onglet, parcourir une copie de travail et déplacer une famille de conversations sont des opérations distinctes.
-
-**+ Projet** part du dernier chemin connu sur le serveur. Si le dossier a été déplacé ou supprimé, choisissez **Racine du serveur**. Pendant l’ouverture d’un projet récent, **Annuler** revient à la liste des serveurs.
-
-Un projet distant n’apparaît dans les récents qu’après avoir été ouvert ici avec succès. Parcourir les dossiers n’ajoute aucun raccourci. Les raccourcis enregistrés restent disponibles hors connexion pour la même connexion (profil, adresse, réglage de vérification TLS et cible SSH). Si le dossier distant a déjà un onglet en attente, l’ouverture le sélectionne, conserve ses brouillons et vous laisse décider quand réessayer.
-
-Un raccourci retiré reste masqué dans les récents jusqu’à ce que vous rouvriez ce dossier.
 
 ## Ouvrir un projet {#open-project}
 
-1. Cliquez sur **Nouvelle instance** (`+`) pour ouvrir l’accueil.
-2. Choisissez **Parcourir les dossiers**, sélectionnez le dossier du backend et ouvrez-le ; ou choisissez une entrée sous **Dossiers récents**.
-3. Pour une copie de dépôt, choisissez **Cloner un dépôt Git**, saisissez **URL du dépôt** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
+1. Cliquez sur **Nouvelle instance** (`+`) ou utilisez `Ctrl/Cmd+N` pour ouvrir un onglet vide. Sous le logo et le nom CodeNomad centrés, **Temporaire** puis **Cloner** précèdent les deux colonnes : **Onglets récents** à gauche ; **Parcourir** à droite, avec **Adresse ou lien du serveur** vers le bas. Le fond de la page reprend celui de l'onglet actif. Les colonnes s'empilent sur écran étroit. Le logo ouvre l'accueil : **Cloner un dépôt Git**, **Nouvel onglet temporaire**, **Nouveau SideCar** et la ligne OpenCode à gauche ; **Onglets récents | Parcourir** à droite, avec les nombres d'éléments sous les titres. Le panneau droit s'aligne sur le bas de la colonne gauche et sa liste défile à l'intérieur. L'accueil conserve la langue, les réglages, **Sponsor** ([Soutenir CodeNomad](sponsor.md)), GitHub, les étoiles et Discord. Clonage et dossiers temporaires ciblent le backend local. Choisir un projet local ou distant ou un SideCar remplit l'onglet vide sur place. Les onglets vides durent jusqu'au rechargement et se ferment sans laisser de projet.
+2. Dans **Onglets récents**, choisissez un projet ; ou ouvrez **Parcourir**, choisissez **Cet ordinateur**, puis sélectionnez le dossier du backend et ouvrez-le. **Parcourir** liste aussi les serveurs CodeNomad enregistrés ([onglets de projets distants](remote-access.md#remote-project-tabs)) et les SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
+3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
 
 Parcourir un serveur distant signifie parcourir son système de fichiers, pas votre téléphone ou ordinateur portable. Ouvrir un projet ne crée pas un démon OpenCode distinct par onglet. Les conversations sont des sessions natives OpenCode ; leur durée de vie n’est pas celle de l’onglet.
 
-Le clonage écrit un dépôt dans la destination. **Supprimer d'abord le dossier de destination s'il existe déjà.** est destructeur : n’activez cette option que si tout ce qui s’y trouve peut être supprimé. Dans le doute, utilisez une nouvelle destination.
+Choisir un serveur dans **Parcourir** explore ses dossiers ; son nom reste visible pendant la connexion et la navigation. Ses projets récents apparaissent uniquement dans **Onglets récents**, à gauche d'un onglet vide, avec leur action **Ouvert** distincte. Sur l'accueil, changer entre **Onglets récents** et **Parcourir** conserve le serveur et le dossier choisis. Tant qu'un serveur est sélectionné, les récents viennent uniquement de ce serveur et proposent les actions d'ouverture ; le retour à Parcourir rétablit les récents mixtes habituels. Les champs de connexion sont libellés. Les lignes de dossiers servent uniquement à naviguer ; appuyez sur Entrée ou sur la flèche au bout du champ de chemin pour ouvrir le dossier affiché. Seul le choix d'un projet remplit l'onglet vide.
 
-Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** change son nom affiché ; **Retirer des récents** retire le raccourci, pas ses fichiers ni ses conversations. Cliquer sur un projet récent déjà ouvert ouvre un nouvel onglet ; son bouton **Ouvert** (**Basculer vers le projet ouvert**) sélectionne plutôt l’onglet existant.
+Le clonage écrit un dépôt dans la destination. **Supprimer d'abord le dossier de destination s'il existe deja.** est destructeur : n’activez cette option que si tout ce qui s’y trouve peut être supprimé. Dans le doute, utilisez une nouvelle destination. Un échec de clonage n’est pas une raison de supprimer un projet existant ; vérifiez la destination et l’erreur signalées avant de réessayer.
 
-Ouvrez deux fois le même dossier et sélectionnez la même conversation dans les deux onglets pour garder le chat dans l’un et un aperçu web, un fichier ou un rapport de Mission dans l’autre. Chaque onglet conserve sa propre vue, la position de défilement de la conversation, la sélection du panneau droit et le mode Fichiers ; les messages, l’exécution et les données du projet restent partagés.
+Les récents sont des raccourcis. Les boutons en ligne sur l'accueil et le menu d'actions des onglets vides proposent **Renommer l'espace de travail** et **Retirer des récents** selon l'entrée ; retirer conserve fichiers et conversations. Partout, accueil, onglet vide et lanceur rapide, cliquer sur un projet local, distant ou un SideCar crée une nouvelle occurrence, même déjà ouvert. L'action séparée **Ouvert** (**Basculer vers le projet ouvert**) rejoint l'occurrence existante.
+
+L’action **Ouvert** sélectionne aussi un onglet qui attend son serveur et ferme l’onglet vide de départ.
 
 ## Utiliser le lanceur de nouvelle instance {#new-instance-launcher}
 
-1. Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
-2. Recherchez les projets récents ou sélectionnez **Parcourir…**, **Temporaire** ou **Cloner…**.
+L'ouverture place le focus sur le menu ; Tab ou un clic permet d'accéder à la recherche. Les flèches parcourent les récents ; Échap ferme le menu.
 
-Un clic normal ouvre l’accueil complet. Le lanceur sélectionne le projet s’il est déjà ouvert ; l’accueil ouvre un nouvel onglet sauf s’il sélectionne un onglet en attente. Dans **DISTANTS**, Échap revient aux serveurs, replie la liste, puis ferme le lanceur et rend le focus à `+`.
+1. Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
+2. **Onglets récents** contient la recherche et les projets locaux, distants et SideCars récents, avec leur action distincte **Ouvert**. Une ligne crée une nouvelle occurrence ; **Ouvert** rejoint l'existante. Le bouton sablier **Nouvel onglet temporaire**, dans la barre de titre, crée un onglet temporaire.
+
+Un clic normal ouvre un onglet vide. Gérez les récents sur l'accueil ou un onglet vide, les serveurs dans **Paramètres → Serveurs** et les SideCars dans **Paramètres → SideCars**. Sur l'accueil, les onglets vides et le lanceur rapide, la sélection d'une ligne persiste uniquement pendant la navigation clavier ; le survol disparaît lorsque le pointeur sort. Échap ferme le lanceur et rend le focus à `+`.
 
 ## Fermer un onglet de projet {#close-stop}
 
@@ -54,11 +50,13 @@ Au rechargement, si la restauration est activée, les onglets distants retrouven
 
 **Réessayer** reprend aussi les onglets en attente lorsque la restauration automatique au démarrage est désactivée. Les notifications sélectionnent l’onglet en attente existant. Vérifiez le résultat d’une action de conversation incertaine avant de la renvoyer.
 
-Avant de supprimer un serveur ou de changer son adresse, fermez ses onglets de projet dans chaque fenêtre et rouvrez **Paramètres** depuis un autre projet si les paramètres ciblent encore ce serveur. Un inventaire de projets inaccessible bloque le changement jusqu’à sa vérification.
+Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir**. Comme `+` et `Ctrl/Cmd+N`, il réutilise l’onglet vide de la fenêtre. Une fois un projet choisi, `+` ouvre un nouvel onglet vide.
+
+**Supprimer** indique combien d’onglets seront fermés et combien de projets récents seront retirés. La connexion enregistrée disparaît de **Parcourir** ; les projets et les conversations restent sur le serveur. Les projets temporaires gardent leurs choix de fermeture habituels.
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 
-1. Choisissez **Temporaire** dans le lanceur ou **Nouvelle instance temporaire** sur l’accueil.
+1. Choisissez **Nouvel onglet temporaire** sur l'accueil ou **Temporaire** au-dessus des colonnes d'un onglet vide.
 2. Travaillez dans le dossier vide géré par CodeNomad ; Git n’est pas initialisé automatiquement.
 3. À la fermeture de l’onglet, choisissez **Garder**, **Jeter** ou **Annuler**. Le menu de l’onglet propose aussi **Garder comme projet**.
 

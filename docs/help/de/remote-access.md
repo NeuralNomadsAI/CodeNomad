@@ -95,25 +95,32 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 Authentifizierte Remote-Clients können alle auf dem Host gespeicherten Server nutzen und verwalten; Startseite und **Einstellungen → Server** zeigen die vom Host erlaubten Aktionen. Unverschlüsseltes LAN-HTTP deaktiviert die Eingabe neuer Serverpasswörter und Kopplungslinks: „Verwenden Sie HTTPS oder Remote Control, um Zugangsdaten einzugeben.“ Verbindungen mit gespeicherten Zugangsdaten sowie das Hinzufügen, Bearbeiten und Entfernen von Profilen ohne Geheimnisse bleiben verfügbar.
 
-Für ein ausschließlich über SSH erreichbares Ziel wählen Sie in den **Einstellungen → Server** die Aktion **Server hinzufügen**, geben **URL** und **SSH-Host (optional)** ein und wählen **Speichern**. Das Profil wird offline gespeichert; die Verbindung nutzt das SSH-Relay des Backends.
+Für ein ausschließlich über SSH erreichbares Ziel wählen Sie in den **Einstellungen → Server** die Aktion **SSH-Server hinzufügen**, geben **URL** und **SSH-Host (optional)** ein und wählen **Speichern**. Das Profil wird offline gespeichert; die Verbindung nutzt das SSH-Relay des Backends.
 
-Öffnen Sie **Einstellungen → Server**: Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein oder bestätigen Sie mit Enter. Das Hinzufügen speichert ein Profil auf dem Host, ohne ein Projekt zu öffnen. **Server bearbeiten** ändert **URL** oder den optionalen **Name**; Umbenennen bei gleicher URL und TLS-Richtlinie funktioniert offline. **Gespeicherten Server entfernen** fragt nach Bestätigung, vergisst die Verbindung und speichert die Entfernung; bei einem Speicherfehler bleibt das Profil für einen neuen Versuch erhalten. Andere Verbindungen bleiben bestehen.
+Öffnen Sie **Einstellungen → Server**: Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein oder bestätigen Sie mit Enter. Das Hinzufügen speichert ein Profil auf dem Host, ohne ein Projekt zu öffnen. **Server bearbeiten** ändert **URL** oder den optionalen **Name**; Umbenennen bei gleicher URL und TLS-Richtlinie funktioniert offline. **Entfernen** fragt nach Bestätigung, vergisst die Verbindung und speichert die Entfernung; bei einem Speicherfehler bleibt das Profil für einen neuen Versuch erhalten. Andere Verbindungen bleiben bestehen.
 
-**TLS-Prüfung überspringen** erscheint nach einem Zertifikatsfehler für diese Adresse; eine neue Adresse löscht die Zustimmung. Kopplung prüft TLS immer. **Öffnen** zeigt die Projekte des Servers.
+**TLS-Prüfung überspringen** erscheint nach einem Zertifikatsfehler für diese Adresse; eine neue Adresse löscht die Zustimmung. Kopplung prüft TLS immer.
 
 **SSH-Host (optional)** speichert einen OpenSSH-Host oder Alias für das Backend-Relay. Vorschläge stammen aus `~/.ssh/config` des lokalen Backend-Kontos. Geben Sie die CodeNomad-Adresse aus Sicht dieses Hosts ein (etwa `https://127.0.0.1:9898` mit dem tatsächlichen Port) und wählen Sie **Speichern**. SSH-Profile nutzen das Relay. CodeNomad muss dort bereits installiert sein und laufen. Lokal werden OpenSSH, Schlüsselauthentifizierung und ein geprüfter Hostschlüssel in `known_hosts` benötigt; CodeNomad-Authentifizierung und HTTPS-Zertifikatsprüfungen gelten weiterhin.
 
 Nur wenn `multiBackend` auf `false` gesetzt ist, gelten die folgenden Schritte für separate Desktop-Fenster:
 
-1. Wählen Sie auf der Desktop-Startseite **CodeNomad-Server verbinden**. Dieselbe Schaltfläche erscheint auf einem leeren Tab **Server** und unter **Einstellungen → Remote-Zugriff → Server**.
+1. **Einstellungen → Remote-Zugriff → Server** → **CodeNomad-Server verbinden**.
 2. Geben Sie in **Mit Server verbinden** **Servername** und **Server-URL** mit einer vertrauenswürdigen HTTPS-Origin ein. Lassen Sie **TLS-Verifizierung für selbstsignierte Zertifikate überspringen.** deaktiviert; richten Sie stattdessen Vertrauen ein.
 3. Wählen Sie **Speichern** für ein Lesezeichen oder **Verbinden** zum Speichern und Öffnen. Melden Sie sich auf diesem Server an.
 
-Wählen Sie einen gespeicherten Server auf dem Tab **Server** der Startseite, um ihn erneut zu öffnen. Lesezeichen gehören zu dieser CodeNomad-Konfiguration, nicht den Projekten des Remote-Servers. Eine URL zu speichern startet keinen Server und gewährt keinen Zugriff. **Gespeicherten Server entfernen** entfernt das Lesezeichen, nicht entfernte Unterhaltungen, Backend oder Zugangsdaten.
 
 Wenn Sie das letzte lokale Fenster schließen, während Remote-Fenster geöffnet bleiben, behält es seine Tabs: **Fenster → Neues Fenster** in einem Remote-Fenster oder ein erneuter Start von CodeNomad öffnet es wieder.
 
 Fügen Sie für Fernsteuerung stattdessen einen frischen Kopplungslink in **Server-URL** ein. Das Lesezeichen behält nur die Tunnel-Origin, nie den Einmal-Kopplungscode; siehe [Fernsteuerung](remote-control.md) zur erneuten Kopplung nach Verlust des Geräte-Cookies.
+
+## Ein Remote-Projekt in einem Tab öffnen {#remote-project-tabs}
+
+Wählen Sie auf der Startseite oder in einem neuen Tab **Durchsuchen** und dann einen Server. Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein. Melden Sie sich bei Bedarf an. Klicken Sie auf einen Ordner, um ihn zu durchsuchen. Drücken Sie im Pfadfeld die Eingabetaste oder wählen Sie **Öffnen**, um ihn zu öffnen. Mit **Zurück zu Durchsuchen** gelangen Sie zur Serverliste.
+
+Lokale und entfernte Projekte teilen sich das Fenster. **Zuletzt verwendete Tabs** zeigt beim Durchsuchen die Einträge des ausgewählten Servers. In der gemischten Liste stehen Serversymbol und Servername bei den hier geöffneten Projekten. Wenn ein wiederhergestellter Tab auf seinen Server wartet, wählen Sie darin **Erneut versuchen** oder **Verbinden**. Seine Entwürfe bleiben erhalten.
+
+Unter **Einstellungen → Server** öffnet **Öffnen** einen neuen Tab mit dem gewählten Server unter **Durchsuchen**. **Entfernen** vergisst die Verbindung und blendet ihre Verknüpfungen aus; offene Tabs, Projekte und Unterhaltungen bleiben erhalten.
 
 ### `--connect-server` {#connect-server}
 

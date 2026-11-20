@@ -24,7 +24,7 @@ Atamalar CodeNomad arayüz yapılandırmasına kaydedilir ve bunu paylaşan iste
 | Eylem | Varsayılan |
 | --- | --- |
 | Komut paletini aç | `Mod+Shift+P` |
-| Yeni örnek / Ana sayfada bir klasöre göz atın | `Mod+N` |
+| Yeni örnek / Boş sekme açın | `Mod+N` |
 | Uygulama sekmesini kapat | `Mod+W` |
 | Önceki / sonraki uygulama sekmesi | `Mod+[` / `Mod+]` |
 | Uygulama sekmesi 1-9 | `Mod+1`'den `Mod+9`'ye kadar |
@@ -73,3 +73,5 @@ Normal tarayıcı pencereleri tarayıcı kısayollarını da korur. Tuş birleş
 Rakam sırası ve köşeli parantez kısayolları AZERTY/QWERTZ dahil kayıt, yürütme ve çakışma kontrolünde fiziksel tuş konumlarını kullanır. Diğer tuşlar mantıksal değerlerini kullanır. Kullanacağınız klavyeyle kaydedip gösterilen sonucu kontrol edin.
 
 IME birleşimi sırasında metin girişi önceliklidir. İstem geçmişi ve Escape eylemleri ayrıca odağa, seçici/Shell durumuna ve devam eden işleme bağlıdır; her ArrowUp veya Escape basışının koşulsuz genel eylem olduğunu varsaymayın. Masaüstünde gönderme odağı konuşmaya taşır; böylece oklar, sayfa tuşları ve Boşluk konuşmayı kaydırır. Bir karakter yazmak o karakterle birlikte ileti düzenleyicisine döner; **Girdiye odaklan** ise istem geçmişini kullanmadan önce odağı oraya döndürür.
+
+Başlatıcı menüsünde aramak için Tab, seçmek için ok tuşları ve Enter, `+` düğmesine dönmek için Escape tuşuna basın.

@@ -1,7 +1,20 @@
-import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Globe, Loader2, GitBranch, Pencil, Hourglass, Server } from "lucide-solid"
+import { Component, createMemo, createSignal, createUniqueId, Show, For, onMount, onCleanup, createEffect, on } from "solid-js"
+import { Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Pencil, Laptop, Server } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
-import { isHotkeyRecording, matchesHotkey, withHotkey } from "../lib/hotkeys"
+import type { RemoteServerBrowseResponse, RemoteServerProfile } from "../../../server/src/api-types"
+import type { ServerSelectionIntent } from "../lib/native/server-selection-intent"
+import { qualifiedServerDisplayName } from "../lib/codenomad-link"
+import { captureRequestFocus } from "../lib/request-focus"
+import BrowseMenu, { createBrowseEntryCount } from "./browse-menu"
+import EntryCount from "./entry-count"
+import RemoteRecentSession from "./remote-recent-session"
+import ActionOverflowMenu from "./action-overflow-menu"
+import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget, launchableRecents, type LaunchableRecent } from "../lib/recent-open-target"
+import { helpUrl } from "../lib/help-url"
+import { Heart } from "lucide-solid"
+import NewTabActions from "./new-tab-actions"
+import RecentTabIcon from "./recent-tab-icon"
+import { isHotkeyRecording, matchesHotkey } from "../lib/hotkeys"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
@@ -13,67 +26,79 @@ import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
-import { canOpenRemoteWindows } from "../lib/runtime-env"
-import { getExistingInstanceForFolder } from "../stores/instances"
+import { remoteRecentProjectsUsable, removeRecentProject, renameRecentProject, type RecentProject } from "../stores/recent-projects"
+import { normalizeWorkspacePath } from "../stores/app-session-reconciliation"
 import { renameProject } from "../stores/project-names"
 import { LocaleSelector } from "./locale-selector"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
-import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
-import { getServerMeta, localRequest, serversUsable, serversManageable, sidecarsAllowed } from "../lib/server-meta"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
-import { preferences } from "../stores/preferences"
-import RemoteProjectMenu, { type RemoteRecentRequest } from "./remote-project-menu"
-import { recentProjects, removeRecentProject, renameRecentProject, type RecentProject } from "../stores/recent-projects"
-import { findOpenProjectTab, selectOpenProjectTab } from "../stores/remote-project-open"
 
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
 const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
-
-type HomeTab = "local" | "servers"
-
 
 interface FolderSelectionViewProps {
   onSelectFolder: (folder: string) => void
   onSelectExistingInstance: (instanceId: string, recentPath: string) => void
   /** Creates a new temporary instance; open ones come back with the restored tabs. */
   onNewTemporaryInstance?: () => void
-  onOpenSidecar?: () => void
-  onRemoteOpened?: () => void
   isLoading?: boolean
   onClose?: () => void
+  blank?: boolean
+  initialServer?: ServerSelectionIntent
+  active?: boolean
+  onOpenSidecar?: (id: string) => void
+  onJoined?: () => void
+  onRemoteOpened?: (instanceId: string) => void
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
-  const {
-    recentFolders,
-  } = useConfig()
-  const { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile } = useRemoteServerProfiles()
-  const { t } = useI18n()
+  const { remoteServers } = useConfig()
+  const { t, locale } = useI18n()
+  const [remoteSource, setRemoteSource] = createSignal<{ profile: RemoteServerProfile; listing?: RemoteServerBrowseResponse }>()
+  const browseEntryCount = createBrowseEntryCount()
+  const viewId = createUniqueId()
+  const tabId = (tab: string) => `folder-home-tab-${viewId}-${tab}`
+  const panelId = (tab: string) => `folder-home-panel-${viewId}-${tab}`
   const [selectedIndex, setSelectedIndex] = createSignal(0)
+  const [connectingRecent, setConnectingRecent] = createSignal<string>()
   const [hoveredRecentActionPath, setHoveredRecentActionPath] = createSignal<string | null>(null)
   const [focusedRecentActionPath, setFocusedRecentActionPath] = createSignal<string | null>(null)
-  const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
-  const [renameProjectTarget, setRenameProjectTarget] = createSignal<{ folder: RecentProject; name: string } | null>(null)
+  const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>(null)
+  const [renameProjectTarget, setRenameProjectTarget] = createSignal<{ recent: RecentProject; name: string } | null>(null)
   const [isRenamingProject, setIsRenamingProject] = createSignal(false)
-  const [activeTab, setActiveTab] = createSignal<HomeTab>("local")
-  const [remoteRecent, setRemoteRecent] = createSignal<RemoteRecentRequest>()
+  // The canonical selector shared by Home and blank tabs.
+  const [homeTab, setHomeTab] = createSignal<"recent" | "browse">("recent")
+  createEffect(on([() => props.active, remoteSource, homeTab], () => setConnectingRecent(undefined), { defer: true }))
+  createEffect(() => { if (!remoteRecentProjectsUsable()) setConnectingRecent(undefined) })
   let homeRootRef: HTMLDivElement | undefined
-  let actionsColumnRef: HTMLDivElement | undefined
   let recentListRef: HTMLDivElement | undefined
+  createEffect(on(() => props.blank && props.active !== false, (active) => {
+    if (!active) return
+    setHomeTab(allRecents().length ? "recent" : "browse")
+    const focus = captureRequestFocus()
+    let cancelled = false
+    onCleanup(() => { cancelled = true; focus.dispose() })
+    requestAnimationFrame(() => {
+      if (!cancelled && props.active !== false && focus.retained()) homeRootRef?.querySelector<HTMLElement>('[data-list-index="0"], [data-browse-nav]')?.focus()
+      focus.dispose()
+    })
+  }))
 
-  const folders = recentProjects
-  const serverList = () => remoteServers()
+  // This computer's folders, the remote projects this window reopens and SideCars, newest first.
+  const allRecents = createMemo<readonly LaunchableRecent[]>(() => {
+    const source = remoteSource()
+    if (!source) return launchableRecents()
+    const profile = source.profile
+    const serverLabel = qualifiedServerDisplayName(profile, remoteServers())
+    return source.listing?.recents.map(recent => ({ ...recent, kind: "remote", backendId: profile.id, serverLabel,
+      policy: profile, key: JSON.stringify([profile.id, normalizeWorkspacePath(recent.path)]) })) ?? []
+  })
+  const recentsAvailable = () => !remoteSource() || !!remoteSource()?.listing
+  const folders = allRecents
   const isLoading = () => Boolean(props.isLoading)
-  const canUseRemoteServerWindows = () => preferences().multiBackend !== true && localRequest() && canOpenRemoteWindows()
-  const canManageRemoteServers = () => preferences().multiBackend === true ? serversUsable() && serversManageable() : canUseRemoteServerWindows()
-  const openServer = (id: string) => {
-    if (!canUseRemoteServerWindows()) return
-    void connectSavedServer(id)
-  }
-  onMount(() => { void getServerMeta().catch(() => {}) })
 
   function getActiveListLength() {
-    return activeTab() === "local" ? folders().length : serverList().length
+    return props.blank || homeTab() === "recent" ? folders().length : 0
   }
 
   function scrollToIndex(index: number) {
@@ -82,23 +107,18 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     const element = container.querySelector(`[data-list-index="${index}"]`) as HTMLElement | null
     if (!element) return
 
-    const containerRect = container.getBoundingClientRect()
-    const elementRect = element.getBoundingClientRect()
-
-    if (elementRect.top < containerRect.top) {
-      container.scrollTop -= containerRect.top - elementRect.top
-    } else if (elementRect.bottom > containerRect.bottom) {
-      container.scrollTop += elementRect.bottom - containerRect.bottom
-    }
+    element.focus()
+    element.scrollIntoView({ block: "nearest" })
   }
 
 
   function handleKeyDown(e: KeyboardEvent) {
-    if (e.defaultPrevented || e.isComposing || isHotkeyRecording()) return
+    if (props.active === false || e.defaultPrevented || e.isComposing || isHotkeyRecording()) return
     let activeElement: HTMLElement | null = null
     if (typeof document !== "undefined") {
       activeElement = document.activeElement as HTMLElement | null
     }
+    if (activeElement && activeElement !== document.body && !homeRootRef?.contains(activeElement)) return
     const insideModal = activeElement?.closest(".modal-surface") || activeElement?.closest("[role='dialog']")
     const isEditingField =
       activeElement &&
@@ -126,19 +146,20 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     }
 
     if (isInteractiveControl && (e.key === "Enter" || e.key === " ")) return
+    if (activeElement?.closest(".browse-menu, [role=tablist], [data-remote-view-session]")) return
 
     const listLength = getActiveListLength()
     if (listLength === 0) return
 
     if (e.key === "ArrowDown") {
       e.preventDefault()
-      const newIndex = Math.min(selectedIndex() + 1, listLength - 1)
+      const newIndex = (selectedIndex() + 1) % listLength
       setSelectedIndex(newIndex)
       setFocusMode("recent")
       scrollToIndex(newIndex)
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
-      const newIndex = Math.max(selectedIndex() - 1, 0)
+      const newIndex = (selectedIndex() - 1 + listLength) % listLength
       setSelectedIndex(newIndex)
       setFocusMode("recent")
       scrollToIndex(newIndex)
@@ -176,31 +197,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   function handleEnterKey() {
     if (isLoading()) return
-    const index = selectedIndex()
-
-    if (activeTab() === "local") {
-      const folder = folders()[index]
-      if (folder) {
-        handleRecentSelect(folder)
-      }
-      return
-    }
-
-    const server = serverList()[index]
-    if (server) {
-      openServer(server.id)
-    }
+    const folder = folders()[selectedIndex()]
+    if (folder) openRecent(folder)
   }
-
-  createEffect(() => {
-    activeTab()
-    if (!canUseRemoteServerWindows() && activeTab() !== "local") {
-      setActiveTab("local")
-      return
-    }
-    setSelectedIndex(0)
-    setFocusMode("recent")
-  })
 
   createEffect(() => {
     const length = getActiveListLength()
@@ -222,30 +221,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     })
   })
 
-  onMount(() => {
-    const syncActionsHeight = () => {
-      if (!homeRootRef || !actionsColumnRef) return
-      const height = actionsColumnRef.getBoundingClientRect().height
-      homeRootRef.style.setProperty("--folder-home-actions-height", `${Math.ceil(height)}px`)
-    }
-
-    syncActionsHeight()
-    window.addEventListener("resize", syncActionsHeight)
-
-    let observer: ResizeObserver | undefined
-    if (typeof ResizeObserver !== "undefined" && actionsColumnRef) {
-      observer = new ResizeObserver(syncActionsHeight)
-      observer.observe(actionsColumnRef)
-    }
-
-    onCleanup(() => {
-      window.removeEventListener("resize", syncActionsHeight)
-      observer?.disconnect()
-    })
-  })
+  onMount(() => { if (!allRecents().length) setHomeTab("browse") })
 
   function dropTargetBlocked() {
-    return isLoading() || dialogs.isFolderBrowserOpen() || settingsOpen()
+    return props.active === false || isLoading() || dialogs.isFolderBrowserOpen() || settingsOpen()
   }
 
   function showInvalidFolderDropAlert() {
@@ -274,15 +253,20 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     props.onSelectFolder(path)
   }
 
-  function handleRecentSelect(folder: RecentProject) {
+  function openRecent(folder: LaunchableRecent) {
     if (isLoading()) return
-    if (folder.kind === "remote") setRemoteRecent({ profile: folder.policy, path: folder.path, projectName: folder.projectName })
+    if (folder.kind === "sidecar") props.onOpenSidecar?.(folder.path)
+    else if (folder.kind === "remote") setConnectingRecent(folder.key)
     else handleFolderSelect(folder.path)
   }
 
-  function handleExistingInstanceSelect(instanceId: string, recentPath: string) {
-    if (isLoading()) return
-    props.onSelectExistingInstance(instanceId, recentPath)
+  function handleTabKeyDown(event: KeyboardEvent) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return
+    event.preventDefault()
+    const next = homeTab() === "recent" ? "browse" : "recent"
+    const target = event.key === "Home" ? "recent" : event.key === "End" ? "browse" : next
+    setHomeTab(target)
+    homeRootRef?.querySelector<HTMLElement>(`[data-home-tab="${target}"]`)?.focus()
   }
 
   function setRecentActionHovered(path: string, active: boolean) {
@@ -293,25 +277,24 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setFocusedRecentActionPath((current) => active ? path : current === path ? null : current)
   }
 
-  function clearRecentActionState(path: string) {
-    setRecentActionHovered(path, false)
-    setRecentActionFocused(path, false)
-  }
-
   const dialogs = createNewInstanceDialogs({
-    defaultPath: () => recentFolders()[0]?.path,
+    defaultPath: () => launchableRecents().find(folder => folder.kind === "local")?.path,
     isLoading,
     onSelectFolder: handleFolderSelect,
-    onSaveServer: saveServer,
   })
 
   const openCloneDialog = () => dialogs.clone()
 
-  function openServerDialog() {
-    if (!canManageRemoteServers()) return
-    if (preferences().multiBackend === true) void openSettings("servers")
-    else if (canUseRemoteServerWindows()) dialogs.addServer()
-  }
+  const RecentSource = () => <span class="folder-home-recent-source flex items-center justify-end gap-2 min-w-0 text-sm text-secondary">
+    <Show when={remoteSource()} fallback={
+      <span role="img" aria-label={t("folderSelection.browseMenu.thisComputer")} title={t("folderSelection.browseMenu.thisComputer")}>
+        <Laptop class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+      </span>
+    }>{(source) => <>
+      <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+      <bdi class="truncate" dir="auto" title={qualifiedServerDisplayName(source().profile, remoteServers())}>{qualifiedServerDisplayName(source().profile, remoteServers())}</bdi>
+    </>}</Show>
+  </span>
 
   async function handleBrowse() {
     if (isLoading()) return
@@ -319,8 +302,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     await dialogs.browse()
   }
 
-  function handleRemove(folder: RecentProject, e?: Event) {
-    if (isLoading()) return
+  function handleRemove(folder: LaunchableRecent, e?: Event) {
+    if (isLoading() || remoteSource() || folder.kind === "sidecar") return
     e?.stopPropagation()
     void removeRecentProject(folder).catch(() => showAlertDialog(t("settings.preferenceSaveFailed"), { variant: "warning" }))
 
@@ -330,10 +313,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     }
   }
 
-  function openProjectRename(folder: RecentProject, e?: Event) {
+  function openProjectRename(recent: LaunchableRecent, e?: Event) {
     if (isLoading()) return
     e?.stopPropagation()
-    setRenameProjectTarget({ folder, name: getProjectDisplayName(folder.path, folder.projectName) })
+    if (recent.kind === "sidecar") return
+    setRenameProjectTarget({ recent, name: getProjectDisplayName(recent.path, recent.projectName) })
   }
 
   function closeProjectRenameDialog() {
@@ -345,8 +329,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     if (!target || !nextName.trim()) return
     setIsRenamingProject(true)
     try {
-      if (target.folder.kind === "remote") await renameRecentProject(target.folder, nextName)
-      else await renameProject(target.folder.path, nextName)
+      if (target.recent.kind === "remote") await renameRecentProject(target.recent, nextName)
+      else await renameProject(target.recent.path, nextName)
       setRenameProjectTarget(null)
     } catch {
       showAlertDialog(t("settings.preferenceSaveFailed"), { variant: "warning" })
@@ -360,16 +344,20 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     <>
       <div
         class="folder-home-root flex w-full items-start justify-center py-6 px-4 sm:px-6 relative"
+        classList={{ "folder-home-root--blank": props.blank }}
         ref={(el) => (homeRootRef = el)}
         onDragEnter={folderDrop.bind.onDragEnter}
         onDragOver={folderDrop.bind.onDragOver}
         onDragLeave={folderDrop.bind.onDragLeave}
         onDrop={folderDrop.bind.onDrop}
+        onPointerMove={() => setFocusMode(null)}
+        onKeyDown={(event) => { if (event.key === "Tab") setFocusMode("recent") }}
       >
         <div
-          class="folder-home-shell w-full max-w-5xl px-4 sm:px-8 pb-2 flex flex-col"
+           class="folder-home-shell w-full pb-2 flex flex-col"
           aria-busy={isLoading() ? "true" : "false"}
         >
+          <Show when={!props.blank}>
           <div class="absolute top-4" style="inset-inline-start: 1.5rem;">
             <LocaleSelector />
           </div>
@@ -404,12 +392,20 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </button>
             </Show>
           </div>
+          </Show>
           <div class="folder-home-hero text-center shrink-0">
-            <div class="mb-3 flex justify-center">
-              <BrandLogo alt={t("folderSelection.logoAlt")} class="folder-home-logo" />
+            <div class="folder-home-identity">
+              <div class="mb-3 flex justify-center"><BrandLogo alt={t("folderSelection.logoAlt")} class={props.blank ? "folder-home-logo empty-state-logo" : "folder-home-logo"} /></div>
+              <h1 class="mb-2 text-3xl font-semibold text-primary" classList={{ "empty-state-brand-title": props.blank }}>CodeNomad</h1>
             </div>
-            <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
+            <Show when={!props.blank}>
             <div class="mt-3 flex justify-center gap-2">
+              <a href={helpUrl(locale(), "sponsor")} class="selector-button selector-button-secondary w-auto px-3 py-1.5 inline-flex items-center justify-center gap-1.5"
+                onClick={(event) => { event.preventDefault(); void openExternalUrl(helpUrl(locale(), "sponsor"), "help").then((opened) => {
+                  if (!opened) showAlertDialog(t("commands.openSponsor.failed", { url: helpUrl(locale(), "sponsor") }), { variant: "warning" })
+                }) }}>
+                <Heart class="w-4 h-4" aria-hidden="true" /><span>{t("newTab.sponsor")}</span>
+              </a>
               <a
                 href={GITHUB_URL}
                 target="_blank"
@@ -456,201 +452,122 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 <DiscordSymbolIcon class="w-4 h-4" />
               </a>
             </div>
+            </Show>
           </div>
 
           <div class="folder-home-content flex-1 min-h-0 flex flex-col gap-4">
+            <Show when={props.blank}>
+              <div class="folder-home-blank-actions window-shell">
+                <NewTabActions blank isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} hideSidecar />
+              </div>
+            </Show>
             <div class="folder-home-main flex-1 gap-4">
-              {/* Right column: recent folders */}
-              <div class="folder-home-list-column order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0">
-                <div class="folder-home-list-panel panel flex flex-col flex-1">
-                  <div class="panel-header !gap-0 !p-0">
-                    <div class={`grid ${canUseRemoteServerWindows() ? "grid-cols-2" : "grid-cols-1"} gap-0 overflow-hidden border border-base`}>
-                      <button
-                        type="button"
-                        class="border-r border-base px-4 py-3 text-left transition-colors"
-                        classList={{
-                          "text-primary": activeTab() === "local",
-                          "text-muted hover:text-secondary": activeTab() !== "local",
-                        }}
-                        style={{
-                          "background-color": "var(--surface-secondary)",
-                        }}
-                        onClick={() => setActiveTab("local")}
-                      >
-                        <div
-                          class="panel-title text-base"
-                          style={{
-                            color: activeTab() === "local" ? "var(--text-primary)" : "var(--text-secondary)",
-                          }}
-                        >
-                          {t("folderSelection.recent.title")}
-                        </div>
-                        <p
-                          class="panel-subtitle mt-1"
-                          style={{
-                            color: activeTab() === "local" ? "var(--text-muted)" : "var(--text-secondary)",
-                          }}
-                        >
-                          {t(
-                            folders().length === 1
-                              ? "folderSelection.recent.subtitle.one"
-                              : "folderSelection.recent.subtitle.other",
-                            { count: folders().length },
-                          )}
-                        </p>
+              <Show when={!props.blank}>
+                <div class="folder-home-create-column flex flex-col gap-4">
+                  <div class="panel shrink-0">
+                    <div class="folder-home-creation-actions panel-body flex flex-col gap-3">
+                      <NewTabActions home isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} />
+                    </div>
+                    <div class="panel-section w-full">
+                      <button type="button" onClick={() => openSettings("opencode")} class="panel-section-header w-full justify-between">
+                        <div class="flex items-center gap-2"><Settings class="w-4 h-4 icon-muted" aria-hidden="true" /><span class="text-sm font-medium text-secondary">{t("folderSelection.opencode")}</span></div><ChevronRight class="w-4 h-4 icon-muted" aria-hidden="true" />
                       </button>
-                      <Show when={canUseRemoteServerWindows()}>
-                        <button
-                          type="button"
-                          class="px-4 py-3 text-left transition-colors"
-                          classList={{
-                            "text-primary": activeTab() === "servers",
-                            "text-muted hover:text-secondary": activeTab() !== "servers",
-                          }}
-                          style={{
-                            "background-color": "var(--surface-secondary)",
-                          }}
-                          onClick={() => setActiveTab("servers")}
-                        >
-                          <div
-                            class="panel-title text-base"
-                            style={{
-                              color: activeTab() === "servers" ? "var(--text-primary)" : "var(--text-secondary)",
-                            }}
-                          >
-                            {t("folderSelection.tabs.servers")}
-                          </div>
-                          <p
-                            class="panel-subtitle mt-1"
-                            style={{
-                              color: activeTab() === "servers" ? "var(--text-muted)" : "var(--text-secondary)",
-                            }}
-                          >
-                            {t("folderSelection.servers.count", { count: remoteServers().length })}
-                          </p>
-                        </button>
-                      </Show>
                     </div>
                   </div>
+                  <div class="panel shrink-0"><div class="panel-body flex items-center justify-center"><VersionPill /></div></div>
+                </div>
+              </Show>
+              <div class="folder-home-list-column flex flex-col gap-4 flex-1 min-h-0">
+                <div class="folder-home-list-panel panel flex flex-col" classList={{ "window-shell": props.blank }}>
+                  <div class="panel-header !gap-0 !p-0">
+                    <Show when={props.blank}><div class="flex items-center justify-between gap-2 min-w-0 w-full px-4 py-3"><div class="shrink-0"><h2 class="panel-title text-base">{t("newInstanceLauncher.recentTitle")}</h2><Show when={recentsAvailable()}><EntryCount count={allRecents().length} /></Show></div><RecentSource /></div></Show>
+                    <Show when={!props.blank}>
+                    <div class="grid grid-cols-2 gap-0 overflow-hidden border border-base" role="tablist" onKeyDown={handleTabKeyDown}>
+                      <For each={["recent", "browse"] as const}>
+                        {(tab) => (
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-label={t(tab === "recent" ? "newInstanceLauncher.recentTitle" : "folderSelection.browseMenu.title")}
+                            aria-description={tab === "recent" && !recentsAvailable() ? undefined : t((tab === "recent" ? allRecents().length : browseEntryCount()) === 1 ? "newTab.items.one" : "newTab.items.other", { count: tab === "recent" ? allRecents().length : browseEntryCount() })}
+                            id={tabId(tab)}
+                            data-home-tab={tab}
+                            aria-selected={homeTab() === tab}
+                            aria-controls={panelId(tab)}
+                            tabIndex={homeTab() === tab ? 0 : -1}
+                            class="folder-home-header-tab px-4 py-3 text-left transition-colors"
+                            classList={{ "border-r border-base": tab === "recent" }}
+                            style={{ "background-color": homeTab() === tab ? "var(--surface-secondary)" : "var(--surface-control)" }}
+                            onClick={() => setHomeTab(tab)}
+                          >
+                            <div class="flex items-center justify-between gap-2 min-w-0"><div class="shrink-0"><span class="panel-title text-base" style={{ color: homeTab() === tab ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                              {t(tab === "recent" ? "newInstanceLauncher.recentTitle" : "folderSelection.browseMenu.title")}
+                            </span>
+                            <Show when={tab !== "recent" || recentsAvailable()}><EntryCount count={tab === "recent" ? allRecents().length : browseEntryCount()} /></Show>
+                            </div><Show when={tab === "recent"}><RecentSource /></Show></div>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                    </Show>
+                  </div>
 
+                  <Show when={!props.blank}>
+                    <div id={panelId("browse")} role="tabpanel" aria-labelledby={tabId("browse")} class="flex flex-col flex-1 min-h-0" hidden={homeTab() !== "browse"} style={{ display: homeTab() === "browse" ? undefined : "none" }}>
+                      <BrowseMenu isLoading={isLoading()} active={props.active !== false && homeTab() === "browse"} onSourceChange={setRemoteSource} onBrowseLocal={() => void handleBrowse()}
+                        onOpenSidecar={id => props.onOpenSidecar?.(id)} onJoined={props.onJoined} onRemoteOpened={props.onRemoteOpened} />
+                    </div>
+                  </Show>
+
+                  <Show when={props.blank || homeTab() === "recent"}>
+                  <div id={panelId("recent")} role={props.blank ? "region" : "tabpanel"} aria-label={props.blank ? t("newInstanceLauncher.recentTitle") : undefined} aria-labelledby={props.blank ? undefined : tabId("recent")} class="flex flex-col flex-1 min-h-0">
                   <Show
-                    when={activeTab() === "local"}
-                    fallback={
-                      <Show
-                        when={canUseRemoteServerWindows() && remoteServers().length > 0}
-                        fallback={
-                          <Show when={canUseRemoteServerWindows()}>
-                            <div class="panel-empty-state flex-1">
-                              <div class="panel-empty-state-icon">
-                                <Globe class="w-12 h-12 mx-auto" />
-                              </div>
-                              <p class="panel-empty-state-title">{t("folderSelection.servers.empty.title")}</p>
-                              <Show when={canManageRemoteServers()}><button
-                                type="button"
-                                class="button-primary mt-4 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
-                                onClick={openServerDialog}
-                              >
-                                <Globe class="w-4 h-4" />
-                                <span>{t("folderSelection.actions.connectButton")}</span>
-                              </button></Show>
-                            </div>
-                          </Show>
-                        }
-                      >
-                        <div
-                          class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
-                          ref={(el) => (recentListRef = el)}
-                        >
-                          <For each={remoteServers()}>
-                            {(server, index) => (
-                              <div
-                                class="panel-list-item"
-                                classList={{
-                                  "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
-                                }}
-                              >
-                                <div class="flex items-center gap-2 w-full px-1">
-                                  <button
-                                    data-list-index={index()}
-                                    class="panel-list-item-content flex-1"
-                                    onClick={() => openServer(server.id)}
-                                    onMouseEnter={() => {
-                                      setFocusMode("recent")
-                                      setSelectedIndex(index())
-                                    }}
-                                  >
-                                    <div class="flex items-center justify-between gap-3 w-full">
-                                      <div class="flex-1 min-w-0 text-left">
-                                        <div class="flex items-center gap-2 mb-1">
-                                          <Globe class="w-4 h-4 flex-shrink-0 icon-muted" />
-                                          <span class="text-sm font-medium truncate text-primary">{server.name}</span>
-                                        </div>
-                                        <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
-                                          <span class="font-mono truncate-start flex-1 min-w-0">{server.baseUrl}</span>
-                                        </div>
-                                      </div>
-                                      <Show when={connectingServerId() === server.id}>
-                                        <Loader2 class="w-4 h-4 animate-spin icon-muted" />
-                                      </Show>
-                                    </div>
-                                  </button>
-                                  <Show when={preferences().multiBackend !== true}><button
-                                    onClick={() => removeRemoteServerProfile(server.id)}
-                                    class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100"
-                                    title={`${t("folderSelection.servers.remove")}: ${server.name}`}
-                                    aria-label={`${t("folderSelection.servers.remove")}: ${server.name}`}
-                                  >
-                                    <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
-                                  </button></Show>
-                                </div>
-                              </div>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-                    }
-                  >
-                    <Show
                       when={folders().length > 0}
                       fallback={
-                        <div class="panel-empty-state flex-1">
-                          <div class="panel-empty-state-icon">
-                            <Clock class="w-12 h-12 mx-auto" />
-                          </div>
-                          <p class="panel-empty-state-title">{t("folderSelection.empty.title")}</p>
-                        </div>
+                        <Show when={recentsAvailable()}>
+                          <Show when={props.blank || remoteSource()} fallback={
+                            <button type="button" class="window-text-button" onClick={() => setHomeTab("browse")}>{t("folderSelection.browseMenu.title")}</button>
+                          }><p class="new-instance-launcher-empty" role="status">{t("newInstanceLauncher.empty")}</p></Show>
+                        </Show>
                       }
                     >
                       <div
-                        class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
+                         class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
+                         role="list"
+                         id={`recent-folders-${viewId}`}
                         ref={(el) => (recentListRef = el)}
                       >
                         <For each={folders()}>
                           {(folder, index) => {
-                            const remoteTab = () => folder.kind === "remote" && findOpenProjectTab(folder.path, folder.backendId)
-                            const existingInstance = () => folder.kind === "remote" ? undefined : getExistingInstanceForFolder(folder.path)
-                            const existing = () => remoteTab() || existingInstance()
                             const key = folder.key
-                            const serverName = folder.kind === "remote" ? folder.serverLabel : undefined
+                            const existingInstance = () => recentOpenTarget(folder)
                             const projectName = () => getProjectDisplayName(folder.path, folder.projectName)
-                            const projectLabelId = () => `recent-folder-${index()}-name`
-                            const serverLabelId = () => `recent-folder-${index()}-server`
-                            const openActionLabelId = () => `recent-folder-${index()}-open-action`
+                            const projectLabelId = () => `recent-folder-${viewId}-${index()}-name`
+                            const actions = createMemo(() => [
+                              ...(folder.kind === "sidecar" ? [] : [
+                                { key: "rename", label: t("folderSelection.recent.rename"), icon: <Pencil class="w-3.5 h-3.5" />, disabled: isLoading(), onSelect: () => openProjectRename(folder) },
+                                { key: "remove", label: t("folderSelection.recent.remove"), icon: <Trash2 class="w-3.5 h-3.5" />, disabled: isLoading(), onSelect: () => handleRemove(folder) },
+                              ]),
+                            ])
 
                             return <div
                               class="panel-list-item folder-home-recent-item"
+                              role="listitem"
                               classList={{
                                 "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
                                 "panel-list-item-disabled": isLoading(),
                                 "folder-home-recent-item-action-active":
                                   hoveredRecentActionPath() === key || focusedRecentActionPath() === key,
                               }}
+                              data-remote-server={folder.kind === "remote" ? folder.backendId : undefined}
+                              data-sidecar={folder.kind === "sidecar" ? folder.path : undefined}
                               onMouseEnter={() => {
                                 if (isLoading()) return
-                                setFocusMode("recent")
+                                setFocusMode(null)
                                 setSelectedIndex(index())
                               }}
                             >
+                              <Show when={folder.kind === "remote" && connectingRecent() === key ? folder : undefined} keyed fallback={
                               <div class="flex items-center gap-2 w-full px-1">
                                 <div class="panel-list-item-content relative flex-1">
                                   <button
@@ -658,24 +575,22 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     type="button"
                                     class="folder-home-recent-primary-action"
                                     disabled={isLoading()}
-                                    aria-labelledby={serverName ? `${projectLabelId()} ${serverLabelId()}` : projectLabelId()}
-                                    onClick={() => handleRecentSelect(folder)}
+                                    aria-label={recentAccessibleName(folder)}
+                                    title={recentAccessibleName(folder)}
+                                    onClick={() => openRecent(folder)}
                                     onFocus={() => {
-                                      setFocusMode("recent")
                                       setSelectedIndex(index())
                                     }}
                                   />
                                   <div class="relative z-[1] pointer-events-none flex items-center justify-between gap-3 w-full">
                                     <div class="flex-1 min-w-0">
                                       <div class="flex items-center gap-2 mb-1">
-                                        <Show when={serverName} fallback={<Folder class="w-4 h-4 flex-shrink-0 icon-muted" />}>
-                                          <Server class="w-4 h-4 flex-shrink-0 icon-muted" aria-hidden="true" />
-                                        </Show>
+                                        <RecentTabIcon recent={folder} class="w-4 h-4 flex-shrink-0 icon-muted" />
                                         <span id={projectLabelId()} class="text-sm font-medium truncate text-primary">
                                           {projectName()}
                                         </span>
-                                        <Show when={existing()}>
-                                          {(_tab) => {
+                                        <Show when={existingInstance()}>
+                                          {(_target) => {
                                             let ownsHoverState = false
                                             let ownsFocusState = false
                                             onCleanup(() => {
@@ -687,14 +602,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                                 type="button"
                                                 class="folder-home-open-instance-button folder-home-row-action pointer-events-auto"
                                                 disabled={isLoading()}
-                                                aria-labelledby={`${openActionLabelId()} ${projectLabelId()}`}
+                                                aria-label={`${t("folderSelection.recent.switchToOpenProject")} · ${recentAccessibleName(folder)}`}
                                                 title={t("folderSelection.recent.switchToOpenProject")}
-                                                onClick={() => {
-                                                  const local = existingInstance()
-                                                  if (folder.kind === "remote") {
-                                                    if (selectOpenProjectTab(folder.policy, folder.path, true, folder.projectName)) props.onRemoteOpened?.()
-                                                  } else if (local) handleExistingInstanceSelect(local.id, folder.path)
-                                                }}
+                                                onClick={() => { if (!isLoading() && joinRecentOpenTarget(folder, props.onSelectExistingInstance)) props.onJoined?.() }}
                                                 onMouseEnter={() => {
                                                   ownsHoverState = true
                                                   setRecentActionHovered(key, true)
@@ -712,160 +622,75 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                                   setRecentActionFocused(key, false)
                                                 }}
                                               >
-                                                <span id={openActionLabelId()}>{t("folderSelection.recent.openBadge")}</span>
+                                                <span>{t("folderSelection.recent.openBadge")}</span>
                                               </button>
                                             )
                                           }}
                                         </Show>
                                       </div>
                                       <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
-                                        <Show when={serverName}>
-                                          {name => <bdi id={serverLabelId()} class="shrink-0 truncate max-w-[40%]" dir="auto" title={name()}>{name()}</bdi>}
+                                        <Show when={folder.kind === "remote" ? folder.serverLabel : undefined}>
+                                          {(name) => <bdi class="flex-shrink-0 truncate" dir="auto" style={{ "max-width": "40%" }}>{name()}</bdi>}
                                         </Show>
-                                        <span class="font-mono truncate-start flex-1 min-w-0">
-                                          {getDisplayPath(folder.path)}
-                                        </span>
+                                        <Show when={props.blank && folder.kind === "local"}><span class="truncate">{t("folderSelection.browseMenu.thisComputer")} ·</span></Show>
+                                        <Show when={folder.kind !== "sidecar"} fallback={<span class="flex-1 min-w-0 truncate">{t("folderSelection.recent.sidecar")}</span>}>
+                                          <span class="font-mono truncate-start flex-1 min-w-0" dir="ltr">
+                                            {getDisplayPath(folder.path)}
+                                          </span>
+                                        </Show>
                                         <span class="flex-shrink-0">{formatRelativeTime(t, folder.lastAccessed)}</span>
                                       </div>
                                     </div>
                                   </div>
                                 </div>
-                                <button
-                                  onClick={(e) => openProjectRename(folder, e)}
-                                  disabled={isLoading()}
-                                  class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
-                                  title={t("folderSelection.recent.rename")}
-                                  onMouseEnter={() => setRecentActionHovered(key, true)}
-                                  onMouseLeave={() => setRecentActionHovered(key, false)}
-                                  onFocus={() => setRecentActionFocused(key, true)}
-                                  onBlur={() => setRecentActionFocused(key, false)}
-                                >
-                                  <Pencil class="w-3.5 h-3.5 transition-colors icon-muted" />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    clearRecentActionState(key)
-                                    handleRemove(folder, e)
-                                  }}
-                                  disabled={isLoading()}
-                                  class="folder-home-row-action p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100"
-                                  title={t("folderSelection.recent.remove")}
-                                  onMouseEnter={() => setRecentActionHovered(key, true)}
-                                  onMouseLeave={() => setRecentActionHovered(key, false)}
-                                  onFocus={() => setRecentActionFocused(key, true)}
-                                  onBlur={() => setRecentActionFocused(key, false)}
-                                >
-                                  <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
-                                </button>
-                              </div>
+                                <Show when={!remoteSource() && folder.kind !== "sidecar"}><Show when={props.blank} fallback={
+                                  <>
+                                    <Show when={folder.kind !== "sidecar"}>
+                                      <button type="button" class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
+                                        disabled={isLoading()} title={t("folderSelection.recent.rename")}
+                                        onClick={(event) => openProjectRename(folder, event)}
+                                        onMouseEnter={() => setRecentActionHovered(key, true)} onMouseLeave={() => setRecentActionHovered(key, false)}
+                                        onFocus={() => setRecentActionFocused(key, true)} onBlur={() => setRecentActionFocused(key, false)}>
+                                        <Pencil class="w-3.5 h-3.5 icon-muted" />
+                                      </button>
+                                    </Show>
+                                    <button type="button" class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
+                                      disabled={isLoading()} title={t("folderSelection.recent.remove")}
+                                      onClick={(event) => { setRecentActionHovered(key, false); setRecentActionFocused(key, false); handleRemove(folder, event) }}
+                                      onMouseEnter={() => setRecentActionHovered(key, true)} onMouseLeave={() => setRecentActionHovered(key, false)}
+                                      onFocus={() => setRecentActionFocused(key, true)} onBlur={() => setRecentActionFocused(key, false)}>
+                                      <Trash2 class="w-3.5 h-3.5 icon-muted" />
+                                    </button>
+                                  </>
+                                }>
+                                  <ActionOverflowMenu items={actions()} label={`${t("folderSelection.recent.actions")} · ${recentAccessibleName(folder)}`}
+                                    onOpenChange={(open) => setRecentActionFocused(key, open)} />
+                                </Show>
+                                </Show>
+                              </div>}>
+                                {target => <RemoteRecentSession recent={target} active={props.active !== false}
+                                  onBack={() => { setConnectingRecent(undefined); queueMicrotask(() => scrollToIndex(index())) }}
+                                  onOpened={id => { setConnectingRecent(undefined); props.onRemoteOpened?.(id) }} />}
+                              </Show>
                             </div>
                           }}
                         </For>
                       </div>
                     </Show>
+                  </div>
                   </Show>
                 </div>
 
               </div>
 
-              {/* Left column: version + browse + advanced settings */}
-              <div
-                class="folder-home-actions-column order-2 lg:order-1 flex flex-col gap-4 flex-1"
-                ref={(el) => (actionsColumnRef = el)}
-              >
-              <div class="panel shrink-0">
-                <div class="panel-body flex flex-col gap-3">
-                  <button
-                    onClick={() => void handleBrowse()}
-                    disabled={props.isLoading}
-                    title={withHotkey(t("folderSelection.browse.button"), "browse-folder")}
-                    class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
-                    onMouseEnter={() => setFocusMode("new")}
-                  >
-                    <div class="flex items-center gap-2">
-                      <FolderPlus class="w-4 h-4" />
-                      <span>
-                        {props.isLoading
-                          ? t("folderSelection.browse.buttonOpening")
-                          : t("folderSelection.browse.button")}
-                      </span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={openCloneDialog}
-                    disabled={props.isLoading}
-                    class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
-                  >
-                    <div class="flex items-center gap-2">
-                      <GitBranch class="w-4 h-4" />
-                      <span>{t("folderSelection.clone.button")}</span>
-                    </div>
-                  </button>
-
-                  <Show when={props.onNewTemporaryInstance}>
-                    <button
-                      type="button"
-                      onClick={() => props.onNewTemporaryInstance?.()}
-                      disabled={props.isLoading}
-                      title={t("folderSelection.temporary.description")}
-                      class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
-                    >
-                      <div class="flex items-center gap-2">
-                        <Hourglass class="w-4 h-4" />
-                        <span>{t("folderSelection.temporary.button")}</span>
-                      </div>
-                    </button>
-                  </Show>
-
-                  <RemoteProjectMenu isLoading={isLoading()} recent={remoteRecent()} onOpened={() => props.onRemoteOpened?.()} />
-
-                  <Show when={sidecarsAllowed()}><button
-                    type="button"
-                    onClick={() => props.onOpenSidecar?.()}
-                    class="button-primary w-full flex items-center justify-center text-sm"
-                  >
-                    <div class="flex items-center gap-2">
-                      <MonitorUp class="w-4 h-4" />
-                      <span>{t("folderSelection.sidecars.button")}</span>
-                    </div>
-                  </button></Show>
-
-                  <Show when={canManageRemoteServers()}>
-                    <button
-                      onClick={openServerDialog}
-                      class="button-primary w-full flex items-center justify-center text-sm"
-                    >
-                      <div class="flex items-center gap-2">
-                        <Globe class="w-4 h-4" />
-                        <span>{t("folderSelection.actions.connectButton")}</span>
-                      </div>
-                    </button>
-                  </Show>
+              <Show when={props.blank}>
+                <div class="folder-dashboard-servers panel window-shell flex flex-col min-w-0">
+                  <header class="panel-header !px-4 !py-3"><h2 class="panel-title text-base">{t("folderSelection.browseMenu.title")}</h2><EntryCount count={browseEntryCount()} /></header>
+                  <BrowseMenu initialServer={props.initialServer} isLoading={isLoading()} active={props.active !== false} onSourceChange={setRemoteSource} onBrowseLocal={() => void handleBrowse()} pinAddField
+                    onOpenSidecar={id => props.onOpenSidecar?.(id)} onJoined={props.onJoined} onRemoteOpened={props.onRemoteOpened} />
                 </div>
-
-                {/* OpenCode settings section */}
-                <div class="panel-section w-full">
-                  <button onClick={() => openSettings("opencode")} class="panel-section-header w-full justify-between">
-                    <div class="flex items-center gap-2">
-                      <Settings class="w-4 h-4 icon-muted" />
-                      <span class="text-sm font-medium text-secondary">{t("folderSelection.opencode")}</span>
-                    </div>
-                    <ChevronRight class="w-4 h-4 icon-muted" />
-                  </button>
-                </div>
-              </div>
-
-              <div class="panel shrink-0">
-                <div class="panel-body flex items-center justify-center">
-                  <VersionPill />
-                </div>
-              </div>
+              </Show>
             </div>
-
-            </div>
-
           </div>
         </div>
         <Show when={isLoading()}>

@@ -95,25 +95,32 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 Les clients distants authentifiés peuvent utiliser et gérer tous les serveurs enregistrés sur l’hôte ; l’accueil et **Paramètres → Serveurs** affichent les actions autorisées par les capacités de l’hôte. Le HTTP simple sur le réseau local désactive la saisie de nouveaux mots de passe de serveur et liens d’appairage : « Utilisez HTTPS ou Remote Control pour saisir les identifiants. » Les connexions utilisant des identifiants enregistrés et l’ajout, la modification ou la suppression de profils sans secrets restent disponibles.
 
-Pour une destination accessible uniquement par SSH dans les **Paramètres → Serveurs**, choisissez **Ajouter le serveur**, saisissez son **URL** et son **Hôte SSH (facultatif)**, puis **Enregistrer**. Le profil s’enregistre hors ligne ; sa connexion passe par le relais SSH du backend.
+Pour une destination accessible uniquement par SSH dans les **Paramètres → Serveurs**, choisissez **Ajouter un serveur SSH**, saisissez son **URL** et son **Hôte SSH (facultatif)**, puis **Enregistrer**. Le profil s’enregistre hors ligne ; sa connexion passe par le relais SSH du backend.
 
-Ouvrez **Paramètres → Serveurs** : collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur**, ou validez par Entrée. L’ajout enregistre un profil sur l’hôte sans ouvrir de projet. **Modifier le serveur** change son **URL** ou son **Nom** facultatif ; renommer à URL et politique TLS identiques fonctionne hors ligne. **Supprimer le serveur enregistré** demande confirmation, oublie sa connexion puis enregistre le retrait ; une erreur de sauvegarde conserve le profil pour réessayer. Les autres connexions restent disponibles.
+Ouvrez **Paramètres → Serveurs** : collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur**, ou validez par Entrée. L’ajout enregistre un profil sur l’hôte sans ouvrir de projet. **Modifier le serveur** change son **URL** ou son **Nom** facultatif ; renommer à URL et politique TLS identiques fonctionne hors ligne. **Supprimer** demande confirmation, oublie sa connexion puis enregistre le retrait ; une erreur de sauvegarde conserve le profil pour réessayer. Les autres connexions restent disponibles.
 
-**Ignorer la vérification TLS** est proposé après un échec de certificat pour cette adresse ; changer d’adresse retire l’accord. L’appairage vérifie toujours TLS. **Ouvrir** affiche les projets du serveur.
+**Ignorer la vérification TLS** est proposé après un échec de certificat pour cette adresse ; changer d’adresse retire l’accord. L’appairage vérifie toujours TLS.
 
 **Hôte SSH (facultatif)** enregistre un hôte ou alias OpenSSH pour le relais du backend. Les suggestions proviennent du fichier `~/.ssh/config` du compte exécutant le backend local. Saisissez l’adresse de CodeNomad vue depuis cet hôte (par exemple `https://127.0.0.1:9898`, avec son port réel), puis **Enregistrer**. Les profils SSH passent par le relais. CodeNomad doit déjà y être installé et démarré. OpenSSH doit être disponible localement, avec une authentification par clé et une clé d’hôte vérifiée dans `known_hosts` ; l’authentification CodeNomad et les contrôles des certificats HTTPS s’appliquent toujours.
 
 Uniquement si `multiBackend` est réglé sur `false`, utilisez les fenêtres de bureau séparées ci-dessous :
 
-1. Sur l’accueil de bureau, choisissez **Se connecter au serveur CodeNomad**. Le même bouton apparaît dans un onglet **Serveurs** vide et dans **Paramètres → Accès distant → Serveurs**.
+1. **Paramètres → Accès distant → Serveurs** → **Se connecter au serveur CodeNomad**.
 2. Dans **Se connecter à un serveur**, saisissez **Nom du serveur** et **URL du serveur** avec une origine HTTPS de confiance. Laissez **Ignorer la vérification TLS pour les certificats auto-signés.** décoché ; établissez plutôt la confiance.
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.
 
-Sélectionnez un serveur enregistré dans l’onglet **Serveurs** de l’accueil pour l’ouvrir de nouveau. Les favoris appartiennent à cette configuration CodeNomad, pas aux projets du serveur distant. Enregistrer une URL ne démarre pas le serveur et n’accorde pas l’accès. **Supprimer le serveur enregistré** retire le favori, pas les conversations distantes, le backend ou ses identifiants.
 
 Fermer la dernière fenêtre locale alors que des fenêtres distantes restent ouvertes conserve ses onglets : **Fenêtre → Nouvelle fenêtre** dans une fenêtre distante, ou un nouveau lancement de CodeNomad, la rouvre.
 
 Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans **URL du serveur**. Le favori ne conserve que l’origine du tunnel, jamais le code d’appairage à usage unique ; voir [Contrôle à distance](remote-control.md) pour le réappairage après perte du cookie de l’appareil.
+
+## Ouvrir un projet distant dans un onglet {#remote-project-tabs}
+
+À l’accueil ou dans un nouvel onglet, choisissez **Parcourir**, puis un serveur. Collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur** pour l’enregistrer. Connectez-vous si nécessaire. Cliquez sur un dossier pour y entrer ; utilisez Entrée dans le champ de chemin ou **Ouvrir** (la flèche) pour l’ouvrir. **Retour à Parcourir** revient à la liste des serveurs.
+
+Les projets locaux et distants partagent la même fenêtre. **Onglets récents** affiche les raccourcis du serveur parcouru ; les récents mixtes indiquent l’icône et le nom du serveur pour les projets ouverts ici. Si un onglet restauré attend son serveur, choisissez **Réessayer** ou **Se connecter** dans cet onglet. Il conserve ses brouillons.
+
+Dans **Paramètres → Serveurs**, **Ouvrir** affiche un nouvel onglet avec ce serveur sélectionné dans **Parcourir**. **Supprimer** oublie la connexion et masque ses raccourcis récents. Les onglets ouverts, les projets et les conversations sont conservés.
 
 ### `--connect-server` {#connect-server}
 

@@ -8,7 +8,7 @@ export const dialogMessages = {
   "remoteRestore.unauthorized": "Sign in required",
   "remoteRestore.unreachable": "Server unavailable",
   "remoteRestore.pairingLink": "Pairing link",
-  "remoteRestore.inUse": "Close this server’s tabs and reopen Settings from another project before removing or changing its address.",
+  "remoteRestore.inUse": "Close this server’s tabs and reopen Settings from another project before changing its address.",
   "authRecovery.title": "Sign in to CodeNomad again",
   "authRecovery.pairing": "On the host, open Settings → Remote Access, create a pairing link and open it on this device, then check the connection.",
   "authRecovery.pairingTitle": "Pair this device again",

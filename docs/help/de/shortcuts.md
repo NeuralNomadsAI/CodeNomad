@@ -24,7 +24,7 @@ Belegungen werden in CodeNomads UI-Konfiguration gespeichert und betreffen Clien
 | Aktion | Standard |
 | --- | --- |
 | Befehlspalette öffnen | `Mod+Shift+P` |
-| Neue Instanz / Ordner auf der Startseite durchsuchen | `Mod+N` |
+| Neue Instanz / Leeren Tab öffnen | `Mod+N` |
 | App-Tab schließen | `Mod+W` |
 | Vorheriger / nächster App-Tab | `Mod+[` / `Mod+]` |
 | App-Tab 1–9 | `Mod+1` bis `Mod+9` |
@@ -73,3 +73,5 @@ Normale Browserfenster behalten ebenfalls ihre Browserkürzel. Erreicht eine Bel
 Kürzel der Ziffernreihe und eckigen Klammern verwenden physische Tastenpositionen für Aufzeichnen, Ausführen und Konfliktprüfung, auch bei AZERTY/QWERTZ. Andere Tasten verwenden logische Werte. Zeichnen Sie auf der vorgesehenen Tastatur auf und prüfen Sie das angezeigte Ergebnis.
 
 Während IME-Komposition hat Texteingabe Vorrang. Prompt-Verlauf und Escape-Aktionen hängen ebenfalls von Fokus, Auswahl-/Shell-Zustand und aktuellem Vorgang ab; nehmen Sie nicht an, dass jedes ArrowUp oder Escape bedingungslos global wirkt. Auf dem Desktop verschiebt Senden den Fokus in die Unterhaltung, sodass Pfeiltasten, Bildlauftasten und Leertaste sie scrollen; das Tippen eines Zeichens kehrt mit diesem Zeichen zum Eingabefeld zurück, und **Eingabe fokussieren** kehrt dorthin zurück, bevor Sie den Prompt-Verlauf nutzen.
+
+Im Schnellstarter führt Tab zur Suche, Pfeiltasten und Eingabe wählen den Eintrag, Escape kehrt zu `+` zurück.

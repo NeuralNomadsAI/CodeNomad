@@ -95,25 +95,32 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 Kimliği doğrulanmış uzak istemciler ana bilgisayarda kayıtlı tüm sunucuları kullanabilir ve yönetebilir; ana sayfa ve **Ayarlar → Sunucular**, ana bilgisayarın yeteneklerinin izin verdiği eylemleri gösterir. Düz LAN HTTP, yeni sunucu parolası ve eşleştirme bağlantısı girişini devre dışı bırakır: “Kimlik bilgilerini girmek için HTTPS veya Uzaktan Kontrol kullanın.” Kayıtlı kimlik bilgileriyle bağlantı kurma ve gizli bilgi içermeyen profilleri ekleme, düzenleme veya kaldırma kullanılabilir.
 
-Yalnızca SSH üzerinden erişilen bir hedef için **Ayarlar → Sunucular** bölümünde **Sunucu ekle** seçeneğini açın, **URL** ve **SSH sunucusu (isteğe bağlı)** alanlarını doldurup **Kaydet** seçeneğini kullanın. Profil çevrimdışı kaydedilir; bağlantı backend'in SSH aktarımını kullanır.
+Yalnızca SSH üzerinden erişilen bir hedef için **Ayarlar → Sunucular** bölümünde **SSH sunucusu ekle** seçeneğini açın, **URL** ve **SSH sunucusu (isteğe bağlı)** alanlarını doldurup **Kaydet** seçeneğini kullanın. Profil çevrimdışı kaydedilir; bağlantı backend'in SSH aktarımını kullanır.
 
-**Ayarlar → Sunucular** bölümünü kullanın: **Sunucu adresi veya bağlantısı** alanına adres ya da eşleştirme bağlantısı yapıştırın veya Enter tuşuna basın. Ekleme, proje açmadan ana bilgisayarda bir profil kaydeder. **Sunucuyu düzenle**, **URL** veya isteğe bağlı **Ad** alanını değiştirir; aynı URL ve TLS ilkesiyle ad değiştirme çevrimdışı çalışır. **Kayıtlı sunucuyu kaldır** onay ister, bağlantıyı unutur ve kaldırmayı kaydeder; kayıt hatasında profil yeniden denemek için kalır. Diğer bağlantılar sürer.
+**Ayarlar → Sunucular** bölümünü kullanın: **Sunucu adresi veya bağlantısı** alanına adres ya da eşleştirme bağlantısı yapıştırın veya Enter tuşuna basın. Ekleme, proje açmadan ana bilgisayarda bir profil kaydeder. **Sunucuyu düzenle**, **URL** veya isteğe bağlı **Ad** alanını değiştirir; aynı URL ve TLS ilkesiyle ad değiştirme çevrimdışı çalışır. **Kaldır** onay ister, bağlantıyı unutur ve kaldırmayı kaydeder; kayıt hatasında profil yeniden denemek için kalır. Diğer bağlantılar sürer.
 
-**TLS doğrulamasını atla**, o adresin sertifika hatasından sonra sunulur; adres değişince onay silinir. Eşleştirme her zaman TLS doğrular. **Aç**, sunucunun projelerini gösterir.
+**TLS doğrulamasını atla**, o adresin sertifika hatasından sonra sunulur; adres değişince onay silinir. Eşleştirme her zaman TLS doğrular.
 
 **SSH sunucusu (isteğe bağlı)**, backend aktarımı için bir OpenSSH sunucusu veya takma adı kaydeder. Öneriler yerel backend hesabının `~/.ssh/config` dosyasından gelir. CodeNomad adresini bu ana makineden görüldüğü şekilde girin (örneğin gerçek bağlantı noktasıyla `https://127.0.0.1:9898`) ve **Kaydet** seçeneğini kullanın. SSH profilleri aktarımı kullanır. CodeNomad orada kurulu ve çalışıyor olmalıdır. Yerel OpenSSH, anahtarla kimlik doğrulama ve `known_hosts` içinde doğrulanmış bir sunucu anahtarı gereklidir; CodeNomad kimlik doğrulaması ve HTTPS sertifika kontrolleri de geçerlidir.
 
 Yalnızca `multiBackend` değeri `false` ise aşağıdaki ayrı masaüstü penceresi adımlarını kullanın:
 
-1. Masaüstü ana sayfasında **CodeNomad Sunucusuna Bağlan** öğesini seçin. Aynı düğme boş bir **Sunucular** sekmesinde ve **Ayarlar → Uzak Erişim → Sunucular** bölümünde de bulunur.
+1. **Ayarlar → Uzak Erişim → Sunucular** → **CodeNomad Sunucusuna Bağlan**.
 2. **Sunucuya Bağlan** penceresinde, güvenilir bir HTTPS kaynağını kullanarak **Sunucu adı** ve **Sunucu URL'si** öğesini girin. **Kendinden imzalı sertifikalar için TLS doğrulamasını atla.** öğesini işaretlemeden bırakın; bunun yerine güven oluşturun.
 3. Yer imlerine eklemek için **Kaydet** öğesini veya kaydedip açmak için **Bağlan** öğesini seçin. Bu sunucuda oturum açın.
 
-Kayıtlı bir sunucuyu yeniden açmak için ana sayfanın **Sunucular** sekmesinde onu seçin. Yer imleri uzak sunucunun projelerine değil, bu CodeNomad yapılandırmasına aittir. Bir URL'nin kaydedilmesi sunucuyu başlatmaz veya erişim sağlamaz. **Kayıtlı sunucuyu kaldır**, uzak konuşmaları, arka ucu veya kimlik bilgilerini değil, yer işaretini kaldırır.
 
 Uzak pencereler açık kalırken son yerel pencereyi kapatmak sekmelerini korur: uzak penceredeki **Pencere → Yeni pencere** ya da CodeNomad'ı yeniden başlatmak onu yeniden açar.
 
 Uzaktan Kontrol için bunun yerine **Sunucu URL'si** öğesine yeni bir eşleştirme bağlantısı yapıştırın. Yer imi yalnızca tünelin kökenini korur, asla tek kullanımlık eşleştirme kodunu içermez; Cihaz çerezi kaybından sonra yeniden eşleştirme için bkz. [Uzaktan Kontrol](remote-control.md).
+
+## Uzak projeyi sekmede açma {#remote-project-tabs}
+
+Ana sayfada veya yeni sekmede **Gözat** bölümünden sunucuyu seçin. Sunucuyu kaydetmek için adresini veya eşleme bağlantısını yapıştırın. Gerekirse oturum açın. Klasörde gezinmek için klasöre tıklayın; açmak için yol alanında Enter tuşuna basın veya **Aç** düğmesine basın. Geri düğmesi sunucu listesine döner.
+
+Yerel ve uzak projeler aynı pencerede açılır. Gezinirken **Son sekmeler** seçili sunucunun kısayollarını gösterir. Karma listede burada açtığınız projelerin sunucu simgesi ve adı görünür. Geri yüklenen bir sekme sunucuyu bekliyorsa o sekmede yeniden deneyin veya bağlanın. Taslaklar sekmede kalır.
+
+**Ayarlar → Sunucular** altında **Aç**, bu sunucunun seçili olduğu yeni bir sekme açar. **Kaldır** bağlantıyı unutur ve son kısayolları gizler; açık sekmeler, projeler ve konuşmalar kalır.
 
 ### `--connect-server` {#connect-server}
 

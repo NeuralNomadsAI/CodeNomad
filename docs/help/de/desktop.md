@@ -2,7 +2,7 @@
 
 ## Fenster, Tabs und gemeinsamer Dienst {#windows-tabs}
 
-1. Verwenden Sie **Neue Instanz**, um einen weiteren Projekt-/Startseiten-Tab im aktuellen Fenster zu öffnen.
+1. Öffnen Sie mit **Neue Instanz** einen leeren Tab im aktuellen Fenster und wählen Sie ein Projekt. Das CodeNomad-Logo öffnet die Startseite.
 2. Verwenden Sie das native **Fenster → Neues Fenster** (`Ctrl+Shift+N` oder `Cmd+Shift+N`) für ein separates Anwendungsfenster.
 3. Aktivieren Sie unter **Einstellungen → Erweitert** die Option **Vorhandenes Fenster beim zweiten Start fokussieren**, wenn ein weiterer Start das zuletzt verwendete Fenster fokussieren statt ein neues öffnen soll.
 
@@ -47,6 +47,8 @@ Jeder Projekt-Tab stellt seine eigene Auswahl im rechten Panel, seinen Dateien-M
 Das Einstellungsfenster hat keinen separaten Wiederherstellungszustand: Diese Bedienelemente zielen auf das Fenster, das es öffnete. Ist dieses geschlossen oder unbekannt, weil die Einstellungen beim Start wieder geöffnet wurden, folgen sie stattdessen dem zuletzt verwendeten Fenster; eine für ein anderes Fenster vorbereitete Änderung wird nie angewendet, die Bedienelemente zeigen zuerst den Wert des neuen Fensters. Um ein bestimmtes Fenster zu konfigurieren, öffnen Sie die Einstellungen aus diesem Fenster. Projektbezogene Einstellungen verwenden ebenfalls die Location des öffnenden Fensters und bleiben ohne sie nicht verfügbar. Werden die Einstellungen beim Start wieder geöffnet, verbinden sie sich erneut, sobald dieses Projekt fertig geöffnet ist; solange der Ordner noch startet oder in mehreren Tabs geöffnet ist, bleiben sie nicht verfügbar, bis Sie die Einstellungen aus dem gewünschten Fenster öffnen.
 
 Browser- und Remote-Clients verwenden eingebettete Einstellungen.
+
+Ein nicht verfügbarer Remote-Tab bleibt mit seinen Entwürfen an seiner Position. Wählen Sie ihn zum erneuten Versuch oder zur Anmeldung aus.
 
 ## Desktop-Datenprofile {#data-profiles}
 

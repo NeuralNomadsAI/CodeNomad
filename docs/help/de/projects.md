@@ -1,35 +1,31 @@
 # Projekte und Worktrees
 
-Klappen Sie **Remote** auf der Startseite oder im `+`-Schnellstarter auf. Wählen Sie **+ Projekt** neben einem gespeicherten CodeNomad-Server, durchsuchen Sie dort seine Ordner und wählen Sie **Öffnen**. Das Projekt öffnet sich als normaler Tab. Zum Hinzufügen fügen Sie den Kopplungslink oder die Adresse unter der Serverliste ein. Hier geöffnete Projekte bleiben auch offline mit Symbol und Servernamen unter **Zuletzt verwendet**. Durchsuchen, Klonen und temporäre Projekte verwenden diesen Computer.
-
 Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Das Öffnen eines Tabs, Durchsuchen eines Checkouts und Verschieben einer Unterhaltungsfamilie sind verschiedene Vorgänge.
-
-**+ Projekt** beginnt beim zuletzt bekannten Projektpfad. Wurde der Ordner verschoben oder gelöscht, wählen Sie **Server-Stammordner**. Beim Öffnen eines zuletzt verwendeten Projekts führt **Abbrechen** zurück zur Serverliste.
-
-In der Liste erscheinen nur Remote-Projekte, die Sie hier erfolgreich öffnen. Beim Durchsuchen von Ordnern kommen keine Einträge hinzu. Gespeicherte Verknüpfungen bleiben für genau diese Verbindung (Profil, Adresse, TLS-Prüfeinstellung und SSH-Ziel) auch offline verfügbar. Gibt es für den Ordner bereits einen wartenden Tab, wird er mit seinen Entwürfen ausgewählt. Sie entscheiden, wann Sie es erneut versuchen.
-
-Eine entfernte Verknüpfung bleibt ausgeblendet, bis Sie den Ordner erneut öffnen.
 
 ## Projekt öffnen {#open-project}
 
-1. Klicken Sie auf **Neue Instanz** (`+`), um die Startseite zu öffnen.
-2. Wählen Sie **Ordner durchsuchen**, wählen und öffnen Sie den Backend-Ordner; oder wählen Sie einen Eintrag unter **Letzte Ordner**.
+1. **Neue Instanz** (`+`) oder `Ctrl/Cmd+N` öffnet einen leeren Tab. Unter Logo und CodeNomad-Name stehen **Temporär** und **Klonen**, dann zwei Spalten: links **Zuletzt verwendete Tabs**, rechts **Durchsuchen** mit **Serveradresse oder -link** am unteren Rand. Der Seitenhintergrund entspricht dem aktiven Tab. Auf schmalen Bildschirmen stehen die Spalten untereinander. Das Logo öffnet die Startseite mit **Git-Repo klonen**, **Neuer temporärer Tab**, **Neuer SideCar** und der OpenCode-Zeile links sowie **Zuletzt verwendete Tabs | Durchsuchen** rechts. Die Anzahl steht unter dem jeweiligen Titel. Der rechte Bereich endet auf Höhe der linken Spalte; die Liste scrollt darin. Die Startseite zeigt Sprache, Einstellungen, **Sponsor** ([CodeNomad unterstützen](sponsor.md)), GitHub-Sterne und Discord. Klonen und temporäre Ordner verwenden das lokale Backend. Die Projekt- oder SideCar-Auswahl füllt den leeren Tab an seiner Position. Leere Tabs bestehen bis zum Neuladen und schließen ohne Projekt.
+2. Wählen Sie unter **Zuletzt verwendete Tabs** ein Projekt; oder öffnen Sie **Durchsuchen**, wählen Sie **Dieser Computer**, dann den Backend-Ordner, und öffnen Sie ihn. **Durchsuchen** listet auch gespeicherte CodeNomad-Server ([Remote-Projekt-Tabs](remote-access.md#remote-project-tabs)) und SideCars ([SideCars](browser-sidecars.md#register-sidecar)) auf.
 3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
 
 Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, nicht Ihr Telefon oder Notebook. Das Öffnen eines Projekts erzeugt keinen separaten OpenCode-Daemon pro Tab. Unterhaltungen sind native OpenCode-Sitzungen; ihre Lebensdauer entspricht nicht der des Tabs.
 
-Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entfernen, falls er bereits existiert.** ist destruktiv: Aktivieren Sie dies nur, wenn alles dort Vorhandene gelöscht werden darf. Verwenden Sie im Zweifel ein neues Ziel.
+Die Serverwahl in **Durchsuchen** öffnet dessen Ordner; sein Name bleibt bei Anmeldung und Navigation sichtbar. Seine letzten Projekte erscheinen nur unter **Zuletzt verwendete Tabs**, im leeren Tab links, mit der separaten Aktion **Offen**. Auf der Startseite bleiben Server und Ordner beim Wechsel zwischen **Zuletzt verwendete Tabs** und **Durchsuchen** erhalten. Bei gewähltem Server stammen die Einträge ausschließlich von ihm und bieten Öffnungsaktionen; Zurück zu Durchsuchen stellt die gemischte Liste wieder her. Die Anmeldefelder sind beschriftet. Ordnerzeilen dienen nur der Navigation; drücken Sie die Eingabetaste oder den Pfeil am Ende des Pfadfelds, um den angezeigten Ordner zu öffnen. Erst die Projektwahl füllt den leeren Tab.
 
-Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** ändert den Anzeigenamen; **Aus Liste entfernen** entfernt die Verknüpfung, nicht die Dateien oder Unterhaltungen. Ein Klick auf ein bereits geöffnetes zuletzt verwendetes Projekt öffnet einen neuen Tab; seine Schaltfläche **Offen** (**Zum offenen Projekt wechseln**) wählt stattdessen den vorhandenen Tab.
+Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entfernen, falls er bereits existiert.** ist destruktiv: Aktivieren Sie dies nur, wenn alles dort Vorhandene gelöscht werden darf. Verwenden Sie im Zweifel ein neues Ziel. Ein fehlgeschlagener Klon ist kein Grund, ein vorhandenes Projekt zu löschen; prüfen Sie vor dem Wiederholen das gemeldete Ziel und den Fehler.
 
-Öffnen Sie denselben Ordner zweimal und wählen Sie in beiden Tabs dieselbe Unterhaltung, um in einem den Chat und im anderen eine Webvorschau, eine Datei oder einen Missionsbericht anzuzeigen. Jeder Tab behält seine eigene Ansicht, Scrollposition der Unterhaltung, Auswahl im rechten Panel und seinen Dateien-Modus; Nachrichten, Ausführung und Projektdaten bleiben gemeinsam.
+Zuletzt verwendete Einträge sind Verknüpfungen. Die direkten Schaltflächen auf der Startseite und das Aktionsmenü leerer Tabs bieten je nach Eintrag **Arbeitsbereich umbenennen** und **Aus Liste entfernen**; Dateien und Unterhaltungen bleiben erhalten. Auf Startseite, leeren Tabs und im Schnellstarter erzeugt ein Klick auf lokale/entfernte Projekte oder SideCars ein neues Vorkommen, auch wenn sie geöffnet sind. Die separate Aktion **Offen** (**Zum offenen Projekt wechseln**) wählt das vorhandene Vorkommen.
+
+Die Aktion zum Wechseln wählt auch einen Tab aus, der auf seinen Server wartet, und schließt den leeren Ausgangstab.
 
 ## Schnellstarter für neue Instanzen verwenden {#new-instance-launcher}
 
-1. Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
-2. Suchen Sie zuletzt verwendete Projekte oder wählen Sie **Durchsuchen…**, **Temporär** oder **Klonen…**.
+Beim Öffnen erhält das Menü den Fokus. Tab oder ein Klick erreicht die Suche. Pfeiltasten navigieren durch die Einträge; Escape schließt das Menü.
 
-Ein normaler Klick öffnet die Startseite. Der Schnellstarter wechselt zum offenen Projekt; die Startseite öffnet einen neuen Tab, sofern kein wartender Tab ausgewählt wird. In **REMOTE** kehrt Escape zur Serverliste zurück, klappt sie zu und schließt dann den Schnellstarter mit Fokus auf `+`.
+1. Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
+2. **Zuletzt verwendete Tabs** enthält die Suche und zuletzt verwendete lokale Projekte, Remote-Projekte und SideCars mit der separaten Aktion **Offen**. Eine Zeile öffnet ein neues Vorkommen; **Offen** wechselt zum vorhandenen. Die Sanduhr-Schaltfläche **Neuer temporärer Tab** in der Titelleiste erstellt einen temporären Tab.
+
+Ein normaler Klick öffnet einen leeren Tab. Verwalten Sie letzte Einträge auf Startseite oder leeren Tabs, Server unter **Einstellungen → Server** und SideCars unter **Einstellungen → SideCars**. Auf Startseite, leeren Tabs und im Schnellstarter bleibt die Zeilenauswahl nur bei Tastaturnavigation bestehen; die Hervorhebung beim Überfahren endet, sobald der Zeiger die Zeile verlässt. Escape schließt den Starter und gibt den Fokus an `+` zurück.
 
 ## Projekt-Tab schließen {#close-stop}
 
@@ -54,11 +50,13 @@ Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und
 
 **Wiederholen** stellt wartende Tabs auch bei deaktivierter automatischer Startwiederherstellung wieder her. Benachrichtigungen wählen den vorhandenen wartenden Tab aus. Prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie erneut senden.
 
-Bevor Sie einen Server entfernen oder seine Adresse ändern, schließen Sie seine Projekttabs in allen Fenstern und öffnen Sie **Einstellungen** von einem anderen Projekt aus, falls die Einstellungen noch diesen Server verwenden. Ein unerreichbarer Projektbestand blockiert die Änderung bis zur Prüfung.
+Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** aus. Wie `+` und `Ctrl/Cmd+N` verwendet es den leeren Tab des Fensters. Nach der Projektauswahl öffnet `+` einen weiteren leeren Tab.
+
+**Entfernen** zeigt, wie viele Tabs geschlossen und wie viele zuletzt geöffnete Projekte aus der Liste entfernt werden. Die gespeicherte Verbindung verschwindet aus **Durchsuchen**; Projekte und Unterhaltungen bleiben auf dem Server. Für temporäre Projekte gelten die üblichen Optionen beim Schließen.
 
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 
-1. Wählen Sie **Temporär** im Schnellstarter oder **Neue temporäre Instanz** auf der Startseite.
+1. Wählen Sie **Neuer temporärer Tab** auf der Startseite oder **Temporär** über den Spalten eines leeren Tabs.
 2. Arbeiten Sie im leeren, von CodeNomad verwalteten Ordner; Git wird nicht automatisch initialisiert.
 3. Wählen Sie beim Schließen des Tabs **Behalten**, **Verwerfen** oder **Abbrechen**. Das Tab-Menü bietet auch **Als Projekt behalten**.
 

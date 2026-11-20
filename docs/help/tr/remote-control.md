@@ -13,6 +13,8 @@ Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur.
 
 Başka bir masaüstü CodeNomad uygulamasında eşleştirme bağlantısını şu alana yapıştırın: **Ayarlar → Sunucular → Sunucu adresi veya bağlantısı**. İstekten önce alan temizlenir; yalnızca köken kaydedilir. Yerel arka uç özel cihaz kimliğini yeniden başlatmalar arasında korur. **Kayıtlı sunucuyu kaldır** önce bu profilin bağlantısını unutur. Eşleştirme TLS doğrular ve proje açmaz.
 
+Yeniden eşleştirmek için yeni bağlantıyı sunucunun veya projenin bağlantı formuna yapıştırın.
+
 ## Doğrudan HTTPS ile eşleştirin {#direct-https}
 
 Tünel engellendiğinde ama arka uca güvenilir HTTPS ile ulaşılabildiğinde, örneğin gerçek sertifikalı bir ters proxy üzerinden, cihazlar bu adreste eşleştirilebilir. Uygun adresler bu arka ucun kendi HTTPS adresleri ve `CODENOMAD_ALLOWED_ORIGINS` içindeki HTTPS origin adresleridir (bkz. [Yükseltme](remote-access.md#upgrading)); geri döngü adları ve düz HTTP asla eşleştirmez. Uzaktan Kontrolün başlatılması gerekmez.

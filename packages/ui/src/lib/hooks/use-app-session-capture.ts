@@ -72,7 +72,7 @@ function captureRuntimeState(
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
 export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
-  const tabs = appTabs()
+  const tabs = appTabs().filter(tab => tab.kind !== "blank")
   const occurrenceKey = (project: Pick<RestorableWorkspaceTabState, "folder" | "backendId" | "serverId">) =>
     workspaceInstallationKey(project.folder, project.backendId, project.serverId)
   const nextOccurrence = new Map<string, number>()

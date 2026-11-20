@@ -173,7 +173,8 @@ test("web clients manage and select saved servers through embedded Settings with
   await page.evaluate(() => (window as any).parity.openServers())
   const row = page.locator('[data-remote-server="A"]')
   await row.waitFor()
-  assert.equal(await page.getByRole("button", { name: "Add server", exact: true }).first().isVisible(), true)
+  assert.equal(await page.getByRole("textbox", { name: "Server address or link" }).isVisible(), true)
+  assert.equal(await page.getByRole("button", { name: "Add SSH server", exact: true }).isVisible(), true)
   assert.equal(await page.getByRole("button", { name: "Edit server: Server A", exact: true }).count(), 1)
   const id = await page.evaluate(async () => {
     Object.defineProperty(crypto, "randomUUID", { value: undefined })

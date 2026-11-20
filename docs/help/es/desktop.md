@@ -2,7 +2,7 @@
 
 ## Ventanas, pestañas y servicio compartido {#windows-tabs}
 
-1. Usa **Nueva instancia** para abrir otra pestaña de proyecto/inicio en la ventana actual.
+1. Usa **Nueva instancia** para abrir una pestaña vacía en la ventana actual y elige un proyecto. El logotipo CodeNomad abre Inicio.
 2. Usa **Ventana → Nueva ventana** nativo (`Ctrl+Shift+N` o `Cmd+Shift+N`) para una ventana de aplicación separada.
 3. En **Configuración → Avanzado**, activa **Enfocar la ventana existente en el segundo inicio** si otro inicio debe enfocar la ventana usada más recientemente en lugar de abrir una nueva.
 
@@ -47,6 +47,8 @@ Cada pestaña de proyecto restaura su propia selección del panel derecho, modo 
 La ventana de Preferencias no tiene un estado de restauración independiente: estos controles apuntan a la ventana que la abrió. Si esa ventana se cerró, o es desconocida porque Preferencias se reabrió al iniciar, siguen la ventana usada más recientemente; un cambio preparado para otra ventana nunca se aplica, y los controles muestran primero el valor de la nueva ventana. Para configurar una ventana concreta, abre Preferencias desde ella. Los ajustes con ámbito de proyecto usan igualmente la Location de origen; sin ella no están disponibles. Cuando Preferencias se reabre al iniciar, se vuelven a conectar en cuanto ese proyecto termina de abrirse; mientras la carpeta sigue iniciándose, o está abierta en varias pestañas, permanecen no disponibles hasta que abras Preferencias desde la ventana deseada.
 
 Los clientes de navegador y remotos usan la configuración integrada.
+
+Una pestaña remota no disponible permanece en su sitio con sus borradores. Selecciónala para reintentar o iniciar sesión.
 
 ## Perfiles de datos de escritorio {#data-profiles}
 

@@ -17,7 +17,7 @@ import { SettingsScreen } from "../../../src/components/settings-screen"
 import { openSettings } from "../../../src/stores/settings-screen"
 import { selectInstanceTab } from "../../../src/stores/app-tabs"
 import { setActiveSessionId } from "../../../src/stores/session-selection-state"
-import { remoteServerSelection } from "../../../src/stores/remote-project-open"
+import { activeAppTab } from "../../../src/stores/app-tabs"
 import "../../../src/stores/sessions"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
@@ -142,7 +142,10 @@ let retainedAction: any
     setShowSettings(true)
     await openSettings("servers")
   },
-  serverSelection: remoteServerSelection,
+  serverSelection: () => {
+    const tab = activeAppTab()
+    return tab?.kind === "blank" ? tab.server : undefined
+  },
   addServer: () => host.saveRemoteServerProfile({ name: "LAN server", baseUrl: "http://lan.invalid" }),
   openMissions: async (owner: string) => {
     const id = `${owner}~same`

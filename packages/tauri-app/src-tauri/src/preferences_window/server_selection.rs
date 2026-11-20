@@ -99,6 +99,7 @@ pub(crate) async fn preferences_select_server(
     app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
     intent: ServerSelection,
+    action: Option<String>,
 ) -> Result<(), String> {
     crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
     if webview.label() != LABEL {
@@ -107,7 +108,12 @@ pub(crate) async fn preferences_select_server(
     intent.validate()?;
     let label = {
         let state = preferences.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.request.section != "servers" {
+        let allowed = match action.as_deref() {
+            None => state.request.section == "servers",
+            Some("remove") => matches!(state.request.section.as_str(), "servers" | "remote"),
+            _ => false,
+        };
+        if !allowed {
             return Err("Server selection context changed".into());
         }
         state
@@ -133,13 +139,14 @@ pub(crate) async fn preferences_select_server(
     )
     .map_err(|e| e.to_string())?;
     let value = serde_json::to_string(&intent).map_err(|e| e.to_string())?;
+    let action = serde_json::to_string(&action).map_err(|e| e.to_string())?;
     let (id, receiver) = preferences.selection.begin(&label)?;
     let request_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
     let sent = target.eval(&format!(r#"
         Promise.resolve().then(() => {{
             if (window.location.origin !== {origin} || typeof window.__CODENOMAD_SELECT_SERVER__ !== 'function')
                 throw new Error("Server selection unavailable");
-            return window.__CODENOMAD_SELECT_SERVER__({value});
+            return window.__CODENOMAD_SELECT_SERVER__({value}, {action});
         }}).then(() => true, () => false).then(ok =>
             window.__TAURI__.core.invoke("server_selection_result", {{ id: {request_id}, ok }})
         ).catch(() => {{}});

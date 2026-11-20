@@ -95,25 +95,32 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 Authenticated remote clients can use and manage all servers saved on the host; Home and **Settings → Servers** show the actions allowed by the host's capabilities. Plain LAN HTTP disables new server password and pairing-link entry: “Use HTTPS or Remote Control to enter credentials.” Connections using saved credentials and adding, editing or removing profiles without secrets remain available.
 
-For an SSH-only destination in **Settings → Servers**, choose **Add server**, enter its **URL** and **SSH host (optional)**, then **Save**. The profile saves offline; its connection uses the backend's SSH relay.
+For an SSH-only destination in **Settings → Servers**, choose **Add SSH server**, enter its **URL** and **SSH host (optional)**, then **Save**. The profile saves offline; its connection uses the backend's SSH relay.
 
-Use **Settings → Servers**: paste an address or pairing link into **Server address or link**, or press Enter to add it. Adding saves a host-owned profile without opening a project. **Edit server** changes its **URL** or optional **Name**; renaming with the same URL and TLS policy works offline. **Remove saved server** asks for confirmation, forgets this profile's connection and saves its removal; a save error leaves the profile available to retry. Other profiles keep their connections.
+Use **Settings → Servers**: paste an address or pairing link into **Server address or link**, or press Enter to add it. Adding saves a host-owned profile without opening a project. **Edit server** changes its **URL** or optional **Name**; renaming with the same URL and TLS policy works offline. **Remove** asks for confirmation, forgets this profile's connection and saves its removal; a save error leaves the profile available to retry. Other profiles keep their connections.
 
-**Skip TLS verification** is offered after a certificate failure for that address; changing the address clears the consent. Pairing always verifies TLS. **Open** browses the server's projects.
+**Skip TLS verification** is offered after a certificate failure for that address; changing the address clears the consent. Pairing always verifies TLS.
 
 **SSH host (optional)** saves an OpenSSH host or alias for the backend relay. Suggestions come from the local backend account's `~/.ssh/config`. Enter the CodeNomad address as seen from that host (for example `https://127.0.0.1:9898`, using its actual port), then **Save**. SSH profiles use the backend relay. CodeNomad must already be installed and running there. OpenSSH must be available locally, with key authentication and a verified host key in `known_hosts`; CodeNomad authentication and HTTPS certificate checks still apply.
 
 Only if `multiBackend` is set to `false`, use the separate desktop-window flow below:
 
-1. On the desktop home page, choose **Connect CodeNomad Server**. The same button appears on an empty **Servers** tab and in **Settings → Remote Access → Servers**.
+1. **Settings → Remote Access → Servers** → **Connect CodeNomad Server**.
 2. In **Connect to Server**, enter **Server name** and **Server URL** using a trusted HTTPS origin. Leave **Skip TLS verification for self-signed certificates.** unchecked; establish trust instead.
 3. Choose **Save** to bookmark, or **Connect** to save and open it. Sign in on that server.
 
-Select a saved server on the home page's **Servers** tab to open it again. Bookmarks belong to this CodeNomad configuration, not the remote server's projects. Saving a URL does not start the server or grant access. **Remove saved server** removes the bookmark, not remote conversations, the backend or its credentials.
 
 Closing the last local window while remote windows stay open keeps its tabs: **Window → New Window** in a remote window, or starting CodeNomad again, reopens it.
 
 For Remote Control, paste a fresh pairing link into **Server URL** instead. The bookmark retains only the tunnel origin, never the one-use pairing code; see [Remote Control](remote-control.md) for re-pairing after device-cookie loss.
+
+## Open a remote project in a tab {#remote-project-tabs}
+
+On Home or in a new tab, choose **Browse**, then a server. Paste an address or pairing link into **Server address or link** to save a server. Sign in if asked. Click a folder to enter it; press Enter in the path field or choose **Open** (the arrow) to open it. **Back to Browse** returns to the server list.
+
+Local and remote projects share the same window. **Recent tabs** shows the selected server’s shortcuts while you browse; mixed recents show the server icon and name for projects opened here. If a saved remote tab is waiting for its server, select it and use **Retry** or **Connect**. Its drafts stay with that tab.
+
+In **Settings → Servers**, **Open** starts a new tab with that server selected in **Browse**. **Remove** forgets the connection and hides its recent shortcuts; open tabs, projects and conversations are kept.
 
 ### `--connect-server` {#connect-server}
 

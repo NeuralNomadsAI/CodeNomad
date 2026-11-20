@@ -254,7 +254,7 @@ test("direct mutations validate Origin then Referer, including login/logout and 
   const login = await app.inject({ method: "POST", url: "/api/auth/login", remoteAddress: lan, headers: { origin: own },
     payload: { username: "codenomad", password: "local-password" } })
   assert.equal(login.statusCode, 200)
-  assert.ok(login.headers["set-cookie"])
+  assert.match(String(login.headers["set-cookie"]), /(?:^|; )Max-Age=604800(?:;|$)/)
   const localNative = await app.inject({ method: "POST", url: "/api/test/mutate", headers: { cookie } })
   assert.equal(localNative.statusCode, 200)
 })
@@ -293,6 +293,7 @@ test("LAN sessions use the bundled UI but cannot administer host-only routes, in
   assert.notEqual(localStatus.json().manageable, false)
   const logout = await app.inject({ method: "POST", url: "/api/auth/logout", remoteAddress: lan, headers })
   assert.equal(logout.statusCode, 200)
+  assert.match(String(logout.headers["set-cookie"]), /(?:^|; )Max-Age=0(?:;|$)/)
   const status = await app.inject({ url: "/api/auth/status", remoteAddress: lan, headers: { cookie } })
   assert.equal(status.json().authenticated, false)
 })

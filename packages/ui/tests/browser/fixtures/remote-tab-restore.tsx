@@ -84,7 +84,6 @@ function Fixture() {
   waitForInventory: () => waitForInitialWorkspaceLoad(),
   snapshot: loadedRestorableSession,
   saved: async () => { const value = (window as any).committedState; return value && decodeClientSnapshotV2(value.snapshot, 1, async key => value.partitions[key] ?? null) },
-  removeServer: () => preferencesForBackend("local").removeRemoteServerProfile("a"),
   removeServerQueued: () => relayProfiles.removeServer(preferencesForBackend("local").remoteServers().find(profile => profile.id === "a")!),
   retargetServerQueued: () => preferencesForBackend("local").saveRemoteServerProfile({
     ...preferencesForBackend("local").remoteServers().find(profile => profile.id === "a")!, baseUrl: "https://changed.test",

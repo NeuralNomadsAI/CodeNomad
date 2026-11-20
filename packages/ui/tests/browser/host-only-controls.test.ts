@@ -15,7 +15,7 @@ before(async () => {
 after(async () => { await browser?.close() })
 
 for (const mode of ["local", "nonlocal", "sidecars", "missing", "failure"]) {
-  for (const surface of ["home", "settings", "picker"]) {
+  for (const surface of ["home", "settings"]) {
     test(`${surface}: host-only controls require affirmative local metadata (${mode})`, async () => {
       const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: "en-US" })
       const errors: string[] = []
@@ -27,8 +27,9 @@ for (const mode of ["local", "nonlocal", "sidecars", "missing", "failure"]) {
         // A non-local client opens SideCars only when the host allows it over direct HTTPS.
         const sidecars = local || mode === "sidecars"
         if (surface === "home") {
-          assert.equal(await page.getByRole("button", { name: "Open SideCar", exact: true }).count(), Number(sidecars))
-          assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), Number(local))
+          await page.getByRole("tab", { name: "Browse" }).click()
+          assert.equal(await page.getByRole("button", { name: "Fixture SideCar", exact: false }).count(), Number(sidecars))
+          assert.equal(await page.getByRole("button", { name: "New SideCar", exact: true }).count(), 1)
         } else if (surface === "settings") {
           assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), Number(local))
           // Registration stays usable through paired and LAN connections.
@@ -42,9 +43,6 @@ for (const mode of ["local", "nonlocal", "sidecars", "missing", "failure"]) {
           } else {
             assert.equal(await page.locator('input[type="password"]').count(), 0)
           }
-        } else {
-          assert.equal(await page.getByRole("dialog").count(), Number(sidecars))
-          if (sidecars) await page.getByRole("button", { name: /Fixture SideCar/ }).waitFor()
         }
         assert.deepEqual(errors, [])
       } finally { await page.close() }
@@ -89,9 +87,10 @@ for (const mode of ["servers", "servers-readonly", "servers-refused"]) test(`hom
       await page.goto(`${url}?mode=${mode}&surface=home&scenario=${scenario}`)
       await page.locator("html[data-meta-settled=true]").waitFor()
       await page.waitForFunction(() => (window as any).hostControlsConfig.isLoaded())
-      assert.equal(await page.getByRole("button", { name: /^Remotes$/i }).count(), Number(scenario === "ssh" && mode !== "servers-refused"))
-      assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), Number(scenario === "ssh" && mode === "servers"))
-      assert.equal(await page.getByRole("button", { name: "Open SideCar", exact: true }).count(), 0)
+      await page.getByRole("tab", { name: "Browse" }).click()
+      assert.equal(await page.locator(".browse-menu-row[data-remote-server]").count(), Number(scenario === "ssh" && mode !== "servers-refused"))
+      assert.equal(await page.locator(".browse-menu [data-server-add-field]").count(), Number(scenario === "ssh" && mode === "servers"))
+      assert.equal(await page.getByRole("button", { name: /Fixture SideCar/ }).count(), 0)
     }
   } finally { await page.close() }
 })

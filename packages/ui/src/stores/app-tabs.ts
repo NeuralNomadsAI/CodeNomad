@@ -1,4 +1,4 @@
-import { createMemo, createSignal } from "solid-js"
+import { batch, createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
 import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId, waitForInstanceInitialSessionHydration, type WorkspaceCreationOwnership } from "./instances"
 import { restoreClosedWorkspaceDrafts } from "./closed-workspace-drafts"
@@ -13,6 +13,8 @@ import {
 import { workspaceIdentity } from "./app-session-reconciliation"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { remoteRestoreTabs, type RemoteRestoreTab } from "./remote-restore-tabs"
+import { generateUUID } from "../lib/client-identity"
+import type { ServerSelectionIntent } from "../lib/native/server-selection-intent"
 
 export interface InstanceAppTab {
   id: string
@@ -26,7 +28,49 @@ export interface SideCarAppTab {
   sidecarTab: SideCarTabRecord
 }
 
-export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab
+interface BlankAppTab { id: string; kind: "blank"; server?: ServerSelectionIntent }
+export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab | BlankAppTab
+
+const [blankTab, setBlankTab] = createSignal<BlankAppTab>()
+const [blankServer, setBlankServer] = createSignal<ServerSelectionIntent>()
+
+export function openBlankTab(server?: ServerSelectionIntent): void {
+  batch(() => {
+    if (server) setBlankServer({ ...server })
+    let tab = blankTab()
+    if (!tab) {
+      tab = { id: `blank:${generateUUID()}`, kind: "blank", get server() { return blankServer() } }
+      setBlankTab(tab)
+    }
+    selectAppTab(tab.id)
+  })
+}
+
+export function closeBlankTab(id: string): void {
+  if (blankTab()?.id !== id) return
+  const fallback = getAdjacentAppTabId(id)
+  batch(() => {
+    setBlankServer(undefined)
+    setBlankTab(undefined)
+    setTabOrder(ids => ids.filter(entry => entry !== id))
+    setAppTabOrderRevision(revision => revision + 1)
+    if (activeAppTabId() === id) selectAppTab(fallback)
+  })
+}
+
+/** A successful choice occupies its originating blank tab's position. */
+export function replaceBlankTab(blankId: string | undefined, chosenId: string): void {
+  if (!blankId || blankTab()?.id !== blankId || !getAppTabById(chosenId)) return
+  const ids = appTabs().map(tab => tab.id).filter(id => id !== chosenId)
+  batch(() => {
+    setBlankServer(undefined)
+    setBlankTab(undefined)
+    setAppTabOrder(ids.map(id => id === blankId ? chosenId : id))
+    setAppTabOrderRevision(revision => revision + 1)
+  })
+}
+
+export const activeBlankTabId = () => activeAppTab()?.kind === "blank" ? activeAppTabId() ?? undefined : undefined
 
 function getInstanceAppTabId(instanceId: string): string {
   return `instance:${instanceId}`
@@ -70,7 +114,9 @@ const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
   // Solid's <For> keys by object identity. Metadata refreshes and opening another
   // project must not remount every shell (and restart their Git/status reads).
   const previousById = new Map(previous.map((tab) => [tab.id, tab]))
+  const blank = blankTab()
   const currentTabs = [
+    ...(blank ? [blank] : []),
     ...remoteRestoreTabs(),
     ...Array.from(instances().values())
       .filter((instance) => openInstanceTabIds().has(instance.id))

@@ -70,6 +70,7 @@ export const toggleSettings = (section?: SettingsSectionId) => openSettings(sect
 const SETTINGS_ROWS = {
   "opencode-login-start": "opencode",
   "server-diagnostics": "info",
+  "sidecar-add": "sidecars",
   "voice-dictation": "speech",
   "voice-playback": "speech",
   "voice-conversation": "speech",

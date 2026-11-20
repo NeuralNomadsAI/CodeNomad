@@ -6,19 +6,19 @@ import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
 import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
-import RemoteServerProjectDialog from "./components/remote-server-browser"
 import { selectRemoteServer } from "./stores/remote-project-open"
+import { normalizeServerSelection, sameServerSelection } from "./lib/native/server-selection-intent"
+import { serversManageable } from "./lib/server-meta"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { useDesktopConnectionLaunch } from "./lib/hooks/use-desktop-connection-launch"
 import { installKeyboardOffset } from "./lib/keyboard-offset"
-import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
+import { openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
 import { NativeTitlebar, hasNativeTitlebar } from "./components/native-titlebar"
-import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
 import { SideCarView } from "./components/sidecar-view"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { showAlertDialog } from "./stores/alerts"
@@ -56,7 +56,7 @@ import {
   showFolderSelection,
   setShowFolderSelection,
 } from "./stores/ui"
-import { recentFolders, useConfig } from "./stores/preferences"
+import { preferencesForBackend, recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
   instances,
@@ -90,23 +90,22 @@ import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-stat
 import { shouldAppHoldWakeLock } from "./stores/wake-lock-eligibility"
 import { openSettings } from "./stores/settings-screen"
 import { showCommandPalette } from "./stores/command-palette"
-import {
-  closeSidecarTab,
-  ensureSidecarsLoaded,
-  openSidecarTab,
-} from "./stores/sidecars"
+import { openSidecarTab } from "./stores/sidecars"
+import { closeAppTab } from "./stores/app-tab-close"
 import { parseInstanceKey, backendIdOf } from "./lib/backend-identity"
 import { captureBackendOperation } from "./lib/backend-operation"
 import {
   activeAppTab,
   activeAppTabId,
   appTabs,
-  closeInstanceTab,
+  activeBlankTabId,
+  closeBlankTab,
+  openBlankTab,
+  replaceBlankTab,
+  getInstanceAppTabId,
+  getSidecarAppTabId,
   detachInstanceTab,
   ensureActiveAppTab,
-  getAdjacentAppTabId,
-  getAppTabById,
-  markAppTabUserInteraction,
   moveAppTab,
   selectAppTab,
   selectInstanceTab,
@@ -144,7 +143,21 @@ async function withForegroundRefreshTimeout<T>(
 
 const App: Component = () => {
   onMount(() => {
-    window.__CODENOMAD_SELECT_SERVER__ = selectRemoteServer
+    window.__CODENOMAD_SELECT_SERVER__ = (intent, action) => {
+      if (action !== "remove") return selectRemoteServer(intent)
+      const target = normalizeServerSelection(intent)
+      const host = preferencesForBackend("local")
+      const relay = host.preferences().multiBackend
+      const current = () => relay === host.preferences().multiBackend && (relay !== true || serversManageable())
+      if (!target || !current() || !host.remoteServers().some(profile => sameServerSelection(target, profile))) {
+        throw new Error("Server selection changed")
+      }
+      void host.removeRemoteServerProfile(target.id, current).catch(error => {
+        if (error?.name !== "AbortError") showAlertDialog(t("settings.preferenceSaveFailed"), {
+          title: t("folderSelection.servers.remove"), variant: "warning",
+        })
+      })
+    }
     onCleanup(() => { delete window.__CODENOMAD_SELECT_SERVER__ })
   })
   onMount(() => onCleanup(startNotificationIconBadge()))
@@ -168,7 +181,6 @@ const App: Component = () => {
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
-  const [sidecarPickerOpen, setSidecarPickerOpen] = createSignal(false)
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
 
@@ -505,7 +517,7 @@ const App: Component = () => {
     return recent?.projectName?.trim() || getPathBasename(folderPath)
   }
 
-  async function handleSelectFolder(folderPath: string): Promise<boolean> {
+  async function handleSelectFolder(folderPath: string, blankId: string | null | undefined = activeBlankTabId()): Promise<boolean> {
     if (!folderPath) {
       return false
     }
@@ -520,12 +532,14 @@ const App: Component = () => {
       recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
       if (result.reused) {
         selectInstanceTab(result.instanceId)
+        replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(result.instanceId))
         setShowFolderSelection(false)
         log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
         return true
       }
 
       selectInstanceTab(result.instanceId)
+      replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(result.instanceId))
       setShowFolderSelection(false)
 
       log.info("Created instance", {
@@ -542,7 +556,7 @@ const App: Component = () => {
       )
       const missingBinary = isMissingBinaryMessage(message)
       if (missingBinary || message.includes("opencode_update_required")) {
-        openOpenCodeSetup(() => handleSelectFolder(folderPath))
+        openOpenCodeSetup(() => handleSelectFolder(folderPath, blankId))
         return false
       }
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
@@ -556,11 +570,13 @@ const App: Component = () => {
   useDesktopFolderLaunch(handleSelectFolder)
   useDesktopConnectionLaunch()
 
-  async function handleNewTemporaryInstance(): Promise<void> {
+  async function handleNewTemporaryInstance(blankId: string | null | undefined = activeBlankTabId()): Promise<void> {
     clearLaunchError()
     setIsSelectingFolder(true)
     try {
-      selectInstanceTab(await openTemporaryInstance())
+      const id = await openTemporaryInstance()
+      selectInstanceTab(id)
+      replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(id))
       setShowFolderSelection(false)
     } catch (error) {
       const message = formatLaunchErrorMessage(
@@ -571,7 +587,7 @@ const App: Component = () => {
       )
       const missingBinary = isMissingBinaryMessage(message)
       if (missingBinary || message.includes("opencode_update_required")) {
-        openOpenCodeSetup(() => handleNewTemporaryInstance())
+        openOpenCodeSetup(() => handleNewTemporaryInstance(blankId))
         return
       }
       showLaunchError({ source: "create", message, binaryPath: serverSettings().opencodeBinary || "opencode2", missingBinary })
@@ -581,11 +597,12 @@ const App: Component = () => {
     }
   }
 
-  function handleSelectExistingInstance(instanceId: string, recentPath: string) {
+  function handleSelectExistingInstance(instanceId: string, recentPath: string, blankId: string | null | undefined = activeBlankTabId()) {
     const instance = instances().get(instanceId)
     if (!instance) return
     recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
+    if (blankId) closeBlankTab(blankId)
     setShowFolderSelection(false)
     log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
   }
@@ -600,7 +617,8 @@ const App: Component = () => {
   }
 
   function handleNewInstanceRequest() {
-    setShowFolderSelection(true)
+    openBlankTab()
+    setShowFolderSelection(false)
   }
 
   const [launcherOpen, setLauncherOpen] = createSignal(false)
@@ -610,17 +628,13 @@ const App: Component = () => {
     if (showFolderSelection() || appTabs().length === 0) setLauncherOpen(false)
   })
 
-  function handleOpenSidecarPicker() {
-    setSidecarPickerOpen(true)
-    void ensureSidecarsLoaded()
-  }
-
-  async function handleOpenSidecar(sidecarId: string) {
+  async function handleOpenSidecar(sidecarId: string, blankId: string | null | undefined = activeBlankTabId()) {
     try {
       const tab = await openSidecarTab(sidecarId)
       selectSidecarTab(tab.token)
+      replaceBlankTab(blankId ?? undefined, getSidecarAppTabId(tab.token))
       setShowFolderSelection(false)
-      setSidecarPickerOpen(false)
+      preferencesForBackend("local").recordSidecarRecent(sidecarId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       showAlertDialog(message, {
@@ -665,32 +679,6 @@ const App: Component = () => {
     }
   }
 
-  async function handleCloseAppTab(tabId: string) {
-    const tab = getAppTabById(tabId)
-    if (!tab) return
-    markAppTabUserInteraction()
-
-    const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
-
-    if (tab.kind === "instance" && tab.instance.temporary) {
-      // Asks to keep or discard unless untouched; a refused discard restores the tab.
-      await closeTemporaryInstance(tab.instance.id)
-      return
-    }
-
-    if (tab.kind === "instance") {
-      closeInstanceTab(tab.instance.id)
-    } else if (tab.kind === "remote-restore") {
-      tab.remove()
-    } else {
-      closeSidecarTab(tab.sidecarTab.token)
-    }
-
-    if (!getAppTabById(tabId)) {
-      ensureActiveAppTab(fallbackTabId)
-    }
-  }
-
   const handleSidebarAgentChange = async (instanceId: string, sessionId: string, agent: string) => {
     if (!instanceId || !sessionId || sessionId === "info") return
     await updateSessionAgent(instanceId, sessionId, agent)
@@ -719,7 +707,7 @@ const App: Component = () => {
     setToolInputsVisibility,
     handleNewInstanceRequest,
     handleNewTemporaryInstance: () => handleNewTemporaryInstance(),
-    handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
+    handleCloseActiveTab: () => closeAppTab(activeAppTabId() ?? ""),
     handleNewSession,
     handleCloseSession,
     getActiveInstance: activeInstance,
@@ -731,7 +719,7 @@ const App: Component = () => {
     executeCommand,
     setEscapeInDebounce,
     handleNewInstanceRequest,
-    handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
+    handleCloseActiveTab: () => closeAppTab(activeAppTabId() ?? ""),
     handleNewSession,
     handleCloseSession,
     showFolderSelection,
@@ -837,7 +825,7 @@ const App: Component = () => {
                   tabs={appTabs()}
                   activeTabId={activeAppTabId()}
                   onSelect={selectAppTab}
-                  onClose={(tabId) => void handleCloseAppTab(tabId)}
+                  onClose={(tabId) => void closeAppTab(tabId)}
                   onNew={handleNewInstanceRequest}
                   onOpenLauncher={(anchor) => {
                     // The home page already offers everything; a hidden tab bar must not reopen it.
@@ -888,7 +876,14 @@ const App: Component = () => {
                       data-tab-kind={tab.kind}
                       data-tab-visible={isVisible() ? "true" : "false"}
                     >
-                      {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : <RemoteRestoreView tab={tab} />}
+                      {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : tab.kind === "remote-restore" ? <RemoteRestoreView tab={tab} /> :
+                        <FolderSelectionView blank initialServer={tab.server} active={isVisible()} isLoading={isSelectingFolder()}
+                          onSelectFolder={path => void handleSelectFolder(path, tab.id)}
+                          onSelectExistingInstance={handleSelectExistingInstance}
+                          onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)}
+                          onOpenSidecar={id => void handleOpenSidecar(id, tab.id)}
+                          onJoined={() => closeBlankTab(tab.id)}
+                          onRemoteOpened={id => replaceBlankTab(tab.id, `instance:${id}`)} />}
                     </div>
                   )
                 }}
@@ -902,7 +897,8 @@ const App: Component = () => {
             onSelectExistingInstance={handleSelectExistingInstance}
             onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
             isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
-            onOpenSidecar={handleOpenSidecarPicker}
+            onOpenSidecar={handleOpenSidecar}
+            onJoined={() => setShowFolderSelection(false)}
             onRemoteOpened={() => setShowFolderSelection(false)}
           />
         </Show>
@@ -911,11 +907,12 @@ const App: Component = () => {
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
             <div class="w-full h-full relative">
               <FolderSelectionView
-                onSelectFolder={handleSelectFolder}
-                onSelectExistingInstance={handleSelectExistingInstance}
-                onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
+                onSelectFolder={path => void handleSelectFolder(path, null)}
+                onSelectExistingInstance={(id, path) => handleSelectExistingInstance(id, path, null)}
+                onNewTemporaryInstance={() => void handleNewTemporaryInstance(null)}
                 isLoading={isSelectingFolder()}
-                onOpenSidecar={handleOpenSidecarPicker}
+                onOpenSidecar={id => void handleOpenSidecar(id, null)}
+                onJoined={() => setShowFolderSelection(false)}
                 onRemoteOpened={() => setShowFolderSelection(false)}
                 onClose={() => {
                   setShowFolderSelection(false)
@@ -931,13 +928,12 @@ const App: Component = () => {
           anchor={launcherAnchor()}
           isLoading={isSelectingFolder()}
           onOpenChange={setLauncherOpen}
-          onSelectFolder={(path) => void handleSelectFolder(path)}
-          onSelectExistingInstance={handleSelectExistingInstance}
-          onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
+          onSelectFolder={(path) => void handleSelectFolder(path, null)}
+          onSelectExistingInstance={(id, path) => handleSelectExistingInstance(id, path, null)}
+          onNewTemporary={() => void handleNewTemporaryInstance(null)}
+          onOpenSidecar={id => void handleOpenSidecar(id, null)}
         />
-        <RemoteServerProjectDialog onOpened={() => setShowFolderSelection(false)} />
         <SettingsScreen />
-        <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
         <SessionPreviewHost />
         <AuthRecoveryDialog />
