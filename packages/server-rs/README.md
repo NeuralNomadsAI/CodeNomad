@@ -15,11 +15,12 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/main.rs` | Startup and route assembly per domain; local and HTTPS listeners |
 | `src/app.rs`, `config.rs` | Shared state and JSON error shape; production settings from the environment |
 | `src/bench.rs` | Only reader of the comparison bench variables (`CNRS_FIXTURE_*`, traces) |
-| `src/meta.rs`, `service.rs`, `workspaces.rs`, `storage.rs` | Server identity, user service mode, workspace lifecycle, UI preferences |
+| `src/meta.rs`, `service.rs`, `workspaces.rs`, `storage.rs` | Server identity, user service mode, workspace lifecycle, per-instance documents |
+| `src/settings/` | `config.yaml` / `state.yaml` owners shared with the TypeScript server (`CLI_CONFIG`, else the data folder), server identity |
 | `src/auth/` | Local password session; paired devices, HTTPS admission, TLS |
 | `src/opencode/` | Native client, `/instance` relay, cursors |
 | `src/events/` | SSE to the UI, bridge from the daemon stream |
-| `src/files/`, `search/`, `git/` | Project files and links, file search, Git status/diff/history/mutations |
+| `src/files/`, `search/`, `git/` | Project files and links, folder browser (whole filesystem with `CLI_UNRESTRICTED_ROOT`), file search, Git status/diff/history/branches/mutations |
 | `src/worktrees/` | Owned checkouts, linked worktrees, location ownership, deletion fence |
 | `src/sessions/` | Pending requests, permission receipts, favorites, history navigation |
 | `src/memory/` | Agent memory: private Git store, Preferences routes, native tool bridge |

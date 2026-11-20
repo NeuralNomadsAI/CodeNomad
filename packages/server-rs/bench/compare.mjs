@@ -4,18 +4,17 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { pathToFileURL } from "node:url"
 import { chromium } from "playwright"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { installMissions, installPruning, measurePair, memory, out, privateGit, provisionEnv, repo, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
@@ -24,16 +23,7 @@ await useBenchTemp()
 const shots = path.join(out, "screenshots", mode)
 await mkdir(shots, { recursive: true })
 
-// The fixture daemon module with a short provider delay and a Git ceiling: the bench
-// lies inside the CodeNomad checkout, whose repository must stay invisible to it.
-const fixtureSource = path.join(repo, "scripts/native-product-fixture.mjs")
-const fixtureFile = path.join(out, `native-product-fixture-${process.pid}.mjs`)
-const edits = [['      res.end("data: [DONE]\\n\\n")', "      await delay(60)\n"], ["  await mkdir(env.OPENCODE_CONFIG_DIR)", "  env.GIT_CEILING_DIRECTORIES = root\n"]]
-let fixtureCode = await readFile(fixtureSource, "utf8")
-for (const [marker, before] of edits) { assert.equal(fixtureCode.split(marker).length, 2, marker); fixtureCode = fixtureCode.replace(marker, before + marker) }
-fixtureCode = fixtureCode.replace('"./native-fixture-guards.mjs"', JSON.stringify(pathToFileURL(path.join(repo, "scripts/native-fixture-guards.mjs")).href))
-await writeFile(fixtureFile, fixtureCode)
-const { withProductRuntime } = await import(pathToFileURL(fixtureFile))
+const { withProductRuntime, remove: removeRuntime } = await productRuntime()
 
 const HTTP_TIMEOUT = 20000
 const result = { mode, binary: bin, tests: [], browser: {}, statuses: {}, samples: {} }
@@ -72,6 +62,8 @@ async function start(label, fixture, folder, password, trustedCA) {
     CNRS_FIXTURE_MISSIONS_READ: "1", CNRS_FIXTURE_MISSIONS_RUN: "1",
     CNRS_FIXTURE_MISSIONS_REGISTRY: path.join(fixture.env.LOCALAPPDATA, "CodeNomad", "automation-bridges"),
     ...(mode === "memory" ? provisionEnv(root, "memory") : mode === "design" ? provisionEnv(root) : {}) })
+  // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
+  if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CLI_CONFIG: path.join(root, label === "ts" ? "ts.yaml" : "rust.yaml") })
   const child = label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", path.join(out, "ui"), "--config", path.join(root, "ts.yaml"), "--workspace-root", folder],
@@ -127,7 +119,7 @@ async function qualify(ts, rs, password, rsRoot) {
   assert.equal(await callStatus("/api/auth/login", { ...jsonBody({ username: "codenomad", password }), headers: { "content-type": "application/json", "x-forwarded-proto": "https" } }), 403)
   assert.equal(await callStatus("/api/remote-control/server-pair", { ...jsonBody({ code: "a".repeat(32) }), headers: { "content-type": "application/json", "x-codenomad-server-pairing": "1" } }), 404)
   result.tests.push("password, cookies, logout, cross-origin and Referer (TS + RS), unsupported device/authority/pairing (RS)")
-  assert.equal(await callStatus(`/api/filesystem?path=${encodeURIComponent(path.dirname(rsRoot))}`), 400)
+  if (mode !== "host") assert.equal(await callStatus(`/api/filesystem?path=${encodeURIComponent(path.dirname(rsRoot))}`), 400)
   assert((await (await call("/api/filesystem")).json()).entries.some(e => e.name === "Rust Project"))
   const open = requestId => call("/api/workspaces", jsonBody({ path: "Rust Project", requestId }))
   const opening = await open("release-test")
@@ -372,7 +364,9 @@ try {
     await populate(path.join(rsRoot, "Rust Project"))
     await populate(path.join(tsRoot, "Local Project"))
     await rustPruning.ready(remote.client, path.join(rsRoot, "Rust Project"))
-    await writeFile(path.join(local.root, "ts.yaml"), `server:\n  opencodeBinary: ${JSON.stringify(exe)}\nui:\n  settings:\n    multiBackend: true\n    locale: en\n`)
+    const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\nui:\n  settings:\n    multiBackend: true\n    locale: en\n`
+    await writeFile(path.join(local.root, "ts.yaml"), settings)
+    if (mode === "host") await writeFile(path.join(remote.root, "rust.yaml"), settings)
     let ts, rs
     try {
       rs = await start("rs", remote, rsRoot, password)
@@ -400,7 +394,7 @@ try {
 } finally {
   await rustPruning?.close()
   await missionsPresence?.()
-  await rm(fixtureFile, { force: true })
+  await removeRuntime()
   await writeJson(`${mode}.json`, result)
   console.log(`${mode}: ${result.error ? "FAILED" : "identical"} → ${path.join(out, `${mode}.json`)}`)
 }

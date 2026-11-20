@@ -16,6 +16,7 @@ pub fn routes() -> axum::Router<Shared> {
             routing::get(get).put(put).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
         )
         .route("/api/filesystem", routing::get(browse::browse))
+        .route("/api/filesystem/folders", routing::post(browse::create_folder))
         .route("/api/filesystem/files/content", routing::get(global_content))
 }
 
@@ -207,7 +208,7 @@ pub struct Input {
 }
 async fn select(app: &crate::App, id: &str, q: &Input) -> Result<Workspace, Error> {
     let w = app.workspace(id)?;
-    if q.directory.as_deref().is_some_and(|d| !paths::under(&app.root, Path::new(d))) {
+    if q.directory.as_deref().is_some_and(|d| !paths::under(&app.scope, Path::new(d))) {
         return Err(not_owned());
     }
     let slug = q.worktree.as_deref().filter(|s| !s.is_empty());
@@ -303,14 +304,18 @@ pub async fn get(
     content(app, id, q, false).await
 }
 
-pub async fn global_content(State(app): State<Shared>, Query(q): Query<Input>) -> Result<Json<Value>, Error> {
+pub async fn global_content(State(app): State<Shared>, Query(q): Query<Input>) -> Result<Response, Error> {
     let path = q.path.as_deref().ok_or_else(invalid)?;
+    // Not called by the UI with `--unrestricted-root` (bench/HOST_ROUTES.md): left undeclared.
+    if app.unrestricted {
+        return Ok(crate::unavailable());
+    }
     let relative = workspace_path(&app.root, path, false)?;
     encoded(&[], q.encoding.as_deref())?;
     let _slot = app.file_reader.acquire().await.unwrap();
     let data = links::read(&app.root, &relative, MAX)?.ok_or_else(unavailable)?;
     let (encoding, contents) = encoded(&data, q.encoding.as_deref())?;
-    Ok(Json(json!({"path":path,"contents":contents,"encoding":encoding})))
+    Ok(Json(json!({"path":path,"contents":contents,"encoding":encoding})).into_response())
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

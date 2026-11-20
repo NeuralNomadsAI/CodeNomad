@@ -3,7 +3,7 @@ param([Parameter(Mandatory)][string]$OpenCode, [string[]]$Only)
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 Set-Location $PSScriptRoot
 New-Item -ItemType Directory -Force out | Out-Null
-$runs = 'http', 'files', 'contract', 'depth', 'worktree-gone', 'links', 'search', 'memory', 'design', 'solid', 'security', 'hardening'
+$runs = 'http', 'files', 'contract', 'depth', 'worktree-gone', 'links', 'search', 'memory', 'design', 'host', 'solid', 'security', 'hardening'
 $summary = foreach ($name in $runs) {
   if ($Only -and $name -notin $Only) { continue }
   $cpu = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average

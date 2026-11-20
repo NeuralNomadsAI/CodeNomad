@@ -17,6 +17,23 @@ pub fn print_version() -> bool {
     asked
 }
 
+/// `CLI_CONFIG`: the settings location (a folder, a YAML file or a legacy JSON file).
+pub fn settings_location() -> Option<String> {
+    env::var("CLI_CONFIG").ok()
+}
+/// `CLI_UNRESTRICTED_ROOT`: the folder browser and workspaces may use the whole filesystem.
+pub fn unrestricted_root() -> Result<bool, String> {
+    switch("CLI_UNRESTRICTED_ROOT")
+}
+/// `parseBooleanSwitchEnv`: unset is off; other values follow the reference grammar.
+fn switch(name: &str) -> Result<bool, String> {
+    match env::var(name).map(|v| v.trim().to_lowercase()).as_deref() {
+        Err(_) | Ok("0" | "false" | "no" | "off" | "") => Ok(false),
+        Ok("1" | "true" | "yes" | "on") => Ok(true),
+        Ok(_) => Err(format!("{name} must be 1, true, yes, on, 0, false, no, off, or empty (case-insensitive)")),
+    }
+}
+
 pub fn server_password() -> Result<String, env::VarError> {
     env::var("CNRS_SERVER_PASSWORD")
 }

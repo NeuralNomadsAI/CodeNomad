@@ -2,7 +2,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { register } from "node:module"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -89,3 +89,17 @@ export async function measurePair(ts, rs) {
 }
 
 export const writeJson = (name, value) => writeFile(path.join(out, name), JSON.stringify(value, null, 2))
+
+/** The fixture daemon module with a short provider delay and a Git ceiling: the bench lies inside the
+ * CodeNomad checkout, whose repository must stay invisible to it. Returns its runner and a cleanup. */
+export async function productRuntime() {
+  const source = path.join(repo, "scripts/native-product-fixture.mjs")
+  const file = path.join(out, `native-product-fixture-${process.pid}.mjs`)
+  const edits = [['      res.end("data: [DONE]\\n\\n")', "      await delay(60)\n"], ["  await mkdir(env.OPENCODE_CONFIG_DIR)", "  env.GIT_CEILING_DIRECTORIES = root\n"]]
+  let code = await readFile(source, "utf8")
+  for (const [marker, before] of edits) { assert.equal(code.split(marker).length, 2, marker); code = code.replace(marker, before + marker) }
+  code = code.replace('"./native-fixture-guards.mjs"', JSON.stringify(pathToFileURL(path.join(repo, "scripts/native-fixture-guards.mjs")).href))
+  await writeFile(file, code)
+  const { withProductRuntime } = await import(pathToFileURL(file))
+  return { withProductRuntime, remove: () => rm(file, { force: true }) }
+}
