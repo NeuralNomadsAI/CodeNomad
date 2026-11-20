@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMainEvent, WebContents } from "electron"
+import { isPrivatePreviewUrl, restrictedBrowserGuest } from "./browser-presentation"
 
 export function validPromptRequest(value: unknown): value is { message: string; value: string } {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
@@ -17,6 +18,7 @@ export function createBrowserPromptHandler(ownerOf: (contents: WebContents) => B
       if (!owner || owner.isDestroyed() || event.sender.isDestroyed() || pending.has(event.sender)
         || !validPromptRequest(args) || !event.senderFrame || event.senderFrame.detached
         || !event.sender.mainFrame.framesInSubtree.includes(event.senderFrame)) { event.returnValue = null; return }
+      if (restrictedBrowserGuest(event.sender) || isPrivatePreviewUrl(event.senderFrame.url)) { event.returnValue = null; return }
       const origin = event.senderFrame.origin
       const revision = revisionOf(event.sender)
       const current = () => !owner.isDestroyed() && !event.sender.isDestroyed() && ownerOf(event.sender) === owner

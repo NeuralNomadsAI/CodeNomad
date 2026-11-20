@@ -124,6 +124,7 @@ test("active toggles carry a visible accent tint on every real surface and ready
   page.on("pageerror", error => errors.push(error.message))
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/panel-extensions", route => route.fulfill({ json: [] }))
     await page.route("**/api/speech/capabilities", route => route.fulfill({ json: SPEECH }))
     // tsx keeps function names; the sampled page needs its helper.
     await page.addInitScript("window.__name = f => f")

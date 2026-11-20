@@ -5,9 +5,10 @@ import { SessionTranscriptMeasurementQueue } from "../lib/session-transcript-mea
 import { isSessionTranscriptProtected, SessionTranscriptLru } from "../lib/session-transcript-lru"
 import { messageStoreBus } from "./message-v2/bus"
 import { loading, sessions } from "./session-state"
-import { destroyOpenCodeData } from "./opencode-data"
+import { destroyOpenCodeData, getOpenCodeInstanceGeneration } from "./opencode-data"
 import { cancelTranscriptProjections } from "./opencode-projection-frame"
-import { isSessionTranscriptVisible, releaseSessionTranscriptVisible, retainSessionTranscriptVisible, clearInstanceTranscriptVisible } from "./session-transcript-visibility"
+import { isSessionTranscriptVisible, retainSessionTranscriptVisible, clearSessionTranscriptVisible, clearInstanceTranscriptVisible } from "./session-transcript-visibility"
+import type { captureBackendOperation } from "../lib/backend-operation"
 
 // Inactive transcript budget. Protected active/live 200-message windows retain authoritative content and may exceed it.
 export const SESSION_TRANSCRIPT_BYTE_BUDGET = 64 * 1024 * 1024
@@ -60,15 +61,26 @@ export function touchSessionTranscript(instanceId: string, sessionId: string): v
   measurements.schedule(instanceId, sessionId)
 }
 
-export function setSessionTranscriptVisible(instanceId: string, sessionId: string, value: boolean): void {
-  if (value) {
-    retainSessionTranscriptVisible(instanceId, sessionId)
-    touchSessionTranscript(instanceId, sessionId)
-  } else {
-    releaseSessionTranscriptVisible(instanceId, sessionId)
-    measurements.schedule(instanceId, sessionId)
-  }
+/** Scalar ownership identity: catalogue object replacements preserve a view's lease. */
+export function sessionTranscriptBinding(instanceId: string, sessionId: string): string | undefined {
+  const session = sessions().get(instanceId)?.get(sessionId)
+  return session ? JSON.stringify([getOpenCodeInstanceGeneration(instanceId), session.projectID,
+    session.location?.directory, session.location?.workspaceID]) : undefined
+}
+
+export function setSessionTranscriptVisible(instanceId: string, sessionId: string, operation: ReturnType<typeof captureBackendOperation>): () => void {
+  const binding = sessionTranscriptBinding(instanceId, sessionId)
+  const release = retainSessionTranscriptVisible(instanceId, sessionId, {
+    signal: operation.signal,
+    current: () => binding !== undefined && operation.current() && sessionTranscriptBinding(instanceId, sessionId) === binding,
+  })
+  if (isSessionTranscriptVisible(instanceId, sessionId)) touchSessionTranscript(instanceId, sessionId)
   coordinator.enforce()
+  return () => {
+    if (!release()) return
+    measurements.schedule(instanceId, sessionId)
+    coordinator.enforce()
+  }
 }
 
 export function reconcileSessionTranscriptBudget(): void {
@@ -84,6 +96,7 @@ createRoot(() => createEffect(() => {
 messageStoreBus.onSessionChanged(accountSessionTranscript)
 onCacheSessionChanged(accountSessionTranscript)
 messageStoreBus.onSessionCleared((instanceId, sessionId) => {
+  clearSessionTranscriptVisible(instanceId, sessionId)
   measurements.cancel(instanceId, sessionId)
   coordinator.forget(instanceId, sessionId)
 })

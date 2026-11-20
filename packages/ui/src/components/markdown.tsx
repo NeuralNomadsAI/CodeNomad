@@ -14,9 +14,12 @@ import {
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { scheduleDeferredHighlight } from "../lib/markdown-highlight-schedule"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
-import { decorateSessionLinks, routeSessionLink, sessionLinkBase, sessionLinkTitles, warmLoopbackPreviewMeta } from "./markdown-session-links"
-import { messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
+import { decorateSessionLinks, routeSessionLink, sessionLinkBase, sessionLinkTitles } from "./markdown-session-links"
+import { matchLocalImage, messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
+import { createMediaSource } from "../lib/media-source"
 import { messageStoreBus } from "../stores/message-v2/bus"
+import { createProjectServerMeta } from "../lib/project-server-meta"
+import { backendOf } from "../lib/backend-client"
 import { useMarkdownMermaid } from "./markdown-mermaid"
 
 const log = getLogger("session")
@@ -30,6 +33,7 @@ interface ResolvedMarkdownSnapshot {
   highlightEnabled: boolean
   escapeRawHtml: boolean
   literalRawHtml: boolean
+  originRelativeImages: boolean
   defaultCodeBlockWrap: boolean
   partId: string | undefined
   cacheId: string
@@ -134,8 +138,13 @@ interface MarkdownProps {
 export function Markdown(props: MarkdownProps) {
   const { t } = useI18n()
 
-  // Loopback-link availability resolves without waiting for a click.
-  warmLoopbackPreviewMeta(props.instanceId, props.sessionId)
+  // Whether clicking a loopback link opens the web preview on this client.
+  // Availability must be known first: through Remote Control with previews
+  // off the default false would otherwise open a dead preview before the
+  // server meta answers. Other callers (update checks, settings) usually
+  // resolve the meta earlier.
+  const { previewsUnavailable, previewsAvailabilityResolved } = createProjectServerMeta(() => props.sessionId ? props.instanceId : undefined)
+  const loopbackLinksOpenPreview = () => previewsAvailabilityResolved() && !previewsUnavailable()
 
   const [html, setHtml] = createSignal("")
   // Whether `html` is the Markdown render rather than its plain-text fallback. The
@@ -221,6 +230,8 @@ export function Markdown(props: MarkdownProps) {
     const part = props.part
     const window = bounded.window()
     const literalRawHtml = Boolean(props.literalRawHtml)
+    let originRelativeImages = !props.instanceId
+    try { originRelativeImages = !props.instanceId || backendOf(props.instanceId).id === "local" } catch { /* Missing owners stay inert. */ }
     const boundedText = props.formatText ? props.formatText(window.text) : window.text
     const text = literalRawHtml ? boundedText : decodeHtmlEntitiesLocally(boundedText)
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
@@ -246,6 +257,7 @@ export function Markdown(props: MarkdownProps) {
       highlightEnabled,
       escapeRawHtml,
       literalRawHtml,
+      originRelativeImages,
       defaultCodeBlockWrap,
       partId,
       cacheId,
@@ -258,8 +270,8 @@ export function Markdown(props: MarkdownProps) {
     sessionId: () => props.sessionId,
     scope: "markdown",
     cacheId: () => {
-      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, literalRawHtml, defaultCodeBlockWrap } = resolved()
-      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${literalRawHtml ? "literal" : escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}`
+      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, literalRawHtml, originRelativeImages, defaultCodeBlockWrap } = resolved()
+      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${literalRawHtml ? "literal" : escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}${originRelativeImages ? "" : ":owner"}`
     },
     version: () => resolved().version,
   })
@@ -276,7 +288,7 @@ export function Markdown(props: MarkdownProps) {
     const cacheEntry: RenderCache = {
       html: renderedHtml,
       theme: snapshot.themeKey,
-      mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
+      mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}${snapshot.originRelativeImages ? "" : ":owner"}`,
       mermaid: options?.mermaid,
     }
     setMermaidBlocks(options?.mermaid ?? [])
@@ -299,6 +311,7 @@ export function Markdown(props: MarkdownProps) {
       suppressHighlight: !highlight,
       escapeRawHtml: snapshot.escapeRawHtml,
       literalRawHtml: snapshot.literalRawHtml,
+      originRelativeImages: snapshot.originRelativeImages,
       defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
       onMermaid: block => diagrams.push(block),
       truncated: snapshot.truncated,
@@ -350,7 +363,7 @@ export function Markdown(props: MarkdownProps) {
     previousSnapshot = snapshot
     // Cache hits must also invalidate any older render waiting to publish.
     const request = ++latestRenderRequest
-    const cacheMode = `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`
+    const cacheMode = `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}${snapshot.originRelativeImages ? "" : ":owner"}`
 
     const cacheMatches = (cache: RenderCache | undefined) => {
       if (!cache) return false
@@ -411,7 +424,7 @@ export function Markdown(props: MarkdownProps) {
     // resolution base are read synchronously so availability, locale and
     // worktree-inventory changes re-run this pass.
     const sessionBound = Boolean(props.instanceId && props.sessionId)
-    const titles = sessionLinkTitles(props.instanceId, props.sessionId)
+    const titles = sessionLinkTitles(props.instanceId, props.sessionId, loopbackLinksOpenPreview())
     const base = sessionBound ? sessionLinkBase(props.instanceId!, props.sessionId!) : undefined
     Promise.resolve().then(() => {
       if (disposed || !containerRef) {
@@ -429,8 +442,22 @@ export function Markdown(props: MarkdownProps) {
     const store = messageStoreBus.getOrCreate(instanceId)
     const candidates = [...store.getSessionMessageIds(sessionId)].reverse()
       .flatMap(id => { const message = store.getMessage(id); return message ? messageImageCandidates(message) : [] })
-    Promise.resolve().then(() => {
-      if (!disposed && containerRef) resolveLocalImages(containerRef, candidates)
+    const labels = document.createElement("div")
+    labels.innerHTML = html()
+    const shown = new Set([...labels.querySelectorAll<HTMLElement>("[data-local-image]")].map(element =>
+      matchLocalImage(candidates, element.dataset.localImage ?? "", element.dataset.localImageExact === undefined)))
+    const visibleCandidates = candidates.filter(candidate => shown.has(candidate.source))
+    const sources = visibleCandidates.map(candidate => createMediaSource(() => instanceId, () => candidate.source))
+    let active = true
+    onCleanup(() => { active = false })
+    createEffect(() => {
+      const resolved = visibleCandidates.flatMap((candidate, index) => {
+        const source = sources[index]()
+        return source ? [{ paths: candidate.paths, source }] : []
+      })
+      Promise.resolve().then(() => {
+        if (active && !disposed && containerRef) resolveLocalImages(containerRef, resolved, sources.some(source => source.restricted()))
+      })
     })
   })
 
@@ -447,7 +474,7 @@ export function Markdown(props: MarkdownProps) {
         // A plain click on a loopback URL opens the session preview, and one
         // on a path inside the session's worktree opens the file reader;
         // modified clicks keep browser defaults (see markdown-session-links).
-        if (plainClick && routeSessionLink(props.instanceId, props.sessionId, href)) {
+        if (plainClick && routeSessionLink(props.instanceId, props.sessionId, href, loopbackLinksOpenPreview())) {
           event.preventDefault()
           return
         }

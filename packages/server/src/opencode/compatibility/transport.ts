@@ -4,6 +4,10 @@ import { assertSupportedOpenCode } from "../runtime-support"
 import { negotiateRuntime } from "./negotiate"
 import { applyLocationContext, LOCATION_CONTEXT_HEADER } from "./location"
 
+type SessionMediaResponseProcessor = (response: Response, signal: AbortSignal) => Promise<Response>
+type RuntimeFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1],
+  mediaResponseProcessor?: SessionMediaResponseProcessor) => Promise<Response>
+
 function object(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
 }
@@ -29,7 +33,7 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     }).catch(error => { negotiation = undefined; throw error })
     return awaitLocal(negotiation, signal)
   }
-  const adaptedFetch: typeof fetch = async (input, init) => {
+  const adaptedFetch: RuntimeFetch = async (input, init, mediaResponseProcessor) => {
     const request = new Request(input, init)
     const url = new URL(request.url)
     if (url.origin !== new URL(endpoint.url).origin) throw new Error("OpenCode transport origin mismatch")
@@ -37,7 +41,8 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     const headers = new Headers(request.headers)
     for (const [name, value] of Object.entries(Service.headers(endpoint) ?? {})) headers.set(name, value)
     // Credentialed native requests must never follow a redirect to another host.
-    const options: RequestInit = { method: request.method, headers, signal: AbortSignal.any([request.signal, lifetime]), redirect: "error" }
+    const signal = AbortSignal.any([request.signal, lifetime])
+    const options: RequestInit = { method: request.method, headers, signal, redirect: "error" }
     if (headers.has(LOCATION_CONTEXT_HEADER)) {
       const text = request.body ? await request.text() : undefined
       let body: unknown = text ? JSON.parse(text) : undefined
@@ -49,7 +54,8 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     } else if (request.body) {
       options.body = await request.arrayBuffer()
     }
-    const response = await fetcher(url, options)
+    let response = await fetcher(url, options)
+    if (mediaResponseProcessor) response = await mediaResponseProcessor(response, signal)
     if (!response.ok && !response.headers.get("content-type")?.includes("application/json")) {
       await response.body?.cancel()
       return Response.json({

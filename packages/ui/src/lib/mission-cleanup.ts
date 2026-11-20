@@ -11,8 +11,8 @@ export class MissionDeletionError extends HttpResponseError {
 export const missionCleanupPending = (cleanup: Pick<MissionCleanup, "pending" | "documentPending">): boolean =>
   cleanup.pending > 0 || cleanup.documentPending === true
 
-export async function deleteMissionRequest(url: string, input: MissionDeletionRequest): Promise<{ deleted: true; cleanup?: MissionCleanup }> {
-  const response = await authenticatedFetch(url, { method: "DELETE", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
+export async function deleteMissionRequest(url: string, input: MissionDeletionRequest, fetcher: typeof fetch = authenticatedFetch): Promise<{ deleted: true; cleanup?: MissionCleanup }> {
+  const response = await fetcher(url, { method: "DELETE", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => undefined)
     const code = body && typeof body === "object" && "code" in body && typeof body.code === "string" && codes.includes(body.code) ? body.code : undefined

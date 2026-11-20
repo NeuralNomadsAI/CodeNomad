@@ -100,6 +100,140 @@ Background WKWebView has qualified input limits: an initial standalone hover aft
 
 The hidden Electron fixture supplies visible ownership to the controller. Before input, its preparation waits for the loaded guest's non-empty hidden `capturePage` within one monotonic 10 s load/capture budget, retaining the exact guest while its window stays hidden and unfocused. `automation-preview-preparation.test.ts` executes the fixture against fake Electron objects to check loading, capture errors, guest replacement, owner state, deadlines and timer cleanup.
 
+## Remote preview content transport
+
+`codenomad-servers/preview-capabilities.ts` owns a lazy, content-only IPv4 loopback
+listener. Each remote preview receives a fresh `<capability>.preview.localhost`
+origin on that listener's ephemeral port. Every HTTP path and WebSocket upgrade
+on the listener resolves only through that capability's remote preview token.
+Responses use a sandbox with `allow-same-origin` on that capability's exclusive
+content origin and the existing remote path proxy's asset/runtime rewriting.
+HTTP Origin carriers, CORS preflights and WebSocket upgrades bind to that exact
+origin; opaque/null and foreign Origin carriers are refused before upstream
+dispatch. `Cross-Origin-Resource-Policy: same-origin` protects no-CORS resources.
+The sandbox's `frame-ancestors` admits the content origin and its issuing local
+UI origin, captured during guarded creation. Request cookies and authorization, response
+cookies and remote connection credentials stay outside content traffic, matching
+the local path-preview policy.
+
+The owning local UI creates a capability with
+`POST /api/backends/:id/preview-capabilities` and `{ sessionId, url }`, carrying its
+current `X-CodeNomad-Backend-Authority` header. The response is
+`RemotePreviewCapability`: the remote preview plus `capability` and `contentUrl`.
+Issuance retains the backend generation through remote creation and publication.
+`DELETE /api/backends/:id/preview-capabilities/:capability` jointly revokes the
+capability and its HTTP/WS transfers; deleting the collection detaches that
+generation's previews across listeners. Both operations retain the original
+authority header. Retargeting, removal, Forget, observed identity change and
+backend shutdown also revoke transfers. Remote token deletion is best-effort
+under that original generation.
+
+The session preview store uses the owning client's capability API for remote
+projects. Same-application navigation reuses its capability; changing application
+origins creates a replacement. `BrowserFrame` separates the loaded source from
+the displayed application address and maps native history entries before storing
+their logical URLs. Remote dismissal releases live authority while retaining
+saved logical history. Tab detachment and attachment revocation fence pending
+creation/restoration and release live capabilities; `pagehide` uses keepalive
+deletion. Internal content URLs remain confined to embedded loading. Unmapped
+native commits admit only external HTTP(S) site addresses as navigation requests. The
+`isolatedOrigin` frame policy requires origin-bound HTTP/WS admission on its
+host-issued content origin.
+
+Native remote previews pass a logical address with their registration. Their
+native presentation keeps the content capability private: native context menus,
+clipboard exports, link dragging, printing, pop-ups, downloads, page dialogs and permission prompts
+are suppressed. Electron's guarded before-unload fallback uses the logical
+origin or CodeNomad as its title. WebView2 hides its native status bar; WebKit
+disables link previews/tooltips. The fixed privilege-free
+`lib/native/remote-preview-guards.cjs` document-start program applies only to
+private preview origins. Ordinary native previews retain their browser policy.
+
+Service-worker script requests are refused on the isolated listener before
+transport construction or upstream dispatch. `Service-Worker-Allowed` stays
+outside the response allowlist. An expired content origin's network response
+carries `Clear-Site-Data: "storage"` as best-effort cleanup; the control API
+retains the trusted UI's storage. A worker-synthesized response can bypass
+network headers, so registration prevention and fresh capability origins own
+the authority boundary.
+
+### Remote-client path capabilities
+
+Remote clients (Remote Control devices, verified direct HTTPS, admitted LAN HTTP
+and their PWAs) cannot resolve `preview.localhost`. With `multiBackend` enabled (the default), the
+same creation route issues them a host path capability instead:
+`contentUrl` is `/previews/<capability>/…` on the page's own origin, and the
+remote token stays private. Creation uses the authenticated UI guard
+(`isBackendUiRoute()` admits only POST of the collection and DELETE of one
+capability; generation-wide detachment stays local) and binds the capability to
+its issuing principal (`relay-principal.ts` `lifetime()`), its channel (ingress
+socket or direct listener) and exact public `Host`. Logout, idle/absolute expiry,
+password replacement, device revocation or expiry, Remote Control Stop for tunnel
+devices, the host's **Web previews** switch for paired devices, server
+remove/retarget/Forget and owner deletion revoke it and close its HTTP and WS
+transfers. Admission and publication read current authority without extending
+its lifetime. Explicit invalidation is synchronous; the device expiration and
+availability check supplements it for idle transfers. Only the issuing principal
+can delete it.
+
+Content is cookie-free. `/previews/:token` routes and the preview upgrade handler
+hand capabilities they do not own locally to `RemotePreviewCapabilities.servePath()`
+/ `upgradePath()`, which reuse the generation owner's pinned transport and the
+isolated listener's header filtering. They accept only absent or `null` Origin,
+the issuing channel and Host, and refuse service-worker script requests. Responses
+carry `sandbox` without `allow-same-origin` plus `frame-ancestors 'self'`,
+`Referrer-Policy: no-referrer` and `Access-Control-Allow-Origin: null`; same-origin
+CORP is omitted because the opaque document's own no-CORS loads would fail it.
+HTML, CSS and JavaScript bodies and `Location` replace the remote prefix with
+the host capability prefix, which also retargets the remote runtime bridge's
+fetch/XHR/WS/SSE rewriting. Body replacement preserves the surrounding bytes and
+omits the origin's representation validators and range headers; partial text
+responses are refused. The source and host use the same MIME classification,
+including the exact JavaScript essences from WHATWG MIME Sniffing. Each proxy
+admits four active rewrites of up to 16 MiB per document and queues up to 32
+paused inputs in arrival order without allocating rewrite buffers for them.
+The 15-second deadline covers queueing, rewriting and downstream completion;
+disconnect or authority revocation cancels the wait. The source rewrites
+UTF-8, UTF-16 and supported
+ASCII-compatible legacy text in its original charset, after streaming
+decompression for gzip, deflate or Brotli if needed. The host substitutes the
+prefix in place. The host also admits up to 128 pending and live relay preview
+records together. Binary bodies and SSE stream without a rewrite slot;
+WebSocket messages pass through unchanged.
+
+`remotePreviewContent()` (`lib/remote-preview-address.ts`) resolves either form;
+`BrowserFrame`'s `opaqueSource` keeps the iframe sandbox without
+`allow-same-origin` and expects `null` message origins, while the logical
+address and history mapping stay as for isolated sources. Previews sharing the
+public hostname have distinct opaque origins: they cannot script, frame or
+store into each other, reach application APIs or register workers. Chromium
+sends no Referer or Fetch Metadata from these documents, so HTTP/WS reads between
+previews rely on keeping capability URLs private. CodeNomad keeps remote-client
+bearer URLs out of its own logs and saved logical preview history. A same-preview
+`Location` may carry the public capability. Browser navigation history and
+reverse-proxy access logs may retain bearer URLs, and plain HTTP exposes them
+in transit. Treat these URLs as secrets and prefer HTTPS.
+
+Remote project preview controls and preview links wait for metadata from both
+the host and the project's attached backend. A host event-stream open lets mounted
+views recover missing host metadata through the shared cache. If the initial read
+is still pending, recovery waits for it and shares one follow-up read on failure.
+
+#### Preview transport validation
+
+`preview-capabilities.test.ts` covers content-origin reservation, equal remote
+tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
+destination ownership, revocation and the real remote CodeNomad path proxy.
+`tests/browser/remote-preview-origin-isolation.test.ts` drives Chromium against identical remote
+tokens to qualify fetch/XHR/WS, no-CORS scripts/images/fetch, iframe embedding,
+opaque callers and legitimate own-origin resources.
+`remote-control/remote-client-previews.test.ts` drives two controlled A/B remotes
+with identical tokens through Remote Control, a TLS reverse proxy and a real LAN
+interface: rewriting, fetch/preflight/redirect/SSE/WS, hostile refusals and each
+revocation row. `tests/browser/remote-preview-path-isolation.test.ts` qualifies
+the opaque path documents in Chromium, including UI embedding and sibling,
+application, worker and Referer probes.
+
 ## Design constraints
 
 Execution re-reads session ownership through the shared connection and validated worktree inventory; never let a plugin location or a caller-provided session ID alone grant access. Keep the connection-scoped compatibility adapter.
@@ -168,9 +302,17 @@ WebKitGTK clipboard writes and native Ctrl+C/V use the engine's user-initiated p
 - The host navigation interceptor consults the shared `EmbeddedViews` application state first. Reserved `browser-` and `embedded-remote-` labels with missing records are denied. These labels stay outside primary `local-*` and `remote-*` capability patterns. A child decision returns immediately, before window-origin rules and external-link opening.
 - The controller publishes its registration with renderer/generation fencing, navigates, then applies current visibility. Hiding revokes automation leases before native I/O, including when the native hide fails. Owner cleanup also invalidates children still being constructed; an old creation cannot publish after primary-renderer reload.
 - WebKit history reads the native back/forward list on the UI thread. Each retained native item gets a monotonic numeric handle, with at most 32 exposed entries; redirects and `replaceState` update that item's URL, while distinct same-URL entries keep distinct handles. Reads and traversal revalidate the registration's owner/generation, reject expired or removed handles and release retained items on replacement, close and primary-renderer reload. GTK observes native URI/list changes. WKWebView samples native lists every 250 ms while visible and every second while hidden because its public list API has no same-URL `pushState` notification. Saved restoration keeps only URLs/cursor and loads the selected URL on explicit reopening.
-- Remote project tabs' `remote_view.rs` can adopt this layer by replacing direct `add_child`, geometry, visibility, closure and storage setup with `EmbeddedViews`, using unique `embedded-remote-` labels and a `Storage` descriptor with a server-profile directory and domain. A bare `PathBuf` selects the preview domain; remote consumers must specify their distinct server-profile domain. `RemoteViews` retains origin/profile identity, project entry, login/pairing, titles, events and notifications. Add its same-origin restriction to the mandatory URL policy, keep Entry/Help effects single-shot and allow only the approved help site to open externally. Keep application capabilities confined to primary local webviews. Qualify remote TLS exceptions and notification permissions separately; never apply `linux_tls.rs` remote-window exceptions to browser previews.
+- Keep application capabilities confined to primary local webviews. Never apply `linux_tls.rs` remote-window exceptions to browser previews.
 
-The UI routes an autonomous open request to an open project occurrence containing the session, preferring the active tab and otherwise choosing the first owning tab. The selected occurrence stays pinned through claim and asynchronous preview creation; closing it releases that request's newly allocated proxy token. The UI claims the request for one local window, selects that occurrence and session, and opens the session's shared browser. Page actions target the session's visible native guest; hiding or closure invalidates the captured target. Keep the real native session ID on every registration and apply this rule on Electron and Tauri Windows/macOS/Linux.
+Autonomous native opens consider local-backend occurrences containing the session:
+choose the active occurrence, otherwise its unique open owner; refuse ambiguity.
+Claim for one local window, select that occurrence/session and open its preview.
+Keep that occurrence pinned through claim and creation; revalidate attachment,
+instance and session ownership. Closing it releases its new proxy token; stale
+admitted claims release their exact request. Never reroute to a duplicate.
+Page actions require exactly one visible native target for the invoking session.
+Ambiguity, hiding and closure invalidate it. Registrations retain the real native
+session ID on Electron and Tauri Windows/macOS/Linux.
 
 Renderer preview operations retain occurrence/session identity fences while pending.
 Lifecycle unavailability or removal invalidates those fences; completion releases
@@ -190,6 +332,8 @@ Native open claims retain their request deadline and backend-generation fence. T
 
 ## Focused Validation
 
+- Remote preview transport: see the [capability validation inventory](#preview-transport-validation).
+
 - Server: `automation-plugin.test.ts`, `automation/desktop-plugin.test.ts`, `routes/automation-plugin.test.ts`, and the shared pruning-presence regressions
 - Native discovery: build with `npm run build:automation --workspace @neuralnomads/codenomad`, then run `node scripts/test-automation-native.mjs <absolute-cli-path>`. The fixture uses an isolated daemon/config/database and exercises ordinary-project discovery, all tools at startup, execution fences, independent leases, shutdown and reopening. CI runs it against the minimum and latest OpenCode runtimes.
 - Electron: `browser-controller.test.ts`, `browser-webview-security.test.ts`, preload tests.
@@ -197,8 +341,8 @@ Native open claims retain their request deadline and backend-generation fence. T
   builds the production entries and loads them in hidden sandboxed native views.
   Preload builds use isolated entries with dependencies bundled inline; every
   entry must load autonomously under Electron's sandboxed module loader.
-  The built regression checks ordinary prompt behavior and
-  local/Preferences/remote application bridge fences.
+  The built regression checks document-start remote guards, ordinary prompt
+  behavior and local/Preferences/remote application bridge fences.
   Linux runs under Xvfb with Chromium's process sandbox disabled for CI;
   each tested renderer retains asserted `sandbox: true`, context isolation and
   disabled page Node integration. Child exit status and bounded output accompany failures.
@@ -212,6 +356,7 @@ Native open claims retain their request deadline and backend-generation fence. T
 
 ## Agent conventions
 
+- Live open/restore/navigation resolves the owning backend from the instance key before HTTP. Follow the [remote preview transport contract](#remote-preview-content-transport) for capability cleanup and revocation. Remote project preview controls wait for both the host snapshot and attachment-scoped project metadata. Host version/update checks use local metadata.
 - A floating session drawer covers the portaled session preview: `SessionPreviewHost` hides its retained DOM and deactivates its native target until that shell's drawer leaves the DOM. Body-portaled menus and dialogs retain their shared stacking layers; Tauri child views follow `localOverlayOpen()` visibility.
 
 - After changing fixed page programs or their signatures, run `node --import tsx scripts/build-page-function-registry.ts` and the driver contract tests. Keep `functions.generated.json` derived from the authored registry. Bump the private driver contract version for incompatible operation/signature changes. Preserve the fixed-program hashes and snapshot goldens when behavior is unchanged. Never accept caller-supplied protocol names or JavaScript source in the page channel.

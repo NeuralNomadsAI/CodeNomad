@@ -22,11 +22,13 @@ export interface MissionTaskSessionDeps {
   /** Current connection identity; a change fences reads begun on the previous one. */
   connection(instanceId: string): unknown
   generation(instanceId: string): number
+  signal?(instanceId: string): AbortSignal
   root(instanceId: string): Root
   warn(message: string, details: Record<string, unknown>): void
 }
 
 interface Entry {
+  signal?: AbortSignal
   generation: number; revision: number; connection: unknown; pulse: number; sessions: Map<string, string[]>
   tasks: ReadonlyMap<string, MissionTaskSessionContext["tasks"][number]>
   /** Direct children whose admitted first message was already examined. */
@@ -35,6 +37,7 @@ interface Entry {
   active: ReadonlySet<string>
 }
 interface Flight {
+  signal?: AbortSignal
   generation: number; revision: number; connection: unknown; done: Promise<void>
   rerun?: { generation: number; connection: unknown; mission: MissionTaskSessionContext; pulse: number }
 }
@@ -69,13 +72,16 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
 
   /** The read for the mission's current owners; a queued rerun registers none. */
   function run(instanceId: string, mission: MissionTaskSessionContext, pulse: number): Promise<void> {
+    const signal = deps.signal?.(instanceId)
+    if (signal?.aborted) return Promise.resolve()
     const key = keyOf(instanceId, mission), connection = deps.connection(instanceId)
     if (!owners.get(key)?.size) return Promise.resolve()
     const generation = deps.generation(instanceId)
     const entry = entries().get(key)
-    const sameOwner = entry?.generation === generation && entry.connection === connection
+    const sameOwner = entry?.generation === generation && entry.connection === connection && entry.signal === signal
     if (sameOwner && entry.revision > mission.revision) return Promise.resolve()
-    const running = inFlight.get(key)
+    const candidate = inFlight.get(key)
+    const running = candidate?.generation === generation && candidate.connection === connection && candidate.signal === signal ? candidate : undefined
     if (running?.generation === generation && running.connection === connection && running.revision > mission.revision) return running.done
     const known = sameOwner && entry.revision === mission.revision
     // Owners hold different windows of the same immutable revision. Coverage may
@@ -102,17 +108,17 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
       return running.done
     }
     const flight: Flight = {
-      generation, revision: mission.revision, connection, done: Promise.resolve(),
+      generation, revision: mission.revision, connection, signal, done: Promise.resolve(),
     }
     inFlight.set(key, flight)
     const root = deps.root(instanceId)
-    const current = () => inFlight.get(key) === flight && deps.connection(instanceId) === connection
+    const current = () => !signal?.aborted && inFlight.get(key) === flight && deps.connection(instanceId) === connection
       && deps.generation(instanceId) === generation && Boolean(owners.get(key)?.size)
     flight.done = (async () => {
       let sessions = known ? new Map(entry.sessions) : undefined
       if (!sessions) {
         const page = await listMessageWindow(root as OpenCodeClient, mission.coordinatorSessionId,
-          { limit: COORDINATOR_MESSAGE_BOUND, isAuthoritative: current })
+          { limit: COORDINATOR_MESSAGE_BOUND, isAuthoritative: current, signal })
         if (!page || !current()) return
         // Cache exact assignment candidates once. A newly loaded directory window
         // can reveal their task keys later; only declared keys are exposed below.
@@ -120,11 +126,11 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
       }
       const examined = new Set(known ? entry.examined : [])
       if (unlinked(observedMission, sessions)) {
-        const children = await root.session.list({ parentID: mission.coordinatorSessionId, project: mission.projectID, limit: CHILD_BOUND })
+        const children = await root.session.list({ parentID: mission.coordinatorSessionId, project: mission.projectID, limit: CHILD_BOUND }, { signal })
         if (!current()) return
         for (const child of children.data ?? []) {
           if (examined.has(child.id) || [...sessions.values()].some(ids => ids.includes(child.id))) continue
-          const first = await root.message.list({ sessionID: child.id, limit: 1, order: "asc" })
+          const first = await root.message.list({ sessionID: child.id, limit: 1, order: "asc" }, { signal })
           if (!current()) return
           const message = first.data?.[0]
           // Not admitted yet: leave unexamined for the next activity pulse.
@@ -135,17 +141,18 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
         }
       }
       const linked = new Set([...sessions].filter(([key]) => taskKeys.has(key)).flatMap(([, ids]) => ids))
-      const active = linked.size ? await root.session.active() : {}
+      const active = linked.size ? await root.session.active({ signal }) : {}
       if (!current()) return
       const live = new Set(Object.keys(active ?? {}).filter(id => linked.has(id)))
-      setEntries(previous => new Map(previous).set(key, { generation, revision: mission.revision, connection, pulse, tasks, sessions: sessions!, examined, active: live }))
+      setEntries(previous => new Map(previous).set(key, { generation, revision: mission.revision, connection, signal, pulse, tasks, sessions: sessions!, examined, active: live }))
     })()
-      .catch(error => deps.warn("Mission task conversations unavailable", { instanceId, missionId: mission.id, error }))
+      .catch(error => { if (current()) deps.warn("Mission task conversations unavailable", { instanceId, missionId: mission.id, error }) })
       .finally(() => {
         if (inFlight.get(key) !== flight) return
+        const follow = current()
         inFlight.delete(key)
         const queued = flight.rerun
-        if (queued && queued.connection === deps.connection(instanceId) && queued.generation === deps.generation(instanceId))
+        if (follow && queued && queued.connection === deps.connection(instanceId) && queued.generation === deps.generation(instanceId))
           void run(instanceId, queued.mission, queued.pulse)
       })
     return flight.done
@@ -163,7 +170,7 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
 
   const entryOf = (instanceId: string, mission: MissionSessionKey) => {
     const entry = entries().get(keyOf(instanceId, mission))
-    return entry?.generation === deps.generation(instanceId) && entry.connection === deps.connection(instanceId) ? entry : undefined
+    return entry?.generation === deps.generation(instanceId) && entry.connection === deps.connection(instanceId) && entry.signal === deps.signal?.(instanceId) && !entry.signal?.aborted ? entry : undefined
   }
 
   return {

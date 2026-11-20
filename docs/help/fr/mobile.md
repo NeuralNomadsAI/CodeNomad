@@ -4,11 +4,13 @@ Utilisez l’interface navigateur sur téléphone ou tablette pour poursuivre le
 
 ## Se connecter depuis un téléphone ou une tablette {#connect}
 
+Les serveurs enregistrés sont accessibles depuis l’accueil et Paramètres → Serveurs. [Restaurer les onglets distants](projects.md#restore-remote-tabs).
+
 1. Sur l’hôte, ouvrez **Paramètres → Accès distant → Contrôle à distance**, puis choisissez **Démarrer le contrôle à distance**.
 2. Scannez le QR code d’appairage avec votre appareil mobile et ouvrez le lien dans le navigateur que vous comptez garder.
 3. Sinon, configurez l’[accès direct](remote-access.md), ouvrez l’URL HTTPS accessible et de confiance de l’hôte, puis connectez-vous avec son mot de passe serveur.
 
-Le Contrôle à distance exige un appairage ; les connexions directes nécessitent routage, écoute accessible et authentification. N’utilisez pas `localhost` sur le téléphone pour atteindre votre poste. Perdre les données de site ou changer de profil navigateur peut nécessiter une nouvelle connexion ou un appairage ; voir [Contrôle à distance](remote-control.md).
+Le Contrôle à distance exige un appairage ; les connexions directes nécessitent routage, écoute accessible et authentification. N’utilisez pas `localhost` sur le téléphone pour atteindre votre poste. Perdre les données de site ou changer de profil navigateur peut nécessiter une nouvelle connexion ou un appairage ; voir [Contrôle à distance](remote-control.md). Si le tunnel est bloqué, appairez plutôt l’appareil sur une adresse HTTPS de confiance ; voir [Appairer en HTTPS direct](remote-control.md#direct-https).
 
 ## Installer la PWA {#install-pwa}
 

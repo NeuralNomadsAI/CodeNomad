@@ -1,5 +1,7 @@
 # Einstellungen und Layout
 
+Das Einstellungsfenster verwendet den Server des ausgewählten Projekts für Projekteinstellungen, Anbieter, Statistiken und Gedächtnis, einschließlich der Bereinigung. Bei einem nicht erreichbaren Server bleiben die Projektaktionen inaktiv. Geräteeinstellungen und SideCars bleiben lokal. Die Einstellungen für Bilder und Websuche gelten für den Server des Projekts, einschließlich seiner globalen Vorgaben.
+
 ## Einstellungen öffnen und Geltungsbereich erkennen {#open-settings}
 
 1. Öffnen Sie **Einstellungen** über das Zahnrad **Einstellungen öffnen** in der Tab-Leiste (in der macOS-Desktop-App in der Titelleiste) oder auf der Startseite. Direktzugänge wie **Anbieter verwalten** in der Modellauswahl, das Zahnrad des Missionspanels oder das Zahnrad **Einstellungen** im Benachrichtigungsverlauf öffnen direkt den passenden Abschnitt.
@@ -43,6 +45,8 @@ Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNo
 Wählen Sie unter **Einstellungen → Allgemein → Berechtigungen für neue Unterhaltungen** den Modus **Autonom** (Standard) oder **Beaufsichtigt** für neue Hauptunterhaltungen, die Sie in CodeNomad erstellen. Bestehende Unterhaltungen bleiben unverändert. Zum Ändern öffnen Sie in der jeweiligen Unterhaltung [Status → Berechtigungen](permissions.md#conversation-mode).
 
 ## Dauerhaftes Agentengedächtnis {#agent-memory}
+
+Authentifizierte Nutzer können über Fernsteuerung, verifiziertes HTTPS, LAN oder eine installierte PWA das Gedächtnis des ausgewählten lokalen oder entfernten Projekts prüfen, bearbeiten und **Aufräumen** verwenden.
 
 CodeNomad versucht, veraltete Speicheranweisungen der Sitzung zu entfernen; schlägt auch dies fehl, können die bisherigen Anweisungen bis zur nächsten erfolgreichen Aktualisierung erhalten bleiben.
 
@@ -90,6 +94,8 @@ Die Timeline hat eine Markierung für jede Antwort, jeden Denkprozess, jedes Wer
 Beim manuellen Ändern der Eingabehöhe zählt die Höhe der Unterhaltung ohne Bildschirmtastatur: mindestens 8 % mit einer Untergrenze von 44 Pixeln, höchstens 60 %. Ein schmales Layout oder langer Text erhöhen diese Grenzen nicht. Bei geöffneter Tastatur kann das Feld vorübergehend kleiner werden, damit Bedienelemente und Nachrichten erreichbar bleiben. Das gespeicherte Höhenverhältnis bleibt dabei unverändert. Eine aufgeklappte Berechtigung/Frage minimiert das Eingabefeld vorübergehend, ohne gespeicherte Höhe oder Entwurf zu ändern. Klappen/erledigen Sie die Anfrage, um Größenänderung fortzusetzen.
 
 ## Benachrichtigungen und Abzeichen {#notifications}
+
+Bei einem Projekt-Tab auf einem anderen CodeNomad-Server enthalten Benachrichtigungen den Servernamen. **Unterhaltung anzeigen** öffnet genau dieses Projekt und diese Unterhaltung; beim Trennen des Servers werden seine Hinweise entfernt.
 
 Die Komprimierung technischer Missionssitzungen bleibt stumm.
 

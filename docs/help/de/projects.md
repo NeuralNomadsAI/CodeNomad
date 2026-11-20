@@ -4,24 +4,24 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 ## Projekt öffnen {#open-project}
 
-1. Klicken Sie auf **Neue Instanz** (`+`), um die Startseite zu öffnen.
-2. Wählen Sie **Ordner durchsuchen**, wählen und öffnen Sie den Backend-Ordner; oder wählen Sie einen Eintrag unter **Letzte Ordner**.
-3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
+Klicken Sie auf **Neue Instanz** (`+`) oder drücken Sie `Ctrl/Cmd+N` für einen leeren Tab. Wählen Sie ein Projekt unter **Zuletzt verwendete Tabs** oder **Durchsuchen**. Das CodeNomad-Logo öffnet die Startseite. Klonen und temporäre Tabs verwenden das lokale Backend.
+
+[Ein Remote-Projekt in einem Tab öffnen](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
+
+Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
 
 Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, nicht Ihr Telefon oder Notebook. Das Öffnen eines Projekts erzeugt keinen separaten OpenCode-Daemon pro Tab. Unterhaltungen sind native OpenCode-Sitzungen; ihre Lebensdauer entspricht nicht der des Tabs.
 
-Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entfernen, falls er bereits existiert.** ist destruktiv: Aktivieren Sie dies nur, wenn alles dort Vorhandene gelöscht werden darf. Verwenden Sie im Zweifel ein neues Ziel.
+Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entfernen, falls er bereits existiert.** ist destruktiv: Aktivieren Sie dies nur, wenn alles dort Vorhandene gelöscht werden darf. Verwenden Sie im Zweifel ein neues Ziel. Ein fehlgeschlagener Klon ist kein Grund, ein vorhandenes Projekt zu löschen; prüfen Sie vor dem Wiederholen das gemeldete Ziel und den Fehler.
 
-Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** ändert den Anzeigenamen; **Aus Liste entfernen** entfernt die Verknüpfung, nicht die Dateien oder Unterhaltungen. Ein Klick auf ein bereits geöffnetes zuletzt verwendetes Projekt öffnet einen neuen Tab; seine Schaltfläche **Offen** (**Zum offenen Projekt wechseln**) wählt stattdessen den vorhandenen Tab.
+Zuletzt verwendete Einträge sind Verknüpfungen. Die direkten Schaltflächen auf der Startseite und das Aktionsmenü leerer Tabs bieten je nach Eintrag **Arbeitsbereich umbenennen** und **Aus Liste entfernen**; Dateien und Unterhaltungen bleiben erhalten. Auf Startseite, leeren Tabs und im Schnellstarter erzeugt ein Klick auf lokale/entfernte Projekte oder SideCars ein neues Vorkommen, auch wenn sie geöffnet sind. Die separate Aktion **Offen** (**Zum offenen Projekt wechseln**) wählt das vorhandene Vorkommen.
 
-Öffnen Sie denselben Ordner zweimal und wählen Sie in beiden Tabs dieselbe Unterhaltung, um in einem den Chat und im anderen eine Webvorschau, eine Datei oder einen Missionsbericht anzuzeigen. Jeder Tab behält seine eigene Ansicht, Scrollposition der Unterhaltung, Auswahl im rechten Panel und seinen Dateien-Modus; Nachrichten, Ausführung und Projektdaten bleiben gemeinsam.
+Die Aktion zum Wechseln wählt auch einen Tab aus, der auf seinen Server wartet, und schließt den leeren Ausgangstab.
 
 ## Schnellstarter für neue Instanzen verwenden {#new-instance-launcher}
 
-1. Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
-2. Suchen Sie zuletzt verwendete Projekte oder wählen Sie **Durchsuchen…**, **Temporär** oder **Klonen…**.
-
-Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Schnellstarter ist ein Direktzugriff, keine Verwaltungsoberfläche: Benennen/entfernen Sie zuletzt verwendete Projekte und verwalten Sie Server-Lesezeichen auf der Startseite. Escape schließt den Schnellstarter und setzt den Fokus auf `+` zurück.
+Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
+Tab öffnet die Suche, Pfeiltasten und Enter wählen aus, Escape setzt den Fokus zurück auf `+`.
 
 ## Projekt-Tab schließen {#close-stop}
 
@@ -40,9 +40,17 @@ Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Pro
 
 Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigenen Panel-Auswahlen, Missionsauswahl und -leseansicht sowie die Wahl zwischen Chat und Web-Vorschau wieder her. Browser-URLs und Verlauf werden pro Sitzung geteilt; gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen der Web-Vorschau. Das Schließen einer Instanz entfernt nur ihre gespeicherte Ansicht; erneutes Öffnen des Ordners erzeugt eine neue Instanz.
 
+## Remote-Tabs wiederherstellen {#restore-remote-tabs}
+
+Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und Entwürfe der Remote-Tabs erhalten. Ein unerreichbarer Server hinterlässt einen wartenden Tab: Wählen Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Benutzername/Passwort oder einem Link im Feld **Neuer Kopplungslink**. Andere Server bleiben nutzbar. **Server nicht gefunden** bedeutet, dass der gespeicherte Server fehlt.
+
+**Wiederholen** verbindet erneut mit einem vorhandenen Projekt. Ist der Server erreichbar, aber das Projekt fehlt, wählen Sie **Öffnen**.
+
+**Wiederholen** stellt wartende Tabs auch bei deaktivierter automatischer Startwiederherstellung wieder her. Benachrichtigungen wählen den vorhandenen wartenden Tab aus. Prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie erneut senden.
+
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 
-1. Wählen Sie **Temporär** im Schnellstarter oder **Neue temporäre Instanz** auf der Startseite.
+1. Wählen Sie **Neuer temporärer Tab** auf der Startseite oder **Temporär** über den Spalten eines leeren Tabs.
 2. Arbeiten Sie im leeren, von CodeNomad verwalteten Ordner; Git wird nicht automatisch initialisiert.
 3. Wählen Sie beim Schließen des Tabs **Behalten**, **Verwerfen** oder **Abbrechen**. Das Tab-Menü bietet auch **Als Projekt behalten**.
 

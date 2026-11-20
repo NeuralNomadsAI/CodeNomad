@@ -4,11 +4,13 @@ Use the browser UI on a phone or tablet to continue work on the backend host. In
 
 ## Connect from a phone or tablet {#connect}
 
+Saved servers are available from Home and Settings → Servers. [Restore remote tabs](projects.md#restore-remote-tabs).
+
 1. On the host, open **Settings → Remote Access → Remote Control**, then choose **Start Remote Control**.
 2. Scan the pairing QR code with your mobile device and open the link in the browser you intend to keep using.
 3. Alternatively, configure [direct access](remote-access.md), open the host's reachable trusted HTTPS URL, and sign in with its server password.
 
-Remote Control requires device pairing; direct connections require routing, a reachable listener and authentication. Do not use `localhost` on the phone to reach your workstation. Losing site data or switching browser profiles can require sign-in or pairing again; see [Remote Control](remote-control.md).
+Remote Control requires device pairing; direct connections require routing, a reachable listener and authentication. Do not use `localhost` on the phone to reach your workstation. Losing site data or switching browser profiles can require sign-in or pairing again; see [Remote Control](remote-control.md). Where the tunnel is blocked, pair over a trusted HTTPS address instead; see [Pair over direct HTTPS](remote-control.md#direct-https).
 
 ## Install the PWA {#install-pwa}
 

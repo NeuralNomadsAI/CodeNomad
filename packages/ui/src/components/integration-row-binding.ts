@@ -9,6 +9,8 @@ import type {
 import { useI18n } from "../lib/i18n"
 import { integrationAttachChoice, integrationLink, type IntegrationLink } from "../lib/integration-row-state"
 import { integrationAttachmentRequest } from "../lib/integrations-api"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { backendEvents } from "../lib/server-events"
 import { showToastNotification } from "../lib/notifications"
 import { integrationBindings, integrationEpoch } from "../stores/integrations"
 import type { IntegrationBindingTarget } from "../stores/integration-bindings-store"
@@ -16,7 +18,7 @@ import type { IntegrationBindingTarget } from "../stores/integration-bindings-st
 const sameTarget = (left?: IntegrationBindingTarget, right?: IntegrationBindingTarget) => left === right || (!!left && !!right
   && left.instanceId === right.instanceId && left.directory === right.directory && left.sessionID === right.sessionID && left.integrationId === right.integrationId)
 const OUTCOMES = new Set(["busy", "gone", "refused"])
-interface AttachIntent { target: IntegrationBindingTarget; epoch: string; controller: AbortController }
+interface AttachIntent { target: IntegrationBindingTarget; epoch: string; controller: AbortController; authority: ReturnType<typeof captureBackendOperation> }
 
 /**
  * The displayed conversation's attachment to one integration of a Plugins row: its authoritative read and the open
@@ -56,8 +58,9 @@ export function createIntegrationRowBinding(options: {
     setChoices(undefined); setReading(false)
   }
   createEffect(on(() => [target(), options.active(), epoch()] as const, revoke, { defer: true }))
+  createEffect(on(() => backendEvents.signalForInstance(options.instanceId()), revoke, { defer: true }))
   onCleanup(() => { disposed = true; revoke() })
-  const owns = (captured: AttachIntent) => !disposed && intent === captured && !captured.controller.signal.aborted
+  const owns = (captured: AttachIntent) => captured.authority.current() && !disposed && intent === captured && !captured.controller.signal.aborted
     && options.active() && sameTarget(target(), captured.target) && epoch() === captured.epoch
   const busy = () => { const value = target(); return reading() || (value ? integrationBindings.busy(value) : false) }
   const fail = (value: IntegrationBindingTarget, key = "integrations.error.retry", vars?: Record<string, string>) => {
@@ -70,26 +73,32 @@ export function createIntegrationRowBinding(options: {
     return value && options.active() && count > 0 && entry?.status?.host?.state !== "unsupported"
       ? JSON.stringify([value.instanceId, value.directory, value.integrationId, count, epoch()]) : undefined
   })
-  createEffect(on(offersKey, key => {
+  createEffect(on(() => [offersKey(), backendEvents.signalForInstance(options.instanceId())] as const, ([key]) => {
     const value = target()
-    if (!key || !value) { setOffers(undefined); return }
+    setOffers(undefined)
+    if (!key || !value) return
     const controller = new AbortController()
     onCleanup(() => controller.abort())
-    void integrationAttachmentRequest<IntegrationHostsResponse>(value.instanceId, value.directory, value.integrationId, "hosts", controller.signal)
-      .then(result => { if (!controller.signal.aborted) setOffers(Array.isArray(result?.offers) ? result.offers : undefined) })
-      .catch(() => { if (!controller.signal.aborted) setOffers(undefined) })
+    const authority = captureBackendOperation(value.instanceId, controller.signal)
+    if (!authority.current()) return
+    void integrationAttachmentRequest<IntegrationHostsResponse>(value.instanceId, value.directory, value.integrationId, "hosts", authority.signal)
+      .then(result => { if (authority.current()) setOffers(Array.isArray(result?.offers) ? result.offers : undefined) })
+      .catch(() => { if (authority.current()) setOffers(undefined) })
   }))
 
   /** At most one `detachHost` for the displayed conversation. */
   const detach = async () => {
     const value = target()
     if (disposed || !value || link()?.state !== "attached" || busy() || !options.active()) return
+    const authority = captureBackendOperation(value.instanceId, undefined, () => !disposed && options.active() && sameTarget(target(), value))
+    if (!authority.current()) return
     await integrationBindings.run(value, async () => {
+      if (!authority.current()) return
       try {
         const result = await integrationAttachmentRequest<IntegrationDetachResponse>(value.instanceId, value.directory, value.integrationId,
-          "detach", new AbortController().signal, { sessionID: value.sessionID })
+          "detach", authority.signal, { sessionID: value.sessionID })
         if (result?.outcome !== "detached" && result?.outcome !== "none") throw new Error("Invalid detach result")
-      } catch { fail(value) }
+      } catch { if (authority.current()) fail(value) }
     })
   }
   /** At most one `attachHost` of the displayed conversation to the chosen offer. */
@@ -102,11 +111,12 @@ export function createIntegrationRowBinding(options: {
       revoke()
       try {
         const result = await integrationAttachmentRequest<IntegrationAttachResponse>(value.instanceId, value.directory, value.integrationId,
-          "attach", new AbortController().signal, { sessionID: value.sessionID, offerID })
+          "attach", captured.authority.signal, { sessionID: value.sessionID, offerID })
+        if (!captured.authority.current()) return
         if (result?.outcome === "attached") return
         if (OUTCOMES.has(result?.outcome)) fail(value, `integrations.outcome.${result.outcome}`)
         else throw new Error("Invalid attach result")
-      } catch { fail(value) }
+      } catch { if (captured.authority.current()) fail(value) }
     })
   }
   /**
@@ -116,12 +126,14 @@ export function createIntegrationRowBinding(options: {
   const activate = async (expectedOfferID?: string) => {
     const value = target(), entry = options.integration()
     if (disposed || !value || !entry || link()?.state === "attached" || busy() || !options.active()) return
-    const captured: AttachIntent = { target: value, epoch: epoch(), controller: new AbortController() }
+    const authority = captureBackendOperation(value.instanceId)
+    if (!authority.current()) return
+    const captured: AttachIntent = { target: value, epoch: epoch(), controller: new AbortController(), authority }
     intent = captured
     setReading(true)
     try {
       const result = await integrationAttachmentRequest<IntegrationHostsResponse>(value.instanceId, value.directory, value.integrationId,
-        "hosts", captured.controller.signal)
+        "hosts", AbortSignal.any([captured.controller.signal, authority.signal]))
       if (!owns(captured)) return
       if (!Array.isArray(result?.offers)) throw new Error("Invalid hosts result")
       const choice = integrationAttachChoice(result.offers)

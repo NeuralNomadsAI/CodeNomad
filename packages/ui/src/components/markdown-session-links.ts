@@ -1,5 +1,5 @@
 import { tGlobal } from "../lib/i18n"
-import { previewsUnavailable, previewsAvailabilityResolved, getServerMeta } from "../lib/server-meta"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { showAlertDialog } from "../stores/alerts"
 import { activeInstanceId, instances } from "../stores/instances"
@@ -9,31 +9,12 @@ import { openSessionPreview } from "../stores/session-previews"
 import { activeSessionId, sessions } from "../stores/session-state"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
 
-// One session-bound Markdown instance asks for the server meta; the answer
-// decides whether loopback links may open the web preview on this client.
-let loopbackPreviewMetaRequested = false
-
-/** Whether clicking a loopback link opens the web preview on this client.
- * Availability must be known first: through Remote Control with previews off
- * the default false would otherwise open a dead preview before the server
- * meta answers. */
-const loopbackLinksOpenPreview = () => previewsAvailabilityResolved() && !previewsUnavailable()
-
-/** Asks for the server meta once until it answers, so loopback availability
- * resolves without waiting for a click. */
-export function warmLoopbackPreviewMeta(instanceId: string | undefined, sessionId: string | undefined): void {
-  if (instanceId && sessionId && !previewsAvailabilityResolved() && !loopbackPreviewMetaRequested) {
-    loopbackPreviewMetaRequested = true
-    void getServerMeta().catch(() => {
-      loopbackPreviewMetaRequested = false
-    })
-  }
-}
-
 // A loopback link click opens the session preview on the instance owning
 // the session; failures surface through the shared alert dialog.
 const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
+  const operation = captureBackendOperation(instanceId)
   void openSessionPreview(sessionId, url, instanceId).catch((error) => {
+    if (!operation.current()) return
     if (error instanceof Error && error.name === "AbortError") return
     if (activeInstanceId() !== instanceId || activeSessionId().get(instanceId) !== sessionId) return
     showAlertDialog(tGlobal("sessionPreview.open.title"), {
@@ -65,6 +46,7 @@ export interface SessionLinkBase {
 }
 
 export function sessionLinkBase(instanceId: string, sessionId: string): SessionLinkBase | undefined {
+  if (!captureBackendOperation(instanceId).current()) return undefined
   // The session's own location: an independently moved child carries its own
   // directory, never its parent's.
   const sessionDirectory = sessions().get(instanceId)?.get(sessionId)?.location.directory
@@ -92,9 +74,12 @@ export function resolveSessionProjectLink(instanceId: string, sessionId: string,
  * opens the session preview on the instance owning the session (browser-accessed
  * frontends cannot reach the backend host's localhost), and a path inside the
  * session's worktree opens the file reader. Returns whether the click was
- * handled; modified clicks never reach this. */
-export function routeSessionLink(instanceId: string, sessionId: string, href: string): boolean {
-  if (loopbackLinksOpenPreview() && isLoopbackHttpUrl(href)) {
+ * handled; modified clicks never reach this. Availability comes from the
+ * mounted owner's createProjectServerMeta reader. */
+export function routeSessionLink(instanceId: string, sessionId: string, href: string, loopbackLinksOpenPreview: boolean): boolean {
+  const instance = instances().get(instanceId)
+  if (!instance || !captureBackendOperation(instanceId).current()) return false
+  if (loopbackLinksOpenPreview && isLoopbackHttpUrl(href)) {
     openLoopbackPreview(instanceId, sessionId, href)
     return true
   }
@@ -109,10 +94,11 @@ export function routeSessionLink(instanceId: string, sessionId: string, href: st
 /** The titles decorated links carry, computed from the reactive availability
  * and locale signals: call this synchronously inside an effect so their
  * changes re-run the decoration pass. */
-export function sessionLinkTitles(instanceId: string | undefined, sessionId: string | undefined): { preview: string; file: string } {
-  const sessionBound = Boolean(instanceId && sessionId)
+export function sessionLinkTitles(instanceId: string | undefined, sessionId: string | undefined,
+  loopbackLinksOpenPreview: boolean): { preview: string; file: string } {
+  const sessionBound = Boolean(instanceId && sessionId && captureBackendOperation(instanceId).current())
   return {
-    preview: sessionBound && loopbackLinksOpenPreview() ? tGlobal("markdown.link.previewOpens") : "",
+    preview: sessionBound && loopbackLinksOpenPreview ? tGlobal("markdown.link.previewOpens") : "",
     file: sessionBound ? tGlobal("markdown.link.fileOpens") : "",
   }
 }

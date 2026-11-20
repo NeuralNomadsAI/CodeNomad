@@ -1,6 +1,10 @@
 // Mirrors the server's PAIR_PAGE_PATH (packages/server/src/remote-control/gate.ts).
 const PAIR_PAGE_PATH = "/remote-pair"
 
+export function supportsPairingLink(address: string): boolean {
+  try { return new URL(address).protocol === "https:" } catch { return false }
+}
+
 /**
  * Splits a Remote Control pairing link into the server address to save and the
  * single-use link that only the first window opens. The code lives in the

@@ -181,3 +181,35 @@ test("a connected tunnel is not tied to any start deadline", async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.deepEqual({ enabled: manager.status().enabled, state: manager.status().state }, { enabled: true, state: "connected" })
 })
+
+test("administrator policy refuses direct HTTPS devices and pairing while preserving origin classification and revocation", async (t) => {
+  const { file, opened } = fixture(t)
+  const origin = "https://code.example.test"
+  const registry = new RemoteDeviceRegistry(file)
+  const device = registry.exchange(registry.createPairing(origin).code, "direct device", origin)
+  assert(device)
+  const pendingCode = registry.createPairing(origin).code
+
+  const disabled = new RemoteControlManager({
+    disabledByAdministrator: true, directHttpsOrigins: () => [origin],
+    registry, router: () => null, logger,
+    openTunnel: async (options) => { opened.push(options); throw new Error("must never open") },
+  })
+  t.after(() => disabled.shutdown())
+  await disabled.resume()
+  await assert.rejects(disabled.start(), /disabled by the administrator/)
+  assert.throws(() => disabled.createDirectPairing(origin), /disabled by the administrator/)
+  assert.equal(disabled.exchangeDirectPairing(pendingCode, origin, undefined), null)
+  assert.equal(disabled.exchangePairing(pendingCode, undefined), null)
+  assert.equal(disabled.isDeviceAuthorized(device.device.id), false)
+  assert.equal(disabled.gate().authenticate(device.token), null)
+  assert.equal(disabled.gate().authenticateDirect!(device.token, origin), null)
+  assert.deepEqual(disabled.gate().directHttpsOrigins!(), [origin], "classify the cookie and refuse it, without password fallback")
+  assert.deepEqual(disabled.devices().map(value => value.id), [device.device.id])
+  assert.equal(opened.length, 0)
+  assert(disabled.revokeDevice(device.device.id))
+  await disabled.shutdown()
+
+  assert(registry.exchange(pendingCode, "new device", origin), "refused exchanges and shutdown preserve the direct code")
+  assert.equal(registry.isPaired(device.device.id, origin), false)
+})

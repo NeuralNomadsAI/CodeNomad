@@ -59,6 +59,8 @@ leaves a recovery entry; optional updates never force the dialog. Connection
 changes, foreground entry and unsupported proxy responses refresh state; stale
 responses cannot overwrite a changed executable or completed action. Only a
 pending folder open may resume; prompts are never replayed.
+Automatic local recovery follows the selected/restoring backend. Remote selection
+releases its automatic dialog; explicit opening or maintenance retains ownership.
 
 Automatic selection follows PATH order (`opencode2`, then `opencode` within
 each directory), then the conventional user npm installation. An explicit

@@ -1,5 +1,7 @@
 # Settings and layout
 
+Preferences uses the selected project's server for project settings, providers, statistics and memory, including **Tidy up**. An unavailable server keeps project controls inactive. Device settings and SideCars stay local. Images and Web search settings follow the project's server, including that server's global defaults.
+
 ## Open settings and identify the scope {#open-settings}
 
 1. Open **Settings** with the **Open settings** gear in the tab bar (the title bar in the macOS desktop app) or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.
@@ -43,6 +45,8 @@ In **Settings → General**, **Keep the computer awake while CodeNomad is runnin
 In **Settings → General → New conversation permissions**, choose **Autonomous** (the default) or **Supervised** for new top-level conversations you create in CodeNomad. This leaves existing conversations unchanged. To change one, open [Status → Permissions](permissions.md#conversation-mode) in that conversation.
 
 ## Persistent agent memory {#agent-memory}
+
+Authenticated users over Remote Control, verified HTTPS, LAN or an installed PWA can review, edit and **Tidy up** memory for the selected local or remote project.
 
 CodeNomad attempts to remove the session's stale memory instructions; if that cleanup also fails, the previous instructions can remain until a successful refresh.
 
@@ -90,6 +94,8 @@ The timeline has one marker for each reply, thinking block, tool, compaction and
 Manual composer sizing uses the conversation height without the on-screen keyboard: minimum 8% with a 44 px floor, maximum 60%. Narrow width and long text do not raise those limits. When the keyboard opens, the field can shrink temporarily to leave room for controls and messages, without changing the saved height proportion. An expanded permission/question temporarily minimizes the composer without changing its saved height or draft. Collapse or settle the request to resume resizing.
 
 ## Notifications and badges {#notifications}
+
+For a project tab on another CodeNomad server, notifications include the server name. **View conversation** opens that exact project and conversation; detaching the server clears its notices.
 
 Compaction of technical Mission sessions is silent.
 

@@ -2,11 +2,141 @@ import assert from "node:assert/strict"
 import crypto from "node:crypto"
 import http from "node:http"
 import net from "node:net"
+import os from "node:os"
+import fs from "node:fs"
+import path from "node:path"
 import test, { type TestContext } from "node:test"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
+import { backendAdmissionFixture, backendAuthorityHeader, backendBootstrap, assertServerCapabilities, assertPrivateBackendReply } from "./test-support/backend-admission"
 
 const HOST = FAKE_TUNNEL_HOST
 const ORIGIN = `https://${HOST}`
+
+for (const reason of ["flag-off", "server-request", "foreign-origin", "missing-origin"] as const) {
+  test(`server-profile persistence admission: ingress ${reason} cannot patch or delete saved profiles`, async t => {
+    const f = await backendAdmissionFixture(t, reason !== "flag-off")
+    const { target, code } = await startRemoteSurface(t, { settings: f.settings })
+    const cookie = await pair(target(), code)
+    const headers: Record<string, string> = { cookie, "content-type": "application/json" }
+    if (reason !== "missing-origin" && reason !== "server-request") headers.origin = reason === "foreign-origin" ? "https://foreign.test" : ORIGIN
+    if (reason === "server-request") headers["x-codenomad-server-request"] = "1"
+    const stateFile = path.join(f.directory, "state.yaml")
+    const before = fs.readFileSync(stateFile, "utf8")
+    const snapshot = structuredClone(f.settings.getDoc("state"))
+    for (const [url, payload] of [
+      ["/api/storage/state/ui", { remoteServers: [] }],
+      ["/api/storage/state/ui", { remoteServers: null }],
+      ["/api/storage/state", { ui: { remoteServers: [] } }],
+      ["/api/storage/state", { ui: { remoteServers: null } }],
+      ["/api/storage/state", { ui: null }],
+    ] as const) {
+      const result = await send(target(), url, { method: "PATCH", headers, body: JSON.stringify(payload) })
+      assert.equal(fs.readFileSync(stateFile, "utf8"), before, `${reason} ${url}: persisted a refused profile change`)
+      assert.deepEqual(f.settings.getDoc("state"), snapshot, `${reason} ${url}: changed cached state`)
+      assert.ok([401, 403, 404].includes(result.status), `${reason} ${url}: ${result.status} ${result.body}`)
+    }
+    assert.equal(f.io(), 0)
+  })
+}
+
+test("server-profile persistence admission: enabled paired ingress may manage saved profiles", async t => {
+  const f = await backendAdmissionFixture(t)
+  const { target, code } = await startRemoteSurface(t, { settings: f.settings })
+  const cookie = await pair(target(), code)
+  const headers = { cookie, origin: ORIGIN, "content-type": "application/json" }
+  const remoteServers = [{ id: "managed", baseUrl: f.remotes[0]!.origin, skipTlsVerify: true, ssh: { host: "fixture-host" } }]
+  for (const [url, payload] of [
+    ["/api/storage/state/ui", { remoteServers }],
+    ["/api/storage/state", { ui: { remoteServers } }],
+  ] as const) {
+    const result = await send(target(), url, { method: "PATCH", headers, body: JSON.stringify(payload) })
+    assert.equal(result.status, 200, result.body)
+    assert.deepEqual(f.settings.getOwner("state", "ui").remoteServers, remoteServers)
+  }
+  const deleted = await send(target(), "/api/storage/state", { method: "PATCH", headers, body: JSON.stringify({ ui: null }) })
+  assert.equal(deleted.status, 200, deleted.body)
+  assert.equal(f.settings.getOwner("state", "ui").remoteServers, undefined)
+  assert.equal(f.io(), 0)
+})
+
+test("multi-backend admission: paired ingress browses, connects and relays colliding A/B IDs", async t => {
+  const f = await backendAdmissionFixture(t)
+  const { target, code } = await startRemoteSurface(t, { settings: f.settings })
+  const cookie = await pair(target(), code)
+  const headers = { cookie, origin: ORIGIN, "content-type": "application/json" }
+  t.mock.method(os, "homedir", () => f.directory)
+  const ssh = await send(target(), "/api/remote-servers/ssh-hosts", { headers: { cookie } })
+  assert.equal(ssh.status, 200, ssh.body)
+  assert.deepEqual(JSON.parse(ssh.body), { hosts: ["fixture-host"] })
+  const probe = await send(target(), "/api/remote-servers/probe", { method: "POST", headers,
+    body: JSON.stringify({ baseUrl: f.remotes[0]!.origin }) })
+  assert.equal(probe.status, 200, probe.body)
+  assert.equal(JSON.parse(probe.body).ok, true)
+  for (const id of ["A", "B"]) {
+    for (const action of ["connect", "browse"]) {
+      const response = await send(target(), `/api/remote-servers/${id}/${action}`, { method: "POST", headers, body: "{}" })
+      assert.equal(response.status, 200, `${id}/${action}: ${response.body}`)
+      assertPrivateBackendReply(response.body, response.headers)
+    }
+    const bootstrap = await send(target(), `/api/backends/${id}/api/meta`, {
+      headers: { cookie, [backendAuthorityHeader]: backendBootstrap },
+    })
+    assert.equal(bootstrap.status, 200, bootstrap.body)
+    const proof = String(bootstrap.headers[backendAuthorityHeader])
+    assert.match(proof, /^[A-Za-z0-9_-]{43}$/)
+    for (const route of ["/api/workspaces", "/workspaces/same-workspace/instance/api/session/same-session"]) {
+      const response = await send(target(), `/api/backends/${id}${route}`, { headers: { cookie, [backendAuthorityHeader]: proof } })
+      assert.equal(response.status, 200, response.body)
+      const body = JSON.parse(response.body)
+      assert.equal((Array.isArray(body) ? body[0] : body).server, id)
+      assertPrivateBackendReply(response.body, response.headers)
+    }
+    assert.equal((await send(target(), `/api/remote-servers/${id}/forget`, { method: "POST", headers, body: "{}" })).status, 200)
+  }
+  const meta = await send(target(), "/api/meta", { headers: { cookie } })
+  assertServerCapabilities(JSON.parse(meta.body), true, true)
+  for (const remote of f.remotes) for (const request of remote.state.requests) {
+    assert.equal(request.headers.cookie?.includes(cookie), undefined)
+    assert.equal(request.headers[backendAuthorityHeader], undefined)
+  }
+})
+
+test("multi-backend admission: ingress rejects hostile provenance and explicit server protocol before IO", async t => {
+  const f = await backendAdmissionFixture(t)
+  const { target, code, manager } = await startRemoteSurface(t, { settings: f.settings })
+  const cookie = await pair(target(), code)
+  const before = f.io()
+  const hostileHeaders: Record<string, string>[] = [
+    { origin: "https://foreign.test" }, { origin: "null" }, { referer: "https://foreign.test/page" },
+    { "x-codenomad-server-request": "1" },
+    { origin: "https://foreign.test", "x-forwarded-for": "127.0.0.1", "x-forwarded-host": HOST, "x-forwarded-proto": "https" },
+  ]
+  for (const extra of hostileHeaders) {
+    const response = await send(target(), "/api/backends/A/api/meta", { headers: { cookie, ...extra } })
+    assert.ok([403, 404].includes(response.status), `${JSON.stringify(extra)}: ${response.status}`)
+  }
+  for (const pathname of ["/api/backends/A/api/backends/B/api/meta", "/api/backends/A/api/remote-%73ervers/probe",
+    "/api/backends/A/api/auth/password", "/api/backends/A/preview-capabilities"]) {
+    assert.equal((await send(target(), pathname, { headers: { cookie } })).status, 404, pathname)
+  }
+  assert.equal(f.io(), before)
+  manager.revokeDevice(manager.devices()[0]!.id)
+  for (const credential of [undefined, cookie]) {
+    const response = await send(target(), "/api/backends/A/api/meta", { headers: credential ? { cookie: credential } : {} })
+    assert.ok([401, 404].includes(response.status), String(response.status))
+  }
+  assert.equal(f.io(), before)
+})
+
+test("multi-backend admission: ingress feature-off refuses before remote IO", async t => {
+  const f = await backendAdmissionFixture(t, false)
+  const { target, code } = await startRemoteSurface(t, { settings: f.settings })
+  const cookie = await pair(target(), code)
+  const response = await send(target(), "/api/backends/A/api/meta", { headers: { cookie } })
+  assert.ok([403, 404].includes(response.status))
+  assert.equal(f.io(), 0)
+  assertServerCapabilities(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body), false, false)
+})
 
 interface Reply {
   status: number

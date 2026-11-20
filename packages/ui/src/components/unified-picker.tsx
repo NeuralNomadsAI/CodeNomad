@@ -1,10 +1,11 @@
-import { Component, createSignal, createEffect, createMemo, For, Show, onCleanup } from "solid-js"
+import { Component, createSignal, createEffect, createMemo, For, Show, on, onCleanup } from "solid-js"
+import { captureBackendOperation } from "../lib/backend-operation"
 import type { Agent } from "../types/session"
 import type { CommandInfo, SkillInfo } from "@opencode/client"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { getRootClient } from "../stores/opencode-client"
 import { splitDisplayPath } from "./unified-picker-path"
 const log = getLogger("actions")
@@ -114,6 +115,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   let lastCommandQuery = ""
   let inflightWorkspaceId: string | null = null
   let inflightSnapshotPromise: Promise<FileItem[]> | null = null
+  let inflightSnapshotSignal: AbortSignal | undefined
   let activeRequestId = 0
   let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null
  
@@ -133,33 +135,39 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
  
   async function fetchWorkspaceSnapshot(workspaceId: string): Promise<FileItem[]> {
-    if (inflightWorkspaceId === workspaceId && inflightSnapshotPromise) {
+    const operation = captureBackendOperation(workspaceId)
+    operation.signal.throwIfAborted()
+    if (inflightWorkspaceId === workspaceId && inflightSnapshotSignal === operation.signal && inflightSnapshotPromise) {
       return inflightSnapshotPromise
     }
- 
+    inflightSnapshotSignal = operation.signal
     inflightWorkspaceId = workspaceId
-    inflightSnapshotPromise = serverApi
-      .listWorkspaceFiles(workspaceId, ".", props.directory)
+    const request = backendOf(workspaceId).api
+      .listWorkspaceFiles(workspaceId, ".", props.directory, operation.signal)
       .then((entries) => mapEntriesToFileItems(entries))
       .then((snapshot) => {
+        operation.signal.throwIfAborted()
         setAllFiles(snapshot)
         setCachedWorkspaceId(workspaceId)
         return snapshot
       })
       .catch((error) => {
+        if (!operation.current()) throw error
         log.error(`[UnifiedPicker] Failed to load workspace files:`, error)
         setAllFiles([])
         setCachedWorkspaceId(null)
         throw error
       })
       .finally(() => {
-        if (inflightWorkspaceId === workspaceId) {
+        if (inflightSnapshotPromise === request) {
           inflightWorkspaceId = null
           inflightSnapshotPromise = null
+          inflightSnapshotSignal = undefined
         }
       })
  
-    return inflightSnapshotPromise
+    inflightSnapshotPromise = request
+    return request
   }
  
   async function ensureWorkspaceSnapshot(workspaceId: string) {
@@ -176,6 +184,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     searchController?.abort()
     const controller = new AbortController()
     searchController = controller
+    const operation = captureBackendOperation(workspaceId, controller.signal)
+    if (!operation.current()) return
     const normalizedQuery = normalizeQuery(rawQuery)
     const requestId = ++activeRequestId
     const hasCachedSnapshot =
@@ -190,24 +200,24 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     try {
       if (!normalizedQuery) {
         const snapshot = await ensureWorkspaceSnapshot(workspaceId)
-        if (!shouldApplyResults(requestId, workspaceId)) {
+        if (!operation.current() || !shouldApplyResults(requestId, workspaceId)) {
           return
         }
         applyFileResults(snapshot)
         return
       }
 
-      const results = await serverApi.searchWorkspaceFiles(workspaceId, normalizedQuery, {
+      const results = await backendOf(workspaceId).api.searchWorkspaceFiles(workspaceId, normalizedQuery, {
         limit: SEARCH_RESULT_LIMIT,
-        signal: controller.signal,
+        signal: operation.signal,
         directory: props.directory,
       })
-      if (!shouldApplyResults(requestId, workspaceId)) {
+      if (!operation.current() || !shouldApplyResults(requestId, workspaceId)) {
         return
       }
       applyFileResults(mapEntriesToFileItems(results))
     } catch (error) {
-      if (controller.signal.aborted) return
+      if (!operation.current()) return
       if (workspaceId === props.workspaceId) {
         log.error(`[UnifiedPicker] Failed to fetch files:`, error)
         if (shouldApplyResults(requestId, workspaceId)) {
@@ -215,7 +225,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
         }
       }
     } finally {
-      if (shouldFinalizeRequest(requestId, workspaceId)) {
+      if (operation.current() && shouldFinalizeRequest(requestId, workspaceId)) {
         setLoadingState("idle")
       }
     }
@@ -234,9 +244,12 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     clearQueryDebounce()
     const normalizedQuery = normalizeQuery(rawQuery)
     const shouldDebounce = !immediate && normalizedQuery.length > 0
+    const operation = captureBackendOperation(workspaceId)
+    if (!operation.current()) return
     if (shouldDebounce) {
       queryDebounceTimer = setTimeout(() => {
         queryDebounceTimer = null
+        if (!operation.current()) return
         void loadFilesForQuery(rawQuery, workspaceId)
       }, SEARCH_DEBOUNCE_MS)
       return
@@ -276,6 +289,10 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     searchController?.abort()
     clearQueryDebounce()
   })
+  createEffect(on(() => serverEvents.signalForInstance(props.workspaceId), () => {
+    inflightWorkspaceId = null; inflightSnapshotPromise = null
+    resetPickerState()
+  }, { defer: true }))
 
   createEffect(() => {
     if (!props.open) {
@@ -316,17 +333,19 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const directory = props.directory ?? ""
     if (!workspaceId || !directory) return
     let disposed = false, inFlight = false, trailing = false
+    const operation = captureBackendOperation(workspaceId, undefined, () => !disposed)
+    const releaseLoading = () => { if (!disposed) setSkillsLoading(false) }
+    operation.signal.addEventListener("abort", releaseLoading, { once: true })
     setSkills([])
     setSkillsError(false)
-    setSkillsLoading(true)
     const load = () => {
-      if (disposed) return
+      if (!operation.current()) return
       if (inFlight) { trailing = true; return }
       inFlight = true
       setSkillsLoading(true)
-      void getRootClient(workspaceId).skill.list({ location: { directory } }).then(
+      void (async () => getRootClient(workspaceId).skill.list({ location: { directory } }, { signal: operation.signal }))().then(
         (response) => {
-          if (disposed) return
+          if (!operation.current()) return
           if (trailing) { inFlight = false; trailing = false; load(); return }
           setSkills((response.data ?? []).map(({ id, name, description }) => ({ id, name, description })))
           setSkillsError(false)
@@ -334,7 +353,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           setSkillsLoading(false)
         },
         (error) => {
-          if (disposed) return
+          if (!operation.current()) return
           if (trailing) { inFlight = false; trailing = false; load(); return }
           log.error(`[UnifiedPicker] Failed to load skills:`, error)
           setSkillsError(true)
@@ -350,8 +369,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === workspaceId && payload.status === "connected") load()
     })
-    const reconnect = serverEvents.onOpen(() => load())
-    onCleanup(() => { disposed = true; unsubscribe(); status(); reconnect() })
+    const reconnect = serverEvents.forInstance(() => workspaceId).onOpen(() => load())
+    onCleanup(() => { disposed = true; operation.signal.removeEventListener("abort", releaseLoading); unsubscribe(); status(); reconnect() })
     load()
   })
 

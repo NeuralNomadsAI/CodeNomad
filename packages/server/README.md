@@ -253,6 +253,10 @@ CodeNomad owns no private OpenCode port, database, service registration, or daem
 
 Closing a project tab deletes its logical CodeNomad workspace record without evicting the native Location or stopping sessions. Separate occurrences of the same folder are independent. The `workspace.stopped` broadcast closes any other window's tab displaying that record, with a notification only in that other window. Whole-window close, quit and renderer reload do not delete records; backend shutdown clears only CodeNomad's in-memory connection state and never stops the global service. Reopening the project finds its native sessions again.
 
+### Server Metadata
+
+`GET /api/meta` reports the persisted installation identity (`serverId`), API contract version (`apiContract`) and implemented route families (`capabilities`). Registry admission requires an exact contract match and a stable identity. Keep the identity claim with the config; see the [metadata contract](../../dev-docs/architecture.md#server-metadata-contract) for initialization and repair.
+
 ### Event Delivery
 
 CodeNomad holds one shared OpenCode V2 `client.event.subscribe()` stream. It routes native location-scoped events to logical workspaces and multiplexes them with CodeNomad events over `GET /api/events` for browser `EventSource` clients.

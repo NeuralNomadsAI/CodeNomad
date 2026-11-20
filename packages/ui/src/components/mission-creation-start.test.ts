@@ -7,17 +7,19 @@ import { MissionLifecycleRequestError, type MissionLifecycleInput } from "../lib
 import { missionLifecycleIntents, missionLifecycleSource } from "../stores/mission-lifecycle-intents"
 import { createMissionCreationStart } from "./mission-creation-start"
 import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
+import { backends, localBackend, type BackendClient } from "../lib/backend-client"
+import { backendEvents } from "../lib/server-events"
 
 const mission = (id: string) => ({ id, projectID: "project", projectCanonical: "/fixture", revision: 1,
   status: "active", runState: "prepared", coordinatorSessionId: "ses_coordinator",
   actors: [{ sessionId: "ses_coordinator", kind: "coordinator", location: { directory: "/fixture" } }] }) as MissionPanelMap
 const source = (value: MissionPanelMap) => missionLifecycleSource("fixture", value, {})
-function setup() {
+function setup(instanceId = "fixture") {
   let dispose!: () => void, active = true, epoch = 0, refreshes = 0
   let projectID: string | undefined = "project", directory = "/fixture"
   const capture = createRoot(cleanup => {
     dispose = cleanup
-    return createMissionCreationStart({ instanceId: "fixture", get projectID() { return projectID }, get directory() { return directory },
+    return createMissionCreationStart({ instanceId, get projectID() { return projectID }, get directory() { return directory },
       active: () => active, captureView: () => { const before = epoch; return () => epoch === before }, refresh: () => { refreshes++ } })
   })
   return { capture, dispose, hide: () => { active = false }, navigate: () => { epoch++ },
@@ -54,6 +56,27 @@ test("unchecked, departed and disposed creation intentions send nothing", async 
     assert.equal(f.refreshes, 0)
   }
   assert.equal(calls, 0)
+})
+
+test("creation Start uses its backend and a replacement attachment cannot borrow the continuation", async t => {
+  const id = "creation-remote", instanceId = `${id}~workspace`
+  const registry = backends as Map<string, BackendClient>
+  let controller = new AbortController(), calls = 0
+  t.mock.method(backendEvents, "signalForInstance", () => controller.signal)
+  t.mock.method(serverApi, "controlMission", async () => assert.fail("remote Start reached local"))
+  registry.set(id, { ...localBackend, id, api: { ...serverApi, controlMission: async (_instance, _id, input) => {
+    calls++; return ack(mission("remote-start"), input)
+  } } })
+  t.after(() => registry.delete(id))
+  const f = setup(instanceId)
+  try {
+    const stale = f.capture(true)
+    controller.abort(); controller = new AbortController()
+    await stale(mission("remote-stale"))
+    assert.equal(calls, 0)
+    await f.capture(true)(mission("remote-start"))
+    assert.equal(calls, 1)
+  } finally { f.dispose() }
 })
 
 test("creation continuation retains its captured project and physical directory owner", async t => {

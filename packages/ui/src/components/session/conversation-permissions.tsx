@@ -2,10 +2,10 @@ import { createSignal, createUniqueId, onCleanup, onMount, Show } from "solid-js
 import { Dynamic } from "solid-js/web"
 import { Shield, Zap } from "lucide-solid"
 import type { ConversationPermissionMode, ConversationPermissionModeResponse } from "../../../../server/src/api-types"
-import { serverApi } from "../../lib/api-client"
+import { backendOf } from "../../lib/backend-client"
 import { useI18n } from "../../lib/i18n"
 import { HttpResponseError } from "../../lib/retryable-file-search"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents } from "../../lib/server-events"
 import { InfoPopoverButton } from "../info-popover-button"
 
 const modes = ["autonomous", "supervised"] as const
@@ -27,6 +27,7 @@ export function ConversationPermissionsInfo() {
 
 /** Shared by the header and body while the selected conversation's section is shown. */
 export function createConversationPermissionsState(instanceId: string, sessionId: string) {
+  const serverEvents = backendEvents.forInstance(() => instanceId)
   const [mode, setMode] = createSignal<ConversationPermissionMode>()
   const [writing, setWriting] = createSignal(false)
   const [readFailed, setReadFailed] = createSignal(false)
@@ -57,7 +58,7 @@ export function createConversationPermissionsState(instanceId: string, sessionId
     const controller = new AbortController()
     read = controller
     try {
-      const response = await serverApi.readConversationPermissionMode(instanceId, sessionId, controller.signal)
+      const response = await backendOf(instanceId).api.readConversationPermissionMode(instanceId, sessionId, controller.signal)
       if (read !== controller || trailing) return
       const confirmed = confirmedMode(response)
       rootSessionID = response.rootSessionID ?? sessionId
@@ -114,7 +115,7 @@ export function createConversationPermissionsState(instanceId: string, sessionId
     setWriteFailed(undefined)
     unconfirmed = undefined
     try {
-      const response = await serverApi.setConversationPermissionMode(instanceId, sessionId, next)
+      const response = await backendOf(instanceId).api.setConversationPermissionMode(instanceId, sessionId, next)
       if (!disposed) setMode(confirmedMode(response))
     } catch (error) {
       if (!disposed) unconfirmed = { mode: next,

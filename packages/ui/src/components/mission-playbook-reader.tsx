@@ -2,7 +2,8 @@ import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "soli
 import type { MissionTemplateId } from "../../../server/src/missions/model"
 import type { MissionPlaybookDetails } from "../../../server/src/missions/playbook-details"
 import type { MissionTaskMode } from "../../../server/src/missions/task-execution-mode"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { openExternalUrl } from "../lib/external-url"
 import { helpUrl } from "../lib/help-url"
 import { useI18n } from "../lib/i18n"
@@ -21,10 +22,12 @@ export function MissionPlaybookReader(props: { instanceId: string; playbook: Mis
   createEffect(() => {
     const taskMode = props.taskMode
     attempt()
+    const instanceId = props.instanceId, controller = new AbortController()
+    const operation = captureBackendOperation(instanceId, controller.signal)
     let current = true
-    setFailed(false)
-    serverApi.fetchMissionPlaybooks(taskMode).then(value => { if (current) setDetails(value) }, () => { if (current) setFailed(true) })
-    onCleanup(() => { current = false })
+    setDetails(undefined); setFailed(false)
+    if (operation.current()) backendOf(instanceId).api.fetchMissionPlaybooks(taskMode).then(value => { if (current && operation.current()) setDetails(value) }, () => { if (current && operation.current()) setFailed(true) })
+    onCleanup(() => { current = false; controller.abort() })
   })
   const shown = () => details()?.taskMode === props.taskMode ? details() : undefined
   const playbook = () => shown()?.playbooks.find(value => value.id === props.playbook)

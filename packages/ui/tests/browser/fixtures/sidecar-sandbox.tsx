@@ -58,6 +58,12 @@ render(
             }}
           />
         </div>
+        <div id="path-preview-root" style={{ width: "800px", height: "300px" }}>
+          <BrowserFrame title="Remote preview" initialUrl="/sidecar-sandbox-guest" initialAddress="http://app.invalid/" proxyBasePath="/previews/capability"
+            addressMode="url" isolatedSource opaqueSource sourceAddress={() => "http://app.invalid/"} labels={{ back: "Back", refresh: "Refresh", path: "Address", go: "Go",
+              viewport: "Viewport", viewportResponsive: "Responsive", viewportDesktop: "Desktop", viewportTablet: "Tablet",
+              viewportTabletLandscape: "Tablet landscape", viewportMobile: "Mobile", viewportMobileLandscape: "Mobile landscape" }} />
+        </div>
       </I18nProvider>
     </ConfigProvider>
   ),

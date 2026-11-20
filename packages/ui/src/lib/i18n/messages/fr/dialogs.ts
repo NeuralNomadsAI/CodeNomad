@@ -1,4 +1,12 @@
 export const dialogMessages = {
+  "remoteRestore.absent": "Serveur introuvable",
+  "remoteRestore.confirmChange": "Modifier cette connexion serveur ? Les onglets enregistrés dans d’autres fenêtres peuvent devenir indisponibles.",
+  "remoteRestore.idle": "En attente",
+  "remoteRestore.admitting": "Connexion…",
+  "remoteRestore.compatible": "Projet indisponible",
+  "remoteRestore.refused": "Serveur incompatible",
+  "remoteRestore.unreachable": "Serveur indisponible",
+  "remoteRestore.inUse": "Fermez les onglets de ce serveur et rouvrez Paramètres depuis un autre projet avant de changer son adresse.",
   "authRecovery.title": "Se reconnecter à CodeNomad",
   "authRecovery.pairing": "Sur l’hôte, ouvrez Paramètres → Accès distant, créez un lien d’appairage et ouvrez-le sur cet appareil, puis vérifiez la connexion.",
   "authRecovery.pairingTitle": "Appairer à nouveau cet appareil",

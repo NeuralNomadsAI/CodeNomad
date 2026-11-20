@@ -1,13 +1,14 @@
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getRootClient } from "./opencode-client"
 import { createShellApi, createShellStore, type ShellRefreshEvent } from "./shell-store"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 
 const shellStore = createShellStore((instanceId) => createShellApi(getRootClient(instanceId),
-  (directory, workspaceID) => {
+  (directory, workspaceID, signal) => {
     if (workspaceID !== undefined) return Promise.reject(new Error("Background shell inventory requires a public directory location"))
-    return serverApi.fetchBackgroundShells(instanceId, directory)
-  }))
+    return backendOf(instanceId).api.fetchBackgroundShells(instanceId, directory, signal)
+  }), id => captureBackendOperation(id).signal)
 
 serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event") return
@@ -20,3 +21,5 @@ serverEvents.on("instance.eventStatus", (event) => {
 })
 
 export { shellStore }
+
+serverEvents.onOpen(backendId => shellStore.refreshBackend(backendId))

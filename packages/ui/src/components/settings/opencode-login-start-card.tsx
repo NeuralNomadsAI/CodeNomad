@@ -2,7 +2,7 @@ import { Show, createSignal, createUniqueId, onCleanup, onMount } from "solid-js
 import type { LoginStartResponse } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { HttpResponseError } from "../../lib/retryable-file-search"
 import { SettingsInfoTip } from "./settings-info-tip"
 import { SettingsSwitch } from "./settings-switch"
@@ -49,7 +49,7 @@ export function OpenCodeLoginStartCard() {
     } finally { if (!disposed) setBusy(false) }
   }
   onMount(() => {
-    const reconnect = serverEvents.onOpen(() => void load())
+    const reconnect = serverEvents.forInstance(() => undefined).onOpen(() => void load())
     onCleanup(() => { disposed = true; reconnect() })
     void load()
   })

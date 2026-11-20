@@ -11,13 +11,15 @@ describe("workspace list reconciliation fence", () => {
       < refresh.indexOf("restoreCreationCommitGates.deferRefreshWorkspace(workspace)"))
     const events = source.slice(source.indexOf("function handleWorkspaceEvent"), source.indexOf("function handleWorkspaceLog"))
     assert.ok(events.indexOf("workspaceListReconciliationFence.markMutation(workspaceId)")
-      < events.indexOf("restoreCreationCommitGates.deferWorkspace(event.workspace)"))
+      < events.indexOf("restoreCreationCommitGates.deferWorkspace(workspace)"))
     const create = source.slice(source.indexOf("async function createInstance"), source.indexOf("function normalizeInstanceFolderPath"))
     assert.ok(create.indexOf("workspaceListReconciliationFence.markMutation(workspace.id)")
       < create.indexOf("upsertWorkspace(committedWorkspace"))
     const close = source.slice(source.indexOf("function closeWorkspace"), source.indexOf("function getActiveInstance"))
     assert.equal(close.includes("removeInstance(id)"), false)
-    assert.equal(close.includes("serverApi.deleteWorkspace(id)"), true)
+    assert.equal(close.includes("receipt.api.deleteWorkspace(id)"), true)
+    assert.ok(close.indexOf("captureWorkspaceOperation(instance.folder, backendOf(id))") < close.indexOf("trackWorkspaceClose(id"))
+    assert.equal(close.includes("if (!receipt.current())"), true)
   })
 
   it("rejects stale list entries and absences after lifecycle mutations", () => {

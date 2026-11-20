@@ -1,4 +1,4 @@
-import type { FastifyInstance, RouteShorthandOptions } from "fastify"
+import type { FastifyInstance, FastifyRequest, RouteShorthandOptions } from "fastify"
 import { z } from "zod"
 import type { BinaryValidationResult } from "../../api-types"
 import { probeOpenCodeBinary } from "../../workspaces/spawn"
@@ -11,6 +11,7 @@ import { SettingsReadError } from "../../settings/yaml-doc-store"
 import { HostOnlySettingError, hostOnlyServerCheck } from "../../settings/host-only-settings"
 import { isLocalRequest } from "../../remote-control/request-origin"
 import { isPlainObject } from "../../settings/merge-patch"
+import type { BackendCallerGuard } from "../../codenomad-servers/ui-caller"
 import { NEW_CONVERSATION_PERMISSIONS, newConversationMode } from "../../permissions/session-mode"
 
 const privateStateOwners = [SESSION_FAVORITES_OWNER, SESSION_PERMISSION_BLOCKS_OWNER]
@@ -28,6 +29,8 @@ interface RouteDeps {
   /** An installed login start follows an explicit executable change; its failure never refuses the save. */
   refreshLoginStart?: () => Promise<void>
   withConfigLock?: <T>(action: () => T) => Promise<T>
+  guardServerProfiles?: BackendCallerGuard
+  principalSignal?: (request: FastifyRequest) => AbortSignal | undefined
 }
 
 const ValidateBinarySchema = z.object({
@@ -165,6 +168,10 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/storage/state", async () => publicState())
   app.patch("/api/storage/state", async (request, reply) => {
     try {
+      deps.principalSignal?.(request)?.throwIfAborted()
+      const ui = isPlainObject(request.body) ? request.body.ui : undefined
+      if (ui !== undefined && (!isPlainObject(ui) || Object.hasOwn(ui, "remoteServers"))
+        && deps.guardServerProfiles?.(request, reply)) return
       const patch = request.body
       if (patch && typeof patch === "object" && privateStateOwners.some(owner => Object.hasOwn(patch, owner))) {
         return reply.code(403).send()
@@ -185,6 +192,9 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.patch<{ Params: { owner: string } }>("/api/storage/state/:owner", async (request, reply) => {
     if (privateStateOwners.includes(request.params.owner)) return reply.code(403).send()
     try {
+      deps.principalSignal?.(request)?.throwIfAborted()
+      if (request.params.owner === "ui" && isPlainObject(request.body) && Object.hasOwn(request.body, "remoteServers")
+        && deps.guardServerProfiles?.(request, reply)) return
       return deps.settings.mergePatchOwner("state", request.params.owner, request.body ?? {})
     } catch (error) {
       reply.code(400)

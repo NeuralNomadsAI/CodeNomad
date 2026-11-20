@@ -4,11 +4,13 @@ backend host को काम जारी राख्न phone वा tablet �
 
 ## phone वा tablet बाट जडान {#connect}
 
+सुरक्षित सर्भरहरू गृह पृष्ठ र सेटिङहरू → सर्भरहरूमा उपलब्ध हुन्छन्। [रिमोट ट्याबहरू पुनर्स्थापना गर्नुहोस्](projects.md#restore-remote-tabs).
+
 1. host मा **सेटिङहरू → रिमोट पहुँच → रिमोट कन्ट्रोल** खोली **रिमोट कन्ट्रोल सुरु गर्नुहोस्** रोज्नुहोस्।
 2. mobile device बाट pairing QR scan गरी प्रयोग गरिरहने browser मा link खोल्नुहोस्।
 3. वा [प्रत्यक्ष पहुँच](remote-access.md) कन्फिगर गरी host को पहुँचयोग्य trusted HTTPS URL खोल्नुहोस् र server password बाट sign in गर्नुहोस्।
 
-Remote Control लाई device pairing चाहिन्छ; direct connection लाई routing, reachable listener र authentication चाहिन्छ। workstation पुग्न phone मा `localhost` प्रयोग नगर्नुहोस्। site data गुम्दा वा browser profile बदल्दा sign-in/pairing फेरि चाहिन सक्छ; [Remote Control](remote-control.md) हेर्नुहोस्।
+Remote Control लाई device pairing चाहिन्छ; direct connection लाई routing, reachable listener र authentication चाहिन्छ। workstation पुग्न phone मा `localhost` प्रयोग नगर्नुहोस्। site data गुम्दा वा browser profile बदल्दा sign-in/pairing फेरि चाहिन सक्छ; [Remote Control](remote-control.md) हेर्नुहोस्। tunnel block भए, बरु विश्वसनीय HTTPS ठेगानामा pair गर्नुहोस्; [direct HTTPS मार्फत pair गर्नुहोस्](remote-control.md#direct-https) हेर्नुहोस्।
 
 ## PWA स्थापना {#install-pwa}
 

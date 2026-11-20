@@ -69,6 +69,8 @@ La lecture utilise la projection textuelle CodeNomad, pas une capture d’écran
 
 ## Conversation vocale {#conversation}
 
+Gemini Live et OpenAI Realtime sont réservés aux sessions du serveur qui a ouvert cette fenêtre.
+
 Dans **Conversation**, choisissez un **Moteur de conversation** :
 
 - **Classique** nécessite seulement une lecture configurée dans un format compatible. Dans **Plus d'actions**, choisissez **Activer le mode conversation**. CodeNomad demande à l’agent de commencer chaque réponse à un prompt envoyé par un résumé `spoken` et lit ce seul bloc terminé dans la session principale active. Le mode s’applique à l’onglet du projet jusqu’à sa désactivation ou au rechargement. Démarrer la dictée arrête la lecture du résumé.

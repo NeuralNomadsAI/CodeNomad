@@ -1,5 +1,5 @@
 import type { WorkspaceEventPayload } from "../../../server/src/api-types"
-import { serverApi } from "./api-client"
+import { serverApi, type ServerApi } from "./api-client"
 
 export interface WorkspaceEventTransportCallbacks {
   onBatch: (events: WorkspaceEventPayload[]) => void
@@ -17,12 +17,13 @@ export interface WorkspaceEventConnection {
 
 export async function connectWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
+  api: Pick<ServerApi, "connectEvents"> = serverApi,
 ): Promise<WorkspaceEventConnection> {
   const notifyDisconnected = () => {
     callbacks.onStatus?.("disconnected")
     callbacks.onError?.()
   }
-  const source = serverApi.connectEvents((event) => {
+  const source = api.connectEvents((event) => {
     callbacks.onBatch([event])
   }, notifyDisconnected, callbacks.onPing)
   source.onopen = () => {

@@ -1,4 +1,12 @@
 export const dialogMessages = {
+  "remoteRestore.absent": "सर्भर फेला परेन",
+  "remoteRestore.confirmChange": "यो सर्भर जडान बदल्ने? अन्य विन्डोका सुरक्षित ट्याबहरू उपलब्ध नहुन सक्छन्।",
+  "remoteRestore.idle": "प्रतीक्षामा",
+  "remoteRestore.admitting": "जडान हुँदैछ…",
+  "remoteRestore.compatible": "परियोजना उपलब्ध छैन",
+  "remoteRestore.refused": "सर्भर असंगत छ",
+  "remoteRestore.unreachable": "सर्भर उपलब्ध छैन",
+  "remoteRestore.inUse": "यस सर्भरको ठेगाना बदल्नुअघि यसका ट्याबहरू बन्द गर्नुहोस् र अर्को परियोजनाबाट सेटिङहरू फेरि खोल्नुहोस्।",
   "authRecovery.title": "CodeNomad मा फेरि साइन इन गर्नुहोस्",
   "authRecovery.pairing": "होस्टमा सेटिङहरू → रिमोट पहुँच खोल्नुहोस्, जोडी लिङ्क बनाएर यस उपकरणमा खोल्नुहोस्, अनि जडान जाँच्नुहोस्।",
   "authRecovery.pairingTitle": "यो उपकरण फेरि जोड्नुहोस्",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-server-selection-result"
+description = "Enables the server_selection_result command without any pre-configured scope."
+commands.allow = ["server_selection_result"]
+
+[[permission]]
+identifier = "deny-server-selection-result"
+description = "Denies the server_selection_result command without any pre-configured scope."
+commands.deny = ["server_selection_result"]

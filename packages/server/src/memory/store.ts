@@ -33,7 +33,8 @@ export function decodeMemoryEntry(text: string): MemoryEntry {
 }
 
 /** Same-directory rename replaces files on Windows too; never unlink the destination first. */
-export async function atomicMemoryWrite(file: string, content: string): Promise<void> {
+export async function atomicMemoryWrite(file: string, content: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
   if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) throw new MemoryError("invalid", "Memory file is too large")
   const temporary = `${file}.${randomUUID()}.tmp`
   let created = false
@@ -42,6 +43,7 @@ export async function atomicMemoryWrite(file: string, content: string): Promise<
     created = true
     try { await handle.writeFile(content, "utf8"); await handle.sync() }
     finally { await handle.close() }
+    signal?.throwIfAborted()
     await rename(temporary, file)
   } finally { if (created) await rm(temporary, { force: true }).catch(() => undefined) }
 }
@@ -88,41 +90,46 @@ export class MemoryStore {
     return memoryForAgent(await this.listStored(namespace))
   }
 
-  async listForUI(namespace: MemoryNamespace): Promise<MemoryReviewEntry[]> {
-    return (await this.listStored(namespace)).map(reviewMemoryEntry)
+  async listForUI(namespace: MemoryNamespace, signal?: AbortSignal): Promise<MemoryReviewEntry[]> {
+    return (await this.listStored(namespace, signal)).map(reviewMemoryEntry)
   }
 
   /** A cleanup capability snapshot: probe actual host ACLs without modifying entries or Git history. */
-  async cleanupWritable(namespace: MemoryNamespace): Promise<boolean> {
+  async cleanupWritable(namespace: MemoryNamespace, signal?: AbortSignal): Promise<boolean> {
     try {
       return await this.locked(async () => {
         if (!await regularDirectory(this.directory)) return false
         if ((await this.git.run(["symbolic-ref", "HEAD"])).trim() !== "refs/heads/main") return false
         const scope = path.join(this.directory, this.scopePath(namespace))
+        signal?.throwIfAborted()
         for (const directory of [scope, this.directory, path.join(this.directory, ".git"),
           path.join(this.directory, ".git", "objects"), path.join(this.directory, ".git", "refs"), path.join(this.directory, ".git", "refs", "heads")]) {
+          signal?.throwIfAborted()
           if (!await regularDirectory(directory)) return false
+          signal?.throwIfAborted()
           const probe = path.join(directory, `.cleanup.md.${randomUUID()}.tmp`)
           const handle = await open(probe, "wx", 0o600)
           try { await handle.close() } finally { await rm(probe) }
         }
         // Windows read-only file attributes can prevent atomic replacement even in a writable folder.
         for (const file of [path.join(this.directory, ".git", "index"), path.join(this.directory, ".git", "refs", "heads", "main"),
-          ...(await this.readScope(namespace)).map(entry => path.join(scope, `${entry.id}.md`))]) {
+          ...(await this.readScope(namespace, signal)).map(entry => path.join(scope, `${entry.id}.md`))]) {
+          signal?.throwIfAborted()
           const handle = await open(file, "r+")
           await handle.close()
         }
         return true
-      })
+      }, signal)
     } catch { return false }
   }
 
-  private async listStored(namespace: MemoryNamespace): Promise<MemoryEntry[]> {
+  private async listStored(namespace: MemoryNamespace, signal?: AbortSignal): Promise<MemoryEntry[]> {
+    signal?.throwIfAborted()
     this.scopePath(namespace)
     // The config directory and repository stay absent for a pristine empty read.
     if (!await regularDirectory(this.configBaseDir)) return []
     if (!await regularDirectory(this.directory)) return []
-    return this.locked(async () => this.readScope(namespace))
+    return this.locked(async () => this.readScope(namespace, signal), signal)
   }
 
   async read(namespace: MemoryNamespace, idOrTitle: string): Promise<MemoryEntry | undefined> {
@@ -144,14 +151,17 @@ export class MemoryStore {
   }
 
   /** Policy decisions (including duplicate replacement/capacity) run inside the repository lock. */
-  async mutate<T>(namespace: MemoryNamespace, decide: (entries: readonly MemoryEntry[]) => MemoryMutation<T> | Promise<MemoryMutation<T>>): Promise<T> {
+  async mutate<T>(namespace: MemoryNamespace, decide: (entries: readonly MemoryEntry[]) => MemoryMutation<T> | Promise<MemoryMutation<T>>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted()
     const scope = this.scopePath(namespace)
     try { await mkdir(this.configBaseDir, { recursive: true, mode: 0o700 }) }
     catch { throw new MemoryError("unreadable", "Memory directory is unavailable") }
     await regularDirectory(this.configBaseDir)
     return this.locked(async () => {
-      const entries = await this.readScope(namespace)
+      const entries = await this.readScope(namespace, signal)
+      signal?.throwIfAborted()
       const mutation = await decide(entries)
+      signal?.throwIfAborted()
       if (mutation.kind === "none") return mutation.result
       let id: string, content: string | null
       if (mutation.kind === "save") {
@@ -168,12 +178,15 @@ export class MemoryStore {
       if (entries.some(entry => entry.id !== id && entry.id.toLowerCase() === id.toLowerCase()))
         throw new MemoryError("conflict", "Memory entry filename conflicts")
       await this.git.initialize()
+      signal?.throwIfAborted()
       const transaction: Transaction = { version: 1, id: randomUUID(), file: `${scope}/${id}.md`, content }
       await this.ensureScope(scope)
-      await atomicMemoryWrite(this.journal, JSON.stringify(transaction))
+      // Atomic journal publication admits the durable transaction owned by finish/recovery.
+      signal?.throwIfAborted()
+      await atomicMemoryWrite(this.journal, JSON.stringify(transaction), signal)
       await this.finish(transaction, true)
       return mutation.result
-    })
+    }, signal)
   }
 
   private get journal(): string { return path.join(this.directory, ".transaction.json") }
@@ -194,7 +207,8 @@ export class MemoryStore {
     }
   }
 
-  private async readScope(namespace: MemoryNamespace): Promise<MemoryEntry[]> {
+  private async readScope(namespace: MemoryNamespace, signal?: AbortSignal): Promise<MemoryEntry[]> {
+    signal?.throwIfAborted()
     if (!await regularDirectory(this.directory)) return []
     let directory = this.directory
     for (const segment of this.scopePath(namespace).split("/")) {
@@ -203,6 +217,7 @@ export class MemoryStore {
     }
     const entries: MemoryEntry[] = []
     for (const name of (await readdir(directory)).sort()) {
+      signal?.throwIfAborted()
       if (/\.md\.[a-f0-9-]{36}\.tmp$/.test(name)) continue
       if (!name.endsWith(".md")) throw new MemoryError("malformed", "Unexpected memory file")
       const entry = decodeMemoryEntry(await readBounded(path.join(directory, name)))
@@ -248,13 +263,16 @@ export class MemoryStore {
     await this.finish(transaction)
   }
 
-  private async locked<T>(action: () => Promise<T>): Promise<T> {
+  private async locked<T>(action: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     let release: (() => Promise<void>) | undefined
     try {
-      release = await lockMemoryRepository(this.directory)
+      release = await lockMemoryRepository(this.directory, undefined, signal)
+      signal?.throwIfAborted()
       await this.recover()
+      signal?.throwIfAborted()
       return await action()
     } catch (error) {
+      signal?.throwIfAborted()
       if (error instanceof GitProbeUnavailableError) throw new MemoryError("conflict", "Git availability could not be checked. Retry the operation.")
       if (error instanceof MemoryError || (error as { code?: string }).code === "git_required") throw error
       throw new MemoryError("unreadable", "Memory storage is unavailable")

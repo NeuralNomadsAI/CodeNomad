@@ -2,24 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { Logger } from "../logger"
 import { isHumanAnswerProofPayload } from "../missions/human-answer"
 import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
-
-const integrationRoute = "/api/workspaces/:id/integrations"
-const integrationRoutes = new Set([integrationRoute, "/api/workspaces/:id/plugin-sources", ...["hosts", "binding", "attach", "detach", "install", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
-
-function integrationLogRoute(request: FastifyRequest): string | undefined {
-  const route = request.routeOptions.url
-  if (route && integrationRoutes.has(route)) return route
-  // Rejects and malformed parameters may have no matched route. Decode segments independently so
-  // a bad escape in a caller-owned ID cannot disable the namespace's confidentiality policy.
-  const pathname = request.url.split(/[?#]/, 1)[0].replace(/^[a-z]+:\/\/[^/]*/i, "")
-  const parts = pathname.replace(/^\/+/, "/").split("/").map(part => {
-    try { return decodeURIComponent(part) } catch { return part }
-  })
-  if (parts[1] === "api" && parts[2] === "workspaces" && parts[4] === "integrations") return `${integrationRoute}/*`
-  if (parts[1] === "api" && parts[2] === "workspaces" && parts[4] === "plugin-sources") return "/api/workspaces/:id/plugin-sources/*"
-}
-
-/** Integration diagnostics contain only fixed routes and completion metadata, including rejected requests. */
+/** Request diagnostics contain only static route templates and completion metadata. */
 export function registerRequestLogging(app: FastifyInstance, apiLogger: Logger) {
   const starts = new WeakMap<FastifyRequest, bigint>()
   app.addHook("onRequest", (request, _reply, done) => {
@@ -29,24 +12,15 @@ export function registerRequestLogging(app: FastifyInstance, apiLogger: Logger) 
   app.addHook("onResponse", (request, reply, done) => {
     const start = starts.get(request)
     const durationMs = start === undefined ? undefined : Number((process.hrtime.bigint() - start) / BigInt(1_000_000))
-    const integration = integrationLogRoute(request)
-    const base = { method: request.method, url: integration ?? request.url, status: reply.statusCode, durationMs }
+    const route = request.routeOptions.url
+    const url = !route ? "<unmatched>" : route === "*" || route === "/*" ? "<catchall>" : route
+    const base = { method: request.method, url, status: reply.statusCode, durationMs }
     apiLogger.debug(base, "HTTP request completed")
     if (apiLogger.isLevelEnabled("trace")) {
-      apiLogger.trace(integration ? base : {
-        ...base,
-        params: redactSecrets(routeParams(request.params)),
-        query: redactSecrets(request.query),
-        body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") ? "<redacted>" : redactSecrets(request.body),
-      }, "HTTP request payload")
+      apiLogger.trace(base, "HTTP request payload")
     }
     done()
   })
-}
-
-/** Fastify builds route parameters, named by the route itself, on a prototype-less object; log them as a plain one. */
-function routeParams(params: unknown): unknown {
-  return typeof params === "object" && params !== null ? { ...params } : params
 }
 
 export function redactSecrets(value: unknown): unknown {
@@ -59,6 +33,6 @@ export function redactSecrets(value: unknown): unknown {
     || isHumanAnswerProofPayload(value as Record<string, unknown>)) return "<redacted>"
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
     key,
-    /(authorization|cookie|key|code|token|password|secret|principal)/i.test(key) ? "<redacted>" : redactSecrets(entry),
+    /(authorization|authority|proof|cookie|credential|key|code|token|password|secret|principal|pairingLink)/i.test(key) ? "<redacted>" : redactSecrets(entry),
   ]))
 }

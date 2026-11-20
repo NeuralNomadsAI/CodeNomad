@@ -65,7 +65,7 @@ test("the real shell badge reopens the selected question with a same-session per
   page.on("pageerror", error => errors.push(error.message))
   const diagnostics = observeHeaderFixture(page)
   try {
-    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
     await diagnostics.install()
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -111,7 +111,7 @@ test("native Electron zoom preserves CSS minimums across close/recreate, shared 
       args: [fileURLToPath(new URL("fixtures/window-zoom-electron.cjs", import.meta.url))], env })
     const page = await app.firstWindow()
     page.on("pageerror", error => console.error("[zoom fixture]", error))
-    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
@@ -203,7 +203,7 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
     const diagnostics = observeHeaderFixture(page)
     await runWithDiagnosticCleanup({
       run: async () => {
-        await page.route("**/api/**", route => route.fulfill({ json: {} }))
+        await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
         await diagnostics.install()
         await page.goto(url)
         await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -259,7 +259,7 @@ test("composer locale settles after a held French dictionary import without losi
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   const requested = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
   try {
-    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
     await page.route("**/messages/fr/index.ts*", async route => {
       requested.resolve()
       await release.promise
@@ -283,7 +283,7 @@ test("composer locale settles after a held French dictionary import without losi
 
 for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`timeline visibility follows conversation width on ${device}, independently of header density and height`, async () => {
   const page = await browser.newPage({ ...devices[device], viewport: { width: 1100, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -332,7 +332,7 @@ for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`
 
 test("short landscape composer shrinks, scrolls long drafts and shares pointer/keyboard resize limits", async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 900 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -364,7 +364,7 @@ test("short landscape composer shrinks, scrolls long drafts and shares pointer/k
 
 test("header actions collapse below the timeline breakpoint even when the full header fits", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -400,7 +400,7 @@ for (const device of ["Pixel 5", "Desktop Chrome"] as const) test(`conversation 
   const mobile = device === "Pixel 5"
   for (const previewsOff of [false, true]) {
     const page = await browser.newPage({ ...devices[device], viewport: { width: 390, height: 844 } })
-    await page.route("**/api/**", route => route.fulfill({ json: previewsOff && new URL(route.request().url()).pathname === "/api/meta" ? { previewsUnavailable: true } : {} }))
+    await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : previewsOff && new URL(route.request().url()).pathname === "/api/meta" ? { previewsUnavailable: true } : {} }))
     try {
       await page.goto(url)
       await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -423,7 +423,7 @@ for (const device of ["Pixel 5", "Desktop Chrome"] as const) test(`conversation 
 
 test("docked drawers can reduce the conversation to 390 CSS pixels", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -441,7 +441,7 @@ test("docked drawers can reduce the conversation to 390 CSS pixels", async () =>
 
 test("manual prompt height follows the pointer without changing its minimum as the draft grows", async () => {
   const page = await browser.newPage({ viewport: { width: 701, height: 1275 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -473,7 +473,7 @@ test("manual prompt height follows the pointer without changing its minimum as t
 
 test("chosen prompt proportion follows window height and survives composer remounts", async () => {
   const page = await browser.newPage({ viewport: { width: 701, height: 900 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -513,7 +513,7 @@ test("visual keyboard shrink clamps the displayed manual height without overwrit
       window.visualViewport.dispatchEvent(new Event("resize"))
     }
   })()`)
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -536,7 +536,7 @@ test("visual keyboard shrink clamps the displayed manual height without overwrit
 
 test("context text never overlaps header actions after usage and session changes", async () => {
   const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 390, height: 844 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -570,7 +570,7 @@ test("context text never overlaps header actions after usage and session changes
 
 test("desktop timeline still follows its saved visibility preference", async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -588,7 +588,7 @@ test("content filters join the measured header overflow and restore keyboard foc
   const page = await browser.newPage({ viewport: { width: 280, height: 844 }, hasTouch: true })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -631,7 +631,7 @@ async function dragWindow(page: Page, panel: Locator, dx: number, dy: number) {
 
 for (const kind of ["command-palette", "session-search"]) test(`${kind} stays visible when content grows after dragging`, async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ json: route.request().url().endsWith("/session-history/query")
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : route.request().url().endsWith("/session-history/query")
     ? { status: "page", scanned: 32, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: null,
         hits: Array.from({ length: 32 }, (_, i) => ({ sessionID: "session", messageID: "hello", partIndex: i,
           kind: "text", role: "user", excerpt: `fixture result ${i}` })) }
@@ -668,7 +668,7 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays vi
 
 for (const kind of ["command-palette", "session-search"]) test(`${kind} close remains reachable after native zoom and pan`, async () => {
   const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 390, height: 844 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -695,7 +695,7 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} close re
 
 test("zoomed search can scroll to its last result and pagination without losing its toolbar", async () => {
   const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 390, height: 844 } })
-  await page.route("**/api/**", route => route.fulfill({ json: route.request().url().endsWith("/session-history/query")
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : route.request().url().endsWith("/session-history/query")
     ? { status: "page", scanned: 32, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: "fixture-next-page",
         hits: Array.from({ length: 32 }, (_, i) => ({ sessionID: "session", messageID: "hello", partIndex: i,
           kind: "text", role: "user", excerpt: `fixture result ${i}` })) }
@@ -735,7 +735,7 @@ test("zoomed search can scroll to its last result and pagination without losing 
 
 test("ported search opens inside the viewport with asymmetric drawers", async () => {
   const page = await browser.newPage({ viewport: { width: 810, height: 600 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -754,7 +754,7 @@ test("ported search opens inside the viewport with asymmetric drawers", async ()
 
 for (const first of ["command-palette", "session-search"]) test(`new utility window remains above the older ${first}`, async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -777,7 +777,7 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -846,7 +846,7 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
 
 test("composer tooltips follow effective bindings without permanent key strips", async () => {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -895,7 +895,7 @@ test("composer tooltips follow effective bindings without permanent key strips",
 
 test("Clear and selector shortcuts drive the shown composer, in a conversation and before the first one", async () => {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -923,7 +923,7 @@ test("Clear and selector shortcuts drive the shown composer, in a conversation a
 
 test("search shortcut, session changes and palette execution keep their own authority", async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -952,7 +952,7 @@ test("search shortcut, session changes and palette execution keep their own auth
 test("compact touch controls can reopen their menu and explicitly toggle a persistent window", async () => {
   const context = await browser.newContext({ viewport: { width: 320, height: 900 }, hasTouch: true })
   const page = await context.newPage()
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -983,7 +983,7 @@ test("compact touch controls can reopen their menu and explicitly toggle a persi
 
 test("utility windows remain visible and keyboard accessible in RTL", async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -1013,7 +1013,7 @@ test("utility windows remain visible and keyboard accessible in RTL", async () =
 
 test("Escape consumes only the top utility window before the global Stop shortcut", async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -1042,7 +1042,7 @@ test("Escape consumes only the top utility window before the global Stop shortcu
 
 test("repeated palette shortcut refocuses its input without erasing the query or editing the composer", async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
@@ -1063,7 +1063,7 @@ test("repeated palette shortcut refocuses its input without erasing the query or
 
 test("web preview close returns to the conversation with its draft and can reopen", async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
   await page.route("**/api/previews", route => route.fulfill({ json: {
     sessionId: "session", token: "fixture-preview", targetUrl: "http://localhost:3000", createdAt: 1,
   } }))

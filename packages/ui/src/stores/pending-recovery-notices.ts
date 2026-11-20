@@ -1,10 +1,12 @@
 import type { PendingRecoveryCause } from "./pending-recovery-cause"
+import { LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
 
 // Recovery incidents already reported in this tab, including across reloads.
 const STORAGE_KEY = "codenomad.pendingRecoveryNotices"
 // The plugin is provided per OpenCode connection, not per project: one notice covers all.
 const UNSUPPORTED = "unsupported"
+const unsupportedKey = (backendId: string) => backendId === LOCAL_BACKEND_ID ? UNSUPPORTED : `${UNSUPPORTED}:${JSON.stringify(backendId)}`
 
 const PROJECT_PREFIX = "project:"
 const projectKey = (project: string) => `${PROJECT_PREFIX}${JSON.stringify(project)}`
@@ -49,8 +51,8 @@ export function recordPendingRecoveryFailure(project: string, cause: PendingReco
 }
 
 /** True the first time a notice is claimed, until its project recovers. */
-export function claimPendingRecoveryNotice(project: string, cause: PendingRecoveryCause): boolean {
-  const key = cause.kind === "unsupported" ? UNSUPPORTED : projectKey(project)
+export function claimPendingRecoveryNotice(project: string, cause: PendingRecoveryCause, backendId = LOCAL_BACKEND_ID): boolean {
+  const key = cause.kind === "unsupported" ? unsupportedKey(backendId) : projectKey(project)
   if (shown.has(key)) return false
   const directories = cause.kind === "directories" ? [...new Set(cause.directories.map(({ directory }) => directory))] : []
   shown.set(key, directories)
@@ -59,10 +61,11 @@ export function claimPendingRecoveryNotice(project: string, cause: PendingRecove
 }
 
 /** Only coverage collected after a notice was claimed can re-arm it. */
-export function capturePendingRecoveryNotices(project: string) {
+export function capturePendingRecoveryNotices(project: string, backendId = LOCAL_BACKEND_ID) {
   const key = projectKey(project)
   const failed = shown.get(key)
-  const plugin = shown.get(UNSUPPORTED)
+  const unsupported = unsupportedKey(backendId)
+  const plugin = shown.get(unsupported)
   const current = () => failed !== undefined && shown.get(key) === failed
   const missing = (directories: readonly string[]) => {
     if (!current() || !failed) return []
@@ -79,7 +82,7 @@ export function capturePendingRecoveryNotices(project: string) {
       return controller.signal
     },
     release(directories: readonly string[]) {
-      let changed = plugin !== undefined && shown.get(UNSUPPORTED) === plugin && shown.delete(UNSUPPORTED)
+      let changed = plugin !== undefined && shown.get(unsupported) === plugin && shown.delete(unsupported)
       if (failed && current() && !missing(directories).length) {
         changed = shown.delete(key) || changed
         proofControllers.get(failed)?.abort()

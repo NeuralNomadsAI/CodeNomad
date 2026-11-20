@@ -5,6 +5,7 @@ import { BrowserFrame } from "../../../src/components/browser-frame"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
+import { remotePreviewAddress, remotePreviewSource } from "../../../src/lib/remote-preview-address"
 import "../../../src/index.css"
 
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
@@ -18,18 +19,22 @@ function Fixture() {
   const query = new URLSearchParams(location.search)
   const guestQuery = query.has("redirect") ? "?redirect" : query.has("hold") ? "?hold" : ""
   const [address, setAddress] = createSignal(`${location.origin}/browser-native-guest${guestQuery}`)
+  const remote = { token: "remote-token", capability: "local-cap", contentUrl: "http://local-cap.preview.localhost:1234/previews/remote-token/start",
+    targetUrl: "http://remote-app.test/start", proxyUrl: "/previews/remote-token/start", sessionId: "fixture-session", createdAt: "" }
+  if (query.has("isolated")) setAddress(remote.targetUrl)
   Object.assign(nativeFixture, { mount: setMounted, overlay: setOverlay, address: setAddress, session: setSessionId })
   return <>
     <div id="preview" style={{ width: "800px", height: "500px" }}>
       <Show when={mounted()}>
         <BrowserFrame sessionId={sessionId()} title="Preview" onClose={() => setMounted(false)}
-          initialUrl={address()} initialAddress={address()}
+          initialUrl={query.has("isolated") ? remote.contentUrl : address()} initialAddress={address()}
+          isolatedSource={query.has("isolated")} sourceAddress={source => remotePreviewAddress(remote, source)}
           proxyBasePath="" addressMode="url"
           labels={{ back: "Back", forward: "Forward", refresh: "Refresh", path: "Address", go: "Go", viewport: "Viewport",
             viewportResponsive: "Responsive", viewportDesktop: "Desktop (1440 × 900)",
             viewportTablet: "Tablet (768 × 1024)", viewportTabletLandscape: "Tablet landscape (1024 × 768)",
             viewportMobile: "Mobile (390 × 844)", viewportMobileLandscape: "Mobile landscape (844 × 390)" }}
-          onNavigate={async url => url}
+          onNavigate={async url => query.has("isolated") ? remotePreviewSource(remote, url)! : url}
           onHistoryChange={query.has("history") ? value => { Object.assign(nativeFixture, { history: value }) } : undefined}
           onFrameLocation={url => { nativeFixture.locations.push(url); setAddress(url) }}
           onNavigationError={reason => {

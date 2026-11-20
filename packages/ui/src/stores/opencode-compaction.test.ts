@@ -120,8 +120,8 @@ test("same session IDs in distinct instances keep separate buffers and flush aut
 
 test("SDK history reads flush pending chunks around the fetch and keep a streaming summary without duplication", async () => {
   const instanceId = "compaction-native-read"
-  const previous = sseManager.getStatuses
-  sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
+  const previous = sseManager.getRawStatus
+  sseManager.getRawStatus = id => id === instanceId ? "connected" : null
   const f = fixture(instanceId)
   const replies: Array<(value: any) => void> = []
   const page = (summary: string) => ({ data: [{ id: "compact", type: "compaction", status: "running",
@@ -146,7 +146,7 @@ test("SDK history reads flush pending chunks around the fetch and keep a streami
     await nextRead
     assert.equal(f.summary(), "AB")
     assert.equal(f.projections(), 2)
-  } finally { f.cleanup(); sseManager.getStatuses = previous }
+  } finally { f.cleanup(); sseManager.getRawStatus = previous }
 })
 
 test("rotation at the 200-message boundary retains exactly one running compaction and its pending chunks", async () => {

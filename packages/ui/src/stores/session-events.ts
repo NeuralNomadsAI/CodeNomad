@@ -13,6 +13,8 @@ import type {
   TuiToastShow,
 } from "@opencode/client"
 import { getLogger } from "../lib/logger"
+import { backendEvents } from "../lib/server-events"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { reconcileSessionModel } from "./session-model-reconciliation"
 import { handlePruningEvent } from "./session-pruning-events"
 import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"
@@ -23,8 +25,10 @@ import {
   getRequestIdFromPermissionReply,
 } from "../types/permission"
 import type { PermissionRequest } from "../types/permission"
-import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
-import { preferences } from "./preferences"
+import { showToastNotification, type ToastHandle, ToastVariant, type ToastPayload } from "../lib/notifications"
+import { uiState } from "./preferences"
+import { getInstanceLabel } from "../lib/instance-label"
+import { setActiveSessionFromList } from "./session-state"
 import {
   instances,
   markPermissionReplied,
@@ -48,7 +52,7 @@ import { getRetrySeconds } from "./session-status"
 import { observeSessionInterruption, retireSessionInterruptionBoundary } from "./session-interruption-seen"
 import { tGlobal } from "../lib/i18n"
 
-import { fetchSessions, invalidateRestorePlacementRead, loadMessages, refreshSessionCatalog, removeSessionProjection, removeSessionRuntimeState } from "./session-api"
+import { excludeMissingMoveFromSearch, fetchSessions, invalidateRestorePlacementRead, loadMessages, refreshSessionCatalog, removeSessionProjection, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
@@ -76,13 +80,30 @@ const pendingSessionFetches = new Map<string, {
   retry?: SessionRetryState | null
   /** Settles once the session's metadata read ends. */
   settled: Promise<void>
+  signal: AbortSignal
+  current: () => boolean
 }>()
 const nativeLifecycleGenerations = new Map<string, number>()
 // The live backoff countdown of one session; it ends when that session's next
 // attempt starts or its run settles.
-let activeRetryToast: { key: string; handle: ToastHandle } | null = null
-const movedSessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
-interface SessionMove { data: SessionMoved["data"]; unresolved?: boolean }
+const activeRetryToasts = new Map<string, { key: string; handle: ToastHandle }>()
+const movedSessionRefreshTimers = new Map<string, () => void>()
+
+function captureEventAuthority(instanceId: string) {
+  const signal = backendEvents.signalForInstance(instanceId)
+  const client = instances().get(instanceId)?.client
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  return { signal, current: () => !signal?.aborted && instances().get(instanceId)?.client === client
+    && getOpenCodeInstanceGeneration(instanceId) === generation }
+}
+
+interface SessionMove {
+  authority: ReturnType<typeof captureEventAuthority>
+  /** A reconnect keeps the read demand, not the old event's destination. */
+  data?: SessionMoved["data"]
+  unresolved?: boolean
+  arrival?: { session: SessionPlacementRead; evidenceCurrent: () => boolean }
+}
 /** Per instance, the latest move of each session since its last refresh. */
 const pendingSessionMoves = new Map<string, Map<string, SessionMove>>()
 /** A move remains current until its placement is settled or superseded. */
@@ -146,12 +167,13 @@ export function retainConfirmedSessionPlacement(
     return true
   }
   const capturedPlacement = { ...placement }
+  const authority = captureEventAuthority(instanceId)
   revalidations.set(sessionId, async () => {
-    const current = () => isCurrent() && !signal?.aborted && !isSessionMovePending(instanceId, sessionId)
+    const current = () => authority.current() && isCurrent() && !signal?.aborted && !isSessionMovePending(instanceId, sessionId)
       && confirmedPlacements.get(instanceId)?.get(sessionId) === confirmed
       && (confirmed.returnFrom === undefined || getMovedAwaySessions(instanceId).get(sessionId) === confirmed.returnFrom)
       && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), capturedPlacement)
-    const readSignal = signal ?? new AbortController().signal
+    const readSignal = signal ? AbortSignal.any([signal, authority.signal]) : authority.signal
     try {
       const result = await prioritizedRead(
         () => activeSessionId().get(instanceId) === sessionId,
@@ -184,7 +206,7 @@ async function readWorkspaceSessionPlacement(instanceId: string, sessionId: stri
       headers: workspaceSessionPlacementHeaders, signal,
     }) as SessionPlacementRead
   } catch (error) {
-    if (isSessionNotFoundError(error)) {
+    if (isSessionNotFoundError(error) && error.sessionID === sessionId) {
       return "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON ? LOCATED_ELSEWHERE : SESSION_MISSING
     }
     throw error
@@ -207,9 +229,11 @@ function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generat
 }
 
 function dismissRetryToast(instanceId: string, sessionId: string): void {
-  if (activeRetryToast?.key !== `${instanceId}\0${sessionId}`) return
-  activeRetryToast.handle.dismiss()
-  activeRetryToast = null
+  const backendId = parseInstanceKey(instanceId).backendId
+  const active = activeRetryToasts.get(backendId)
+  if (active?.key !== `${instanceId}\0${sessionId}`) return
+  active.handle.dismiss()
+  activeRetryToasts.delete(backendId)
 }
 
 function speakCompletedAssistantText(instanceId: string, sessionId: string): void {
@@ -224,8 +248,12 @@ function speakCompletedAssistantText(instanceId: string, sessionId: string): voi
 }
 
 function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void | Promise<void> {
+  const authority = captureEventAuthority(instanceId)
   if (handlePruningEvent(instanceId, event)) return
   switch (event.type) {
+    case "server.connected":
+      reconcileInterruptedSessionMoves(instanceId)
+      return
     case "form.created":
     case "form.replied":
     case "form.cancelled":
@@ -250,7 +278,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     case "session.model.selected":
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) {
         void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
-          .then(() => reconcileSessionModel(instanceId, event.data.sessionID))
+          .then(() => authority.current() ? reconcileSessionModel(instanceId, event.data.sessionID) : undefined)
       } else {
         void reconcileSessionModel(instanceId, event.data.sessionID)
       }
@@ -328,20 +356,23 @@ async function reconcileTerminalNativeSessionStatus(
   sessionId: string,
   options: { failed: boolean; interruptedAt?: number; refreshMessages?: boolean; notify?: boolean; directory?: string },
 ): Promise<void> {
+  const authority = captureEventAuthority(instanceId)
   const generation = advanceNativeLifecycle(instanceId, sessionId)
   // Claim this event before any refresh can expose its badge for acknowledgement.
   const current = sessions().get(instanceId)?.get(sessionId)
   if (current && options.interruptedAt !== undefined) observeSessionInterruption(instanceId, current, options.interruptedAt)
   let activeSessions: Record<string, unknown> | null = null
   try {
-    activeSessions = await getRootClient(instanceId).session.active()
+    if (!authority.current()) return
+    activeSessions = await getRootClient(instanceId).session.active(authority.signal ? { signal: authority.signal } : undefined)
   } catch (error) {
     log.warn("Failed to reconcile terminal session state", { instanceId, sessionId, error })
   }
-  if (!isCurrentNativeLifecycle(instanceId, sessionId, generation)) return
+  if (!authority.current() || !isCurrentNativeLifecycle(instanceId, sessionId, generation)) return
 
   if (activeSessions && Object.prototype.hasOwnProperty.call(activeSessions, sessionId)) {
     withSession(instanceId, sessionId, (session) => { session.generationRecovery = null })
+    if (!authority.current()) return
     const existing = sessions().get(instanceId)?.get(sessionId)
     if (existing) setSessionStatus(instanceId, sessionId, "working", { force: true })
     else ensureSessionStatus(instanceId, sessionId, "working", options.directory)
@@ -351,12 +382,16 @@ async function reconcileTerminalNativeSessionStatus(
   if (options.interruptedAt !== undefined) {
     withSession(instanceId, sessionId, (session) => { session.generationRecovery = "interrupted" })
   }
+  if (!authority.current()) return
   setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
+  if (!authority.current()) return
   refreshSettledSessionMessages(instanceId, sessionId, options.refreshMessages)
+  if (!authority.current()) return
   if (options.notify) notifySessionAttention("sessionDone", instanceId, sessionId)
 }
 
 function refreshSettledSessionMessages(instanceId: string, sessionId: string, force = false): void {
+  const signal = backendEvents.signalForInstance(instanceId)
   // The native reducer can reconcile its own cache after a missing tool terminal
   // event, but our bounded visible message store needs an authoritative load too.
   const store = messageStoreBus.getInstance(instanceId)
@@ -368,7 +403,7 @@ function refreshSettledSessionMessages(instanceId: string, sessionId: string, fo
     })
   })
   if (force || unsettledTools) {
-    void loadMessages(instanceId, sessionId, { force: true }).catch((error) => {
+    void loadMessages(instanceId, sessionId, { force: true, signal }).catch((error) => {
       log.warn("Failed to refresh settled session messages", { instanceId, sessionId, error })
     })
   }
@@ -402,10 +437,11 @@ function applySessionMovePlacement(instanceId: string, { sessionID, location, pr
   })
 }
 
-async function refreshMovedSessions(instanceId: string): Promise<void> {
+async function refreshMovedSessions(instanceId: string, authority = captureEventAuthority(instanceId)): Promise<void> {
   try {
-    await fetchSessions(instanceId, { reset: true })
-    if (activeSessionId().get(instanceId)) await refreshSessionCatalog(instanceId)
+    if (!authority.current()) return
+    await fetchSessions(instanceId, { reset: true, signal: authority.signal })
+    if (authority.current() && activeSessionId().get(instanceId)) await refreshSessionCatalog(instanceId)
   } catch (error) {
     log.warn("Failed to reconcile moved sessions", { instanceId, error })
   }
@@ -420,6 +456,8 @@ function refreshSelectedMoveCatalog(instanceId: string, sessionId: string): void
 }
 
 function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): void {
+  const authority = captureEventAuthority(instanceId)
+  if (!authority.current()) return
   const { sessionID: sessionId, location } = data
   invalidateRestorePlacementRead(instanceId, sessionId)
   // The relay delivers each move to both owners in their own ordered streams.
@@ -429,79 +467,138 @@ function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): voi
     refreshSelectedMoveCatalog(instanceId, sessionId)
   }
 
-  const move: SessionMove = { data }
+  const move: SessionMove = { data, authority }
   confirmedPlacements.get(instanceId)?.delete(sessionId)
   const latest = latestSessionMoves.get(instanceId) ?? new Map()
   latest.set(sessionId, move)
   latestSessionMoves.set(instanceId, latest)
   forgetSessionMovedAway(instanceId, sessionId)
   pendingSessionMoves.set(instanceId, (pendingSessionMoves.get(instanceId) ?? new Map()).set(sessionId, move))
-  const pending = movedSessionRefreshTimers.get(instanceId)
-  if (pending) clearTimeout(pending)
-  movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
-    movedSessionRefreshTimers.delete(instanceId)
+  movedSessionRefreshTimers.get(instanceId)?.()
+  const cancel = () => {
+    clearTimeout(timer)
+    authority.signal.removeEventListener("abort", cancel)
+    if (movedSessionRefreshTimers.get(instanceId) === cancel) movedSessionRefreshTimers.delete(instanceId)
+  }
+  const timer = setTimeout(() => {
+    if (movedSessionRefreshTimers.get(instanceId) !== cancel) return
+    cancel()
     const moves = pendingSessionMoves.get(instanceId) ?? new Map<string, SessionMove>()
     pendingSessionMoves.delete(instanceId)
-    void reloadWorktrees(instanceId).catch(error => {
+    if (!authority.current()) return
+    void reloadWorktrees(instanceId, false, authority.signal).catch(error => {
       log.warn("Failed to refresh moved-session worktrees", { instanceId, error })
-    }).then(() => Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move))))
-      .then(() => refreshMovedSessions(instanceId))
-  }, 100))
+    }).then(() => authority.current() ? Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move))) : undefined)
+      .then(() => refreshMovedSessions(instanceId, authority))
+  }, 100)
+  movedSessionRefreshTimers.set(instanceId, cancel)
+  authority.signal.addEventListener("abort", cancel, { once: true })
+}
+
+/** Re-admit only the IDs from this attachment, with an exact read under the new authority. */
+export function reconcileInterruptedSessionMoves(instanceId: string): ReadonlySet<string> {
+  const recovering = new Set<string>()
+  const moves = latestSessionMoves.get(instanceId)
+  const authority = captureEventAuthority(instanceId)
+  if (!moves || !authority.current() || !instances().get(instanceId)?.client) return recovering
+  for (const [id, previous] of moves) {
+    if (previous.authority.signal !== authority.signal) continue
+    let move = previous
+    if (!previous.authority.current()) {
+      move = { authority, unresolved: true }
+      moves.set(id, move)
+      pendingSessionMoves.get(instanceId)?.delete(id)
+    }
+    recovering.add(id)
+    if (!move.data && move.unresolved) void settleSessionMove(instanceId, id, move)
+  }
+  if (pendingSessionMoves.get(instanceId)?.size === 0) {
+    movedSessionRefreshTimers.get(instanceId)?.()
+    pendingSessionMoves.delete(instanceId)
+  }
+  return recovering
 }
 
 async function settleSessionMove(instanceId: string, sessionId: string, move: SessionMove, fresh = false): Promise<boolean> {
-  const instance = instances().get(instanceId)
-  const generation = getOpenCodeInstanceGeneration(instanceId)
-  const current = () => !!instance?.client && instances().get(instanceId)?.client === instance.client
-    && isInstanceGenerationCurrent(instanceId, generation) && getPendingSessionMove(instanceId, sessionId) === move
+  const { authority } = move
+  const current = () => authority.current() && !!instances().get(instanceId)?.client
+    && getPendingSessionMove(instanceId, sessionId) === move
   if (!current()) return false
-  const needsFresh = move.unresolved || !listsSessionDirectory(instanceId, move.data.location.directory)
-  move.unresolved = false
-  let inventoryKnown = fresh || !needsFresh
-  if (!inventoryKnown) {
-    try {
-      await reloadWorktrees(instanceId, true)
-      inventoryKnown = true
-    } catch (error) {
-      log.warn("Failed to read the inventory for a moved session", { instanceId, sessionId, error })
+  if (move.arrival) {
+    const { session, evidenceCurrent } = move.arrival
+    if (evidenceCurrent() && !sessions().get(instanceId)?.has(sessionId)) {
+      return getWorktrees(instanceId).some(tree => tree.slug === session.listWorktreeSlug)
+        && finishSessionMove(instanceId, sessionId, move, session, session)
     }
+    // Another projection or proof arrived while waiting. Read its current owner.
+    move.arrival = undefined
+    move.data = undefined
   }
-  if (!current()) {
-    move.unresolved = true
-    return false
-  }
-  if (inventoryKnown && listsSessionDirectory(instanceId, move.data.location.directory)) {
-    return finishSessionMove(instanceId, sessionId, move, move.data)
+  const { data } = move
+  const retry = move.unresolved
+  move.unresolved = false
+  if (data) {
+    let inventoryKnown = fresh || (!retry && listsSessionDirectory(instanceId, data.location.directory))
+    if (!inventoryKnown) {
+      try {
+        await reloadWorktrees(instanceId, true, authority.signal)
+        inventoryKnown = true
+      } catch (error) {
+        log.warn("Failed to read the inventory for a moved session", { instanceId, sessionId, error })
+      }
+    }
+    if (!current()) return false
+    if (inventoryKnown && listsSessionDirectory(instanceId, data.location.directory)) {
+      return finishSessionMove(instanceId, sessionId, move, data)
+    }
   }
   // Containment alone cannot distinguish a registered checkout alias from a nested repo.
+  const captured = sessions().get(instanceId)?.get(sessionId)
+  const evidenceCurrent = captureSessionPlacementEvidence(instanceId, sessionId)
   try {
-    const session = await readWorkspaceSessionPlacement(instanceId, sessionId)
-    if (current()) {
-      if (session === LOCATED_ELSEWHERE || session === SESSION_MISSING) return finishSessionMove(instanceId, sessionId, move, session)
-      if (session?.id === sessionId && session.location) return finishSessionMove(instanceId, sessionId, move, session, session)
+    const session = await readWorkspaceSessionPlacement(instanceId, sessionId, authority.signal)
+    if (current() && (data || evidenceCurrent())) {
+      const latest = sessions().get(instanceId)?.get(sessionId)
+      if (session === LOCATED_ELSEWHERE || session === SESSION_MISSING) {
+        if (data || latest === captured) return finishSessionMove(instanceId, sessionId, move, session)
+      } else if (session?.id === sessionId && session.location && (latest || evidenceCurrent())) {
+        if (data || latest === captured || (captured && matchesSessionPlacement(latest, captured))) {
+          return finishSessionMove(instanceId, sessionId, move, session, session)
+        }
+      }
     }
   } catch (error) {
-    log.warn("Failed to confirm moved session placement", { instanceId, sessionId, error })
+    if (current()) log.warn("Failed to confirm moved session placement", { instanceId, sessionId, error })
   }
-  move.unresolved = true
+  if (current()) move.unresolved = true
   return false
 }
 
 function finishSessionMove(instanceId: string, sessionId: string, move: SessionMove, placement: SessionPlacement | typeof LOCATED_ELSEWHERE | typeof SESSION_MISSING, verified?: SessionPlacementRead): boolean {
   if (getPendingSessionMove(instanceId, sessionId) !== move) return false
+  if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) {
+    clearPendingSessionMove(instanceId, sessionId)
+    return false
+  }
+  const held = sessions().get(instanceId)?.get(sessionId)
+  if (!held && verified?.listWorktreeSlug && !getWorktrees(instanceId).some(tree => tree.slug === verified.listWorktreeSlug)) {
+    move.arrival = { session: verified, evidenceCurrent: captureSessionPlacementEvidence(instanceId, sessionId) }
+    move.unresolved = false
+    return false
+  }
   clearPendingSessionMove(instanceId, sessionId)
-  if (!instances().has(instanceId) || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return false
-  const { directory } = move.data.location
   if (typeof placement !== "symbol") {
     if (verified) confirmSessionPlacement(instanceId, sessionId, placement)
-    const held = sessions().get(instanceId)?.get(sessionId)
     if (held) applySessionMovePlacement(instanceId, { ...placement, sessionID: sessionId })
-    else if (verified && confirmedSessionListDirectory(instanceId, sessionId, placement)) {
-      publishFetchedSessionInfo(instanceId, verified, undefined)
+    else if (verified && (confirmedSessionListDirectory(instanceId, sessionId, placement)
+      || (!move.data && listsSessionDirectory(instanceId, placement.location.directory)))) {
+      publishFetchedSessionInfo(instanceId, verified, undefined, move.authority.current)
     }
+    if (!move.data && held) refreshSelectedMoveCatalog(instanceId, sessionId)
     return true
   }
-  if (placement === LOCATED_ELSEWHERE) markSessionMovedAway(instanceId, sessionId, directory)
+  if (placement === LOCATED_ELSEWHERE) markSessionMovedAway(instanceId, sessionId, move.data?.location.directory ?? null)
+  else excludeMissingMoveFromSearch(instanceId, sessionId)
   if (!sessions().get(instanceId)?.has(sessionId)) return true
   nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
   dismissRetryToast(instanceId, sessionId)
@@ -510,7 +607,8 @@ function finishSessionMove(instanceId: string, sessionId: string, move: SessionM
 }
 
 export function getPendingSessionMove(instanceId: string, sessionId: string): SessionMove | undefined {
-  return latestSessionMoves.get(instanceId)?.get(sessionId)
+  const move = latestSessionMoves.get(instanceId)?.get(sessionId)
+  return move?.authority.current() ? move : undefined
 }
 
 export function clearPendingSessionMove(instanceId: string, sessionId?: string): void {
@@ -519,10 +617,10 @@ export function clearPendingSessionMove(instanceId: string, sessionId?: string):
   if (sessionId === undefined || !confirmed?.size) confirmedPlacements.delete(instanceId)
   const moves = latestSessionMoves.get(instanceId)
   if (sessionId !== undefined) moves?.delete(sessionId)
+  if (sessionId !== undefined) pendingSessionMoves.get(instanceId)?.delete(sessionId)
   if (sessionId === undefined || !moves?.size) latestSessionMoves.delete(instanceId)
   if (sessionId === undefined) {
-    clearTimeout(movedSessionRefreshTimers.get(instanceId))
-    movedSessionRefreshTimers.delete(instanceId)
+    movedSessionRefreshTimers.get(instanceId)?.()
     pendingSessionMoves.delete(instanceId)
   }
 }
@@ -584,9 +682,36 @@ function isNotifiableSession(instanceId: string, sessionId: string | undefined |
   return true
 }
 
-function getInstanceDisplayName(instanceId: string): string {
-  const instanceFolder = instances().get(instanceId)?.folder ?? instanceId
-  return instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
+function getInstanceDisplayName(instanceId: string, detail?: string): string {
+  const instance = instances().get(instanceId)
+  const { backendId } = parseInstanceKey(instanceId)
+  if (backendId === "local") {
+    const folder = instance?.folder ?? instanceId
+    return detail || folder.split(/[\\/]/).filter(Boolean).pop() || folder
+  }
+  const label = detail || (instance ? getInstanceLabel(instance) : instanceId)
+  const server = uiState().remoteServers.find(profile => profile.id === backendId)?.name ?? backendId
+  return tGlobal("sessionEvents.notify.serverTitle", { server, label })
+}
+
+/** Keep navigation and displayed notices on the exact event attachment. */
+function showInstanceToast(instanceId: string, sessionId: string | undefined | null, payload: ToastPayload): ToastHandle {
+  if (parseInstanceKey(instanceId).backendId === "local") return showToastNotification(payload)
+  const authority = captureEventAuthority(instanceId)
+  return showToastNotification({ ...payload, signal: authority.signal, action: {
+    label: tGlobal(sessionId ? "interruption.viewConversation" : "folderSelection.recent.switchToOpenProject"),
+    onClick: async () => {
+      if (!authority.current()) return
+      const { appTabs, selectAppTab, selectInstanceTab } = await import("./app-tabs")
+      if (!authority.current()) return
+      const waiting = appTabs().find(tab => tab.kind === "remote-restore" && tab.instanceId === instanceId)
+      if (waiting) { selectAppTab(waiting.id); return }
+      if (!instances().has(instanceId)) return
+      if (sessionId && !sessions().get(instanceId)?.has(sessionId)) return
+      selectInstanceTab(instanceId)
+      if (sessionId) setActiveSessionFromList(instanceId, sessionId)
+    },
+  } })
 }
 
 function getSessionTitle(instanceId: string, sessionId: string | undefined | null): string {
@@ -603,19 +728,22 @@ function notifySessionAttention(category: "needsInput" | "sessionDone", instance
   const message = label
     ? tGlobal(category === "needsInput" ? "sessionEvents.notify.needsInput" : "sessionEvents.notify.done", { label })
     : tGlobal(`settings.notifications.category.${category}`)
-  showToastNotification({ category, title: getInstanceDisplayName(instanceId), message, variant: "info" })
+  showInstanceToast(instanceId, sessionId, { category, title: getInstanceDisplayName(instanceId), message, variant: "info" })
 }
 
 queueMicrotask(() => {
   onWorktreesPublished((instanceId, fresh) => {
+    const authority = captureEventAuthority(instanceId)
+    if (!authority.current()) return
+    reconcileInterruptedSessionMoves(instanceId)
     relistReturnedSessions(instanceId)
     const retries: Promise<boolean>[] = []
     for (const [sessionId, move] of latestSessionMoves.get(instanceId) ?? []) {
-      if (!move.unresolved) continue
+      if (!move.arrival && (!move.data || !move.unresolved)) continue
       retries.push(settleSessionMove(instanceId, sessionId, move, fresh))
     }
     if (retries.length) void Promise.all(retries).then(results => {
-      if (results.some(Boolean)) return refreshMovedSessions(instanceId)
+      if (results.some(Boolean)) return refreshMovedSessions(instanceId, authority)
     })
   })
   setPendingFormAddedHandler((instanceId, form) => notifySessionAttention("needsInput", instanceId, form.sessionID))
@@ -629,6 +757,7 @@ function isInstanceGenerationCurrent(instanceId: string, generation: number): bo
 }
 
 async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
+  const authority = captureEventAuthority(instanceId)
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
 
@@ -638,17 +767,18 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
   try {
     const captured = sessions().get(instanceId)?.get(sessionId)
-    const info = await client.session.get({ sessionID: sessionId })
+    const info = await client.session.get({ sessionID: sessionId }, authority.signal ? { signal: authority.signal } : undefined)
     // A project closed or a client replaced during the read publishes nothing.
-    if (!isInstanceGenerationCurrent(instanceId, generation)) return null
-    return publishFetchedSessionInfo(instanceId, info, captured)
+    if (!authority.current() || !isInstanceGenerationCurrent(instanceId, generation)) return null
+    return publishFetchedSessionInfo(instanceId, info, captured, authority.current)
   } catch (error) {
     log.error("Failed to fetch session info", error)
     return null
   }
 }
 
-function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captured: Session | undefined): Session {
+function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captured: Session | undefined, current = captureEventAuthority(instanceId).current): Session | null {
+  if (!current()) return null
   const sessionId = info.id
   const fetched = createClientSession(info, instanceId)
   let updatedInstanceSessions: Map<string, Session> | undefined
@@ -682,6 +812,7 @@ function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captur
     return next
   })
 
+  if (!current()) return null
   reconcilePendingSessionIndicators(instanceId)
 
   const published = updatedInstanceSessions?.get(sessionId)
@@ -697,6 +828,8 @@ function ensureSessionStatus(
   directory?: string,
   retry?: SessionRetryState | null,
 ): Promise<void> {
+  const authority = captureEventAuthority(instanceId)
+  if (!authority.current()) return Promise.resolve()
   const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) {
     setSessionStatus(instanceId, sessionId, status, { retry })
@@ -706,16 +839,16 @@ function ensureSessionStatus(
   // Reads coalesce within one instance generation: a replaced client reads again.
   const key = `${instanceId}:${getOpenCodeInstanceGeneration(instanceId)}:${sessionId}`
   const existingFetch = pendingSessionFetches.get(key)
-  if (existingFetch) {
+  if (existingFetch?.current() && existingFetch.signal === authority.signal) {
     existingFetch.status = status
     existingFetch.retry = retry
     return existingFetch.settled
   }
 
-  const pendingState: { status: SessionStatus; retry?: SessionRetryState | null; settled: Promise<void> } = { status, retry, settled: Promise.resolve() }
+  const pendingState = { status, retry, settled: Promise.resolve(), signal: authority.signal, current: authority.current }
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
-    if (!fetched) return
+    if (!fetched || !authority.current()) return
     setSessionStatus(instanceId, sessionId, pendingState.status, { retry: pendingState.retry })
   })()
 
@@ -847,6 +980,7 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
 
 /** Native provider backoff. The next attempt's step events clear it as ordinary work. */
 function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled): void {
+  const authority = captureEventAuthority(instanceId)
   const sessionId = event.data.sessionID
   const generation = advanceNativeLifecycle(instanceId, sessionId)
   const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
@@ -858,7 +992,7 @@ function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled):
   // published; by then the next attempt may have replaced this backoff, or
   // the project may have closed.
   else void resolved.then(() => {
-    if (isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionId)
+    if (authority.current() && isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionId)
       && isCurrentNativeLifecycle(instanceId, sessionId, generation)) showRetryToast(instanceId, sessionId, retry)
   })
 }
@@ -872,10 +1006,11 @@ function showRetryToast(instanceId: string, sessionId: string, retry: SessionRet
       ? tGlobal("sessionList.status.retryingIn", { seconds: String(remainingSeconds) })
       : tGlobal("sessionList.status.retrying")
   const label = getSessionTitle(instanceId, sessionId)
-  activeRetryToast?.handle.dismiss()
+  const backendId = parseInstanceKey(instanceId).backendId
+  activeRetryToasts.get(backendId)?.handle.dismiss()
   // A live retry status replaced by the next attempt, not an event to keep.
-  activeRetryToast = { key: `${instanceId}\0${sessionId}`, handle: showToastNotification({ category: "sessions", transient: true,
-    title: label || getInstanceDisplayName(instanceId),
+  activeRetryToasts.set(backendId, { key: `${instanceId}\0${sessionId}`, handle: showInstanceToast(instanceId, sessionId, { category: "sessions", transient: true,
+    title: getInstanceDisplayName(instanceId, label),
     message: tGlobal("sessionList.status.retryToast", {
       countdown,
       message: retry.message,
@@ -883,10 +1018,11 @@ function showRetryToast(instanceId: string, sessionId: string, retry: SessionRet
     }),
     variant: "error",
     duration: 7000,
-  }) }
+  }) })
 }
 
 function handleSessionCompacted(instanceId: string, event: SessionCompactionEnded): void {
+  const authority = captureEventAuthority(instanceId)
   const sessionID = event.data.sessionID
   if (!sessionID) return
 
@@ -896,13 +1032,13 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) {
     setSessionStatus(instanceId, sessionID, "working", { force: true })
-    announceCompaction(instanceId, event)
+    if (authority.current()) announceCompaction(instanceId, event)
   } else {
     // An unknown session's scope is known once its metadata is read and
     // published; a failed read, a deletion or a closed project announces nothing.
     const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
     void ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory).then(() => {
-      if (isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionID)) announceCompaction(instanceId, event)
+      if (authority.current() && isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionID)) announceCompaction(instanceId, event)
     })
   }
 }
@@ -912,15 +1048,15 @@ function announceCompaction(instanceId: string, event: SessionCompactionEnded): 
   if (isReservedMissionScheduleSessionID(sessionID)) return
   // Announced by the project whose list shows the session, not by an owning parent.
   if (sessions().get(instanceId)?.has(sessionID) && !isSessionInWorkspaceScope(instanceId, sessionID)) return
-  if (!claimCompactionNotice(event)) return
+  const { backendId } = parseInstanceKey(instanceId)
+  if (!claimCompactionNotice(event, backendId)) return
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
   const label = session?.title?.trim() ? session.title : sessionID
-  const instanceFolder = instances().get(instanceId)?.folder ?? instanceId
-  const instanceName = instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
+  const instanceName = getInstanceDisplayName(instanceId)
   const displayLabel = label ? `"${label}"` : sessionID
 
-  compactionBubbles.show(sessionID, COMPACTION_TOAST_MS, () => showToastNotification({ category: "sessions",
+  compactionBubbles.show(`${backendId}\0${sessionID}`, COMPACTION_TOAST_MS, () => showInstanceToast(instanceId, sessionID, { category: "sessions",
     title: instanceName,
     message: tGlobal("sessionEvents.sessionCompactedToast", { label: displayLabel }),
     variant: "info",
@@ -949,7 +1085,7 @@ function handleSessionError(instanceId: string, event: SessionExecutionFailed): 
   })
 }
 
-function handleTuiToast(_instanceId: string, event: TuiToastShow): void {
+function handleTuiToast(instanceId: string, event: TuiToastShow): void {
   const payload = event.data
   if (!payload || typeof payload.message !== "string" || typeof payload.variant !== "string") return
   if (!payload.message.trim()) return
@@ -958,8 +1094,10 @@ function handleTuiToast(_instanceId: string, event: TuiToastShow): void {
     ? (payload.variant as ToastVariant)
     : "info"
 
-  showToastNotification({ category: "opencode",
-    title: typeof payload.title === "string" ? payload.title : undefined,
+  showInstanceToast(instanceId, undefined, { category: "opencode",
+    title: parseInstanceKey(instanceId).backendId === "local"
+      ? typeof payload.title === "string" ? payload.title : undefined
+      : getInstanceDisplayName(instanceId, typeof payload.title === "string" ? payload.title : undefined),
     message: payload.message,
     variant,
     duration: typeof payload.duration === "number" ? payload.duration : undefined,

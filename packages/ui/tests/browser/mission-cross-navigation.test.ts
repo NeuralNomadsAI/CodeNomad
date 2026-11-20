@@ -11,9 +11,11 @@ import { clickMissionAction, missionRows, toggleMissionOverview } from "./missio
 import type {} from "./fixtures/mission-cross-navigation"
 import { panelMissions } from "./mission-content-fixture"
 import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { collectMissionReadFailures, MISSION_READ_HEADER } from "./mission-read-observation-fixture"
 
 let browser: Browser, url: string
+let nativeStream: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "mission-cross-navigation",
@@ -27,10 +29,11 @@ before(async () => {
       ],
     })
   url = fixture.url
+  nativeStream = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); })
+after(async () => { await browser?.close(); await nativeStream?.close() })
 function mission(id: string): MissionMap {
   return { version: 1, id, projectID: "project", projectCanonical: "/fixture", objective: `Objective ${id}`, template: "custom", notes: "Private objective reader",
     coordinatorSessionId: `ses_${id}`, status: "active", actors: [], tasks: [], reports: [], frontier: [], claims: [], revision: 1,
@@ -57,7 +60,10 @@ async function setup(missing = false, holdEvents = false, web = false) {
   await page.route("**/api/**", async route => {
     const pathname = new URL(route.request().url()).pathname; requests.push(`${route.request().method()} ${pathname}`)
     const location = { directory: "/fixture" }
-    if (pathname === "/api/events") { await events.promise; return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" }) }
+    if (pathname === "/api/events") {
+      await events.promise
+      return route.continue({ url: nativeStream.url })
+    }
     if (pathname === "/api/panel-extensions") return route.fulfill({ json: [] })
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {
@@ -86,10 +92,14 @@ async function setup(missing = false, holdEvents = false, web = false) {
     const eventStreamResponse = page.waitForResponse(response => response.request().resourceType() === "eventsource" && new URL(response.url()).pathname === "/api/events", { timeout: 120_000 })
     void eventStreamResponse.catch(() => {}) // Page cleanup may cancel a deliberately held setup stream.
     await page.goto(url)
-    if (!holdEvents) await eventStreamResponse
-    // Loaded Missions enable the current-mission field (nothing is selected by default).
-    await missionRows(page).locator("button.mission-row-select").first().waitFor()
-    await page.evaluate(() => window.missionCrossNavigation.coldCatalogue())
+    if (holdEvents) {
+      await page.waitForFunction(() => !!window.missionCrossNavigation)
+    } else {
+      await eventStreamResponse
+      // Loaded Missions enable the current-mission field (nothing is selected by default).
+      await missionRows(page).locator("button.mission-row-select").first().waitFor()
+      await page.evaluate(() => window.missionCrossNavigation.coldCatalogue())
+    }
     return { page, eventStreamResponse, events, panelReads, missionReads, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
   } catch (error) {
     if (process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE) await writeFile(path.join(process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE, `setup-failure-${Date.now()}.json`), JSON.stringify({ error: String(error), errors, networkErrors, requests,
@@ -97,7 +107,26 @@ async function setup(missing = false, holdEvents = false, web = false) {
     events.release(); hold.release(); await page.close(); throw error
   }
 }
-test("shell fixture serves an event stream and still detects request cancellations and transport failures", async () => {
+test("first native stream open reconciles the completed HTTP catalogue without a synthetic disconnect", { timeout: 60000 }, async () => {
+  let fixture: Awaited<ReturnType<typeof setup>> | undefined
+  try {
+    fixture = await setup(false, true)
+    const { page, events, requests, panelReads, errors, networkErrors } = fixture
+    // Finish the initial snapshot before admitting the real persistent SSE open.
+    await page.waitForFunction(async () => await window.fixturePanelReadCancelled("1") === false)
+    assert.equal(requests.filter(request => request === "GET /api/panel-extensions").length, 1)
+    const reconciled = page.waitForResponse(response => new URL(response.url()).pathname === "/api/panel-extensions")
+    events.release()
+    await reconciled
+    await page.waitForFunction(async () => await window.fixturePanelReadCancelled("2") === false)
+    assert.equal(requests.filter(request => request === "GET /api/panel-extensions").length, 2)
+    await panelReads.drain()
+    assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])
+  } finally {
+    fixture?.events.release(); fixture?.hold.release(); await fixture?.page.close()
+  }
+})
+test("shell fixture serves an event stream and still detects request cancellations and transport failures", { timeout: 60000 }, async () => {
   const { page, eventStreamResponse, panelReads, errors, networkErrors, hold } = await setup()
   try {
     assert.equal((await eventStreamResponse).status(), 200)
@@ -124,7 +153,7 @@ test("shell fixture serves an event stream and still detects request cancellatio
     assert.deepEqual(errors, [])
   } finally { hold.release(); await page.close() }
 })
-test("catalog cancellation receipts reject genuine same-URL aborts and missing, unknown or reused identities", async () => {
+test("catalog cancellation receipts reject genuine same-URL aborts and missing, unknown or reused identities", { timeout: 60000 }, async () => {
   const { page, panelReads, errors, networkErrors, hold } = await setup()
   const catalog = new URL("/api/panel-extensions", url).href, held = gate()
   let arrived!: (request: Request) => void, first = true
@@ -234,7 +263,7 @@ test("receipt cancellation requires its exact owning signal and rejects same-URL
   } finally { held.release(); hold.release(); await page.close() }
 })
 for (const origin of ["actor", "reader"] as const) for (const change of ["session", "session-aba", "preview", "preview-aba"] as const) {
-  test(`shell deferred ${origin} respects external ${change}`, async () => {
+  test(`shell deferred ${origin} respects external ${change}`, { timeout: 60000 }, async () => {
     const forceSupersession = origin === "reader" && change !== "session"
     const { page, eventStreamResponse, events, panelReads, missionReads, errors, networkErrors, requests, hold, reached, complete, defer } = await setup(false, forceSupersession)
     const catalogHold = gate()
@@ -290,7 +319,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["sessio
     } finally { events.release(); catalogHold.release(); hold.release(); await page.close() }
   })
 }
-for (const origin of ["actor", "reader"] as const) test(`shell current ${origin} survives its own synchronous navigation writes`, async () => {
+for (const origin of ["actor", "reader"] as const) test(`shell current ${origin} survives its own synchronous navigation writes`, { timeout: 60000 }, async () => {
   const { page, panelReads, errors, networkErrors, hold, reached, complete, defer } = await setup()
   try {
     defer()
@@ -308,7 +337,7 @@ for (const origin of ["actor", "reader"] as const) test(`shell current ${origin}
   } finally { hold.release(); await page.close() }
 })
 
-for (const change of ["session", "preview"] as const) test(`shell stale missing actor cannot publish an error over external ${change}`, async () => {
+for (const change of ["session", "preview"] as const) test(`shell stale missing actor cannot publish an error over external ${change}`, { timeout: 60000 }, async () => {
   const { page, panelReads, errors, networkErrors, hold, reached, complete, defer } = await setup(true)
   try {
     defer(); await navigate(page, "actor"); await reached.promise
