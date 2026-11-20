@@ -26,6 +26,7 @@ pwsh -NoProfile -File run-all.ps1 -OpenCode $OpenCode [-Only http,contract]   # 
 node security.mjs $OpenCode
 node hardening.mjs $OpenCode
 node service.mjs $OpenCode
+node opencode-install.mjs
 node launch.mjs
 ```
 
@@ -47,6 +48,7 @@ node launch.mjs
 | `launch.mjs` | Both servers launched as Tauri launches them (same `serve` arguments and variables, private homes): stdout contract lines, bootstrap token exchange, sign-in pages and redirects, UI bundle and single-page fallback, `tls/` and identity files, stop over stdin. No OpenCode needed. |
 | `hardening.mjs` | Rust only: HTTPS admission under silent-socket floods, device and network paths, cross-site navigation, Git configuration guard, data folder ACL, SSE budgets. |
 | `service.mjs` | The daemon lifecycle through each server's own CLI discovery, on two isolated profiles and daemon ports: start on the first workspace, discovery after a backend restart, reconnection after a daemon restart, a conversation each time; refusals of a V1 CLI, malformed CLI output and a daemon below the minimum version. |
+| `opencode-install.mjs` | OpenCode installed by each server on a machine without it, in private profiles, from a loopback registry behind a token (`@opencode` scope of a private npmrc): fresh install and update compared (version, discovery by the TS functions, `.cmd`/`.ps1` shims, package.json); a substituted 2.6.0 platform package refused by Rust (TS accepts it through the package's postinstall fallback, recorded as a divergence); Rust rollback, update while OpenCode runs, through an HTTP proxy, and `POST /api/opencode/update`. The account's npm prefix and user PATH must not change. Needs `rustc` for the fake binaries. |
 
 `node host-survey.mjs $OpenCode` records every request the Solid UI makes to a TS local host (start-up, folder picker, conversation, Files, Git, worktree, recents, Settings) in `out/host-survey.json`; [HOST_ROUTES.md](HOST_ROUTES.md) classifies them.
 

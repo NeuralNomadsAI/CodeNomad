@@ -3,6 +3,7 @@
 //! relay (`proxy`) with its session-list scope (`scope`).
 pub mod admission;
 pub mod daemon;
+pub mod install;
 pub mod launch;
 pub mod proxy;
 pub mod scope;

@@ -1,5 +1,5 @@
 //! CodeNomad server in Rust: `codenomad-rs serve [options]` as Tauri launches the reference,
-//! or the bench's positional launch. Start-up, then every domain's routes behind the loopback
+//! the bench's positional launch, or `codenomad-rs opencode …` (OpenCode installation). Start-up, then every domain's routes behind the loopback
 //! password session and, with HTTPS configured, behind the paired-device admission.
 mod app;
 mod auth;
@@ -37,6 +37,9 @@ use shared::{data_owner, panic_guard};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     bench::panic_on_start();
     let args: Vec<_> = env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "opencode") {
+        std::process::exit(opencode::install::command(&args[1..]).await);
+    }
     let launch = if host::cli::serves(&args) {
         match host::cli::parse(&args) {
             Ok(host::cli::Command::Serve(launch)) => *launch,
@@ -134,7 +137,8 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(events::routes())
         .merge(extensions::routes())
         .merge(missions::routes())
-        .merge(opencode::routes());
+        .merge(opencode::routes())
+        .merge(opencode::install::routes());
 
     let shutdown = CancellationToken::new();
     service::stop_on_terminate(shutdown.clone());

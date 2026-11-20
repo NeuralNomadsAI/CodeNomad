@@ -102,7 +102,7 @@ fn extension(path: &str) -> String {
 }
 
 /// The user npm prefix (`npm_config_prefix`, else `%APPDATA%\npm` or `~/.local`).
-fn npm_prefix() -> Option<PathBuf> {
+pub fn npm_prefix() -> Option<PathBuf> {
     let configured =
         env::vars().find(|(k, _)| k.eq_ignore_ascii_case("npm_config_prefix")).map(|(_, v)| PathBuf::from(v));
     if let Some(prefix) = configured.filter(|p| p.is_absolute()) {
@@ -118,10 +118,8 @@ fn npm_prefix() -> Option<PathBuf> {
     }
 }
 
-/// `BinaryResolver.resolveDefault` without a saved selection (`resolveDefaultInstallation`):
-/// the first `opencode2` or `opencode` command in PATH, else the user npm prefix's
-/// `@opencode/cli` executable, else the bare `opencode2`.
-pub fn default_binary() -> String {
+/// `findPathOpenCode`: the first `opencode2` or `opencode` command in PATH (PATHEXT order on Windows).
+pub fn path_command() -> Option<String> {
     let extensions = if cfg!(windows) { extensions() } else { vec![String::new()] };
     for directory in path_entries().filter(|d| d.is_absolute()) {
         for name in ["opencode2", "opencode"] {
@@ -131,18 +129,30 @@ pub fn default_binary() -> String {
                     && !retired(&candidate.to_string_lossy())
                     && (cfg!(windows) || executable(&candidate))
                 {
-                    return candidate.to_string_lossy().into_owned();
+                    return Some(candidate.to_string_lossy().into_owned());
                 }
             }
         }
     }
-    let lib: &[&str] = if cfg!(windows) { &[] } else { &["lib"] };
-    let npm =
-        npm_prefix().map(|p| lib.iter().fold(p, |p, s| p.join(s)).join("node_modules/@opencode/cli/bin/opencode.exe"));
-    match npm.filter(|b| b.is_file() && !retired(&b.to_string_lossy())) {
-        Some(binary) => binary.to_string_lossy().into_owned(),
-        None => "opencode2".into(),
+    None
+}
+
+/// `BinaryResolver.resolveDefault` without a saved selection (`resolveDefaultInstallation`):
+/// the PATH command, else the user npm prefix's `@opencode/cli` executable, else the bare
+/// `opencode2`; with where it came from (`path`, `user`, none).
+pub fn default_binary_source() -> (String, Option<&'static str>) {
+    if let Some(command) = path_command() {
+        return (command, Some("path"));
     }
+    let npm = npm_prefix().map(|p| super::install::layout::Prefix { root: p }.binary());
+    match npm.filter(|b| b.is_file() && !retired(&b.to_string_lossy())) {
+        Some(binary) => (binary.to_string_lossy().into_owned(), Some("user")),
+        None => ("opencode2".into(), None),
+    }
+}
+
+pub fn default_binary() -> String {
+    default_binary_source().0
 }
 
 /// `resolveBinaryPath`: a bare name through `where`/`which`; Windows prefers `.exe`, `.cmd`, `.bat`, `.ps1`.
@@ -223,7 +233,7 @@ fn bare_windows_command(binary: &str) -> Option<String> {
 }
 
 /// An npm `.cmd` shim that only forwards to an `.exe` beside it: launch that `.exe` directly.
-fn npm_executable(command: &str) -> Option<String> {
+pub fn npm_executable(command: &str) -> Option<String> {
     if !matches!(extension(command).as_str(), ".cmd" | ".bat") {
         return None;
     }
