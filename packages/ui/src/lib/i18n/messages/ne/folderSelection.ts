@@ -1,4 +1,11 @@
 export const folderSelectionMessages = {
+  "folderSelection.remoteProject.serverRoot": "सर्भरको मूल फोल्डर",
+  "folderSelection.remoteProject.title": "रिमोटहरू",
+  "folderSelection.remoteProject.project": "परियोजना",
+  "folderSelection.remoteProject.openProject": "{name} मा परियोजना खोल्नुहोस्",
+  "folderSelection.remoteProject.back": "सर्भरहरूमा फर्कनुहोस्",
+  "folderSelection.remoteProject.add": "सर्भर थप्नुहोस्",
+  "folderSelection.remoteProject.addPlaceholder": "पेयरिङ लिङ्क वा ठेगाना",
   "remoteBrowse.secretEntryForbidden": "प्रमाणहरू प्रविष्ट गर्न HTTPS वा Remote Control प्रयोग गर्नुहोस्।",
   "remoteBrowse.incompatible": "असंगत CodeNomad सर्भर।",
   "remoteBrowse.unreachable": "सर्भर पहुँचयोग्य छैन।",

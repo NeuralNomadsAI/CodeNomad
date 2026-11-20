@@ -51,7 +51,7 @@ export class YamlDocStore {
   constructor(
     private readonly filePath: string,
     private readonly logger: Logger,
-    private readonly options: { throwOnPersistError?: boolean } = {},
+    private readonly options: { throwOnPersistError?: boolean; normalize?: (doc: SettingsDoc, beforeMerge?: SettingsDoc) => SettingsDoc } = {},
   ) {}
 
   load(): SettingsDoc {
@@ -68,7 +68,7 @@ export class YamlDocStore {
 
       const content = fs.readFileSync(this.filePath, "utf-8")
       const parsed = parseYaml(content)
-      this.cache = normalizeDoc(parsed)
+      this.cache = this.normalize(parsed)
       this.loaded = true
       return this.cache
     } catch (error) {
@@ -84,7 +84,11 @@ export class YamlDocStore {
   }
 
   replace(next: unknown): SettingsDoc {
-    const normalized = normalizeDoc(next)
+    return this.persistDoc(next)
+  }
+
+  private persistDoc(next: unknown, beforeMerge?: SettingsDoc): SettingsDoc {
+    const normalized = this.normalize(next, beforeMerge)
     const previousCache = this.cache
     const previousLoaded = this.loaded
     this.cache = normalized
@@ -99,13 +103,18 @@ export class YamlDocStore {
     return this.cache
   }
 
+  private normalize(value: unknown, beforeMerge?: SettingsDoc): SettingsDoc {
+    const doc = normalizeDoc(value)
+    return this.options.normalize?.(doc, beforeMerge) ?? doc
+  }
+
   mergePatch(patch: unknown): SettingsDoc {
     if (!isPlainObject(patch)) {
       throw new Error("Patch must be a JSON object")
     }
     const current = this.get()
     const next = applyMergePatch(current, patch)
-    return this.replace(next)
+    return this.persistDoc(next, current)
   }
 
   getOwner(owner: string): SettingsDoc {
@@ -166,8 +175,7 @@ export class YamlDocStore {
   replaceOwner(owner: string, value: unknown): SettingsDoc {
     const doc = this.get()
     const nextDoc: SettingsDoc = { ...doc, [owner]: normalizeDoc(value) }
-    this.replace(nextDoc)
-    return nextDoc[owner] as SettingsDoc
+    return this.replace(nextDoc)[owner] as SettingsDoc
   }
 
   mergePatchOwner(owner: string, patch: unknown): SettingsDoc {
@@ -178,8 +186,7 @@ export class YamlDocStore {
     const currentOwner = normalizeDoc((doc as any)?.[owner])
     const nextOwner = normalizeDoc(applyMergePatch(currentOwner, patch))
     const nextDoc: SettingsDoc = { ...doc, [owner]: nextOwner }
-    this.replace(nextDoc)
-    return nextOwner
+    return this.persistDoc(nextDoc, doc)[owner] as SettingsDoc
   }
 
   private persist() {

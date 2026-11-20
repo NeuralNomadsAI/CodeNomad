@@ -2,6 +2,7 @@ import { For, Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import FolderSelectionView from "../../../src/components/folder-selection-view"
 import RemoteServerProjectDialog from "../../../src/components/remote-server-browser"
+import NewInstanceLauncher from "../../../src/components/new-instance-launcher"
 import InstanceTab from "../../../src/components/instance-tab"
 import { SettingsScreen } from "../../../src/components/settings-screen"
 import { ConfigProvider, preferencesForBackend, updatePreferences } from "../../../src/stores/preferences"
@@ -19,6 +20,8 @@ await preloadLocaleMessages("en")
 await refreshWorkspaceList()
 selectInstanceTab("w")
 const [home, setHome] = createSignal(true)
+const [launcherOpen, setLauncherOpen] = createSignal(false)
+let launcherAnchor!: HTMLButtonElement
 const native = new URL(location.href).searchParams.has("preferences")
 setActiveSettingsSection("servers")
 window.__CODENOMAD_SELECT_SERVER__ = selectRemoteServer
@@ -28,8 +31,12 @@ render(() => <ConfigProvider><I18nProvider>
       {instance => <InstanceTab instance={instance()} active={activeAppTabId() === tab.id} onSelect={() => selectInstanceTab(instance().id)}
         onClose={() => {}} onRename={() => {}} />}
     </Show>}</For></div>
+    <button type="button" ref={launcherAnchor} onClick={() => setLauncherOpen(true)}>Fixture launcher</button>
+    <NewInstanceLauncher open={launcherOpen()} anchor={launcherAnchor} isLoading={false} onOpenChange={setLauncherOpen}
+      onSelectFolder={() => { throw new Error("Unexpected local opening") }}
+      onSelectExistingInstance={id => selectInstanceTab(id)} onNewTemporaryInstance={() => {}} />
     <Show when={home()}><FolderSelectionView onSelectFolder={() => { throw new Error("Unexpected local opening") }}
-      onSelectExistingInstance={() => {}} onClose={() => setHome(false)} /></Show>
+      onSelectExistingInstance={() => {}} onRemoteOpened={() => setHome(false)} onClose={() => setHome(false)} /></Show>
     <RemoteServerProjectDialog onOpened={() => setHome(false)} />
   </>}><SettingsScreen standalone /></Show>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
@@ -51,4 +58,5 @@ render(() => <ConfigProvider><I18nProvider>
     selectRemoteServer({ id: p.id, baseUrl: p.baseUrl, skipTlsVerify: p.skipTlsVerify })
   },
   disable: () => updatePreferences({ multiBackend: false }),
+  enable: () => updatePreferences({ multiBackend: true }),
 }

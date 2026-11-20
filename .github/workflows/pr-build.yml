@@ -589,6 +589,7 @@ jobs:
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/stores/backend-preferences.test.ts
+          packages/ui/src/stores/recent-projects.test.ts
           packages/ui/src/stores/backend-registry.test.ts
           packages/ui/tests/backend-relay-authority.test.ts
           packages/ui/src/stores/preferences-multi-backend.test.ts

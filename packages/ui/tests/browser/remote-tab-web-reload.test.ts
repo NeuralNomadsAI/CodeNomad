@@ -40,7 +40,7 @@ for (const offline of [false, true]) test(`web reload retains backend-owned reco
     }))
   })
   let healthy = !offline
-  await context.route(/\/(?:api|workspaces)\//, async route => {
+  await context.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname
     const backend = pathname.match(/^\/api\/backends\/([ab])\//)?.[1]
     const path = backend ? pathname.slice(`/api/backends/${backend}`.length) : pathname

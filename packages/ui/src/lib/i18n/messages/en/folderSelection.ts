@@ -1,4 +1,11 @@
 export const folderSelectionMessages = {
+  "folderSelection.remoteProject.serverRoot": "Server root",
+  "folderSelection.remoteProject.title": "Remotes",
+  "folderSelection.remoteProject.project": "Project",
+  "folderSelection.remoteProject.openProject": "Open a project on {name}",
+  "folderSelection.remoteProject.back": "Back to servers",
+  "folderSelection.remoteProject.add": "Add server",
+  "folderSelection.remoteProject.addPlaceholder": "Pairing link or address",
   "remoteBrowse.secretEntryForbidden": "Use HTTPS or Remote Control to enter credentials.",
   "remoteBrowse.incompatible": "Incompatible CodeNomad server.",
   "remoteBrowse.unreachable": "Server unreachable.",

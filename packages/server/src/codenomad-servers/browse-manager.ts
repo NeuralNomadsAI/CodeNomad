@@ -22,7 +22,7 @@ function pairingCode(link: string, origin: string): string {
   } catch { /* Return a stable error without the caller's link. */ }
   throw new CodeNomadServerError("pairing_expired")
 }
-export const BrowseBody = z.object({ path: z.string().max(8192).optional() }).strict()
+export const BrowseBody = z.object({ path: z.string().max(8192).optional(), foldersOnly: z.literal(true).optional() }).strict()
 export const ConnectBody = z.object({ username: z.string().min(1).max(1024).optional(), password: z.string().min(1).max(8192).optional(),
   pairingLink: z.string().max(8192).optional() }).strict()
 
@@ -193,9 +193,16 @@ export class RemoteServerBrowseManager {
         if (status.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
       }
       const folders = await entry.client.json<unknown>(`/api/filesystem${suffix}`, { signal }, observeStatus ? "observe-status" : undefined)
+      this.assertCurrent(profile)
+      // The CodeNomad filesystem route reports rejected directory reads as 400.
+      if (folders.status === 400 && body.path !== undefined) throw new CodeNomadServerError("path_unavailable")
+      if (folders.status === 426) throw new CodeNomadServerError("refused")
       if (folders.status !== 200) throw new CodeNomadServerError("unreachable")
       const listing = relayedFolderListing(folders.body)
+      if (body.foldersOnly) return { listing, recents: [] }
       const state = await entry.client.json<{ recentFolders?: unknown }>("/api/storage/state/ui", { signal }, observeStatus ? "observe-status" : undefined)
+      this.assertCurrent(profile)
+      if (state.status === 426) throw new CodeNomadServerError("refused")
       if (state.status !== 200 || !state.body || typeof state.body !== "object") throw new CodeNomadServerError("unreachable")
       const recents = Array.isArray(state.body.recentFolders) ? state.body.recentFolders.slice(0, 2000).flatMap(value => {
         const parsed = Recent.safeParse(value)

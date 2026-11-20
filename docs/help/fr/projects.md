@@ -1,8 +1,14 @@
 # Projets et worktrees
 
-Lorsque le multi-backend est activé, choisissez un serveur enregistré sur l’accueil ou **Ouvrir** dans **Réglages → Serveurs**. La fenêtre principale affiche ses dossiers et projets récents ; parcourez les dossiers ou saisissez un chemin puis Entrée pour ouvrir un onglet de projet ordinaire. Les onglets distants portent une icône et le nom du serveur. Fermez le navigateur pour annuler ; un serveur incompatible nécessite une version compatible de CodeNomad. Le clonage et les projets temporaires de l’accueil utilisent cet ordinateur.
+Lorsque le multi-backend est activé, dépliez **DISTANTS** sur l’accueil ou dans le lanceur `+`. Choisissez **+ Projet** sur un serveur CodeNomad enregistré, parcourez ses dossiers sur place, puis choisissez **Ouvrir**. Pour ajouter un serveur, collez son lien d’appairage ou son adresse dans le champ sous la liste. Les projets ouverts ici restent dans la liste des récents avec l’icône et le nom du serveur, même hors connexion. Parcourir, Cloner et Temporaire restent locaux.
 
 Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend. Ouvrir un onglet, parcourir une copie de travail et déplacer une famille de conversations sont des opérations distinctes.
+
+**+ Projet** part du dernier chemin connu sur le serveur. Si le dossier a été déplacé ou supprimé, choisissez **Racine du serveur**. Pendant l’ouverture d’un projet récent, **Annuler** revient à la liste des serveurs.
+
+Un projet distant n’apparaît dans les récents qu’après avoir été ouvert ici avec succès. Parcourir les dossiers n’ajoute aucun raccourci. Les raccourcis enregistrés restent disponibles hors connexion pour la même connexion (profil, adresse, réglage de vérification TLS et cible SSH). Si le dossier distant a déjà un onglet en attente, l’ouverture le sélectionne, conserve ses brouillons et vous laisse décider quand réessayer.
+
+Un raccourci retiré reste masqué dans les récents jusqu’à ce que vous rouvriez ce dossier.
 
 ## Ouvrir un projet {#open-project}
 
@@ -23,7 +29,7 @@ Ouvrez deux fois le même dossier et sélectionnez la même conversation dans le
 1. Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
 2. Recherchez les projets récents ou sélectionnez **Parcourir…**, **Temporaire** ou **Cloner…**.
 
-Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, pas l’interface de gestion : renommez/retirez les projets récents et gérez les serveurs enregistrés depuis l’accueil. Échap ferme le lanceur et rend le focus à `+`.
+Un clic normal ouvre l’accueil complet. Le lanceur sélectionne le projet s’il est déjà ouvert ; l’accueil ouvre un nouvel onglet sauf s’il sélectionne un onglet en attente. Dans **DISTANTS**, Échap revient aux serveurs, replie la liste, puis ferme le lanceur et rend le focus à `+`.
 
 ## Fermer un onglet de projet {#close-stop}
 

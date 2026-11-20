@@ -1,5 +1,8 @@
 import { backendScoped } from "../lib/backend-identity"
 import type { BackendId } from "../lib/backend-transport"
+import { normalizeWorkspacePath } from "../../../server/src/workspaces/workspace-path-key"
+
+export { normalizeWorkspacePath }
 
 export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number; backendId?: BackendId; workspaceId?: string }
 type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string; backendId?: BackendId }
@@ -13,11 +16,6 @@ export interface RestoredSessionReferences {
   idleMarkerSessionIds?: readonly string[]
   generationRecoverySessionIds?: readonly string[]
   expandedSessionIds?: readonly string[]
-}
-export function normalizeWorkspacePath(folderPath: string): string {
-  const windowsLike = /^(?:[A-Za-z]:[/\\]|[/\\]{2})/.test(folderPath)
-  const normalized = windowsLike ? folderPath.replace(/\\/g, "/").toLowerCase() : folderPath
-  return normalized === "/" || /^[a-z]:\/$/.test(normalized) ? normalized : normalized.replace(/\/+$/, "")
 }
 /** One project of one backend: the normalized folder, prefixed by the backend id unless local. */
 export function workspaceIdentity(folderPath: string, backendId?: BackendId): string {

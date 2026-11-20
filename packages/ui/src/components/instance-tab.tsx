@@ -9,7 +9,7 @@ import { keepTemporaryInstance } from "../stores/temporary-instances"
 import { withHotkey, matchesHotkey } from "../lib/hotkeys"
 import { getInstanceLabel } from "../lib/instance-label"
 import { backendIdOf } from "../lib/backend-identity"
-import { serverDisplayName } from "../lib/codenomad-link"
+import { qualifiedServerDisplayName } from "../lib/codenomad-link"
 
 interface InstanceTabProps {
   instance: Instance
@@ -61,9 +61,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
     const id = backendIdOf(props.instance)
     if (id === "local") return
     const profile = remoteServers().find(p => p.id === id)
-    if (!profile) return id
-    const name = serverDisplayName(profile, remoteServers())
-    return remoteServers().some(p => p.id !== id && serverDisplayName(p, remoteServers()) === name) ? `${name} (${id})` : name
+    return profile ? qualifiedServerDisplayName(profile, remoteServers()) : id
   })
   const requestRename = () => props.onRename(tabLabel())
   // The menu restores focus to the tab when it closes; open the dialog after

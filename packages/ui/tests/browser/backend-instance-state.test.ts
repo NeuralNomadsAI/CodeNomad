@@ -49,7 +49,7 @@ for (const host of ["electron", "tauri"] as const) for (const savedRemote of [fa
         w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} }
       }
     }` })
-    await page.route(/\/(?:api|workspaces)\//, async route => {
+    await page.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
       const request = route.request(), path = new URL(request.url()).pathname
       if (path === "/api/workspaces" && request.method() === "POST") creations.push(request.postDataJSON().path)
       await route.fulfill({ json: path === "/api/workspaces" ? [] : {} })

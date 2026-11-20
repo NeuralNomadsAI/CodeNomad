@@ -1,8 +1,14 @@
 # Projects and worktrees
 
-With multi-backend enabled, choose a saved server on the home page or use **Open** in **Settings → Servers**. The main window shows that server's folders and recent projects; navigate folders or enter a path and press Enter to open an ordinary project tab. Remote tabs show a server icon and name. Close the browser to cancel; incompatible servers require a compatible CodeNomad server. Clone and temporary-project actions on the home page use this computer.
+With multi-backend enabled, expand **REMOTES** on Home or in the `+` launcher. Select **+ Project** beside a saved CodeNomad server, browse its folders in place and choose **Open**. To add a server, paste its pairing link or address into the field below the server list. Recent projects you open here stay in the mixed list with a server icon and name, even while their server is offline. Browse, Clone and Temporary act on this computer.
 
 A project tab connects CodeNomad to a folder on the backend computer. Opening a tab, browsing a checkout and moving a conversation family are different operations.
+
+**+ Project** starts at the server's last known project path. If it was moved or removed, choose **Server root**. While a recent project is opening, **Cancel** returns to the server list.
+
+A remote project appears in Recents only after you successfully open it here. Browsing folders adds nothing. Saved shortcuts stay available offline for the exact saved connection (profile, address, TLS verification setting and SSH target). If the remote folder already has a waiting tab, opening it selects that tab, keeps its drafts and lets you choose when to retry.
+
+A shortcut you remove stays hidden from Recents until you open that folder again.
 
 ## Open a project {#open-project}
 
@@ -23,7 +29,7 @@ Open the same folder twice and select the same conversation in both tabs to keep
 1. Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
 2. Search recent projects, or select **Browse…**, **Temporary** or **Clone…**.
 
-A normal click still opens the full home page. The launcher is a shortcut, not the management surface: rename/remove recent projects and manage server bookmarks on the home page. Escape dismisses the launcher and returns focus to `+`.
+A normal click opens the full home page. The launcher switches to the matching open project; Home opens a new tab unless it selects a waiting tab. In **REMOTES**, Escape returns to the servers, folds the list, then closes the launcher and returns focus to `+`.
 
 ## Close a project tab {#close-stop}
 

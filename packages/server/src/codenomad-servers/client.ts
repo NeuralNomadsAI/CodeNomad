@@ -7,7 +7,7 @@ import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { DEVICE_COOKIE_NAME } from "../remote-control/gate"
 
 export type CodeNomadServerErrorCode = "unreachable" | "tls_error" | "auth" | "pairing_unavailable" | "pairing_expired" | "pairing_rate_limited" | "needs_credentials" | "unknown_server"
-  | "ssh_unavailable" | "ssh_host_key" | "ssh_auth"
+  | "ssh_unavailable" | "ssh_host_key" | "ssh_auth" | "path_unavailable" | "refused"
 
 /** Stable codes only; never a URL, credential or upstream message. */
 export class CodeNomadServerError extends Error {

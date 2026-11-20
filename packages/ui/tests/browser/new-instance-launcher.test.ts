@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import { mkdir } from "node:fs/promises"
+import { join } from "node:path"
 import { after, before, test } from "node:test"
 import type { ServerMeta } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
@@ -19,7 +21,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-async function prepare(width = 1100, home = false) {
+async function prepare(width = 1100, home = false, multi = false) {
   const page = await browser.newPage({ viewport: { width, height: 760 }, locale: "en-US" })
   const errors: string[] = []
   const remoteRequests: string[] = []
@@ -33,16 +35,91 @@ async function prepare(width = 1100, home = false) {
     window.__CODENOMAD_WINDOW_CONTEXT__ = "local"
   })
   await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/meta" ? {
-    localRequest: true, localUrl: new URL(url).origin, eventsUrl: "/api/events", host: "127.0.0.1",
+    localRequest: true, ...(multi ? { serversManageable: true, serversUsable: true, secretEntryAllowed: true } : {}),
+    localUrl: new URL(url).origin, eventsUrl: "/api/events", host: "127.0.0.1",
     listeningMode: "local", localPort: Number(new URL(url).port), hostLabel: "Fixture", workspaceRoot: "D:/", addresses: [],
   } satisfies ServerMeta : {} }))
-  await page.goto(home ? `${url}?home` : url)
+  await page.goto(`${url}?${home ? "home&" : ""}${multi ? "multi" : ""}`)
   await page.waitForFunction(() => Boolean((window as any).launcherFixture))
   return { page, errors, remoteRequests, calls: () => page.evaluate(() => [...(window as any).launcherFixture.calls]) }
 }
 const plus = (page: Page) => page.locator(".new-instance-button")
 const launcher = (page: Page) => page.locator(".new-instance-launcher")
 const options = (page: Page) => launcher(page).getByRole("option")
+
+for (const home of [true, false]) test(`${home ? "Home" : "Launcher"} uses the inline Remotes disclosure and exact folder navigation`, async () => {
+  const { page, errors, remoteRequests } = await prepare(390, home, true)
+  const { promise: initialRead, resolve: releaseRead } = Promise.withResolvers<void>()
+  try {
+    await page.route("**/api/remote-servers/*/browse**", async route => {
+      await initialRead
+      const path = route.request().postDataJSON().path ?? "/projects"
+      return route.fulfill({ json: { listing: {
+        metadata: { currentPath: path, displayPath: path, ...(path !== "/projects" ? { parentPath: "/projects" } : {}) },
+        entries: path === "/projects" ? [{ type: "directory", name: "Example", path: "/projects/Example" }] : [],
+      }, recents: [] } })
+    })
+    if (!home) await plus(page).click({ button: "right" })
+    const toggle = page.getByRole("button", { name: /^Remotes$/i })
+    await toggle.waitFor({ timeout: 4500 })
+    assert.deepEqual(remoteRequests, [])
+    assert.equal(await toggle.evaluate(el => getComputedStyle(el).textTransform), "uppercase")
+    assert.equal(await toggle.evaluate(el => getComputedStyle(el).borderTopWidth), "0px")
+    await toggle.click()
+    const server = page.getByRole("button", { name: "Open a project on Saved remote" })
+    assert.match(await server.innerText(), /Saved remote[\s\S]*Project/)
+    assert.equal(await server.locator("button").count(), 0)
+    assert.deepEqual(remoteRequests, [])
+    const capture = async (state: string) => {
+      const directory = process.env.CODENOMAD_REMOTES_CAPTURE_DIR
+      if (!directory) return
+      await mkdir(directory, { recursive: true })
+      await page.screenshot({ path: join(directory, `${home ? "home" : "launcher"}-${state}.png`) })
+    }
+    await capture("servers")
+    await toggle.press("ArrowDown")
+    assert.equal(await server.evaluate(el => document.activeElement === el), true)
+    await page.keyboard.press("ArrowRight")
+    const back = page.getByRole("button", { name: "Back to servers" })
+    await back.waitFor()
+    assert.equal(await back.evaluate(el => document.activeElement === el), true, "Back holds actual focus while the read is pending")
+    releaseRead()
+    const folder = page.getByRole("button", { name: "Example" })
+    await folder.waitFor()
+    assert.equal(await folder.evaluate(el => document.activeElement === el), true)
+    assert.equal(await page.locator(".remote-project-header bdi").textContent(), "Saved remote")
+    assert.equal(await page.locator(".remote-project-header bdi").getAttribute("dir"), "auto")
+    await capture("folders")
+    for (const dir of ["rtl", "ltr"] as const) {
+      await page.locator(".remote-project-header").evaluate((element, direction) => {
+        element.setAttribute("dir", direction)
+      }, dir)
+      // Serialize plain browser JS so tsx's keep-names helper cannot leak into this assertion.
+      const fits = await page.evaluate(`(() => {
+        const element = document.querySelector(".remote-project-header")
+        const nameWidth = element.querySelector("bdi").getBoundingClientRect().width
+        const pathWidth = element.querySelector(".remote-project-path").getBoundingClientRect().width
+        return nameWidth > 24 && pathWidth > 24 && element.scrollWidth <= element.clientWidth
+      })()`)
+      assert.ok(fits, `server label and path fit in ${dir}`)
+    }
+    await folder.press("ArrowRight")
+    const parent = page.locator(".remote-project-folders button:not(:disabled)").filter({ hasText: "Parent folder" })
+    await parent.waitFor({ timeout: 5_000 })
+    await parent.press("Backspace")
+    await folder.waitFor()
+    assert.equal(await folder.evaluate(el => document.activeElement === el), true)
+    await page.keyboard.press("Escape")
+    assert.equal(await server.evaluate(el => document.activeElement === el), true)
+    await page.keyboard.press("Escape")
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+    if (!home) {
+      await page.keyboard.press("Escape")
+      await launcher(page).waitFor({ state: "detached" })
+    }
+    assert.deepEqual(errors, [])
+  } finally { releaseRead(); await page.close() }
+})
 // The popup focuses its search field on the next frame; type once it has focus.
 const openedWithFocus = async (page: Page) => {
   await launcher(page).waitFor()

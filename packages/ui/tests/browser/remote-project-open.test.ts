@@ -13,6 +13,8 @@ import { RemoteServerBrowseManager } from "../../../server/src/codenomad-servers
 import { startFakeCodeNomad } from "../../../server/src/codenomad-servers/test-support/fake-codenomad"
 import { registerBackendRelayRoutes } from "../../../server/src/server/routes/backend-relay"
 import { registerRemoteServerBrowseRoutes } from "../../../server/src/server/routes/remote-server-browse"
+import { applyMergePatch } from "../../../server/src/settings/merge-patch"
+import { readRemoteProjectHistory } from "../../src/lib/remote-project-recent-data"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
@@ -65,7 +67,8 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     baseUrl: remote.origin, skipTlsVerify: false, createdAt: "", updatedAt: "" }))
   const app = Fastify(), origins = new Set<string>(), local: string[] = []
   const ui = { settings: { multiBackend: true, locale: "en" } }
-  const manager = new RemoteServerBrowseManager({ getOwner: () => ({ remoteServers: profiles }),
+  const state: { remoteServers: typeof profiles; remoteProjectRecents?: unknown; remoteProjectHistory?: unknown } = { remoteServers: profiles }
+  const manager = new RemoteServerBrowseManager({ getOwner: () => ({ remoteServers: state.remoteServers }),
     configYamlPathForAuthority: () => path.join(directory, "config.yaml") })
   registerBackendRelayRoutes(app, { manager, getSelfOrigins: () => origins })
   registerRemoteServerBrowseRoutes(app, { manager, getSelfOrigins: () => origins })
@@ -77,7 +80,10 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       if (request.method === "PATCH") Object.assign(ui.settings, (request.body as any)?.settings)
       return ui
     }
-    if (request.url === "/api/storage/state/ui") return { remoteServers: profiles }
+    if (request.url === "/api/storage/state/ui") {
+      if (request.method === "PATCH") Object.assign(state, applyMergePatch(state, request.body))
+      return state
+    }
     return {}
   })
   const target = await app.listen({ host: "127.0.0.1", port: 0 })
@@ -90,7 +96,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
         const gate = (phase: string, value: string) => `\nif ((window as any).__openingGate) await (window as any).__openingGate("${phase}", ${value}, signal);\n`
         if (file.endsWith("/src/stores/remote-project-open.ts")) {
           source = source.replaceAll("\r\n", "\n")
-          const create = "const result = await createInstance(path, undefined, {"
+          const create = "const result = await createInstance(path, options?.projectName, {"
           assert(source.includes(create), "observe the real create callback")
           source = source.replace(create, `${create} onCreateCommit: id => (window as any).__onCreateCommit?.(id),`)
           const guard = /(\n\s*)(if \(!current\(\).*return false)(?=\n\s*(?:transferred = )?selectInstanceTab)/
@@ -262,33 +268,211 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       assert.deepEqual(mutations.slice(before), ["a:POST", "a:/w/creation/release:POST"])
     } finally { accept(); await preferences.close(); await main.close() }
   })
-  for (const host of ["electron", "web"] as const) await t.test(`${host}: home, navigation, typed path, recents, server labels and ordinary instance tabs`, async () => {
+  for (const host of ["electron", "web"] as const) await t.test(`${host}: inline navigation, mixed recents, server labels and ordinary instance tabs`, async () => {
+    delete state.remoteProjectRecents
+    delete state.remoteProjectHistory
     const page = await prepare(host), pathStart = paths.length
-    await page.getByRole("button", { name: /Servers/ }).click()
-    await page.getByRole("button", { name: /^Alpha/ }).click()
-    await dialog(page).getByRole("button", { name: "app", exact: true }).waitFor()
-    await dialog(page).getByRole("button", { name: "app", exact: true }).focus()
-    await page.keyboard.press("Enter")
-    await dialog(page).getByRole("button", { name: /Parent/ }).waitFor()
-    await dialog(page).getByRole("button", { name: /Parent/ }).click()
-    await dialog(page).getByRole("textbox").fill("/same")
-    await dialog(page).getByRole("textbox").press("Enter")
-    await dialog(page).waitFor({ state: "detached" })
-    await page.getByRole("tab", { name: /same — Alpha/ }).waitFor()
-    await select(page, "b")
-    await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
-    await dialog(page).waitFor({ state: "detached" })
-    await page.getByRole("tab", { name: /same — Beta/ }).waitFor()
+    const aRequestStart = a.state.requests.length
+    const remotes = page.getByRole("button", { name: /^Remotes$/i })
+    await remotes.click()
+    await page.getByRole("button", { name: "Open a project on Alpha" }).click()
+    const inline = page.locator(".remote-project-menu")
+    await inline.getByRole("button", { name: "app", exact: true }).press("Enter")
+    await inline.getByRole("button", { name: /Parent/ }).click()
+    await inline.getByRole("button", { name: "Back to servers" }).click()
+    assert.equal(await page.getByRole("button", { name: "Same Alpha", exact: true }).count(), 0, "browse does not import the remote server's shortcuts")
+    assert.equal(state.remoteProjectHistory, undefined, "browse does not record opened folders")
+    assert.ok(!a.state.requests.slice(aRequestStart).some(request => request.path === "/api/storage/state/ui"), "inline browse only reads folders")
+    const alpha = page.getByRole("button", { name: "app Alpha", exact: true })
+    const alphaRow = alpha.locator("xpath=ancestor::*[contains(@class,'folder-home-recent-item')][1]")
+    const actions = alphaRow.locator("button[title='Rename workspace'], button[title='Remove from recent']")
+    await page.getByRole("button", { name: "Open a project on Alpha" }).click()
+    await inline.getByRole("button", { name: "app", exact: true }).click()
+    await inline.getByRole("button", { name: "Open", exact: true }).click()
+    await page.waitForFunction(() => (window as any).remoteOpenFixture.snapshot().active === "instance:a~w", undefined, { timeout: 5_000 })
+    await page.getByRole("tab", { name: /Alpha/ }).waitFor({ timeout: 5_000 })
+    await page.evaluate(() => (window as any).remoteOpenFixture.home())
+    await remotes.click()
+    await page.getByRole("button", { name: "Open a project on Beta" }).click()
+    await inline.getByRole("button", { name: "app", exact: true }).click()
+    await inline.getByRole("button", { name: "Open", exact: true }).click()
+    await page.getByRole("tab", { name: /Beta/ }).waitFor({ timeout: 5_000 })
     assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
       tabs: [{ id: "instance:w", kind: "instance" }, { id: "instance:a~w", kind: "instance" }, { id: "instance:b~w", kind: "instance" }],
       active: "instance:b~w",
     })
-    assert.deepEqual(paths.slice(pathStart), ["a:/same", "b:/same"])
+    assert.deepEqual(paths.slice(pathStart), ["a:/srv/projects/app", "b:/srv/projects/app"])
     assert.equal(local.includes("POST /api/workspaces"), false)
     assert.equal(await page.locator("webview, iframe").count(), 0)
+    await page.getByRole("button", { name: "Fixture launcher" }).click()
+    await page.getByRole("option", { name: /app Alpha/ }).click()
+    await page.waitForFunction(() => (window as any).remoteOpenFixture.snapshot().active === "instance:a~w")
+    await page.locator(".new-instance-launcher").waitFor({ state: "detached" })
+    assert.deepEqual(paths.slice(pathStart), ["a:/srv/projects/app", "b:/srv/projects/app"], "launcher did not create a duplicate")
+    await page.evaluate(() => (window as any).remoteOpenFixture.home())
+    await alpha.waitFor()
+    assert.equal(await actions.count(), 2, "the persisted recent has both actions")
+    await page.getByRole("button", { name: "app Beta", exact: true }).waitFor()
     await select(page, "a"); await dialog(page).getByRole("button", { name: /Close/ }).click()
     assert.equal(await page.getByRole("tab").count(), 3)
+    const persisted = readRemoteProjectHistory(state.remoteProjectRecents, state.remoteProjectHistory).recents
+    assert.ok(Array.isArray(persisted) && persisted.length === 2)
+    assert.doesNotMatch(JSON.stringify(persisted), /must-not-leak/)
+    const unsolicited: string[] = []
+    page.on("request", request => { if (/\/api\/(?:remote-servers|backends)\//.test(request.url())) unsolicited.push(request.url()) })
+    await page.reload()
+    await alpha.waitFor()
+    await page.getByRole("button", { name: "app Beta", exact: true }).waitFor()
+    assert.deepEqual(unsolicited, [], "displaying persisted recents after reload does not dial a server")
+    // The destination itself also remembers this exact folder, independently of the host shortcut.
+    a.state.recents.push({ path: "/srv/projects/app", projectName: "app", lastAccessed: 42, password: "must-not-leak" })
+    try {
+      await alphaRow.getByTitle("Remove from recent", { exact: true }).click()
+      await alpha.waitFor({ state: "detached" })
+      await remotes.click()
+      await page.getByRole("button", { name: "Open a project on Alpha" }).click()
+      await inline.getByRole("button", { name: "app", exact: true }).click()
+      const open = inline.getByRole("button", { name: "Open", exact: true })
+      await inline.getByRole("button", { name: /Parent/ }).waitFor()
+      assert.equal(await alpha.count(), 0, "browsing the exact removed folder does not restore it")
+      await open.click()
+      await page.getByRole("tab", { name: /Alpha/ }).waitFor({ timeout: 5_000 })
+      await page.evaluate(() => (window as any).remoteOpenFixture.home())
+      await alpha.waitFor({ timeout: 5_000 })
+    } finally {
+      a.state.recents.pop()
+    }
     await page.close()
+  })
+  const alphaPolicy = { id: "a", baseUrl: a.origin, skipTlsVerify: false }
+  await t.test("server opens at the last path, with explicit recovery at its root", async () => {
+    delete state.remoteProjectHistory
+    state.remoteProjectRecents = [{ policy: alphaPolicy, path: "/moved", lastAccessed: 42 }]
+    const page = await prepare()
+    const reads: (string | null)[] = []
+    try {
+      let failure = 400
+      a.state.handlers.set("/api/filesystem", (request, response) => {
+        const folder = new URL(request.url!, a.origin).searchParams.get("path")
+        reads.push(folder)
+        response.writeHead(folder ? failure : 200, { "content-type": "application/json" })
+        response.end(JSON.stringify(folder ? { error: "directory unavailable" } : {
+          entries: [{ name: "Replacement", type: "directory", path: "/replacement" }],
+          metadata: { scope: "unrestricted", currentPath: "/", displayPath: "/", rootPath: "/", homePath: "/", pathKind: "absolute" },
+        }))
+      })
+      await page.getByRole("button", { name: /^Remotes$/i }).click()
+      await page.getByRole("button", { name: "Open a project on Alpha" }).click()
+      const root = page.getByRole("button", { name: "Server root" })
+      await root.waitFor({ timeout: 5_000 })
+      assert.deepEqual(reads, ["/moved"])
+      await root.click()
+      await page.getByRole("button", { name: "Replacement" }).waitFor({ timeout: 5_000 })
+      assert.deepEqual(reads, ["/moved", null])
+      for (const code of [426, 503]) {
+        failure = code
+        await page.getByRole("button", { name: "Back to servers" }).click()
+        await page.getByRole("button", { name: "Open a project on Alpha" }).click()
+        await page.locator(".remote-project-error").waitFor()
+        assert.equal(await root.count(), 0, `HTTP ${code} is not a path failure`)
+        assert.equal(reads.at(-1), "/moved")
+      }
+    } finally { a.state.handlers.delete("/api/filesystem"); await page.close(); delete state.remoteProjectRecents }
+  })
+  for (const phase of ["success", "failure", "escape"] as const) await t.test(`keyboard server add: ${phase}`, async () => {
+    const page = await prepare()
+    let release = () => {}
+    let begin = () => {}
+    const entered = new Promise<void>(resolve => { begin = resolve })
+    try {
+      await page.route("**/api/remote-servers/probe", async route => {
+        begin()
+        await new Promise<void>(resolve => { release = resolve })
+        await route.fulfill({ json: phase === "failure"
+          ? { ok: false, errorCode: "unreachable" }
+          : { ok: true, normalizedUrl: a.origin } }).catch(() => undefined)
+      })
+      await page.getByRole("button", { name: "Fixture launcher" }).click()
+      const popup = page.locator(".new-instance-launcher")
+      const toggle = popup.getByRole("button", { name: /^Remotes$/i })
+      await toggle.click()
+      const field = popup.locator("[data-server-add-field]")
+      await field.fill("https://new.example")
+      await field.press("Enter")
+      await entered
+      if (phase === "escape") {
+        await page.keyboard.press("Escape")
+        assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+        assert.equal(await toggle.evaluate(el => el === document.activeElement), true)
+      }
+      release()
+      if (phase === "success") {
+        const folder = popup.getByRole("button", { name: "app", exact: true })
+        await folder.waitFor()
+        assert.equal(await folder.evaluate(el => el === document.activeElement), true)
+        await page.keyboard.press("Escape")
+        await field.waitFor()
+        assert.equal(await popup.locator("[data-remote-server]:focus").count(), 1)
+      } else if (phase === "failure") {
+        await popup.locator(".server-add-field-error").waitFor()
+        assert.equal(await field.evaluate(el => el === document.activeElement), true)
+        await page.keyboard.press("Escape")
+        assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+      }
+    } finally { release(); await page.close(); state.remoteServers = profiles }
+  })
+  for (const mode of ["button", "escape", "flag"] as const) await t.test(`direct recent opening is cancelled by ${mode}`, async () => {
+    state.remoteProjectRecents = [{ policy: alphaPolicy, path: "/same", projectName: "Same", lastAccessed: 42 }]
+    const page = await prepare()
+    const start = mutations.length
+    try {
+      await page.evaluate(`window.__openingGate = async (phase, _value, signal) => {
+        if (phase !== "ensure") return
+        window.heldRecent = { signal }
+        await new Promise(resolve => { window.heldRecent.resume = resolve })
+      }`)
+      const anchor = page.getByRole("button", { name: "Fixture launcher" })
+      await anchor.click()
+      const popup = page.locator(".new-instance-launcher")
+      const toggle = popup.getByRole("button", { name: /^Remotes$/i })
+      assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+      const search = popup.getByRole("combobox")
+      await search.fill("Same")
+      await popup.getByRole("option", { name: /Same Alpha/ }).waitFor({ timeout: 5_000 })
+      await search.press("Enter")
+      await page.waitForFunction(`Boolean(window.heldRecent?.resume)`, undefined, { timeout: 5_000 })
+      const cancel = popup.getByRole("button", { name: "Cancel", exact: true })
+      await cancel.waitFor({ timeout: 5_000 })
+      assert.equal(await cancel.evaluate(el => document.activeElement === el), true)
+      assert.match(await cancel.innerText(), /Cancel/)
+      if (mode === "flag") {
+        await page.evaluate(() => (window as any).remoteOpenFixture.disable())
+        await toggle.waitFor({ state: "detached" })
+        await page.evaluate(() => (window as any).remoteOpenFixture.enable())
+        await toggle.waitFor()
+        assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+      } else {
+        if (mode === "button") await cancel.click()
+        else await page.keyboard.press("Escape")
+        const serverRow = popup.getByRole("button", { name: "Open a project on Alpha" })
+        assert.equal(await serverRow.evaluate(el => document.activeElement === el), true)
+        await page.keyboard.press("Escape")
+        assert.equal(await toggle.evaluate(el => document.activeElement === el), true)
+        assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+        await page.keyboard.press("Escape")
+        await popup.waitFor({ state: "detached" })
+        await page.waitForFunction(`document.activeElement?.textContent === "Fixture launcher"`, undefined, { timeout: 5_000 })
+      }
+      assert.equal(await page.evaluate(`window.heldRecent.signal.aborted`), true)
+      await page.evaluate(`window.heldRecent.resume()`)
+      assert.deepEqual(mutations.slice(start), [])
+      assert.equal(await page.getByRole("tab").count(), 1)
+    } finally {
+      await page.evaluate(`window.heldRecent?.resume()`).catch(() => {})
+      if (!ui.settings.multiBackend) await page.evaluate(() => (window as any).remoteOpenFixture.enable())
+      await page.close()
+      delete state.remoteProjectRecents
+    }
   })
   await t.test("Escape cancels only its in-flight opening and keeps the local occurrence", async () => {
     const page = await prepare(), before = mutations.length
@@ -426,13 +610,15 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     a.state.overrides.set("/api/filesystem", { status: 401, body: { error: "Unauthorized" } })
     const page = await prepare(), logins = a.state.logins
     try {
-      await select(page, "a")
-      await dialog(page).getByLabel("Password", { exact: true }).fill("remote-password")
+      await page.getByRole("button", { name: /^Remotes$/i }).click()
+      await page.getByRole("button", { name: "Open a project on Alpha" }).click()
+      const inline = page.locator(".remote-project-menu")
+      await inline.getByLabel("Password", { exact: true }).fill("remote-password")
       a.state.overrides.delete("/api/filesystem")
-      await dialog(page).getByRole("button", { name: "Sign in", exact: true }).click()
-      await dialog(page).getByRole("button", { name: "app", exact: true }).waitFor()
+      await inline.getByRole("button", { name: "Sign in", exact: true }).click()
+      await inline.getByRole("button", { name: "app", exact: true }).waitFor()
       assert.equal(a.state.logins, logins + 1)
-      assert.equal(await dialog(page).getByLabel("Password", { exact: true }).count(), 0)
+      assert.equal(await inline.getByLabel("Password", { exact: true }).count(), 0)
       assert.equal((await page.locator("body").innerText()).includes("remote-password"), false)
     } finally { a.state.overrides.delete("/api/filesystem"); await page.close() }
   })

@@ -2,7 +2,7 @@ import type { BackendHttp } from "./backend-transport"
 import type { RemoteServerBrowseResponse } from "../../../server/src/api-types"
 import { secretEntryAllowed } from "./host-server-meta"
 
-const codes = ["unknown_server", "needs_credentials", "auth", "pairing_unavailable", "pairing_expired", "pairing_rate_limited", "tls_error", "secret_entry_forbidden", "unreachable"] as const
+const codes = ["unknown_server", "needs_credentials", "auth", "pairing_unavailable", "pairing_expired", "pairing_rate_limited", "tls_error", "secret_entry_forbidden", "unreachable", "path_unavailable", "refused"] as const
 export type RemoteServerErrorCode = typeof codes[number]
 export class RemoteServerRequestError extends Error {
   constructor(readonly code: RemoteServerErrorCode) { super(code); this.name = "RemoteServerRequestError" }
@@ -18,10 +18,12 @@ export function assertRemoteServerCredentials(input: RemoteServerConnectInput) {
   }
 }
 
+type RemoteServerBrowseInput = { path?: string; foldersOnly?: true }
+
 /** Host-only browsing and credential operations; failures expose only stable codes. */
-export function remoteServerRequest(ctx: BackendHttp, id: string, action: "browse", body: { path?: string }, signal?: AbortSignal): Promise<RemoteServerBrowseResponse>
+export function remoteServerRequest(ctx: BackendHttp, id: string, action: "browse", body: RemoteServerBrowseInput, signal?: AbortSignal): Promise<RemoteServerBrowseResponse>
 export function remoteServerRequest(ctx: BackendHttp, id: string, action: "connect" | "forget", body: RemoteServerConnectInput, signal?: AbortSignal): Promise<{ ok: boolean }>
-export async function remoteServerRequest(ctx: BackendHttp, id: string, action: "browse" | "connect" | "forget", body: RemoteServerConnectInput | { path?: string }, signal?: AbortSignal): Promise<RemoteServerBrowseResponse | { ok: boolean }> {
+export async function remoteServerRequest(ctx: BackendHttp, id: string, action: "browse" | "connect" | "forget", body: RemoteServerConnectInput | RemoteServerBrowseInput, signal?: AbortSignal): Promise<RemoteServerBrowseResponse | { ok: boolean }> {
   signal?.throwIfAborted()
   if (ctx.id !== "local" || !id || id.length > 256) throw new RemoteServerRequestError("unknown_server")
   if (action === "connect") assertRemoteServerCredentials(body as RemoteServerConnectInput)
@@ -33,7 +35,7 @@ export async function remoteServerRequest(ctx: BackendHttp, id: string, action: 
     const value = await response.json().catch(() => undefined)
     signal?.throwIfAborted()
     if (!response.ok) {
-      const code = codes.find(code => code === value?.error) ?? "unreachable"
+      const code = response.status === 426 ? "refused" : codes.find(code => code === value?.error) ?? "unreachable"
       throw new RemoteServerRequestError(code)
     }
     if (action === "browse") {

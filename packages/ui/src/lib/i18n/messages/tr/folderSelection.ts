@@ -1,4 +1,11 @@
 export const folderSelectionMessages = {
+  "folderSelection.remoteProject.serverRoot": "Sunucu kök dizini",
+  "folderSelection.remoteProject.title": "Uzaklar",
+  "folderSelection.remoteProject.project": "Proje",
+  "folderSelection.remoteProject.openProject": "{name} üzerinde proje aç",
+  "folderSelection.remoteProject.back": "Sunuculara dön",
+  "folderSelection.remoteProject.add": "Sunucu ekle",
+  "folderSelection.remoteProject.addPlaceholder": "Eşleştirme bağlantısı veya adres",
   "remoteBrowse.secretEntryForbidden": "Kimlik bilgilerini girmek için HTTPS veya Uzaktan Kontrol kullanın.",
   "remoteBrowse.incompatible": "Uyumsuz CodeNomad sunucusu.",
   "remoteBrowse.unreachable": "Sunucuya ulaşılamıyor.",

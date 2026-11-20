@@ -1,8 +1,14 @@
 # Proyectos y worktrees
 
-Con múltiples backends activados, elige un servidor guardado en el inicio o **Abrir** en **Ajustes → Servidores**. La ventana principal muestra sus carpetas y proyectos recientes. Navega por las carpetas o escribe una ruta y pulsa Intro para abrir una pestaña de proyecto normal. Las pestañas remotas muestran el icono y el nombre del servidor. Cierra el explorador para cancelar; los servidores incompatibles requieren un servidor CodeNomad compatible. La clonación y los proyectos temporales del inicio usan este equipo.
+Con múltiples backends activados, despliega **REMOTOS** en el inicio o en el lanzador `+`. Elige **+ Proyecto** junto a un servidor CodeNomad guardado, navega por sus carpetas y elige **Abrir**. Para añadir un servidor, pega su enlace de emparejamiento o dirección debajo de la lista. Los proyectos abiertos aquí quedan en la lista mixta con el icono y el nombre del servidor, incluso sin conexión. Explorar, Clonar y Temporal usan este equipo.
 
 Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend. Abrir una pestaña, explorar una copia de trabajo y mover una familia de conversaciones son operaciones distintas.
+
+**+ Proyecto** empieza en la última ruta conocida del servidor. Si la carpeta se movió o se eliminó, elige **Raíz del servidor**. Mientras se abre un proyecto reciente, **Cancelar** vuelve a la lista de servidores.
+
+En los recientes solo aparecen los proyectos remotos que abras aquí correctamente. Explorar carpetas no añade accesos. Los accesos guardados siguen disponibles sin conexión para la conexión exacta (perfil, dirección, ajuste de verificación TLS y destino SSH). Si la carpeta remota ya tiene una pestaña en espera, se selecciona y conserva sus borradores. Tú decides cuándo reintentar.
+
+Un acceso que quites seguirá oculto en los recientes hasta que vuelvas a abrir esa carpeta.
 
 ## Abrir un proyecto {#open-project}
 
@@ -23,7 +29,7 @@ Abre la misma carpeta dos veces y selecciona la misma conversación en ambas pes
 1. Mantén pulsado `+` o haz clic derecho; con el foco del teclado allí, usa **Alt+Down**, **Shift+F10** o la tecla Menú.
 2. Busca proyectos recientes o selecciona **Examinar…**, **Temporal** o **Clonar…**.
 
-Un clic normal sigue abriendo la página de inicio completa. El lanzador es un acceso directo, no la superficie de gestión: renombra/elimina proyectos recientes y gestiona los marcadores de servidores en la página de inicio. Escape cierra el lanzador y devuelve el foco a `+`.
+Un clic normal abre el inicio completo. El lanzador selecciona el proyecto si ya está abierto; el inicio abre otra pestaña salvo que seleccione una en espera. En **REMOTOS**, Escape vuelve a los servidores, pliega la lista y después cierra el lanzador y devuelve el foco a `+`.
 
 ## Cerrar una pestaña de proyecto {#close-stop}
 
