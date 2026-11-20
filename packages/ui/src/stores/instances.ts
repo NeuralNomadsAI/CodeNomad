@@ -2179,6 +2179,19 @@ function getExistingInstanceForFolder(folder: string, backendId: BackendId = LOC
   return matches.find((instance) => instance.id === activeId) ?? matches.find((instance) => instance.status === "ready") ?? matches[0] ?? null
 }
 
+/** Whether an attached tab displays this local-backend folder. Only a shown
+ * occurrence justifies appending another record; an instantiated-but-untabbed
+ * one adopts the folder's existing record. */
+export function hasTabInstanceForFolder(folder: string): boolean {
+  if (!folder) return false
+  const target = normalizeInstanceFolderPath(folder)
+  return Array.from(instances().values()).some((instance) => (
+    backendIdOf(instance) === LOCAL_BACKEND_ID
+    && normalizeInstanceFolderPath(instance.folder) === target
+    && openInstanceTabIds().has(instance.id)
+  ))
+}
+
 function updateProjectNameForFolder(folder: string, projectName: string, backendId: BackendId = LOCAL_BACKEND_ID): void {
   const name = projectName.trim()
   if (!folder || !name) return

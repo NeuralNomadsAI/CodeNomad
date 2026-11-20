@@ -737,16 +737,19 @@ export class WorkspaceManager {
       if (options.reuse) {
         const reusable = this.reusableWorkspaceRecords(workspaceIdentity)
         if (reusable.length) {
-          // Adopt the folder's oldest free record and close the duplicates no
-          // client can still reference: their close requests are gone for good.
+          // Adopt the folder's oldest free record. Deletion stays with each
+          // record's own closer: no creation claim does not prove that no
+          // client still uses a sibling record.
           const adopted = reusable[0]!
           this.attachCreationClaim(adopted, options.requestId)
           this.options.logger.info({ workspaceId: adopted.id, folder: adopted.path }, "Reusing existing workspace")
-          await this.closeWorkspaceRecords(reusable.slice(1))
           return this.finishCreation({ workspace: adopted, created: false }, options.requestId, adopted)
         }
         const pending = this.pendingWorkspaceCreations.get(workspaceIdentity)
         if (pending) {
+          // A manual joiner takes user ownership of the shared launch, so
+          // cancelling the restore that started it cannot delete the record.
+          if (!options.requestId) pending[WORKSPACE_STATE].creationRetained = true
           this.attachCreationClaim(pending, options.requestId)
           this.options.logger.info({ workspaceId: pending.id, folder: pending.path }, "Joining in-flight workspace creation")
           await pending[WORKSPACE_STATE].creationPromise
@@ -848,13 +851,6 @@ export class WorkspaceManager {
     if (!requestId) return
     record[WORKSPACE_STATE].creationClaims.set(requestId, "owner")
     this.refreshCreationRequestId(record)
-  }
-
-  private async closeWorkspaceRecords(records: WorkspaceRecord[]): Promise<void> {
-    const deletions = records.map((record) => this.delete(record.id).catch((error) => {
-      this.options.logger.warn({ workspaceId: record.id, err: error }, "Failed to close duplicate workspace record")
-    }))
-    await Promise.all(deletions)
   }
   private async createWithDeadline(record: WorkspaceRecord,
     launchDeadlineAt: number, launchTimeoutMs: number,
