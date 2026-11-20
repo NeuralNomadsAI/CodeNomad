@@ -1,13 +1,14 @@
 //! `GET /api/events`: the UI's SSE stream (workspace, native and file events through
 //! per-subscriber queues), its pong keep-alive and the bridge from the daemon's stream.
+mod bridge;
 mod hub;
 mod upstream;
 
+pub use bridge::bridge;
 pub use hub::Hub;
 
 use std::{
     convert::Infallible,
-    path::Path,
     time::{Duration, Instant},
 };
 
@@ -18,7 +19,7 @@ use axum::{
     response::sse::{Event, Sse},
     routing::{get, post},
 };
-use futures_util::{Stream, StreamExt};
+use futures_util::Stream;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -169,208 +170,6 @@ pub async fn pong(
     }
 }
 
-/// Native events without a location that every workspace receives.
-const GLOBAL: &str = "agent.updated command.updated config.updated credential.switched credential.updated \
-    integration.updated installation.update-available installation.updated mcp.resources.changed \
-    mcp.status.changed models-dev.refreshed model.updated plugin.updated provider.updated \
-    reference.updated server.connected skill.updated websearch.updated worktree.updated";
-
-fn status(app: &App, next: &'static str, reason: Option<&str>) {
-    let mut store = app.inner.lock().unwrap();
-    if next == "connecting" {
-        store.generation += 1;
-    }
-    store.status = next;
-    for w in &store.workspaces {
-        app.emit_status(w.id, next, store.generation, reason);
-    }
-}
-
-/// Workspaces that received a session's events (TS `sessionRecipients`, same
-/// bound): a move reaches them even when its envelope names only the destination.
-#[derive(Default)]
-struct Held {
-    order: std::collections::VecDeque<String>,
-    sessions: std::collections::HashMap<String, std::collections::HashSet<Uuid>>,
-}
-const SESSION_RECIPIENT_LIMIT: usize = 4096;
-impl Held {
-    fn has(&self, session: &str, w: Uuid) -> bool {
-        self.sessions.get(session).is_some_and(|s| s.contains(&w))
-    }
-    fn remember(&mut self, session: &str, w: Uuid) {
-        if !self.sessions.contains_key(session) {
-            self.order.push_back(session.to_owned());
-            if self.order.len() > SESSION_RECIPIENT_LIMIT
-                && let Some(oldest) = self.order.pop_front()
-            {
-                self.sessions.remove(&oldest);
-            }
-        }
-        self.sessions.entry(session.to_owned()).or_default().insert(w);
-    }
-    fn forget(&mut self, session: &str, w: Uuid) {
-        if let Some(set) = self.sessions.get_mut(session) {
-            set.remove(&w);
-            if set.is_empty() {
-                self.sessions.remove(session);
-                self.order.retain(|s| s != session);
-            }
-        }
-    }
-}
-
-pub async fn bridge(app: Shared) {
-    let daemon = Uuid::new_v4().simple().to_string();
-    let mut held = Held::default();
-    loop {
-        while {
-            let store = app.inner.lock().unwrap();
-            store.workspaces.is_empty() && store.generation == 0
-        } {
-            app.opened.notified().await;
-        }
-        status(&app, "connecting", None);
-        let response = app.native.get("/api/event").header("accept", "text/event-stream").send().await;
-        if let Ok(response) = response
-            && response.status().is_success()
-            && response.headers().get("content-type").is_some_and(|v| v.as_bytes().starts_with(b"text/event-stream"))
-        {
-            // Any chunk, including the daemon's `: heartbeat` comments (every 15 s when idle),
-            // proves the stream alive: only 60 s without a byte reconnects and resynchronizes the UI.
-            let now = || chrono::Utc::now().timestamp_millis();
-            let seen = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(now()));
-            let mark = seen.clone();
-            let mut stream = Box::pin(upstream::events::<Value, _, _>(Box::pin(response.bytes_stream()), move || {
-                mark.store(now(), std::sync::atomic::Ordering::Relaxed)
-            }));
-            let mut connected = false;
-            loop {
-                let next = match tokio::time::timeout(Duration::from_secs(60), stream.next()).await {
-                    Ok(next) => next,
-                    Err(_) if now() - seen.load(std::sync::atomic::Ordering::Relaxed) < 60_000 => continue,
-                    Err(_) => break,
-                };
-                let Some(Ok(mut event)) = next else { break };
-                let Some(kind) = event["type"].as_str().map(str::to_owned) else { break };
-                let routed = Instant::now();
-                let received = chrono::Utc::now().timestamp_millis();
-                if !connected {
-                    if kind != "server.connected" {
-                        break;
-                    }
-                    connected = true;
-                    status(&app, "connected", None);
-                    // Reference: bundled plugins are provisioned on every OpenCode connection.
-                    crate::extensions::lifecycle::connected();
-                }
-                if kind == "server.connected" {
-                    if !event["data"].is_object() {
-                        event["data"] = json!({});
-                    }
-                    event["data"]["daemon"] = json!(daemon);
-                }
-                // Integration events can contain backend-only data and need the TS sanitizer.
-                if kind.starts_with("worktree.") || kind == "server.connected" {
-                    crate::worktrees::linked::invalidate(&app);
-                }
-                if matches!(kind.as_str(), "integration.updated" | "rpc") {
-                    continue;
-                }
-                let mut directory = event["location"]["directory"].as_str().map(str::to_owned);
-                if directory.is_none() {
-                    let session =
-                        event["data"]["sessionID"].as_str().or_else(|| event["data"]["form"]["sessionID"].as_str());
-                    if let Some(session) = session.filter(|s| crate::opencode::valid_id(s)) {
-                        directory = crate::opencode::session_directory(&app, session).await.ok();
-                    }
-                }
-                let candidates = {
-                    let store = app.inner.lock().unwrap();
-                    store
-                        .workspaces
-                        .iter()
-                        .filter(|workspace| {
-                            let native_dir = workspace.location["directory"].as_str().unwrap_or_default();
-                            directory.as_deref().map_or_else(
-                                || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted",
-                                |dir| dir == native_dir || Path::new(dir).starts_with(&app.root),
-                            ) && event["location"].get("workspaceID").is_none()
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>()
-                };
-                let session_id = event["data"]["sessionID"].as_str();
-                let session_id =
-                    session_id.filter(|s| *s != "global" && crate::opencode::valid_id(s)).map(str::to_owned);
-                let mut recipients = Vec::new();
-                if kind == "session.moved"
-                    && let Some(sid) = session_id.as_deref()
-                    && let Some(destination) = event["data"]["location"]["directory"]
-                        .as_str()
-                        .filter(|_| event["data"]["location"].get("workspaceID").is_none())
-                        .map(str::to_owned)
-                {
-                    // Like native location subscriptions, a move reaches the
-                    // source owner, earlier recipients and the destination owner.
-                    let all = app.inner.lock().unwrap().workspaces.clone();
-                    for workspace in all {
-                        let source = match directory.as_deref() {
-                            Some(dir) if event["location"].get("workspaceID").is_none() => {
-                                crate::worktrees::owns_event(&app, &workspace, dir).await
-                            }
-                            _ => false,
-                        };
-                        let owns_destination = crate::worktrees::owns_event(&app, &workspace, &destination).await;
-                        if owns_destination {
-                            held.remember(sid, workspace.id);
-                        }
-                        if held.has(sid, workspace.id) || source || owns_destination {
-                            if !owns_destination {
-                                held.forget(sid, workspace.id);
-                            }
-                            recipients.push(workspace);
-                        }
-                    }
-                } else {
-                    for workspace in candidates {
-                        if let Some(dir) = directory.as_deref()
-                            && !crate::worktrees::owns_event(&app, &workspace, dir).await
-                        {
-                            continue;
-                        }
-                        recipients.push(workspace);
-                    }
-                    if let Some(sid) = session_id.as_deref() {
-                        for workspace in &recipients {
-                            if kind == "session.deleted" || kind == "session.moved" {
-                                held.forget(sid, workspace.id);
-                            } else {
-                                held.remember(sid, workspace.id);
-                            }
-                        }
-                    }
-                }
-                for workspace in &recipients {
-                    if app.workspace(&workspace.id.to_string()).is_ok() {
-                        app.emit(json!({"type":"instance.event","instanceId":workspace.id,"event":event}));
-                    }
-                }
-                let sid =
-                    session_id.as_deref().or(event["data"]["session"]["id"].as_str()).or(event["data"]["id"].as_str());
-                let (took, count, sid) = (routed.elapsed().as_millis(), recipients.len(), sid.unwrap_or("-"));
-                crate::bench::route_trace(format_args!("event {kind} {took}ms to {count} at {received} sid {sid}"));
-                crate::sessions::favorites::deleted(&app, &event);
-                if crate::sessions::receipts::observe(&app, &event, &recipients).await.is_err() {
-                    eprintln!("Permission receipt persistence unavailable");
-                }
-            }
-        }
-        status(&app, "error", Some("Shared OpenCode event stream ended"));
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,20 +192,5 @@ mod tests {
         assert!(keys[0] != keys[1] && keys[1] != keys[2] && keys[0] != keys[2]);
         assert!(keys[0].0.starts_with("local\0"));
         assert_eq!(owner(Some(&channel(None))), "unbound");
-    }
-
-    #[test]
-    fn session_recipients_follow_the_reference_bound() {
-        let mut held = Held::default();
-        let w = Uuid::new_v4();
-        for i in 0..=SESSION_RECIPIENT_LIMIT {
-            held.remember(&format!("ses_{i}"), w);
-        }
-        assert!(!held.has("ses_0", w), "oldest session evicted");
-        assert!(held.has(&format!("ses_{SESSION_RECIPIENT_LIMIT}"), w));
-        assert_eq!(held.sessions.len(), SESSION_RECIPIENT_LIMIT);
-        held.forget(&format!("ses_{SESSION_RECIPIENT_LIMIT}"), w);
-        assert!(!held.has(&format!("ses_{SESSION_RECIPIENT_LIMIT}"), w));
-        assert_eq!(held.order.len(), held.sessions.len());
     }
 }
