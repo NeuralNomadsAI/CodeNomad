@@ -40,6 +40,7 @@ function preferencesOf(value: unknown): Preferences | "invalid" | "too-large" {
 
 export class PanelExtensionStore {
   private tail: Promise<unknown> = Promise.resolve()
+  private released: Promise<unknown> = Promise.resolve()
   constructor(private readonly directory: string, private readonly changed: () => void = () => {},
     private readonly notesChanged: (id: string) => void = () => {}) {}
 
@@ -49,14 +50,13 @@ export class PanelExtensionStore {
   }
 
   install(pkg: PanelExtensionPackage, previousDigest?: string): Promise<void> {
-    // Grant changes take the package's notes lock, so no note write commits under a revoked grant.
     return this.mutate(records => {
       const previous = records.find(record => record.manifest.id === pkg.manifest.id)
       if (previous?.digest !== previousDigest) throw new PanelExtensionError("conflict")
       if (previous?.digest === pkg.digest) return records
       // Replacing code revokes every grant, even if its declared permissions are unchanged, and resets its preferences.
       return [...records.filter(record => record !== previous), { ...pkg, global: false }]
-    }, undefined, true, () => this.lockNotes(pkg.manifest.id))
+    })
   }
 
   activate(id: string, digest: string, enabled: boolean): Promise<void> {
@@ -64,7 +64,7 @@ export class PanelExtensionStore {
       if (record.manifest.id !== id) return record
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
       return { ...record, global: enabled }
-    }), id, true, () => this.lockNotes(id))
+    }), id)
   }
 
   /**
@@ -76,7 +76,7 @@ export class PanelExtensionStore {
       if (record.manifest.id !== id) return true
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
       return false
-    }), id, true, () => this.lockNotes(id), async () => {
+    }), id, true, async () => {
       const notes = this.notesDirectory(id), aside = path.join(this.directory, "notes", `.removing-${randomUUID()}`)
       try { await fs.rename(notes, aside) } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
@@ -134,7 +134,7 @@ export class PanelExtensionStore {
 
   /** The enabled package's notes in `project`, newest first. A corrupt file throws `unavailable` and is kept. */
   async notes(id: string, digest: string, project: string): Promise<PanelStoredNote[]> {
-    return this.serialize(async () => {
+    return this.locked(async () => {
       granted(await this.read(), id, digest, "panel.notes")
       return (await this.readNotes(id, project)).notes.sort((a, b) => b.updated - a.updated || b.revision - a.revision)
     })
@@ -149,25 +149,20 @@ export class PanelExtensionStore {
     next: { title: string; text: string }, guard?: { check(): Promise<void>; final(): void }): Promise<PanelNoteChange> {
     if (Buffer.byteLength(next.text) > PANEL_EXTENSION_LIMITS.noteBytes) return { status: "too-large" }
     if (!Project.test(project)) throw new PanelExtensionError("invalid")
-    return this.serialize(async () => {
-      // Another backend on this profile has its own queue: the package's cross-process lock keeps
-      // the grant, the compare and the write one transaction, against its writes and its removal.
-      const release = await this.lockNotes(id)
-      try {
-        granted(await this.read(), id, digest, "panel.notes")
-        return await this.changeNote(id, project, sessionID, revision, next, guard)
-      } finally { await release() }
+    return this.locked(async () => {
+      granted(await this.read(), id, digest, "panel.notes")
+      return this.changeNote(id, project, sessionID, revision, next, guard)
     })
   }
 
   private async changeNote(id: string, project: string, sessionID: string, revision: number,
     next: { title: string; text: string }, guard?: { check(): Promise<void>; final(): void }): Promise<PanelNoteChange> {
     const { notes, revision: issued } = await this.readNotes(id, project)
+    // The caller's authority, revalidated where nothing else can write first, before any answer.
+    await guard?.check()
     const current = notes.find(note => note.sessionID === sessionID)
     if ((current?.revision ?? 0) !== revision) return { status: "conflict", note: current ? { text: current.text, revision: current.revision } : null }
     const others = notes.filter(note => note !== current)
-    // The caller's authority, revalidated where nothing else can write first.
-    await guard?.check()
     if (!next.text) {
       if (current) await this.writeNotes(id, project, others, issued, guard?.final)
       return { status: "saved", revision: 0 }
@@ -180,11 +175,18 @@ export class PanelExtensionStore {
 
   private notesDirectory(id: string) { return path.join(this.directory, "notes", id) }
 
-  /** Agent memory's cross-process lock, outside the removable notes directory. */
-  private async lockNotes(id: string) {
-    const locks = path.join(this.directory, "notes-locks")
-    await fs.mkdir(locks, { recursive: true })
-    return lockMemoryRepository(path.join(locks, id))
+  /**
+   * `operation` in this store's queue under the profile's cross-process lock (agent memory's), so
+   * backends sharing the profile change the catalogue and notes one at a time. The release runs
+   * beside the answer, so a slow one never delays or changes it; the next acquisition awaits it.
+   */
+  private locked<T>(operation: () => Promise<T>): Promise<T> {
+    return this.serialize(async () => {
+      await this.released
+      await fs.mkdir(this.directory, { recursive: true })
+      const release = await lockMemoryRepository(path.join(this.directory, "catalogue"))
+      try { return await operation() } finally { this.released = release().catch(() => {}) }
+    })
   }
 
   private async readNotes(id: string, project: string): Promise<{ notes: PanelStoredNote[]; revision: number }> {
@@ -207,11 +209,15 @@ export class PanelExtensionStore {
   private async replace(directory: string, file: string, text: string, final?: () => void) {
     await fs.mkdir(directory, { recursive: true })
     const temporary = path.join(directory, `${randomUUID()}.tmp`)
+    // The rename commits: nothing awaited after it can turn a committed write into a failure.
     try {
       await fs.writeFile(temporary, text, { flag: "wx", mode: 0o600 })
       final?.()
       await fs.rename(temporary, file)
-    } finally { await fs.rm(temporary, { force: true }) }
+    } catch (error) {
+      await fs.rm(temporary, { force: true }).catch(() => {})
+      throw error
+    }
   }
 
   private async read(): Promise<Stored[]> {
@@ -229,12 +235,9 @@ export class PanelExtensionStore {
   }
 
   /** `stage` runs once the update is valid; it is undone if the catalogue write fails, else committed. */
-  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true, lock?: () => Promise<() => Promise<void>>,
+  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true,
     stage?: () => Promise<{ commit(): Promise<void>; undo(): Promise<void> } | undefined>): Promise<void> {
-    return this.serialize(async () => {
-      const release = await lock?.()
-      try { await this.mutateLocked(update, requiredId, notify, stage) } finally { await release?.() }
-    })
+    return this.locked(() => this.mutateLocked(update, requiredId, notify, stage))
   }
 
   private async mutateLocked(update: (records: Stored[]) => Stored[], requiredId: string | undefined, notify: boolean,

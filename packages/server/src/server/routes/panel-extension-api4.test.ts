@@ -93,7 +93,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
       list: () => [{ id: "i" }, { id: "j" }] as any,
       getHostPathForServicePath: async (_id: string, value: string) => value,
     } })
-  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }) })
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) })
   const post = (method: string, body: Record<string, unknown> = {}) => app.inject({ method: "POST", url: `/api/panel-extensions/${pkg.manifest.id}/${method}`,
     payload: { instanceId: "i", digest: pkg.digest, ...body } })
   return { app, store, pkg, calls, excluded, checked, post, file: path.join(directory, "installed.json"), connection, owned, sessions, notesChanged }
@@ -405,4 +405,22 @@ test("notes: a remote change during a write refuses it; a committed write answer
   f.sessions.ses_work.location = { directory: "/repo" }
   f.sessions.ses_work.title = "x".repeat(255) + "😀"
   assert.equal((await f.post("notesList", {})).json().notes[0].title, "x".repeat(255))
+})
+test("notes: a remote change while a note is read refuses the answer", async t => {
+  let reads = 0
+  // The first read resolves the project; the second, after the note is read, finds another one.
+  const f = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => ++reads === 2 ? "c".repeat(64) : undefined })
+  assert.equal((await f.post("notesGet", { sessionID: "ses_work" })).statusCode, 409)
+  assert.equal((await f.post("notesGet", { sessionID: "ses_work" })).statusCode, 200)
+})
+
+test("notes: a stale write from a session that just moved is refused, not answered with the old project's note", async t => {
+  let move = false
+  let f: Fixture = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => { if (move) f.sessions.ses_work.location = { directory: "/linked" } } })
+  f.owned.add("/linked")
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "old project", revision: 0 })).json().status, "saved")
+  move = true
+  const stale = await f.post("notesSet", { sessionID: "ses_work", text: "x", revision: 0 })
+  assert.equal(stale.statusCode, 409)
+  assert.equal(stale.body.includes("old project"), false)
 })

@@ -326,14 +326,18 @@ codenomad.notes.onChanged(() => { /* read again */ })
   note; empty text deletes it. Each project file keeps the highest revision it issued,
   deleted notes' included, so a recreated note never takes a stale writer's; a file
   listing a session twice or a revision above that mark is corrupt.
-- **Notes writes** run in the store queue under the package's cross-process lock (agent
-  memory's `memory/lock.ts`, in `panel-extensions/notes-locks/`), which installation,
-  activation and removal also take: across backends sharing the profile, the exact grant,
-  the compare and the write are one transaction. Under it a write rechecks the session's
-  Location (or the instance Location's ownership) and the project identity, read again
-  uncached, then, once the bytes are staged and right before the rename, the request's
-  deadline, connection, instance placement and the anchor worktree's deletion fence. A
-  committed write answers `saved` as is: no read after it turns it into a refusal.
+- **Notes writes**: every catalogue mutation (preferences included), note write and note
+  read runs in the store queue under one profile-wide cross-process lock (agent memory's
+  `memory/lock.ts`, `panel-extensions/catalogue.lock`): across backends sharing the
+  profile, the exact grant, the compare and the write are one transaction, and no read
+  sees a removal in progress. The lock is released beside the answer; the next
+  acquisition awaits it. Under it a write rechecks the session's Location (or the
+  instance Location's ownership) and the project identity, read again uncached, before
+  any answer (a `conflict` included), then, once the bytes are staged and right before
+  the rename, the request's deadline, connection, instance placement and the anchor
+  worktree's deletion fence. The rename commits: a committed write answers `saved` as
+  is, and no read or cleanup after it turns it into a refusal. Reads recheck the project
+  identity after their last read.
 - **Notes reads**: `list` pages the project's notes newest first (16 a page, decimal
   cursor; same-instant writes by revision), with the session's current title while it is
   still in the project as some open window resolves it, else the last title written

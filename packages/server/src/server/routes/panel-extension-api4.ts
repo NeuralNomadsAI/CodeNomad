@@ -295,25 +295,23 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
    * titles only) another open window does, as agent memory resolves a session's project; else `undefined`.
    */
   const identities = (instanceId: string) => {
-    const known = new Map<string, Promise<string | undefined>>()
-    const target = async (workspaceId: string, directory: string) => {
+    type Owner = { directory: string; distro?: string }
+    const owners = new Map<string, Promise<Owner | undefined>>(), ids = new Map<string, Promise<string>>()
+    const memo = <T>(cache: Map<string, Promise<T>>, key: string, read: () => Promise<T>) => {
+      let found = cache.get(key)
+      if (!found) { found = read(); cache.set(key, found) }
+      return found
+    }
+    const target = async (workspaceId: string, directory: string): Promise<Owner> => {
       const owned = await manager.getServiceDirectoryForPath(workspaceId, directory)
       if (!owned) throw new Error("Not an owner")
       return { directory: owned, distro: manager.getServiceWslDistro(workspaceId) }
     }
-    return (directory: string, anyWindow = false) => {
-      const key = `${anyWindow}:${directory}`
-      let found = known.get(key)
-      if (!found) {
-        found = (async () => {
-          const owner = await target(instanceId, directory).catch(() => anyWindow
-            ? Promise.any(manager.list().filter(workspace => workspace.id !== instanceId).map(workspace => target(workspace.id, directory))).catch(() => undefined)
-            : undefined)
-          return owner ? (await projectIdentity(owner)).id : undefined
-        })()
-        known.set(key, found)
-      }
-      return found
+    return async (directory: string, anyWindow = false) => {
+      const own = await memo(owners, `own:${directory}`, () => target(instanceId, directory).catch(() => undefined))
+      const owner = own ?? (anyWindow ? await memo(owners, `any:${directory}`, () => Promise.any(manager.list()
+        .filter(workspace => workspace.id !== instanceId).map(workspace => target(workspace.id, directory))).catch(() => undefined)) : undefined)
+      return owner ? memo(ids, `${owner.distro ?? ""}:${owner.directory}`, async () => (await projectIdentity(owner)).id) : undefined
     }
   }
   /** The request's project; a `write` checks its anchor inside the store queue instead of after the answer. */
@@ -333,6 +331,9 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     const identityAt = identities(instanceId)
     const id = await identityAt(location.directory)
     if (!id) throw new Refused(403)
+    // Read again, uncached, after the last read: a remote change moves the project without moving the session.
+    const sameProject = (directory: string) => async () => { if (await identities(instanceId)(directory) !== id) throw new Refused(409) }
+    if (!write) context.fence(`identity:${location.directory}`, sameProject(location.directory))
     context.signal.throwIfAborted()
     // Inside the store queue: the anchor still where it was, then, once the bytes are staged, nothing gone stale.
     const workspace = manager.get(instanceId), base = manager.getServiceLocation(instanceId)
@@ -345,11 +346,10 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
         const latest = readLocationRef((await ownedSession(instanceId, client, sessionID!, context.signal)).location)
         if (JSON.stringify(latest) !== JSON.stringify(location)) throw new Refused(409)
       } else if (!await manager.ownsLocation(instanceId, { directory: location.directory }, client, { signal: context.signal })) throw new Refused(403)
-      // Read again, uncached: a remote change moves the project without moving the session.
-      if (await identities(instanceId)(location.directory) !== id) throw new Refused(409)
+      await sameProject(location.directory)()
       final()
     }
-    return { id, client, session, guard: { check, final }, identityAt }
+    return { id, client, session, guard: { check, final }, identityAt, sameProject }
   }
   /** The session, or `undefined` once it is deleted; any other failure fails the request. */
   const unlessDeleted = <T>(signal: AbortSignal, read: Promise<T>) => read.catch(error => {
@@ -392,12 +392,13 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   })
   // Only a session with a note in this project, owned by this instance and still in the project, may be shown.
   route("notesOpen", "panel.notes", { sessionID: Id.optional(), target: Id }, 8192, async (input, context) => {
-    const { id: projectId, client, identityAt } = await project(context, input.instanceId, input.sessionID)
+    const { id: projectId, client, identityAt, sameProject } = await project(context, input.instanceId, input.sessionID)
     if (!(await deps.store.notes(context.id, input.digest, projectId)).some(note => note.sessionID === input.target)) return { openable: false }
     const session = await unlessDeleted(context.signal, ownedSession(input.instanceId, client, input.target, context.signal))
       .catch(error => { if (error instanceof Refused && error.status === 403) return undefined; throw error })
     if (!session || await identityAt(readLocationRef(session.location).directory) !== projectId) return { openable: false }
     fenceSession(context, input.instanceId, client, input.target, session.location)
+    context.fence(`identity:${readLocationRef(session.location).directory}`, sameProject(readLocationRef(session.location).directory))
     return { openable: true }
   })
 }

@@ -72,7 +72,7 @@ test("an installed, enabled API 4 extension declaring opencode.designAgent reque
     await store.install(other, pkg.digest)
     await store.activate(other.manifest.id, other.digest, true)
     assert.equal(extensionsRequestDesign(await store.list()), false)
-  } finally { await rm(directory, { recursive: true, force: true }) }
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
 })
 
 test("preferences: {} by default, 4 KiB whole objects, per extension, kept on disable, reset on replace and remove, durable", async () => {
@@ -119,7 +119,7 @@ test("preferences: {} by default, 4 KiB whole objects, per extension, kept on di
     await store.remove(id, replacement.digest)
     await store.install(replacement); await store.activate(id, replacement.digest, true)
     assert.deepEqual(await store.preferences(id, replacement.digest), {}, "removal resets")
-  } finally { await rm(directory, { recursive: true, force: true }) }
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
 })
 
 test("preferences: an invalid entry alone reads {}; a corrupt store is unavailable and stays byte-identical", async () => {
@@ -141,7 +141,7 @@ test("preferences: an invalid entry alone reads {}; a corrupt store is unavailab
       await assert.rejects(store.setPreferences(pkg.manifest.id, pkg.digest, { a: 1 }), { code: "unavailable" })
       assert.equal(await readFile(file, "utf8"), corrupt)
     }
-  } finally { await rm(directory, { recursive: true, force: true }) }
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
 })
 
 test("notes: one per session and project, revision-checked, empty deletes, capped, kept on disable and replace, removed with the package", async () => {
@@ -186,7 +186,7 @@ test("notes: one per session and project, revision-checked, empty deletes, cappe
     await store.remove(id, replacement.digest)
     await store.install(replacement); await store.activate(id, replacement.digest, true)
     assert.deepEqual(await store.notes(id, replacement.digest, project), [], "removal deletes them")
-  } finally { await rm(directory, { recursive: true, force: true }) }
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
 })
 test("notes: a recreated note gets a newer revision even at the same instant; a failed cleanup leaves removal retryable", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-retry-"))
@@ -217,7 +217,7 @@ test("notes: a recreated note gets a newer revision even at the same instant; a 
     await store.remove(id, pkg.digest)
     await store.install(pkg); await store.activate(id, pkg.digest, true)
     assert.deepEqual(await store.notes(id, pkg.digest, project), [])
-  } finally { await rm(directory, { recursive: true, force: true }) }
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
 })
 test("notes: same-instant writes list newest first, inconsistent files fail closed, titles keep whole characters, backends share one lock", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-file-"))
@@ -247,7 +247,7 @@ test("notes: same-instant writes list newest first, inconsistent files fail clos
     const results = await Promise.all([store, other].map((writer, index) =>
       writer.setNote(id, pkg.digest, project, "ses_race", 0, { title: "", text: `writer ${index}` })))
     assert.deepEqual(results.map(result => result.status).sort(), ["conflict", "saved"])
-  } finally { await rm(directory, { recursive: true, force: true }) }
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
 })
 test("notes: a removal from another backend waits for a write in flight, then deletes it too", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-remove-"))
@@ -270,7 +270,7 @@ test("notes: a removal from another backend waits for a write in flight, then de
     await removing
     await b.install(pkg); await b.activate(id, pkg.digest, true)
     assert.deepEqual(await b.notes(id, pkg.digest, project), [], "nothing comes back on reinstall")
-  } finally { await rm(directory, { recursive: true, force: true }) }
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
 })
 test("notes: disabling from another backend waits for a write in flight; the next write is refused", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-disable-"))
@@ -291,5 +291,34 @@ test("notes: disabling from another backend waits for a write in flight; the nex
     assert.equal((await saving).status, "saved")
     await disabling
     await assert.rejects(a.setNote(id, pkg.digest, project, "ses_2", 0, { title: "", text: "late" }), { code: "unavailable" })
-  } finally { await rm(directory, { recursive: true, force: true }) }
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
+})
+test("notes: one profile lock — concurrent removals from two backends both hold; a read waits for a removal that then fails", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-profile-"))
+  try {
+    const a = new PanelExtensionStore(directory), b = new PanelExtensionStore(directory)
+    const first = await api4(["session.context", "panel.notes"]), second = await api4(["session.context", "panel.notes"], { id: "example.second" })
+    for (const pkg of [first, second]) { await a.install(pkg); await a.activate(pkg.manifest.id, pkg.digest, true) }
+    const project = "a".repeat(64)
+    await a.setNote(first.manifest.id, first.digest, project, "ses_1", 0, { title: "", text: "keep" })
+
+    // The catalogue write of a removal stalls, then fails: a read from the other backend waits and sees the notes.
+    const rename = fs.rename
+    let stalled!: () => void, fail!: () => void
+    const reached = new Promise<void>(resolve => { stalled = resolve }), failing = new Promise<void>(resolve => { fail = resolve })
+    const busy = t.mock.method(fs, "rename", async (from: string, to: string) => {
+      if (to === path.join(directory, "installed.json")) { stalled(); await failing; throw Object.assign(new Error("busy"), { code: "EBUSY" }) }
+      return rename(from, to)
+    })
+    const removing = b.remove(first.manifest.id, first.digest).catch(error => error)
+    await reached
+    const reading = a.notes(first.manifest.id, first.digest, project)
+    fail()
+    assert.equal((await removing).code, "EBUSY")
+    busy.mock.restore()
+    assert.deepEqual((await reading).map(note => note.text), ["keep"])
+
+    await Promise.all([a.remove(first.manifest.id, first.digest), b.remove(second.manifest.id, second.digest)])
+    assert.deepEqual(await new PanelExtensionStore(directory).list(), [], "neither removal is lost")
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 }) }
 })
