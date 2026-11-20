@@ -591,17 +591,22 @@ describe("partitioned client state", () => {
     await debounced("broken")
     digest.mock.restore()
     await debounced("second")
-    await state.flushClientState()
     assert.equal(commits.length, 2)
-    // An explicit flush republishes even an unchanged graph, so a lost host copy heals.
-    state.updateRestorableSession(session("second"))
+    // The skipped save left the host copy unverified: the next flush republishes it,
+    // so a lost host copy heals, and a further flush has nothing left to write.
     await state.flushClientState()
     assert.equal(commits.length, 3)
+    await state.flushClientState()
+    assert.equal(commits.length, 3)
+    // An explicit flush of a fresh capture republishes even an unchanged graph.
+    state.updateRestorableSession(session("second"))
+    await state.flushClientState()
+    assert.equal(commits.length, 4)
     // Clearing forgets the committed graph, so the same state is written again.
     await state.clearRestoredClientState()
     await state.setRestorePreviousStateEnabled(true)
     await debounced("second")
-    assert.equal(commits.length, 4)
+    assert.equal(commits.length, 5)
   })
 
   it("commits one atomic graph without a monolithic save or automatic load rewrite", async () => {

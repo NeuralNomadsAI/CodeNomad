@@ -18,8 +18,9 @@ export interface EncodedPartition { key: string; text: string; bytes: number }
 // Saves repeat most partitions unchanged; reuse their canonical text and key by plain
 // JSON, which equal values share. Callers pass normalized JSON data only (no Date,
 // toJSON or undefined members), so equal plain JSON means equal canonical JSON.
-// Bounded LRU: blob-heavy snapshots simply miss.
-const MAX_CACHED_CHARACTERS = 8 * 1024 * 1024
+// Bounded LRU (each entry holds two serialisations): about 16 M characters of state
+// stay cached; only larger, attachment-heavy snapshots miss.
+const MAX_CACHED_CHARACTERS = 32 * 1024 * 1024
 const cache = new Map<string, EncodedPartition>()
 let cachedCharacters = 0
 export async function encodePartition(value: unknown): Promise<EncodedPartition> {

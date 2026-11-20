@@ -66,11 +66,13 @@ test("capture defers only busy usage through both real-store effects and keeps f
         page.evaluate(([field, id, sessionId]) => (window as any).fixture.change(field, id, sessionId), [field, id, sessionId])
       const usage = (id = "first", sessionId = "parent") =>
         page.evaluate(([id, sessionId]) => (window as any).fixture.usage(id, sessionId), [id, sessionId])
+      // A checkpoint is a capture; it writes natively only when persisted content changed.
+      const captures = () => page.evaluate(() => (window as any).fixture.captures())
       const mutate = async (path: string, value: unknown) => {
-        const before = await count()
+        const before = await captures()
         await page.evaluate(([path, value]) => (window as any).fixture.mutate(path, value), [path, value])
         await settle()
-        assert.equal(await count(), before + 1, `${host}: in-place ${path} checkpoints`)
+        assert.equal(await captures(), before + 1, `${host}: in-place ${path} checkpoints`)
       }
       await settle()
       assert.equal(await page.evaluate(() => (window as any).fixture.draftValue("first", "missing")), "")
