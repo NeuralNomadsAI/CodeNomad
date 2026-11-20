@@ -102,10 +102,3 @@
   border-bottom: 0;
 }
 
-.remote-spin {
-  animation: remote-spin 1s linear infinite;
-}
-
-@keyframes remote-spin {
-  to { transform: rotate(360deg); }
-}

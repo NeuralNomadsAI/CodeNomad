@@ -292,13 +292,6 @@
 .providers-spin-icon {
   width: 1rem;
   height: 1rem;
-  animation: providers-spin 900ms linear infinite;
-}
-
-@keyframes providers-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (max-width: 640px) {

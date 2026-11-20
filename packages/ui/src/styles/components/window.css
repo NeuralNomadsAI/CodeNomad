@@ -105,7 +105,8 @@
   outline-offset: -1px;
 }
 
-.window-icon-button > svg {
+/* Descendant: spinners wrap their icon in a rotating span. */
+.window-icon-button svg {
   width: 14px;
   height: 14px;
 }

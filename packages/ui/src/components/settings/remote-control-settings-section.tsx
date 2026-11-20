@@ -171,7 +171,7 @@ export const RemoteControlSettingsSection: Component = () => {
             <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
             <button class="window-icon-button disabled:opacity-50 disabled:cursor-not-allowed" type="button"
               aria-label={t("remoteControl.refresh")} title={t("remoteControl.refresh")} onClick={() => void refresh()} disabled={loading()}>
-              <RefreshCw class={`w-4 h-4 ${loading() ? "remote-spin" : ""}`} aria-hidden="true" />
+              <span class="inline-flex" classList={{ "animate-spin": loading() }}><RefreshCw class="w-4 h-4" aria-hidden="true" /></span>
             </button>
           </div>
         </div>
@@ -242,7 +242,7 @@ export const RemoteControlSettingsSection: Component = () => {
               <h3 class="settings-card-title">{t("remoteControl.pairing.title")}</h3>
               <p class="settings-card-subtitle">{t("remoteControl.pairing.description")}</p>
             </div>
-            <Show when={qrCode()} fallback={<Loader2 class="remote-control-qr-loading remote-spin" />}>
+            <Show when={qrCode()} fallback={<span class="inline-flex animate-spin self-center"><Loader2 class="remote-control-qr-loading" /></span>}>
               {(source) => <img class="remote-control-qr" src={source()} alt={t("remoteControl.pairing.qrAlt")} />}
             </Show>
             <code class="remote-control-link">{value().url}</code>

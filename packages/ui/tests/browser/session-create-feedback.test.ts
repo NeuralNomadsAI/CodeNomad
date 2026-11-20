@@ -23,7 +23,7 @@ const busy = (page: Page) => page.evaluate(() => {
   const button = document.querySelector('[aria-label="New session"]') as HTMLButtonElement | null
   return {
     disabled: button?.disabled === true || button?.classList.contains("Mui-disabled") === true,
-    spinning: Boolean(button?.querySelector("svg.animate-spin")),
+    spinning: Boolean(button?.querySelector(".animate-spin svg")),
   }
 })
 async function until(page: Page, expectation: () => Promise<boolean>, description: string) {
