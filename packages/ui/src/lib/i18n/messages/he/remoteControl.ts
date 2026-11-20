@@ -32,4 +32,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "צימוד HTTPS ישיר",
   "remoteControl.direct.origin": "כתובת HTTPS",
   "remoteControl.direct.newLink": "צור קישור צימוד HTTPS",
+  "remoteControl.devices.revocationPending": "ביטול הגישה ממתין",
 } as const

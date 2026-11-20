@@ -8,11 +8,12 @@ Bei aktiviertem experimentellem Multi-Backend-Modus verwendet das Einstellungsfe
 2. Wählen Sie einen Abschnitt. Lokale Electron-/Tauri-Fenster öffnen oder fokussieren ein natives Einstellungsfenster; Browser-/Remote-Ansichten verwenden die eingebettete Einstellungsseite.
 3. Prüfen Sie vor dem Verlassen den Geltungsbereich und mögliche **Speichern**-Aktionen.
 
-Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderung sofort speichern. Sprache, eigene Palettenfarben und Konfigurationsdateien behalten ein explizites **Speichern**. Zeigen Sie auf das **i** neben dem Einstellungstitel oder fokussieren Sie es für eine kurze Erklärung. Bei einem Hilfelink öffnen Klicken, Eingabe oder Antippen den passenden Abschnitt in der Oberflächensprache im Systembrowser oder in einem separaten Tab. Reine Tooltip-Symbole zeigen ihre Erklärung beim Antippen. **Einstellungen → Info** enthält außerdem die Karte **CodeNomad unterstützen**: **Sponsern oder mitwirken** öffnet die Seite [CodeNomad unterstützen](sponsor.md).
+Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderung sofort speichern. Einstellungen für Sprach-APIs, eigene Palettenfarben und Konfigurationsdateien erfordern **Speichern**. Zeigen Sie auf das **i** neben dem Einstellungstitel oder fokussieren Sie es für eine kurze Erklärung. Bei einem Hilfelink öffnen Klicken, Eingabe oder Antippen den passenden Abschnitt in der Oberflächensprache im Systembrowser oder in einem separaten Tab. Reine Tooltip-Symbole zeigen ihre Erklärung beim Antippen. **Einstellungen → Info** enthält außerdem die Karte **CodeNomad unterstützen**: **Sponsern oder mitwirken** öffnet die Seite [CodeNomad unterstützen](sponsor.md).
 
 | Zustand | Was er steuert |
 | --- | --- |
-| CodeNomad-Konfiguration | UI-Einstellungen, Sprache, SideCars und Servereinstellungen für Clients dieser Konfiguration. Einstellungen ohne Abzeichen werden ebenfalls nicht pro Gerät gespeichert; **Server-Einstellung** kennzeichnet serverseitige Konfiguration wie Sprache, SideCars, Fernsteuerung und Umgebungsvariablen. |
+| CodeNomad-Konfiguration | Gemeinsame UI-Einstellungen und als **Server-Einstellung** gekennzeichnete Optionen, darunter die Sprach-API, SideCars, Fernsteuerung und Umgebungsvariablen. |
+| Sprach-Engines | Die [Diktier-Engine der Desktop-App](voice.md#desktop-dictation) gilt für alle Projekte auf diesem Gerät. Die [Gesprächs-Engine](voice.md#conversation) gilt für das Desktop-Profil bzw. das Browserprofil und den verbundenen Server. |
 | Fenster-/Projekt-Tab-Layout | Offene Panels, ausgewählte Tabs, Lesezustand und wiederherstellbare Entwürfe/Layout. Dies ist keine OpenCode-Konfiguration. |
 | Globale/projektbezogene OpenCode-Einstellungen | Native Plugin-/Konfigurationsänderungen im angezeigten Umfang. Projektsteuerung benötigt ein aktives Projekt/eine Location. |
 | Desktop-Datenprofil | Native Fenster, Wiederherstellungszustand und Browserspeicher, unabhängig von Konfigurationsdatei und gemeinsamem OpenCode-Dienst. Siehe [Desktop-Fenster und Daten](desktop.md). |
@@ -92,6 +93,8 @@ Die Eingabehöhe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtas
 
 Bei einem Projekt-Tab auf einem anderen CodeNomad-Server enthalten Benachrichtigungen den Servernamen. **Unterhaltung anzeigen** öffnet genau dieses Projekt und diese Unterhaltung; beim Trennen des Servers werden seine Hinweise entfernt. Die Einstellungen für Bilder und Websuche gelten für den Server des Projekts, einschließlich seiner globalen Vorgaben.
 
+Die Komprimierung technischer Missionssitzungen bleibt stumm.
+
 1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste, in der macOS-Desktop-App in der Titelleiste, aufbewahrt) und **System** (eine Betriebssystembenachrichtigung). Ziehen Sie über eine Zeile oder Spalte von Kästchen, um mehrere auf einmal einzustellen.
 2. Das Markieren eines **System**-Kästchens fragt bei Bedarf nach der Berechtigung. Unter **Systembenachrichtigungen** fragt **Berechtigung anfordern** erneut, solange die Berechtigung fehlt.
 3. Aktivieren Sie **Benachrichtigen, wenn die App im Fokus ist**, um Systembenachrichtigungen auch zu erhalten, während dieses Fenster im Fokus ist. Sonst erscheinen sie, sobald es nicht im Fokus ist, auch wenn es geöffnet auf dem Bildschirm bleibt.
@@ -117,4 +120,4 @@ Die ungelesene Glocken-/Verlaufszahl, die nur an den Verlauf geleitete Benachric
 | Lange Assistentenantworten anhalten | Stoppt automatisches Folgen, wenn eine gestreamte Antwort über die Ansicht hinauswächst. |
 | Umgebungsvariablen | Serverseitig vor jedem Prompt/Sitzungsbefehl angewandt; Lesen aktualisiert keine bereits laufende Ausführung. Siehe [OpenCode-Einrichtung](opencode.md). |
 
-Tastaturkonfiguration siehe [Tastenkürzel](shortcuts.md); Sprachsteuerung siehe [Spracheingabe und Wiedergabe](voice.md). Startwiederherstellung und Desktop-Datenprofile behandelt [Desktop-Fenster und Daten](desktop.md).
+Tastaturkonfiguration siehe [Tastenkürzel](shortcuts.md). Unter **Sprache** finden Sie [Diktat, Wiedergabe und Gespräch](voice.md). Startwiederherstellung und Desktop-Datenprofile behandelt [Desktop-Fenster und Daten](desktop.md).

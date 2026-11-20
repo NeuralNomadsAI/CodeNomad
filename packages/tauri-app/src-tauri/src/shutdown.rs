@@ -7,6 +7,7 @@ use tauri::WebviewWindow;
 use tauri::{AppHandle, Emitter, Manager};
 
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+const UPDATE_RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
 const SHUTDOWN_STOP_ATTEMPTS: usize = 2;
 const FLUSH_CANCELLED_EVENT: &str = "client-state:flush-cancelled";
 #[cfg(windows)]
@@ -577,7 +578,7 @@ pub(crate) fn request(app: AppHandle) {
         start_cleanup(app, false);
         return;
     };
-    flush_shutdown(app, requests);
+    flush_shutdown(app, requests, RENDERER_FLUSH_TIMEOUT);
 }
 
 pub(crate) fn request_update(
@@ -587,11 +588,12 @@ pub(crate) fn request_update(
     let requests = app.state::<ShutdownCoordinator>()
         .begin_update(renderer_labels(&app), update)
         .ok_or("Application shutdown is already in progress")?;
-    flush_shutdown(app, requests);
+    flush_shutdown(app, requests, UPDATE_RENDERER_FLUSH_TIMEOUT);
     Ok(())
 }
 
-fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>) {
+fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>, timeout: Duration) {
+    crate::remote_dictation::revoke(&app, None);
     for (label, generation) in &requests {
         if !emit_flush(&app, label, *generation) {
             app.state::<ShutdownCoordinator>()
@@ -611,7 +613,7 @@ fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>) {
         return;
     }
     std::thread::spawn(move || {
-        std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
+        std::thread::sleep(timeout);
         match app.state::<ShutdownCoordinator>().expire_pending_shutdown(&requests) {
             PendingShutdownTimeoutAction::Cancel(cancellations) => {
                 emit_flush_cancellations(&app, cancellations)
@@ -645,6 +647,9 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         .begin_cleanup(deadline_reached)
     {
         return;
+    }
+    if let Some(speech) = app.try_state::<crate::device_speech::DeviceSpeech>() {
+        speech.revoke(None);
     }
     std::thread::spawn(move || {
         client_state::capture_and_flush_all_windows(&app);
@@ -791,6 +796,7 @@ fn prepare_windows_session_end(app: &AppHandle) -> (u64, Instant) {
     let preparation = app
         .state::<ShutdownCoordinator>()
         .begin_windows_session_end(labels);
+    crate::remote_dictation::revoke(app, None);
     let generation = preparation.generation;
     let deadline = preparation.deadline;
     let Some(requests) = preparation.requests else {

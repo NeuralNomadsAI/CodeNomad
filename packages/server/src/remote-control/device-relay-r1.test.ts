@@ -98,7 +98,8 @@ for (const ingress of [false, true]) {
       ["GET", "/api/panel-extensions"], ["POST", "/api/panel-extensions/catalog/install"],
       ["PATCH", "/api/panel-extensions/org.panel"], ["GET", "/api/panel-extensions/org.panel/panel"],
       ...["assets", "assetRead", "workItems", "workItemUrl", "images", "imageRead", "imagesStatus", "prefillReferences",
-        "conversationStatus", "conversationOpen", "conversationNew", "preferencesGet", "preferencesSet"]
+        "conversationStatus", "conversationOpen", "conversationNew", "preferencesGet", "preferencesSet",
+        "notesGet", "notesSet", "notesList", "notesDelete", "notesOpen", "workItemBranches", "workItemBranchLookup", "workItemBranch"]
         .map(method => ["POST", `/api/panel-extensions/org.panel/${method}`] as [string, string]),
       ["POST", "/api/workspaces"], ["DELETE", "/api/workspaces/w"], ["POST", "/api/workspaces/clone"],
       ["POST", "/api/workspaces/creation/cancel"], ["POST", "/api/workspaces/w/creation/release"],

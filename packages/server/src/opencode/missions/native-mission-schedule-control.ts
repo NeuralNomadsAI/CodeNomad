@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode/plugin/effect"
-import { Effect } from "effect"
+import { Cause, Effect } from "effect"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { missionSchedulePayloadDigest } from "../../missions/mission-schedule-contract"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
@@ -20,6 +20,7 @@ import { configureNativeMissionPreparation } from "./native-mission-preparation"
 import { deleteDormantMissionJournal } from "../../missions/mission-dormant-journal"
 import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 import { assertAgentScheduledCoordinatorSelection, prevalidateAgentScheduledCoordinatorCreation } from "./native-scheduled-coordinator-adoption"
+import { ScheduledCoordinatorRefusal } from "./native-source-fence"
 
 type Authority = Effect.Success<ReturnType<typeof acquireNativeMissionScheduleAuthority>>
 
@@ -31,24 +32,38 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   const current = (): true => { configurationCurrent(); return authority.current() }
   const { missionID, requestID, expectedRevision, action } = request
   current()
+  const refusal = (reason: ScheduledCoordinatorRefusal["reason"] | "control-conflict") => ({ document: null, pending: false,
+    refusal: { missionID, requestID, expectedRevision, action, payloadDigest: missionSchedulePayloadDigest(request), reason } })
+  // Only a rejection before the document write proves that dispatch had no effect.
+  const prevalidate = (author: Parameters<typeof prevalidateAgentScheduledCoordinatorCreation>[2]["author"]) =>
+    prevalidateAgentScheduledCoordinatorCreation(ctx, run, {
+      missionID, configuration: request.configuration!, author, current: authority.current, signal,
+    }).pipe(Effect.catchCause(cause => {
+      const error = Cause.squash(cause)
+      return error instanceof ScheduledCoordinatorRefusal ? Effect.succeed(refusal(error.reason)) : Effect.failCause(cause)
+    }))
   if (action === "configure" && request.transport.principal?.kind === "agent") {
     const author = request.transport.principal.author
     if (request.configuration?.coordinatorSelectionAuthor?.coordinatorSessionID !== author.coordinatorSessionID)
       throw new Error("Agent coordinator selection author differs")
-    assertAgentScheduledCoordinatorSelection(request.configuration!, author)
+    try { assertAgentScheduledCoordinatorSelection(request.configuration!, author) }
+    catch (error) {
+      if (error instanceof ScheduledCoordinatorRefusal) return refusal(error.reason)
+      throw error
+    }
     const before = authority.before && !("deletedAt" in authority.before) ? authority.before : undefined
     const replay = before && nativeScheduleOwnerControlReceipt(before, requestID)
-    if (!replay && (!before?.pending || before.configuration.coordinatorSessionID !== request.configuration!.coordinatorSessionID))
-      configurationCurrent = yield* prevalidateAgentScheduledCoordinatorCreation(ctx, run, {
-        missionID, configuration: request.configuration!, author, current: authority.current, signal,
-      })
+    if (!replay && (!before?.pending || before.configuration.coordinatorSessionID !== request.configuration!.coordinatorSessionID)) {
+      const selected = yield* prevalidate(author)
+      if (typeof selected !== "function") return selected
+      configurationCurrent = selected
+    }
   }
   if (action === "create") {
     if (!requiresMissionCalendar(request.configuration!.launch)) throw new Error("Use immediate Mission creation")
     const creation = request.creation ?? { requestID, digest: missionSchedulePayloadDigest(request) }
-    const adoption = authority.before ? current : yield* prevalidateAgentScheduledCoordinatorCreation(ctx, run, {
-      missionID, configuration: request.configuration!, author: request.creation?.author, current, signal,
-    })
+    const adoption = authority.before ? current : yield* prevalidate(request.creation?.author)
+    if (typeof adoption !== "function") return adoption
     let acknowledgement: "fresh" | "recovered" = "recovered"
     const created = yield* Effect.tryPromise(() => store.withExclusion(async locked => {
       const before = await locked.read(missionID)
@@ -65,8 +80,7 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   }
   let doc = yield* Effect.promise(() => store.read(missionID))
   if (!doc) throw new Error("Mission schedule unavailable")
-  const conflict = () => ({ document: null, pending: false, refusal: { missionID, requestID, expectedRevision, action,
-    payloadDigest: missionSchedulePayloadDigest(request), reason: "control-conflict" as const } })
+  const conflict = () => refusal("control-conflict")
   if ("deletedAt" in doc) {
     if (action !== "delete" || doc.requestID !== requestID || doc.expectedRevision !== expectedRevision
       || doc.deleteManagedSessions !== (request.deleteManagedSessions ?? false)) return conflict()

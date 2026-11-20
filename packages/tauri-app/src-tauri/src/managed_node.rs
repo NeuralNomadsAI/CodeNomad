@@ -18,6 +18,20 @@ pub fn resolve_bundled_node_binary() -> anyhow::Result<String> {
     ))
 }
 
+pub(crate) fn resolve_desktop_speech_worker() -> Option<PathBuf> {
+    candidate_resource_roots()
+        .into_iter()
+        .map(|root| {
+            root.join("server")
+                .join("desktop-speech")
+                .join("hex-worker.mjs")
+        })
+        .chain(cfg!(debug_assertions).then(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../desktop-speech/hex-worker.mjs")
+        }))
+        .find(|path| path.is_file())
+}
+
 fn binary_relative_path() -> &'static Path {
     if cfg!(target_os = "windows") {
         Path::new("node.exe")
@@ -26,7 +40,7 @@ fn binary_relative_path() -> &'static Path {
     }
 }
 
-fn candidate_resource_roots() -> Vec<PathBuf> {
+pub(crate) fn candidate_resource_roots() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Ok(exe) = std::env::current_exe() {

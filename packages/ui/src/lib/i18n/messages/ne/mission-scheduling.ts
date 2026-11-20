@@ -146,6 +146,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.shortcut.cron": "उन्नत (cron)",
   "missions.scheduling.condition.schedule-success": "अर्को समयतालिका सफल हुँदा",
   "missions.scheduling.condition.branch-commits": "स्थानीय शाखामा नयाँ कमिटहरू",
+  "missions.scheduling.condition.remote-branch-commits": "दूरस्थ शाखामा नयाँ कमिटहरू",
+  "missions.scheduling.repository.branch": "शाखा",
   "missions.scheduling.condition.mission-completed": "एकपटकको मिसन सफलतापूर्वक सकिँदा",
   "missions.scheduling.condition.conversation-message": "पछ्याइएको कुराकानीमा नयाँ सन्देश",
   "missions.scheduling.condition.files-changed": "तोकिएका फाइलहरू बदलिँदा",

@@ -121,14 +121,20 @@ pub(crate) fn bind_webview(webview: &Webview, binding: u64) {
     let host = state.1.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let closed_host = host.clone();
     let label = webview.label().to_string();
+    let closed_label = label.clone();
     webview.window().on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Destroyed) {
             if let Some(app) = closed_host.upgrade() {
-                remove_window(&app, &label, binding);
+                remove_window(&app, &closed_label, binding);
             }
         }
     });
-    crate::notification_badge_lifetime::bind(webview, host, binding);
+    #[cfg(any(windows, target_os = "linux"))]
+    crate::notification_badge_lifetime::bind(webview, move || {
+        if let Some(app) = host.upgrade() {
+            renderer_terminated(&app, &label, binding);
+        }
+    });
 }
 
 #[cfg(any(windows, target_os = "linux"))]

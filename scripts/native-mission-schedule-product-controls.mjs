@@ -108,8 +108,10 @@ async function pausedManual(fixture) {
     await fixture.save(`manual-${count}-settled-paused`, settled)
   }
   assert.equal(new Set(passages.map(passage => passage.passageID)).size, 2)
-  assert.equal(new Set(passages.map(passage => passage.rootID)).size, 2)
-  fixture.result.pausedManual = { actualManualPassages: passages, launchedCount: 2, settledCount: 2, desiredStateRetained: "paused", maxLaunches: 3, automaticResume: false }
+  const existing = fixture.result.existingCoordinators?.find(item => item.missionID === id)
+  if (existing) assert.deepEqual(passages.map(passage => passage.rootID), [existing.id, existing.id])
+  else assert.equal(new Set(passages.map(passage => passage.rootID)).size, 2)
+  fixture.result.pausedManual = { actualManualPassages: passages, launchedCount: 2, settledCount: 2, desiredStateRetained: "paused", automaticResume: false }
   await fixture.control(id, "stop", { allowPending: true })
   await waitCleanup(fixture, id, "stopped", "paused-manual-final-stop-cleanup")
 }

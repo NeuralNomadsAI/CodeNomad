@@ -32,4 +32,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "Appairage HTTPS direct",
   "remoteControl.direct.origin": "Adresse HTTPS",
   "remoteControl.direct.newLink": "Créer un lien d’appairage HTTPS",
+  "remoteControl.devices.revocationPending": "Révocation en attente",
 } as const

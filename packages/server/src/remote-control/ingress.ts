@@ -5,7 +5,7 @@ import { guardProxyListener } from "../server/proxy-destination"
 
 type Router = (request: http.IncomingMessage, response: http.ServerResponse) => void
 /** Takes an admitted WebSocket upgrade; false when nothing handled it. */
-type UpgradeRouter = (request: http.IncomingMessage, socket: Socket, head: Buffer) => boolean
+type UpgradeRouter = (request: http.IncomingMessage, socket: Socket, head: Buffer) => "preview" | "voice" | false
 
 // The local Fastify listener's timeouts, so long uploads and idle keep-alive
 // connections behave the same remotely (Node's defaults are 300 s and 5 s).
@@ -20,7 +20,7 @@ export class RemoteIngress {
   private server: http.Server | null = null
   private readonly sockets = new Set<Socket>()
   private readonly devices = new WeakMap<Socket, string>()
-  private readonly upgraded = new Set<Socket>()
+  private readonly previewSockets = new Set<Socket>()
 
   constructor(private readonly router: Router, private readonly upgrade: UpgradeRouter = () => false) {}
 
@@ -35,14 +35,15 @@ export class RemoteIngress {
       this.sockets.add(socket)
       socket.once("close", () => this.sockets.delete(socket))
     })
-    // Web previews are the only WebSocket endpoints of the remote surface.
     server.on("upgrade", (request, socket: Socket, head: Buffer) => {
-      if (this.upgrade(request, socket, head)) {
-        this.upgraded.add(socket)
-        socket.once("close", () => this.upgraded.delete(socket))
-        return
-      }
-      socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+      try {
+        const surface = this.upgrade(request, socket, head)
+        if (surface === "preview") {
+          this.previewSockets.add(socket)
+          socket.once("close", () => this.previewSockets.delete(socket))
+        }
+        if (!surface) socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+      } catch { socket.destroy() }
     })
     server.on("clientError", (_error, socket: Socket) => socket.destroy())
     await new Promise<void>((resolve, reject) => {
@@ -68,9 +69,9 @@ export class RemoteIngress {
     }
   }
 
-  /** Closes every upgraded (preview WebSocket) connection, for example when the host turns previews off. */
-  disconnectUpgrades(): void {
-    for (const socket of this.upgraded) socket.destroy()
+  /** The preview switch affects preview capabilities only. */
+  disconnectPreviews(): void {
+    for (const socket of this.previewSockets) socket.destroy()
   }
 
   async stop(): Promise<void> {

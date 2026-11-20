@@ -32,4 +32,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "Direkte HTTPS-Kopplung",
   "remoteControl.direct.origin": "HTTPS-Adresse",
   "remoteControl.direct.newLink": "HTTPS-Kopplungslink erstellen",
+  "remoteControl.devices.revocationPending": "Widerruf ausstehend",
 } as const

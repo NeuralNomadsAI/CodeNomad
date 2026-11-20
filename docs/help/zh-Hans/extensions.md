@@ -53,12 +53,18 @@
 | `images.conversation` | 打开或开始此项目的“图像”对话。 |
 | `opencode.designAgent` | 在此扩展启用期间，将 CodeNomad 的 Design 智能体及其图像技能添加到 OpenCode。 |
 | `panel.preferences` | 记住此面板自身的设置。 |
+| `panel.notes` | 为此项目的每个对话保存一条笔记，列出和删除笔记，并打开其对话。移除此扩展会删除这些笔记。 |
+| `repository.workItems.read` | 读取此项目的仓库名称及其在 GitHub、GitLab 或 Gitea/Forgejo 上的 issue 和 pull request(通过已登录的 gh、glab 或 tea,公开仓库可匿名读取),并在浏览器中打开。 |
+| `repository.worktrees.read`(需要 `repository.workItems.read`) | 查看哪些 issue 和 pull request 拥有 CodeNomad 创建的本地分支,以及是否有 worktree 使用该分支。 |
+| `repository.worktrees.write`(需要 `repository.worktrees.read`) | 请求为 issue 或 pull request 创建分支和 worktree(从仓库获取 pull request),并将当前显示的对话移到那里。CodeNomad 每次都会询问你。 |
 
 资源访问跟随当前挂载的宿主/会话，而非作者选择的会话。 切换会话、断开连接或撤销同意会使旧访问失效。
 
-拥有 `session.images.prompts` 的扩展可以读取您或智能体在“图像”对话中为图像编写的提示词，并且尽管有沙箱，仍可能将其转交他人，因此只应授予您愿意托付这些内容的作者。 由 `composer.prefill` 添加的文本会留在输入框中，直到您编辑它或选择**发送消息**；它绝不会以命令开头，绝不会以未完成的 `@` 提及结尾，并以纯文本引用图像路径。 在输入框中用 Ctrl+Z（macOS 上为 Cmd+Z）撤销不会移除它。 已保存的面板设置属于此 CodeNomad 配置，每个扩展最多 4 KiB；禁用扩展会保留它们。
+拥有 `session.images.prompts` 的扩展可以读取您或智能体在“图像”对话中为图像编写的提示词，并且尽管有沙箱，仍可能将其转交他人，因此只应授予您愿意托付这些内容的作者。 由 `composer.prefill` 添加的文本会留在输入框中，直到您编辑它或选择**发送消息**；它绝不会以命令开头，绝不会以未完成的 `@` 提及结尾，并以纯文本引用图像路径。 在输入框中用 Ctrl+Z（macOS 上为 Cmd+Z）撤销不会移除它。 已保存的面板设置属于此 CodeNomad 配置，每个扩展最多 4 KiB；禁用扩展会保留它们。通过 `panel.notes` 保存的笔记同样属于此配置文件，并按项目存放：同一仓库的工作树共享这些笔记，远程指向同一托管仓库的克隆也会共享。停用或替换扩展会保留笔记，移除扩展会删除笔记。与智能体记忆一样，笔记需要 Git 来识别其所属项目。
 
 这些条目来自项目文件夹的 `upstream` 远程仓库，否则来自 `origin`。CodeNomad 使用您已登录的 GitHub、GitLab 或 Gitea CLI（`gh`、`glab`、`tea`）读取它们，公开仓库可匿名读取，且不存储任何令牌；扩展只能看到仓库名称和条目。匿名读取仅适用于 github.com、gitlab.com、codeberg.org 和 gitea.com；自托管平台只能通过已登录该平台的 CLI 读取。打开条目时，CodeNomad 会在浏览器中打开该条目在同一平台上的页面，每秒最多一次；扩展无法打开其他地址。
+
+关联分支是 CodeNomad 为某个条目创建的分支:从当前提交创建的 `issue-N`,或位于从同一远程获取的 pull request 头部的 `pr-N`(包括 fork)。Git 将关联与分支一起保存,并在删除分支时一并删除;CodeNomad 未创建的同名分支永远不会被复用。扩展只能发出请求:CodeNomad 显示自己的对话框并注明该条目,然后在需要时创建分支和 worktree,并将当前显示的对话及其子代理对话移到那里。`pr-N` 分支没有 upstream;请用你常用的 Git 命令推送。
 
 作者代码在受限 iframe 中运行，而非可信应用渲染器。它无法获得原生/OpenCode 桥接、凭据访问、通用 RPC、表单、弹出窗口或下载；网络 API 和外部资源受限。扩展是界面附加组件，而非 [OpenCode 插件](integrations.md)。
 

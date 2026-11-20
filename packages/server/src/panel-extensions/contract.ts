@@ -1,15 +1,16 @@
 /** Public extension contract, independent of CodeNomad's internal Solid modules. */
 export const PANEL_EXTENSION_API_VERSION = 4
 export const PANEL_EXTENSION_LIMITS = { archiveBytes: 2 * 1024 * 1024, htmlBytes: 2 * 1024 * 1024, installed: 32, storageBytes: 16 * 1024 * 1024,
-  preferencesBytes: 4096 } as const
+  preferencesBytes: 4096, noteBytes: 32 * 1024, notes: 256, notesPage: 16 } as const
 
 /**
  * API 4's finite permission set: `session.context` plus a non-empty subset of
  * these, each one capability with fixed methods (dev-docs/PANEL_EXTENSIONS.md#api-4).
- * `session.images.prompts` requires `session.images.read`.
+ * `session.images.prompts` requires `session.images.read`; `repository.worktrees.read`
+ * requires `repository.workItems.read`, and `repository.worktrees.write` requires `repository.worktrees.read`.
  */
 export const PANEL_EXTENSION_API4_PERMISSIONS = ["session.images.read", "session.images.prompts", "composer.prefill", "images.conversation",
-  "opencode.designAgent", "panel.preferences"] as const
+  "opencode.designAgent", "panel.preferences", "panel.notes", "repository.workItems.read", "repository.worktrees.read", "repository.worktrees.write"] as const
 export type PanelExtensionApi4Permission = typeof PANEL_EXTENSION_API4_PERMISSIONS[number]
 
 export type PanelExtensionManifest = {
@@ -65,6 +66,22 @@ export interface PanelConversationStatus {
 export type PanelPrefillStatus = "added" | "busy" | "no-session" | "too-long" | "invalid"
 export type PanelPreferencesSetStatus = "saved" | "too-large" | "invalid" | "unavailable"
 
+/**
+ * API 4 `notes.list()` entry: a note of a session in the displayed project, newest first.
+ * `orphan` notes belong to a deleted session and show the title captured when the note was last saved.
+ */
+export interface PanelNote {
+  sessionID: string
+  title: string
+  text: string
+  revision: number
+  /** Last change, in ms. */
+  updated: number
+  orphan: boolean
+}
+
+export interface PanelNotesPage { notes: PanelNote[]; cursor: string | null }
+
 export type ForgeProvider = "github" | "gitlab" | "gitea"
 export type ForgeWorkItemKind = "issue" | "pullRequest"
 
@@ -92,6 +109,18 @@ export interface ForgeWorkItem {
 }
 
 export type ForgeUnavailableReason = "no_remote" | "unsupported_host" | "sign_in" | "rate_limited"
+
+/** API 4 `worktrees.list()` entry: a local branch the host created for an item of the project's repository. */
+export interface PanelWorkItemWorktree {
+  kind: ForgeWorkItemKind
+  number: number
+  branch: string
+  /** Checked out in one of the project's worktrees. */
+  worktree: boolean
+  /** That worktree holds the displayed conversation's family. */
+  current: boolean
+}
+
 
 export type ForgeWorkItemsResult =
   | { status: "ok"; repository: ForgeRepository; items: ForgeWorkItem[]; page: number; hasMore: boolean; total?: number }

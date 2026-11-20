@@ -32,4 +32,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "Прямое сопряжение по HTTPS",
   "remoteControl.direct.origin": "HTTPS-адрес",
   "remoteControl.direct.newLink": "Создать ссылку сопряжения HTTPS",
+  "remoteControl.devices.revocationPending": "Отзыв доступа ожидает сохранения",
 } as const

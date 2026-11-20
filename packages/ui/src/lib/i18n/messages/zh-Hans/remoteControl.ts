@@ -32,4 +32,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "HTTPS 直接配对",
   "remoteControl.direct.origin": "HTTPS 地址",
   "remoteControl.direct.newLink": "创建 HTTPS 配对链接",
+  "remoteControl.devices.revocationPending": "撤销待保存",
 } as const

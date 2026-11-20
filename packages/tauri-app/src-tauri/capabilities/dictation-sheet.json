@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/capabilities.json",
+  "identifier": "dictation-sheet",
+  "description": "Allow the local dictation sheet to capture and settle dictation.",
+  "local": false,
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*", "https://127.0.0.1:*", "https://localhost:*"]
+  },
+  "webviews": ["dictation-*"],
+  "permissions": ["allow-device-speech-request", "allow-settle-remote-dictation"]
+}

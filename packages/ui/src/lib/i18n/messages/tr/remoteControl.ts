@@ -32,4 +32,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "Doğrudan HTTPS eşleştirme",
   "remoteControl.direct.origin": "HTTPS adresi",
   "remoteControl.direct.newLink": "HTTPS eşleştirme bağlantısı oluştur",
+  "remoteControl.devices.revocationPending": "İptal beklemede",
 } as const

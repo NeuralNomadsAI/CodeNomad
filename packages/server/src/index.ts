@@ -31,6 +31,7 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { RemoteServerBrowseManager } from "./codenomad-servers/browse-manager"
+import { LiveVoiceGateway } from "./speech/live-voice-gateway"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { nativeServiceStarter } from "./workspaces/native-service-start"
 import { acceptsIpv4Loopback, resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
@@ -516,12 +517,14 @@ async function main() {
   let remoteControlPreviewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
   let remoteControlServesRemotePreview: (token: string) => boolean = () => false
   const allowedOrigins = parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS)
+  let remoteControlVoiceUpgrade: ReturnType<typeof createHttpServer>["remoteVoiceUpgrade"] | null = null
   const remoteControlManager = new RemoteControlManager({
     directHttpsOrigins: () => verifiedHttpsOrigins(serverMeta, allowedOrigins),
     registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
     lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
     router: () => remoteControlRouter,
     previewUpgrade: () => remoteControlPreviewUpgrade,
+    voiceUpgrade: () => remoteControlVoiceUpgrade,
     hasPreview: (token) => previewManager.get(token) !== undefined || remoteControlServesRemotePreview(token),
     tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
     disabledByAdministrator: options.remoteControlDisabled,
@@ -544,7 +547,7 @@ async function main() {
   const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
     eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
     void refreshDesignRequest()
-  })
+  }, id => eventBus.publish({ type: "panelExtensions.notesChanged", id }))
   // This backend's Design request, carried by each of its session-pruning leases.
   const refreshDesignRequest = designRequestRefresher(panelExtensions, pruningLifecycle)
   void refreshDesignRequest()
@@ -570,6 +573,7 @@ async function main() {
     serverMeta,
     instanceStore,
     speechService,
+    liveVoice: new LiveVoiceGateway(speechService),
     sidecarManager,
     previewManager,
     authManager,
@@ -633,6 +637,7 @@ async function main() {
   remoteControlRouter = (request, response) => routingServer.instance.routing(request, response)
   remoteControlPreviewUpgrade = routingServer.previewUpgrade
   remoteControlServesRemotePreview = routingServer.servesRemotePreview
+  remoteControlVoiceUpgrade = routingServer.remoteVoiceUpgrade
 
   const [httpStart, httpsStart, bridgeStart] = await Promise.all([
     httpServer.start(),

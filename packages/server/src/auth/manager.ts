@@ -176,10 +176,15 @@ export class AuthManager {
 
     const cookieHeader = Array.isArray(headers.cookie) ? headers.cookie.join("; ") : headers.cookie
     const cookies = parseCookies(cookieHeader)
+    if (!cookies) return null
     const sessionId = cookies[this.cookieName]
     const session = this.sessionManager.getSession(sessionId)
     if (!session) return null
     return { username: session.username, sessionId: session.id }
+  }
+
+  watchSessionRevocation(sessionId: string, close: () => void): () => void {
+    return this.authEnabled ? this.sessionManager.watch(sessionId, close) : () => {}
   }
 
   setSessionCookie(reply: FastifyReply, sessionId: string) {

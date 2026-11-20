@@ -67,7 +67,7 @@ function parseGitRemoteUrl(url: string, forIdentity: boolean): ForgeRemote | und
  * The repository to contribute to: `upstream` when the checkout is a fork,
  * otherwise `origin`, otherwise the first remote with a forge URL.
  */
-export async function readForgeRemote(directory: string, signal?: AbortSignal): Promise<ForgeRemote | undefined> {
+export async function readForgeRemote(directory: string, signal?: AbortSignal): Promise<(ForgeRemote & { name: string }) | undefined> {
   const expires = performance.now() + 10_000
   const cleared = Object.fromEntries(Object.keys(process.env).filter(key => key.toUpperCase().startsWith("GIT_")).map(key => [key, undefined]))
   const read = async (args: string[]) => {
@@ -86,7 +86,7 @@ export async function readForgeRemote(directory: string, signal?: AbortSignal): 
   for (const name of ordered) {
     const url = await read(["remote", "get-url", name])
     const remote = parseRemoteUrl(url)
-    if (remote) return remote
+    if (remote) return { ...remote, name }
   }
   return undefined
 }

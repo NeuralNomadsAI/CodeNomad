@@ -8,11 +8,12 @@ With experimental multi-backend enabled, Preferences uses the selected project's
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
 
-Most choices apply immediately, including Mission preferences, which save each change as you make it. Speech, custom palette colors and Config Files keep an explicit **Save**. Hover or focus the **i** beside a setting's title for a short explanation. When it links to help, click, press Enter or tap to open the relevant section in your interface language, in the system browser or a separate browser tab. Tooltip-only icons show their explanation on tap. **Settings → Info** also holds the **Support CodeNomad** card: **Sponsor or contribute** opens the [Support CodeNomad](sponsor.md) page.
+Most choices apply immediately, including Mission preferences, which save each change as you make it. Voice API settings, custom palette colors and Config Files keep an explicit **Save**. Hover or focus the **i** beside a setting's title for a short explanation. When it links to help, click, press Enter or tap to open the relevant section in your interface language, in the system browser or a separate browser tab. Tooltip-only icons show their explanation on tap. **Settings → Info** also holds the **Support CodeNomad** card: **Sponsor or contribute** opens the [Support CodeNomad](sponsor.md) page.
 
 | State | What it controls |
 | --- | --- |
-| CodeNomad configuration | UI preferences, speech, SideCars and server settings for clients using that configuration. Preferences without a badge are not stored per device either; **Server setting** marks server-side configuration such as Speech, SideCars, Remote Control and Environment Variables. |
+| CodeNomad configuration | Shared UI preferences and **Server setting** controls, including Voice API settings, SideCars, Remote Control and Environment Variables. |
+| Voice engines | The [desktop dictation engine](voice.md#desktop-dictation) applies across projects on this device. The [conversation engine](voice.md#conversation) is selected for the desktop profile or the browser profile and connected server. |
 | Window/project-tab layout | Open panels, selected tabs, reader state and restorable drafts/layout. These are not OpenCode configuration. |
 | Global/Project OpenCode settings | Native plugin/configuration changes at their displayed scope. Project controls require an active project/Location. |
 | Desktop data profile | Native windows, restore state and browser storage, independently of the configuration file and shared OpenCode service. See [Desktop windows and data](desktop.md). |
@@ -92,6 +93,8 @@ Composer height follows the visible conversation, including the software keyboar
 
 For a project tab on another CodeNomad server, notifications include the server name. **View conversation** opens that exact project and conversation; detaching the server clears its notices. Images and Web search settings follow the project's server, including that server's global defaults.
 
+Compaction of technical Mission sessions is silent.
+
 1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar, or the title bar in the macOS desktop app) and **System** (an operating-system notification). Drag across a row or column of boxes to set several at once.
 2. Checking a **System** box asks for permission if needed. Under **System notifications**, **Request permission** asks again while permission is missing.
 3. Enable **Notify when the app is focused** to keep system notifications while this window is focused. Otherwise they appear whenever it is not, even if it stays open on screen.
@@ -117,4 +120,4 @@ The bell/history unread count, which only counts notifications routed to History
 | Hold long assistant replies | Stops automatic following when a streaming reply grows beyond the viewport. |
 | Environment Variables | Applied server-side before each prompt or session command; reads do not update already-running execution. See [OpenCode setup](opencode.md). |
 
-For keyboard configuration use [Keyboard shortcuts](shortcuts.md); for voice controls use [Voice input and playback](voice.md). Startup restore and desktop data profiles are covered in [Desktop windows and data](desktop.md).
+For keyboard configuration use [Keyboard shortcuts](shortcuts.md); **Voice** groups [Dictation, Playback and Conversation](voice.md). Startup restore and desktop data profiles are covered in [Desktop windows and data](desktop.md).

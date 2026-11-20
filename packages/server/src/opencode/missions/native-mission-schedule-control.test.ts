@@ -7,6 +7,27 @@ import { ownerFixture } from "./native-schedule-owner-test-fixture"
 import { nativeMissionScheduleControlExecution } from "./native-mission-schedule-authority"
 import { missionDocumentChanges } from "../../missions/mission-document-state"
 
+test("a refused coordinator selection returns the exact create or configure identity without writing", async t => {
+  const f = await ownerFixture(t), before = await f.read()
+  const author = { coordinatorSessionID: "ses_author" }
+  const configuration = { ...before.configuration, coordinatorSessionID: "ses_source",
+    watchedConversationIDs: ["ses_source"], coordinatorSelectionAuthor: author }
+  const saved = structuredClone([...f.values])
+  for (const action of ["create", "configure"] as const) {
+    const request = { missionID: action === "create" ? "new_schedule" : before.id,
+      requestID: `refused_${action}`, expectedRevision: action === "create" ? 0 : before.revision,
+      action, configuration, ...(action === "create" ? { creation: { author, requestID: "refused_create", digest: "a".repeat(64) } } : {}),
+      transport: { principal: { kind: "agent", author } } }
+    const result = await Effect.runPromise(controlNativeMissionSchedule(f.ctx, {
+      request, before: action === "create" ? undefined : before, store: f.store, current: f.current,
+    } as never, undefined, Effect.runPromise).pipe(Effect.scoped))
+    assert.deepEqual(result, { document: null, pending: false, refusal: { missionID: request.missionID,
+      requestID: request.requestID, expectedRevision: request.expectedRevision, action,
+      payloadDigest: missionSchedulePayloadDigest(request), reason: "coordinator-is-source" } })
+    assert.deepEqual([...f.values], saved)
+  }
+})
+
 test("exact completed calendar controls return read-only receipts for human and agent entries", async t => {
   for (const action of ["play", "pause", "stop", "resume", "configure"] as const) {
     const f = await ownerFixture(t)
