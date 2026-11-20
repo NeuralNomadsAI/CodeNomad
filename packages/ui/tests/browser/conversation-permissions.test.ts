@@ -22,11 +22,17 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
-const modeSelect = (page: Page) => page.getByRole("combobox", { name: "Permissions", exact: true })
 const statusTab = (page: Page) => page.getByRole("tab", { name: "Status", exact: true })
 const permissionSection = (page: Page) => page.locator('[data-status-section="permissions"]')
+const permissionTrigger = (page: Page) => permissionSection(page).locator("[data-status-section-trigger]")
+const modeGroup = (page: Page) => permissionSection(page).getByRole("group", { name: "Permissions", exact: true })
+const modeNames = { autonomous: "Autonomous", supervised: "Supervised" }
+const modeButton = (page: Page, mode: ConversationPermissionMode) => modeGroup(page).getByRole("button", { name: modeNames[mode], exact: true })
 const sectionIds = (page: Page) => page.locator("[data-status-section]").evaluateAll(rows => rows.map(row => row.getAttribute("data-status-section")))
-const expectValue = (select: Locator, mode: ConversationPermissionMode) => select.locator(`option[value="${mode}"]:checked`).waitFor({ state: "attached" })
+const expectMode = async (page: Page, mode: ConversationPermissionMode) => {
+  await modeGroup(page).getByRole("button", { name: modeNames[mode], exact: true, pressed: true }).waitFor()
+  assert.equal(await modeGroup(page).getByRole("button", { pressed: true }).count(), 1)
+}
 const expectFocus = async (target: Locator) => target.page().waitForFunction(el => el === document.activeElement, await target.elementHandle())
 const permissionUpdate = (sessionID: string, instanceId = "status-fixture") => events.send({
   type: "instance.event", instanceId, event: { type: "session.permissions", data: { sessionID, permissions: [] } },
@@ -81,22 +87,45 @@ test("Status shows confirmed modes, follows another window and reconciles on rec
       await page.goto(url)
       await statusTab(page).click()
       await page.waitForFunction(() => (window as any).statusFixture?.streamOpens() > 0)
-      await expectValue(modeSelect(page), "autonomous")
+      await expectMode(page, "autonomous")
     }))
     const [first, other] = pages
-    const select = modeSelect(first)
     assert.deepEqual((await sectionIds(first)).slice(0, 3), ["tokens", "permissions", "provider-usage"])
-    assert.equal(await select.evaluate(element => element.tagName), "SELECT")
+    const autonomous = modeButton(first, "autonomous")
+    const supervised = modeButton(first, "supervised")
+    const [left, right, group] = await Promise.all([autonomous.boundingBox(), supervised.boundingBox(), modeGroup(first).boundingBox()])
+    assert.ok(left && right && group)
+    assert.equal(left.width, right.width)
+    assert.equal(left.y, right.y)
+    assert.equal(left.x + left.width, right.x)
+    assert.equal(left.width + right.width, group.width)
+    await autonomous.locator("svg.lucide-zap").waitFor()
+    await supervised.locator("svg.lucide-shield").waitFor()
+    const fill = (button: Locator) => button.evaluate(element => getComputedStyle(element).backgroundColor)
+    assert.notEqual(await fill(autonomous), await fill(supervised))
     const status = permissionSection(first).getByRole("status")
     await status.filter({ hasText: "Permissions: Autonomous" }).waitFor({ state: "attached" })
-    await select.selectOption("supervised")
-    assert.equal(await select.inputValue(), "autonomous")
+    assert.equal(await permissionTrigger(first).locator(".right-panel-section-summary").count(), 0)
+    await autonomous.focus()
+    await first.keyboard.press("Tab")
+    await expectFocus(supervised)
+    assert.equal(await supervised.evaluate(element => getComputedStyle(element).outlineStyle), "solid")
+    await first.keyboard.press("Space")
+    await expectMode(first, "autonomous")
     await status.filter({ hasText: "Updating permissions…" }).waitFor({ state: "attached" })
+    await expectFocus(supervised)
+    await first.keyboard.press("Enter")
+    assert.equal(attempts, 1, "activating the pending button again does not issue another write")
+    const otherTrigger = permissionTrigger(other)
+    await otherTrigger.click()
+    await modeGroup(other).waitFor({ state: "hidden" })
+    await otherTrigger.locator(".lucide-zap").waitFor()
+    await permissionSection(other).getByRole("button", { name: "Permissions Autonomous", exact: true }).waitFor()
     release()
-    await expectValue(select, "supervised")
-    await expectValue(modeSelect(other), "supervised")
+    await expectMode(first, "supervised")
+    await otherTrigger.locator(".lucide-shield").waitFor()
+    await permissionSection(other).getByRole("button", { name: "Permissions Supervised", exact: true }).waitFor()
     await status.filter({ hasText: "Permissions: Supervised" }).waitFor({ state: "attached" })
-    if (captures) await permissionSection(first).screenshot({ path: join(captures, "status-supervised.png") })
 
     const otherSection = permissionSection(other)
     const stale = otherSection.getByRole("status").filter({ hasText: "Mode not confirmed." })
@@ -104,28 +133,31 @@ test("Status shows confirmed modes, follows another window and reconciles on rec
     failOtherReads = true
     mode = "autonomous"
     permissionUpdate("ses_status")
-    await expectValue(select, "autonomous")
+    await expectMode(first, "autonomous")
+    await otherTrigger.getByText("Mode not confirmed.").waitFor()
+    await otherTrigger.locator(".lucide-shield").waitFor()
+    await otherTrigger.click()
     await stale.waitFor()
-    assert.equal(await modeSelect(other).inputValue(), "supervised", "a failed refresh retains the last known mode")
-    assert.equal(await modeSelect(other).getAttribute("aria-disabled"), "true")
+    await expectMode(other, "supervised")
+    assert.equal(await modeGroup(other).getAttribute("aria-disabled"), "true")
     failOtherReads = false
     await reload.click()
-    await expectValue(modeSelect(other), "autonomous")
+    await expectMode(other, "autonomous")
     await stale.waitFor({ state: "hidden" })
 
-    await select.selectOption("supervised")
-    await expectValue(select, "supervised")
-    await expectValue(modeSelect(other), "supervised")
+    await supervised.click()
+    await expectMode(first, "supervised")
+    await expectMode(other, "supervised")
     reject = true
-    await select.selectOption("autonomous")
+    await autonomous.click()
     await first.getByText("Couldn’t change permissions. Try again.", { exact: true }).waitFor()
-    assert.equal(await select.inputValue(), "supervised")
+    await expectMode(first, "supervised")
     assert.equal(attempts, 3, "reconciliation never replays the write")
 
     await first.evaluate(() => (window as any).statusFixture.select("ses_other"))
-    await expectValue(select, "autonomous")
+    await expectMode(first, "autonomous")
     await first.evaluate(() => (window as any).statusFixture.select("ses_status"))
-    await expectValue(select, "supervised")
+    await expectMode(first, "supervised")
     mode = "autonomous"
     await other.route("**/permission-mode", async route => {
       if (route.request().method() !== "GET") return route.fallback()
@@ -134,11 +166,12 @@ test("Status shows confirmed modes, follows another window and reconciles on rec
     })
     await other.evaluate(() => (window as any).statusFixture.reconnect())
     await stale.waitFor()
-    assert.equal(await modeSelect(other).inputValue(), "supervised", "a disconnect removes confirmation before the reconnect read settles")
+    await expectMode(other, "supervised")
+    assert.equal(await modeGroup(other).getAttribute("aria-disabled"), "true", "a disconnect removes confirmation before the reconnect read settles")
     allowReconnectRead()
-    await expectValue(modeSelect(other), "autonomous")
+    await expectMode(other, "autonomous")
     await stale.waitFor({ state: "hidden" })
-    assert.equal(await select.inputValue(), "supervised", "no event was delivered to the original window")
+    assert.equal(await supervised.getAttribute("aria-pressed"), "true", "no event was delivered to the original window")
   } catch (error) {
     console.error(await pages[0].locator("body").innerText())
     throw error
@@ -173,7 +206,7 @@ test("Permissions help is named and Escape closes it before and after autofocus"
     }), { openedWithTriggerFocused: true, escaped: true, closed: true })
     await dialog.waitFor({ state: "hidden" })
     await expectFocus(info)
-    await expectValue(modeSelect(page), "autonomous")
+    await expectMode(page, "autonomous")
     await info.click()
     await dialog.waitFor()
     await statusTab(page).click()
@@ -185,7 +218,11 @@ test("Status restores the saved position and visibility of Permissions", async (
   const page = await openPage()
   try {
     await page.route("**/api/**", statusFixtureResponse)
-    await page.route("**/permission-mode", route => route.fulfill({ json: { mode: "autonomous" } }))
+    let reads = 0
+    await page.route("**/permission-mode", route => {
+      reads++
+      return route.fulfill({ json: { mode: "autonomous" } })
+    })
     await events.route(page)
     await page.addInitScript(() => {
       const key = "opencode-session-right-panel-customization-v1"
@@ -198,18 +235,42 @@ test("Status restores the saved position and visibility of Permissions", async (
     await page.getByRole("button", { name: "Customize right panel" }).click()
     const choice = page.getByRole("checkbox", { name: "Permissions", exact: true })
     assert.equal(await choice.isChecked(), false)
+    assert.equal(reads, 0, "a hidden Permissions section has no read demand")
     await choice.check()
     await page.keyboard.press("Escape")
-    await expectValue(modeSelect(page), "autonomous")
+    await expectMode(page, "autonomous")
     assert.deepEqual((await sectionIds(page)).slice(0, 3), ["provider-usage", "permissions", "tokens"])
     await page.reload()
     await statusTab(page).click()
-    await expectValue(modeSelect(page), "autonomous")
+    await expectMode(page, "autonomous")
     assert.deepEqual((await sectionIds(page)).slice(0, 3), ["provider-usage", "permissions", "tokens"])
   } catch (error) {
     console.error(await page.locator("body").innerText())
     throw error
   } finally { await page.close() }
+})
+
+if (captures) test("Capture the French Permissions section in light and dark themes", async () => {
+  for (const colorScheme of ["dark", "light"] as const) {
+    const page = await openPage({ locale: "fr-FR", colorScheme })
+    try {
+      await page.route("**/api/**", route => new URL(route.request().url()).pathname === "/api/storage/config/ui"
+        ? route.fulfill({ json: { settings: { locale: "fr" }, theme: colorScheme } })
+        : statusFixtureResponse(route))
+      await page.route("**/permission-mode", route => route.fulfill({ json: { mode: "supervised" } }))
+      await events.route(page)
+      await page.goto(url)
+      await page.getByRole("tab", { name: "Statut", exact: true }).click()
+      const section = permissionSection(page)
+      await section.getByRole("button", { name: "Supervisé", exact: true, pressed: true }).waitFor()
+      await page.locator(`html[data-theme="${colorScheme}"]`).waitFor({ state: "attached" })
+      await section.screenshot({ path: join(captures, `permissions-fr-${colorScheme}-deplie.png`) })
+      await permissionTrigger(page).click()
+      await section.getByRole("button", { name: "Permissions Supervisé", exact: true }).waitFor()
+      await page.mouse.move(500, 10)
+      await section.screenshot({ path: join(captures, `permissions-fr-${colorScheme}-replie.png`) })
+    } finally { await page.close() }
+  }
 })
 
 test("General saves the new-conversation mode immediately before Queue sent prompts", async () => {

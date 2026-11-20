@@ -84,13 +84,15 @@ ordered native `permissions` array (`action`, `resource`, `effect`) regardless
 of client, including the TUI on the same service and session. CodeNomad replies
 only to explicit decisions; stored automatic receipts remain readable.
 
-**Status → Permissions** reads while the selected section is shown. It shares
-the secondary read budget, coalesces invalidations during a read, and preserves
-the last confirmed value during a write. A failed read or disconnect marks that
-value unconfirmed; Reload permissions reads the mode again before editing is
-available. A write settles with an authoritative refresh and is never replayed
-after failure. Status customization normalizes saved section IDs before
-applying order and visibility.
+**Status → Permissions** reads while the selected section is shown, including
+when folded. The Autonomous and Supervised buttons and the folded header icon
+share one conversation snapshot. Reads use the secondary budget and coalesce
+invalidations. A write preserves the last confirmed value until confirmation,
+settles with an authoritative refresh and is never replayed after failure.
+A failed read or disconnect marks the last value unconfirmed in either layout.
+Reload permissions in the expanded section reads it again before editing is
+available. Status customization normalizes saved section IDs before applying
+order and visibility.
 
 Autonomous contributes no rules. Supervised preserves the original session array
 and appends `ask edit *` and `ask shell *`, then projects the effective global and
@@ -153,8 +155,9 @@ exact removal, inherited blocks, concurrent changes and private state.
 `node scripts/test-session-permission-mode-native.mjs <absolute-opencode-executable>`
 exercises the route and proxy, native child and fork copies, and native config
 events against a private OpenCode process.
-`tests/browser/conversation-permissions.test.ts` exercises the native Status
-selector, a second window, reconnect, saved customization and General settings.
+`tests/browser/conversation-permissions.test.ts` exercises the Status buttons
+and folded summary, a second window, reconnect, saved customization and General
+settings.
 `tests/browser/permission-receipts.test.ts` covers reload, hidden tools, empty-page
 pagination, SSE refresh, stale reads and long receipts in light/dark mobile layouts.
 `node scripts/test-permission-receipts-native.mjs` runs isolated native recovery

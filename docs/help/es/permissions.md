@@ -57,7 +57,7 @@ Los comprobantes son anotaciones de solo lectura de CodeNomad, no mensajes nativ
 
 ## Modo de permisos de la conversación {#conversation-mode}
 
-Selecciona una conversación y abre **Estado → Permisos**.
+Selecciona una conversación, abre **Estado → Permisos** y haz clic en un modo. Al plegar la sección, un rayo (Autónomo) o un escudo (Supervisado) muestra el último modo conocido.
 
 - **Autónomo** — Aplica las reglas de permisos de OpenCode.
 - **Supervisado** — Pide confirmación antes de que el agente modifique archivos o ejecute comandos de shell. Para esas acciones, las prohibiciones globales, del proyecto y de la conversación siguen vigentes, y las reglas que las permiten pasan a requerir confirmación. Las aprobaciones de **Permitir siempre** guardadas por OpenCode siguen vigentes para las solicitudes que coincidan.

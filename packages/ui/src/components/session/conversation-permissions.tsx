@@ -1,4 +1,6 @@
 import { createSignal, createUniqueId, onCleanup, onMount, Show } from "solid-js"
+import { Dynamic } from "solid-js/web"
+import { Shield, Zap } from "lucide-solid"
 import type { ConversationPermissionMode, ConversationPermissionModeResponse } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
@@ -6,6 +8,7 @@ import { serverEvents } from "../../lib/server-events"
 import { InfoPopoverButton } from "../info-popover-button"
 
 const modes = ["autonomous", "supervised"] as const
+const modeIcons = { autonomous: Zap, supervised: Shield }
 
 function confirmedMode(response: ConversationPermissionModeResponse): ConversationPermissionMode {
   if (response?.mode === "autonomous" || response?.mode === "supervised") return response.mode
@@ -21,11 +24,8 @@ export function ConversationPermissionsInfo() {
   </InfoPopoverButton>
 }
 
-/** Mounted only while the captured conversation's expanded section is shown. */
-export function ConversationPermissions(props: { instanceId: string; sessionId: string }) {
-  const { t } = useI18n()
-  const { instanceId, sessionId } = props
-  const statusID = createUniqueId()
+/** Shared by the header and body while the selected conversation's section is shown. */
+export function createConversationPermissionsState(instanceId: string, sessionId: string) {
   const [mode, setMode] = createSignal<ConversationPermissionMode>()
   const [writing, setWriting] = createSignal(false)
   const [readFailed, setReadFailed] = createSignal(false)
@@ -102,11 +102,9 @@ export function ConversationPermissions(props: { instanceId: string; sessionId: 
     cancelRead()
   })
 
-  async function change(select: HTMLSelectElement) {
-    const next = select.value
+  async function change(next: ConversationPermissionMode) {
     const previous = mode()
-    select.value = previous ?? ""
-    if (!previous || writing() || readFailed() || next === previous || (next !== "autonomous" && next !== "supervised")) return
+    if (!previous || writing() || readFailed() || next === previous) return
     cancelRead()
     setWriting(true)
     setWriteFailed(false)
@@ -124,13 +122,42 @@ export function ConversationPermissions(props: { instanceId: string; sessionId: 
     }
   }
 
+  return { mode, writing, readFailed, writeFailed, refresh, change }
+}
+
+type PermissionState = ReturnType<typeof createConversationPermissionsState>
+
+export function ConversationPermissionsSummary(props: { state: PermissionState }) {
+  const { t } = useI18n()
+  return <>
+    <Show when={props.state.mode()}>
+      {mode => (
+        <span role="img" class="inline-flex align-middle" aria-label={t(`permissions.mode.${mode()}`)}>
+          <Dynamic component={modeIcons[mode()]} size={14} aria-hidden="true" />
+        </span>
+      )}
+    </Show>
+    <Show when={props.state.readFailed()}><span class="ms-1 text-xs">{t("permissions.unconfirmed")}</span></Show>
+  </>
+}
+
+export function ConversationPermissions(props: { state: PermissionState }) {
+  const { t } = useI18n()
+  const { mode, writing, readFailed, writeFailed, refresh, change } = props.state
+  const statusID = createUniqueId()
   return <div class="flex flex-col items-start gap-1">
     <Show when={mode()}>
-      <select class="selector-trigger w-full min-w-0" aria-label={t("permissions.title")} aria-disabled={writing() || readFailed()}
-        aria-describedby={readFailed() ? statusID : undefined}
-        value={mode()} onChange={event => void change(event.currentTarget)}>
-        {modes.map(value => <option value={value}>{t(`permissions.mode.${value}`)}</option>)}
-      </select>
+      <div role="group" aria-label={t("permissions.title")} aria-disabled={writing() || readFailed()}
+        aria-describedby={readFailed() ? statusID : undefined} class="grid w-full grid-cols-2 bg-[var(--surface-control)]">
+        {modes.map(value => {
+          const Icon = modeIcons[value]
+          return <button type="button" class="window-action icon-toggle min-w-0 min-h-[var(--control-height)] last:border-s-0" aria-pressed={mode() === value}
+            onClick={() => void change(value)}>
+            <Icon size={14} class="shrink-0" aria-hidden="true" />
+            <span class="truncate">{t(`permissions.mode.${value}`)}</span>
+          </button>
+        })}
+      </div>
     </Show>
     <div id={statusID} role="status" class={readFailed() ? "text-xs" : "sr-only"}>{readFailed() ? t("permissions.unconfirmed")
       : writing() ? t("permissions.applying")

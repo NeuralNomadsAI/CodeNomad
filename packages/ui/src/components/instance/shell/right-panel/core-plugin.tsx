@@ -14,6 +14,7 @@ interface CoreStatusSectionRenderers {
   renderTokens: () => JSX.Element
   renderTokensSummary?: () => JSX.Element
   renderPermissions: () => JSX.Element
+  renderPermissionsSummary: () => JSX.Element
   renderPermissionsInfo: () => JSX.Element
   renderProviderUsage: () => JSX.Element
   renderBackgroundProcesses: () => JSX.Element
@@ -64,6 +65,7 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
       const render = sectionRenderers[section.id]
       if (!render) throw new Error(`Missing core right panel section renderer: ${section.id}`)
       return { ...section, render, renderStatus: section.id === "tokens" ? renderers.renderTokensSummary : undefined,
+        renderSummary: section.id === CONVERSATION_PERMISSIONS_SECTION_ID ? renderers.renderPermissionsSummary : undefined,
         renderInfo: section.id === CONVERSATION_PERMISSIONS_SECTION_ID
           ? renderers.renderPermissionsInfo
           : () => <SettingsInfoTip text={tGlobal(section.tooltipKey)} help={section.help} /> }
