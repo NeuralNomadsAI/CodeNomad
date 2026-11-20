@@ -519,7 +519,8 @@ test("relay HTTP preserves query, method and raw POST while isolating private he
     assert.equal(result.headers["x-content-type-options"], "nosniff")
     const forwarded = f.remote.state.requests.at(-1)!
     assert.match(forwarded.headers.cookie!, /^codenomad_session=/)
-    for (const name of ["origin", "referer", "sec-fetch-site", "authorization", "x-forwarded-for"]) assert.equal(forwarded.headers[name], undefined, name)
+    assert.equal(forwarded.headers.origin, method === "POST" ? f.remote.origin : undefined)
+    for (const name of ["referer", "sec-fetch-site", "authorization", "x-forwarded-for"]) assert.equal(forwarded.headers[name], undefined, name)
     assert.equal(forwarded.headers["if-none-match"], "previous")
     assert.equal(forwarded.headers["accept-language"], "fr")
   }

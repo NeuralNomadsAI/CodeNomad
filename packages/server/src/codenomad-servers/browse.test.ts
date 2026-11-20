@@ -94,7 +94,8 @@ test("saved direct authentication, sanitized folders and recents, one reauthenti
   assert.equal((await f.call("browse")).statusCode, 200)
   assert.equal(f.remote.state.logins, 3)
   assert.notEqual(fs.readFileSync(path.join(f.dir, "remote-server-credentials.json"), "utf8"), beforeExpiry, "rotated session persists after expired-session reauthentication")
-  assert(f.remote.state.requests.every(request => request.headers.origin === undefined), "never send Origin upstream")
+  assert(f.remote.state.requests.every(request =>
+    request.headers.origin === (request.path === "/api/auth/login" ? f.remote.origin : undefined)), "only login sends the saved origin")
   assert(f.remote.state.requests.every(request => ["/api/auth/login", "/api/auth/status", "/api/filesystem", "/api/storage/state/ui"].includes(request.path.split("?")[0]!)))
 })
 

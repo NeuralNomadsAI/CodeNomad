@@ -150,7 +150,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     if (host === "web") await page.route("**/api/meta", route => {
       if (new URL(route.request().url()).pathname !== "/api/meta") return route.continue()
       return route.fulfill({ json: { apiContract: CODENOMAD_API_CONTRACT, serverId: "local",
-        localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false } })
+        localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: true } })
     })
     await beforeNavigation?.(page)
     await page.goto(`${origin}/fixture${native ? "?preferences" : ""}`)
@@ -651,6 +651,35 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       assert.equal(await inline.getByLabel("Password", { exact: true }).count(), 0)
       assert.equal((await page.locator("body").innerText()).includes("remote-password"), false)
     } finally { a.state.overrides.delete("/api/filesystem"); await page.close() }
+  })
+  await t.test("a remote browser can sign in to the second saved server and open a project", async () => {
+    const logins = b.state.logins
+    const status = b.state.handlers.get("/api/auth/status")
+    b.state.handlers.set("/api/auth/status", (request, response) => {
+      const cookie = request.headers.cookie?.match(/(?:^|; )codenomad_session=([^;]+)/)?.[1]
+      response.writeHead(200, { "content-type": "application/json" })
+      response.end(JSON.stringify({ authenticated: !!cookie && b.state.sessions.has(cookie) }))
+    })
+    const page = await prepare("web")
+    try {
+      await page.getByRole("tab", { name: "Browse", exact: true }).click()
+      await page.getByRole("button", { name: "Open a project on Beta" }).click()
+      const inline = page.locator(".browse-menu")
+      const password = inline.getByLabel("Password", { exact: true })
+      await password.fill("remote-password")
+      const connected = page.waitForResponse(response => new URL(response.url()).pathname === "/api/remote-servers/b/connect")
+      await password.press("Enter")
+      assert.equal((await connected).status(), 200)
+      await inline.getByRole("button", { name: "app", exact: true }).click()
+      await inline.getByRole("button", { name: "Open", exact: true }).click()
+      await page.getByRole("tab", { name: /Beta/ }).waitFor()
+      assert.equal(b.state.logins, logins + 1)
+      assert.equal(b.state.requests.findLast(request => request.path === "/api/auth/login")?.headers.origin, b.origin)
+    } finally {
+      if (status) b.state.handlers.set("/api/auth/status", status)
+      else b.state.handlers.delete("/api/auth/status")
+      await page.close()
+    }
   })
   await t.test("flag revocation cancels browsing without affecting a local tab", async () => {
     const page = await prepare()
