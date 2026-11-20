@@ -116,7 +116,7 @@ async function encodeAttachments(attachments: RestorableAttachment[], addPartiti
 async function encodeSessionGraph(session: RestorableSessionState | null) {
   const generated: Record<string, string> = Object.create(null)
   const addPartition = async (value: unknown) => {
-    const partition = await encodePartition(value)
+    const partition = await encodePartition(value, MAX_PARTITION_BYTES)
     if (partition.bytes > MAX_PARTITION_BYTES) {
       throw new Error("Client state partition exceeds the native size limit")
     }

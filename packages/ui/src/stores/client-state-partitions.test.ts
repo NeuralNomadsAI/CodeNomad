@@ -171,6 +171,13 @@ it("keeps one cached copy of a partition encoded concurrently", async (t) => {
   assert.equal(digest.mock.callCount(), 0)
 })
 
+it("rejects an oversized partition without hashing or caching it", async (t) => {
+  const value = { format: 2, draft: "y".repeat(64) }
+  const digest = t.mock.method(crypto.subtle, "digest")
+  for (let attempt = 0; attempt < 2; attempt++) assert.equal((await encodePartition(value, 16)).key, "")
+  assert.equal(digest.mock.callCount(), 0)
+})
+
 it("uses the native graph cap without truncating the encoded key list", async () => {
   const encoded = await encodeClientSnapshotV2(sidecarSnapshot)
   assert.equal(canCommitClientSnapshotV2({ ...encoded, partitionKeys: Array(4096).fill("key") }), true)

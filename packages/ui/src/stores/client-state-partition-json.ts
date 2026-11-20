@@ -23,13 +23,16 @@ export interface EncodedPartition { key: string; text: string; bytes: number }
 const MAX_CACHED_CHARACTERS = 32 * 1024 * 1024
 const cache = new Map<string, EncodedPartition>()
 let cachedCharacters = 0
-export async function encodePartition(value: unknown): Promise<EncodedPartition> {
+/** A partition over `maxBytes` comes back unhashed (empty key) and uncached, for the caller to reject. */
+export async function encodePartition(value: unknown, maxBytes = Infinity): Promise<EncodedPartition> {
   const plain = JSON.stringify(value)
   if (plain === undefined) throw new TypeError("Client state partition must be JSON-serializable")
   const hit = cache.get(plain)
   if (hit) { cache.delete(plain); cache.set(plain, hit); return hit }
   const text = canonicalJson(value)
-  const encoded = { key: await sha256(text), text, bytes: encoder.encode(text).byteLength }
+  const bytes = encoder.encode(text).byteLength
+  if (bytes > maxBytes) return { key: "", text, bytes }
+  const encoded = { key: await sha256(text), text, bytes }
   // A concurrent call for the same value may have stored it during the digest.
   const stored = cache.get(plain)
   if (stored) return stored
