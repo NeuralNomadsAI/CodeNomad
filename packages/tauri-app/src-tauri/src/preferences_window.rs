@@ -309,6 +309,23 @@ pub(crate) async fn open_preferences_window(
     )
 }
 
+pub(crate) fn open_speech(app: &AppHandle) -> Result<(), String> {
+    open_preferences(
+        app,
+        &app.state::<AppState>(),
+        &app.state::<PreferencesWindow>(),
+        PreferencesRequest {
+            section: "speech".into(),
+            scroll_top: None,
+            instance_id: None,
+            workspace_path: None,
+            location: None,
+        },
+        false,
+        None,
+    )
+}
+
 fn open_preferences(
     app: &AppHandle,
     app_state: &AppState,
@@ -387,6 +404,9 @@ fn open_preferences(
         .build()
         .map_err(|error| error.to_string())?;
     crate::menu_bar::hide(&preferences_window.as_ref().window());
+    crate::remote_dictation::bind_termination(preferences_window.as_ref(), None);
+    #[cfg(target_os = "linux")]
+    crate::device_speech_ipc::bind_microphone(&preferences_window, false);
 
     if let Err(error) =
         crate::client_state::setup_local_window(app, &preferences_window, LABEL, true, true)

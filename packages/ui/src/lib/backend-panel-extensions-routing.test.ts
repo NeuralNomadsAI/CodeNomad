@@ -61,7 +61,7 @@ async function bridges(t: TestContext, instanceId: string) {
     const authority = { instanceId, id: entry.manifest.id, digest: entry.digest, send: (value: unknown) => answers.push(value) }
     assets = useAssetsChannel({ ...authority, sessionId: () => "session" })
     work = useWorkItemsChannel({ ...authority, captureOperation: captureBackendOperation })
-    api4 = useApi4Channel({ ...authority, permissions: ["panel.preferences"], sessionId: "session",
+    api4 = useApi4Channel({ ...authority, name: "Panel", permissions: ["panel.preferences"], sessionId: "session",
       host: { activeSessionId: () => "session", promptInputApi: () => null, isPhoneLayout: () => false, closePanel() {} } })
   })
   await Promise.all([
@@ -120,6 +120,8 @@ test("real panel inventory, manager and API2/3/4 bridges isolate two backends an
     assert.equal(answers.length, 3)
     assert.equal(answers.some(value => value.error), false)
     assert.deepEqual(answers.find(value => value.id === 3).result, { owner: `${owner.backend.id.toLowerCase()}.invalid` })
+    await panelExtensionsApi4.notes({ instanceId: id, id: entry.manifest.id, digest: entry.digest },
+      "notesGet", { sessionID: "session" }, new AbortController().signal)
     assert.deepEqual(await panelExtensionsApi.panel(id, entry.manifest.id, entry.digest, new AbortController().signal), { html: "<p>local srcdoc</p>" })
     for (const call of owner.calls) {
       assert.ok(call.url.startsWith(`https://${owner.backend.id.toLowerCase()}.invalid/`))
@@ -127,6 +129,7 @@ test("real panel inventory, manager and API2/3/4 bridges isolate two backends an
       if (call.body && String(call.body).includes("instanceId")) assert.equal(JSON.parse(String(call.body)).instanceId, "w/1")
     }
     assert.ok(owner.calls.some(call => call.url.includes("instanceId=w%2F1")))
+    assert.ok(owner.calls.some(call => call.url.endsWith("/notesGet") && JSON.parse(String(call.body)).sessionID === "session"))
     assert.ok(owner.calls.some(call => call.url.endsWith("/catalog/install")))
     assert.ok(owner.calls.some(call => call.method === "DELETE"))
     assert.ok(owner.calls.some(call => call.body && JSON.parse(String(call.body)).archiveBase64 === "ZIP"))

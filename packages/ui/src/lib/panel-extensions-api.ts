@@ -9,6 +9,7 @@ import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
+import type { WorkItemBranch, WorkItemBranchLookup, WorkItemBranchResult } from "../../../server/src/forge/work-item-branches"
 
 /** The panel extension routes of one backend. */
 export function createPanelExtensionsApi(http: Pick<BackendHttp, "url" | "fetch">, operation?: ReturnType<typeof captureBackendOperation>) {
@@ -48,6 +49,14 @@ export function createPanelExtensionsApi(http: Pick<BackendHttp, "url" | "fetch"
       api4<{ status: "ok"; value: Record<string, unknown> } | { status: "unavailable" }>(id, "preferencesGet", authority, signal),
     preferencesSet: ({ id, ...authority }: Authority, value: unknown, signal: AbortSignal) =>
       api4<{ status: PanelPreferencesSetStatus }>(id, "preferencesSet", { ...authority, value }, signal),
+    notes: <T>({ id, ...authority }: Authority, method: "notesGet" | "notesSet" | "notesList" | "notesDelete" | "notesOpen",
+      input: Record<string, unknown>, signal: AbortSignal) => api4<T>(id, method, { ...authority, ...input }, signal),
+    workItemBranches: ({ id, ...authority }: Authority, signal: AbortSignal) =>
+      api4<{ status: "ok"; branches: WorkItemBranch[] } | { status: "unavailable" }>(id, "workItemBranches", authority, signal),
+    workItemBranchLookup: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, signal: AbortSignal) =>
+      api4<WorkItemBranchLookup>(id, "workItemBranchLookup", { ...authority, kind, number }, signal),
+    workItemBranch: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, repository: string, fromSlug: string, signal: AbortSignal) =>
+      api4<WorkItemBranchResult>(id, "workItemBranch", { ...authority, kind, number, repository, fromSlug }, signal),
   }
   const panelExtensionsApi = {
     assets: (instanceId: string, id: string, digest: string, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>

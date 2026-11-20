@@ -48,6 +48,7 @@ export class EventBus extends EventEmitter {
     this.on("yolo.stateChanged", handler)
     this.on("yolo.autoAccepted", handler)
     this.on("permission.receiptsChanged", handler)
+    this.on("panelExtensions.notesChanged", handler)
     for (const status of this.instanceStatuses.values()) listener(status)
     return () => {
       this.off("workspace.created", handler)
@@ -68,6 +69,7 @@ export class EventBus extends EventEmitter {
       this.off("yolo.stateChanged", handler)
       this.off("yolo.autoAccepted", handler)
       this.off("permission.receiptsChanged", handler)
+      this.off("panelExtensions.notesChanged", handler)
     }
   }
 }

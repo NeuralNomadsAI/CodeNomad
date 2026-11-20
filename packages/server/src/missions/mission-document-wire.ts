@@ -4,6 +4,8 @@ const text = { type: "string" } as const
 const calendar = { type: "object", properties: { expression: text, zone: text }, required: ["expression", "zone"], additionalProperties: false } as const
 const cron = { ...calendar, properties: { ...calendar.properties, kind: { const: "cron" } }, required: ["kind", ...calendar.required] } as const
 const events = [
+  { type: "object", properties: { kind: { const: "remote-branch-commits" }, provider: { enum: ["github", "gitlab", "gitea"] },
+    host: text, repository: text, ref: text }, required: ["kind", "provider", "host", "repository", "ref"], additionalProperties: false },
   { type: "object", properties: { kind: { const: "repository-activity" }, provider: { enum: ["github", "gitlab", "gitea"] }, host: text,
     repository: text, event: { enum: ["pull-request-created", "pull-request-merged", "issue-created"] }, author: text },
     required: ["kind", "provider", "host", "repository", "event"], additionalProperties: false },

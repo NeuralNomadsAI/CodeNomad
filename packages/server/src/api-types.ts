@@ -285,12 +285,16 @@ export interface WorktreeListResponse {
 export interface WorktreeCreateRequest {
   slug: string
   fromSlug?: string
+  /** The existing branch's expected tip: refuse a missing or moved branch instead of creating one. */
+  revision?: string
   /** Optional branch name (defaults to slug). */
   branch?: string
 }
 
 export interface WorktreeSessionMoveRequest {
   worktreeSlug: string
+  /** The branch the target must still have checked out when the family moves. */
+  branch?: string
 }
 
 export interface WorktreeSessionMoveResponse {
@@ -758,6 +762,11 @@ export interface SpeechSegment {
   text: string
 }
 
+export type VoiceConversationEngine = "classic" | "gemini-live" | "openai-realtime"
+export type VoiceConversationProvider = "geminiLive" | "openaiRealtime"
+export type PublicVoiceConversationConfig = Record<VoiceConversationProvider, { hasApiKey: boolean; model?: string; voice?: string }>
+export type VoiceConversationCapabilities = Record<VoiceConversationProvider, { configured: boolean }>
+
 export interface SpeechCapabilitiesResponse {
   available: boolean
   configured: boolean
@@ -776,6 +785,9 @@ export interface SpeechCapabilitiesResponse {
   ttsConfigured?: boolean
   sttBaseUrl?: string
   ttsBaseUrl?: string
+  voiceConversation?: VoiceConversationCapabilities
+  desktopVoiceConversationEngine?: boolean
+  desktopLiveVoiceConsent?: Partial<Record<Exclude<VoiceConversationEngine, "classic">, number>>
 }
 
 export interface SpeechTranscriptionResponse {
@@ -869,6 +881,7 @@ export interface RemoteControlDevice {
   lastSeenAt: string
   /** Verified direct HTTPS origin the device paired on; absent for Remote Control tunnel devices. */
   origin?: string
+  revocationPending?: true
 }
 
 export interface RemoteControlStartResponse {
@@ -896,6 +909,7 @@ export type WorkspaceEventType =
   | "yolo.autoAccepted"
   | "permission.receiptsChanged"
   | "memory.changed"
+  | "panelExtensions.notesChanged"
 
 export interface PermissionReceipt {
   requestId: string
@@ -939,6 +953,8 @@ export type WorkspaceEventPayload =
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
   | { type: "permission.receiptsChanged"; instanceId: string; sessionId: string; messageId?: string }
+  /** A package's `panel.notes` changed in some project; frames re-read their own. */
+  | { type: "panelExtensions.notesChanged"; id: string }
 
 export interface NetworkAddress {
   ip: string

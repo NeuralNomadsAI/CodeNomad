@@ -236,7 +236,8 @@ export function getDirectoryOnlyWorktree(instanceId: string): WorktreeDescriptor
   return getWorktrees(instanceId).find(worktree => worktree.slug === "root" && worktree.directoryOnly)
 }
 
-async function createWorktree(instanceId: string, slug: string, fromSlug = "root"): Promise<{ slug: string; directory: string; branch?: string }> {
+/** `revision`: the existing branch's expected tip; the server refuses instead of creating the branch. */
+async function createWorktree(instanceId: string, slug: string, fromSlug = "root", revision?: string): Promise<{ slug: string; directory: string; branch?: string }> {
   const operation = captureWorktreeOperation(instanceId)
   operation.signal.throwIfAborted()
   if (!operation.current()) throw new Error("Worktree creation was superseded")
@@ -247,7 +248,7 @@ async function createWorktree(instanceId: string, slug: string, fromSlug = "root
   if (!trimmed) {
     throw new Error("Worktree name is required")
   }
-  return backendOf(instanceId).api.createWorktree(instanceId, { slug: trimmed, fromSlug })
+  return backendOf(instanceId).api.createWorktree(instanceId, { slug: trimmed, fromSlug, ...(revision ? { revision } : {}) })
 }
 
 async function deleteWorktree(
@@ -377,6 +378,12 @@ async function setWorktreeSlugForParentSession(
   slug: string,
   options: {
     currentSlug?: string
+    /** The branch the target must still have checked out when the family moves (checked by the server). */
+    branch?: string
+    /** Runs inside the move queue right before the move is sent; a rejection cancels it. */
+    admit?: () => Promise<void>
+    /** Already there only when every loaded family member is: a split family is moved whole. */
+    wholeFamily?: boolean
     moveFamily?: (instanceId: string, rootSessionId: string, worktreeSlug: string) => Promise<unknown>
     refreshSessions?: (instanceId: string) => Promise<void>
   } = {},
@@ -395,14 +402,18 @@ async function setWorktreeSlugForParentSession(
   // Do not turn that reconciliation into a family move and native move echoes.
   const currentDirectory = sessions().get(instanceId)?.get(rootSessionId)?.location.directory
   const targetDirectory = worktree.serviceDirectory ?? worktree.directory
-  if (getWorktreeForSession(instanceId, rootSessionId)?.slug === normalizedSlug
-    || (currentDirectory && normalizeDirectory(currentDirectory) === normalizeDirectory(targetDirectory))) return
+  const there = (sessionId: string) => getWorktreeForSession(instanceId, sessionId)?.slug === normalizedSlug
+  const family = [...(sessions().get(instanceId)?.values() ?? [])].filter(session => getParentSessionId(instanceId, session.id) === rootSessionId)
+  // A family with no loaded member is unknown, never already there.
+  if (options.wholeFamily
+    ? family.length > 0 && family.every(session => there(session.id))
+    : there(rootSessionId) || (currentDirectory && normalizeDirectory(currentDirectory) === normalizeDirectory(targetDirectory))) return
 
   const key = `${instanceId}:${rootSessionId}`
   const pending = familyMoveRequests.get(key)
   const previous = pending && worktreeTaskOwners.get(pending)?.() ? pending : undefined
   const moveFamily = options.moveFamily ?? ((id: string, sessionId: string, worktreeSlug: string) =>
-    backendOf(id).api.moveSessionFamily(id, sessionId, { worktreeSlug }))
+    backendOf(id).api.moveSessionFamily(id, sessionId, { worktreeSlug, ...(options.branch ? { branch: options.branch } : {}) }))
   const refreshSessions = options.refreshSessions ?? (async (id: string) => {
     const { fetchSessions } = await import("./session-api")
     if (operation.current()) await fetchSessions(id, { reset: true, strictStatus: true, signal: operation.signal })
@@ -416,6 +427,8 @@ async function setWorktreeSlugForParentSession(
     unreconciledFamilyMoves.set(key, recovery)
     let moveError: unknown
     try {
+      await options.admit?.()
+      if (!operation.current()) { recovery.settled = true; return }
       await moveFamily(instanceId, rootSessionId, normalizedSlug)
     } catch (error) {
       moveError = error
@@ -470,6 +483,7 @@ export {
   getDefaultWorktreeSlug,
   getParentSessionId,
   getWorktreeForDirectory,
+  getWorktreeForSession,
   getWorktreeSlugForParentSession,
   getWorktreeSlugForSession,
   setWorktreeSlugForParentSession,

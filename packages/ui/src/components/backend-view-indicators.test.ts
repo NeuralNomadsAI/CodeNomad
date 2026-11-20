@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import { generateUUID } from "../lib/client-identity"
 import ts from "typescript"
-import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { isMissionPickerSource } from "./mission-scheduling-data"
 import { createEffect, createMemo, createRoot, createSignal, createUniqueId, mapArray, on, onCleanup, untrack } from "solid-js"
 
 // Execute production AST, including the actual finally/cleanup branches. Imports
@@ -166,7 +166,7 @@ for (const outcome of ["success", "failure", "cancellation"] as const) {
   test(`editor source retained view: ${outcome}, hidden cancellation then active B`, async () => {
     const backend = attachment(), requests: ReturnType<typeof deferred>[] = []
     const [active, setActive] = createSignal(true)
-    const client = {}, scope = { ...solid, ...backend, isMissionGithubKind, getOpenCodeInstanceGeneration: () => 1,
+    const client = {}, scope = { ...solid, ...backend, isMissionPickerSource, getOpenCodeInstanceGeneration: () => 1,
       getRootClient: () => client, serverApi: { fetchMissionScheduleSourcePage: () => {} } }
     // Branch sources avoid loading unrelated native session/cursor adapters.
     Object.assign(scope.serverApi, { fetchLocalGitBranches: () => { const request = deferred(); requests.push(request); return request.promise } })

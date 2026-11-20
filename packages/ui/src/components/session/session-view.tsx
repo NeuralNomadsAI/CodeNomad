@@ -434,30 +434,41 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     attachments: Attachment[],
     delivery: PromptDelivery,
     restoredPayload?: SessionInboxUserPayload,
+    admitDelivery?: () => PromptDelivery,
   ) {
-    const operation = captureBackendOperation(props.instanceId)
+    const { instanceId, sessionId } = props
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instanceId === instanceId && props.sessionId === sessionId)
     if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
-    if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
-      await loadLatestMessageWindow(props.instanceId, props.sessionId)
+    const preparePin = () => {
+      const messageCount = visibleMessageCount()
+      const target = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
+      return { messageCount, target, intent: startSubmitBottomPinIntent(target, { createdMessageCount: messageCount }) }
     }
-    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
-    const messageCount = visibleMessageCount()
-    const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
-    const initialPinIntent = startSubmitBottomPinIntent(submittedExchangeTargetCount, { createdMessageCount: messageCount })
+    let pin = isLatestMessageWindow(instanceId, sessionId) ? preparePin() : undefined
     try {
-      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery, restoredPayload })
-      if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
+      await sendMessage(instanceId, sessionId, prompt, attachments, {
+        delivery: admitDelivery ?? delivery,
+        pendingDelivery: delivery,
+        admissionCurrent: operation.current,
+        restoredPayload,
+        prepareAdmission: pin ? undefined : async () => {
+          if (!isLatestMessageWindow(instanceId, sessionId)) await loadLatestMessageWindow(instanceId, sessionId, operation.signal)
+          if (operation.current()) pin = preparePin()
+        },
+      })
+      operation.signal.throwIfAborted()
+      if (!pin || !operation.current()) return
       const latestMessageCount = visibleMessageCount()
-      if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
+      if (latestMessageCount < pin.target && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
-      } else if (submitBottomPinIntent()?.token === initialPinIntent.token) {
-        startSubmitBottomPinIntent(Math.max(submittedExchangeTargetCount, latestMessageCount), {
-          createdMessageCount: messageCount,
+      } else if (submitBottomPinIntent()?.token === pin.intent.token) {
+        startSubmitBottomPinIntent(Math.max(pin.target, latestMessageCount), {
+          createdMessageCount: pin.messageCount,
           preserveObservedStreaming: true,
         })
       }
     } catch (error) {
-      if (operation.current()) setSubmitBottomPinIntent(null)
+      if (operation.current() && pin && submitBottomPinIntent()?.token === pin.intent.token) setSubmitBottomPinIntent(null)
       throw error
     }
   }

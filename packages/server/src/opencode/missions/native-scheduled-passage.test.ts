@@ -2,7 +2,7 @@ import { legacyLaunch } from "../../missions/legacy-launch-test-helper"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import assert from "node:assert/strict"
 import test from "node:test"
-import { Effect, Schema } from "effect"
+import { Context, Effect, Schema } from "effect"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "../../missions/mission-document-store"
@@ -17,7 +17,8 @@ import { documentPassageStartInput, documentWatchCheckpoint, documentWatchCheckp
 import { admitNativeScheduledPassage, readOriginalDocumentAdmission } from "./native-scheduled-passage-admission"
 import { nativeScheduledPassageBusiness, type NativeScheduledPassageContext } from "./native-scheduled-passage-business"
 import { observeNativeScheduledPassage } from "./native-scheduled-passage-settlement"
-import { documentManualPassageAllowed, documentPassageDispatchAllowed } from "./native-scheduled-passage-authority"
+import { acquireNativeScheduledPassageAuthority, documentManualPassageAllowed, documentPassageDispatchAllowed } from "./native-scheduled-passage-authority"
+import { withNativeSourceTransaction } from "./native-source-fence"
 import { prepareNativeDocumentSources } from "./native-scheduled-passage-sources"
 import { createNativeScheduledPassageBusinessPort, type NativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
 import type { MissionNativeService } from "./native-service-adapter"
@@ -161,11 +162,26 @@ async function fixture(existing = false, author?: string) {
     set now(value: number) { clock = value } }
 }
 
-test("agent coordinator prevalidation refuses its actual author and both conversation source kinds", async () => {
-  const f = await fixture(true, "ses_existing")
-  await assert.rejects(f.admit(), /coordinator-is-author/)
-  assert.equal((await f.read()).pending!.coordinatorBaseline, undefined)
-  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
+test("passage authority reads from the open document transaction", async () => {
+  const f = await fixture(true, "ses_existing"), expected = await f.read()
+  let stored = expected
+  const database = Context.Service<never, unknown>("@opencode/storage/Database")
+  const location = Context.Service<never, unknown>("@opencode/Location")
+  const transaction = Context.Service<never, boolean>("passage-test-transaction")
+  const client = { unsafe: () => ({ withoutTransform: Effect.gen(function* () {
+    assert.equal(yield* transaction, true)
+    return [{ value: JSON.stringify(stored) }]
+  }) }) }
+  const graph = Context.add(Context.make(database, { db: { $client: client } }), location, f.native.location)
+  const authority = await Effect.runPromise(Effect.provide(acquireNativeScheduledPassageAuthority(current), graph))
+  const read = () => withNativeSourceTransaction(Context.add(graph, transaction, true), () => authority(expected, "observe"))
+  assert.equal(read(), true)
+  stored = { ...stored, pending: null }
+  assert.throws(read, /Document passage authority changed/)
+})
+
+test("agent coordinator prevalidation refuses both conversation source kinds", async () => {
+  const f = await fixture(true, "ses_author")
   const config = (await f.read()).configuration, author = { coordinatorSessionID: "ses_author" }
   assert.throws(() => assertAgentScheduledCoordinatorSelection({ ...config, watchedConversationIDs: ["ses_existing"] }, author), /coordinator-is-source/)
   assert.throws(() => assertAgentScheduledCoordinatorSelection({ ...config,
@@ -190,10 +206,15 @@ test("agent adoption refuses root/family activity, inbox, durable claims, tools 
   }
 })
 
-test("a quiet agent-selected root admits once with its own adoption marker and preserves unrelated state", async () => {
-  const f = await fixture(true, "ses_author")
+test("an agent's own root waits until idle and reuses the same conversation on later passages", async () => {
+  const f = await fixture(true, "ses_existing")
+  await assert.rejects(f.admit(), /coordinator-busy/)
+  assert.equal((await f.read()).pending!.coordinatorBaseline, undefined)
+  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
   f.states.get("ses_existing")!.active = false
-  assert.equal((await f.admit()).kind, "admitted")
+  const first = await f.admit()
+  assert.equal(first.kind, "admitted")
+  if (first.kind === "admitted") assert.equal(first.coordinatorSessionID, "ses_existing")
   assert.equal(f.sessions.get("ses_existing")!.metadata!.unrelated, "keep")
   assert.equal((await f.admit()).kind, "recorded")
   assert.deepEqual(f.counts(), { sends: 1, creates: 0, environments: 1 })
@@ -205,7 +226,9 @@ test("a quiet agent-selected root admits once with its own adoption marker and p
   doc = await f.store.change(doc.id, doc.revision, current, next => changes.settle(next, next.pending!.id, "completed", at + 2000, false, settled!.proof))
   await f.store.change(doc.id, doc.revision, current, next => changes.reserve(next, { kind: "manual", requestID: "agent_next_passage" }, at + 3000, []))
   f.now = at + 4000
-  assert.equal((await f.admit()).kind, "admitted", "the exact archived marker authorizes quiet reuse by a later passage")
+  const second = await f.admit()
+  assert.equal(second.kind, "admitted", "the exact archived marker authorizes quiet reuse by a later passage")
+  if (second.kind === "admitted") assert.equal(second.coordinatorSessionID, "ses_existing")
   assert.deepEqual(f.counts(), { sends: 2, creates: 0, environments: 2 })
 })
 
@@ -322,6 +345,21 @@ test("explicit existing coordinator is adopted despite active work, preserves tr
   assert.equal((await passage.journal.snapshot()).missions[0].reports.length, 0, "previous results stay in the previous journal")
   assert.equal(f.counts().creates, 0)
   assert.equal(f.counts().sends, 2)
+})
+
+test("a quiet inherited descendant in another worktree does not block settlement; new work there still does", async () => {
+  const f = await fixture(true), first = (await f.read()).pending!
+  const worktree = "/project/.worktrees/earlier", old = f.states.get("ses_old_child")!
+  old.directory = worktree; f.sessions.get("ses_old_child")!.location = { directory: worktree }
+  assert.equal((await f.admit()).kind, "admitted")
+  f.states.get("ses_existing")!.active = false
+  await f.use(async input => {
+    await nativeScheduledPassageBusiness(input).control.report("ses_existing", { missionID: first.missionID, outcome: "completed",
+      summary: "Done", final: true, evidence: [], next: [] })
+  })
+  assert.equal((await f.use(observeNativeScheduledPassage))?.outcome, "completed")
+  old.terminal = { inputMessageID: "msg_later", messageID: "msg_later_idle", outcome: "succeeded" }
+  await assert.rejects(f.use(observeNativeScheduledPassage), /Passage family moved/)
 })
 
 test("a missing selected coordinator is never recreated and original proof still prevents replay", async () => {

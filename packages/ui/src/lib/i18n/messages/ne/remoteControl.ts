@@ -32,4 +32,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "प्रत्यक्ष HTTPS जोडी",
   "remoteControl.direct.origin": "HTTPS ठेगाना",
   "remoteControl.direct.newLink": "HTTPS जोडी लिंक बनाउनुहोस्",
+  "remoteControl.devices.revocationPending": "पहुँच हटाउन बाँकी",
 } as const

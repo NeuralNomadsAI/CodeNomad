@@ -42,11 +42,16 @@ test("one automatic compaction shows one notification, whichever tabs or replays
     assert.equal(await bubbles.count(), 1)
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.history()), [message])
 
-    // The session's next compaction is new: it reaches the history and replaces the bubble.
-    await page.evaluate(() => (window as any).fixture.compacted("tab-b", "evt_2", 9))
-    await page.waitForFunction(() => (window as any).fixture.history().length === 2)
+    // A carrier with the same title stays silent; the ordinary session still notifies.
+    await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.compacted("tab-b", "evt_carrier", 8, "ses_cn_schedule_fixture")
+      fixture.compacted("tab-b", "evt_2", 9)
+    })
+    await page.waitForFunction(() => (window as any).fixture.history().length >= 2)
     await page.waitForTimeout(600)
     assert.equal(await bubbles.count(), 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.history()), [message, message])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

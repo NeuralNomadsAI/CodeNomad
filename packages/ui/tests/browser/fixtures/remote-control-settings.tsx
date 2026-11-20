@@ -1,5 +1,5 @@
 import { render } from "solid-js/web"
-import type { RemoteControlStatus } from "../../../../server/src/api-types"
+import type { RemoteControlDevice, RemoteControlStatus } from "../../../../server/src/api-types"
 import { RemoteControlSettingsSection } from "../../../src/components/settings/remote-control-settings-section"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -40,10 +40,20 @@ serverApi.fetchRemoteControlStatus = async () => {
   if (scenario === "resuming" && reads >= 3) status = connected
   return status
 }
-serverApi.fetchRemoteControlDevices = async () => ({
-  devices: [{ id: "8e5f0a8e-4a8c-4f43-9a4c-6d1f6b0d7c11", name: "Android · Firefox", createdAt: "2026-10-12T12:39:58.214Z", lastSeenAt: "2026-10-12T12:43:14.286Z" },
-    ...(scenario === "direct" ? [{ id: "1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d", name: "iPhone · Safari", createdAt: "2026-10-12T12:39:58.214Z", lastSeenAt: "2026-10-12T12:43:14.286Z", origin: "https://code.example.test" }] : [])],
-})
+let devices: RemoteControlDevice[] = [
+  { id: "8e5f0a8e-4a8c-4f43-9a4c-6d1f6b0d7c11", name: "Android · Firefox", createdAt: "2026-10-12T12:39:58.214Z", lastSeenAt: "2026-10-12T12:43:14.286Z" },
+  ...(scenario === "direct" ? [{ id: "1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d", name: "iPhone · Safari", createdAt: "2026-10-12T12:39:58.214Z", lastSeenAt: "2026-10-12T12:43:14.286Z", origin: "https://code.example.test" }] : []),
+]
+serverApi.fetchRemoteControlDevices = async () => ({ devices })
+serverApi.revokeRemoteControlDevice = async (id) => {
+  const device = devices.find(device => device.id === id)!
+  if (!device.revocationPending) {
+    devices = devices.map(entry => entry.id === id ? { ...entry, revocationPending: true } : entry)
+    status = { ...status, pairedDevices: devices.filter(entry => !entry.revocationPending).length }
+    throw new Error("Registry could not be saved")
+  }
+  devices = devices.filter(entry => entry.id !== id)
+}
 serverApi.createRemoteControlPairing = async (origin) => {
   fixture.pairingOrigins.push(origin)
   return {

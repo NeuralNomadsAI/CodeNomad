@@ -4,6 +4,7 @@ import { canonicalAuthority } from "../../missions/authority-protocol"
 import { MISSION_DOCUMENT_PREFIX, parseMissionDocument, type MissionDocument } from "../../missions/mission-document"
 import { stableToken } from "../../missions/receipt-identity"
 import { missionLaunchLimit } from "../../missions/launch-policy"
+import { readNativeSourceRows } from "./native-source-fence"
 
 export type ScheduledPassagePurpose = "observe" | "initial" | "business"
 export type ScheduledPassageAuthority = (doc: MissionDocument, purpose: ScheduledPassagePurpose) => true
@@ -39,7 +40,7 @@ export const acquireNativeScheduledPassageAuthority = Effect.fn("missions.acquir
   const location = placed.value as { directory?: unknown; project?: { id?: unknown; canonical?: unknown } }
   if (!Predicate.isFunction(database.db?.$client?.unsafe)) throw new Error("Document passage SQL authority unavailable")
   const graph = yield* Effect.context<never>()
-  const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
+  const decodeRows = Schema.decodeUnknownSync(Schema.Array(Schema.Record(Schema.String, Schema.Unknown)))
   return ((expected: MissionDocument, purpose: ScheduledPassagePurpose): true => {
     current()
     if (Context.get(graph, databaseTag) !== found.value || Context.get(graph, locationTag) !== placed.value
@@ -47,8 +48,7 @@ export const acquireNativeScheduledPassageAuthority = Effect.fn("missions.acquir
       || !expected.pending?.configuration.roots.some(root => root.directory === location.directory)) throw new Error("Document passage placement changed")
     const key = `${MISSION_DOCUMENT_PREFIX}/project/${stableToken(`${expected.projectID}\0${expected.projectCanonical}`, 24)}/missions/${expected.id}`
     const namespace = `plugin:${Array.from("codenomad.missions").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
-    const value = Effect.runSync(database.db!.$client!.unsafe("SELECT value FROM kv WHERE key=?", [`${namespace}${key}`])
-      .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))[0]?.value
+    const value = decodeRows(readNativeSourceRows(database.db!.$client!, graph, "SELECT value FROM kv WHERE key=?", [`${namespace}${key}`]))[0]?.value
     if (typeof value !== "string") throw new Error("Document passage authority missing")
     const doc = parseMissionDocument(JSON.parse(value), expected)
     if (!doc.pending || doc.pending.id !== expected.pending.id || doc.pending.missionID !== expected.pending.missionID

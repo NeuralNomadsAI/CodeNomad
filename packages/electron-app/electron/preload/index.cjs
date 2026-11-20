@@ -5,7 +5,7 @@ function resolveWindowContext() {
   const arg = process.argv.find((value) => typeof value === "string" && value.startsWith(prefix))
   if (!arg) return "local"
   const context = arg.slice(prefix.length)
-  return context === "local" || context === "preferences" ? context : "remote"
+  return context === "local" || context === "preferences" || context === "dictation" ? context : "remote"
 }
 
 function resolveWindowId() {
@@ -65,6 +65,7 @@ const localElectronAPI = {
     }
   },
   requestMicrophoneAccess: () => ipcRenderer.invoke("media:requestMicrophoneAccess"),
+  deviceSpeech: (request) => ipcRenderer.invoke("device-speech:request", request),
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
   setNotificationBadge: (count) => ipcRenderer.invoke("notifications:setBadge", count),
@@ -99,6 +100,8 @@ const localElectronAPI = {
 }
 
 const remoteElectronAPI = {
+  remoteMicrophoneLease: true,
+  remoteDictation: (request) => ipcRenderer.invoke("remote-dictation:request", request),
   requestMicrophoneAccess: localElectronAPI.requestMicrophoneAccess,
   setWakeLock: localElectronAPI.setWakeLock,
   showNotification: localElectronAPI.showNotification,
@@ -113,6 +116,7 @@ const preferencesElectronAPI = {
   onCliError: localElectronAPI.onCliError,
   getCliStatus: localElectronAPI.getCliStatus,
   restartCli: localElectronAPI.restartCli,
+  deviceSpeech: localElectronAPI.deviceSpeech,
   openDialog: localElectronAPI.openDialog,
   showNotification: localElectronAPI.showNotification,
   openRemoteWindow: localElectronAPI.openRemoteWindow,
@@ -149,9 +153,15 @@ const preferencesElectronAPI = {
   closeWindow: () => ipcRenderer.invoke("preferences:close"),
 }
 
+const dictationElectronAPI = {
+  deviceSpeech: localElectronAPI.deviceSpeech,
+  requestMicrophoneAccess: localElectronAPI.requestMicrophoneAccess,
+  settleRemoteDictation: (request) => ipcRenderer.invoke("remote-dictation:settle", request),
+}
+
 contextBridge.exposeInMainWorld(
   "electronAPI",
-  windowContext === "local" ? localElectronAPI : windowContext === "preferences" ? preferencesElectronAPI : remoteElectronAPI,
+  { local: localElectronAPI, preferences: preferencesElectronAPI, dictation: dictationElectronAPI, remote: remoteElectronAPI }[windowContext],
 )
 contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_CONTEXT__", windowContext)
 contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_ID__", windowContext === "local" ? windowId : null)

@@ -115,6 +115,23 @@ test("cold auxiliary lost-ACK wake adopts only its row, consumes/closes before o
   assert.equal(doc.calendars.find(item => item.role === "reconciliation")!.highWater, 1)
 })
 
+test("auxiliary reconciliation outlives the wake receipt once its run is consumed", async t => {
+  const f = await receiver(t, "reconciliation")
+  let consumed = false, expired = false
+  const entry = { ...f.entry, consumed: () => { consumed = true },
+    current: (): true => { if (expired && !consumed) throw new Error("schedule-preflight-invalid"); return f.current() } }
+  f.ports.runtime.reconcile = async input => {
+    f.calls.push("business-reconcile")
+    expired = true // A coordinator ownership scan can outlast the eight-second receipt.
+    input.current()
+    return "idle"
+  }
+  await f.claim()
+  assert.equal((await receiveNativeMissionScheduleWake("wake", f.input, entry, f.ports)).state, "applied")
+  assert.deepEqual(f.calls, ["close", "owner", "business-reconcile", "owner"])
+  assert.equal(consumed, true)
+})
+
 test("auxiliary business settlement reapplies terminal owner cleanup before replying from the same invocation", async t => {
   const f = await receiver(t, "reconciliation")
   let doc = await f.read()

@@ -8,7 +8,7 @@ import type { NativeMissionDocumentStore } from "../../missions/mission-document
 import { isolatedMissionPassageJournal } from "../../missions/mission-document-passage-storage"
 import { readMissionLocalSource } from "../../missions/mission-local-sources"
 import { readMissionGithubSource } from "../../missions/mission-github-source"
-import { readMissionRepositorySource } from "../../missions/mission-repository-source"
+import { readMissionRemoteBranch, readMissionRepositorySource } from "../../missions/mission-repository-source"
 import { isMissionGithubCondition } from "../../missions/mission-github-condition"
 import { stableToken } from "../../missions/receipt-identity"
 import { missionLaunchesRepeatedly, missionLaunchModel, requiresMissionCalendar, type MissionCondition } from "../../missions/launch-policy"
@@ -60,9 +60,12 @@ export function createMissionConditionReader(input: {
     const current = (): true => { input.signal.throwIfAborted(); for (const guard of guards) guard(); return true }
     await assertMissionSourceAcyclic(doc, input.store, id => fence.document(sourceKey(doc, id)))
     const previous = doc.checkpoints.find(item => item.key === missionSourceKey(condition))
-    if (condition.kind === "repository-activity") {
+    if (condition.kind === "repository-activity" || condition.kind === "remote-branch-commits") {
       if (!doc.configuration.roots.some(item => item.directory === input.native.location.directory)) return unavailable()
-      const read = await readMissionRepositorySource(condition, input.native.location.directory, previous, input.signal)
+      const reader = condition.kind === "repository-activity"
+        ? readMissionRepositorySource(condition, input.native.location.directory, previous, input.signal)
+        : readMissionRemoteBranch(condition, input.native.location.directory, previous, input.signal)
+      const read = await reader
       guards.push(read.current); current()
       return { ...read, current }
     }

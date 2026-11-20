@@ -56,6 +56,7 @@ const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["PATCH DELETE", /^\/api\/panel-extensions\/[^/]+$/],
   ["GET", /^\/api\/panel-extensions\/[^/]+\/panel$/],
   ["POST", /^\/api\/panel-extensions\/[^/]+\/(?:assets|assetRead|workItems|workItemUrl|images|imageRead|imagesStatus|prefillReferences|conversationStatus|conversationOpen|conversationNew|preferencesGet|preferencesSet)$/],
+  ["POST", /^\/api\/panel-extensions\/[^/]+\/(?:notesGet|notesSet|notesList|notesDelete|notesOpen|workItemBranches|workItemBranchLookup|workItemBranch)$/],
   ["GET POST", /^\/api\/workspaces$/],
   ["POST", /^\/api\/workspaces\/(?:clone|creation\/cancel|temporary\/abandon)$/],
   ["GET POST", /^\/api\/workspaces\/temporary$/],
@@ -118,10 +119,8 @@ export interface RemoteGateDeps {
  */
 export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, deps: RemoteGateDeps): boolean {
   const ingress = isRemoteSocket(request.raw.socket)
-  let cookies: Record<string, string>
-  try {
-    cookies = parseCookies(request.headers.cookie)
-  } catch {
+  const cookies = parseCookies(request.headers.cookie)
+  if (!cookies) {
     reject(reply, 400, "Invalid cookie")
     return true
   }
@@ -246,6 +245,18 @@ export function admitRemoteUpgrade(request: IncomingMessage, deps: RemoteGateDep
   for (const name of SPOOFABLE_HEADERS) delete request.headers[name]
   const parsed = parsePreviewUpgradePath(target)
   return parsed !== null && deps.servesPreview(parsed.token)
+}
+
+/** Audio uses the exact tunnel origin and the device credential on this request. */
+export function admitRemoteVoiceUpgrade(request: IncomingMessage, deps: RemoteGateDeps): RemoteControlDevice | null {
+  const host = deps.publicHost()
+  if (!isRemoteSocket(request.socket) || !host || request.headers.host !== host || request.headers.origin !== `https://${host}`) return null
+  for (const name of SPOOFABLE_HEADERS) delete request.headers[name]
+  const cookies = parseCookies(request.headers.cookie)
+  if (!cookies) return null
+  const device = deps.authenticate(cookies[DEVICE_COOKIE_NAME])
+  if (device) deps.assignDevice(request.socket, device.id)
+  return device
 }
 
 export function deviceCookie(token: string, maxAge = DEVICE_COOKIE_MAX_AGE_SECONDS): string {

@@ -4,13 +4,12 @@ import { GripVertical, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { MissionSourceSelect } from "./mission-source-select"
-import { isMissionGithubKind, type MissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 import { MissionRepositoryFields } from "./mission-repository-fields"
 import type { MissionRepositoryDiscovery } from "./mission-editor-repository"
-import { isMissionEventKind, isRepositoryCriterion, missionEventKinds, missionHourSteps, missionScheduleShortcuts, type MissionConditionKind,
+import { isMissionPickerSource, isRepositoryCriterion, missionEventKinds, missionHourSteps, missionScheduleShortcuts, type MissionPickerSource,
   type MissionCriterionDraft, type MissionCriterionKind } from "./mission-scheduling-data"
 
-export type SelectedSource = Exclude<MissionConditionKind, "files-changed" | "repository-activity" | MissionGithubKind> | "coordinator-session"
+export type SelectedSource = MissionPickerSource | "coordinator-session"
 export type MissionSourcePage = { next(): string | undefined; loading(): boolean; failed(): boolean; lookupFailed?(): boolean
   more(): void; retry(): void; search?(query: string): void }
 /** Lists come from the owning authorized project. Absence is an unavailable read. */
@@ -89,7 +88,7 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
         onInput={event => patch({ files: event.currentTarget.value })} /></label></Show>
     <Show when={isRepositoryCriterion(kind())}><MissionRepositoryFields row={props.row} number={props.number}
       discovery={props.repository} errorID={props.errorID} onChange={props.onChange} /></Show>
-    <Show when={isMissionEventKind(kind()) && kind() !== "files-changed" && kind() !== "repository-activity" && !isMissionGithubKind(kind()) ? kind() as SelectedSource : undefined} keyed>{sourceKind =>
+    <Show when={isMissionPickerSource(kind()) ? kind() as MissionPickerSource : undefined} keyed>{sourceKind =>
       <MissionSourceSelect label={label("missions.scheduling.criterionSource")} value={props.row.source} choices={choices()}
         disabled={props.disabled} errorID={props.errorID} paging={props.paging?.(sourceKind, props.row.source)} onChange={source => patch({ source })} />
     }</Show>

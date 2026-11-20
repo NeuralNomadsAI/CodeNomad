@@ -469,9 +469,9 @@ equivalent agent surfaces:
 | Schedule Start/Pause/Resume/Stop, Run now, Check, activation/diagnostic and daily controls | `schedule` |
 
 Presentation gestures (selection, copy, mark read, opening conversations) remain
-window-local. Authenticated human answers use the human question gate. Existing
-coordinator selection belongs to the scheduled editor; one-time preparation uses
-a fresh root, while `inspect.start` attaches the calling root.
+window-local. Authenticated human answers use the human question gate. Scheduled
+preparations can explicitly select the agent's own eligible root. One-time
+preparation uses a fresh root, while `inspect.start` attaches the calling root.
 
 ### Agent schedule controls
 
@@ -1793,6 +1793,8 @@ answers mutations with 405 and writes `browser-report.json` to the absolute
 `NATIVE_MISSION_OUTPUT` (default: a temporary folder).
 
 ## Agent conventions
+
+- Model-facing tool schemas use a plain object at the root, with variants inside properties. Keep scope and action validation in the execution codec.
 
 - Missions project tools admit every owned project conversation, including descendants and scheduled passages, and include human-created Missions. Keep coordinator-only topology and authenticated human-answer evidence at their existing domain boundaries.
 

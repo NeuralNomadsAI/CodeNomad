@@ -186,12 +186,16 @@ Each reservation retains its distinct passage, execution Mission and original me
 IDs and isolated journal, with `coordinatorReused` identifying the explicit selection.
 Adoption applies the frozen agent/model through public native switches and merges only
 the Missions metadata key. Existing transcript, title, permissions and unrelated metadata
-remain. The user's choice authorizes ordinary Mission controls over that conversation
+remain. After admission the coordinator conversation's agent and model stay its user's
+choice: Mission tools keep working after a switch, while task roots keep their role profile. The user's choice authorizes ordinary Mission controls over that conversation
 and its work, including Stop cancellation of existing queued user/synthetic inputs.
 For human-authored choices, never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
-Agent-authored preparations and configurations restrict explicit adoption to an idle eligible root:
-the author, followed/event sources, active family work, queued inputs, durable claims,
-open requests and active or uncertain ownership by another Mission refuse adoption.
+An agent can explicitly select its own eligible root when saving a schedule.
+Selection checks placement, source and ownership while the conversation is active.
+Another root must be idle at selection. Every agent-authored passage requires an
+idle family, including its inbox, claims, tools and pending requests, at adoption.
+Deterministic coordinator selection refusals before a write return an exact
+request-bound refusal; incomplete or ambiguous writes retain their recovery hold.
 Preparation, configuration and every authoritative adoption revalidate this boundary before native
 profile, metadata, environment or input effects; the current passage's own marker is allowed.
 A missing chosen root stays missing; attempted admission retains its original proof rules.
@@ -199,7 +203,9 @@ A missing chosen root stays missing; attempted admission retains its original pr
 Before adoption, one immutable `coordinatorBaseline` checkpoint captures the bounded
 native family and its per-session message high-water, boundary, in-flight input and durable
 aggregate sequence under document CAS and native-state fencing. Existing quiet histories
-are separated from new descendants and later child inputs. A native prompt hook records
+are separated from new descendants and later child inputs. A quiet inherited descendant
+keeps its existing Location, such as an earlier worktree; passage-owned sessions and
+inherited sessions with new activity must stay in the coordinator's Location. A native prompt hook records
 the first actual child-input identity in `codenomad.passage-input` metadata for that passage;
 later inputs retain it through pruning and restarts. Inherited running work keeps its actual
 captured input and failures after the ownership boundary. Idle ancestors of inherited
@@ -396,7 +402,7 @@ explicit unavailable response. UI reads use the shared secondary HTTP budget.
 
 Explicit events share the native source preparation boundary:
 another schedule's successful passage, a completed one-time Mission, commits on
-a local branch, stable new messages in a followed conversation, and an explicit
+a local or remote branch, stable new messages in a followed conversation, and an explicit
 file set; repository pull/merge request creation and merging, issue creation, GitHub account
 notifications and Dependabot alerts.
 One reader call per event key (`native-mission-condition-reader.ts`)
@@ -424,6 +430,11 @@ event-specific fields stay in that card. `mission-editor-repository.ts` demands 
 owned `repository-source` read only while such a card is shown. Detection never rewrites
 a draft: selecting a forge event pins its provider, authority and repository path.
 Stored GitHub and branch criteria keep their exact policy and source keys on unchanged saves.
+`remote-branch-commits` pins the detected forge repository and exact `refs/heads/`
+reference. The branch reader uses the forge's direct branch endpoint and the
+existing account and repository checks. A changed remote tip triggers one
+passage per observation, including force-updates. A missing branch blocks the
+read. The tip is checked again before publishing a pending passage.
 
 `mission-repository-source.ts` reads `repository-activity` through Contribute's
 `ForgeWorkItems.openRepository`: shared remote selection, CLI discovery, anonymous
@@ -487,6 +498,7 @@ Context classification and recovery follow the schedule transport's
 Ordinary sidebar browsing/search and Mission criterion conversation-source pickers
 exclude this namespace through the shared carrier-identity predicate; native
 observations remain available to ownership and reconciliation readers.
+The compaction notifier uses the same predicate to keep carrier compaction silent.
 Technical turns keep native model-selection events/statistics while making zero
 provider HTTP requests. Their compaction preserves the carrier/calendar identity
 and bounds processed context. Persisted native messages and events follow native

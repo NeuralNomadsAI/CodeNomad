@@ -7,6 +7,7 @@ import type { Logger } from "../logger"
 function createMockSettings(serverConfig: Record<string, unknown>): SettingsService {
   return {
     getOwner: () => serverConfig,
+    getRawConfigOwner: () => serverConfig,
   } as unknown as SettingsService
 }
 

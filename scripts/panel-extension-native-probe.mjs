@@ -19,12 +19,17 @@ const API4_FRAME_METHODS = {
   "images.conversation": { conversation: ["status", "open", "startNew"] },
   "opencode.designAgent": {},
   "panel.preferences": { preferences: ["get", "set"] },
+  "panel.notes": { notes: ["get", "set", "list", "delete", "open"] },
+  "repository.workItems.read": { workItems: ["list", "open"] },
+  "repository.worktrees.read": { worktrees: ["list"] },
+  "repository.worktrees.write": { worktrees: ["open"] },
 }
 const LEGACY_FRAME_METHODS = { 1: {}, 2: { assets: ["list", "read"] }, 3: { workItems: ["list", "open"] } }
-const LISTENERS = { 2: { assets: ["onChanged"] }, 4: { images: ["onChanged"] } }
+const LISTENERS = { 2: { assets: ["onChanged"] }, 4: { images: ["onChanged"], notes: ["onChanged"], worktrees: ["onChanged"] } }
 const ARGS = {
-  "assets.read": ["probe-target", { thumbnail: true }], "workItems.list": [{ kind: "issue" }], "workItems.open": ["issue", 1],
+  "assets.read": ["probe-target", { thumbnail: true }], "workItems.list": [{ kind: "issue" }], "workItems.open": ["issue", 1], "worktrees.open": ["issue", 1],
   "images.read": ["probe-target", { thumbnail: true }], "composer.prefill": [{ text: "probe" }], "preferences.set": [{ probe: true }],
+  "notes.set": ["probe", 0], "notes.delete": ["probe-session", 1], "notes.open": ["probe-session"],
 }
 
 export const MODES = ["real", "same-origin", "no-csp"]
@@ -119,6 +124,7 @@ function authorHtml({ leakBase, methods, apiVersion }) {
   const fired = Date.now();
   if (${apiVersion} === 2) codenomad.assets.onChanged(() => { results.changed = 'called'; });
   if (${apiVersion} === 4 && codenomad.images) codenomad.images.onChanged(detail => { results.changed = detail; });
+  if (${apiVersion} === 4 && codenomad.notes) codenomad.notes.onChanged(() => { results.notesChanged = 'called'; });
   const methods = ${JSON.stringify(methods)}, args = ${JSON.stringify(ARGS)};
   let started = false;
   codenomad.onContext(async context => {
@@ -161,6 +167,7 @@ function hostPage({ mode, srcdoc, sandbox, apiVersion }) {
         channel.port1.postMessage({ type: 'context', context: { apiVersion: ${apiVersion}, sessionId: 'native-session', locale: 'en', appearance: 'light' } });
         if (${apiVersion} === 2) channel.port1.postMessage({ type: 'assets:changed' });
         if (${apiVersion} === 4) channel.port1.postMessage({ type: 'images:changed', gallery: true, status: false });
+        if (${apiVersion} === 4) channel.port1.postMessage({ type: 'notes:changed' });
       } else unexpected.push(data?.type ?? typeof data);
     };
     frame.contentWindow.postMessage({ type: 'codenomad:init' }, '*', [channel.port2]);
@@ -241,6 +248,7 @@ export function probeViolations(outcome) {
   if (sorted(child.surface) !== sorted(surface)) fail("api", `frame surface ${JSON.stringify(child.surface)}, expected ${JSON.stringify(surface)}`)
   const change = outcome.apiVersion === 4 ? { gallery: true, status: false } : outcome.apiVersion === 2 ? "called" : null
   if (JSON.stringify(child.changed) !== JSON.stringify(change)) fail("api", `change notification ${JSON.stringify(child.changed)}`)
+  if (outcome.apiVersion === 4 && child.notesChanged !== "called") fail("api", `notes change notification ${JSON.stringify(child.notesChanged)}`)
   return violations
 }
 

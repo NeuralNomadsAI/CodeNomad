@@ -85,7 +85,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "chat", icon: MessageSquare, label: t("settings.nav.chat") },
       { id: "hotkeys", icon: Keyboard, label: t("settings.nav.hotkeys") },
       { id: "notifications", icon: Bell, label: t("settings.nav.notifications") },
-      { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
+      { id: "speech", icon: Volume2, label: t("settings.nav.voice") },
       { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
       { id: "providers", icon: PlugZap, label: t("settings.nav.providers") },
       { id: "missions", icon: Flag, label: t("settings.nav.missions") },

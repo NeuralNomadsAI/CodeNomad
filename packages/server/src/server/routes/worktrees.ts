@@ -33,10 +33,12 @@ const WorktreeCreateSchema = z.object({
   slug: z.string().trim().min(1),
   branch: z.string().trim().min(1).optional(),
   fromSlug: z.string().trim().min(1).optional(),
+  revision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/).optional(),
 })
 
 const WorktreeSessionMoveSchema = z.object({
   worktreeSlug: z.string().trim().min(1),
+  branch: z.string().min(1).max(1024).optional(),
 })
 
 export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
@@ -98,7 +100,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       const release = deps.worktreeDeletionFence.enter(identities as string[])
       if (!release) throw new ProjectSessionError("A worktree is being removed", 409)
       try {
-        const created = await deps.workspaceManager.createWorktree(workspace.id, slug, source.slug)
+        const created = await deps.workspaceManager.createWorktree(workspace.id, slug, source.slug, body.revision)
         invalidateWorktreeCache(workspace.id)
         reply.code(201)
         return created
@@ -119,12 +121,13 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     try {
-      const { worktreeSlug } = WorktreeSessionMoveSchema.parse(request.body ?? {})
+      const { worktreeSlug, branch } = WorktreeSessionMoveSchema.parse(request.body ?? {})
       const { isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
       if (!isGitRepo) throw new ProjectSessionError("Workspace is not a Git repository", 409)
       const worktrees = await strictWorktrees(deps.workspaceManager, workspace.id)
       const target = worktrees.find((worktree) => worktree.slug === worktreeSlug)
       if (!target) throw new ProjectSessionError("Worktree not found", 404)
+      if (branch !== undefined && target.branch !== branch) throw new ProjectSessionError("Worktree branch changed", 409)
       const projectLocation = deps.workspaceManager.getServiceLocation(workspace.id)
       const targetDirectory = await deps.workspaceManager.getServiceDirectoryForPath(workspace.id, target.directory)
       if (!projectLocation || !targetDirectory) throw new ProjectSessionError("Unable to resolve OpenCode worktree paths", 409)
@@ -139,7 +142,8 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           const refreshed = await strictWorktrees(deps.workspaceManager, workspace.id)
           return refreshed.some((worktree) => worktree.slug === worktreeSlug
             && worktree.registeredDirectory === target.registeredDirectory
-            && worktree.head === target.head)
+            && worktree.head === target.head
+            && (branch === undefined || worktree.branch === branch))
         },
         runMutation: async (directories, operation) => {
           const identities = await Promise.all(directories.map((directory) => (

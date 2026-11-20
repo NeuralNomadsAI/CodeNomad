@@ -8,11 +8,12 @@ Lorsque le mode multi-serveur expérimental est activé, Preferences utilise le 
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
 
-La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. La voix, les couleurs de palette personnalisées et les fichiers de configuration gardent un **Enregistrer** explicite. Survolez ou focalisez le **i** à côté du titre d’un réglage pour une courte explication. S’il mène à l’aide, cliquez, appuyez sur Entrée ou touchez-le pour ouvrir la section pertinente dans la langue de l’interface, dans le navigateur système ou un onglet séparé. Les icônes limitées à une infobulle affichent leur explication au toucher. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
+La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. Les réglages des API vocales, les couleurs de palette personnalisées et les fichiers de configuration gardent un bouton **Enregistrer**. Survolez ou focalisez le **i** à côté du titre d’un réglage pour une courte explication. S’il mène à l’aide, cliquez, appuyez sur Entrée ou touchez-le pour ouvrir la section pertinente dans la langue de l’interface, dans le navigateur système ou un onglet séparé. Les icônes limitées à une infobulle affichent leur explication au toucher. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
 
 | État | Ce qu’il contrôle |
 | --- | --- |
-| Configuration CodeNomad | Préférences d’interface, voix, SideCars et paramètres serveur pour les clients de cette configuration. Les préférences sans badge ne sont pas non plus enregistrées par appareil ; **Paramètre serveur** signale une configuration côté serveur comme la voix, les SideCars, le Contrôle à distance et les variables d’environnement. |
+| Configuration CodeNomad | Préférences d’interface partagées et commandes signalées par **Paramètre serveur**, dont l’API vocale, les SideCars, le Contrôle à distance et les variables d’environnement. |
+| Moteurs vocaux | Le [moteur de dictée](voice.md#desktop-dictation) vaut pour tous les projets sur cet appareil. Le [moteur de conversation](voice.md#conversation) est choisi pour le profil de bureau ou pour le profil du navigateur et le serveur connecté. |
 | Disposition de fenêtre/d’onglet de projet | Panneaux ouverts, onglets sélectionnés, état du lecteur et brouillons/disposition restaurables. Ce n’est pas de la configuration OpenCode. |
 | Paramètres OpenCode Global/Projet | Changements de plugins/configuration natifs à la portée affichée. Les commandes Projet nécessitent un projet/une Location actif. |
 | Profil de données de bureau | Fenêtres natives, état de restauration et stockage navigateur, indépendamment du fichier de configuration et du service OpenCode partagé. Voir [Fenêtres de bureau et données](desktop.md). |
@@ -92,6 +93,8 @@ La hauteur de saisie suit la conversation visible, y compris le clavier logiciel
 
 Pour un onglet de projet sur un autre serveur CodeNomad, les notifications indiquent le nom du serveur. **Voir la conversation** ouvre ce projet et cette conversation précis ; détacher le serveur efface ses notifications. Les réglages Images et Recherche web suivent le serveur du projet, y compris ses valeurs globales.
 
+La compaction des sessions techniques des Missions reste silencieuse.
+
 1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation). Faites glisser le pointeur sur une ligne ou une colonne de cases pour en régler plusieurs d'un coup.
 2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander l'autorisation** relance la demande tant que l’autorisation manque.
 3. Activez **Notifier lorsque l'application est au premier plan** pour garder les notifications système pendant que cette fenêtre est au premier plan. Sinon, elles s’affichent dès qu’elle ne l’est pas, même si elle reste ouverte à l’écran.
@@ -117,4 +120,4 @@ Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notif
 | Retenir les longues réponses de l’assistant | Arrête le suivi automatique lorsqu’une réponse en cours dépasse la zone visible. |
 | Variables d’environnement | Appliquées côté serveur avant chaque prompt ou commande de session ; les lectures ne mettent pas à jour une exécution déjà active. Voir [Configuration d’OpenCode](opencode.md). |
 
-Pour configurer le clavier, voir [Raccourcis clavier](shortcuts.md) ; pour les commandes vocales, voir [Saisie et lecture vocales](voice.md). La restauration au démarrage et les profils de données de bureau sont décrits dans [Fenêtres de bureau et données](desktop.md).
+Pour configurer le clavier, voir [Raccourcis clavier](shortcuts.md). **Voix** regroupe [Dictée, Lecture et Conversation](voice.md). La restauration au démarrage et les profils de données de bureau sont décrits dans [Fenêtres de bureau et données](desktop.md).

@@ -84,11 +84,13 @@ export async function observePassageFamilySettlement(input: {
     if (next.adopted) adoptedIDs.add(next.id)
     const owner = next.adopted && !originalInputs.has(next.id) ? input.coordinatorOwner : undefined
     const session = await native.session(next.id, originalInputs.get(next.id), originalInputs.has(next.id) ? undefined : baseline.get(next.id), owner)
-    if (session.projectID !== input.projectID || session.directory !== input.directory || session.workspaceID !== input.workspaceID
-      || session.parentID !== next.parentID) throw new Error("Passage family moved")
     // Every claim blocks, including old claims absent from process-local active:
     // native restart recovery can resume them after this asynchronous read.
     const historical = input.reusedCoordinator && session.historical === true
+    // An inherited descendant untouched since the baseline (a move would advance its
+    // sequence) keeps whatever Location it already had, such as an earlier worktree.
+    if (session.projectID !== input.projectID || session.parentID !== next.parentID
+      || !historical && (session.directory !== input.directory || session.workspaceID !== input.workspaceID)) throw new Error("Passage family moved")
     if (session.active || session.inbox || session.suspended || session.runningTools || !historical && !session.terminal) {
       if (!session.active && (session.suspended || !session.terminal && !session.inbox && !session.runningTools)) input.uncertain?.()
       return undefined

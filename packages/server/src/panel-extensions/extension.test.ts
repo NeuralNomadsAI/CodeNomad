@@ -18,7 +18,7 @@ test("ZIP contract is bounded and rejects unsupported APIs, paths, links, duplic
     { id: "../outside" }, { server: "index.js" }, { repository: "https://github.com/a/b?token=secret" },
     { apiVersion: 3 }, { apiVersion: 3, permissions: ["session.context", "session.assets.read"] },
     { apiVersion: 3, permissions: ["repository.workItems.read", "session.context"] }, { permissions: ["session.context", "repository.workItems.read"] },
-    { apiVersion: 4, permissions: ["session.context", "repository.workItems.read"] }]) {
+    { apiVersion: 4, permissions: ["session.context", "repository.worktrees.read"] }]) {
     await assert.rejects(readPanelExtensionArchive(fixtureArchive("<p>x</p>", changes)), { code: "invalid" })
   }
   const workItems = await readPanelExtensionArchive(fixtureArchive("<p>x</p>", { apiVersion: 3, permissions: ["session.context", "repository.workItems.read"] }))
