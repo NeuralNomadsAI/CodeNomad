@@ -694,6 +694,7 @@ export class MissionControl {
           location: this.options.project.location,
           metadata: this.metadata(missionID, "coordinator", { role: "coordinator" }),
           ...input.profiles?.coordinator,
+          ...(input.permissions ? { permissions: input.permissions } : {}),
         })
       }
       this.assertOwnedRoot(coordinator)

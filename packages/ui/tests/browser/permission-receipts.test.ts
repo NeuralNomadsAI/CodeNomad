@@ -76,7 +76,7 @@ test("durable HTTP receipts survive reload, show every outcome outside hidden to
     assert.equal(await anchored.locator("li").count(), 3)
     assert.equal(await page.locator(".tool-call").count(), 0)
     assert.equal(await anchored.getByText("Décision native", { exact: true }).count(), 1)
-    assert.equal(await anchored.getByText("Automatique · Yolo", { exact: true }).count(), 1)
+    assert.equal(await anchored.getByText("Décision automatique", { exact: true }).count(), 1)
     const unanchored = page.locator('[data-permission-message="unanchored"]')
     await unanchored.locator("summary").click()
     await unanchored.getByRole("button", { name: "Charger d’autres décisions" }).click()

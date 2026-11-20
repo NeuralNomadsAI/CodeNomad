@@ -55,7 +55,7 @@ async function startServer(t: TestContext) {
     workspaceManager: stub, settings: stub, fileSystemBrowser: stub, eventBus: new EventBus(),
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub, speechService: stub, sidecarManager: stub, previewManager,
-    clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
+    clientConnectionManager: stub, remoteProxySessionManager: stub,
     authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
     remoteControlManager: stub, uiStaticDir: directory,
   })

@@ -60,14 +60,14 @@ describe("right panel registry", () => {
   })
 
   it("moves only the source section and keeps unknown and hidden ids in place", () => {
-    const saved = ["plan", "tokens", "mcp", "integration:gone", "plugins", "yolo-mode"]
-    // `yolo-mode` is hidden: the drag sees only the shown sections.
+    const saved = ["plan", "tokens", "mcp", "integration:gone", "plugins", "permissions"]
+    // Permissions is hidden: the drag sees only the shown sections.
     assert.deepEqual(reorderStatusSections(saved, ["tokens", "mcp", "plugins"], "plugins", "tokens"),
-      ["plan", "plugins", "tokens", "mcp", "integration:gone", "yolo-mode"])
+      ["plan", "plugins", "tokens", "mcp", "integration:gone", "permissions"])
     assert.deepEqual(reorderStatusSections(saved, ["tokens", "mcp", "plugins"], "tokens", "plugins"),
-      ["plan", "mcp", "integration:gone", "plugins", "tokens", "yolo-mode"])
-    assert.deepEqual(moveRightPanelItem(saved, ["tokens", "mcp", "plugins", "yolo-mode"], "plugins", 1),
-      ["plan", "tokens", "mcp", "integration:gone", "yolo-mode", "plugins"])
+      ["plan", "mcp", "integration:gone", "plugins", "tokens", "permissions"])
+    assert.deepEqual(moveRightPanelItem(saved, ["tokens", "mcp", "plugins", "permissions"], "plugins", 1),
+      ["plan", "tokens", "mcp", "integration:gone", "permissions", "plugins"])
   })
 
   it("materializes shown sections without a rank next to their shown predecessor", () => {

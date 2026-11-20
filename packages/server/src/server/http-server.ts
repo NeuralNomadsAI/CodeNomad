@@ -24,7 +24,6 @@ import { registerConfigFileRoutes } from "./routes/config-files"
 import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
-import { registerYoloRoutes } from "./routes/yolo"
 import { registerPermissionReceiptRoutes } from "./routes/permission-receipts"
 import type { PermissionReceipts } from "../permissions/receipts"
 import { registerSessionPruningRoutes } from "./routes/session-pruning"
@@ -87,7 +86,6 @@ import { ImageSettings } from "../opencode/image-settings"
 import { registerImageSettingsRoutes } from "./routes/image-settings"
 import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
-import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
@@ -113,6 +111,10 @@ import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaS
 import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
+import { SessionModeConflict, SessionPermissionModes } from "../permissions/session-mode"
+import { appendSessionProjection, sessionPermissionRules, blockPositions } from "../permissions/session-mode-rules"
+import { recordPermissionFork, registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./routes/session-permission-mode"
+import { connectSessionPermissionRefresh } from "./routes/session-permission-refresh"
 import { requestAdmission } from "./request-admission"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 import { DEFERRED_MEDIA_HEADER, deferToolMedia, wantsDeferredMedia } from "../opencode/session-media"
@@ -156,7 +158,6 @@ interface HttpServerDeps {
   authManager: AuthManager
   clientConnectionManager: ClientConnectionManager
   remoteProxySessionManager: RemoteProxySessionManager
-  yoloManager: AutoAcceptManager
   permissionReceipts?: PermissionReceipts
   uiStaticDir: string
   uiDevServerUrl?: string
@@ -168,6 +169,7 @@ interface HttpServerDeps {
   panelExtensions?: PanelExtensionStore
   /** Shared by every listener of one backend; a fresh one serves a lone server. */
   worktreeDeletionFence?: WorktreeDeletionFence
+  sessionPermissions?: { modes: SessionPermissionModes; cleanup: SessionCleanupFence }
   /** See `registerMissionRoutes`. */
   missionsHost?: () => boolean
   /** Shared by every listener of one backend; a fresh in-memory one serves a lone server. */
@@ -445,8 +447,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   const developerCdp = new DeveloperCdp()
+  const permissionModes = deps.sessionPermissions?.modes ?? new SessionPermissionModes(deps.settings)
   const scheduleSettingsActivation = new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager)
   registerAutomationPluginRoute(app, {
+    permissionModes,
     subagentDepth,
     forge: forgeWorkItems,
     memory,
@@ -467,6 +471,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const stopMissionActivityCache = connectMissionActivityCache(deps.eventBus, missionActivityCache)
   app.addHook("onClose", async () => stopMissionActivityCache())
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings, activityCache: missionActivityCache,
+    permissionModes,
     scheduleSettingsActivation,
     scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,
@@ -480,7 +485,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   if (deps.panelExtensions) registerPanelExtensionWorkItemRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, forge: forgeWorkItems })
-  if (deps.panelExtensions) registerPanelExtensionApi4Routes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence, imageSettings })
+  if (deps.panelExtensions) registerPanelExtensionApi4Routes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence, imageSettings, permissionModes })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger, authManager: deps.authManager })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
@@ -495,17 +500,22 @@ export function createHttpServer(deps: HttpServerDeps) {
     authManager: deps.authManager,
     logger: proxyLogger,
   })
-  registerYoloRoutes(app, { yoloManager: deps.yoloManager })
   if (deps.permissionReceipts) registerPermissionReceiptRoutes(app, deps.permissionReceipts)
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
-  registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
+  registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, permissionModes })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
-  const sessionCleanup = new SessionCleanupFence()
+  const sessionCleanup = deps.sessionPermissions?.cleanup ?? new SessionCleanupFence()
+  if (!deps.sessionPermissions) {
+    const stopPermissionRefresh = connectSessionPermissionRefresh(deps.eventBus, deps.workspaceManager, permissionModes,
+      worktreeDeletionFence, sessionCleanup, apiLogger)
+    app.addHook("onClose", async () => stopPermissionRefresh())
+  }
+  registerSessionPermissionModeRoutes(app, { workspaceManager: deps.workspaceManager, modes: permissionModes, worktreeDeletionFence, cleanup: sessionCleanup })
   const isProtected = registerSessionFavoritesRoutes(app, { workspaceManager: deps.workspaceManager, settings: deps.settings, eventBus: deps.eventBus, cleanup: sessionCleanup })
   registerSessionCleanupRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, cleanup: sessionCleanup, isProtected })
   registerBackgroundShellRoutes(app, deps.workspaceManager)
   registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts, sessionCleanup,
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts, sessionCleanup, permissionModes,
     humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
       remoteDevices: deps.remoteControlManager } })
 
@@ -570,6 +580,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 }
 
 export interface InstanceProxyWorkspaceManager {
+  getServiceWslDistro?: WorkspaceManager["getServiceWslDistro"]
   get(id: string): ReturnType<WorkspaceManager["get"]>
   getSharedServiceEndpoint(id: string): ReturnType<WorkspaceManager["getSharedServiceEndpoint"]>
   getSharedServiceConnection?(id: string): ReturnType<WorkspaceManager["getSharedServiceConnection"]>
@@ -590,6 +601,7 @@ export interface InstanceProxyWorkspaceManager {
 }
 
 interface InstanceProxyDeps {
+  permissionModes?: SessionPermissionModes
   sessionCleanup?: SessionCleanupFence
   workspaceManager: InstanceProxyWorkspaceManager
   logger: Logger
@@ -826,6 +838,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         accounts: deps.accounts,
         memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
+        permissionModes: deps.permissionModes,
         humanAnswers: deps.humanAnswers,
         sessionCleanup: deps.sessionCleanup,
         pathSuffix: "",
@@ -845,6 +858,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         accounts: deps.accounts,
         memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
+        permissionModes: deps.permissionModes,
         humanAnswers: deps.humanAnswers,
         sessionCleanup: deps.sessionCleanup,
         pathSuffix: request.params["*"] ?? "",
@@ -864,6 +878,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         accounts: deps.accounts,
         memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
+        permissionModes: deps.permissionModes,
         humanAnswers: deps.humanAnswers,
         sessionCleanup: deps.sessionCleanup,
         pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
@@ -882,6 +897,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
 }
 
 interface InstanceProxyRequestArgs {
+  permissionModes?: SessionPermissionModes
   sessionCleanup?: SessionCleanupFence
   request: FastifyRequest
   reply: FastifyReply
@@ -958,7 +974,8 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
 
   // Native parent creation ignores the supplied location and inherits the
   // parent's authority. It is not part of CodeNomad's root-create contract.
-  if (request.method === "POST" && pathname.replace(/\/+$/, "") === "/api/session") {
+  const createRoot = request.method === "POST" && pathname.replace(/\/+$/, "") === "/api/session"
+  if (createRoot) {
     if (request.body !== undefined && (!request.body || typeof request.body !== "object"
       || Array.isArray(request.body) || Buffer.isBuffer(request.body)
       || request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json")) {
@@ -1280,7 +1297,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   }
 
   const defaultLocation = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
-  const body = defaultLocation.body
+  let body = defaultLocation.body
   if (defaultLocation.directory) mutationDirectories.add(defaultLocation.directory)
   if (isMutation) {
     // Resolve every effective effect location, including server-supplied defaults
@@ -1338,6 +1355,47 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           return reply.code(error.statusCode).send({ error: error.message })
         }
         throw error
+      }
+    }
+    let confirmRoot: ((response: Response) => Promise<Response>) | undefined
+    if (createRoot && !authorizedSession && args.permissionModes) {
+      const modes = args.permissionModes
+      const distro = workspaceManager.getServiceWslDistro?.(workspaceId)
+      const input = (body ?? {}) as { id?: unknown; location?: LocationRef; permissions?: unknown }
+      // Native root creation selects its directory from the JSON body, not
+      // from an ambient query or header. Read that Location's configuration.
+      const location = { directory: input.location?.directory ?? runtimeLocation.directory }
+      let configBlock
+      try {
+        configBlock = await wait(modes.newRootRules({ client: await clientForRequest(), location, distro, signal }))
+      } catch {
+        releaseMutation?.()
+        return reply.code(503).send({ error: "Conversation permissions unavailable" })
+      }
+      if (configBlock) {
+        const original = sessionPermissionRules.safeParse(input.permissions ?? [])
+        if (!original.success || blockPositions(original.data, configBlock).length) {
+          releaseMutation?.()
+          return reply.code(400).send({ error: "Cannot combine conversation permissions" })
+        }
+        const block = appendSessionProjection(configBlock, original.data, distro)
+        body = { ...input, location, permissions: [...original.data, ...block] }
+        confirmRoot = async response => {
+          if (!response.ok) return response
+          try {
+            const { data: created } = await response.clone().json()
+            connection?.assertCurrent()
+            if (!created || (typeof input.id === "string" && created.id !== input.id)
+              || !sameLocation(readLocationRef(created.location), location)
+              || !await workspaceManager.ownsLocation(workspaceId, created.location, connection?.client)) throw new Error("Foreign session")
+            connection?.assertCurrent()
+            modes.confirmNewRoot(created, distro, block, original.data)
+            return response
+          } catch {
+            await response.body?.cancel().catch(() => {})
+            return Response.json({ error: "Conversation permissions were not confirmed" }, { status: 502 })
+          }
+        }
       }
     }
     const formReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/form\/([^/]+)\/reply\/?$/)
@@ -1422,7 +1480,33 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           throw error
         }
       }
+      const modes = args.permissionModes
+      if (modes && authorizedSession) {
+        try {
+          if (modes.mayBeSupervised(authorizedSession)) {
+            const client = await clientForRequest()
+            const refreshSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+            const current = () => {
+              refreshSignal.throwIfAborted()
+              connection?.assertCurrent()
+              if (workspaceManager.get(workspaceId) !== workspace) throw new Error("Workspace changed")
+            }
+            await wait(modes.refresh(sessionPermissionTarget(authorizedSession, {
+              client, current, signal: refreshSignal, distro: workspaceManager.getServiceWslDistro?.(workspaceId),
+            })))
+          }
+        } catch {
+          signal.throwIfAborted()
+          releaseMutation?.()
+          return reply.code(503).send({ error: "Conversation permissions unavailable" })
+        }
+      }
     }
+    // The native session PATCH can replace the entire permission array.
+    const patchSession = args.permissionModes && request.method === "PATCH" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
+      ? authorizedSession : undefined
+    const forkSource = args.permissionModes && request.method === "POST" && /^\/api\/session\/[^/]+\/fork\/?$/.test(pathname)
+      ? authorizedSession : undefined
     if (connection || workspaceManager.getSharedServiceFetch) {
       const headers = sanitizeInstanceProxyRequestHeaders(request.headers, instanceAuthHeader)
       delete headers[LOCATION_CONTEXT_HEADER]
@@ -1430,27 +1514,74 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       if (locationContext) Object.assign(headers, locationRequestOptions({ ...locationContext, directory: translatedDirectories.get(locationContext.directory)! }, { includeDirectory: true })?.headers)
       if (globalFormLocation) headers["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormLocation.directory)!)
       const runtimeFetch = connection?.fetch ?? await wait(workspaceManager.getSharedServiceFetch!())
+      if (confirmRoot) headers["content-type"] = "application/json"
       signal.throwIfAborted()
       // A transcript page read by the UI: large tool images load on demand.
       const deferMedia = request.method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(pathname)
         && wantsDeferredMedia(request.headers)
-      return await forwardRuntimeRequest({
+      const forward = () => forwardRuntimeRequest({
         transform: deferMedia && sessionId
           ? body => deferToolMedia((body as { data?: unknown } | null)?.data, { workspaceId, sessionId })
           : undefined,
         request, reply, url: targetUrl.toString(), body, headers,
-        fetch: confirmPermission || confirmDeletion ? async (input, init) => {
+        fetch: confirmPermission || confirmDeletion || confirmRoot || forkSource ? async (input, init) => {
           const response = await runtimeFetch(input, init)
-          if (response.ok) { await confirmPermission?.(); await confirmDeletion?.() }
-          return response
+          if (response.ok) {
+            await confirmPermission?.()
+            await confirmDeletion?.()
+            if (forkSource) {
+              try {
+                const client = await clientForRequest()
+                const forkSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+                await recordPermissionFork(response, args.permissionModes!, forkSource, {
+                  client, distro: workspaceManager.getServiceWslDistro?.(workspaceId),
+                  signal: forkSignal,
+                  current: () => {
+                    forkSignal.throwIfAborted()
+                    connection?.assertCurrent()
+                    if (workspaceManager.get(workspaceId) !== workspace) throw new SessionModeConflict("Workspace changed")
+                  },
+                }, location => workspaceManager.ownsLocation(workspaceId, location, client, { signal: forkSignal }))
+              } catch {
+                logger.warn({ workspaceId }, "Unable to record forked conversation permissions")
+              }
+            }
+          }
+          return confirmRoot ? confirmRoot(response) : response
         } : runtimeFetch, release: releaseMutation,
         retainMutation: ordinarySessionMutation && targetSessionId && args.sessionCleanup
           ? confirmed => { if (!confirmed) args.sessionCleanup!.markUncertain(targetSessionId) }
-          : undefined,
+          : confirmRoot || patchSession ? () => {} : undefined,
         invalidate: () => connection ? connection.invalidate() : workspaceManager.invalidateSharedServiceConnection?.(),
       })
+      if (!patchSession) return await forward()
+      const client = await clientForRequest()
+      const target = sessionPermissionTarget(patchSession, {
+        client, signal, distro: workspaceManager.getServiceWslDistro?.(workspaceId),
+        current: () => {
+          signal.throwIfAborted()
+          connection?.assertCurrent()
+          if (workspaceManager.get(workspaceId) !== workspace) throw new SessionModeConflict("Workspace changed")
+        },
+      })
+      try {
+        return await args.permissionModes!.withSessionLock(target, fresh => {
+          assertOrdinaryMissionScheduleBody({ metadata: fresh.metadata })
+          return forward()
+        })
+      } catch (error) {
+        if (isSessionNotFoundError(error) && error.sessionID === patchSession.id) {
+          releaseMutation?.()
+          return reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: patchSession.id, message: "Session not found" })
+        }
+        if (error instanceof SessionModeConflict || error instanceof MissionScheduleInputError) {
+          releaseMutation?.()
+          return reply.code(error instanceof MissionScheduleInputError ? error.statusCode : 409).send({ error: error.message })
+        }
+        throw error
+      }
     }
-    if (ordinarySessionMutation && targetSessionId && args.sessionCleanup) {
+    if (confirmRoot || patchSession || ordinarySessionMutation && targetSessionId && args.sessionCleanup) {
       releaseMutation?.()
       return reply.code(503).send({ error: "Session mutation transport is unavailable" })
     }

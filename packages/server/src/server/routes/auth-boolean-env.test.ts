@@ -37,7 +37,7 @@ for (const value of ["false", "1"]) {
       workspaceManager: stub, settings: stub, fileSystemBrowser: stub, eventBus: new EventBus(),
       serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
       instanceStore: stub, speechService: stub, sidecarManager: stub, previewManager: stub,
-      clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
+      clientConnectionManager: stub, remoteProxySessionManager: stub,
       authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
       remoteControlManager: stub, uiStaticDir: directory,
     })

@@ -270,6 +270,9 @@ const creationInput = {
     coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
     watchedConversationIDs: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 240 } },
     expectedCoordinatorLocation: location, prepared: { type: "boolean" }, startOnCreation: { type: "boolean" },
+    permissions: { type: "array", items: { type: "object", properties: {
+      action: { type: "string" }, resource: { type: "string" }, effect: { enum: ["allow", "ask", "deny"] },
+    }, required: ["action", "resource", "effect"], additionalProperties: false } },
     preparationOptions: { type: "object", properties: missionPreparationOptionsWire, additionalProperties: false },
     preparedBy: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
       coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 } },
@@ -307,7 +310,8 @@ export const CODENOMAD_MISSIONS_RPC = {
     documentCapabilities: {
       input: { type: "object", properties: {}, additionalProperties: false },
       output: { type: "object", properties: { version: { type: "integer", const: 1 }, automaticStart: { const: true },
-        agentSchedulePreparation: { const: true }, agentScheduleControl: { const: true } }, required: ["version"], additionalProperties: false },
+        agentSchedulePreparation: { const: true }, agentScheduleControl: { const: true }, rootPermissions: { const: true },
+      }, required: ["version"], additionalProperties: false },
     },
     documentActivation: {
       input: { type: "object", properties: { missionID: { type: "string", minLength: 3, maxLength: 100 }, requestID,

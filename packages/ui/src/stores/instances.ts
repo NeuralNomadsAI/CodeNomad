@@ -74,14 +74,6 @@ import {
   markPermissionReplied,
 } from "./permission-replies"
 import { clearSettledForms, hasSettledForm, markFormSettled } from "./form-settlements"
-import {
-  clearPermissionAutoAcceptForInstance,
-  isPermissionAutoAcceptEnabled,
-  resolvePermissionAutoAcceptFamilyRoot,
-  setPermissionAutoAcceptEnabled,
-  setPermissionAutoAcceptFamilyRootResolver,
-  togglePermissionAutoAccept,
-} from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { clearInstanceMetadata } from "./instance-metadata"
@@ -124,37 +116,6 @@ import { WorkspaceListReconciliationFence } from "./workspace-list-reconciliatio
 import { usesClientState } from "../lib/runtime-env"
 
 const log = getLogger("api")
-
-setPermissionAutoAcceptFamilyRootResolver((instanceId, sessionId) => {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return sessionId
-  return resolvePermissionAutoAcceptFamilyRoot(sessionId, (id) => instanceSessions.get(id))
-})
-
-// Server is authoritative for Yolo state; mirror toggles (incl. from other
-// clients) arriving over the CodeNomad server event stream into the local
-// projection so the badge/switch stay in sync.
-serverEvents.on("yolo.stateChanged", (event) => {
-  if (event.type !== "yolo.stateChanged") return
-  const { instanceId, sessionId, enabled } = event
-  if (typeof instanceId !== "string" || typeof sessionId !== "string" || typeof enabled !== "boolean") return
-  log.info(`[SSE] Yolo state changed: ${instanceId}:${sessionId} -> ${enabled}`)
-  setPermissionAutoAcceptEnabled(instanceId, sessionId, enabled)
-})
-
-// When the server auto-accepts a permission, clean up the UI queue immediately
-// instead of waiting for the OpenCode permission.replied SSE event (which may
-// be delayed or missed on a flaky connection). This preserves the #424
-// invariant: auto-accept cleanup happens at the queue level, not tied to
-// external event timing.
-serverEvents.on("yolo.autoAccepted", (event) => {
-  if (event.type !== "yolo.autoAccepted") return
-  const { instanceId, permissionId } = event
-  if (typeof instanceId !== "string" || typeof permissionId !== "string") return
-  markPermissionReplied(instanceId, permissionId)
-  removePermissionFromQueue(instanceId, permissionId)
-  removePermissionV2(instanceId, permissionId)
-})
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 
@@ -1456,8 +1417,6 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
     case "workspace.error":
       upsertWorkspace(event.workspace)
       showWorkspaceLaunchError(event.workspace)
-      clearPermissionAutoAcceptForInstance(event.workspace.id)
-      clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
     case "workspace.stopped": {
       const instance = instances().get(event.workspaceId)
@@ -1668,8 +1627,6 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   clearInstanceMetadata(id)
   destroyOpenCodeData(id)
   cancelTranscriptProjections(id)
-  clearPermissionAutoAcceptForInstance(id)
-  clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
   initialSessionHydrations.delete(id)
   initialWorkspaceMetadataHydrations.delete(id)
@@ -2161,61 +2118,6 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
   }
 }
 
-function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
-  const wasEnabled = isPermissionAutoAcceptEnabled(instanceId, sessionId)
-  togglePermissionAutoAccept(instanceId, sessionId)
-  void serverApi
-    .toggleYolo(instanceId, sessionId)
-    .then((state) => {
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
-    })
-    .catch((error) => {
-      log.warn("Failed to toggle Yolo on server", { instanceId, sessionId, error })
-      // revert to the pre-toggle state (not a naive flip, which can be wrong
-      // if an SSE yolo.stateChanged arrived between toggle and catch)
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, wasEnabled)
-    })
-}
-
-/**
- * Sessions whose Yolo state has been backfilled from the server. The server is
- * authoritative but only pushes changes (`yolo.stateChanged`); a freshly
- * connected client must fetch the effective state for a session so the badge
- * matches reality from the start. De-duped per session and reset on SSE
- * reconnect so state re-syncs after a server restart.
- */
-const syncedYoloSessions = new Set<string>()
-
-export function ensureYoloStateSynced(instanceId: string, sessionId: string): void {
-  if (!instanceId || !sessionId || sessionId === "info") return
-  const key = `${instanceId}:${sessionId}`
-  if (syncedYoloSessions.has(key)) return
-  syncedYoloSessions.add(key)
-  void serverApi
-    .getYoloState(instanceId, sessionId)
-    .then((state) => {
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
-    })
-    .catch((error) => {
-      // allow retry on next activation (e.g. instance not ready yet)
-      syncedYoloSessions.delete(key)
-      log.warn("Failed to sync Yolo state", { instanceId, sessionId, error })
-    })
-}
-
-serverEvents.onOpen(() => {
-  syncedYoloSessions.clear()
-})
-
-function clearSyncedYoloSessionsForInstance(instanceId: string): void {
-  const prefix = `${instanceId}:`
-  for (const key of Array.from(syncedYoloSessions)) {
-    if (key.startsWith(prefix)) {
-      syncedYoloSessions.delete(key)
-    }
-  }
-}
-
 function clearPermissionQueue(instanceId: string): void {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   permissionRequestLocations.delete(instanceId)
@@ -2599,7 +2501,6 @@ export {
   removePermissionFromQueue,
   markPermissionReplied,
   hasRepliedPermission,
-  togglePermissionAutoAcceptForSession,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,

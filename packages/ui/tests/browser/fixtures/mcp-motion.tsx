@@ -50,7 +50,7 @@ function Fixture() {
     <StatusTab instanceId="mcp-motion" instance={instance()} t={t} activeSession={() => null}
       isActive={() => true} expandedItems={expanded} onExpandedItemsChange={setExpanded}
       customization={() => ({ ...DEFAULT_RIGHT_PANEL_CUSTOMIZATION,
-        hiddenStatusSectionIds: ["tokens", "yolo-mode", "provider-usage", "background-processes", "plugins"],
+        hiddenStatusSectionIds: ["tokens", "permissions", "provider-usage", "background-processes", "plugins"],
       })} onCustomizationChange={() => {}} />
   </main>
 }

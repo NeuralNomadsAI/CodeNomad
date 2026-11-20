@@ -64,8 +64,6 @@ async function open(run: (page: Page) => Promise<void>) {
     }
     return route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" })
   })
-  await page.route("**/workspaces/browser-instance/yolo/sessions/browser-session", route =>
-    route.request().method() === "GET" ? route.fulfill({ json: { enabled: false } }) : route.continue())
   await events.route(page)
   await runWithDiagnosticCleanup({
     run: async () => {

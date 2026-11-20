@@ -56,8 +56,8 @@ Reads are bounded and ownership-checked.
 
 Native permission events are ephemeral and replies omit the reason. CodeNomad
 therefore captures confirmed replies and observed native settlements separately,
-since a native settlement can come from another client or a cascade. Yolo
-decisions are identified as automatic. A failed or ambiguous reply never becomes
+since a native settlement can come from another client or a cascade. Stored
+automatic decisions retain their original provenance. A failed or ambiguous reply never becomes
 a fabricated decision and is never replayed automatically. Decisions made while
 CodeNomad was offline have no receipt; never reconstruct one from a tool's
 success/error or from saved permission rules.
@@ -74,6 +74,86 @@ registered-only workspace ownership before querying pending permissions. This
 includes descendant directories inside the project and its worktrees; it never
 uses the daemon's default directory as a substitute or triggers strategy discovery.
 
+## Conversation permissions
+
+`GET`/`PUT /api/workspaces/:id/sessions/:sessionId/permission-mode` reads or sets
+`{ mode: "autonomous" | "supervised" }` for the root of an owned conversation
+family. Resolve `parentID` through owned sessions in the same native project;
+a fork starts a separate family. A subagent response includes `rootSessionID`.
+Read the route on selection, reconnect, and on a native `session.permissions`
+event for the root. OpenCode owns evaluation and settlement from the session’s
+ordered native `permissions` array (`action`, `resource`, `effect`) regardless
+of client, including the TUI on the same service and session. CodeNomad replies
+only to explicit decisions; stored automatic receipts remain readable.
+
+**Status → Permissions** reads while the selected section is shown, including
+when folded. The Autonomous and Supervised buttons and the folded header icon
+share one family-mode snapshot. Reads use the secondary budget and coalesce
+invalidations. A write preserves the last confirmed value until confirmation,
+settles with an authoritative refresh and is never replayed after failure.
+A failed read or disconnect marks the last value unconfirmed in either layout.
+Reload permissions in the expanded section reads it again before editing is
+available. Status customization normalizes saved section IDs before applying
+order and visibility.
+
+On the root, Autonomous contributes no rules. Supervised preserves the original session array
+and appends `ask edit *` and `ask shell *`, then projects the effective global and
+project configuration onto those two actions in order, followed by the session's
+own matching rules. The projection preserves `deny` and `ask` and turns `allow`
+into `ask`, keeping native ordering. Home-relative edit resources that need
+expansion by the native config loader are refused if their native absolute path
+cannot be established. The block takes precedence over agent-specific rules where
+they overlap. CodeNomad reads the effective configuration at the conversation's
+native Location when enabling Supervised and before forwarding a prompt, command
+or shell from CodeNomad when the block can be verified. A send uses the native
+rules as they stand when ownership cannot be verified. On first native
+connection, reconnection, and `config.updated`, the backend also refreshes saved
+Supervised sessions in the affected Locations in the background. A native
+`session.permissions` event refreshes the block, projecting any changed root
+rules before it and leaving trailing rules in place. An unchanged block
+requires no write, including when the event echoes the backend's own update.
+Native clients use the stored rules until the refresh completes.
+
+Matching saved project **Always Allow** approvals can still settle an `ask`.
+Reads, external-directory actions, MCP and delegation retain their own rules.
+Open requests keep their original decision context. This gates agent tool requests;
+approved tools run under the same OS account and isolation as in Autonomous.
+
+Private backend state records an exact contiguous block and its native session
+identity. Hash-only records are matched against scoped native session metadata.
+Confirmed deletions remove tracked records. Empty observations need no record.
+OpenCode copies the immediate parent's rules when it creates a subagent. A mode
+change updates the root alone, so a new child of an existing subagent copies that
+subagent's current rules. A child creation event with the same full rules as the
+verified direct source authorizes only adding configuration denies to the copied
+span: the native event cannot distinguish an explicit identical array from
+inheritance. Existing child rules are preserved in order.
+
+A fork's creation response or native `session.forked` event can record the
+direct source's exact block when the complete copied array matches as of creation.
+Copying history can advance the fork's update timestamp. A copied block is
+rewritable and removable only when the source is a root with a verified owned
+block. A matched copy from a subagent or an unowned fork permits additive deny
+refreshes; an unmatched copy keeps its native rules. Sends can proceed with the
+stored rules if an optional additive fork refresh fails.
+
+Returning to Autonomous with only a copied, unverified block returns an explicit
+conflict and leaves the array intact. An explicit Supervised write can append a
+separately identifiable block; returning to Autonomous removes exactly that
+block and reports the remaining native mode. Rules have no per-entry native identity.
+Mode writes, projection refreshes and native session PATCHes through the same
+backend share a per-session lock and read fresh state before forwarding. Mode
+writes and refreshes verify the resulting rules and retry a detected concurrent
+change from fresh rules. A native PATCH keeps OpenCode's whole-array replacement
+semantics. An independent native client can still write between a backend read
+and update because OpenCode offers no compare-and-swap.
+
+`ui.settings.newConversationPermissions` defaults to Autonomous. The workspace
+proxy, paused Mission creation, managed independent roots and the Images
+conversation creation path send the selected rules at creation. Existing
+conversations, imports and forks keep their native rules. Mission roots created
+by the native schedule runtime start in Autonomous regardless of this preference.
+
 ## Validation
 
 `tests/browser/interruption-dock.test.ts` exercises real Solid session, transcript,
@@ -86,8 +166,18 @@ geometry with reachable footer actions.
 `permission-fallback-diff.test.ts` keeps the dock's full-source access,
 changed-diff and late-copy regressions. Both run on isolated fixtures only.
 
-`permissions/receipts.test.ts` exercises disk reload, all decisions, native versus
-manual/Yolo provenance, cascades, ownership, deletion and mutation failure paths.
+`permissions/receipts.test.ts` exercises disk reload, all decisions and their
+provenance, cascades, ownership, deletion and mutation failure paths.
+`session-permission-mode.test.ts` covers config and session-event projection,
+unchanged echoes, exact root removal, additive child and fork refresh, late fork
+timestamps, refusal to remove unowned fork copies, concurrent mode and proxy
+writes, and deletion of private state.
+`node scripts/test-session-permission-mode-native.mjs <absolute-opencode-executable>`
+exercises the route and proxy, native child and fork copies, and native config
+and session permission events against a private OpenCode process.
+`tests/browser/conversation-permissions.test.ts` exercises the Status buttons
+and folded summary, root-to-child updates across windows, reconnect, saved
+customization and General settings.
 `tests/browser/permission-receipts.test.ts` covers reload, hidden tools, empty-page
 pagination, SSE refresh, stale reads and long receipts in light/dark mobile layouts.
 `node scripts/test-permission-receipts-native.mjs` runs isolated native recovery

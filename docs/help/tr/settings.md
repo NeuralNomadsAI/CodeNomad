@@ -38,6 +38,10 @@ Renklerin okunması zorlaşırsa **Kontrast → Açık** seçin. Yerleşik bir p
 
 **Ayarlar → Genel** bölümündeki **CodeNomad çalışırken bilgisayarı uyanık tut** seçeneği varsayılan olarak kapalıdır. Hiçbir oturum çalışmasa bile yerel bir CodeNomad penceresi açıkken (simge durumuna küçültülmüş olsa bile) sistemin uykuya geçmesini önlemek için açın; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar. Seçenek yalnızca masaüstü uygulamasının yerel pencerelerinde ve Tercihler penceresinde görünür; tarayıcı ve uzak görünümlerde gizlidir.
 
+## Yeni konuşmaların izinleri {#new-conversation-permissions}
+
+CodeNomad’da oluşturduğunuz yeni ana konuşmalar için **Ayarlar → Genel → Yeni konuşmaların izinleri** bölümünden **Özerk** (varsayılan) veya **Denetimli** modunu seçin. Mevcut konuşmalar değişmez. Bir konuşmanın modunu değiştirmek için o konuşmada [Durum → İzinler](permissions.md#conversation-mode) bölümünü açın.
+
 ## Kalıcı ajan belleği {#agent-memory}
 
 CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir.
@@ -70,7 +74,7 @@ Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyi
 
 Tüm Durum bölümlerini sürükleyerek veya Yukarı/Aşağı tuşlarıyla sıralayın. Görünürlük ve sıra yeniden yüklemelerde korunur.
 
-Durum; belirteç bilgilerini, Yolo modunu, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Görüşmenin bir [hedefi](conversations.md#goal) olduğu sürece bu bölümlerin üzerindeki bir hedef satırı onu gösterir; bu satır bir bölüm değildir, gizlenemez ve taşınamaz. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
+Durum; belirteç bilgilerini, **İzinler** bölümünü, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Görüşmenin bir [hedefi](conversations.md#goal) olduğu sürece bu bölümlerin üzerindeki bir hedef satırı onu gösterir; bu satır bir bölüm değildir, gizlenemez ve taşınamaz. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
 
 Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı onay kutuları farklıdır: yapılandırmayı kullanan tüm projelerde kodu etkinleştirir. **Sıfırla** uzantı onayını değiştirmez. Bkz. [Panel uzantıları](extensions.md).
 
