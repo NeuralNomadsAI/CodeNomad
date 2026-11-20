@@ -175,7 +175,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     tokio::spawn(sidecars::probe(state.clone()));
     let local = routes
         .merge(auth::local_routes())
-        .merge(sidecars::proxy::routes())
+        .merge(sidecars::proxy::routes(ui.clone()))
         .fallback(move |req: Request| {
             let ui = ui.clone();
             async move { host::ui::serve(&ui, req).await }

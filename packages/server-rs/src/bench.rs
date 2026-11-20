@@ -56,7 +56,10 @@ pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::E
         http: host::Bind { ip: [127, 0, 0, 1].into(), port: port.parse()?, fallback: false },
         https,
         auth,
-        ui: host::ui::Source::Absent,
+        ui: match env::var_os("CNRS_FIXTURE_UI_DIR") {
+            Some(dir) if native_endpoint_set() => host::ui::Source::Dir(dir.into(), "bundled"),
+            _ => host::ui::Source::Absent,
+        },
         serve: false,
     })
 }

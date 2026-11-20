@@ -10,7 +10,8 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium } from "playwright"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { fromDist, installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
@@ -20,6 +21,8 @@ assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.
 const bin = rustBinary()
 const bench = mode === "solid" ? undefined : await import(`./${mode === "http" ? "worktrees" : mode}.mjs`)
 await useBenchTemp()
+await outsideUserHome(process.env.TEMP)
+const { resolveConfigLocation } = await fromDist("config/location.js")
 const shots = path.join(out, "screenshots", mode)
 await mkdir(shots, { recursive: true })
 
@@ -65,10 +68,15 @@ async function start(label, fixture, folder, password, trustedCA) {
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
   if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true" })
   // Modes that seed `config.yaml` start both servers on equal settings.
-  if (mode === "host" || bench?.configure) Object.assign(env, { CLI_CONFIG: path.join(root, label === "ts" ? "ts.yaml" : "rust.yaml") })
+  // Keep the Rust settings at their private positional default in modes without a seeded YAML.
+  env.CLI_CONFIG = label === "ts" ? path.join(root, "ts.yaml")
+    : path.join(root, mode === "host" || bench?.configure ? "rust.yaml" : "rust.data")
+  await assertPrivateProfile(root, env, resolveConfigLocation(env.CLI_CONFIG))
+  const uiDir = await bench?.ui?.(root) ?? path.join(out, "ui")
+  if (bench?.ui) env.CNRS_FIXTURE_UI_DIR = uiDir
   const child = label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
-      "--ui-no-update", "--ui-dir", path.join(out, "ui"), "--config", path.join(root, "ts.yaml"), "--workspace-root", folder],
+      "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
       { env, cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     : spawn(bin, [folder, path.join(root, "rust.json"), String(port), exe], { env, cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
   const stopped = new Promise(resolve => child.once("close", resolve))

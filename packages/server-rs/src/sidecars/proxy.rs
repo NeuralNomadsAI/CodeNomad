@@ -27,15 +27,30 @@ use crate::{
     shared::{decode_component, fastify},
 };
 
-pub fn routes() -> Router<Shared> {
+pub fn routes(ui: Arc<crate::host::ui::Source>) -> Router<Shared> {
     Router::new()
-        .route("/sidecars", any(|request: Request| async move { unrouted(&request) }))
+        .route(
+            "/sidecars",
+            any(|axum::Extension(ui): axum::Extension<Arc<crate::host::ui::Source>>, request: Request| async move {
+                unrouted(&ui, request).await
+            }),
+        )
         .route("/sidecars/", any(relay))
         .route("/sidecars/{*rest}", any(relay))
+        .layer(axum::Extension(ui))
 }
 
-/// Fastify's not-found answer.
-fn unrouted(request: &Request) -> Response {
+/// Fastify uses the UI fallback for unmatched SideCar paths when the bundle exists.
+async fn unrouted(ui: &crate::host::ui::Source, request: Request) -> Response {
+    use crate::host::ui::Source;
+    let serves_ui = match ui {
+        Source::Dev(_) => true,
+        Source::Dir(dir, _) => dir.is_dir(),
+        Source::Absent => false,
+    };
+    if serves_ui {
+        return crate::host::ui::serve(ui, request).await;
+    }
     let target = request.uri().path_and_query().map_or("/", |p| p.as_str());
     let message = format!("Route {}:{target} not found", request.method());
     (Status::NOT_FOUND, Json(json!({"message": message, "error": "Not Found", "statusCode": 404}))).into_response()
@@ -330,12 +345,16 @@ fn routed(method: &Method) -> bool {
     METHODS.contains(&method.as_str())
 }
 
-async fn relay(State(app): State<Shared>, request: Request) -> Response {
+async fn relay(
+    State(app): State<Shared>,
+    axum::Extension(ui): axum::Extension<Arc<crate::host::ui::Source>>,
+    request: Request,
+) -> Response {
     if upgrade_requested(request.headers()) {
         return websocket(app, request).await;
     }
     if !routed(request.method()) {
-        return unrouted(&request);
+        return unrouted(&ui, request).await;
     }
     // The router's path ends at the first `;` (`useSemicolonDelimiter`); its parameters arrive decoded.
     let path = request.uri().path().split(';').next().unwrap_or("");
@@ -343,7 +362,7 @@ async fn relay(State(app): State<Shared>, request: Request) -> Response {
     let (id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
     // find-my-way's `maxParamLength`: a longer `:id` matches no route.
     if id.len() > 100 {
-        return unrouted(&request);
+        return unrouted(&ui, request).await;
     }
     let (Some(id), Some(suffix)) = (decode_component(id), decode_component(suffix)) else {
         return (Status::BAD_REQUEST, [(header::CONNECTION, "close")], Json(json!({"error": "Invalid request"})))
