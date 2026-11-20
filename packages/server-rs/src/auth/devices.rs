@@ -105,11 +105,15 @@ pub fn direct_origin(origin: &str) -> bool {
                 |ip| !ip.is_unspecified()&&!ip.is_loopback()&&!matches!(ip,std::net::IpAddr::V6(v) if v.to_ipv4_mapped().is_some_and(|v|v.is_loopback()||v.is_unspecified())))
         }))
 }
-/// The registry of `<data>/devices`, private like `tls/`.
+/// The reference's `remote-control-devices.json` in the private data folder, shared with it: a device
+/// paired by either server is admitted, and revoked, by both. An earlier `devices/` copy moves there once.
 pub fn open(data: &Path, tls: &tls::Listener) -> Result<Lock<Devices>, Fail> {
-    let dir = data.join("devices");
-    tls::private_directory(&dir)?;
-    Ok(Lock::new(Devices::open(&dir, tls.origin.clone(), tls.ingress)?))
+    let file = data.join("remote-control-devices.json");
+    let earlier = data.join("devices").join("remote-control-devices.json");
+    if !file.exists() && earlier.is_file() {
+        fs::rename(&earlier, &file)?;
+    }
+    Ok(Lock::new(Devices::open(file, tls.origin.clone(), tls.ingress)?))
 }
 /// Expired pairings and sessions leave the registry within 250 ms.
 pub async fn sweep(app: Shared, stop: CancellationToken) {
@@ -122,8 +126,7 @@ pub async fn sweep(app: Shared, stop: CancellationToken) {
     }
 }
 impl Devices {
-    fn open(path: &Path, origin: String, ingress: bool) -> Result<Self, Fail> {
-        let file = path.join("remote-control-devices.json");
+    fn open(file: PathBuf, origin: String, ingress: bool) -> Result<Self, Fail> {
         let doc = match fs::File::open(&file) {
             Ok(f) => {
                 let mut data = Vec::new();
@@ -166,7 +169,7 @@ impl Devices {
         Self { file, doc, pairing: None, origin, ingress, disabled, tokens, written, failures: 0, reset }
     }
     fn persist(&self, doc: &Document) -> Result<(), Fail> {
-        Ok(write_private(&self.file, &serde_json::to_vec_pretty(doc)?)?)
+        Ok(write_private(&self.file, format!("{}\n", serde_json::to_string_pretty(doc)?).as_bytes())?)
     }
     fn drop_principal(&mut self, id: Uuid) {
         if let Some(token) = self.tokens.remove(&id) {
