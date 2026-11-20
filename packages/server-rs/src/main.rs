@@ -161,7 +161,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .with_graceful_shutdown(async move {
             done.cancelled().await;
             // Event streams end, as `closeSseClients` does, so the drain can finish.
-            let _ = state.events.send(None);
+            state.events.shutdown.cancel();
         })
         .await;
     shutdown.cancel();

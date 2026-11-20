@@ -1,6 +1,9 @@
-//! `GET /api/events`: the UI's SSE stream (workspace, native and file events under a
-//! shared byte budget), its pong keep-alive and the bridge from the daemon's stream.
+//! `GET /api/events`: the UI's SSE stream (workspace, native and file events through
+//! per-subscriber queues), its pong keep-alive and the bridge from the daemon's stream.
+mod hub;
 mod upstream;
+
+pub use hub::Hub;
 
 use std::{
     convert::Infallible,
@@ -18,7 +21,6 @@ use axum::{
 use futures_util::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -51,17 +53,7 @@ pub fn routes() -> axum::Router<Shared> {
 
 impl App {
     pub fn emit(&self, event: Value) {
-        if self.events.receiver_count() == 0 {
-            return;
-        }
-        let text = event.to_string();
-        let frame = u32::try_from(text.capacity())
-            .ok()
-            .and_then(|size| self.event_budget.clone().try_acquire_many_owned(size).ok())
-            .map(|permit| std::sync::Arc::new(Frame { text, _bytes: permit }));
-        // A subscriber that cannot consume the shared byte budget must reconnect
-        // and reconcile just like a receiver that lags the 128-frame ring.
-        let _ = self.events.send(frame);
+        self.events.publish(event);
     }
     pub fn emit_status(&self, id: Uuid, status: &str, generation: u64, reason: Option<&str>) {
         let mut event = json!({"type":"instance.eventStatus","instanceId":id,"status":status,"generation":generation});
@@ -72,14 +64,10 @@ impl App {
     }
 }
 
-pub struct Frame {
-    text: String,
-    _bytes: tokio::sync::OwnedSemaphorePermit,
-}
-
-struct Guard(Shared, (String, String), CancellationToken);
+struct Guard(Shared, (String, String), CancellationToken, std::sync::Arc<hub::Sub>);
 impl Drop for Guard {
     fn drop(&mut self) {
+        self.0.events.unsubscribe(&self.3);
         let mut store = self.0.inner.lock().unwrap();
         if !self.2.is_cancelled() {
             store.connections.remove(&self.1);
@@ -115,7 +103,6 @@ pub async fn connect(
     let key =
         owned_key(&owner, query.map_err(|_| error(Status::BAD_REQUEST, "Invalid client connection"))?.0.validate()?);
     let limit = if owner == "local" { LOCAL_STREAMS } else { DEVICE_STREAMS };
-    let mut rx = app.events.subscribe();
     let cancel = CancellationToken::new();
     let mut inventory = app.inner.lock().unwrap();
     let prefix = format!("{owner}\0");
@@ -128,28 +115,41 @@ pub async fn connect(
     {
         previous.cancellation.cancel();
     }
+    // Subscribed under the inventory lock: the replayed statuses precede every later one.
+    let sub = app.events.subscribe();
     drop(inventory);
-    let guard = Guard(app, key, cancel.clone());
+    let guard = Guard(app, key, cancel.clone(), sub);
     Ok(Sse::new(async_stream::stream! {
         let _guard = guard;
+        let (app, sub) = (&_guard.0, &_guard.3);
         let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         heartbeat.tick().await;
+        // A backlog is sent without waiting, yet cancellation and the keep-alive still come first.
+        let mut more = true;
         loop {
             tokio::select! {
                 biased;
                 _ = principal.0.cancelled() => break,
                 _ = cancel.cancelled() => break,
-                event = rx.recv() => match event {
-                    Ok(Some(frame)) => yield Ok(Event::default().data(&frame.text)),
-                    Ok(None) | Err(broadcast::error::RecvError::Lagged(_) | broadcast::error::RecvError::Closed) => break,
-                },
+                _ = app.events.shutdown.cancelled() => break,
                 _ = heartbeat.tick() => {
-                    if _guard.0.inner.lock().unwrap().connections.get(&_guard.1)
+                    if app.inner.lock().unwrap().connections.get(&_guard.1)
                         .is_none_or(|client| client.pong.elapsed() >= Duration::from_secs(45)) { break; }
                     yield Ok(Event::default().event("codenomad.client.ping")
                         .data(json!({"ts": chrono::Utc::now().timestamp_millis()}).to_string()));
+                    continue;
                 },
+                _ = std::future::ready(()), if more => {},
+                _ = sub.ready.notified(), if !more => {},
+            }
+            match app.events.pop(sub) {
+                hub::Next::Frame(text) => {
+                    more = true;
+                    yield Ok(Event::default().data(text));
+                }
+                hub::Next::Empty => more = false,
+                hub::Next::Closed => break,
             }
         }
     }))

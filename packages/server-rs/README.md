@@ -29,7 +29,7 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/meta.rs`, `service.rs`, `workspaces.rs`, `storage.rs` | Server identity, user service mode, workspace lifecycle, UI preferences |
 | `src/auth/` | Local password session (`auth.json`, bootstrap token, `/login`); paired devices, HTTPS admission, TLS |
 | `src/opencode/` | Native client, `/instance` relay, cursors |
-| `src/events/` | SSE to the UI, bridge from the daemon stream |
+| `src/events/` | SSE to the UI through per-subscriber queues (4 MiB each, 32 MiB shared), bridge from the daemon stream. A slow subscriber's backlog folds superseding events (native deltas, usage, tool progress, storage and inventory signals); past its bound, a workspace's native events give way to `instance.eventStatus` `error` then its current status, which makes the UI re-read that workspace; an overflow no workspace explains resynchronizes every workspace and ends the stream |
 | `src/files/`, `search/`, `git/` | Project files and links, file search, Git status/diff/history/mutations |
 | `src/worktrees/` | Owned checkouts, linked worktrees, location ownership, deletion fence |
 | `src/sessions/` | Pending requests, permission receipts, favorites, history navigation |
