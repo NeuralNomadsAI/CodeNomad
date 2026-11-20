@@ -514,6 +514,7 @@ async function main() {
   // Decrypted Remote Control requests enter the same application as local ones.
   let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
   let remoteControlPreviewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
+  let remoteControlServesRemotePreview: (token: string) => boolean = () => false
   const allowedOrigins = parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS)
   const remoteControlManager = new RemoteControlManager({
     directHttpsOrigins: () => verifiedHttpsOrigins(serverMeta, allowedOrigins),
@@ -521,7 +522,7 @@ async function main() {
     lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
     router: () => remoteControlRouter,
     previewUpgrade: () => remoteControlPreviewUpgrade,
-    hasPreview: (token) => previewManager.get(token) !== undefined,
+    hasPreview: (token) => previewManager.get(token) !== undefined || remoteControlServesRemotePreview(token),
     tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
     disabledByAdministrator: options.remoteControlDisabled,
     logger: logger.child({ component: "remote-control" }),
@@ -631,6 +632,7 @@ async function main() {
   const routingServer = options.http || nativeParent.available || !httpsServer ? httpServer : httpsServer
   remoteControlRouter = (request, response) => routingServer.instance.routing(request, response)
   remoteControlPreviewUpgrade = routingServer.previewUpgrade
+  remoteControlServesRemotePreview = routingServer.servesRemotePreview
 
   const [httpStart, httpsStart, bridgeStart] = await Promise.all([
     httpServer.start(),

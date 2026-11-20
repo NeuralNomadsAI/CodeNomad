@@ -14,13 +14,14 @@ import "../../../src/index.css"
 
 const calls: { owner: string; url: string; method: string; body?: any }[] = []
 let token = 0, generation = 1, held: "meta" | "preview" | undefined
+let hostPreviewsOff = false
 const pending: (() => void)[] = []
 const wait = async (phase: typeof held) => { if (held === phase) await new Promise<void>(resolve => pending.push(resolve)) }
 localBackend.api.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 localBackend.api.fetchStateOwner = async () => ({}) as any
 localBackend.api.fetchServerMeta = async () => {
   calls.push({ owner: "local", url: "/api/meta", method: "GET" })
-  return { serverVersion: "host-version", previewsUnavailable: false } as any
+  return { serverVersion: "host-version", previewsUnavailable: hostPreviewsOff } as any
 }
 localBackend.api.createPreview = async body => {
   calls.push({ owner: "local", url: "/api/previews", method: "POST", body })
@@ -75,4 +76,5 @@ render(() => <ConfigProvider><I18nProvider>
   reattach: () => { generation++; detach = backendEvents.attach(remote.id, remote.events) },
   missing: () => { detach(); registry.delete(remote.id); setRemoteId("preview_remote~missing") },
   hostMeta: async () => setHostVersion((await getServerMeta()).serverVersion),
+  hostPreviews: async (off: boolean) => { hostPreviewsOff = off; await getServerMeta(true) },
 }

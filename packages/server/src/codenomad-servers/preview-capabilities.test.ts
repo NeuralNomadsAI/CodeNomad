@@ -9,6 +9,7 @@ import os from "node:os"
 import path from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import test, { type TestContext } from "node:test"
+import { gzipSync } from "node:zlib"
 import Fastify from "fastify"
 import pino from "pino"
 import { RemoteServerBrowseManager } from "./browse-manager"
@@ -30,7 +31,7 @@ const bounded = <T>(value: Promise<T>) => Promise.race([value, new Promise<never
   void value.finally(() => clearTimeout(timer)).catch(() => {})
 })])
 
-async function remote(t: TestContext, label: string, application = false, tls?: https.ServerOptions) {
+async function remote(t: TestContext, label: string, application = false, tls?: https.ServerOptions, content?: http.RequestListener) {
   const requests: { path: string; headers: IncomingHttpHeaders }[] = []
   const sockets = new Set<Socket>()
   const httpStreams = new Set<http.ServerResponse>()
@@ -52,6 +53,7 @@ async function remote(t: TestContext, label: string, application = false, tls?: 
     }
     if (url === `/api/previews/${TOKEN}` && request.method === "DELETE") { live = false; return reply.writeHead(204).end() }
     if (!live || !application && !url.startsWith(`/previews/${TOKEN}/`)) return reply.writeHead(404).end()
+    if (content && url !== "/") return content(request, reply)
     reply.setHeader("set-cookie", "appCookie=must-stay-private; HttpOnly")
     if (url.endsWith("/sw.js")) reply.setHeader("service-worker-allowed", "/")
     if (url.endsWith("/redirect")) return reply.writeHead(302, { location: `/previews/${TOKEN}/next` }).end()
@@ -154,8 +156,8 @@ function send(source: string, options: { method?: string; body?: string; headers
   }))
 }
 
-async function websocket(source: string, options: { origin?: string | null } = {}) {
-  const url = new URL("/ws", source)
+async function websocket(source: string, options: { origin?: string | null; path?: boolean } = {}) {
+  const url = new URL(options.path ? "./ws" : "/ws", source)
   return bounded(new Promise<{ socket: Socket; headers: IncomingHttpHeaders }>((resolve, reject) => {
     const request = http.request({ hostname: "127.0.0.1", port: url.port, path: url.pathname,
       headers: { host: url.host, origin: options.origin === null ? undefined : options.origin ?? url.origin, connection: "Upgrade", upgrade: "websocket",
@@ -434,8 +436,53 @@ test("HTTPS content and WSS honor the saved TLS policy through an identity-gated
   allowedWs.socket.destroy()
 })
 
-test("real remote CodeNomad HTTP/WS path proxies remain cookie-free", async t => {
-  const app = await remote(t, "APP", true)
+test("real remote CodeNomad HTTP/WS path proxies preserve normal preview content", async t => {
+  const encodeWide = (s: string) => Buffer.from(s, "utf16le").swap16()
+  const asset = Buffer.from([0x00, 0x80, 0xff])
+  const scripts = new Map([
+    ["module", "application/x-javascript"],
+    ...["text/x-javascript", "text/jscript", "text/livescript", "application/x-ecmascript",
+      "text/javascript1.0", "text/javascript1.5", "text/x-ecmascript", "text/javascript"]
+      .map((type, index) => [`chunk-${index}`, type] as const),
+  ])
+  const pending: http.ServerResponse[] = []
+  let events: http.ServerResponse
+  const app = await remote(t, "APP", true, undefined, (request, reply) => {
+    const script = scripts.get(request.url!.slice(1))
+    if (script) {
+      reply.writeHead(200, { "content-type": `${script}; charset=utf-8` })
+      if (request.url === "/module") return reply.end('import { next } from "/next"; // café')
+      reply.flushHeaders()
+      pending.push(reply)
+      if (pending.length === scripts.size - 1) {
+        const batch = pending.splice(0)
+        // Let all source requests reach rewrite admission while the bodies are paused.
+        setTimeout(() => { for (const item of batch) item.end('import { next } from "/next"; // café') }, 150)
+      }
+      return
+    }
+    switch (request.url) {
+      case "/legacy":
+        return reply.writeHead(200, { "content-type": 'text/html; charset="windows-1252"', "content-encoding": "gzip", etag: '"app"' })
+          .end(gzipSync(Buffer.from('<head></head><a href="/next">\x93Caf\xe9\x94</a>', "latin1")))
+      case "/wide":
+        return reply.writeHead(200, { "content-type": "text/html" }).end(encodeWide('\ufeff<a href="/next">日本語</a>'))
+      case "/style":
+        return reply.writeHead(200, { "content-type": "text/css; charset=utf-8" }).end('a { background: url("/next") }')
+      case "/unsupported":
+        return reply.writeHead(200, { "content-type": "text/html; charset=utf-32" }).end(Buffer.from([0, 0, 0xfe, 0xff]))
+      case "/partial":
+        return reply.writeHead(206, { "content-type": "text/css", "content-range": "bytes 0-5/12" }).end("a { } ")
+      case "/asset":
+        return reply.writeHead(200, { "content-type": "application/octet-stream; name=javascript" }).end(asset)
+      case "/events":
+        events = reply
+        reply.writeHead(200, { "content-type": "text/event-stream" }).write("data: ready\n\n")
+        return
+      default:
+        return reply.writeHead(404).end()
+    }
+  })
   const surface = await startRemoteSurface(t, { configureApp: instance => {
     instance.addHook("onSend", (request, _reply, payload, done) => {
       done(null, request.url === "/api/meta" ? JSON.stringify({ serverId: "real-backend" }) : payload)
@@ -463,4 +510,58 @@ test("real remote CodeNomad HTTP/WS path proxies remain cookie-free", async t =>
   assert.deepEqual((await bounded(echoed))[0], Buffer.from([0x81, 2, 104, 105]))
   assert.ok(surface.previewManager.get(cap.token))
   previews.revoke(cap.capability)
+
+  const host = http.createServer((request, reply) => {
+    if (!previews.servePath(request, reply)) reply.writeHead(404).end()
+  })
+  host.on("upgrade", (request, socket: Socket, head) => {
+    if (!previews.upgradePath(request, socket, head)) socket.destroy()
+  })
+  await new Promise<void>(resolve => host.listen(0, "127.0.0.1", resolve))
+  t.after(() => host.close())
+  const hostAddress = `127.0.0.1:${(host.address() as { port: number }).port}`
+  const authority = new AbortController()
+  const pathCap = await previews.create("real", proof, { sessionId: "real", url: app.origin }, undefined, undefined,
+    { key: "local-test", host: hostAddress, ingress: false, signal: authority.signal, current: () => !authority.signal.aborted, release() {} })
+  const publicOrigin = `http://${hostAddress}`
+  const publicPrefix = `/previews/${pathCap.capability}`
+  const wsPath = await websocket(`${publicOrigin}${pathCap.contentUrl}`, { path: true, origin: "null" })
+  t.after(() => wsPath.socket.destroy())
+  const pathEcho = once(wsPath.socket, "data")
+  wsPath.socket.write(Buffer.from([0x81, 0x82, 1, 2, 3, 4, 104 ^ 1, 105 ^ 2]))
+  assert.deepEqual((await bounded(pathEcho))[0], Buffer.from([0x81, 2, 104, 105]))
+  wsPath.socket.destroy()
+  for (const [origin, prefix] of [[`http://${surface.local}`, `/previews/${pathCap.token}`], [publicOrigin, publicPrefix]] as const) {
+    const get = async (part: string) => {
+      const response = await fetch(`${origin}${prefix}/${part}`, { signal: AbortSignal.timeout(5000) })
+      return { status: response.status, headers: response.headers, bytes: Buffer.from(await response.arrayBuffer()) }
+    }
+    const legacy = await get("legacy")
+    assert.equal(legacy.status, 200)
+    assert.equal(legacy.headers.get("etag"), null)
+    assert.equal(legacy.headers.get("content-encoding"), null)
+    assert.ok(legacy.bytes.includes(Buffer.from(`<a href="${prefix}/next">\x93Caf\xe9\x94</a>`, "latin1")))
+    const wide = await get("wide")
+    assert.equal(wide.status, 200)
+    assert.deepEqual(wide.bytes.subarray(0, 2), encodeWide("\ufeff"))
+    assert.ok(wide.bytes.includes(encodeWide(`<a href="${prefix}/next">日本語</a>`)))
+    assert.equal((await get("module")).bytes.toString(), `import { next } from "${prefix}/next"; // café`)
+    const chunks = await Promise.all([...scripts.keys()].filter(name => name !== "module").map(get))
+    for (const chunk of chunks) {
+      assert.equal(chunk.status, 200)
+      assert.equal(chunk.bytes.toString(), `import { next } from "${prefix}/next"; // café`)
+    }
+    assert.equal((await get("style")).bytes.toString(), `a { background: url("${prefix}/next") }`)
+    assert.deepEqual((await get("asset")).bytes, asset)
+    const stream = await fetch(`${origin}${prefix}/events`, { signal: AbortSignal.timeout(5000) })
+    assert.equal(stream.headers.get("content-type"), "text/event-stream")
+    const reader = stream.body!.getReader()
+    assert.equal(Buffer.from((await reader.read()).value!).toString(), "data: ready\n\n")
+    events!.end("data: done\n\n")
+    assert.equal(Buffer.from((await reader.read()).value!).toString(), "data: done\n\n")
+    assert.equal((await reader.read()).done, true)
+    assert.equal((await get("unsupported")).status, 502)
+    assert.equal((await get("partial")).status, 502)
+  }
+  authority.abort()
 })

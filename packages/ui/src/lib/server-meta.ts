@@ -13,8 +13,6 @@ export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
   type Snapshot = ReturnType<typeof createSnapshot>
   const local = createSnapshot()
   const attachments = new WeakMap<AbortSignal, Snapshot>()
-  const [previewsUnavailable, setPreviewsUnavailable] = createSignal(false)
-  const [previewsAvailabilityResolved, setPreviewsAvailabilityResolved] = createSignal(false)
 
   function snapshotFor(signal?: AbortSignal): Snapshot {
     let snapshot = signal ? attachments.get(signal) : local
@@ -36,8 +34,6 @@ export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
       snapshot.cached = meta
       snapshot.setMeta(meta)
       if (api === serverApi && !signal) setHostServerMeta(meta)
-      setPreviewsUnavailable(meta.previewsUnavailable === true)
-      setPreviewsAvailabilityResolved(true)
       return meta
     })
     snapshot.pending = request
@@ -48,7 +44,15 @@ export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
     }
   }
 
-  return { getServerMeta, meta: (signal?: AbortSignal) => snapshotFor(signal).meta(), previewsUnavailable, previewsAvailabilityResolved }
+  // An open that joins the initial read still owns one recovery read if that flight fails.
+  async function recoverInitialServerMeta(stillNeeded: () => boolean): Promise<void> {
+    await local.pending?.catch(() => undefined)
+    if (!local.cached && stillNeeded()) await getServerMeta()
+  }
+
+  return { getServerMeta, recoverInitialServerMeta, meta: (signal?: AbortSignal) => snapshotFor(signal).meta(),
+    previewsUnavailable: () => local.meta()?.previewsUnavailable === true,
+    previewsAvailabilityResolved: () => local.meta() !== null }
 }
 
 export type ServerMetaCache = ReturnType<typeof createServerMetaCache>

@@ -72,7 +72,8 @@ export function getPreviewFrameSource(
   parentUrl: string,
   backendId = "local",
 ): string {
-  if (backendId !== "local") return preview.contentUrl ?? preview.proxyUrl
+  // Host path capabilities are issued relative to the page origin.
+  if (backendId !== "local") return new URL(preview.contentUrl ?? preview.proxyUrl, parentUrl).href
   if (environment.windowContext !== "local" || (environment.host !== "electron" && environment.host !== "tauri")) {
     return preview.proxyUrl
   }

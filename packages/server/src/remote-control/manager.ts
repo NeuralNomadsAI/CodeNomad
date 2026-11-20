@@ -52,6 +52,7 @@ export class RemoteControlManager {
   private error: string | undefined
   private lastConnectedAt: string | undefined
   private readonly pushRevokedListeners = new Set<(deviceId: string | null, channel?: "tunnel") => void>()
+  private readonly previewInvalidations = new Set<(deviceId?: string, tunnelOnly?: boolean) => void>()
 
   constructor(private readonly options: ManagerOptions) {
     this.ingress = new RemoteIngress((request, response) => {
@@ -185,6 +186,27 @@ export class RemoteControlManager {
       || this.directHttpsOrigins().some((origin) => this.options.registry.isPaired(id, origin))
   }
 
+  isPreviewDeviceAuthorized(id: string, host: string, ingress: boolean): boolean {
+    if (this.options.disabledByAdministrator || !this.previewsAllowed()) return false
+    if (ingress) return this.enabled && this.tunnel?.hostname === host && this.options.registry.isPaired(id)
+    const origin = `https://${host}`
+    return this.directHttpsOrigins().includes(origin) && this.options.registry.isPaired(id, origin)
+  }
+
+  onPreviewDeviceInvalidated(id: string, ingress: boolean, invalidate: () => void): () => void {
+    const listener = (deviceId?: string, tunnelOnly?: boolean) => {
+      if ((!tunnelOnly || ingress) && (deviceId === undefined || deviceId === id)) invalidate()
+    }
+    this.previewInvalidations.add(listener)
+    return () => { this.previewInvalidations.delete(listener) }
+  }
+
+  private invalidatePreviews(deviceId?: string, tunnelOnly?: boolean) {
+    for (const invalidate of this.previewInvalidations) {
+      try { invalidate(deviceId, tunnelOnly) } catch { /* Continue notifying other owners. */ }
+    }
+  }
+
   pushAuthority(id: string, channel: "tunnel" | "https", origin: string): "active" | "suspended" | "revoked" {
     if (this.options.disabledByAdministrator || !this.options.registry.isPaired(id, channel === "https" ? origin : undefined)) return "revoked"
     if (channel === "https") return this.directHttpsOrigins().includes(origin) ? "active" : "revoked"
@@ -217,7 +239,10 @@ export class RemoteControlManager {
   /** The host's choice; turning previews off also closes their live WebSockets. */
   setPreviewsAllowed(allowed: boolean): RemoteControlStatus {
     this.options.registry.setPreviewsAllowed(allowed)
-    if (!allowed) this.ingress.disconnectUpgrades()
+    if (!allowed) {
+      this.invalidatePreviews()
+      this.ingress.disconnectUpgrades()
+    }
     return this.status()
   }
 
@@ -235,6 +260,7 @@ export class RemoteControlManager {
 
   shutdown(): Promise<void> {
     this.enabled = false
+    this.invalidatePreviews()
     this.generation += 1
     for (const socket of this.directDeviceSockets.keys()) socket.destroy()
     this.directDeviceSockets.clear()
@@ -308,6 +334,7 @@ export class RemoteControlManager {
   }
 
   private disconnectDevice(id: string): void {
+    this.invalidatePreviews(id)
     this.notifyPushRevoked(id)
     for (const sockets of [this.deviceSockets, this.directDeviceSockets]) {
       for (const [socket, devices] of sockets) {
@@ -317,6 +344,7 @@ export class RemoteControlManager {
   }
 
   private disconnectDevices(): void {
+    this.invalidatePreviews(undefined, true)
     for (const socket of this.deviceSockets.keys()) socket.destroy()
     this.deviceSockets.clear()
   }
