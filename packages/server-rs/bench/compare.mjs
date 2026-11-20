@@ -119,7 +119,15 @@ async function qualify(ts, rs, password, rsRoot) {
   assert.equal(await callStatus("/api/auth/login", { ...jsonBody({ username: "codenomad", password }), headers: { "content-type": "application/json", "x-forwarded-proto": "https" } }), 403)
   assert.equal(await callStatus("/api/remote-control/server-pair", { ...jsonBody({ code: "a".repeat(32) }), headers: { "content-type": "application/json", "x-codenomad-server-pairing": "1" } }), 404)
   result.tests.push("password, cookies, logout, cross-origin and Referer (TS + RS), unsupported device/authority/pairing (RS)")
-  if (mode !== "host") assert.equal(await callStatus(`/api/filesystem?path=${encodeURIComponent(path.dirname(rsRoot))}`), 400)
+  // Lexical refusals before any disk access: outside the root without `--unrestricted-root`; network,
+  // verbatim and device paths in both cases.
+  const outside = mode === "host" ? [] : [path.dirname(rsRoot)]
+  for (const refused of [...outside, String.raw`\\fixture.invalid\share\x`, String.raw`\\?\C:\Windows`, String.raw`\\.\pipe\x`, "C:\\Windows\\NUL"]) {
+    assert.equal(await callStatus(`/api/filesystem?path=${encodeURIComponent(refused)}`), 400, refused)
+    assert.equal(await callStatus("/api/filesystem/folders", jsonBody({ parentPath: refused, name: "x" })), 400, refused)
+    assert.equal(await callStatus("/api/workspaces", jsonBody({ path: refused })), 400, refused)
+  }
+  if (mode === "host") assert.equal(await callStatus(`/api/filesystem?path=${encodeURIComponent(path.dirname(rsRoot))}`), 200)
   assert((await (await call("/api/filesystem")).json()).entries.some(e => e.name === "Rust Project"))
   const open = requestId => call("/api/workspaces", jsonBody({ path: "Rust Project", requestId }))
   const opening = await open("release-test")
