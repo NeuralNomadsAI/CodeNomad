@@ -495,6 +495,7 @@ Context classification and recovery follow the schedule transport's
 Ordinary sidebar browsing/search and Mission criterion conversation-source pickers
 exclude this namespace through the shared carrier-identity predicate; native
 observations remain available to ownership and reconciliation readers.
+The compaction notifier uses the same predicate to keep carrier compaction silent.
 Technical turns keep native model-selection events/statistics while making zero
 provider HTTP requests. Their compaction preserves the carrier/calendar identity
 and bounds processed context. Persisted native messages and events follow native

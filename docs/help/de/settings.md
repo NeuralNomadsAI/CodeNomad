@@ -87,6 +87,8 @@ Die Eingabehöhe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtas
 
 ## Benachrichtigungen und Abzeichen {#notifications}
 
+Die Komprimierung technischer Missionssitzungen bleibt stumm.
+
 1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste, in der macOS-Desktop-App in der Titelleiste, aufbewahrt) und **System** (eine Betriebssystembenachrichtigung). Ziehen Sie über eine Zeile oder Spalte von Kästchen, um mehrere auf einmal einzustellen.
 2. Das Markieren eines **System**-Kästchens fragt bei Bedarf nach der Berechtigung. Unter **Systembenachrichtigungen** fragt **Berechtigung anfordern** erneut, solange die Berechtigung fehlt.
 3. Aktivieren Sie **Benachrichtigen, wenn die App im Fokus ist**, um Systembenachrichtigungen auch zu erhalten, während dieses Fenster im Fokus ist. Sonst erscheinen sie, sobald es nicht im Fokus ist, auch wenn es geöffnet auf dem Bildschirm bleibt.
