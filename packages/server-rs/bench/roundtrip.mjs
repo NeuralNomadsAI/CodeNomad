@@ -22,7 +22,6 @@ const ip = Object.values(os.networkInterfaces()).flat().find(a => a?.family === 
   && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a.address))?.address
 assert(ip, "No private IPv4 address for the direct HTTPS origin")
 const free = host => new Promise(resolve => { const s = net.createServer().listen(0, host, () => { const { port } = s.address(); s.close(() => resolve(port)) }) })
-const sorted = v => Array.isArray(v) ? v.map(sorted) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sorted(v[k])])) : v
 const sha = text => createHash("sha256").update(text).digest("hex").slice(0, 16)
 const json = (method, body) => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
 const result = { ip, steps: [] }
@@ -124,7 +123,7 @@ try {
     await new MemoryStore(config).save({ scope: "global" }, { title: "Saved by TS", type: "fact", text: "ts" }, "ses_roundtrip", () => true)
     const afterTs = step("ts1 files", await files(config))
     const tsNames = await readdir(config)
-    const tsConfig = JSON.stringify(sorted(parseYaml(await readFile(path.join(config, "config.yaml"), "utf8"))))
+    const tsConfig = JSON.stringify(parseYaml(await readFile(path.join(config, "config.yaml"), "utf8")))
 
     // Rust on the same profile: same authority, devices, identity, password and memory; its changes in place.
     let rs = live = await serve("rs", fixture, config, ["--tlsSANs", "roundtrip.example"])
@@ -146,8 +145,9 @@ try {
     const afterRs = step("rs files", await files(config))
     step("rs kept TS files", ["state.yaml", "config.yaml.server-id", "tls/ca-cert.pem", "tls/ca-key.pem"]
       .filter(name => afterRs[name] !== afterTs[name]))
-    // Either server rewrites the whole document (`yaml-doc-store.ts`): what TS reads back must be unchanged.
-    step("rs kept config.yaml", JSON.stringify(sorted(parseYaml(await readFile(path.join(config, "config.yaml"), "utf8")))) === tsConfig)
+    // Either server rewrites the whole document (`yaml-doc-store.ts`), each with its own YAML rendering:
+    // what TS reads back, key order included, must be unchanged.
+    step("rs kept config.yaml", JSON.stringify(parseYaml(await readFile(path.join(config, "config.yaml"), "utf8"))) === tsConfig)
     step("rs issued a new leaf with the TS authority", afterRs["tls/server-cert.pem"] !== afterTs["tls/server-cert.pem"])
     step("rust-only files", (await readdir(config)).filter(name => !tsNames.includes(name)).sort())
 
