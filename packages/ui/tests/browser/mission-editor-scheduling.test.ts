@@ -1232,6 +1232,25 @@ for (const provider of ["github", "gitlab", "gitea"] as const) test(`repository 
   } finally { await page.close() }
 })
 
+test("a remote branch criterion saves the detected repository and exact branch", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  const repository = { provider: "github", host: "github.com", repository: "team/project" }
+  await page.route("**/api/workspaces/fixture/repository-source?*", route => route.fulfill({ json: { status: "ok", repository } }))
+  await branches(page)
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Watch remote dev")
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("repository-activity")
+    await form(page).getByLabel("Criterion 1 event", { exact: true }).selectOption("remote-branch-commits")
+    await form(page).getByLabel("Criterion 1 source", { exact: true }).fill("release/dev")
+    await ready(page)
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "remote-branch-commits", ...repository, ref: "refs/heads/release/dev" }] })
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
 test("repository detection failures retry on demand; Git stays usable without a one-option event selector", async () => {
   const page = await browser.newPage(), f = await setup(page)
   let fails = true, calls = 0

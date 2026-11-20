@@ -94,11 +94,15 @@ Events at the beginning can launch a passage on each new occurrence; trigger eve
 
 **Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**.
 
+You can ask an agent to prepare the schedule using its current root conversation. Passages wait for the conversation to be idle.
+
 Select a schedule to read its state, next wake or check, launched and successful passage counts, and **Past runs**. The history retains 30 results; lifetime counts remain. **Run now** counts as a launched passage once admitted.
 
 A saved policy that the editor cannot represent stays under **Stored scheduling policy** until you explicitly replace it. Review any retained end or launch limit before editing.
 
 In **Followed conversations**, use **Add conversation** and choose a conversation, including for an immediate Mission. Before Play, change a selection or use its × button to remove it.
+
+Choose **New commits on a local branch** to watch a local Git ref, or **New commits on a remote branch** and enter the branch name (for example `dev`). The remote check reads the detected repository directly, without a local fetch. Several commits between checks produce one passage.
 
 ### Existing daily schedules {#existing-daily-schedules}
 

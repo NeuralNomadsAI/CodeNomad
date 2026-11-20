@@ -14,7 +14,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { acquireMissionNativeService, type MissionNativeRunner } from "./native-service-adapter"
 import { acquireNativePassageObservation } from "./native-passage-observation"
-import { acquireNativeSourceFence } from "./native-source-fence"
+import { acquireNativeSourceFence, ScheduledCoordinatorRefusal } from "./native-source-fence"
 import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 
 type Author = NonNullable<NonNullable<MissionDocument["creation"]>["author"]>
@@ -23,29 +23,28 @@ type Author = NonNullable<NonNullable<MissionDocument["creation"]>["author"]>
 export function assertAgentScheduledCoordinatorSelection(configuration: MissionConfiguration, author?: Author) {
   const id = configuration.coordinatorSessionID
   if (!author || !id) return
-  if (id === author.coordinatorSessionID) throw new Error("coordinator-is-author")
   if (configuration.watchedConversationIDs.includes(id) || missionLaunchModel(configuration.launch).events.some(event =>
-    event.kind === "conversation-message" && event.conversationID === id)) throw new Error("coordinator-is-source")
+    event.kind === "conversation-message" && event.conversationID === id)) throw new ScheduledCoordinatorRefusal("coordinator-is-source")
 }
 
 type AdoptionDocument = Pick<MissionDocument, "id" | "projectID" | "projectCanonical" | "configuration" | "pending">
   & { creation?: Pick<NonNullable<MissionDocument["creation"]>, "author"> }
 type Validation = Pick<NativeScheduledPassageContext, "native" | "observation" | "signal" | "current">
   & { document: AdoptionDocument; storage: Pick<MissionStorage, "get" | "scan" | "range">; fence: Pick<NativeSourceFence, "family" | "current">
-    & Partial<Pick<NativeSourceFence, "journal" | "coordinator">> }
+    & Partial<Pick<NativeSourceFence, "journal" | "coordinator">>; preparing?: true }
 
 export const acquireAgentScheduledCoordinatorValidation = Effect.fn("missions.validateAgentScheduledCoordinator")(function* (
-  ctx: Plugin.Context, run: MissionNativeRunner, document: AdoptionDocument, current: () => true, signal: AbortSignal,
+  ctx: Plugin.Context, run: MissionNativeRunner, document: AdoptionDocument, current: () => true, signal: AbortSignal, preparing?: true,
 ) {
-   const configuration = document.pending?.configuration ?? document.configuration
-   const author = configuration.coordinatorSelectionAuthor ?? document.creation?.author
-   assertAgentScheduledCoordinatorSelection(configuration, author)
-   if (!author || !configuration.coordinatorSessionID) return current
+  const configuration = document.pending?.configuration ?? document.configuration
+  const author = configuration.coordinatorSelectionAuthor ?? document.creation?.author
+  assertAgentScheduledCoordinatorSelection(configuration, author)
+  if (!author || !configuration.coordinatorSessionID) return current
   const native = yield* acquireMissionNativeService(current, run).pipe(Effect.scoped)
   const observation = yield* acquireNativePassageObservation(undefined, run)
   const fences = yield* acquireNativeSourceFence(current)
   const range = yield* optionalOrdinaryJournalRange(ctx, run)
-  return yield* Effect.tryPromise({ try: () => prepareAgentScheduledCoordinator({ document, native, observation, current, signal, fence: fences(),
+  return yield* Effect.tryPromise({ try: () => prepareAgentScheduledCoordinator({ document, native, observation, current, signal, preparing, fence: fences(),
     storage: { range, get: key => run(ctx.storage.get(key)) as ReturnType<MissionStorage["get"]>,
       scan: value => run(ctx.storage.scan(value)) as ReturnType<MissionStorage["scan"]> } }), catch: error => error })
 })
@@ -58,7 +57,7 @@ export const prevalidateAgentScheduledCoordinatorCreation = Effect.fn("missions.
 ) {
   return yield* acquireAgentScheduledCoordinatorValidation(ctx, run, { id: input.missionID, configuration: input.configuration,
     projectID: ctx.location.project.id, projectCanonical: ctx.location.project.canonical,
-    pending: null, creation: { author: input.author } }, input.current, input.signal)
+    pending: null, creation: { author: input.author } }, input.current, input.signal, true)
 })
 
 /** Read-only prevalidation. Its native fence is also consumed inside CAS/effects;
@@ -75,31 +74,35 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
   const documents = `${MISSION_DOCUMENT_PREFIX}/project/${token}/missions/`
   fence.journal(`${MISSION_JOURNAL_STORAGE_PREFIX}/${token}${storage.range ? "" : "/"}`, undefined, !!storage.range)
   fence.journal(documents, `${documents}${doc.id}`)
-  fence.family(id, undefined, true)
-  fence.coordinator(id)
+  // Saving records a future selection; it does not adopt or dispatch into the current turn.
+  const savingSelf = input.preparing && id === author.coordinatorSessionID
+  if (!savingSelf) fence.family(id, undefined, true)
+  fence.coordinator(id, savingSelf)
   const session = await input.native.get({ sessionID: id }, { signal: input.signal })
   if (session.id !== id || session.parentID || session.projectID !== doc.projectID
     || session.location.directory !== input.native.location.directory || session.location.workspaceID !== input.native.location.workspaceID
     || isReservedMissionScheduleSessionID(id) || session.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER] !== undefined)
-    throw new Error("Existing coordinator identity differs")
+    throw new ScheduledCoordinatorRefusal("coordinator-owned")
   const family = [id], seen = new Set(family)
   for (let index = 0; index < family.length; index++) {
     input.signal.throwIfAborted(); input.current()
-    const state = await observation.session(family[index])
-    if (state.active || state.inbox || state.suspended || state.runningTools) throw new Error("coordinator-busy")
+    if (!savingSelf) {
+      const state = await observation.session(family[index])
+      if (state.inbox || state.active || state.suspended || state.runningTools) throw new ScheduledCoordinatorRefusal("coordinator-busy")
+    }
     for (const child of await observation.children(family[index])) {
       if (seen.has(child) || seen.size >= MAX_CONTROL_FAMILY_SESSIONS) throw new Error("Coordinator family coverage unavailable")
       seen.add(child); family.push(child)
     }
   }
-  if (await observation.requests(family)) throw new Error("coordinator-busy")
+  if (!savingSelf && await observation.requests(family)) throw new ScheduledCoordinatorRefusal("coordinator-busy")
   const journal = new MissionJournal({ ...storage, set: async () => { throw new Error("Coordinator validation is read-only") } },
     doc.projectID, doc.projectCanonical)
   const snapshot = await journal.snapshot()
   if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable
     || snapshot.missions.some(mission => mission.id !== doc.pending?.missionID
       && (mission.status === "active" || mission.control?.pending.length || mission.control?.receipts?.some(receipt => receipt.acknowledgementState === "unknown"))
-      && (seen.has(mission.coordinatorSessionId) || mission.actors.some(actor => seen.has(actor.sessionId))))) throw new Error("coordinator-owned")
+      && (seen.has(mission.coordinatorSessionId) || mission.actors.some(actor => seen.has(actor.sessionId))))) throw new ScheduledCoordinatorRefusal("coordinator-owned")
   let after: string | undefined, count = 0
   do {
     const page = await storage.scan({ prefix: documents, after, limit: 100 })
@@ -110,12 +113,12 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
       const value = entry.value && typeof entry.value === "object" && "deletedAt" in entry.value
         ? missionTombstoneSchema.parse(entry.value) : parseMissionDocument(entry.value, identity)
       if (value.id !== identity.id || value.projectID !== doc.projectID || value.projectCanonical !== doc.projectCanonical)
-        throw new Error("coordinator-owned")
+        throw new ScheduledCoordinatorRefusal("coordinator-owned")
       if (!("deletedAt" in value) && (value.pending && seen.has(value.pending.coordinatorSessionID)
         || value.preparation?.pending && [value.preparation.previousSessionID, value.preparation.coordinatorSessionID].some(actor => seen.has(actor))
         || value.oneTime && seen.has(value.oneTime.coordinatorSessionID) && (!["finished", "stopped"].includes(value.state)
           || value.oneTime.firstPlay && !value.oneTime.firstPlay.acknowledgement)))
-        throw new Error("coordinator-owned")
+        throw new ScheduledCoordinatorRefusal("coordinator-owned")
     }
     if (page.next && (page.next === after || !page.entries.length)) throw new Error("Coordinator ownership coverage unavailable")
     after = page.next
@@ -128,7 +131,7 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
   async function validateMarker(session: NativeMissionSession) {
     const raw = session.metadata?.["codenomad.mission"]
     if (raw === undefined) return
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("coordinator-owned")
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new ScheduledCoordinatorRefusal("coordinator-owned")
     const marker = raw as { missionID?: string; document?: { missionID?: string; passageID?: string; coordinatorReused?: unknown } }
     if (doc.pending && canonicalAuthority(raw) === canonicalAuthority({ version: 1, missionID: doc.pending.missionID,
       kind: "coordinator", role: "coordinator", document: { missionID: doc.id, passageID: doc.pending.id, coordinatorReused: true } })) return
@@ -137,11 +140,11 @@ export async function prepareAgentScheduledCoordinator(input: Validation): Promi
         const owner = await storage.get(`${documents}${marker.document.missionID}`)
         if (!scheduledPassageOwner(owner, doc, id!, marker)) return
       } catch { /* Unknown ownership refuses adoption. */ }
-      throw new Error("coordinator-owned")
+      throw new ScheduledCoordinatorRefusal("coordinator-owned")
     }
     const owner = snapshot.missions.find(mission => mission.id === marker.missionID)
     if (!owner || owner.status === "active" || owner.control?.pending.length
       || owner.control?.receipts?.some(receipt => receipt.acknowledgementState === "unknown")
-      || !owner.actors.some(actor => actor.sessionId === id)) throw new Error("coordinator-owned")
+      || !owner.actors.some(actor => actor.sessionId === id)) throw new ScheduledCoordinatorRefusal("coordinator-owned")
   }
 }

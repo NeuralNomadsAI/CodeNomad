@@ -14,6 +14,11 @@ export const repositoryAuthorSchema = z.string().trim().max(100).regex(/^@?[A-Za
   .transform(value => value.replace(/^@/, "").toLowerCase())
 export const missionRepositoryConditionSchema = repositoryIdentitySchema.extend({ kind: z.literal("repository-activity"),
   event: z.enum(repositoryEvents), author: repositoryAuthorSchema.optional() }).strict()
+export const branchHeadRefSchema = z.string().min(12).max(1024).regex(/^refs\/heads\//).refine(value => !/[\s~^:?*\[\\\x00-\x1f\x7f]/.test(value)
+  && !value.includes("..") && !value.includes("@{") && value.split("/").every(part => part && !part.startsWith(".") && !part.endsWith(".") && !part.endsWith(".lock")))
+export const missionRemoteBranchConditionSchema = repositoryIdentitySchema.extend({ kind: z.literal("remote-branch-commits"), ref: branchHeadRefSchema }).strict()
+export type MissionRemoteBranchCondition = z.infer<typeof missionRemoteBranchConditionSchema>
+export const missionRemoteBranchCheckpointSchema = z.object({ oid: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/) }).strict()
 export type MissionRepositoryCondition = z.infer<typeof missionRepositoryConditionSchema>
 export type MissionRepositoryIdentity = z.infer<typeof repositoryIdentitySchema>
 const timestamp = z.string().datetime({ offset: true }).transform(value => new Date(value).toISOString())
