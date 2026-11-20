@@ -55,6 +55,7 @@ jobs:
       - tests
       - tests-browser
       - tests-tauri-windows
+      - tests-server-rs
       - tests-opencode-compatibility
       - tests-session-pruning-native
       - tests-runtime-contracts
@@ -841,6 +842,24 @@ jobs:
 
       - name: Reproduce and prevent Windows runtime handle corruption
         run: node scripts/test-tauri-runner-refcount.mjs --baseline
+
+  tests-server-rs:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test the Rust server
+        working-directory: packages/server-rs
+        run: cargo test --locked
 
   # Exercise the selected-CLI contract on the reported macOS ARM64 platform as
   # well as both other hosts, independently of unrelated server-suite failures.
