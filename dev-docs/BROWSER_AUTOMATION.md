@@ -135,7 +135,8 @@ the displayed application address and maps native history entries before storing
 their logical URLs. Remote dismissal releases live authority while retaining
 saved logical history. Tab detachment and attachment revocation fence pending
 creation/restoration and release live capabilities; `pagehide` uses keepalive
-deletion. Internal content URLs remain confined to embedded loading. The
+deletion. Internal content URLs remain confined to embedded loading. Unmapped
+native commits admit only external HTTP(S) site addresses as navigation requests. The
 `isolatedOrigin` frame policy requires origin-bound HTTP/WS admission on its
 host-issued content origin.
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { remotePreviewAddress, remotePreviewContent, remotePreviewSource } from "./remote-preview-address"
+import { remotePreviewAddress, remotePreviewContent, remotePreviewNavigationTarget, remotePreviewSource } from "./remote-preview-address"
 
 const preview = { token: "remote-token", capability: "local-cap", contentUrl: "http://local-cap.preview.localhost:1234/previews/remote-token/start",
   targetUrl: "http://remote-app.test/start", sessionId: "session", createdAt: "", proxyUrl: "/previews/remote-token/start" }
@@ -43,4 +43,13 @@ test("foreign capabilities, app origins and embedded credentials stay outside a 
   for (const address of ["http://other-app.test/start", "http://user:secret@remote-app.test/start", preview.contentUrl, "file:///etc/passwd"]) {
     assert.equal(remotePreviewSource(preview, address), undefined)
   }
+})
+test("an unmapped native commit can navigate only to an ordinary site address", () => {
+  const ui = "http://127.0.0.1:43123"
+  for (const stale of ["about:blank", "chrome-error://chromewebdata/", "http://old.preview.localhost:51234/previews/old/",
+    `${ui}/previews/old/`, "/previews/old/", "https://user:pass@example.org/"]) {
+    assert.equal(remotePreviewNavigationTarget(stale, ui), undefined, stale)
+  }
+  assert.equal(remotePreviewNavigationTarget("http://127.0.0.1:18852"), "http://127.0.0.1:18852/")
+  assert.equal(remotePreviewNavigationTarget("https://example.org/previews/article", ui), "https://example.org/previews/article")
 })

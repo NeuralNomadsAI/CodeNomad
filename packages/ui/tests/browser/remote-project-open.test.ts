@@ -23,6 +23,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-project-open-"))
   const a = await startFakeCodeNomad({ anonymous: true }), b = await startFakeCodeNomad({ anonymous: true })
   let refusal: "contract" | "426" | undefined, hold: (() => void) | undefined, holdCreate = false
+  let nextWorkspaceId = "w"
   let failInventory = false
   let createEntered: (() => void) | undefined, cancelEntered: (() => void) | undefined
   const mutations: string[] = [], paths: string[] = []
@@ -48,13 +49,13 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
         paths.push(`${id}:${input.path ?? input.folder}`)
         const send = () => {
           response.writeHead(200, { "content-type": "application/json" })
-          response.end(JSON.stringify({ ...descriptor(input.path ?? input.folder), binaryLabel, ...(input.requestId ? { requestId: input.requestId } : {}) }))
+          response.end(JSON.stringify({ ...descriptor(input.path ?? input.folder), id: nextWorkspaceId, binaryLabel, ...(input.requestId ? { requestId: input.requestId } : {}) }))
         }
         if (holdCreate) { hold = send; createEntered?.() }
         else send()
       })
     })
-    for (const suffix of ["/w", "/w/creation/release", "/creation/cancel"]) remote.state.handlers.set(`/api/workspaces${suffix}`, (request, response) => {
+    for (const suffix of ["/w", "/w/creation/release", "/duplicate/creation/release", "/creation/cancel"]) remote.state.handlers.set(`/api/workspaces${suffix}`, (request, response) => {
       mutations.push(`${id}:${suffix}:${request.method}`)
       response.writeHead(200, { "content-type": "application/json" }); response.end("{}")
       if (suffix === "/creation/cancel") cancelEntered?.()
@@ -168,10 +169,25 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     a.state.recents = []
     let releaseMeta!: () => void
     const heldMeta = new Promise<void>(resolve => { releaseMeta = resolve })
-    const page = await prepare("electron", false, page => page.route(/\/api\/meta$/, async route => {
-      if (new URL(route.request().url()).pathname === "/api/meta") await heldMeta
-      await route.continue()
-    }))
+    let releaseHistory!: () => void
+    const heldHistory = new Promise<void>(resolve => { releaseHistory = resolve })
+    let releaseBrowse!: () => void
+    const heldBrowse = new Promise<void>(resolve => { releaseBrowse = resolve })
+    let holdBrowse = false
+    const page = await prepare("electron", false, async page => {
+      await page.route(/\/api\/meta$/, async route => {
+        if (new URL(route.request().url()).pathname === "/api/meta") await heldMeta
+        await route.continue()
+      })
+      await page.route("**/api/storage/state/ui", async route => {
+        if (route.request().method() === "PATCH") await heldHistory
+        await route.continue()
+      })
+      await page.route("**/api/remote-servers/a/browse", async route => {
+        if (holdBrowse) await heldBrowse
+        await route.continue()
+      })
+    })
     try {
       await select(page, "a")
       const browse = blank(page).locator(".remote-server-browser")
@@ -180,13 +196,86 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       await browse.getByRole("button", { name: "app", exact: true }).click()
       await browse.getByRole("button", { name: "Open", exact: true }).click()
       await page.getByRole("tab", { name: /Alpha/ }).waitFor()
+      holdBrowse = true
       await select(page, "a")
       const recents = blank(page).getByRole("region", { name: "Recent tabs", exact: true })
       await recents.getByRole("button", { name: /^app · Alpha ·/ }).waitFor()
       assert.equal(await recents.locator(".folder-home-recent-item").count(), 1)
+      assert.equal(state.remoteProjectHistory, undefined, "the new shortcut appears before the host history write")
     } finally {
       releaseMeta()
+      releaseHistory()
+      releaseBrowse()
       a.state.recents = shortcuts
+      await page.close()
+      delete state.remoteProjectHistory
+    }
+  })
+  await t.test("a recent row opens another occurrence even if host history publishes during creation", async () => {
+    const page = await prepare(), before = mutations.length
+    let releaseHistory!: () => void
+    const heldHistory = new Promise<void>(resolve => { releaseHistory = resolve })
+    try {
+      await select(page, "a")
+      await openSame(page).click()
+      await blank(page).waitFor({ state: "detached" })
+      // The first opening's write precedes the next one in the owner queue.
+      await page.waitForFunction(async () => !!(await import("/src/stores/preferences.tsx")).remoteProjectHistory().recents.length)
+      await page.route("**/api/storage/state/ui", async route => {
+        if (route.request().method() === "PATCH") await heldHistory
+        await route.continue()
+      })
+      await select(page, "a")
+      const oldTab = "instance:a~w"
+      await blank(page).getByRole("button", { name: /^Switch to open project · Same ·/ }).click()
+      assert.equal(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot().active), oldTab)
+      assert.equal(mutations.slice(before).filter(value => value === "a:POST").length, 1)
+
+      await select(page, "a")
+      nextWorkspaceId = "duplicate"
+      holdCreate = true
+      const entered = new Promise<void>(resolve => { createEntered = resolve })
+      await page.evaluate(() => {
+        const w = window as any
+        w.__openingGate = (phase: string, _value: unknown, signal: AbortSignal) => {
+          if (phase === "ensure") w.duplicateSignal = signal
+        }
+      })
+      await openSame(page).click()
+      await entered
+      const historyRequested = page.waitForRequest(request => request.method() === "PATCH" && request.url().endsWith("/api/storage/state/ui"))
+      void historyRequested.catch(() => {})
+      await page.evaluate(async () => {
+        const { editRemoteProjectRecents } = await import("/src/stores/preferences.tsx")
+        const { remoteProjectRecentKey } = await import("/src/lib/remote-project-recent-data.ts")
+        ;(window as any).historyWrite = editRemoteProjectRecents(({ recents }) => ({
+          [remoteProjectRecentKey(recents[0]!)]: { lastAccessed: Date.now() + 1000 },
+        }))
+      })
+      await historyRequested
+      const historyUpdated = page.waitForResponse(response => response.request().method() === "PATCH" && response.url().endsWith("/api/storage/state/ui"))
+      releaseHistory()
+      await historyUpdated
+      // Wait for the actual store publication before releasing the pending creation.
+      await page.evaluate(() => (window as any).historyWrite)
+      assert.equal(await page.evaluate(() => (window as any).duplicateSignal.aborted), false, "the history refresh did not dispose the opening row")
+      const send = hold; hold = undefined; send?.()
+      await blank(page).waitFor({ state: "detached" })
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
+        tabs: [{ id: "instance:w", kind: "instance" }, { id: oldTab, kind: "instance" }, { id: "instance:a~duplicate", kind: "instance" }],
+        active: "instance:a~duplicate",
+      })
+      await page.waitForFunction(async () => {
+        const { __openingReceipts } = await import("/src/stores/instances.ts") as any
+        return !__openingReceipts().some((receipt: { backendId: string }) => receipt.backendId === "a")
+      })
+      assert.deepEqual(mutations.slice(before), ["a:POST", "a:/w/creation/release:POST", "a:POST", "a:/duplicate/creation/release:POST"])
+    } finally {
+      releaseHistory()
+      holdCreate = false
+      nextWorkspaceId = "w"
+      const send = hold; hold = undefined; send?.()
+      createEntered = undefined
       await page.close()
       delete state.remoteProjectHistory
     }
