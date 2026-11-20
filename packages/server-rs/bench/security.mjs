@@ -83,6 +83,8 @@ async function query(rust,ts) {
   await check("paired auth status","remote",host=>pair("GET","/api/auth/status",{headers:auth(host)}),200)
   await check("nested relay denied","remote",host=>pair("GET","/api/backends/other/api/meta",{headers:auth(host)}),404)
   await check("method outside catalog","remote",host=>pair("PATCH","/api/events",{headers:auth(host)}),404)
+  await check("SideCar management in the catalog","remote",host=>pair("GET","/api/sidecars",{headers:auth(host)}),200)
+  await check("SideCar content stays host-only","remote",host=>pair("GET","/sidecars/fixture/",{headers:auth(host)}),404)
   const sockets=await check("live SSE","remote",host=>pair("GET","/api/events?clientId=fixture&connectionId=revocation",{
     headers:{...auth(host),accept:"text/event-stream"},stream:true
   }),200)

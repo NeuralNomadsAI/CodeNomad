@@ -8,7 +8,7 @@
 //! are skipped as in the reference.
 mod cache;
 mod fuzzy;
-mod query;
+pub mod query;
 
 pub fn routes() -> axum::Router<Shared> {
     axum::Router::new().route("/api/workspaces/{id}/files/search", axum::routing::get(route))

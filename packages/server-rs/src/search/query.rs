@@ -20,7 +20,7 @@ pub struct Query {
     pub refresh: Option<bool>,
 }
 
-fn part(text: &str) -> String {
+pub fn part(text: &str) -> String {
     let text = if text.contains('+') { text.replace('+', " ") } else { text.to_owned() };
     // `fastDecode(text) || text`
     match crate::shared::decode_component(&text) {
@@ -52,7 +52,7 @@ fn fields(raw: &str) -> [Option<Field>; 5] {
 }
 
 /// JavaScript `Number(text)`.
-fn number(text: &str) -> f64 {
+pub fn number(text: &str) -> f64 {
     let t = text.trim_matches(js_space);
     if t.is_empty() {
         return 0.0;

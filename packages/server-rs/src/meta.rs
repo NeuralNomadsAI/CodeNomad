@@ -18,7 +18,8 @@ async fn read(State(app): State<Shared>, channel: Option<Extension<tls::Channel>
     let mut meta = app.meta.clone();
     meta["updateFeed"] = json!(update_feed(&app.settings.owner(Kind::Config, "server")));
     if channel.is_some() {
-        meta["localRequest"] = json!(false);
+        // SideCar content stays host-only: the direct HTTPS opt-in is not served here.
+        (meta["localRequest"], meta["sidecarsAllowed"]) = (json!(false), json!(false));
         meta["previewsUnavailable"] = json!(true);
     }
     Json(meta)
@@ -31,7 +32,15 @@ pub fn document(
     tls: Option<&tls::Listener>,
     ui: Value,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    let mut capabilities = vec!["workspaces", "events", "workspace-files", "workspace-git", "linked-worktrees"];
+    let mut capabilities = vec![
+        "workspaces",
+        "events",
+        "workspace-files",
+        "workspace-git",
+        "linked-worktrees",
+        "sidecars",
+        "service-usage",
+    ];
     if bench::missions_run() {
         capabilities.push("missions");
     }
@@ -39,7 +48,7 @@ pub fn document(
         "serverId": server_id, "apiContract": API_CONTRACT, "capabilities": capabilities,
         "localUrl": format!("http://127.0.0.1:{port}"), "localPort": port, "host": "127.0.0.1",
         "listeningMode": "local", "hostLabel": "127.0.0.1", "eventsUrl": "/api/events", "workspaceRoot": root,
-        "addresses": [], "localRequest": true, "sidecarsAllowed": false,
+        "addresses": [], "localRequest": true, "sidecarsAllowed": true,
         "serversUsable": false, "serversManageable": false, "secretEntryAllowed": false,
         "system": { "platform": if cfg!(windows) { "win32" } else { std::env::consts::OS },
             "arch": if cfg!(target_arch = "x86_64") { "x64" } else { std::env::consts::ARCH } },
