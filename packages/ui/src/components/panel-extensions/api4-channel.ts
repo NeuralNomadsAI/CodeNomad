@@ -185,7 +185,7 @@ export function useApi4Channel(props: {
 
   /** Linked item branches joined to the worktrees that check them out; null when the repository is unavailable. */
   async function linkedWorktrees(signal: AbortSignal) {
-    const [answer] = await Promise.all([panelExtensionsApi4.workItemBranches(authority, signal), reloadWorktrees(props.instanceId)])
+    const [answer] = await Promise.all([panelExtensionsApi4.workItemBranches(authority, signal), reloadWorktrees(props.instanceId, true)])
     if (answer.status !== "ok") return null
     // `worktree`: checked out anywhere, even where the opened folder is missing (Git allows one checkout per branch).
     const worktrees = getWorktrees(props.instanceId), current = familyWorktree()?.slug

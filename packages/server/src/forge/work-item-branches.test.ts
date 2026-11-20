@@ -166,6 +166,16 @@ describe("work item branches", () => {
       [`refs/heads/Issue-42 ${tip}`])
   })
 
+  it("keeps a pull request branch the user rebased", async () => {
+    const { clone, source } = await project()
+    assert.equal((await createWorkItemBranch(clone, source, "pullRequest", 7)).status, "ok")
+    commit(clone, "main moves on")
+    git(clone, "switch", "-q", "pr-7")
+    git(clone, "-c", "user.name=T", "-c", "user.email=t@example.com", "rebase", "-q", "main")
+    git(clone, "switch", "-q", "main")
+    assert.deepEqual(await lookup(clone, source, "pullRequest", 7), { status: "ok", branch: "pr-7" })
+  })
+
   it("keeps a link whose creation entry expired from a reflog that goes on", async () => {
     const { clone, source } = await project()
     assert.equal((await createWorkItemBranch(clone, source, "issue", 43)).status, "ok")

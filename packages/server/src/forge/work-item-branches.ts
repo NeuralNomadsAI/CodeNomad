@@ -148,9 +148,10 @@ async function linkedBranch(directory: string, source: WorkItemBranchSource, kin
   // (later entries kept) or without a reflog, ancestry alone decides.
   // `git branch -c`/`-m` carry config and reflog along, then log the copy or rename: such a
   // branch came under this name from another one, whatever its first entry says.
-  const recreated = (first?.creation === true && first.message !== creationMarker(kind, number))
-    || /^Branch: (copied|renamed) /im.test(history)
-  return contains && !recreated ? { status: "ok", repository: workItemRepository(source), branch: link.branch } : { status: "conflict", branch: link.branch }
+  const ours = first?.creation === true && first.message === creationMarker(kind, number)
+  const recreated = (first?.creation === true && !ours) || /^Branch: (copied|renamed) /im.test(history)
+  // CodeNomad's own creation entry proves the branch through any rewrite (a rebase); without it, ancestry decides.
+  return !recreated && (ours || contains) ? { status: "ok", repository: workItemRepository(source), branch: link.branch } : { status: "conflict", branch: link.branch }
 }
 
 /**
