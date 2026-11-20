@@ -66,7 +66,9 @@ Both modes use OpenCode’s session rules, including in its terminal UI when con
 
 Supervised is not a sandbox. Reads, access outside the project and MCP tools keep their own rules. Open requests keep their original rules.
 
-New subagents and forks get a copy of the session rules at creation. You can change their mode separately.
+In a subagent, **Permissions** shows and changes the root conversation’s mode. Existing subagents keep their rules when the mode changes; when a subagent starts another, the new one copies its immediate parent’s rules.
+
+A fork gets a copy of its source’s rules and has its own mode. If CodeNomad can’t verify which rules to remove, the fork keeps them and you can still send messages.
 
 If the mode is unconfirmed, choose **Reload permissions**. To set the starting mode, see [New conversation permissions](settings.md#new-conversation-permissions).
 

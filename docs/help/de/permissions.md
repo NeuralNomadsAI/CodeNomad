@@ -66,7 +66,9 @@ Beide Modi nutzen die Sitzungsregeln von OpenCode, auch in dessen Terminaloberfl
 
 Der beaufsichtigte Modus ist keine Sandbox. Lesezugriffe, Zugriffe außerhalb des Projekts und MCP-Werkzeuge behalten ihre eigenen Regeln. Offene Anfragen behalten ihre ursprünglichen Regeln.
 
-Subagenten und verzweigte Unterhaltungen erhalten bei der Erstellung eine Kopie der Sitzungsregeln. Sie können ihren Modus separat ändern.
+Bei einem Subagenten zeigt und ändert **Berechtigungen** den Modus der Hauptunterhaltung. Bestehende Subagenten behalten bei einem Moduswechsel ihre Regeln. Startet ein Subagent einen weiteren, übernimmt dieser die Regeln seines unmittelbaren Elternagenten.
+
+Eine verzweigte Unterhaltung übernimmt die Regeln ihrer Quelle und hat einen eigenen Modus. Kann CodeNomad nicht prüfen, welche Regeln zu entfernen sind, bleiben diese erhalten und Sie können weiterhin Nachrichten senden.
 
 Ist der Modus nicht bestätigt, wählen Sie **Berechtigungen neu laden**. Zum Festlegen des Startmodus siehe [Berechtigungen für neue Unterhaltungen](settings.md#new-conversation-permissions).
 

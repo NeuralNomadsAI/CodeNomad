@@ -163,8 +163,7 @@ export async function prepareMissionCreation(input: {
       return
     }
     const current = () => { signal.throwIfAborted(); connection.assertCurrent() }
-    await modes.recoverNewRoot(sessionPermissionTarget(session, { client, distro, signal, current },
-      candidate => manager.ownsLocation(workspaceID, candidate, client, { signal })), permissions)
+    await modes.recoverNewRoot(sessionPermissionTarget(session, { client, distro, signal, current }), permissions)
   }
   return {
     missionID, sessionID, creationMessageID, request: structuredClone(nativeInput), dispose,

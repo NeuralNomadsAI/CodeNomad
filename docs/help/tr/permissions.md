@@ -66,7 +66,9 @@ Her iki mod da OpenCode’un oturum kurallarını kullanır. Aynı hizmette ayn�
 
 Denetimli mod bir yalıtım ortamı değildir. Okuma, proje dışına erişim ve MCP araçları kendi kurallarına tabi kalır. Açık istekler ilk kurallarını korur.
 
-Alt ajanlar ve çatallanan konuşmalar oluşturulduklarında oturum kurallarının bir kopyasını alır. Modlarını ayrı ayrı değiştirebilirsiniz.
+Bir alt ajanda **İzinler**, kök konuşmanın modunu gösterir ve değiştirir. Mod değişince mevcut alt ajanlar kurallarını korur. Bir alt ajan başka bir alt ajan başlattığında, yeni ajan doğrudan üst ajanının kurallarını kopyalar.
+
+Çatallanan konuşma kaynak konuşmanın kurallarını kopyalar ve kendi modu vardır. CodeNomad hangi kuralların kaldırılacağını doğrulayamazsa kurallar korunur ve mesaj göndermeye devam edebilirsiniz.
 
 Mod doğrulanmadıysa **İzinleri yeniden yükle** seçeneğini kullanın. Başlangıç modunu seçmek için [Yeni konuşmaların izinleri](settings.md#new-conversation-permissions) bölümüne bakın.
 

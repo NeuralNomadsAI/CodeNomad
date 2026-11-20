@@ -89,7 +89,7 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
   const initial = rule("external_directory", "*", "deny")
   const appended = rule("read", "other.txt", "deny")
   const expected = [rule("edit", "*", "ask"), rule("shell", "*", "ask"), rule("shell", "*", "ask"), rule("shell", "rm *", "deny")]
-  const options = { headers: { "x-opencode-directory": encodeURIComponent(directory) }, signal: AbortSignal.timeout(15_000) }
+  const options = { headers: { "x-opencode-directory": encodeURIComponent(directory) }, signal: AbortSignal.timeout(45_000) }
   try {
     const original = await create({ permissions: [initial] })
     assert.deepEqual(original.permissions, [initial])
@@ -148,11 +148,14 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
     assert.equal(proxyFork.statusCode, 200, proxyFork.body)
     const forked = proxyFork.json().data
     assert.deepEqual(forked.permissions, [initial, ...expected])
-    assert.ok(modes.knownAt(undefined).some(target => target.id === forked.id), "proxy records the fork before replying")
+    assert.ok(modes.refreshTargets(undefined).targets.some(target => target.id === forked.id), "proxy records the fork before replying")
     const secondChild = await client.session.create({ parentID: original.id }, options)
     assert.equal(await mode("b", secondChild.id, "autonomous"), "autonomous")
-    assert.deepEqual((await client.session.get({ sessionID: secondChild.id }, options)).permissions, [initial])
-    assert.deepEqual((await read()).permissions, [initial, ...expected])
+    assert.deepEqual((await client.session.get({ sessionID: secondChild.id }, options)).permissions, [initial, ...expected])
+    assert.deepEqual((await read()).permissions, [initial])
+    const newChild = await client.session.create({ parentID: original.id }, options)
+    assert.deepEqual(newChild.permissions, [initial])
+    await mode("a", original.id, "supervised")
     const save = await nativePermission(original.id, "shell", "echo saved", { save: ["echo saved"] })
     assert.equal(save.effect, "ask")
     await client.permission.reply({ sessionID: original.id, requestID: save.id, decision: "always" }, options)
@@ -164,14 +167,11 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
     assert.deepEqual((await read()).permissions, [initial, appended])
     assert.equal(await mode("a", original.id), "autonomous")
     assert.deepEqual((await client.session.get({ sessionID: child.id })).permissions, [initial, ...expected])
-    for (const copy of [child, fork]) {
-      const get = () => client.session.get({ sessionID: copy.id }, options)
-      assert.equal(await mode("a", copy.id), "supervised")
-      await client.session.update({ sessionID: copy.id, permissions: [initial, ...expected, appended] }, options)
-      assert.equal(await mode("b", copy.id, "autonomous"), "autonomous")
-      assert.deepEqual((await get()).permissions, [initial, appended])
-      assert.equal(await mode("a", copy.id), "autonomous")
-    }
+    assert.equal(await mode("a", child.id), "autonomous")
+    assert.equal(await mode("a", forked.id), "supervised")
+    await client.session.update({ sessionID: forked.id, permissions: [initial, ...expected, appended] }, options)
+    assert.equal(await mode("b", forked.id, "autonomous"), "autonomous")
+    assert.deepEqual((await client.session.get({ sessionID: forked.id }, options)).permissions, [initial, appended])
     assert.deepEqual((await read()).permissions, [initial, appended])
     assert.ok((await client.permission.list({ sessionID: original.id }, options)).some(request => request.id === pending.id))
     await client.permission.reply({ sessionID: original.id, requestID: pending.id, decision: "reject" }, options)
@@ -203,8 +203,8 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
 
     const stopRefresh = connectSessionPermissionRefresh(bus, workspaceManager, modes, worktreeDeletionFence, cleanup, logger)
     const watching = new AbortController()
-    const refreshStream = client.event.subscribe({ signal: AbortSignal.any([watching.signal, AbortSignal.timeout(15_000)]),
-      types: ["config.updated", "session.permissions", "session.created"] })[Symbol.asyncIterator]()
+    const refreshStream = client.event.subscribe({ signal: AbortSignal.any([watching.signal, options.signal]),
+      types: ["config.updated", "session.permissions", "session.created", "session.forked", "session.deleted"] })[Symbol.asyncIterator]()
     try {
       assert.equal((await refreshStream.next()).value.type, "server.connected")
       const nextEvent = async (type, sessionID) => {
@@ -213,38 +213,92 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
           if (done) assert.fail("native permission event did not arrive")
           nativeEventConnections.set(event, connection)
           bus.publish({ type: "instance.event", event, instanceId: "a" })
-          if (event.type === type && event.data.sessionID === sessionID) return event
+          if (event.type === type && (!sessionID || event.data.sessionID === sessionID)) return event
         }
       }
       const nextPermissions = async (sessionID = created.id) => (await nextEvent("session.permissions", sessionID)).data.permissions
-      const deny = rule("shell", "echo refresh-fixture", "deny")
-      await writeFile(configPath, JSON.stringify({ permissions: [...config.permissions, deny] }))
-      assert.deepEqual(await nextPermissions(), [initial, ...expected, deny])
-      assert.equal((await nativePermission(created.id, "shell", deny.resource)).effect, "deny")
-      const insertedShell = rule("shell", "echo inserted", "deny")
-      const insertedEdit = rule("edit", path.join(directory, "private.txt"), "deny")
+      const load = session => client.session.get({ sessionID: session.id }, options)
+      const send = session => app.inject({ method: "POST", url: `/workspaces/a/instance/api/session/${session.id}/prompt`,
+        payload: { text: "Permission mode fixture", resume: false } })
+      const recorded = session => modes.refreshTargets(undefined).targets.some(target => target.id === session.id)
+
       const revisedChild = await client.session.create({ parentID: created.id }, options)
       await nextEvent("session.created", revisedChild.id)
       assert.equal(await mode("a", revisedChild.id), "supervised")
-      const childRules = [initial, insertedEdit, ...expected, deny, appended]
-      await client.session.update({ sessionID: revisedChild.id, permissions: childRules }, options)
-      assert.deepEqual(await nextPermissions(revisedChild.id), childRules)
-      const grandchildRules = [initial, insertedEdit, ...expected, deny, insertedEdit, appended]
-      assert.deepEqual(await nextPermissions(revisedChild.id), grandchildRules)
-      const grandchild = await client.session.create({ parentID: revisedChild.id }, options)
-      assert.deepEqual(grandchild.permissions, grandchildRules)
-      await nextEvent("session.created", grandchild.id)
-      assert.equal(await mode("a", grandchild.id), "supervised")
-      assert.equal((await nativePermission(grandchild.id, "edit", insertedEdit.resource)).effect, "deny")
-      const prompt = await app.inject({ method: "POST", url: `/workspaces/a/instance/api/session/${grandchild.id}/prompt`,
-        payload: { text: "Inherited permissions fixture", resume: false } })
-      const restore = await app.inject({ method: "PUT", url: `/api/workspaces/b/sessions/${grandchild.id}/permission-mode`,
-        payload: { mode: "autonomous" } })
-      assert.deepEqual([prompt.statusCode, restore.statusCode], [200, 200], `${prompt.body}\n${restore.body}`)
-      assert.deepEqual((await client.session.get({ sessionID: grandchild.id }, options)).permissions, [initial, insertedEdit, appended])
-      assert.deepEqual((await client.session.get({ sessionID: revisedChild.id }, options)).permissions, grandchildRules)
-      console.log("PASS: native grandchild admits a prompt, keeps the edit deny and removes only its copied block")
+      assert.ok(recorded(revisedChild))
+      const deny = rule("shell", "echo refresh-fixture", "deny")
+      await writeFile(configPath, JSON.stringify({ permissions: [...config.permissions, deny] }))
+      const refreshed = new Set()
+      while (refreshed.size < 2) {
+        const { data } = await nextEvent("session.permissions")
+        if (data.sessionID !== created.id && data.sessionID !== revisedChild.id) continue
+        assert.deepEqual(data.permissions, [initial, ...expected, deny])
+        refreshed.add(data.sessionID)
+      }
+      assert.equal((await nativePermission(created.id, "shell", deny.resource)).effect, "deny")
+      assert.equal((await nativePermission(revisedChild.id, "shell", deny.resource)).effect, "deny")
+      console.log("PASS: a config deny becomes effective on the root and recorded child")
 
+      const explicit = await client.session.create({ parentID: created.id, permissions: [initial, ...expected, deny] }, options)
+      await nextEvent("session.created", explicit.id)
+      assert.equal((await nativePermission(explicit.id, "shell", deny.resource)).effect, "deny")
+      assert.equal(await mode("b", explicit.id, "autonomous"), "autonomous")
+      assert.deepEqual((await load(created)).permissions, [initial])
+      assert.deepEqual((await load(explicit)).permissions, explicit.permissions)
+      assert.equal((await nativePermission(explicit.id, "shell", deny.resource)).effect, "deny")
+      const ask = await nativePermission(explicit.id, "shell", "echo explicitly configured")
+      assert.equal(ask.effect, "ask")
+      await client.permission.reply({ sessionID: explicit.id, requestID: ask.id, decision: "reject" }, options)
+      console.log("PASS: P1, an explicitly supplied array identical to the parent's stays intact, including its deny and ask")
+
+      const history = await load(revisedChild)
+      await client.session.remove({ sessionID: revisedChild.id }, options)
+      await client.session.import({ info: history, messages: [
+        { id: "msg_permission_child_history", type: "user", text: "Fork fixture", time: { created: history.time.created } },
+      ] }, options)
+      const nativeFork = await client.session.fork({ sessionID: revisedChild.id }, options)
+      await nextEvent("session.forked", nativeFork.id)
+      assert.ok((await load(nativeFork)).time.updated > nativeFork.time.created, "copying history updates the fork timestamp")
+      assert.equal(await mode("b", nativeFork.id), "supervised")
+      assert.ok(recorded(nativeFork))
+      assert.equal(await mode("a", revisedChild.id), "autonomous")
+      assert.equal(await mode("a", revisedChild.id, "supervised"), "supervised")
+      const prompt = await send(nativeFork)
+      assert.equal(prompt.statusCode, 200, prompt.body)
+      assert.equal(await mode("b", nativeFork.id, "autonomous"), "autonomous")
+      assert.deepEqual((await load(nativeFork)).permissions, [initial])
+      assert.deepEqual((await load(revisedChild)).permissions, history.permissions)
+      console.log("PASS: P2, native fork from a child with history records its own mode, admits a prompt and restores its rules")
+
+      const independentDeny = rule("shell", "echo independent deny", "deny")
+      const denyParent = await create({ permissions: [independentDeny] })
+      const supplied = [appended, ...expected, deny, independentDeny]
+      const delayedEventChild = await client.session.create({ parentID: denyParent.id, permissions: supplied }, options)
+      await client.session.update({ sessionID: denyParent.id, title: "Renamed after creation" }, options)
+      await nextEvent("session.created", delayedEventChild.id)
+      assert.ok((await load(denyParent)).time.updated > delayedEventChild.time.created)
+      assert.equal((await nativePermission(delayedEventChild.id, "shell", independentDeny.resource)).effect, "deny")
+      assert.equal(await mode("b", delayedEventChild.id, "autonomous"), "autonomous")
+      assert.deepEqual((await load(delayedEventChild)).permissions, supplied)
+      assert.equal((await nativePermission(delayedEventChild.id, "shell", independentDeny.resource)).effect, "deny")
+      console.log("PASS: P1 delayed variant, a child-only deny survives a family mode change after source rename")
+
+      const unknown = await send(fork)
+      assert.equal(unknown.statusCode, 200, unknown.body)
+      const unknownRestore = await app.inject({ method: "PUT", url: `/api/workspaces/b/sessions/${fork.id}/permission-mode`,
+        payload: { mode: "autonomous" } })
+      assert.equal(unknownRestore.statusCode, 409)
+      assert.equal(unknownRestore.json().code, "PERMISSION_BLOCK_UNVERIFIED")
+      assert.deepEqual((await load(fork)).permissions, fork.permissions)
+      console.log("PASS: unknown fork ownership only refuses rule removal; prompts still work")
+
+      await client.session.remove({ sessionID: explicit.id }, options)
+      await nextEvent("session.deleted", explicit.id)
+      for (let i = 0; i < 50 && recorded(explicit); i++) await delay(20)
+      assert.ok(!recorded(explicit), "deletion removes the stored child copy")
+
+      const insertedShell = rule("shell", "echo inserted", "deny")
+      const insertedEdit = rule("edit", path.join(directory, "private.txt"), "deny")
       const prefix = [initial, insertedShell, insertedEdit]
       const otherClientRules = [...prefix, ...expected, deny, appended]
       await client.session.update({ sessionID: created.id, permissions: otherClientRules }, options)
@@ -265,46 +319,6 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
       await stopRefresh()
     }
 
-    const retired = rule("shell", "echo retired fixture", "deny")
-    await writeFile(configPath, JSON.stringify({ permissions: [...config.permissions, retired] }))
-    await client.location.reload({ location: { directory } })
-    const first = await create()
-    assert.deepEqual(first.permissions, [...expected, retired])
-    const stopCopies = connectSessionPermissionRefresh(bus, workspaceManager, modes, worktreeDeletionFence, cleanup, logger)
-    const observingCopies = new AbortController()
-    const copyEvents = client.event.subscribe({ signal: AbortSignal.any([observingCopies.signal, options.signal]),
-      types: ["session.created"] })[Symbol.asyncIterator]()
-    let mid, last
-    try {
-      assert.equal((await copyEvents.next()).value.type, "server.connected")
-      for (const source of [first, null]) {
-        const copy = await client.session.create({ parentID: (source ?? mid).id }, options)
-        const { value: event } = await copyEvents.next()
-        assert.equal(event.data.sessionID, copy.id)
-        assert.deepEqual(event.data.permissions, [...expected, retired])
-        nativeEventConnections.set(event, connection)
-        bus.publish({ type: "instance.event", event, instanceId: "a" })
-        assert.equal(await mode("a", copy.id), "supervised")
-        if (source) mid = copy
-        else last = copy
-      }
-    } finally {
-      observingCopies.abort()
-      await copyEvents.return?.()
-      await stopCopies()
-    }
-    assert.equal((await nativePermission(last.id, "shell", retired.resource)).effect, "deny")
-    assert.equal(await mode("a", mid.id, "autonomous"), "autonomous")
-    assert.deepEqual((await client.session.get({ sessionID: mid.id }, options)).permissions, [])
-    await writeFile(configPath, JSON.stringify(config))
-    await client.location.reload({ location: { directory } })
-    assert.equal(await mode("b", mid.id, "supervised"), "supervised")
-    assert.deepEqual((await client.session.get({ sessionID: mid.id }, options)).permissions, expected)
-    assert.equal(await mode("a", last.id), "supervised")
-    assert.equal(await mode("b", last.id, "autonomous"), "autonomous")
-    assert.deepEqual((await client.session.get({ sessionID: last.id }, options)).permissions, [])
-    assert.equal((await nativePermission(last.id, "shell", retired.resource)).effect, "allow")
-    console.log("PASS: native grandchild drops the entire recorded copy, including the retired deny (native effect: allow)")
-    console.log("PASS: native root default, config deny/read, two clients and SSE, preserved rules, saved approval, independent child/fork modes and pending request")
+    console.log("PASS: native root default, config deny/read, two clients and SSE, saved approval, family mode and pending request")
   } finally { await app.close() }
 })

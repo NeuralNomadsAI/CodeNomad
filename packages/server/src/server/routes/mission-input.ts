@@ -157,7 +157,7 @@ export async function admitMissionInput(manager: Manager, fence: WorktreeDeletio
         const current = () => { signal.throwIfAborted(); connection.assertCurrent(); assertMissionAuthorityCurrent(authority) }
         await permissionModes.refresh(sessionPermissionTarget(beforeSend, {
           client, current, signal, distro: manager.getServiceWslDistro?.(workspace.id),
-        }, location => manager.ownsLocation(workspace.id, location, client, { signal })))
+        }))
         current()
       }
       await client.session.prompt(input, { signal })

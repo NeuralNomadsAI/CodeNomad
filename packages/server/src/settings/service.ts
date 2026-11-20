@@ -215,13 +215,11 @@ export class SettingsService {
     return this.stateStore.getAuthoritativeOwner(SESSION_PERMISSION_BLOCKS_OWNER)
   }
 
-  setPrivateSessionPermissionBlock(key: string, active: PermissionRule[] | null, previous: Array<PermissionRule[] | PermissionRule[][]> = [],
-    revisions: PermissionRule[][] = [], pending?: PermissionRule[], target?: { id: string; created: number; directory: string; distro: string | null },
-    keepEmpty = false): void {
+  setPrivateSessionPermissionBlock(key: string, active: PermissionRule[] | null,
+    target?: { id: string; created: number; directory: string; distro: string | null }, pending?: PermissionRule[], child = false): void {
     this.getPrivateSessionPermissionState()
     this.stateStore.mergePatchOwner(SESSION_PERMISSION_BLOCKS_OWNER, {
-      [key]: previous.length || revisions.length || pending || target || keepEmpty
-        ? { active, previous, revisions, pending: pending ?? null, target: target ?? null } : active,
+      [key]: target ? { active, pending: pending ?? null, target, child, previous: null, revisions: null } : active,
     })
   }
 

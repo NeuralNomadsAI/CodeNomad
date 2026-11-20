@@ -66,7 +66,9 @@ Les deux modes utilisent les règles de session d’OpenCode, y compris dans son
 
 Le mode Supervisé n’est pas un bac à sable. Les lectures, les accès hors projet et les outils MCP gardent leurs propres règles. Les demandes ouvertes gardent leurs règles initiales.
 
-Les sous-agents et les conversations bifurquées reçoivent une copie des règles de session à leur création. Vous pouvez changer leur mode séparément.
+Dans un sous-agent, **Permissions** affiche et modifie le mode de la conversation racine. Les sous-agents existants gardent leurs règles quand le mode change ; lorsqu’un sous-agent en lance un autre, le nouveau copie les règles de son parent direct.
+
+Une conversation bifurquée copie les règles de sa source et a son propre mode. Si CodeNomad ne peut pas vérifier quelles règles retirer, la conversation bifurquée les conserve et vous pouvez toujours envoyer des messages.
 
 Si le mode n’est pas confirmé, choisissez **Recharger les permissions**. Pour régler le mode initial, voir [Permissions des nouvelles conversations](settings.md#new-conversation-permissions).
 

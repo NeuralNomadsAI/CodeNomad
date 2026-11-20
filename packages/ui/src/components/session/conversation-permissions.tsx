@@ -4,6 +4,7 @@ import { Shield, Zap } from "lucide-solid"
 import type { ConversationPermissionMode, ConversationPermissionModeResponse } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
+import { HttpResponseError } from "../../lib/retryable-file-search"
 import { serverEvents } from "../../lib/server-events"
 import { InfoPopoverButton } from "../info-popover-button"
 
@@ -29,11 +30,12 @@ export function createConversationPermissionsState(instanceId: string, sessionId
   const [mode, setMode] = createSignal<ConversationPermissionMode>()
   const [writing, setWriting] = createSignal(false)
   const [readFailed, setReadFailed] = createSignal(false)
-  const [writeFailed, setWriteFailed] = createSignal(false)
+  const [writeFailed, setWriteFailed] = createSignal<"unverified" | "retry">()
+  let rootSessionID: string | undefined
   let disposed = false
   let read: AbortController | undefined
   let trailing = false
-  let unconfirmed: ConversationPermissionMode | undefined
+  let unconfirmed: { mode: ConversationPermissionMode; error: "unverified" | "retry" } | undefined
 
   function cancelRead() {
     read?.abort()
@@ -58,16 +60,17 @@ export function createConversationPermissionsState(instanceId: string, sessionId
       const response = await serverApi.readConversationPermissionMode(instanceId, sessionId, controller.signal)
       if (read !== controller || trailing) return
       const confirmed = confirmedMode(response)
+      rootSessionID = response.rootSessionID ?? sessionId
       setMode(confirmed)
       setReadFailed(false)
       if (unconfirmed) {
-        setWriteFailed(confirmed !== unconfirmed)
+        setWriteFailed(confirmed !== unconfirmed.mode ? unconfirmed.error : undefined)
         unconfirmed = undefined
       }
     } catch {
       if (read === controller && !trailing) {
         setReadFailed(true)
-        if (unconfirmed) setWriteFailed(true)
+        if (unconfirmed) setWriteFailed(unconfirmed.error)
       }
     } finally {
       if (read === controller) {
@@ -84,7 +87,8 @@ export function createConversationPermissionsState(instanceId: string, sessionId
     onCleanup(serverEvents.on("instance.event", (event) => {
       if (event.type !== "instance.event" || event.instanceId !== instanceId) return
       const native = event.event as { type: string; data?: { sessionID?: unknown } }
-      if (native.type === "server.connected" || (native.type === "session.permissions" && native.data?.sessionID === sessionId)) void refresh()
+      if (native.type === "server.connected" || (native.type === "session.permissions"
+        && (!rootSessionID || native.data?.sessionID === rootSessionID))) void refresh()
     }))
     onCleanup(serverEvents.on("instance.eventStatus", (event) => {
       if (event.type !== "instance.eventStatus" || event.instanceId !== instanceId) return
@@ -107,13 +111,14 @@ export function createConversationPermissionsState(instanceId: string, sessionId
     if (!previous || writing() || readFailed() || next === previous) return
     cancelRead()
     setWriting(true)
-    setWriteFailed(false)
+    setWriteFailed(undefined)
     unconfirmed = undefined
     try {
       const response = await serverApi.setConversationPermissionMode(instanceId, sessionId, next)
       if (!disposed) setMode(confirmedMode(response))
-    } catch {
-      if (!disposed) unconfirmed = next
+    } catch (error) {
+      if (!disposed) unconfirmed = { mode: next,
+        error: error instanceof HttpResponseError && error.code === "PERMISSION_BLOCK_UNVERIFIED" ? "unverified" : "retry" }
     } finally {
       if (!disposed) {
         setWriting(false)
@@ -166,7 +171,7 @@ export function ConversationPermissions(props: { state: PermissionState }) {
       <button class="window-action" type="button" onClick={() => void refresh()}>{t("permissions.retry")}</button>
     </Show>
     <Show when={writeFailed()}>
-      <span class="text-xs" role="alert">{t("permissions.changeFailed")}</span>
+      <span class="text-xs" role="alert">{t(writeFailed() === "unverified" ? "permissions.blockUnverified" : "permissions.changeFailed")}</span>
     </Show>
   </div>
 }

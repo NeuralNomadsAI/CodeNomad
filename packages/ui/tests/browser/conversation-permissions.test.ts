@@ -72,19 +72,21 @@ test("Status shows confirmed modes, follows another window and reconciles on rec
         if (route.request().method() === "PUT") {
           assert.equal(id, "ses_status")
           attempts++
-          if (reject) return route.fulfill({ status: 409 })
+          if (reject) return route.fulfill({ status: 409, json: { code: "PERMISSION_BLOCK_UNVERIFIED" } })
           const body = route.request().postDataJSON()
           assert.deepEqual(body, { mode: "supervised" })
           await held
           mode = body.mode
           permissionUpdate(id)
-        } else if (index === 1 && failOtherReads && id === "ses_status") {
+        } else if (index === 1 && failOtherReads && id === "ses_child") {
           return route.fulfill({ status: 503 })
         }
-        return route.fulfill({ json: { mode: id === "ses_status" ? mode : "autonomous" } })
+        return route.fulfill({ json: id === "ses_child" ? { mode, rootSessionID: "ses_status" }
+          : { mode: id === "ses_status" ? mode : "autonomous" } })
       })
       await events.route(page)
       await page.goto(url)
+      if (index === 1) await page.evaluate(() => (window as any).statusFixture.select("ses_child"))
       await statusTab(page).click()
       await page.waitForFunction(() => (window as any).statusFixture?.streamOpens() > 0)
       await expectMode(page, "autonomous")
@@ -150,7 +152,7 @@ test("Status shows confirmed modes, follows another window and reconciles on rec
     await expectMode(other, "supervised")
     reject = true
     await autonomous.click()
-    await first.getByText("Couldn’t change permissions. Try again.", { exact: true }).waitFor()
+    await first.getByRole("alert").filter({ hasText: "Can’t switch to Autonomous: the rules to remove couldn’t be verified." }).waitFor()
     await expectMode(first, "supervised")
     assert.equal(attempts, 3, "reconciliation never replays the write")
 
@@ -162,7 +164,7 @@ test("Status shows confirmed modes, follows another window and reconciles on rec
     await other.route("**/permission-mode", async route => {
       if (route.request().method() !== "GET") return route.fallback()
       await reconnectRead
-      return route.fulfill({ json: { mode } })
+      return route.fulfill({ json: { mode, rootSessionID: "ses_status" } })
     })
     await other.evaluate(() => (window as any).statusFixture.reconnect())
     await stale.waitFor()
@@ -191,7 +193,7 @@ test("Permissions help is named and Escape closes it before and after autofocus"
     const dialog = page.getByRole("dialog", { name, exact: true })
     await info.press("Enter")
     await expectFocus(dialog)
-    await dialog.getByText("New subagents inherit these rules.", { exact: true }).waitFor()
+    await dialog.getByText("This sets the family’s mode. Existing subagents keep their rules; forks have their own mode.", { exact: true }).waitFor()
     if (captures) await dialog.screenshot({ path: join(captures, "status-permissions-info.png") })
     await page.keyboard.press("Escape")
     await dialog.waitFor({ state: "hidden" })

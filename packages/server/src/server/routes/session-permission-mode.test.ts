@@ -242,7 +242,7 @@ test("a mode write queued behind a native PATCH projects the freshly written den
   assert.deepEqual(f.session.permissions, [read, deny, ...block, deny])
 })
 
-test("refreshes known supervised conversations on a location config event, including copied rules", async t => {
+test("refreshes a recorded child with new config denies and never removes its rules", async t => {
   const f = await fixture(t)
   assert.equal((await f.set("supervised")).statusCode, 200)
   const child = { ...f.session, id: "ses_child", parentID: f.session.id }
@@ -281,24 +281,18 @@ test("refreshes known supervised conversations on a location config event, inclu
   assert.deepEqual(child.permissions, [read, ...block, deny, suffix])
   assert.deepEqual(fork.permissions, f.session.permissions)
 
-  // Both boundaries match this unobserved descendant after contraction.
-  const missed = { ...child, id: "ses_missed", parentID: child.id, permissions: [read, ...block, deny] }
-  f.sessions.set(missed.id, missed)
   f.replaceConfig(config)
   const contracted = waitFor(f.session.id, child.id, fork.id)
   f.publish({ type: "config.updated", location: f.session.location, data: {} })
   await contracted
-  assert.deepEqual(child.permissions, [read, ...block, suffix])
-  const signal = AbortSignal.timeout(5_000)
-  const target = sessionPermissionTarget(missed, { client: f.client, distro: undefined, signal, current: () => signal.throwIfAborted() },
-    location => f.manager.ownsLocation("one", location))
-  await assert.rejects(f.modes.refresh(target), /Ambiguous permission block/)
-  assert.equal((await f.set("autonomous", "two", missed.id)).statusCode, 409)
-  assert.deepEqual(missed.permissions, [read, ...block, deny])
-  for (const copy of [f.session, child, fork]) {
-    assert.equal((await f.set("autonomous", "two", copy.id)).statusCode, 200)
-    assert.deepEqual(copy.permissions, copy === child ? [read, suffix] : [read])
-  }
+  assert.deepEqual(child.permissions, [read, ...block, deny, suffix])
+  assert.deepEqual(f.session.permissions, [read, ...block])
+  assert.deepEqual(fork.permissions, [read, ...block])
+  assert.deepEqual((await f.set("autonomous", "two", child.id)).json(), { mode: "autonomous", rootSessionID: f.session.id })
+  assert.deepEqual(f.session.permissions, [read])
+  assert.deepEqual(child.permissions, [read, ...block, deny, suffix])
+  assert.deepEqual((await f.set("autonomous", "two", fork.id)).json(), { mode: "autonomous" })
+  assert.deepEqual(fork.permissions, [read])
 })
 
 test("connection and config events refresh saved blocks without reopening sessions", { timeout: 5_000 }, async t => {
@@ -310,16 +304,15 @@ test("connection and config events refresh saved blocks without reopening sessio
   assert.equal((await f.set("supervised")).statusCode, 200)
   const child = { ...f.session, id: "ses_child", parentID: f.session.id }
   const fork = { ...f.session, id: "ses_fork", fork: { sessionID: f.session.id } } as SessionInfo
-  for (const copy of [child, fork]) {
-    f.sessions.set(copy.id, copy)
-    const signal = AbortSignal.timeout(5_000)
-    assert.deepEqual(await f.modes.refresh(sessionPermissionTarget(copy,
-      { client: f.client, distro: undefined, signal, current: () => signal.throwIfAborted() },
-      location => f.manager.ownsLocation("one", location))), { mode: "supervised" })
-  }
+  for (const copy of [child, fork]) f.sessions.set(copy.id, copy)
+  const initialRefresh = connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger)
+  f.observe(child)
+  f.observe(fork)
+  await f.modes.withSessionLock(sessionPermissionTarget(child, { client: f.client, distro: undefined, signal: t.signal, current() {} }), async () => {})
+  await f.get("one", fork.id)
+  await initialRefresh()
 
   const modes = f.restartModes()
-  assert.deepEqual(modes.knownAt(undefined), [])
   const refresh = modes.refresh.bind(modes)
   let settled: () => void
   let absent: () => void
@@ -350,13 +343,14 @@ test("connection and config events refresh saved blocks without reopening sessio
 
   const nextDeny = shell("deny", "after config *")
   changed(nextDeny)
-  const updated = Promise.all([waitForCopies(), waitForMissing()])
+  const updated = waitForCopies()
   f.reads.length = 0
   f.publish({ type: "config.updated", location: { directory: "/other" }, data: {} })
   f.publish({ type: "config.updated", location: f.session.location, data: {} })
   await updated
-  for (const copy of [f.session, child, fork]) assert.deepEqual(copy.permissions, [read, ...block, nextDeny])
-  assert.equal(f.reads.filter(id => id === missing.id).length, 1, "only the matching location tries the missing session")
+  for (const root of [f.session, fork]) assert.deepEqual(root.permissions, [read, ...block, nextDeny])
+  assert.deepEqual(child.permissions, [read, ...block, startupDeny, nextDeny])
+  assert.ok(!f.reads.includes(missing.id), "the missing session's durable record was cleaned on startup")
   assert.equal(warn.mock.callCount(), 0)
 })
 
@@ -401,8 +395,7 @@ test("preserves a verified refresh after a concurrent native addition and an unc
   const configDeny = shell("deny", "fixture *")
   f.replaceConfig([...config, { type: "document", info: { permissions: [configDeny] } }])
   const signal = AbortSignal.timeout(5_000)
-  const target = sessionPermissionTarget(f.session, { client: f.client, distro: undefined, signal, current: () => signal.throwIfAborted() },
-    location => f.manager.ownsLocation("one", location))
+  const target = sessionPermissionTarget(f.session, { client: f.client, distro: undefined, signal, current: () => signal.throwIfAborted() })
   f.mutate(rules => { f.session.permissions = [...rules, external]; throw Error("lost response") })
   await assert.rejects(f.modes.refresh(target), /lost response/)
   assert.equal(f.writes.length, 2, "an uncertain write is not replayed")
@@ -426,126 +419,90 @@ test("serializes two windows on one session, confirms each mode from native read
   assert.deepEqual((await f.get()).json(), { mode: "autonomous" })
 })
 
-test("finds inherited blocks in native child and fork lineage, and removes only the chosen copy", async t => {
+test("child and grandchild modes target only the root, including equal explicit rules", async t => {
   const f = await fixture(t)
   assert.deepEqual((await f.set("supervised")).json(), { mode: "supervised" })
-  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
-  const descendant = { ...child, id: "ses_descendant", parentID: child.id, permissions: [external, read, ...block] }
-  const fork = { ...child, id: "ses_fork", fork: { sessionID: child.id } } as SessionInfo
-  for (const copy of [child, descendant, fork]) f.sessions.set(copy.id, copy)
-  for (const copy of [child, descendant, fork]) assert.deepEqual((await f.get("one", copy.id)).json(), { mode: "supervised" })
-  assert.deepEqual((await f.set("supervised", "two", child.id)).json(), { mode: "supervised" })
-  assert.deepEqual(f.writes, [f.session.id], "selecting the existing mode does not append anything")
-
-  assert.deepEqual((await f.set("autonomous", "two", child.id)).json(), { mode: "autonomous" })
-  assert.deepEqual(child.permissions, [read])
-  assert.deepEqual(f.session.permissions, [read, ...block])
-  assert.deepEqual((await f.set("autonomous")).json(), { mode: "autonomous" })
-  assert.deepEqual((await f.get("one", fork.id)).json(), { mode: "supervised" })
-  assert.deepEqual((await f.set("autonomous", "one", descendant.id)).json(), { mode: "autonomous" })
-  assert.deepEqual(descendant.permissions, [external, read])
-  assert.deepEqual(fork.permissions, [read, ...block])
-  assert.deepEqual(f.writes, [f.session.id, child.id, f.session.id, descendant.id])
+  const explicit = [read, ...block]
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id, permissions: explicit }
+  const descendant = { ...child, id: "ses_descendant", parentID: child.id, permissions: [external, ...explicit] }
+  for (const copy of [child, descendant]) f.sessions.set(copy.id, copy)
+  t.after(connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger))
+  f.observe(child)
+  for (const copy of [child, descendant]) {
+    assert.deepEqual((await f.get("one", copy.id)).json(), { mode: "supervised", rootSessionID: f.session.id })
+  }
+  assert.deepEqual((await f.set("autonomous", "two", descendant.id)).json(), { mode: "autonomous", rootSessionID: f.session.id })
+  assert.deepEqual(f.session.permissions, [read])
+  assert.deepEqual(child.permissions, explicit)
+  assert.deepEqual(descendant.permissions, [external, ...explicit])
+  assert.deepEqual((await f.set("supervised", "two", child.id)).json(), { mode: "supervised", rootSessionID: f.session.id })
+  assert.deepEqual(f.writes, [f.session.id, f.session.id, f.session.id])
 })
 
-test("uses the refreshed parent block when a grandparent's prefix matches at the same position", async t => {
+test("a fork with a later update timestamp records its creation block and remains independent of the source", async t => {
+  const f = await fixture(t)
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const fork = { ...f.session, id: "ses_fork", parentID: f.session.id, fork: { sessionID: f.session.id },
+    time: { created: 200, updated: 400 } } as SessionInfo
+  f.sessions.set(fork.id, fork)
+  t.after(connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger))
+  f.observe(fork)
+  assert.deepEqual((await f.get("one", fork.id)).json(), { mode: "supervised" })
+  assert.deepEqual((await f.set("autonomous")).json(), { mode: "autonomous" })
+  assert.deepEqual((await f.get("one", fork.id)).json(), { mode: "supervised" })
+  const trailing = shell("deny", "keep *")
+  fork.permissions = [read, ...block, trailing]
+  assert.deepEqual((await f.set("autonomous", "two", fork.id)).json(), { mode: "autonomous" })
+  assert.deepEqual(fork.permissions, [read, trailing])
+})
+
+test("unknown fork and child rules never block sends, and only the fork refuses removal", async t => {
   const f = await fixture(t)
   registerInstanceProxyRoutes(f.app, { workspaceManager: f.manager, logger: f.logger, worktreeDeletionFence: f.worktrees,
     sessionCleanup: f.cleanup, permissionModes: f.modes })
-  assert.equal((await f.set("supervised")).statusCode, 200)
-  const deny = edit("deny", "private.txt")
-  const child = { ...f.session, id: "ses_child", parentID: f.session.id, permissions: [read, deny, ...block, external] }
-  f.sessions.set(child.id, child)
-  const target = sessionPermissionTarget(child, { client: f.client, distro: undefined, signal: t.signal, current: () => t.signal.throwIfAborted() },
-    location => f.manager.ownsLocation("one", location))
-  assert.deepEqual(await f.modes.refresh(target), { mode: "supervised" })
-  const inherited = [read, deny, ...block, deny, external]
-  assert.deepEqual(child.permissions, inherited)
-  const grandchild = { ...child, id: "ses_grandchild", parentID: child.id, permissions: [...inherited, ...block] }
-  f.sessions.set(grandchild.id, grandchild)
-  const send = () => f.app.inject({ method: "POST", url: `/workspaces/one/instance/api/session/${grandchild.id}/prompt`, payload: { text: "fixture" } })
-  const sends: PermissionRule[][] = []
-  f.onDispatch(() => sends.push(grandchild.permissions))
-  assert.equal((await send()).statusCode, 503, "a short match at another position still blocks a refresh")
-  assert.equal((await f.set("autonomous", "two", grandchild.id)).statusCode, 409)
-  assert.deepEqual(grandchild.permissions, [...inherited, ...block])
-
-  // Observe an actual copy; a later lookup alone cannot choose the long
-  // boundary over its matching historical prefix.
-  grandchild.permissions = inherited
-  assert.equal((await f.set("autonomous", "two", grandchild.id)).statusCode, 409)
-  const stop = connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger)
-  t.after(stop)
-  f.observe(grandchild)
-  assert.deepEqual((await f.get("one", grandchild.id)).json(), { mode: "supervised" })
-  const sent = await send()
-  assert.equal(sent.statusCode, 204, sent.body)
-  assert.deepEqual(sends, [inherited])
-  assert.equal((await f.set("autonomous", "two", grandchild.id)).statusCode, 200)
-  assert.deepEqual(grandchild.permissions, [read, deny, external])
-  assert.deepEqual(child.permissions, inherited)
-  assert.deepEqual(f.session.permissions, [read, ...block])
-  assert.deepEqual(f.writes, [f.session.id, child.id, grandchild.id])
+  const rules = [read, ...block, ...block]
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id, permissions: rules }
+  const fork = { ...child, id: "ses_fork", fork: { sessionID: child.id } } as SessionInfo
+  for (const copy of [child, fork]) {
+    f.sessions.set(copy.id, copy)
+    const sent = await f.app.inject({ method: "POST", url: `/workspaces/one/instance/api/session/${copy.id}/prompt`, payload: { text: "fixture" } })
+    assert.equal(sent.statusCode, 204, sent.body)
+  }
+  assert.equal((await f.set("autonomous", "two", child.id)).statusCode, 200)
+  assert.deepEqual((await f.get("one", fork.id)).json(), { mode: "supervised" })
+  const refused = await f.set("autonomous", "two", fork.id)
+  assert.equal(refused.statusCode, 409)
+  assert.equal(refused.json().code, "PERMISSION_BLOCK_UNVERIFIED")
+  assert.deepEqual(child.permissions, rules)
+  assert.deepEqual(fork.permissions, rules)
+  assert.deepEqual(f.writes, [])
 })
 
-test("keeps a trailing rule that completes a more distant ancestor's block on an observed copy", async t => {
+test("cleans a deleted child's durable record and never records empty observations", async t => {
   const f = await fixture(t)
-  const trailing = edit("deny", "private.txt")
-  f.replaceConfig([...config, { type: "document", info: { permissions: [trailing] } }])
+  const autonomous = { ...f.session, id: "ses_autonomous", parentID: f.session.id }
+  f.sessions.set(autonomous.id, autonomous)
+  t.after(connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger))
+  f.observe(autonomous)
   assert.equal((await f.set("supervised")).statusCode, 200)
-  assert.equal((await f.set("autonomous")).statusCode, 200)
-
-  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
-  f.sessions.set(child.id, child)
-  f.replaceConfig(config)
-  assert.equal((await f.set("supervised", "one", child.id)).statusCode, 200)
-  const grandchild = { ...child, id: "ses_grandchild", parentID: child.id, time: { created: 200, updated: 200 } }
-  const missed = { ...grandchild, id: "ses_missed", permissions: [read, ...block, trailing] }
-  f.sessions.set(grandchild.id, grandchild)
-  f.sessions.set(missed.id, missed)
-
-  const stop = connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger)
-  t.after(stop)
-  f.observe(grandchild)
-  // The native read now sees a foreign write that followed the creation event.
-  grandchild.permissions = missed.permissions
-  grandchild.time.updated++
-
-  assert.equal((await f.set("autonomous", "two", grandchild.id)).statusCode, 200)
-  assert.deepEqual(grandchild.permissions, [read, trailing])
-  assert.deepEqual(child.permissions, [read, ...block])
-  assert.equal((await f.set("autonomous", "two", missed.id)).statusCode, 409)
-  assert.deepEqual(missed.permissions, [read, ...block, trailing])
-})
-
-test("removes an observed grandchild's original longer copy after its parent enables a shorter block", async t => {
-  const f = await fixture(t)
-  const retired = shell("deny", "echo retired")
-  f.replaceConfig([...config, { type: "document", info: { permissions: [retired] } }])
-  assert.equal((await f.set("supervised")).statusCode, 200)
-
   const child = { ...f.session, id: "ses_child", parentID: f.session.id, time: { created: 200, updated: 200 } }
-  const grandchild = { ...child, id: "ses_grandchild", parentID: child.id, time: { created: 300, updated: 300 } }
-  for (const copy of [child, grandchild]) f.sessions.set(copy.id, copy)
-  const stop = connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger)
-  t.after(stop)
+  f.sessions.set(child.id, child)
+  const target = sessionPermissionTarget(child, { client: f.client, distro: undefined, signal: t.signal, current() {} })
   f.observe(child)
-  f.observe(grandchild)
-  assert.deepEqual((await f.get("one", grandchild.id)).json(), { mode: "supervised" })
-  await stop()
-  assert.equal((await f.set("autonomous", "one", child.id)).statusCode, 200)
-  f.replaceConfig(config)
-  assert.equal((await f.set("supervised", "one", child.id)).statusCode, 200)
-  assert.deepEqual(child.permissions, [read, ...block])
-  assert.deepEqual(grandchild.permissions, [read, ...block, retired])
-
+  await f.modes.withSessionLock(target, async () => {})
+  assert.deepEqual(f.modes.refreshTargets(undefined).targets.map(target => target.id).sort(), [child.id, f.session.id].sort())
   const modes = f.restartModes()
-  const target = sessionPermissionTarget(grandchild, { client: f.client, distro: undefined, signal: t.signal,
-    current: () => t.signal.throwIfAborted() }, location => f.manager.ownsLocation("one", location))
-  assert.deepEqual(await modes.read(target), { mode: "supervised" })
-  assert.deepEqual(await modes.write(target, "autonomous"), { mode: "autonomous" })
-  assert.deepEqual(grandchild.permissions, [read])
-  assert.deepEqual(child.permissions, [read, ...block])
+  const deleted = deferred()
+  const forget = f.modes.forgetDeleted.bind(f.modes)
+  t.mock.method(f.modes, "forgetDeleted", async (...args: Parameters<typeof forget>) => {
+    await forget(...args)
+    deleted.resolve()
+  })
+  f.sessions.delete(child.id)
+  f.publish({ type: "session.deleted", data: { sessionID: child.id } })
+  await deleted.promise
+  assert.equal(Object.keys(f.settings.getPrivateSessionPermissionState()).length, 1)
+  assert.deepEqual(modes.refreshTargets(undefined).targets.map(target => target.id), [f.session.id])
 })
 
 test("projects ordered session rules after config and restores the exact original rules", async t => {
@@ -560,46 +517,15 @@ test("projects ordered session rules after config and restores the exact origina
   assert.deepEqual(f.session.permissions, original)
 })
 
-test("recognizes earlier copies when a source gets a different supervised block", async t => {
-  const f = await fixture(t)
-  assert.equal((await f.set("supervised")).statusCode, 200)
-  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
-  f.sessions.set(child.id, child)
-  assert.equal((await f.set("autonomous")).statusCode, 200)
-  const newConfig: ConfigGetOutput = [{ type: "document", info: { permissions: [shell("deny", "new *")] } }]
-  f.replaceConfig(newConfig)
-  assert.equal((await f.set("supervised")).statusCode, 200)
-  assert.deepEqual((await f.get("one", child.id)).json(), { mode: "supervised" })
-  assert.equal((await f.set("autonomous", "one", child.id)).statusCode, 200)
-  assert.deepEqual(child.permissions, [read])
-  assert.deepEqual(f.session.permissions, [read, ...supervisedRules(newConfig, false)])
-})
-
-test("leaves a projected child copy unchanged when a historical prefix makes ownership ambiguous", async t => {
-  const f = await fixture(t)
-  assert.equal((await f.set("supervised")).statusCode, 200)
-  assert.equal((await f.set("autonomous")).statusCode, 200)
-  const original = [read, edit("deny", "local.txt")]
-  f.session.permissions = original
-  assert.equal((await f.set("supervised")).statusCode, 200)
-  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
-  f.sessions.set(child.id, child)
-  assert.equal((await f.set("autonomous", "two", child.id)).statusCode, 409)
-  assert.deepEqual(child.permissions, [...original, ...block, edit("deny", "local.txt")])
-})
-
-test("does not remove ambiguous copies or use ownership records from a foreign source", async t => {
+test("cannot set a family's mode via a child if the parent is outside the workspace", async t => {
   const f = await fixture(t)
   assert.equal((await f.set("supervised")).statusCode, 200)
   const child = { ...f.session, id: "ses_child", parentID: f.session.id, permissions: [...block, ...block] }
   f.sessions.set(child.id, child)
-  assert.deepEqual((await f.get("one", child.id)).json(), { mode: "supervised" })
-  assert.equal((await f.set("autonomous", "two", child.id)).statusCode, 409)
   f.session.location = { directory: "/foreign" }
-  child.permissions = [...block]
-  assert.deepEqual((await f.get("one", child.id)).json(), { mode: "autonomous" })
-  assert.deepEqual((await f.set("autonomous", "two", child.id)).json(), { mode: "autonomous" })
-  assert.deepEqual(child.permissions, block)
+  assert.equal((await f.get("one", child.id)).statusCode, 409)
+  assert.equal((await f.set("autonomous", "two", child.id)).statusCode, 409)
+  assert.deepEqual(child.permissions, [...block, ...block])
   assert.deepEqual(f.writes, [f.session.id])
 })
 

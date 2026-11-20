@@ -66,7 +66,9 @@ Ambos modos usan las reglas de sesión de OpenCode, también en su interfaz de t
 
 El modo Supervisado no es un entorno aislado. Las lecturas, el acceso fuera del proyecto y las herramientas MCP conservan sus propias reglas. Las solicitudes abiertas conservan sus reglas originales.
 
-Los subagentes y las bifurcaciones reciben una copia de las reglas de la sesión al crearse. Puedes cambiar su modo por separado.
+En un subagente, **Permisos** muestra y cambia el modo de la conversación raíz. Los subagentes existentes conservan sus reglas al cambiar el modo. Si un subagente inicia otro, el nuevo copia las reglas de su padre inmediato.
+
+Una bifurcación copia las reglas de su conversación de origen y tiene su propio modo. Si CodeNomad no puede verificar qué reglas quitar, la bifurcación las conserva y puedes seguir enviando mensajes.
 
 Si el modo está sin confirmar, selecciona **Volver a cargar los permisos**. Para elegir el modo inicial, consulta [Permisos de las conversaciones nuevas](settings.md#new-conversation-permissions).
 

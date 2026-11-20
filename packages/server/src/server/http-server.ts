@@ -1493,7 +1493,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
             }
             await wait(modes.refresh(sessionPermissionTarget(authorizedSession, {
               client, current, signal: refreshSignal, distro: workspaceManager.getServiceWslDistro?.(workspaceId),
-            }, location => workspaceManager.ownsLocation(workspaceId, location, client, { signal: refreshSignal }))))
+            })))
           }
         } catch {
           signal.throwIfAborted()
@@ -1563,7 +1563,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           connection?.assertCurrent()
           if (workspaceManager.get(workspaceId) !== workspace) throw new SessionModeConflict("Workspace changed")
         },
-      }, location => workspaceManager.ownsLocation(workspaceId, location, client, { signal }))
+      })
       try {
         return await args.permissionModes!.withSessionLock(target, fresh => {
           assertOrdinaryMissionScheduleBody({ metadata: fresh.metadata })

@@ -3,7 +3,7 @@ import type { WorkspaceEventPayload } from "../../api-types"
 import type { EventBus } from "../../events/bus"
 import type { Logger } from "../../logger"
 import { readLocationRef, sameLocation } from "../../opencode/compatibility/location"
-import { SessionModeConflict, type SessionPermissionModes } from "../../permissions/session-mode"
+import { isPermissionRoot, SessionModeConflict, type SessionPermissionModes } from "../../permissions/session-mode"
 import { sessionPermissionRules } from "../../permissions/session-mode-rules"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { nativeEventConnections, type ServiceConnection } from "../../workspaces/opencode-service"
@@ -31,6 +31,18 @@ export function connectSessionPermissionRefresh(bus: EventBus, manager: Pick<Wor
       if (manager.get(instanceId) !== workspace) throw new SessionModeConflict("Workspace changed")
     }
     return { signal, current, distro: manager.getServiceWslDistro(instanceId) }
+  }
+  const missing = async (connection: ServiceConnection, sessionID: string, { signal, current }: NonNullable<ReturnType<typeof scope>>, created?: number) => {
+    current()
+    try {
+      const session = await connection.client.session.get({ sessionID }, { signal })
+      current()
+      return created !== undefined && session.id === sessionID && session.time.created !== created
+    } catch (error) {
+      current()
+      if (isSessionNotFoundError(error) && error.sessionID === sessionID) return true
+      throw error
+    }
   }
   let task: Promise<void> | undefined
   const drain = () => {
@@ -67,11 +79,16 @@ export function connectSessionPermissionRefresh(bus: EventBus, manager: Pick<Wor
     enqueue(instanceId, connection, ["session", target.id, String(target.created ?? ""), target.directory ?? ""], async ({ signal, current, distro }) => {
       let releaseWorktree: (() => void) | undefined
       let releaseSession: (() => void) | undefined
+      const context = { signal, current, distro }
+      const forgetMissing = () => target.created !== undefined
+        ? modes.forgetDeleted(distro, target.id, () => missing(connection, target.id, context, target.created), target.created)
+        : undefined
       try {
         const session = await client.session.get({ sessionID: target.id }, { signal })
         const owns = (location: typeof session.location) => manager.ownsLocation(instanceId, location, client, { signal })
-        if (session.id !== target.id || (target.created !== undefined && session.time.created !== target.created)
-          || (target.directory && session.location.directory !== target.directory) || !await owns(session.location)) return
+        if (session.id !== target.id) return
+        if (target.created !== undefined && session.time.created !== target.created) { await forgetMissing(); return }
+        if ((target.directory && session.location.directory !== target.directory) || !await owns(session.location)) return
         current()
         if (!modes.mayBeSupervised(session)) return
         const identity = await manager.getWorktreeIdentityForPath(instanceId, session.location.directory)
@@ -80,7 +97,10 @@ export function connectSessionPermissionRefresh(bus: EventBus, manager: Pick<Wor
         releaseWorktree = worktrees.enter([identity])
         releaseSession = cleanup.enterMutation(session.id)
         if (!releaseWorktree || !releaseSession) return
-        await modes.refresh(sessionPermissionTarget(session, { client, current, signal, distro }, owns))
+        await modes.refresh(sessionPermissionTarget(session, { client, current, signal, distro }))
+      } catch (error) {
+        if (!(isSessionNotFoundError(error) && error.sessionID === target.id)) throw error
+        await forgetMissing()
       } finally {
         releaseSession?.()
         releaseWorktree?.()
@@ -126,6 +146,7 @@ export function connectSessionPermissionRefresh(bus: EventBus, manager: Pick<Wor
     const { client } = connection
     const { sessionID, parentID } = event.data
     if (!parentID || !ordinaryPermissionSession(sessionID) || !ordinaryPermissionSession(parentID)) return
+    if (event.type === "session.created" && !modes.mayBeSupervised(event.data)) return
     const context = scope(instanceId, connection)
     if (!context) return
     const { current, distro, signal } = context
@@ -136,19 +157,20 @@ export function connectSessionPermissionRefresh(bus: EventBus, manager: Pick<Wor
       if (session.id !== sessionID || session.time.created !== event.created) return
       let permissions
       if (event.type === "session.created") {
-        if (session.parentID !== parentID || session.projectID !== event.data.projectID
+        if (isPermissionRoot(session) || session.parentID !== parentID || session.projectID !== event.data.projectID
           || !sameLocation(session.location, event.data.location)) return
         permissions = event.data.permissions
       } else {
-        // The fork event has no rules. Its first snapshot is usable only while
-        // the native session still has its creation timestamp.
-        if (session.fork?.sessionID !== parentID || session.time.updated !== event.created) return
+        // A fork copies its source, and importing its history also updates its timestamp.
+        if (session.fork?.sessionID !== parentID || !modes.mayBeSupervised(session)) return
         permissions = session.permissions
       }
-      if (!await owns(session.location)) return
+      const source = await client.session.get({ sessionID: parentID }, { signal })
+      if (source.id !== parentID || source.projectID !== session.projectID
+        || !await owns(session.location) || !await owns(source.location)) return
       current()
-      return { session, target: sessionPermissionTarget(session, { client, ...context }, owns),
-        rules: sessionPermissionRules.parse(permissions ?? []), exactNativeCopy: event.type === "session.forked" }
+      const fresh = await sessionPermissionTarget(session, { client, ...context }).read()
+      return { session: fresh, source, current, rules: sessionPermissionRules.parse(permissions ?? []) }
     }).then(recorded => {
       if (recorded && !lifetime.signal.aborted) schedule(instanceId, connection, { id: sessionID, created: event.created })
     }).catch(error => {
@@ -161,7 +183,6 @@ export function connectSessionPermissionRefresh(bus: EventBus, manager: Pick<Wor
   const onEvent = ({ instanceId, event }: InstanceEvent) => {
     const connection = nativeEventConnections.get(event)
     if (!connection) return
-    const distro = manager.getServiceWslDistro(instanceId)
     if (event.type === "config.updated") {
       let location
       try { location = event.location === undefined ? undefined : readLocationRef(event.location) }
@@ -171,8 +192,11 @@ export function connectSessionPermissionRefresh(bus: EventBus, manager: Pick<Wor
       observe(instanceId, connection, event)
     } else if (event.type === "session.moved" || event.type === "session.permissions") {
       schedule(instanceId, connection, { id: event.data.sessionID })
-    } else if (event.type === "session.deleted") {
-      modes.forgetDeleted(distro, event.data.sessionID)
+    } else if (event.type === "session.deleted" && ordinaryPermissionSession(event.data.sessionID)) {
+      const { sessionID } = event.data
+      enqueue(instanceId, connection, ["deleted", sessionID], async context => {
+        await modes.forgetDeleted(context.distro, sessionID, () => missing(connection, sessionID, context))
+      })
     }
   }
   const onStatus = ({ instanceId, status }: Extract<WorkspaceEventPayload, { type: "instance.eventStatus" }>) => {

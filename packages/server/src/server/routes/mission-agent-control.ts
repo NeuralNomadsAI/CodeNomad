@@ -183,7 +183,7 @@ async function requestUpdate(deps: Deps, agent: Awaited<ReturnType<typeof ownedM
       const current = () => { signal.throwIfAborted(); agent.connection.assertCurrent() }
       await modes.refresh(sessionPermissionTarget(target, {
         client, current, signal, distro: deps.workspaceManager.getServiceWslDistro?.(workspace.id),
-      }, location => deps.workspaceManager.ownsLocation(workspace.id, location, client, { signal, strict: true })))
+      }))
       await assertCurrent()
     }
     const id = `msg_${createHash("sha256").update(`mission-briefing\0${mission.id}\0${original.requestID}`).digest("hex").slice(0, 28)}`

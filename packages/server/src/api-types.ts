@@ -795,6 +795,7 @@ export interface SpeechSynthesisResponse {
 export type ConversationPermissionMode = "autonomous" | "supervised"
 export interface ConversationPermissionModeResponse {
   mode: ConversationPermissionMode
+  rootSessionID?: string
 }
 
 export interface RemoteServerProfile {
