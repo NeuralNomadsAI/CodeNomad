@@ -188,36 +188,31 @@ test("agent coordinator prevalidation refuses both conversation source kinds", a
     launch: { when: [{ kind: "conversation-message", conversationID: "ses_existing" }] } }, author), /coordinator-is-source/)
 })
 
-test("agent adoption refuses root/family activity, inbox, durable claims, tools and pending requests before mutations", async () => {
+test("agent adoption admits a root whose family is active, queued, suspended, running tools or awaiting requests", async () => {
   const cases = ["active", "child", "inbox", "claim", "tools", "requests"] as const
   for (const kind of cases) {
-    const f = await fixture(true, "ses_author"), session = f.sessions.get("ses_existing")!
-    const before = structuredClone(session), root = f.states.get(session.id)!
+    const f = await fixture(true, "ses_author"), root = f.states.get("ses_existing")!
     root.active = kind === "active"
     if (kind === "child") f.states.get("ses_old_child")!.active = true
     if (kind === "inbox") root.inbox = 1
     if (kind === "claim") root.suspended = true
     if (kind === "tools") root.runningTools = 1
     if (kind === "requests") f.requests = true
-    await assert.rejects(f.admit(), /coordinator-busy/, kind)
-    assert.deepEqual(session, before, kind)
-    assert.equal((await f.read()).pending!.coordinatorBaseline, undefined)
-    assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
+    assert.equal((await f.admit()).kind, "admitted", kind)
+    assert.equal(f.counts().sends, 1, kind)
   }
 })
 
-test("an agent's own root waits until idle and reuses the same conversation on later passages", async () => {
+test("an agent's own active root is admitted at once and reused on later passages", async () => {
   const f = await fixture(true, "ses_existing")
-  await assert.rejects(f.admit(), /coordinator-busy/)
-  assert.equal((await f.read()).pending!.coordinatorBaseline, undefined)
-  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
-  f.states.get("ses_existing")!.active = false
   const first = await f.admit()
   assert.equal(first.kind, "admitted")
   if (first.kind === "admitted") assert.equal(first.coordinatorSessionID, "ses_existing")
   assert.equal(f.sessions.get("ses_existing")!.metadata!.unrelated, "keep")
   assert.equal((await f.admit()).kind, "recorded")
   assert.deepEqual(f.counts(), { sends: 1, creates: 0, environments: 1 })
+  // The queued passage runs once the user's turn ends; settlement waits for that.
+  f.states.get("ses_existing")!.active = false
   await f.use(async input => { await nativeScheduledPassageBusiness(input).control.report("ses_existing",
     { outcome: "completed", summary: "Delivered", final: true, evidence: [], next: [] }) })
   const settled = await f.use(observeNativeScheduledPassage)
@@ -279,31 +274,6 @@ test("agent adoption revalidates at each lazy native profile/metadata effect ent
     }), /Native state changed/)
     assert.equal(writes, blockedWrite - 1)
     assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
-  }
-})
-
-test("agent admission revalidates after environment preparation and at the write-ahead CAS/native boundary", async () => {
-  for (const phase of ["environment-read", "environment-effect", "cas"] as const) {
-    const f = await fixture(true, "ses_author")
-    f.states.get("ses_existing")!.active = false
-    if (phase === "environment-effect") {
-      const environment = f.native.environment
-      f.native.environment = async (...args) => { const result = await environment(...args); f.states.get("ses_existing")!.inbox = 1; return result }
-    }
-    await assert.rejects(f.use(async input => {
-      if (phase === "environment-read") input.environment = async () => { f.states.get("ses_existing")!.suspended = true; return {} }
-      if (phase === "cas") {
-        const change = input.locked.change.bind(input.locked)
-        input.locked.change = async (...args) => {
-          const result = await change(...args)
-          if (result.pending?.admissionAttempted) f.states.get("ses_existing")!.active = true
-          return result
-        }
-      }
-      return admitNativeScheduledPassage(input)
-    }), /coordinator-busy|Native state changed|policy-unqualified/, phase)
-    assert.equal(f.counts().sends, 0, phase)
-    assert.equal(f.counts().environments, phase === "environment-read" ? 0 : 1, phase)
   }
 })
 
