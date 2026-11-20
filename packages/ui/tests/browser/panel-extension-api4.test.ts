@@ -14,6 +14,7 @@ import { registerPanelExtensionRoutes } from "../../../server/src/server/routes/
 import { registerPanelExtensionApi4Routes } from "../../../server/src/server/routes/panel-extension-api4"
 import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
 import { registerPanelExtensionWorkItemRoutes } from "../../../server/src/server/routes/panel-extension-work-items"
+import { createWorkItemBranch, type WorkItemBranchSource } from "../../../server/src/forge/work-item-branches"
 import type { ForgeWorkItems } from "../../../server/src/forge/work-items"
 import { execFile, execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
@@ -28,7 +29,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>, root: string, stor
 const app = Fastify()
 const rpc = { calls: [] as Array<{ method: string; input: any }>, hold: undefined as undefined | ((method: string) => Promise<void>),
   references: [] as unknown[], conversation: "ses_images", image: { status: "asset", mime: "image/png", uri: "" } as Record<string, unknown> }
-let installed: PanelExtensionPackage | undefined, realPng = "", repository = "", remoteServer: Server
+let installed: PanelExtensionPackage | undefined, realPng = "", repository = "", remoteServer: Server, itemSource: WorkItemBranchSource
 const transit = { hold: undefined as undefined | (() => Promise<void>), branch: undefined as undefined | (() => Promise<void>) }
 
 const png = (width: number, height: number) => {
@@ -87,7 +88,8 @@ before(async () => {
   const host = `127.0.0.1:${(remoteServer.address() as { port: number }).port}`
   // Asynchronous: the server answering it runs on this event loop.
   await promisify(execFile)("git", ["clone", "-q", `http://${host}/team/app.git`, repository])
-  const forge = { branchSource: async () => ({ provider: "github", host, path: "team/app", name: "origin" }) } as unknown as ForgeWorkItems
+  itemSource = { provider: "github", host, path: "team/app", name: "origin" }
+  const forge = { branchSource: async () => itemSource } as unknown as ForgeWorkItems
   registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: (id: string) => id === instanceId ? { id, path: repository } as any : undefined,
     getWorktrees: async () => ({ worktrees: [{ slug: "root", directory: repository }] }) as any } })
   fixture = await startProductFixture("panel-extension-api4")
@@ -677,5 +679,68 @@ test("worktrees: a frame that navigates itself away takes its pending dialog wit
     await frameOf(page).locator("body").evaluate(() => { location.href = "about:blank" }).catch(() => {})
     await confirm.waitFor({ state: "detached" })
     assert.deepEqual(await worktreeCalls(page), [])
+  } finally { await page.close() }
+})
+const fixtureCall = (page: Page, method: string, ...args: unknown[]) => page.evaluate(([method, args]) => (window as any).fixture[method as string](...(args as unknown[])), [method, args] as const)
+
+test("worktrees: a Create confirmation never turns into a move to a checkout that appeared meanwhile", async () => {
+  await install()
+  assert.equal((await createWorkItemBranch(repository, itemSource, "issue", 24)).status, "ok")
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 24), { ok: "confirming" })
+    await page.getByText("Create a worktree for issue #24 and move this conversation there?").waitFor()
+    await fixtureCall(page, "addWorktree", "external", "issue-24")
+    await page.getByRole("button", { name: "Create and move", exact: true }).click()
+    await page.getByText("The worktree for issue #24 changed. Try again.").first().waitFor()
+    assert.deepEqual(await worktreeCalls(page), [])
+  } finally { await page.close() }
+})
+
+test("worktrees: a queued move rechecks consent when it is sent", async () => {
+  await install()
+  assert.equal((await createWorkItemBranch(repository, itemSource, "issue", 26)).status, "ok")
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    await fixtureCall(page, "addWorktree", "other", "other")
+    await fixtureCall(page, "addWorktree", "issue-26", "issue-26")
+    await page.evaluate(() => { const fixture = (window as any).fixture; fixture.moveGate = new Promise(resolve => { fixture.releaseMove = resolve }) })
+    void fixtureCall(page, "move", "other")
+    await page.waitForFunction(() => (window as any).fixture.releaseMove !== undefined)
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 26), { ok: "confirming" })
+    await page.getByRole("button", { name: "Move", exact: true }).click()
+    await page.waitForTimeout(500)
+    await store.activate(installed!.manifest.id, installed!.digest, false)
+    await page.evaluate(() => { const fixture = (window as any).fixture; fixture.moveGate = undefined; fixture.releaseMove() })
+    await page.waitForTimeout(1_000)
+    assert.deepEqual((await worktreeCalls(page)).filter((entry: any) => entry.move).map((entry: any) => entry.move[1]), ["other"])
+  } finally { await page.evaluate(() => (window as any).fixture.releaseMove?.()).catch(() => {}); await page.close() }
+})
+
+test("worktrees: listing reads the inventory again, so a checkout added later counts", async () => {
+  await install()
+  assert.equal((await createWorkItemBranch(repository, itemSource, "issue", 25)).status, "ok")
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    assert.equal(((await call(page, "worktrees.list")).ok as any[]).find(entry => entry.number === 25)?.worktree, false)
+    await fixtureCall(page, "addWorktree", "late", "issue-25")
+    assert.equal(((await call(page, "worktrees.list")).ok as any[]).find(entry => entry.number === 25)?.worktree, true)
+  } finally { await page.close() }
+})
+
+test("worktrees: a name holding another branch is reported before any dialog", async () => {
+  await install()
+  assert.equal((await createWorkItemBranch(repository, itemSource, "issue", 23)).status, "ok")
+  const tip = execFileSync("git", ["-C", repository, "rev-parse", "issue-23"], { encoding: "utf8" }).trim()
+  execFileSync("git", ["-C", repository, "update-ref", "-d", "refs/heads/issue-23"])
+  execFileSync("git", ["-C", repository, "branch", "issue-23", tip])
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 23), { ok: "conflict" })
+    assert.equal(await page.getByRole("button", { name: "Create and move", exact: true }).count(), 0)
   } finally { await page.close() }
 })

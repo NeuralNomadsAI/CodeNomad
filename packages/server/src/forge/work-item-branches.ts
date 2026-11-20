@@ -27,6 +27,8 @@ export interface WorkItemBranchGuard {
 // the one CodeNomad created.
 const KEY = "codenomad-work-item"
 const MAX_LISTED = 200
+const LINK = /^([^#]+)#(issue|pullrequest)\/([1-9]\d{0,8})@([0-9a-f]{40}|[0-9a-f]{64})\/(.+)$/
+const itemBranch = (kind: ForgeWorkItemKind, number: number) => `${kind === "issue" ? "issue" : "pr"}-${number}`
 const FETCH_TIMEOUT_MS = 15_000
 const locks = new Map<string, Promise<unknown>>()
 type Link = WorkItemBranch & { start: string }
@@ -53,7 +55,7 @@ async function links(directory: string, source: Pick<WorkItemBranchSource, "host
     // `branch.<name>.<key> <value>`: Git lowercases the section and key, never the name.
     const space = line.indexOf(" ")
     const branch = line.slice("branch.".length, space - KEY.length - 1)
-    const value = /^([^#]+)#(issue|pullrequest)\/([1-9]\d{0,8})@([0-9a-f]{40}|[0-9a-f]{64})\/(.+)$/.exec(line.slice(space + 1))
+    const value = LINK.exec(line.slice(space + 1))
     // The value names its own branch: `git branch -c`/`-m` carry the config to another name, never the link.
     if (branch && value?.[1] === repository && value[5] === branch) {
       linked.push({ kind: value[2] === "issue" ? "issue" : "pullRequest", number: Number(value[3]), branch, start: value[4]! })
@@ -101,10 +103,15 @@ export async function lookupWorkItemBranch(directory: string, source: WorkItemBr
 }
 
 /** The exact lookup once the remote was checked. */
+// Only the item's own name can hold its link (copies and renames never match), so the lookup reads that one key.
 async function linkedBranch(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number): Promise<WorkItemBranchLookup> {
-  const link = (await links(directory, source)).find(candidate => candidate.kind === kind && candidate.number === number)
-  if (!link) return { status: "ok", repository: workItemRepository(source), branch: null }
-  const ref = `refs/heads/${link.branch}`
+  const repository = workItemRepository(source), name = itemBranch(kind, number), ref = `refs/heads/${name}`
+  const value = LINK.exec(await git(directory, ["config", "--local", "--get", `branch.${name}.${KEY}`]).catch(() => ""))
+  const exists = await git(directory, ["rev-parse", "--verify", "--quiet", ref]).then(Boolean, () => false)
+  if (!value || !exists || value[1] !== repository || value[2] !== kind.toLowerCase() || Number(value[3]) !== number || value[5] !== name) {
+    return { status: "ok", repository, branch: null }
+  }
+  const link = { branch: name, start: value[4]! }
   const [contains, reflog] = await Promise.all([
     git(directory, ["merge-base", "--is-ancestor", link.start, ref])
       .then(() => true, (error: { code?: unknown }) => { if (error.code === 1 || error.code === 128) return false; throw error }),
@@ -188,7 +195,7 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
   const found = await linkedBranch(directory, source, kind, number)
   if (found.status !== "ok") return found
   if (found.branch) return { status: "ok", branch: found.branch, revision: await git(directory, ["rev-parse", "--verify", `refs/heads/${found.branch}^{commit}`]), created: false }
-  const branch = `${kind === "issue" ? "issue" : "pr"}-${number}`
+  const branch = itemBranch(kind, number)
   if (await git(directory, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).catch(() => "")) return { status: "conflict", branch }
   let revision: string
   if (kind === "issue") revision = await git(guard.base ?? directory, ["rev-parse", "--verify", "HEAD^{commit}"])

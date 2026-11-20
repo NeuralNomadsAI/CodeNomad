@@ -18,6 +18,7 @@ import { updateSessionAgent } from "../../../src/stores/session-actions"
 import { applyUiSettings } from "./ui-settings"
 import { serverApi } from "../../../src/lib/api-client"
 import AlertDialog from "../../../src/components/alert-dialog"
+import { setWorktreeSlugForParentSession } from "../../../src/stores/worktrees"
 import { Toaster } from "solid-toast"
 import "../../../src/index.css"
 
@@ -75,6 +76,8 @@ serverApi.createWorktree = async (_id, input) => {
 }
 serverApi.moveSessionFamily = async (_id, sessionId, input) => {
   worktreeCalls.push({ move: [sessionId, input.worktreeSlug] })
+  // `fixture.moveGate`, when set, holds the move until the test opens it.
+  await (window as any).fixture.moveGate
   if (refusal.move) throw new Error("Fixture move refused")
   infos[sessionId]!.location = { directory: worktrees.find(entry => entry.slug === input.worktreeSlug)!.directory }
   return { rootSessionId: sessionId, sessionIds: [sessionId], worktreeSlug: input.worktreeSlug } as any
@@ -134,6 +137,8 @@ window.addEventListener("message", event => { if (event.data?.fixtureAnswer) fra
   openPanel: () => setPanelOpen(true),
   worktreeCalls: () => worktreeCalls.splice(0),
   refuseMoves: (value: boolean) => { refusal.move = value },
+  addWorktree: (slug: string, branch: string) => { worktrees.push({ slug, label: branch, directory: `/fixture/.codenomad/worktrees/${slug}`, kind: "worktree", branch }) },
+  move: (slug: string) => setWorktreeSlugForParentSession(instanceId, "ses_work", slug).catch(() => {}),
   location: (id: string) => infos[id]?.location?.directory ?? "/fixture",
   changed: () => (serverEvents as any).dispatchBatch([{ type: "storage.stateChanged", owner: "panelExtensions", value: {} }]),
   event: (event: unknown) => (serverEvents as any).dispatchBatch([event]),

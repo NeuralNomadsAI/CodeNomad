@@ -314,6 +314,8 @@ async function setWorktreeSlugForParentSession(
     currentSlug?: string
     /** The branch the target must still have checked out when the family moves (checked by the server). */
     branch?: string
+    /** Runs inside the move queue right before the move is sent; a rejection cancels it. */
+    admit?: () => Promise<void>
     moveFamily?: (instanceId: string, rootSessionId: string, worktreeSlug: string) => Promise<unknown>
     refreshSessions?: (instanceId: string) => Promise<void>
   } = {},
@@ -345,6 +347,7 @@ async function setWorktreeSlugForParentSession(
     unreconciledFamilyMoves.set(key, recovery)
     let moveError: unknown
     try {
+      await options.admit?.()
       await moveFamily(instanceId, rootSessionId, normalizedSlug)
     } catch (error) {
       moveError = error

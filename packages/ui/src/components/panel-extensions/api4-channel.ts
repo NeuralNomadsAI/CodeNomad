@@ -9,7 +9,7 @@ import { tGlobal } from "../../lib/i18n"
 import { showToastNotification, type ToastHandle } from "../../lib/notifications"
 import { HttpResponseError } from "../../lib/retryable-file-search"
 import { alertDialogState, showConfirmDialog } from "../../stores/alerts"
-import { createWorktree, ensureWorktreesLoaded, getParentSessionId, getWorktreeForSession, getWorktreeSlugForParentSession, getWorktrees, reloadWorktrees,
+import { createWorktree, getParentSessionId, getWorktreeForSession, getWorktreeSlugForParentSession, getWorktrees, reloadWorktrees,
   setWorktreeSlugForParentSession } from "../../stores/worktrees"
 import { getActiveCatalogLocation } from "../../stores/session-api"
 import { requestComposerFocus } from "../../stores/composer-focus"
@@ -182,7 +182,7 @@ export function useApi4Channel(props: {
 
   /** Linked item branches joined to the worktrees that check them out; null when the repository is unavailable. */
   async function linkedWorktrees(signal: AbortSignal) {
-    const [answer] = await Promise.all([panelExtensionsApi4.workItemBranches(authority, signal), ensureWorktreesLoaded(props.instanceId)])
+    const [answer] = await Promise.all([panelExtensionsApi4.workItemBranches(authority, signal), reloadWorktrees(props.instanceId)])
     if (answer.status !== "ok") return null
     const worktrees = getWorktrees(props.instanceId).filter(worktree => !worktree.nestedFolderMissing), current = familyWorktree()?.slug
     return answer.branches.map((link): PanelWorkItemWorktree => {
@@ -194,11 +194,13 @@ export function useApi4Channel(props: {
   // The item's own link, looked up exactly on the server (the listing is bounded); a name that
   // now holds another branch counts as no worktree, and creating it then reports the conflict.
   async function itemWorktree(kind: ForgeWorkItemKind, number: number, signal: AbortSignal) {
-    const [answer] = await Promise.all([panelExtensionsApi4.workItemBranchLookup(authority, kind, number, signal), ensureWorktreesLoaded(props.instanceId)])
+    // A fresh inventory: a checkout added since the first load counts.
+    const [answer] = await Promise.all([panelExtensionsApi4.workItemBranchLookup(authority, kind, number, signal), reloadWorktrees(props.instanceId)])
     if (answer.status === "unavailable") return null
+    if (answer.status === "conflict") return { conflict: answer.branch }
     const slug = answer.status === "ok" && answer.branch !== null
       ? getWorktrees(props.instanceId).find(worktree => !worktree.nestedFolderMissing && worktree.branch === answer.branch)?.slug : undefined
-    return { repository: answer.status === "ok" ? answer.repository : undefined, branch: answer.status === "ok" ? answer.branch ?? undefined : undefined, slug, current: slug !== undefined && slug === familyWorktree()?.slug }
+    return { repository: answer.repository, branch: answer.branch ?? undefined, slug, current: slug !== undefined && slug === familyWorktree()?.slug }
   }
 
   // The frame only asks; the host's own dialog decides, then creates and moves.
@@ -209,6 +211,8 @@ export function useApi4Channel(props: {
     if (confirming || reserved || alertDialogState() || Date.now() < quietUntil) return { result: "busy" }
     const target = await itemWorktree(kind, number, signal)
     if (!target) return { result: "unavailable" }
+    // A name already holding another branch: no dialog can help.
+    if ("conflict" in target) return { result: "conflict" }
     if (target.current) return { result: "current" }
     // Reserved before answering, so a concurrent open answers `busy`; released if the answer never lands.
     if (confirming || reserved || !connected || !nativeConnected) return { result: "busy" }
@@ -246,7 +250,9 @@ export function useApi4Channel(props: {
       if (!accepted || disposed) return
       // Consent is read again, and the confirmed worktree must still be the item's.
       const target = await itemWorktree(kind, number, signal)
-      if (!target || !repository || target.repository !== repository || (slug !== undefined && target.slug !== slug)) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
+      if (target && "conflict" in target) throw new Refusal(tGlobal("panelExtensions.worktrees.conflict", { item, branch: target.conflict }))
+      // Exactly the target shown: a worktree that appeared or vanished since needs a new confirmation.
+      if (!target || !repository || target.repository !== repository || target.slug !== slug) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
       let destination = target.slug, branchName = target.branch
       if (destination === undefined) {
         progress = showToastNotification({ category: "files", variant: "info", transient: true, duration: 60_000,
@@ -261,9 +267,11 @@ export function useApi4Channel(props: {
         branchName = branch.branch
         await reloadWorktrees(props.instanceId)
       }
-      await consented(branchName)
       // The target must still check out the item's branch when the family moves; the move reports its own failure.
-      await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination, { branch: branchName }).catch(() => {})
+      await consented(branchName)
+      // Checked again inside the move queue, right before dispatch.
+      await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination,
+        { branch: branchName, admit: () => consented(branchName) }).catch(() => {})
     } catch (error) {
       if (signal.aborted) return
       showToastNotification({ category: "files", variant: "error", message: error instanceof Refusal ? error.message

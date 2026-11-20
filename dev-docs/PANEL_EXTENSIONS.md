@@ -262,7 +262,7 @@ await codenomad.conversation.open() // { opened, created }; codenomad.conversati
 await codenomad.preferences.get() // object, or "unavailable"
 await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" | "invalid" | "unavailable"
 await codenomad.worktrees.list() // [{ kind, number, branch, worktree, current }], or "unavailable"
-await codenomad.worktrees.open("pullRequest", 7) // "confirming" | "current" | "busy" | "no-session" | "unavailable"
+await codenomad.worktrees.open("pullRequest", 7) // "confirming" | "current" | "conflict" | "busy" | "no-session" | "unavailable"
 codenomad.worktrees.onChanged(() => { /* list again */ })
 ```
 
@@ -321,7 +321,7 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   with the branch and never follows a copy or rename (`git branch -c`/`-m`); a branch name alone is never proof, and links of another repository identity
   or whose ref is gone are ignored. The exact lookup (`workItemBranchLookup`, used to open)
   answers `conflict` when the name now holds another branch: one that no longer contains the
-  start commit, or whose reflog begins with Git's own creation, copy or rename message (CodeNomad creates its branches with `update-ref -m 'codenomad: work item <kind>/<number>'`). `list` joins the links to the worktree inventory;
+  start commit, or whose reflog begins with Git's own creation, copy or rename message (CodeNomad creates its branches with `update-ref -m 'codenomad: work item <kind>/<number>'`). `list` joins the links to the worktree inventory, read again on each call;
   `current` is the inventory's match for the displayed family, never the `root` fallback of
   a miss. `onChanged` fires when the inventory, a worktree's branch or the family's worktree
   changes, not when a link alone changes.
@@ -329,7 +329,7 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   extension's name; detail: the repository, `<host>/<path>`, the host in lower case and the path as the remote spells it), one at a time and never over
   another host dialog, aborted on unmount, connection loss or the frame navigating away, and reserved before `open` answers (a concurrent `open` answers `busy`); after a refusal the mounting answers `busy` for
   10 s, so a panel cannot hold the modal up. Opening and acceptance look the item up exactly
-  (consent rechecked) and refuse a changed repository or target; without a worktree,
+  (consent rechecked) and refuse a changed repository or target (a worktree that appeared or vanished since the dialog included); a name that already holds another branch answers `conflict` before any dialog; without a worktree,
   `workItemBranch` (given the confirmed repository: another one answers `changed`) returns the
   linked branch or creates one under a per-repository lock, never forced: `issue-N` at the HEAD
   of the family's worktree (`fromSlug`, as the worktree selector creates), or `pr-N` at
@@ -340,7 +340,7 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   see every link, and only `list` stops at 200. `createWorktree` then checks out that branch
   only at the returned tip (`revision`: a missing or moved branch is refused, never recreated or
   guessed from a remote-tracking branch) and `setWorktreeSlugForParentSession` moves the family
-  only while the target still checks out that branch (`branch`, checked again right before the
+  only while the target still checks out that branch and the host's exact lookup still grants it, inside the move queue right before dispatch (`branch`, checked again right before the
   move), reporting its own failure; the created worktree stays. `list` is advisory: an entry
   can still fail the exact lookup as a `conflict`.
 - **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
