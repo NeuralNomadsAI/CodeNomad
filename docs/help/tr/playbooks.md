@@ -76,6 +76,8 @@ Yalnızca [her görevin denetimleri](#common-checks). İş rolleri serbesttir: k
 
 ## Hata ayıklama {#debug}
 
+İlk kontroller değişiklik gerekmediğini gösterirse koordinatör sonucu kaydedip görev tanımlamadan misyonu tamamlayabilir.
+
 Önce kanıt: hatayı ve nedenini kanıtlamak, önce test yazarak düzeltmek, düzeltmeyi iki bağımsız inceleyiciye denetletmek, bulgularını ele almak ve sonra her şeyin yeşil olduğunu doğrulamak. Tahmin yerine kanıt istediğiniz, yeniden üretilebilir bir hata, başarısız bir test veya bir regresyon için seçin.
 
 ### Adımlar ve roller {#debug-steps}

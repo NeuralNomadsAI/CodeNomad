@@ -76,6 +76,8 @@ Sie erhalten die Aufgabenberichte und einen Abschlussbericht; Codeänderungen bl
 
 ## Fehlersuche {#debug}
 
+Ergeben die ersten Prüfungen, dass keine Änderung nötig ist, kann der Koordinator das Ergebnis festhalten und die Mission abschließen, bevor er Aufgaben anlegt.
+
 Belege zuerst: Fehler und Ursache beweisen, testgetrieben beheben, die Korrektur von zwei unabhängigen Prüfern kontrollieren lassen, ihre Befunde bearbeiten und dann alles grün validieren. Wählen Sie es für einen reproduzierbaren Fehler, einen fehlschlagenden Test oder eine Regression, wenn Sie einen Beweis statt einer Vermutung wollen.
 
 ### Schritte und Rollen {#debug-steps}
