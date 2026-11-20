@@ -39,11 +39,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const previewId = createUniqueId()
   const store = () => messageStoreBus.getOrCreate(props.instanceId)
   const segmentsById = createMemo(() => new Map(props.segments.map(segment => [segment.id, segment])))
-  const [hoveredSegmentId, setHoveredSegmentId] = createSignal<string | null>(null)
-  const hoveredSegment = createMemo(() => {
-    const id = hoveredSegmentId()
-    return id ? segmentsById().get(id) : undefined
-  })
+  const [hoverPreview, setHoverPreview] = createSignal<{ segment: TimelineSegment; rect: DOMRect }>()
+  const hoveredSegment = () => hoverPreview()?.segment
   const [visiblePreviewSegments, setVisiblePreviewSegments] = createSignal<TimelineSegment[]>([])
   const previews = createTimelinePreviews({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
     active: () => props.isActive !== false,
@@ -72,7 +69,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     return (segment.type === "tool" ? preview?.tools : preview?.text) || timelineSegmentTooltip(segment, record, t)
   })
   const [tooltipCoords, setTooltipCoords] = createSignal<{ top: number; left: number }>({ top: 0, left: 0 })
-  const [hoverAnchorRect, setHoverAnchorRect] = createSignal<{ top: number; left: number; width: number; height: number } | null>(null)
   const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 360, height: 120 })
   const [tooltipElement, setTooltipElement] = createSignal<HTMLDivElement | null>(null)
   let hoverTimer: number | null = null
@@ -94,8 +90,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const clearHoverPreview = () => {
     clearHoverTimer()
     clearCloseTimer()
-    setHoveredSegmentId(null)
-    setHoverAnchorRect(null)
+    setHoverPreview(undefined)
   }
 
   const scheduleClose = () => {
@@ -117,9 +112,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     hoverTimer = window.setTimeout(() => {
       hoverTimer = null
       if (!target.isConnected) return
-      const rect = target.getBoundingClientRect()
-      setHoverAnchorRect({ top: rect.top, left: rect.left, width: rect.width, height: rect.height })
-      setHoveredSegmentId(segment.id)
+      setHoverPreview({ segment, rect: target.getBoundingClientRect() })
     }, 200)
   }
 
@@ -129,9 +122,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
   createEffect(() => {
     if (typeof window === "undefined") return
-    const anchor = hoverAnchorRect()
-    const segment = hoveredSegment()
-    if (!anchor || !segment) return
+    const anchor = hoverPreview()?.rect
+    if (!anchor) return
     const { width, height } = tooltipSize()
     const verticalGap = 16
     const horizontalGap = 16
@@ -270,6 +262,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       >
         <TimelineVirtualList register={setVirtualizerHandle} onVisibleItems={setVisiblePreviewSegments} items={visibleSegments()} scrollElement={scrollElement()} gap={segment => segmentSpacerHeights().get(segment.id) ?? 0}>
           {(segment) => {
+            // Ordinal IDs can be reused after an edit. Only this mounted marker owns its preview.
+            onCleanup(() => setHoverPreview(current => current?.segment === segment ? undefined : current))
             const isActive = () => activeVisibleId() === segment.id
             const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
             const isActiveSearchMatch = () => props.activeSearchSegmentId?.() === segment.id
@@ -306,7 +300,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""}`}
                   aria-current={isActive() ? "true" : undefined}
                    aria-label={accessibleLabel()}
-                   aria-describedby={hoveredSegment()?.id === segment.id && previewText() ? previewId : undefined}
+                   aria-describedby={hoveredSegment() === segment && previewText() ? previewId : undefined}
                   data-message-id={segment.messageId}
                   aria-hidden={isHidden() ? "true" : undefined}
                     onClick={() => { clearHoverPreview(); props.onSegmentClick?.(segment) }}

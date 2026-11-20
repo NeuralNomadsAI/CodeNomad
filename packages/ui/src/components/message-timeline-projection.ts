@@ -150,7 +150,7 @@ export function timelineSegmentTooltip(segment: TimelineSegment, record: Message
     const text = collectTextFromPart(part, t).trim()
     if (!text) continue
     if (excerpt) excerpt += "\n\n"
-    excerpt += text.slice(0, MAX_TOOLTIP_LENGTH + 1 - excerpt.length)
+    excerpt += text.slice(0, Math.max(0, MAX_TOOLTIP_LENGTH + 1 - excerpt.length))
     if (excerpt.length > MAX_TOOLTIP_LENGTH) return truncateText(excerpt)
   }
   return excerpt || (segment.type === "user" ? t("messageTimeline.tooltip.userFallback")

@@ -412,7 +412,8 @@ focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb drag
 and viewport anchor stability during streaming and distant jumps.
 
 Hover/focus previews escape raw HTML and do no syntax highlighting; moving
-elsewhere cancels obsolete excerpt work. An unloaded/empty excerpt shows no popup; resident
+elsewhere cancels obsolete excerpt work. A preview follows its mounted marker's
+live content and closes when that marker unmounts. An unloaded/empty excerpt shows no popup; resident
 selected content can supply it directly. A separate 512-excerpt cache survives
 view switches; entries older than 30 seconds revalidate on demand, without
 timers/polling. The opaque surface wraps text and stays inside the viewport;

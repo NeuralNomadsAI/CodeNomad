@@ -65,6 +65,8 @@ test("native deltas update a mounted marker's label without reprojecting a 16k o
     const marker = await page.locator('.message-timeline-assistant[data-message-id="msg_assistant"]').elementHandle()
     await marker.focus()
     assert.equal(await marker.getAttribute("aria-label"), "a")
+    const tooltip = page.getByRole("tooltip")
+    await tooltip.waitFor()
     const measurement = await page.evaluate(async () => {
       const fixture = (window as any).outlineFixture
       fixture.reset()
@@ -86,7 +88,47 @@ test("native deltas update a mounted marker's label without reprojecting a 16k o
     const finalText = "A" + reply.slice(1)
     await page.evaluate(text => (window as any).outlineFixture.finish(text), finalText)
     await page.waitForFunction(({ element, text }) => element.getAttribute("aria-label") === text, { element: marker, text: finalText })
+    assert.equal((await tooltip.textContent())?.trim(), finalText, "the focused text preview follows the same live block")
     assert.equal(await page.evaluate(() => (window as any).outlineFixture.snapshot().calls), 0, "a same-shape final reply updates the original marker")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("removing a focused tool closes its preview even when the next tool takes its ordinal", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 850 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "{}" }))
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 })
+    await page.waitForFunction(() => (window as any).outlineFixture?.snapshot().reads >= 32)
+    await page.evaluate(async () => {
+      const fixture = (window as any).outlineFixture
+      await fixture.preset("everything")
+      await fixture.setAssistantTools(["fixture_alpha", "fixture_beta", "fixture_tail_a", "fixture_tail_b", "fixture_tail_c"])
+    })
+    const rail = page.locator(".message-timeline")
+    // Leave room for the rail to shrink without a scroll event dismissing the preview.
+    await rail.evaluate(element => { element.scrollTop = element.scrollHeight - element.clientHeight - 40 })
+    const original = rail.getByRole("button", { name: /fixture_alpha/ })
+    await rail.locator('.message-timeline-assistant[data-message-id="msg_assistant"]').focus()
+    await page.keyboard.press("Tab")
+    assert.equal(await original.evaluate(element => document.activeElement === element), true)
+    const tooltip = page.getByRole("tooltip")
+    await tooltip.waitFor()
+    assert.match((await tooltip.textContent()) ?? "", /fixture_alpha/)
+
+    await page.evaluate(() => (window as any).outlineFixture.setAssistantTools(["fixture_beta", "fixture_tail_a", "fixture_tail_b", "fixture_tail_c"]))
+    assert.equal(await original.count(), 0)
+    const replacement = rail.getByRole("button", { name: /fixture_beta/ })
+    assert.equal(await page.evaluate(() => document.activeElement?.tagName), "BODY")
+    assert.deepEqual({
+      tooltip: await tooltip.allTextContents(),
+      describedBy: await replacement.getAttribute("aria-describedby"),
+    }, { tooltip: [], describedBy: null }, "focus did not enter the replacement marker")
+    await replacement.focus()
+    await tooltip.waitFor()
+    assert.match((await tooltip.textContent()) ?? "", /fixture_beta/)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

@@ -36,6 +36,26 @@ describe("V2 timeline projection", () => {
     assert.equal(timelineSegmentTooltip(initial[1], updated, () => "Tool"), "Tool: Changed")
   })
 
+  it("does not slice a large second fragment when the accessible excerpt is full", () => {
+    const first = "a".repeat(220)
+    const second = "b".repeat(1024 * 1024)
+    const value = record([{ id: "first", type: "text", text: first }, { id: "second", type: "text", text: second }])
+    const [segment] = segments(value)
+    const slice = String.prototype.slice
+    let longestSecondSlice = 0
+    String.prototype.slice = function (start?: number, end?: number) {
+      const result = slice.call(this, start, end)
+      if (String(this) === second) longestSecondSlice = Math.max(longestSecondSlice, result.length)
+      return result
+    }
+    try {
+      assert.equal(timelineSegmentTooltip(segment, value, key => key), "a".repeat(219) + "…")
+    } finally {
+      String.prototype.slice = slice
+    }
+    assert.equal(longestSecondSlice, 0, "the separator exhausts the excerpt budget")
+  })
+
   it("updates the target when a provisional part is replaced at the same cardinality", () => {
     const provisional = record([{ id: "message-text-native-0", type: "text", text: "hello" }])
     const authoritative = record([{ id: "message-text-0", type: "text", text: "hello" }])

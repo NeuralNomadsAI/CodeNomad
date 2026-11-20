@@ -27,6 +27,11 @@ const work = () => (window as any).__outlineWork ?? { calls: 0 }
 ;(window as any).outlineFixture = {
   start: () => source.start(), delta: (text: string) => source.delta(text),
   startAfterTool: (name: string) => source.startAfterTool(name),
+  setAssistantTools: (names: string[]) => source.setAssistantContent([
+    { type: "text", text: "Reply" },
+    ...names.map(name => ({ type: "tool", id: `tool-${name}`, name, time: { created: 1 },
+      state: { status: "completed", input: {}, content: [{ type: "text", text: `${name} output` }] } })),
+  ]),
   preset: (preset: ToolCallExpansionPreset) => updatePreferences(transcriptPresetPatch(preset)),
   finish: (text: string) => source.end(text),
   locale: (locale: string) => applyUiSettings({ locale }),
