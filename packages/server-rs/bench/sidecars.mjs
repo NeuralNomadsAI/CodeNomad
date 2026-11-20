@@ -3,12 +3,24 @@
 // paths and queries, parsed bodies, redirects, application cookies both ways, credentials and
 // routing headers, this server's own ports, HTTPS without a trusted certificate, a stopped port,
 // and WebSocket handshakes (101, a refused handshake, source, session and malformed upgrades).
+import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { createServer } from "node:http"
+import { mkdir, writeFile } from "node:fs/promises"
 import net from "node:net"
+import path from "node:path"
 
 let upstream, port, received = [], idle
 const sockets = new Set()
+export async function ui(root) {
+  const folder = path.join(root, "sidecar-ui")
+  // Test both real server fallbacks without Vite, browsers or a desktop host.
+  if (process.env.CNRS_SIDECARS_NO_UI !== "1") {
+    await mkdir(folder)
+    await writeFile(path.join(folder, "index.html"), "<!doctype html><title>SideCars UI fixture</title>")
+  }
+  return folder
+}
 const free = async () => {
   const socket = net.createServer()
   await new Promise(resolve => socket.listen(0, "127.0.0.1", resolve))
@@ -171,6 +183,18 @@ export async function run({ call, origin, cookie }) {
     "/sidecars/", "/sidecars", "/sidecars?x=1", "/sidecars/docs-app/%E0%A4%A", `/sidecars/${"i".repeat(101)}/x`, `/sidecars/${"i".repeat(100)}/x`]
   out.targets = []
   for (const target of targets) out.targets.push({ target, response: scrub(await get(target)), upstream: take() })
+  const withoutUi = process.env.CNRS_SIDECARS_NO_UI === "1"
+  for (const target of ["/sidecars", "/sidecars?x=1", `/sidecars/${"i".repeat(101)}/x`]) {
+    const { response, upstream } = out.targets.find(item => item.target === target)
+    assert.equal(response.status, withoutUi ? 404 : 200, target)
+    if (withoutUi) {
+      assert.deepEqual(response.body, { error: "Not Found", message: `Route GET:${target} not found`, statusCode: 404 })
+    } else {
+      assert.deepEqual(response.headers["content-type"], ["text/html"])
+      assert.equal(response.body, "<!doctype html><title>SideCars UI fixture</title>")
+    }
+    assert.equal(upstream.length, 0)
+  }
   // `Expect` is dropped as well (unit test): Node answers it with an interim 100 before routing.
   out.headers = { response: scrub(await get("/sidecars/docs-app/h", ["Authorization: Basic eDp5", "Proxy-Authorization: x",
     "X-Keep: 1", "X-Drop: 1", "Connection: close, x-drop", "Origin: " + origin])), upstream: take() }
