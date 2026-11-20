@@ -27,34 +27,22 @@ export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "Language",
 
   "folderSelection.logoAlt": "CodeNomad logo",
-  "folderSelection.tagline": "Select a folder to start coding with AI",
 
   "folderSelection.links.github": "CodeNomad GitHub",
   "folderSelection.links.githubStars": "CodeNomad GitHub Stars",
   "folderSelection.links.discord": "CodeNomad Discord",
 
-  "folderSelection.empty.title": "No Recent Folders",
 
-  "folderSelection.recent.title": "Recent Folders",
-  "folderSelection.recent.subtitle.one": "{count} folder available",
-  "folderSelection.recent.subtitle.other": "{count} folders available",
   "folderSelection.recent.rename": "Rename workspace",
   "folderSelection.recent.remove": "Remove from recent",
   "folderSelection.recent.openBadge": "Open",
-  "newInstanceLauncher.title": "Recent tabs",
-  "newInstanceLauncher.description": "Choose a recent project.",
   "newInstanceLauncher.searchLabel": "Search recent projects",
   "newInstanceLauncher.searchPlaceholder": "Search recent tabs…",
   "newInstanceLauncher.recentTitle": "Recent tabs",
   "newInstanceLauncher.empty": "No recent projects yet.",
   "newInstanceLauncher.noMatch": "No project matches.",
-  "folderSelection.recent.openNewInstance": "Open new instance",
   "folderSelection.recent.switchToOpenProject": "Switch to open project",
 
-  "folderSelection.browse.title": "Browse for Folder",
-  "folderSelection.browse.subtitle": "Select any folder on your computer",
-  "folderSelection.browse.button": "Browse Folders",
-  "folderSelection.browse.buttonOpening": "Opening...",
   "folderSelection.clone.button": "Clone Git Repo",
   "folderSelection.temporary.button": "New temporary tab",
   "folderSelection.temporary.description": "Start in an empty folder managed by CodeNomad; keep or discard it when you close the tab",
@@ -73,13 +61,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "Repository URL and destination folder are required.",
   "folderSelection.actions.connectButton": "Connect CodeNomad Server",
 
-  "folderSelection.advancedSettings": "Advanced Settings",
   "folderSelection.opencode": "OpenCode",
 
-  "folderSelection.hints.navigate": "Navigate",
-  "folderSelection.hints.select": "Select",
-  "folderSelection.hints.remove": "Remove",
-  "folderSelection.hints.browse": "Browse",
 
   "folderSelection.loading.title": "Starting instance...",
 
@@ -90,18 +73,11 @@ export const folderSelectionMessages = {
   "folderSelection.dialog.title": "Select Workspace",
   "folderSelection.dialog.description": "Select workspace to start coding.",
 
-  "folderSelection.tabs.local": "Local Folders",
   "folderSelection.tabs.servers": "Servers",
   "folderSelection.servers.title": "Saved Servers",
-  "folderSelection.servers.subtitle": "Open a saved remote CodeNomad server in a new window",
-  "folderSelection.servers.count": "{count} Servers",
   "folderSelection.servers.empty.title": "No Saved Servers",
-  "folderSelection.servers.connectTitle": "Connect to Server",
-  "folderSelection.servers.connectSubtitle": "Save a remote CodeNomad server and open it in a new window",
-  "folderSelection.servers.connectButton": "Connect to Server",
   "settings.servers.addSsh": "Add SSH server",
   "folderSelection.servers.remove": "Remove",
-  "folderSelection.servers.skipTls": "Self-signed TLS",
   "folderSelection.servers.errorTitle": "Remote Connection Failed",
   "folderSelection.servers.dialog.title": "Connect to Server",
   "folderSelection.servers.dialog.name": "Server name",
@@ -126,7 +102,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.launch.error.credentials": "\"{value}\" carries credentials or a pairing code. Launch addresses cannot include them: pair the server from Connect to Server instead.",
   "folderSelection.servers.launch.error.unknown": "No saved server is named \"{value}\". Use the name of a saved server or an http(s) URL.",
   "folderSelection.servers.launch.error.ambiguous": "Several saved servers are named \"{value}\". Rename one of them, or use its URL.",
-  "folderSelection.sidecars.button": "Open SideCar",
 
   "projectRenameDialog.title": "Rename workspace",
   "projectRenameDialog.description.withLabel": "Update the workspace name for \"{label}\".",

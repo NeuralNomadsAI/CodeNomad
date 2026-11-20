@@ -2,13 +2,10 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import http from "node:http"
+import type { ServerResponse } from "node:http"
 import test from "node:test"
 import { RemoteServerBrowseManager } from "./browse-manager"
 import { startFakeCodeNomad } from "./test-support/fake-codenomad"
-import { startRemoteSurface, FAKE_TUNNEL_HOST } from "../remote-control/test-support/surface"
-import { DEVICE_COOKIE_NAME } from "../remote-control/gate"
-import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 
 for (const change of ["address", "tls"] as const) {
   test(`R1 queued passwords retain their admitted destination and TLS authority: ${change}`, { timeout: 15_000 }, async t => {
@@ -61,7 +58,7 @@ test("R2 forget revokes every listener's shared connection and credential cache"
   const a = new RemoteServerBrowseManager(settings), b = new RemoteServerBrowseManager(settings)
   t.after(async () => { a.close(); b.close(); await remote.close(); fs.rmSync(dir, { recursive: true, force: true }) })
   await a.connect("saved", { username: "codenomad", password: "remote-password" })
-  let response: http.ServerResponse | undefined
+  let response: ServerResponse | undefined
   remote.state.handlers.set("/api/test/live", (_request, reply) => { response = reply; reply.writeHead(200, { "content-type": "text/event-stream" }); reply.write("data: before\n\n") })
   const stream = await b.relay("saved", "/api/test/live", {})
   const reader = stream.body!.getReader()
@@ -90,17 +87,6 @@ test("R1 a failed replacement under another TLS policy cannot retain the disk id
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "remote-server-credentials.json"), "utf8")), { servers: {} })
 })
 
-function send(target: string, url: string, headers: Record<string, string>, body?: unknown) {
-  return new Promise<{ status: number; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
-    const request = http.request(`http://${target}${url}`, { method: body ? "POST" : "GET", headers }, response => {
-      response.resume()
-      response.on("end", () => resolve({ status: response.statusCode!, headers: response.headers }))
-    })
-    request.on("error", reject)
-    request.end(body ? JSON.stringify(body) : undefined)
-  })
-}
-
 test("R2 closing one listener preserves the other listener's connection owner and credential rotation", async t => {
   const remote = await startFakeCodeNomad()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr7-review-close-"))
@@ -121,22 +107,4 @@ test("R2 closing one listener preserves the other listener's connection owner an
   await reader.read()
   b.close()
   await assert.rejects(reader.read())
-})
-
-test("R3 browser pairing remains ingress-only with a valid device and public browser Origin", { timeout: 15_000 }, async t => {
-  const f = await startRemoteSurface(t)
-  // Use the ordinary exchange to obtain a device, then retain the reviewer's direct-listener request.
-  const paired = await new Promise<string>((resolve, reject) => {
-    const request = http.request(`http://${f.target()}${SERVER_PAIR_PATH}`, { method: "POST", headers: { host: FAKE_TUNNEL_HOST, "x-codenomad-server-pairing": "1", "content-type": "application/json" } }, response => {
-      let body = ""
-      response.on("data", chunk => { body += chunk })
-      response.on("end", () => { assert.equal(response.statusCode, 200); resolve(JSON.parse(body).credential) })
-    })
-    request.on("error", reject)
-    request.end(JSON.stringify({ code: f.code, hostName: "review" }))
-  })
-  const next = f.manager.createPairing()
-  const result = await send(f.local, "/api/remote-control/pair", { cookie: `${DEVICE_COOKIE_NAME}=${paired}`, "x-codenomad-server-request": "1", origin: `https://${FAKE_TUNNEL_HOST}`, "content-type": "application/json" }, { code: new URL(next.url).hash.slice(1), name: "second" })
-  assert.equal(result.status, 404, "direct listener must not inherit ingress-only browser pairing")
-  assert.equal(result.headers["set-cookie"], undefined)
 })

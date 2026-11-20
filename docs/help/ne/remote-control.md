@@ -11,13 +11,13 @@ Remote Control ले paired browser वा desktop client लाई inbound net
 
 link **पाँच मिनेट** मान्य हुन्छ र **एकपटक** सफल हुन्छ। credential झैं लिनुहोस्: प्रयोग गर्ने जोकोही paired device बन्न सक्छ। code URL fragment मा हुन्छ, query string मा होइन। **नयाँ जोडी लिंक बनाउनुहोस्** ले अघिल्लो unused link तुरुन्त अमान्य गर्छ। backend shutdown ले बाँकी pairing link रद्द गर्छ; Stop र tunnel failure ले tunnel link रद्द गर्छन्।
 
-अर्को डेस्कटपमा CodeNomad खोल्नुहोस् र जोडी बनाउने लिङ्क यो फिल्डमा टाँस्नुहोस्: **सेटिङहरू → सर्भरहरू → सर्भरको ठेगाना वा लिङ्क**। अनुरोधअघि फिल्ड खाली हुन्छ; मूल ठेगाना मात्र बचत हुन्छ। स्थानीय ब्याकएन्डले निजी उपकरण पहिचान पुनः सुरु गर्दा पनि राख्छ। **बचत गरिएको सर्भर हटाउनुहोस्** ले पहिले त्यही प्रोफाइलको जडान बिर्सन्छ। जोडी बनाउँदा TLS जाँचिन्छ र परियोजना खुल्दैन।
+अर्को डेस्कटपमा CodeNomad खोल्नुहोस् र जोडी बनाउने लिङ्क यो फिल्डमा टाँस्नुहोस्: **सेटिङहरू → सर्भरहरू → सर्भरको ठेगाना वा लिङ्क**।
 
 फेरि जोडी बनाउन सर्भर वा परियोजनाको जडान फाराममा नयाँ लिङ्क टाँस्नुहोस्।
 
 ## direct HTTPS मार्फत pair गर्नुहोस् {#direct-https}
 
-tunnel block भएको तर backend विश्वसनीय HTTPS मार्फत पुग्न सकिने अवस्थामा, जस्तै वास्तविक certificate भएको reverse proxy पछाडि, device हरू त्यो ठेगानामा pair गर्न सक्छन्। योग्य ठेगानाहरू यस backend का आफ्नै HTTPS ठेगाना र `CODENOMAD_ALLOWED_ORIGINS` मा भएका HTTPS origin हुन् ([स्तरोन्नति](remote-access.md#upgrading) हेर्नुहोस्); loopback नाम र plain HTTP कहिल्यै pair हुँदैनन्। रिमोट कन्ट्रोल सुरु गर्नु पर्दैन।
+tunnel block भएको तर backend विश्वसनीय HTTPS मार्फत पुग्न सकिने अवस्थामा, जस्तै वास्तविक certificate भएको reverse proxy पछाडि, device हरू त्यो ठेगानामा pair गर्न सक्छन्। योग्य ठेगानाहरू यस backend का आफ्नै HTTPS ठेगाना र `CODENOMAD_ALLOWED_ORIGINS` मा भएका HTTPS origin हुन् ([अनुमति प्राप्त ओरिजिनहरू](remote-access.md#upgrading) हेर्नुहोस्); loopback नाम र plain HTTP कहिल्यै pair हुँदैनन्। रिमोट कन्ट्रोल सुरु गर्नु पर्दैन।
 
 1. host मा **सेटिङहरू → रिमोट पहुँच → रिमोट कन्ट्रोल** खोल्नुहोस्।
 2. **प्रत्यक्ष HTTPS जोडी** अन्तर्गत, धेरै भए **HTTPS ठेगाना** छान्नुहोस्, अनि **HTTPS जोडी लिंक बनाउनुहोस्** छान्नुहोस्।
@@ -44,7 +44,7 @@ direct-access password बदल्दा device revoke **हुँदैनन�
 ### आफ्नो ठाउँ नगुमाई पुनःpair {#re-pair}
 
 1. client ले **यो उपकरण फेरि जोड्नुहोस्** देखाए त्यो पृष्ठ खुलै राख्नुहोस्।
-2. host मा **नयाँ जोडी लिंक बनाउनुहोस्** रोजी **उही client browser/profile** मा खोल्नुहोस्। saved desktop server मा विद्यमान remote-window storage पुनःप्रयोग गर्न नयाँ pairing link बाट reconnect गर्नुहोस्।
+2. host मा **नयाँ जोडी लिंक बनाउनुहोस्** रोजी **उही client browser/profile** मा खोल्नुहोस्। छुट्टै रिमोट सञ्झ्यालमा नयाँ लिङ्कले त्यही सञ्झ्यालको भण्डारण पुनः प्रयोग गर्छ।
 3. पर्खिरहेको पृष्ठमा फर्केर **जडान जाँच्नुहोस्** रोज्नुहोस्; पृष्ठमा फेरि focus आउँदा पनि यसले फेरि जाँच्छ।
 
 recovery ले खुला पृष्ठ र मस्यौदा जोगाउँछ; असफल कार्य replay गर्दैन। retry अघि send, answer वा delete लागू भयो कि जाँच्नुहोस्। direct-access password ले Remote Control pairing पुनःप्राप्त गर्न सक्दैन।
@@ -77,7 +77,7 @@ paired device ले समान ownership जाँचअन्तर्गत
 | automation bridge | अनुपलब्ध (`/api/opencode-plugin/`)। native desktop क्षमता browser क्षमता बन्दैनन्। |
 | WebSocket upgrade | वेब पूर्वावलोकनका लागि र जोडिएका उपकरणमा [प्रत्यक्ष आवाज कुराकानी](voice.md#conversation) का लागि उपलब्ध। |
 
-होस्टमा सीमित प्रोक्सी/WebSocket र Remote Control व्यवस्थापन (`/api/remote-control/`) का लागि होस्टमा loopback जडान प्रयोग गर्नुहोस्। प्रत्यक्ष LAN पहुँचमा पनि यी कार्यलाई loopback चाहिन्छ; [स्तरोन्नति](remote-access.md#upgrading) हेर्नुहोस्। Remote Control का वेब पूर्वावलोकनले ठेगानामा भएको क्षमता टोकन प्रयोग गर्छन् र होस्टमा सक्षम रहँदा उपलब्ध रहन्छन्; त्यो ठेगाना निजी राख्नुहोस्।
+होस्टमा सीमित प्रोक्सी/WebSocket र Remote Control व्यवस्थापन (`/api/remote-control/`) का लागि होस्टमा loopback जडान प्रयोग गर्नुहोस्। प्रत्यक्ष LAN पहुँचमा पनि यी कार्यलाई loopback चाहिन्छ; [अनुमति प्राप्त ओरिजिनहरू](remote-access.md#upgrading) हेर्नुहोस्। Remote Control का वेब पूर्वावलोकनले ठेगानामा भएको क्षमता टोकन प्रयोग गर्छन् र होस्टमा सक्षम रहँदा उपलब्ध रहन्छन्; त्यो ठेगाना निजी राख्नुहोस्।
 
 ## Relay र गोपनीयता {#relay-privacy}
 

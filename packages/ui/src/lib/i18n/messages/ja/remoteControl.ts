@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "コピーしました",
   "remoteControl.pairing.expires": "このリンクは {time} に期限切れになります。",
   "remoteControl.devices.title": "ペアリング済み端末",
-  "remoteControl.devices.description": "これらの端末は、リモートコントロールまたは HTTPS アドレスからこのホストにアクセスできます。",
   "remoteControl.devices.empty": "ペアリング済み端末はありません。",
   "remoteControl.devices.lastSeen": "最終アクセス: {time}",
   "remoteControl.devices.revoke": "取り消す",

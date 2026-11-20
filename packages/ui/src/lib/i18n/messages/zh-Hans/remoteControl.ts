@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "已复制",
   "remoteControl.pairing.expires": "此链接将在 {time} 过期。",
   "remoteControl.devices.title": "已配对设备",
-  "remoteControl.devices.description": "这些设备可以通过远程控制或其 HTTPS 地址访问此 CodeNomad 主机。",
   "remoteControl.devices.empty": "尚未配对任何设备。",
   "remoteControl.devices.lastSeen": "上次活动：{time}",
   "remoteControl.devices.revoke": "撤销",

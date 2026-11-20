@@ -12,7 +12,7 @@ interface ServerAddFieldProps {
   disabled?: boolean
   onAdded?: (id: string, mayFocus?: () => boolean) => void
   onPairingFailure?: (id: string) => void
-  navAttribute?: string
+  browseNav?: boolean
   pairingProfile?: RemoteServerProfile
 }
 
@@ -76,7 +76,7 @@ export default function ServerAddField(props: ServerAddFieldProps) {
     try {
       const profile = target && !target.skipTlsVerify && link.kind === "pairing"
         ? await serverApi.connectRemoteServer(target.id, { pairingLink: link.entryUrl }, (request = new AbortController()).signal).then(() => target)
-        : await submitServer(input, false, current)
+        : await submitServer(input, current)
       if (!current()) return
       reset()
       props.onAdded?.(profile.id, () => current() && focus.retained())
@@ -99,13 +99,12 @@ export default function ServerAddField(props: ServerAddFieldProps) {
       if (current()) { setBusy(false); if (link.kind === "pairing") setAddress("") }
     }
   }
-  const nav = () => props.navAttribute ? { [props.navAttribute]: "" } : {}
-  const keepBusyFocus = () => !!props.navAttribute && busy()
+  const keepBusyFocus = () => !!props.browseNav && busy()
   const fieldDisabled = () => props.disabled || !!props.pairingProfile && !secretEntryAllowed()
   return (
     <div class="server-add-field">
       <form class="server-add-field-row" onSubmit={event => { event.preventDefault(); void add(address()) }}>
-        <input type="text" class="server-add-field-input" dir="ltr" autocomplete="off" spellcheck={false} {...nav()} data-server-add-field
+        <input type="text" class="server-add-field-input" dir="ltr" autocomplete="off" spellcheck={false} data-browse-nav={props.browseNav ? "" : undefined} data-server-add-field
           aria-label={t(props.pairingProfile ? "remoteBrowse.pairingLink" : "folderSelection.browseMenu.addField")}
           placeholder={t(props.pairingProfile ? "remoteBrowse.pairingLink" : "folderSelection.browseMenu.addField")}
           aria-describedby={error() ? errorId : undefined} aria-invalid={error() ? "true" : undefined}

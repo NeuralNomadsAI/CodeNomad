@@ -128,9 +128,9 @@ let retainedAction: any
       location: { directory: `/${owner}` }, data: type === "session.compaction.ended"
         ? { sessionID: "ses_homonym", reason: "auto", text: "Summary" } : { sessionID: "ses_homonym" } })
   },
-  history: () => getToastHistory().map(({ title, message, action }) => ({ title, message, target: action?.target })),
-  action: async (owner: string) => {
-    const action = getToastHistory().find(item => item.action?.target?.backendId === owner)?.action
+  history: () => getToastHistory().map(({ title, message }) => ({ title, message })),
+  action: async (title: string) => {
+    const action = getToastHistory().find(item => item.title === title)?.action
     if (action) { retainedAction ??= action; await runToastAction(action) }
   },
   staleAction: () => retainedAction && runToastAction(retainedAction),

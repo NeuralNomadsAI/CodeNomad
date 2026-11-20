@@ -23,8 +23,7 @@ if (scenario === "ssh-launch") {
   })
 }
 
-serverApi.fetchConfigOwner = (async () => ({ settings: { multiBackend: scenario === "ssh" || query.get("relay") === "true" } })) as typeof serverApi.fetchConfigOwner
-serverApi.listSshHosts = async () => ({ hosts: ["lab", "other"] })
+serverApi.fetchConfigOwner = (async () => ({ settings: { multiBackend: query.get("relay") === "true" } })) as typeof serverApi.fetchConfigOwner
 serverApi.fetchStateOwner = (async (owner: string) => (owner === "ui" ? uiBucket : {})) as typeof serverApi.fetchStateOwner
 serverApi.patchStateOwner = (async (owner: string, patch: unknown) => {
   if (owner !== "ui") return {}

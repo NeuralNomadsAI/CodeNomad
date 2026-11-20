@@ -1,6 +1,6 @@
 # Einstellungen und Layout
 
-Das Einstellungsfenster den Server des ausgewählten Projekts für Projekteinstellungen, Anbieter, Statistiken und Gedächtnis, einschließlich der Bereinigung. Bei einem nicht erreichbaren Server bleiben die Projektaktionen inaktiv. Geräteeinstellungen und SideCars bleiben lokal.
+Das Einstellungsfenster verwendet den Server des ausgewählten Projekts für Projekteinstellungen, Anbieter, Statistiken und Gedächtnis, einschließlich der Bereinigung. Bei einem nicht erreichbaren Server bleiben die Projektaktionen inaktiv. Geräteeinstellungen und SideCars bleiben lokal. Die Einstellungen für Bilder und Websuche gelten für den Server des Projekts, einschließlich seiner globalen Vorgaben.
 
 ## Einstellungen öffnen und Geltungsbereich erkennen {#open-settings}
 
@@ -42,7 +42,7 @@ Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNo
 
 ## Dauerhaftes Agentengedächtnis {#agent-memory}
 
-Authentifizierte Nutzer können über Fernsteuerung, verifiziertes HTTPS, LAN oder eine installierte PWA das Gedächtnis des ausgewählten lokalen oder entfernten Projekts prüfen, bearbeiten und **Aufräumen** verwenden. Das ausgewählte Projekt bestimmt das zuständige Backend.
+Authentifizierte Nutzer können über Fernsteuerung, verifiziertes HTTPS, LAN oder eine installierte PWA das Gedächtnis des ausgewählten lokalen oder entfernten Projekts prüfen, bearbeiten und **Aufräumen** verwenden.
 
 CodeNomad versucht, veraltete Speicheranweisungen der Sitzung zu entfernen; schlägt auch dies fehl, können die bisherigen Anweisungen bis zur nächsten erfolgreichen Aktualisierung erhalten bleiben.
 
@@ -91,7 +91,7 @@ Die Eingabehöhe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtas
 
 ## Benachrichtigungen und Abzeichen {#notifications}
 
-Bei einem Projekt-Tab auf einem anderen CodeNomad-Server enthalten Benachrichtigungen den Servernamen. **Unterhaltung anzeigen** öffnet genau dieses Projekt und diese Unterhaltung; beim Trennen des Servers werden seine Hinweise entfernt. Die Einstellungen für Bilder und Websuche gelten für den Server des Projekts, einschließlich seiner globalen Vorgaben.
+Bei einem Projekt-Tab auf einem anderen CodeNomad-Server enthalten Benachrichtigungen den Servernamen. **Unterhaltung anzeigen** öffnet genau dieses Projekt und diese Unterhaltung; beim Trennen des Servers werden seine Hinweise entfernt.
 
 Die Komprimierung technischer Missionssitzungen bleibt stumm.
 

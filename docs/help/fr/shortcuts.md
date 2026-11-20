@@ -74,4 +74,4 @@ Les raccourcis de la rangée de chiffres et des crochets utilisent les positions
 
 Pendant la composition IME, la saisie de texte prime. L’historique des prompts et les actions Échap dépendent aussi du focus, de l’état du sélecteur/shell et de l’opération actuelle ; ne supposez pas qu’ArrowUp ou Échap soit toujours une action globale inconditionnelle. Sur ordinateur, l’envoi place le focus sur la conversation pour que les flèches, les touches de défilement par page et Espace la fassent défiler ; taper un caractère revient à la zone de saisie avec ce caractère, et **Activer la saisie** y revient avant d’utiliser l’historique des prompts.
 
-Depuis le menu du lanceur, Tab ouvre la recherche, les flèches et Entrée sélectionnent un onglet, et Échap ramène à `+`.
+[Nouvelle instance](projects.md#new-instance-launcher).

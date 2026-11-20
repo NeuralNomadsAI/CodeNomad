@@ -27,34 +27,22 @@ export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "Sprache",
 
   "folderSelection.logoAlt": "CodeNomad Logo",
-  "folderSelection.tagline": "Wählen Sie einen Ordner aus, um mit dem AI-Coding zu beginnen",
 
   "folderSelection.links.github": "CodeNomad GitHub",
   "folderSelection.links.githubStars": "CodeNomad GitHub Sterne",
   "folderSelection.links.discord": "CodeNomad Discord",
 
-  "folderSelection.empty.title": "Keine letzten Ordner",
 
-  "folderSelection.recent.title": "Letzte Ordner",
-  "folderSelection.recent.subtitle.one": "{count} Ordner verfügbar",
-  "folderSelection.recent.subtitle.other": "{count} Ordner verfügbar",
   "folderSelection.recent.rename": "Arbeitsbereich umbenennen",
   "folderSelection.recent.remove": "Aus Liste entfernen",
   "folderSelection.recent.openBadge": "Offen",
-  "newInstanceLauncher.title": "Zuletzt verwendete Tabs",
-  "newInstanceLauncher.description": "Ein zuletzt verwendetes Projekt auswählen.",
   "newInstanceLauncher.searchLabel": "Zuletzt verwendete Projekte durchsuchen",
   "newInstanceLauncher.searchPlaceholder": "Zuletzt verwendete Tabs durchsuchen…",
   "newInstanceLauncher.recentTitle": "Zuletzt verwendete Tabs",
   "newInstanceLauncher.empty": "Noch keine zuletzt verwendeten Projekte.",
   "newInstanceLauncher.noMatch": "Kein Projekt passt.",
-  "folderSelection.recent.openNewInstance": "Neue Instanz öffnen",
   "folderSelection.recent.switchToOpenProject": "Zum offenen Projekt wechseln",
 
-  "folderSelection.browse.title": "Nach Ordner suchen",
-  "folderSelection.browse.subtitle": "Wählen Sie einen beliebigen Ordner auf Ihrem Computer aus",
-  "folderSelection.browse.button": "Ordner durchsuchen",
-  "folderSelection.browse.buttonOpening": "Wird geöffnet...",
   "folderSelection.clone.button": "Git-Repo klonen",
   "folderSelection.temporary.button": "Neuer temporärer Tab",
   "folderSelection.temporary.description": "In einem leeren, von CodeNomad verwalteten Ordner starten; beim Schließen des Tabs behalten oder verwerfen",
@@ -73,13 +61,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "Repository-URL und Zielordner sind erforderlich.",
   "folderSelection.actions.connectButton": "CodeNomad-Server verbinden",
 
-  "folderSelection.advancedSettings": "Erweiterte Einstellungen",
   "folderSelection.opencode": "OpenCode",
 
-  "folderSelection.hints.navigate": "Navigieren",
-  "folderSelection.hints.select": "Auswählen",
-  "folderSelection.hints.remove": "Entfernen",
-  "folderSelection.hints.browse": "Durchsuchen",
 
   "folderSelection.loading.title": "Instanz wird gestartet...",
 
@@ -90,18 +73,11 @@ export const folderSelectionMessages = {
   "folderSelection.dialog.title": "Arbeitsbereich auswählen",
   "folderSelection.dialog.description": "Wählen Sie einen Arbeitsbereich aus, um mit dem Codieren zu beginnen.",
 
-  "folderSelection.tabs.local": "Lokale Ordner",
   "folderSelection.tabs.servers": "Server",
   "folderSelection.servers.title": "Gespeicherte Server",
-  "folderSelection.servers.subtitle": "Einen gespeicherten CodeNomad-Remote-Server in einem neuen Fenster öffnen",
-  "folderSelection.servers.count": "{count} Server",
   "folderSelection.servers.empty.title": "Keine gespeicherten Server",
-  "folderSelection.servers.connectTitle": "Mit Server verbinden",
-  "folderSelection.servers.connectSubtitle": "Einen CodeNomad-Remote-Server speichern und in einem neuen Fenster öffnen",
-  "folderSelection.servers.connectButton": "Mit Server verbinden",
   "settings.servers.addSsh": "SSH-Server hinzufügen",
   "folderSelection.servers.remove": "Entfernen",
-  "folderSelection.servers.skipTls": "Selbstsigniertes TLS",
   "folderSelection.servers.errorTitle": "Remote-Verbindung fehlgeschlagen",
   "folderSelection.servers.dialog.title": "Mit Server verbinden",
   "folderSelection.servers.dialog.name": "Servername",
@@ -126,7 +102,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.launch.error.credentials": "„{value}“ enthält Anmeldedaten oder einen Kopplungscode. Startadressen dürfen keine enthalten: Koppeln Sie den Server stattdessen über „Mit Server verbinden“.",
   "folderSelection.servers.launch.error.unknown": "Kein gespeicherter Server heißt „{value}“. Verwenden Sie den Namen eines gespeicherten Servers oder eine http(s)-URL.",
   "folderSelection.servers.launch.error.ambiguous": "Mehrere gespeicherte Server heißen „{value}“. Benennen Sie einen um oder verwenden Sie seine URL.",
-  "folderSelection.sidecars.button": "SideCar öffnen",
 
   "projectRenameDialog.title": "Arbeitsbereich umbenennen",
   "projectRenameDialog.description.withLabel": "Arbeitsbereichsnamen für \"{label}\" aktualisieren.",

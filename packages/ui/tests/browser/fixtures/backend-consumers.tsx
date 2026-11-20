@@ -43,13 +43,5 @@ function Fixture() {
   </>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-const keys: { target: string | null; focused: boolean; published: boolean }[] = []
 const histories = () => [folder, `lab~${folder}`].map(key => getInstanceConfig(key).messageHistory)
-document.addEventListener("keydown", event => {
-  if (event.key !== "ArrowUp") return
-  const target = event.target as HTMLElement
-  keys.push({ target: target.closest("[data-composer]")?.getAttribute("data-composer") ?? null,
-    focused: document.activeElement === target,
-    published: histories()[0][0] === "legacy local history" && histories()[1][0] === "remote history" })
-}, true)
-;(window as any).backendConsumers = { reads, folder, histories, keys, readinessChecks: 0 }
+;(window as any).backendConsumers = { reads, folder, histories }

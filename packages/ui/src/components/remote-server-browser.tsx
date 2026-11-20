@@ -41,7 +41,7 @@ export function RemoteServerBrowser(props: {
   let generation = 0
   const name = () => qualifiedServerDisplayName(props.profile, remoteServers())
   const [requestedPath, setRequestedPath] = createSignal<string>()
-  const [pendingOpen, setPendingOpen] = createSignal(props.recent?.path)
+  const [pendingOpen, setPendingOpen] = createSignal<string>()
   const needsCredentials = () => ["needs_credentials", "auth", "pairing_unavailable", "unauthorized"].includes(error())
   const pairing = () => needsCredentials() && supportsPairingLink(props.profile.baseUrl)
   const password = () => needsCredentials() && !new URL(props.profile.baseUrl).hostname.endsWith(".opentunnel.xyz")
@@ -134,12 +134,11 @@ export function RemoteServerBrowser(props: {
           <ArrowLeft class="w-4 h-4" aria-hidden="true" />
         </button>
         <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
-        <bdi class="browse-menu-name" dir="auto" tabIndex={0} title={name()}>{name()}</bdi>
+        <bdi class="browse-menu-name" dir="auto" title={name()}>{name()}</bdi>
         <SettingsInfoTip text={`${name()} — ${props.profile.baseUrl}`} />
       </div>
       <Show when={pairing()}>
-        <p role="alert" class="server-add-field-error">{t("remoteBrowse.pairAgain", { name: name() })}</p>
-        <ServerAddField pairingProfile={props.profile} navAttribute="data-browse-nav" onAdded={() => void connected()} />
+        <ServerAddField pairingProfile={props.profile} browseNav onAdded={() => void connected()} />
       </Show>
       <Show when={password()}>
         <RemoteServerSignin busy={busy()} error={signInError()} onConnect={credentials => void connect(credentials)} />
@@ -166,7 +165,7 @@ export function RemoteServerBrowser(props: {
           </button>
         </Show>
         <For each={result()?.listing.entries}>{entry =>
-          <button type="button" class="browse-menu-row" data-browse-nav data-remote-folder disabled={busy()} title={entry.path} onClick={() => { setPendingOpen(undefined); void browse(entry.path) }}>
+          <button type="button" class="browse-menu-row" data-browse-nav data-remote-folder disabled={busy()} title={entry.path} onClick={() => void browse(entry.path)}>
             <Folder class="w-4 h-4 shrink-0" /><bdi class="browse-menu-name">{entry.name}</bdi>
           </button>
         }</For>

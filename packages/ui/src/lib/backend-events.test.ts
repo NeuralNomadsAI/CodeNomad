@@ -85,6 +85,8 @@ test("reattachment during abort preserves the replacement's reactive authority",
   const bus = new BackendEvents()
   const source = { on: () => () => {}, onOpen: () => () => {}, onTransportStatus: () => () => {}, onDispose: () => () => {} }
   const detach = bus.attach("replacement", source), first = bus.signal("replacement")!
+  const removed: AbortSignal[] = []
+  bus.onDetach((_id, signal) => { removed.push(signal) })
   let detachReplacement!: () => void
   first.addEventListener("abort", () => { detachReplacement = bus.attach("replacement", source) }, { once: true })
   const observed: (AbortSignal | undefined)[] = []
@@ -93,6 +95,8 @@ test("reattachment during abort preserves the replacement's reactive authority",
     detach()
     const replacement = bus.signal("replacement")!
     assert.notEqual(replacement, first)
+    assert.deepEqual(removed, [first])
+    assert.equal(replacement.aborted, false)
     assert.equal(observed.at(-1), replacement)
     detachReplacement()
     assert.equal(replacement.aborted, true)

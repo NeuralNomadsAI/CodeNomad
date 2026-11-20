@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "הועתק",
   "remoteControl.pairing.expires": "הקישור יפוג בשעה {time}.",
   "remoteControl.devices.title": "מכשירים מצומדים",
-  "remoteControl.devices.description": "מכשירים אלה יכולים לגשת למארח דרך שליטה מרחוק או דרך כתובת ה-HTTPS שלהם.",
   "remoteControl.devices.empty": "עדיין אין מכשירים מצומדים.",
   "remoteControl.devices.lastSeen": "נראה לאחרונה: {time}",
   "remoteControl.devices.revoke": "בטל גישה",

@@ -396,9 +396,6 @@ for (const locale of ["en", "fr", "he"]) test(`480px ${locale}: long names/URLs,
   assert.equal(await row.locator("bdi").getAttribute("dir"), "auto")
   assert.equal(await row.locator(".font-mono").getAttribute("dir"), "ltr")
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
-  const screenshots = path.join(os.tmpdir(), "opencode", "mb-pr8c-servers-port", "screenshots")
-  fs.mkdirSync(screenshots, { recursive: true })
-  await page.screenshot({ path: path.join(screenshots, `servers-${locale}-480.png`) })
   const buttons = await row.locator("button").all()
   for (const button of buttons) {
     const rect = await button.boundingBox()
@@ -414,7 +411,6 @@ for (const locale of ["en", "fr", "he"]) test(`480px ${locale}: long names/URLs,
   await error.waitFor()
   assert.equal(await dialog.locator('input[type="text"]').first().getAttribute("aria-invalid"), "true")
   assert.equal(await dialog.locator('input[type="text"]').first().getAttribute("aria-describedby"), await error.getAttribute("id"))
-  await page.screenshot({ path: path.join(screenshots, `editor-${locale}-480.png`) })
   await page.keyboard.press("Tab")
   assert.equal(await page.locator(":focus").evaluate(element => !!element.closest('[role="dialog"]')), true)
   await page.keyboard.press("Shift+Tab")

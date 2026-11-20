@@ -54,13 +54,13 @@ Ne supposez pas le port 9898 ou 9899 : les ports omis peuvent changer s’ils so
 
 Un administrateur peut fixer l’adresse d’écoute : définissez `CODENOMAD_LOCKED_HOST` pour tout le système avec l’adresse que le serveur doit utiliser, puis redémarrez CodeNomad. Elle l’emporte sur `--host`, `CLI_HOST` et **Autoriser les connexions depuis d'autres IP**, qui affiche le résultat sans pouvoir le changer. Utilisez une adresse intranet pour que vos collègues joignent le serveur par le réseau de l’entreprise, ou `127.0.0.1` pour le garder sur cet ordinateur. Pour que tout accès reste dans le réseau de l’entreprise, définissez aussi `CODENOMAD_REMOTE_CONTROL=disabled` ([contrôle à distance](remote-control.md#administrator-policy)).
 
-## Mise à niveau {#upgrading}
+## Origines autorisées {#upgrading}
 
-Reconnectez-vous après la mise à niveau. Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification. Ses origines HTTPS permettent aussi à l’hôte d’appairer des appareils sans le tunnel ; voir [Appairer en HTTPS direct](remote-control.md#direct-https).
+Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification. Ses origines HTTPS permettent aussi à l’hôte d’appairer des appareils sans le tunnel ; voir [Appairer en HTTPS direct](remote-control.md#direct-https).
 
-Utilisez une connexion en boucle locale pour les opérations réservées à l’hôte : contenu SideCar (`/sidecars/`) et WebSockets, gestion du Contrôle à distance (`/api/remote-control/`), pont des plugins (`/api/opencode-plugin/`), proxys distants (`/api/remote-proxy/`), gestion des serveurs enregistrés (`/api/remote-servers/`), changement de mot de passe et initialisation par jeton. Ces opérations exigent la boucle locale, même avec une connexion authentifiée directe depuis le LAN. Seuls les SideCars font exception : le réglage **Ouvrir les SideCars en HTTPS** de l’hôte ouvre leur contenu et leurs WebSockets aux navigateurs connectés via une origine HTTPS de confiance ([SideCars](browser-sidecars.md#register-sidecar)). Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide.
+Utilisez une connexion en boucle locale pour les opérations réservées à l’hôte : contenu SideCar (`/sidecars/`) et WebSockets, gestion du Contrôle à distance (`/api/remote-control/`), pont des plugins (`/api/opencode-plugin/`), proxys distants (`/api/remote-proxy/`), changement de mot de passe et initialisation par jeton. Ces opérations exigent la boucle locale, même avec une connexion authentifiée directe depuis le LAN. Seuls les SideCars font exception : le réglage **Ouvrir les SideCars en HTTPS** de l’hôte ouvre leur contenu et leurs WebSockets aux navigateurs connectés via une origine HTTPS de confiance ([SideCars](browser-sidecars.md#register-sidecar)). Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide.
 
-Les API d’enregistrement `/api/sidecars` restent accessibles aux clients LAN directs authentifiés et aux appareils appairés. Les aperçus web du Contrôle à distance restent accessibles avec leur jeton de capacité lorsqu’ils sont activés sur l’hôte.
+Les API d’enregistrement `/api/sidecars` restent accessibles aux clients LAN directs authentifiés et aux appareils appairés. Les aperçus web du Contrôle à distance restent accessibles avec leur jeton de capacité lorsqu’ils sont activés sur l’hôte. Pour gérer les serveurs et saisir des identifiants en toute sécurité, voir [Enregistrer un serveur distant](remote-access.md#saved-servers).
 
 ## Configurer un TLS de confiance {#tls}
 
@@ -95,20 +95,17 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 Les clients distants authentifiés peuvent utiliser et gérer tous les serveurs enregistrés sur l’hôte ; l’accueil et **Paramètres → Serveurs** affichent les actions autorisées par les capacités de l’hôte. Le HTTP simple sur le réseau local désactive la saisie de nouveaux mots de passe de serveur et liens d’appairage : « Utilisez HTTPS ou Remote Control pour saisir les identifiants. » Les connexions utilisant des identifiants enregistrés et l’ajout, la modification ou la suppression de profils sans secrets restent disponibles.
 
-Pour une destination accessible uniquement par SSH dans les **Paramètres → Serveurs**, choisissez **Ajouter un serveur SSH**, saisissez son **URL** et son **Hôte SSH (facultatif)**, puis **Enregistrer**. Le profil s’enregistre hors ligne ; sa connexion passe par le relais SSH du backend.
+Dans **Paramètres → Serveurs**, choisissez **Ajouter un serveur SSH**. Saisissez l’**URL** de CodeNomad telle que l’hôte SSH y accède, puis l’**Hôte SSH (facultatif)** ou son alias et choisissez **Enregistrer**. Le profil peut être enregistré hors ligne. OpenSSH exige une authentification par clé et une clé d’hôte vérifiée dans `known_hosts`. Connectez-vous à CodeNomad sur ce serveur ; les certificats HTTPS sont toujours vérifiés.
 
 Ouvrez **Paramètres → Serveurs** : collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur**, ou validez par Entrée. L’ajout enregistre un profil sur l’hôte sans ouvrir de projet. **Modifier le serveur** change son **URL** ou son **Nom** facultatif ; renommer à URL et politique TLS identiques fonctionne hors ligne. **Supprimer** demande confirmation, oublie sa connexion puis enregistre le retrait ; une erreur de sauvegarde conserve le profil pour réessayer. Les autres connexions restent disponibles.
 
 **Ignorer la vérification TLS** est proposé après un échec de certificat pour cette adresse ; changer d’adresse retire l’accord. L’appairage vérifie toujours TLS.
-
-**Hôte SSH (facultatif)** enregistre un hôte ou alias OpenSSH pour le relais du backend. Les suggestions proviennent du fichier `~/.ssh/config` du compte exécutant le backend local. Saisissez l’adresse de CodeNomad vue depuis cet hôte (par exemple `https://127.0.0.1:9898`, avec son port réel), puis **Enregistrer**. Les profils SSH passent par le relais. CodeNomad doit déjà y être installé et démarré. OpenSSH doit être disponible localement, avec une authentification par clé et une clé d’hôte vérifiée dans `known_hosts` ; l’authentification CodeNomad et les contrôles des certificats HTTPS s’appliquent toujours.
 
 Uniquement si `multiBackend` est réglé sur `false`, utilisez les fenêtres de bureau séparées ci-dessous :
 
 1. **Paramètres → Accès distant → Serveurs** → **Se connecter au serveur CodeNomad**.
 2. Dans **Se connecter à un serveur**, saisissez **Nom du serveur** et **URL du serveur** avec une origine HTTPS de confiance. Laissez **Ignorer la vérification TLS pour les certificats auto-signés.** décoché ; établissez plutôt la confiance.
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.
-
 
 Fermer la dernière fenêtre locale alors que des fenêtres distantes restent ouvertes conserve ses onglets : **Fenêtre → Nouvelle fenêtre** dans une fenêtre distante, ou un nouveau lancement de CodeNomad, la rouvre.
 
@@ -120,7 +117,7 @@ Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans
 
 Les projets locaux et distants partagent la même fenêtre. **Onglets récents** affiche les raccourcis du serveur parcouru ; les récents mixtes indiquent l’icône et le nom du serveur pour les projets ouverts ici. Si un onglet restauré attend son serveur, choisissez **Réessayer** ou **Se connecter** dans cet onglet. Il conserve ses brouillons.
 
-Dans **Paramètres → Serveurs**, **Ouvrir** affiche un nouvel onglet avec ce serveur sélectionné dans **Parcourir**. **Supprimer** oublie la connexion et masque ses raccourcis récents. Les onglets ouverts, les projets et les conversations sont conservés.
+Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir** et réutilise l’onglet vide s’il existe. **Supprimer** ferme les onglets de ce serveur et retire ses raccourcis récents. Les projets et conversations restent sur le serveur. Les choix de fermeture des onglets temporaires restent disponibles.
 
 ### `--connect-server` {#connect-server}
 

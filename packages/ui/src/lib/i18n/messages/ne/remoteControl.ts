@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "प्रतिलिपि भयो",
   "remoteControl.pairing.expires": "यो लिंक {time} मा समाप्त हुन्छ।",
   "remoteControl.devices.title": "जोडिएका उपकरणहरू",
-  "remoteControl.devices.description": "यी उपकरणहरूले रिमोट कन्ट्रोल वा तिनीहरूको HTTPS ठेगानामार्फत CodeNomad होस्ट पहुँच गर्न सक्छन्।",
   "remoteControl.devices.empty": "अहिलेसम्म कुनै उपकरण जोडिएको छैन।",
   "remoteControl.devices.lastSeen": "अन्तिम पटक: {time}",
   "remoteControl.devices.revoke": "हटाउनुहोस्",

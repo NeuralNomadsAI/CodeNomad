@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "Copiado",
   "remoteControl.pairing.expires": "Este enlace caduca a las {time}.",
   "remoteControl.devices.title": "Dispositivos emparejados",
-  "remoteControl.devices.description": "Estos dispositivos pueden acceder a este host mediante el control remoto o su dirección HTTPS.",
   "remoteControl.devices.empty": "Todavía no hay dispositivos emparejados.",
   "remoteControl.devices.lastSeen": "Última actividad: {time}",
   "remoteControl.devices.revoke": "Revocar",

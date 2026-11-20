@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "Copié",
   "remoteControl.pairing.expires": "Ce lien expire à {time}.",
   "remoteControl.devices.title": "Appareils appairés",
-  "remoteControl.devices.description": "Ces appareils peuvent accéder à cet hôte CodeNomad via le contrôle à distance ou leur adresse HTTPS.",
   "remoteControl.devices.empty": "Aucun appareil n’est encore appairé.",
   "remoteControl.devices.lastSeen": "Dernière activité : {time}",
   "remoteControl.devices.revoke": "Révoquer",

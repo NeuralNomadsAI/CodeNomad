@@ -25,34 +25,22 @@ export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "语言",
 
   "folderSelection.logoAlt": "CodeNomad 徽标",
-  "folderSelection.tagline": "选择文件夹，开始与 AI 一起编码",
 
   "folderSelection.links.github": "CodeNomad 的 GitHub",
   "folderSelection.links.githubStars": "CodeNomad GitHub Star 数",
   "folderSelection.links.discord": "CodeNomad 的 Discord",
 
-  "folderSelection.empty.title": "没有最近的文件夹",
 
-  "folderSelection.recent.title": "最近的文件夹",
-  "folderSelection.recent.subtitle.one": "{count} 个文件夹可用",
-  "folderSelection.recent.subtitle.other": "{count} 个文件夹可用",
   "folderSelection.recent.rename": "重命名工作区",
   "folderSelection.recent.remove": "从最近列表移除",
   "folderSelection.recent.openBadge": "已打开",
-  "newInstanceLauncher.title": "最近的标签页",
-  "newInstanceLauncher.description": "选择最近的项目。",
   "newInstanceLauncher.searchLabel": "搜索最近的项目",
   "newInstanceLauncher.searchPlaceholder": "搜索最近的标签页…",
   "newInstanceLauncher.recentTitle": "最近的标签页",
   "newInstanceLauncher.empty": "还没有最近的项目。",
   "newInstanceLauncher.noMatch": "没有匹配的项目。",
-  "folderSelection.recent.openNewInstance": "打开新实例",
   "folderSelection.recent.switchToOpenProject": "切换到已打开的项目",
 
-  "folderSelection.browse.title": "浏览文件夹",
-  "folderSelection.browse.subtitle": "选择你电脑上的任意文件夹",
-  "folderSelection.browse.button": "浏览文件夹",
-  "folderSelection.browse.buttonOpening": "正在打开...",
   "folderSelection.clone.button": "克隆 Git 仓库",
   "folderSelection.temporary.button": "新建临时标签页",
   "folderSelection.temporary.description": "在 CodeNomad 管理的空文件夹中开始；关闭标签页时可选择保留或丢弃",
@@ -71,13 +59,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "仓库 URL 和目标文件夹为必填项。",
   "folderSelection.actions.connectButton": "连接 CodeNomad 服务器",
 
-  "folderSelection.advancedSettings": "高级设置",
   "folderSelection.opencode": "OpenCode",
 
-  "folderSelection.hints.navigate": "导航",
-  "folderSelection.hints.select": "选择",
-  "folderSelection.hints.remove": "移除",
-  "folderSelection.hints.browse": "浏览",
 
   "folderSelection.loading.title": "正在启动实例...",
 
@@ -88,18 +71,11 @@ export const folderSelectionMessages = {
   "folderSelection.dialog.title": "选择工作区",
   "folderSelection.dialog.description": "选择工作区以开始编码。",
 
-  "folderSelection.tabs.local": "本地文件夹",
   "folderSelection.tabs.servers": "服务器",
   "folderSelection.servers.title": "已保存的服务器",
-  "folderSelection.servers.subtitle": "在新窗口中打开已保存的远程 CodeNomad 服务器",
-  "folderSelection.servers.count": "{count} 个服务器",
   "folderSelection.servers.empty.title": "没有已保存的服务器",
-  "folderSelection.servers.connectTitle": "连接到服务器",
-  "folderSelection.servers.connectSubtitle": "保存远程 CodeNomad 服务器并在新窗口中打开它",
-  "folderSelection.servers.connectButton": "连接到服务器",
   "settings.servers.addSsh": "添加 SSH 服务器",
   "folderSelection.servers.remove": "移除",
-  "folderSelection.servers.skipTls": "自签名 TLS",
   "folderSelection.servers.errorTitle": "远程连接失败",
   "folderSelection.servers.dialog.title": "连接到服务器",
   "folderSelection.servers.dialog.name": "服务器名称",
@@ -124,7 +100,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.launch.error.credentials": "“{value}”包含凭据或配对码。启动地址不能包含它们：请改为通过“连接到服务器”配对该服务器。",
   "folderSelection.servers.launch.error.unknown": "没有名为“{value}”的已保存服务器。请使用已保存服务器的名称或 http(s) URL。",
   "folderSelection.servers.launch.error.ambiguous": "有多个已保存服务器名为“{value}”。请重命名其中一个，或使用其 URL。",
-  "folderSelection.sidecars.button": "打开 SideCar",
 
   "projectRenameDialog.title": "重命名工作区",
   "projectRenameDialog.description.withLabel": "更新“{label}”的工作区名称。",

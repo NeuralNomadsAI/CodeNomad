@@ -25,34 +25,22 @@ export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "言語",
 
   "folderSelection.logoAlt": "CodeNomad ロゴ",
-  "folderSelection.tagline": "フォルダを選択して AI でコーディングを開始",
 
   "folderSelection.links.github": "CodeNomad の GitHub",
   "folderSelection.links.githubStars": "CodeNomad の GitHub スター",
   "folderSelection.links.discord": "CodeNomad の Discord",
 
-  "folderSelection.empty.title": "最近使ったフォルダはありません",
 
-  "folderSelection.recent.title": "最近使ったフォルダ",
-  "folderSelection.recent.subtitle.one": "{count} 件のフォルダ",
-  "folderSelection.recent.subtitle.other": "{count} 件のフォルダ",
   "folderSelection.recent.rename": "ワークスペース名を変更",
   "folderSelection.recent.remove": "履歴から削除",
   "folderSelection.recent.openBadge": "開いています",
-  "newInstanceLauncher.title": "最近のタブ",
-  "newInstanceLauncher.description": "最近のプロジェクトを選択します。",
   "newInstanceLauncher.searchLabel": "最近のプロジェクトを検索",
   "newInstanceLauncher.searchPlaceholder": "最近のタブを検索…",
   "newInstanceLauncher.recentTitle": "最近のタブ",
   "newInstanceLauncher.empty": "最近のプロジェクトはまだありません。",
   "newInstanceLauncher.noMatch": "一致するプロジェクトはありません。",
-  "folderSelection.recent.openNewInstance": "新しいインスタンスを開く",
   "folderSelection.recent.switchToOpenProject": "開いているプロジェクトに切り替え",
 
-  "folderSelection.browse.title": "フォルダを参照",
-  "folderSelection.browse.subtitle": "コンピュータ上の任意のフォルダを選択",
-  "folderSelection.browse.button": "フォルダを参照",
-  "folderSelection.browse.buttonOpening": "開いています...",
   "folderSelection.clone.button": "Git リポジトリをクローン",
   "folderSelection.temporary.button": "新しい一時タブ",
   "folderSelection.temporary.description": "CodeNomad が管理する空のフォルダで開始し、タブを閉じるときに保持または破棄します",
@@ -71,13 +59,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "リポジトリ URL と保存先フォルダは必須です。",
   "folderSelection.actions.connectButton": "CodeNomad サーバーに接続",
 
-  "folderSelection.advancedSettings": "詳細設定",
   "folderSelection.opencode": "OpenCode",
 
-  "folderSelection.hints.navigate": "移動",
-  "folderSelection.hints.select": "選択",
-  "folderSelection.hints.remove": "削除",
-  "folderSelection.hints.browse": "参照",
 
   "folderSelection.loading.title": "インスタンスを起動中...",
 
@@ -88,18 +71,11 @@ export const folderSelectionMessages = {
   "folderSelection.dialog.title": "ワークスペースを選択",
   "folderSelection.dialog.description": "コーディングを開始するワークスペースを選択してください。",
 
-  "folderSelection.tabs.local": "ローカルフォルダ",
   "folderSelection.tabs.servers": "サーバー",
   "folderSelection.servers.title": "保存済みサーバー",
-  "folderSelection.servers.subtitle": "保存したリモート CodeNomad サーバーを新しいウィンドウで開きます",
-  "folderSelection.servers.count": "{count} サーバー",
   "folderSelection.servers.empty.title": "保存済みサーバーはありません",
-  "folderSelection.servers.connectTitle": "サーバーに接続",
-  "folderSelection.servers.connectSubtitle": "リモート CodeNomad サーバーを保存して新しいウィンドウで開きます",
-  "folderSelection.servers.connectButton": "サーバーに接続",
   "settings.servers.addSsh": "SSH サーバーを追加",
   "folderSelection.servers.remove": "削除",
-  "folderSelection.servers.skipTls": "自己署名 TLS",
   "folderSelection.servers.errorTitle": "リモート接続に失敗しました",
   "folderSelection.servers.dialog.title": "サーバーに接続",
   "folderSelection.servers.dialog.name": "サーバー名",
@@ -124,7 +100,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.launch.error.credentials": "「{value}」には認証情報またはペアリングコードが含まれています。起動時のアドレスには含められません。代わりに「サーバーに接続」からペアリングしてください。",
   "folderSelection.servers.launch.error.unknown": "「{value}」という名前の保存済みサーバーはありません。保存済みサーバーの名前か http(s) URL を指定してください。",
   "folderSelection.servers.launch.error.ambiguous": "「{value}」という名前の保存済みサーバーが複数あります。いずれかの名前を変更するか、URL を指定してください。",
-  "folderSelection.sidecars.button": "SideCar を開く",
 
   "projectRenameDialog.title": "ワークスペース名を変更",
   "projectRenameDialog.description.withLabel": "\"{label}\" のワークスペース名を更新します。",

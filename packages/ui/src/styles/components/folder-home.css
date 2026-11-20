@@ -14,7 +14,6 @@
 .folder-home-main, .folder-home-list-column { min-width: 0; }
 .folder-home-main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
 .folder-home-create-column { min-width: 0; }
-.folder-home-root--blank .folder-home-main { align-items: stretch; }
 .folder-dashboard-servers { height: 16rem; min-height: 0; }
 .folder-dashboard-servers > .browse-menu { flex: 1; }
 .folder-home-root--blank .panel-header { background-color: var(--surface-secondary); }
@@ -23,9 +22,7 @@
 
 .folder-home-list-panel {
   min-width: 0;
-  min-height: 16rem;
   height: 16rem;
-  background: var(--surface-canvas);
 }
 
 .folder-home-list-panel .panel-header { flex-shrink: 0; }

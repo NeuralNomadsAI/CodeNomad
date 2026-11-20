@@ -123,11 +123,11 @@ export const RemoteControlSettingsSection: Component = () => {
     }
   }
 
-  const createPairing = async () => {
+  const createPairing = async (origin?: string) => {
     setLoading(true)
     setError(null)
     try {
-      await showPairing(await serverApi.createRemoteControlPairing())
+      await showPairing(await serverApi.createRemoteControlPairing(origin), origin !== undefined)
     } catch (cause) {
       setError(message(cause))
     } finally {
@@ -137,18 +137,6 @@ export const RemoteControlSettingsSection: Component = () => {
 
   const directOrigins = createMemo(() => (status()?.manageable ? status()?.directOrigins ?? [] : []))
   const selectedDirectOrigin = () => (directOrigins().includes(directOrigin()) ? directOrigin() : directOrigins()[0] ?? "")
-
-  const createDirectPairing = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      await showPairing(await serverApi.createRemoteControlPairing(selectedDirectOrigin()), true)
-    } catch (cause) {
-      setError(message(cause))
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const copyPairing = async () => {
     const url = pairing()?.url
@@ -249,7 +237,7 @@ export const RemoteControlSettingsSection: Component = () => {
                   <For each={directOrigins()}>{(origin) => <option value={origin}>{origin}</option>}</For>
                 </select>
               </Show>
-              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void createDirectPairing()} disabled={loading()}>
+              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void createPairing(selectedDirectOrigin())} disabled={loading()}>
                 <Link2 class="w-4 h-4" />
                 {t("remoteControl.direct.newLink")}
               </button>
@@ -304,7 +292,6 @@ export const RemoteControlSettingsSection: Component = () => {
               <ShieldCheck class="settings-card-heading-icon" />
               <div>
                 <h3 class="settings-card-title">{t("remoteControl.devices.title")}</h3>
-                <p class="settings-card-subtitle">{t("remoteControl.devices.description")}</p>
               </div>
             </div>
           </div>

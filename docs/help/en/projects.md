@@ -4,13 +4,13 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 
 ## Open a project {#open-project}
 
-1. Click **New instance** (`+`) or press `Ctrl/Cmd+N` to open an empty **New tab**. Below the centered logo and CodeNomad name, **Temporary** then **Clone** sit above two columns: **Recent tabs** on the left; **Browse** on the right, with **Server address or link** near its bottom. The page uses the active New tab's background. The columns stack on narrow screens. The logo opens Home, where **Clone Git Repo**, **New temporary tab**, **New SideCar** and the OpenCode row sit on the left, and **Recent tabs | Browse** on the right. Counts appear below each tab name. The right panel aligns with the bottom of the left column and scrolls its list inside. Home carries language, settings, **Sponsor** ([Support CodeNomad](sponsor.md)), GitHub stars and Discord links. Cloning and temporary folders target the local backend. Choosing a local or remote project or a SideCar fills the empty tab in place. Empty tabs last until reload and close without leaving a project.
-2. In **Recent tabs**, choose a project; or open **Browse**, choose **This computer**, then select the backend folder and open it. **Browse** also lists saved CodeNomad servers ([remote project tabs](remote-access.md#remote-project-tabs)) and SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
-3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
+Click **New instance** (`+`) or press `Ctrl/Cmd+N` to open an empty tab. Pick a project from **Recent tabs** or **Browse**. The CodeNomad logo opens Home. Clone and Temporary target the local backend.
+
+[Open a remote project in a tab](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
+
+For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
 
 Browsing a remote server means browsing that server's filesystem, not your phone or laptop. Opening a project does not create a separate OpenCode daemon for each tab. Conversations are native OpenCode sessions; their lifetime is not the tab's lifetime.
-
-Choosing a saved server in **Browse** explores its folders and shows its name throughout sign-in and navigation. Its recent projects appear only in **Recent tabs**, on the left of an empty tab, with their separate **Open** action. On Home, switching between **Recent tabs** and **Browse** keeps the selected server and folder. While a server is selected, recents belong only to that server and offer opening actions; **Back to Browse** restores the usual mixed recents. The sign-in fields have visible labels. Folder rows only navigate; press Enter or the arrow at the end of the path field to open the folder it shows. Only a project choice fills the empty tab.
 
 Cloning writes a repository to the destination. **Remove the destination folder first if it already exists.** is destructive: enable it only when everything already there can be deleted. Use a fresh destination if unsure. A failed clone is not a reason to delete an existing project; inspect the reported destination and error before retrying.
 
@@ -20,12 +20,8 @@ The **Open** action also selects a tab waiting for its server and closes the ori
 
 ## Use the new-instance launcher {#new-instance-launcher}
 
-Opening focuses the menu, leaving search available through Tab or a click. Arrow keys navigate recents; Escape closes the menu.
-
-1. Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
-2. **Recent tabs** contains search and recent local projects, remote projects and SideCars, with their separate **Open** action. Choose a row for a new occurrence, or **Open** to switch to the existing one. The title bar's hourglass button, **New temporary tab**, creates a temporary tab.
-
-A normal click opens an empty tab. Manage recent entries on Home or an empty tab, servers in **Settings → Servers** and SideCars in **Settings → SideCars**. On Home, empty tabs and the quick launcher, row selection persists only during keyboard navigation; hover highlighting clears when the pointer leaves. Escape dismisses the launcher and returns focus to `+`.
+Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
+Tab searches, arrows and Enter select, and Escape returns focus to `+`.
 
 ## Close a project tab {#close-stop}
 
@@ -46,13 +42,9 @@ With startup restoration enabled, each remaining tab restores its own panel choi
 
 ## Restore remote tabs {#restore-remote-tabs}
 
-When you reload with restoration enabled, remote tabs keep their order, selection and drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh link in **New pairing link**. Other servers remain usable.
+When you reload with restoration enabled, remote tabs keep their order, selection and drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh link in **New pairing link**. Other servers remain usable. **Server not found** means the saved server is missing.
 
 **Retry** also recovers waiting tabs when automatic startup restoration is off. Notifications select the existing waiting tab. Check an unconfirmed conversation action's outcome before sending it again.
-
-In **Settings → Servers**, **Open** selects the server in **Browse**. It reuses the window's empty tab, just like `+` and `Ctrl/Cmd+N`. After you choose a project, `+` opens another empty tab.
-
-**Remove** shows how many tabs will close and recent projects will be removed. It removes the saved connection from **Browse** and leaves projects and conversations on the server. Temporary projects still offer their usual close choices.
 
 ## Temporary workspaces {#temporary-workspaces}
 

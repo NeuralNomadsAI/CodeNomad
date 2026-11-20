@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "Kopiert",
   "remoteControl.pairing.expires": "Dieser Link läuft um {time} ab.",
   "remoteControl.devices.title": "Gekoppelte Geräte",
-  "remoteControl.devices.description": "Diese Geräte können über die Fernsteuerung oder ihre HTTPS-Adresse auf diesen CodeNomad-Host zugreifen.",
   "remoteControl.devices.empty": "Noch keine Geräte gekoppelt.",
   "remoteControl.devices.lastSeen": "Zuletzt gesehen: {time}",
   "remoteControl.devices.revoke": "Widerrufen",

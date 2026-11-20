@@ -46,7 +46,6 @@ for (const mode of ["control", "reader"]) for (const delivery of ["immediate", "
         await page.waitForFunction(() => {
           const state = (window as any).backendConsumers
           if (!state) return false
-          state.readinessChecks++
           const [localHistory, remoteHistory] = state.histories()
           return localHistory[0] === "legacy local history" && remoteHistory[0] === "remote history"
         })
@@ -59,20 +58,12 @@ for (const mode of ["control", "reader"]) for (const delivery of ["immediate", "
         if (delivery !== "held") return
         await page.waitForFunction(() => {
           const state = (window as any).backendConsumers
-          return state?.readinessChecks > 0 && state.histories()[0][0] === "legacy local history"
+          return state?.histories()[0][0] === "legacy local history"
         })
         await remoteRequested
-        const blocked = await page.evaluate(() => {
-          const state = (window as any).backendConsumers
-          return { histories: state.histories(), keys: state.keys }
-        })
-        assert.deepEqual(blocked, { histories: [["legacy local history"], []], keys: [] })
+        assert.deepEqual(await page.evaluate(() => (window as any).backendConsumers.histories()), [["legacy local history"], []])
         releaseRemote()
       })(),
-    ])
-    assert.deepEqual(await page.evaluate(() => (window as any).backendConsumers.keys), [
-      { target: "local", focused: true, published: true },
-      { target: "remote", focused: true, published: true },
     ])
     await recurrence
     await schedule

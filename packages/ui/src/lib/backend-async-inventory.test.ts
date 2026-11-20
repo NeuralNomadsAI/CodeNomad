@@ -39,7 +39,7 @@ function scan(file: string): string[] {
   }
   const source = variantProgram.getSourceFile(file)!
   assert.deepEqual(variantProgram.getSyntacticDiagnostics(source), [], `Valid in-memory source: ${file}`)
-  return scanOperations(file, source.text, source, variantProgram.getTypeChecker())
+  return scanOperations(source, variantProgram.getTypeChecker())
 }
 
 const positive = [
@@ -111,33 +111,13 @@ const ordinary = ordinaryCases.map(([file, mutate]) => {
     io: fixture(changed + '\nfetch("/api/new-backend-access")', file) }
 })
 
-test("every UI backend boundary has a reviewed authority", t => {
-  const detected = discoverOperations(baselineProgram())
-  const paths = new Set(Object.keys(detected))
-  const missing: string[] = []
-  for (const [path, operations] of Object.entries(detected)) {
-    if (operations.length && !rows.has(path)) missing.push(path)
-  }
-  assert.deepEqual(missing, [], "Classify backend work in architecture.md")
-  assert.deepEqual([...rows.keys()].filter(path => !paths.has(path)), [], "Remove stale inventory paths")
-  assert.deepEqual([...rows.keys()].sort(), Object.keys(detected).filter(file => detected[file].length).sort(),
-    "Document only backend-bearing files; generic helpers inherit their caller's owner")
-  assert.deepEqual(Object.keys(manifest).sort(), Object.keys(detected).filter(file => detected[file].length).sort())
-  for (const [file, operations] of Object.entries(manifest)) {
-    assert.ok(rows.has(file), `Document backend ownership: ${file}`)
-    assert.equal(new Set(operations).size, operations.length, `Duplicate boundary: ${file}`)
-    assert.deepEqual(detected[file], operations, `Review new/removed backend accesses: ${file}`)
-  }
-  t.diagnostic(`${paths.size} UI sources scanned; ${Object.keys(manifest).length} boundary-bearing files; ${Object.values(manifest).reduce((sum, operations) => sum + operations.length, 0)} counted boundary/continuation identities`)
-  const categories = new Map<string, number>()
-  for (const row of rows.values()) {
-    const primary = row.lifetime.split("+")[0]
-    categories.set(primary, (categories.get(primary) ?? 0) + 1)
-  }
-  t.diagnostic(`Primary file lifetimes: ${[...categories].sort().map(([name, count]) => `${name}=${count}`).join(", ")}`)
+test("every UI backend boundary has a reviewed authority", () => {
+  const detected = Object.fromEntries(Object.entries(discoverOperations(baselineProgram())).filter(([, operations]) => operations.length))
+  assert.deepEqual(detected, manifest, "Review new or removed backend accesses")
+  assert.deepEqual([...rows.keys()].sort(), Object.keys(detected).sort(), "Document backend ownership in architecture.md")
 })
 
-test("typed network aliases and delegated continuations are classified, pure local work is free", t => {
+test("typed network aliases and delegated continuations are classified, pure local work is free", () => {
   for (const { text, file } of positive) assert.ok(scan(file).length, text)
   for (const { text, file } of local) assert.deepEqual(scan(file), [], text)
   assert.ok(scan(delegatedTimer).includes("continuation:setTimeout x1"))
@@ -150,7 +130,6 @@ test("typed network aliases and delegated continuations are classified, pure loc
     assert.deepEqual(scan(renamed), [])
     assert.ok(scan(io).length)
   }
-  t.diagnostic(`${variants.size} in-memory variants share one program/checker and reuse baseline source ASTs`)
 })
 
 test("inventory table and operation identities accept both LF and CRLF", () => {

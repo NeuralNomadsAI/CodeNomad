@@ -883,7 +883,7 @@ const App: Component = () => {
                           onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)}
                           onOpenSidecar={id => void handleOpenSidecar(id, tab.id)}
                           onJoined={() => closeBlankTab(tab.id)}
-                          onRemoteOpened={id => replaceBlankTab(tab.id, `instance:${id}`)} />}
+                          onRemoteOpened={id => replaceBlankTab(tab.id, getInstanceAppTabId(id))} />}
                     </div>
                   )
                 }}

@@ -29,34 +29,22 @@ export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "Langue",
 
   "folderSelection.logoAlt": "Logo CodeNomad",
-  "folderSelection.tagline": "Sélectionnez un dossier pour commencer à coder avec l'IA",
 
   "folderSelection.links.github": "GitHub de CodeNomad",
   "folderSelection.links.githubStars": "Étoiles GitHub de CodeNomad",
   "folderSelection.links.discord": "Discord de CodeNomad",
 
-  "folderSelection.empty.title": "Aucun dossier récent",
 
-  "folderSelection.recent.title": "Dossiers récents",
-  "folderSelection.recent.subtitle.one": "{count} dossier disponible",
-  "folderSelection.recent.subtitle.other": "{count} dossiers disponibles",
   "folderSelection.recent.rename": "Renommer l'espace de travail",
   "folderSelection.recent.remove": "Retirer des récents",
   "folderSelection.recent.openBadge": "Ouvert",
-  "newInstanceLauncher.title": "Onglets récents",
-  "newInstanceLauncher.description": "Choisissez un projet récent.",
   "newInstanceLauncher.searchLabel": "Rechercher un projet récent",
   "newInstanceLauncher.searchPlaceholder": "Rechercher dans les onglets récents…",
   "newInstanceLauncher.recentTitle": "Onglets récents",
   "newInstanceLauncher.empty": "Aucun projet récent pour le moment.",
   "newInstanceLauncher.noMatch": "Aucun projet ne correspond.",
-  "folderSelection.recent.openNewInstance": "Ouvrir une nouvelle instance",
   "folderSelection.recent.switchToOpenProject": "Basculer vers le projet ouvert",
 
-  "folderSelection.browse.title": "Parcourir un dossier",
-  "folderSelection.browse.subtitle": "Sélectionnez n'importe quel dossier sur votre ordinateur",
-  "folderSelection.browse.button": "Parcourir les dossiers",
-  "folderSelection.browse.buttonOpening": "Ouverture...",
   "folderSelection.clone.button": "Cloner un dépôt Git",
   "folderSelection.temporary.button": "Nouvel onglet temporaire",
   "folderSelection.temporary.description": "Démarrer dans un dossier vide géré par CodeNomad ; à la fermeture de l'onglet, vous pourrez le garder ou le jeter",
@@ -75,13 +63,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "L'URL du dépôt et le dossier de destination sont requis.",
   "folderSelection.actions.connectButton": "Se connecter au serveur CodeNomad",
 
-  "folderSelection.advancedSettings": "Paramètres avancés",
   "folderSelection.opencode": "OpenCode",
 
-  "folderSelection.hints.navigate": "Naviguer",
-  "folderSelection.hints.select": "Sélectionner",
-  "folderSelection.hints.remove": "Retirer",
-  "folderSelection.hints.browse": "Parcourir",
 
   "folderSelection.loading.title": "Démarrage de l'instance...",
 
@@ -92,18 +75,11 @@ export const folderSelectionMessages = {
   "folderSelection.dialog.title": "Sélectionner l'espace de travail",
   "folderSelection.dialog.description": "Sélectionnez un espace de travail pour commencer à coder.",
 
-  "folderSelection.tabs.local": "Dossiers locaux",
   "folderSelection.tabs.servers": "Serveurs",
   "folderSelection.servers.title": "Serveurs enregistrés",
-  "folderSelection.servers.subtitle": "Ouvrez un serveur CodeNomad distant enregistré dans une nouvelle fenêtre",
-  "folderSelection.servers.count": "{count} serveurs",
   "folderSelection.servers.empty.title": "Aucun serveur enregistré",
-  "folderSelection.servers.connectTitle": "Se connecter à un serveur",
-  "folderSelection.servers.connectSubtitle": "Enregistrez un serveur CodeNomad distant et ouvrez-le dans une nouvelle fenêtre",
-  "folderSelection.servers.connectButton": "Se connecter à un serveur",
   "settings.servers.addSsh": "Ajouter un serveur SSH",
   "folderSelection.servers.remove": "Supprimer",
-  "folderSelection.servers.skipTls": "TLS auto-signé",
   "folderSelection.servers.errorTitle": "Échec de la connexion distante",
   "folderSelection.servers.dialog.title": "Se connecter à un serveur",
   "folderSelection.servers.dialog.name": "Nom du serveur",
@@ -128,7 +104,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.launch.error.credentials": "« {value} » contient des identifiants ou un code d'appairage. Une adresse de lancement ne peut pas en contenir : appairez le serveur depuis Se connecter à un serveur.",
   "folderSelection.servers.launch.error.unknown": "Aucun serveur enregistré ne s'appelle « {value} ». Indiquez le nom d'un serveur enregistré ou une URL http(s).",
   "folderSelection.servers.launch.error.ambiguous": "Plusieurs serveurs enregistrés s'appellent « {value} ». Renommez-en un ou indiquez son URL.",
-  "folderSelection.sidecars.button": "Ouvrir SideCar",
 
   "projectRenameDialog.title": "Renommer l'espace de travail",
   "projectRenameDialog.description.withLabel": "Mettez à jour le nom de l'espace de travail pour \"{label}\".",

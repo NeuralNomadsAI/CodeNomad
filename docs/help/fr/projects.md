@@ -4,13 +4,13 @@ Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend.
 
 ## Ouvrir un projet {#open-project}
 
-1. Cliquez sur **Nouvelle instance** (`+`) ou utilisez `Ctrl/Cmd+N` pour ouvrir un onglet vide. Sous le logo et le nom CodeNomad centrés, **Temporaire** puis **Cloner** précèdent les deux colonnes : **Onglets récents** à gauche ; **Parcourir** à droite, avec **Adresse ou lien du serveur** vers le bas. Le fond de la page reprend celui de l'onglet actif. Les colonnes s'empilent sur écran étroit. Le logo ouvre l'accueil : **Cloner un dépôt Git**, **Nouvel onglet temporaire**, **Nouveau SideCar** et la ligne OpenCode à gauche ; **Onglets récents | Parcourir** à droite, avec les nombres d'éléments sous les titres. Le panneau droit s'aligne sur le bas de la colonne gauche et sa liste défile à l'intérieur. L'accueil conserve la langue, les réglages, **Sponsor** ([Soutenir CodeNomad](sponsor.md)), GitHub, les étoiles et Discord. Clonage et dossiers temporaires ciblent le backend local. Choisir un projet local ou distant ou un SideCar remplit l'onglet vide sur place. Les onglets vides durent jusqu'au rechargement et se ferment sans laisser de projet.
-2. Dans **Onglets récents**, choisissez un projet ; ou ouvrez **Parcourir**, choisissez **Cet ordinateur**, puis sélectionnez le dossier du backend et ouvrez-le. **Parcourir** liste aussi les serveurs CodeNomad enregistrés ([onglets de projets distants](remote-access.md#remote-project-tabs)) et les SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
-3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
+Cliquez sur **Nouvelle instance** (`+`) ou utilisez `Ctrl/Cmd+N` pour ouvrir un onglet vide. Choisissez un projet dans **Onglets récents** ou **Parcourir**. Le logo CodeNomad ouvre l’accueil. Le clonage et les onglets temporaires utilisent le serveur local.
+
+[Ouvrir un projet distant dans un onglet](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
+
+Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
 
 Parcourir un serveur distant signifie parcourir son système de fichiers, pas votre téléphone ou ordinateur portable. Ouvrir un projet ne crée pas un démon OpenCode distinct par onglet. Les conversations sont des sessions natives OpenCode ; leur durée de vie n’est pas celle de l’onglet.
-
-Choisir un serveur dans **Parcourir** explore ses dossiers ; son nom reste visible pendant la connexion et la navigation. Ses projets récents apparaissent uniquement dans **Onglets récents**, à gauche d'un onglet vide, avec leur action **Ouvert** distincte. Sur l'accueil, changer entre **Onglets récents** et **Parcourir** conserve le serveur et le dossier choisis. Tant qu'un serveur est sélectionné, les récents viennent uniquement de ce serveur et proposent les actions d'ouverture ; le retour à Parcourir rétablit les récents mixtes habituels. Les champs de connexion sont libellés. Les lignes de dossiers servent uniquement à naviguer ; appuyez sur Entrée ou sur la flèche au bout du champ de chemin pour ouvrir le dossier affiché. Seul le choix d'un projet remplit l'onglet vide.
 
 Le clonage écrit un dépôt dans la destination. **Supprimer d'abord le dossier de destination s'il existe deja.** est destructeur : n’activez cette option que si tout ce qui s’y trouve peut être supprimé. Dans le doute, utilisez une nouvelle destination. Un échec de clonage n’est pas une raison de supprimer un projet existant ; vérifiez la destination et l’erreur signalées avant de réessayer.
 
@@ -20,12 +20,8 @@ L’action **Ouvert** sélectionne aussi un onglet qui attend son serveur et fer
 
 ## Utiliser le lanceur de nouvelle instance {#new-instance-launcher}
 
-L'ouverture place le focus sur le menu ; Tab ou un clic permet d'accéder à la recherche. Les flèches parcourent les récents ; Échap ferme le menu.
-
-1. Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
-2. **Onglets récents** contient la recherche et les projets locaux, distants et SideCars récents, avec leur action distincte **Ouvert**. Une ligne crée une nouvelle occurrence ; **Ouvert** rejoint l'existante. Le bouton sablier **Nouvel onglet temporaire**, dans la barre de titre, crée un onglet temporaire.
-
-Un clic normal ouvre un onglet vide. Gérez les récents sur l'accueil ou un onglet vide, les serveurs dans **Paramètres → Serveurs** et les SideCars dans **Paramètres → SideCars**. Sur l'accueil, les onglets vides et le lanceur rapide, la sélection d'une ligne persiste uniquement pendant la navigation clavier ; le survol disparaît lorsque le pointeur sort. Échap ferme le lanceur et rend le focus à `+`.
+Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
+Tab ouvre la recherche, les flèches et Entrée sélectionnent, et Échap rend le focus à `+`.
 
 ## Fermer un onglet de projet {#close-stop}
 
@@ -46,13 +42,9 @@ Lorsque la restauration au démarrage est activée, chaque onglet restant retrou
 
 ## Restaurer les onglets distants {#restore-remote-tabs}
 
-Au rechargement, si la restauration est activée, les onglets distants retrouvent leur ordre, leur sélection et leurs brouillons. Un serveur indisponible laisse un onglet en attente : choisissez **Réessayer** à son retour, ou **Se connecter** avec son nom d’utilisateur/mot de passe ou un lien dans **Nouveau lien d’appairage**. Les autres serveurs restent utilisables.
+Au rechargement, si la restauration est activée, les onglets distants retrouvent leur ordre, leur sélection et leurs brouillons. Un serveur indisponible laisse un onglet en attente : choisissez **Réessayer** à son retour, ou **Se connecter** avec son nom d’utilisateur/mot de passe ou un lien dans **Nouveau lien d’appairage**. Les autres serveurs restent utilisables. **Serveur introuvable** signifie que le serveur enregistré est introuvable.
 
 **Réessayer** reprend aussi les onglets en attente lorsque la restauration automatique au démarrage est désactivée. Les notifications sélectionnent l’onglet en attente existant. Vérifiez le résultat d’une action de conversation incertaine avant de la renvoyer.
-
-Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir**. Comme `+` et `Ctrl/Cmd+N`, il réutilise l’onglet vide de la fenêtre. Une fois un projet choisi, `+` ouvre un nouvel onglet vide.
-
-**Supprimer** indique combien d’onglets seront fermés et combien de projets récents seront retirés. La connexion enregistrée disparaît de **Parcourir** ; les projets et les conversations restent sur le serveur. Les projets temporaires gardent leurs choix de fermeture habituels.
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 

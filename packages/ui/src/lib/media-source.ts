@@ -57,9 +57,7 @@ export function createMediaSource(instanceId: Accessor<string>, source: Accessor
           credentials: backendMedia ? "include" : "omit",
         })
         if (!operation.current() || !response.ok) return
-        const blob = await response.blob()
-        if (!operation.current()) return
-        const bytes = new Uint8Array(await blob.arrayBuffer())
+        const bytes = new Uint8Array(await response.arrayBuffer())
         if (!operation.current()) return
         const type = passiveImageType(bytes)
         if (!type) return

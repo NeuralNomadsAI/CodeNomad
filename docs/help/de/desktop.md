@@ -48,7 +48,7 @@ Das Einstellungsfenster hat keinen separaten Wiederherstellungszustand: Diese Be
 
 Browser- und Remote-Clients verwenden eingebettete Einstellungen.
 
-Ein nicht verfügbarer Remote-Tab bleibt mit seinen Entwürfen an seiner Position. Wählen Sie ihn zum erneuten Versuch oder zur Anmeldung aus.
+[Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
 
 ## Desktop-Datenprofile {#data-profiles}
 

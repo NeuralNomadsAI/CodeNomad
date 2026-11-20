@@ -62,7 +62,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [connectingRecent, setConnectingRecent] = createSignal<RemoteRecentProject>()
   const [hoveredRecentActionPath, setHoveredRecentActionPath] = createSignal<string | null>(null)
   const [focusedRecentActionPath, setFocusedRecentActionPath] = createSignal<string | null>(null)
-  const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>(null)
+  const [highlightRecent, setHighlightRecent] = createSignal(false)
   const [renameProjectTarget, setRenameProjectTarget] = createSignal<{ recent: RecentProject; name: string } | null>(null)
   const [isRenamingProject, setIsRenamingProject] = createSignal(false)
   // The canonical selector shared by Home and blank tabs.
@@ -156,38 +156,38 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       e.preventDefault()
       const newIndex = (selectedIndex() + 1) % listLength
       setSelectedIndex(newIndex)
-      setFocusMode("recent")
+      setHighlightRecent(true)
       scrollToIndex(newIndex)
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
       const newIndex = (selectedIndex() - 1 + listLength) % listLength
       setSelectedIndex(newIndex)
-      setFocusMode("recent")
+      setHighlightRecent(true)
       scrollToIndex(newIndex)
     } else if (e.key === "PageDown") {
       e.preventDefault()
       const pageSize = 5
       const newIndex = Math.min(selectedIndex() + pageSize, listLength - 1)
       setSelectedIndex(newIndex)
-      setFocusMode("recent")
+      setHighlightRecent(true)
       scrollToIndex(newIndex)
     } else if (e.key === "PageUp") {
       e.preventDefault()
       const pageSize = 5
       const newIndex = Math.max(selectedIndex() - pageSize, 0)
       setSelectedIndex(newIndex)
-      setFocusMode("recent")
+      setHighlightRecent(true)
       scrollToIndex(newIndex)
     } else if (e.key === "Home") {
       e.preventDefault()
       setSelectedIndex(0)
-      setFocusMode("recent")
+      setHighlightRecent(true)
       scrollToIndex(0)
     } else if (e.key === "End") {
       e.preventDefault()
       const newIndex = listLength - 1
       setSelectedIndex(newIndex)
-      setFocusMode("recent")
+      setHighlightRecent(true)
       scrollToIndex(newIndex)
     } else if (e.key === "Enter") {
       e.preventDefault()
@@ -299,7 +299,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   async function handleBrowse() {
     if (isLoading()) return
-    setFocusMode("new")
+    setHighlightRecent(false)
     await dialogs.browse()
   }
 
@@ -351,8 +351,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         onDragOver={folderDrop.bind.onDragOver}
         onDragLeave={folderDrop.bind.onDragLeave}
         onDrop={folderDrop.bind.onDrop}
-        onPointerMove={() => setFocusMode(null)}
-        onKeyDown={(event) => { if (event.key === "Tab") setFocusMode("recent") }}
+        onPointerMove={() => setHighlightRecent(false)}
+        onKeyDown={(event) => { if (event.key === "Tab") setHighlightRecent(true) }}
       >
         <div
            class="folder-home-shell w-full pb-2 flex flex-col"
@@ -535,7 +535,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                       <div
                          class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
                          role="list"
-                         id={`recent-folders-${viewId}`}
                         ref={(el) => (recentListRef = el)}
                       >
                         <For each={folders()}>
@@ -543,7 +542,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                             const key = folder.key
                             const existingInstance = () => recentOpenTarget(folder)
                             const projectName = () => getProjectDisplayName(folder.path, folder.projectName)
-                            const projectLabelId = () => `recent-folder-${viewId}-${index()}-name`
                             const actions = createMemo(() => [
                               ...(folder.kind === "sidecar" ? [] : [
                                 { key: "rename", label: t("folderSelection.recent.rename"), icon: <Pencil class="w-3.5 h-3.5" />, disabled: isLoading(), onSelect: () => openProjectRename(folder) },
@@ -555,7 +553,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                               class="panel-list-item folder-home-recent-item"
                               role="listitem"
                               classList={{
-                                "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
+                                "panel-list-item-highlight": highlightRecent() && selectedIndex() === index(),
                                 "panel-list-item-disabled": isLoading(),
                                 "folder-home-recent-item-action-active":
                                   hoveredRecentActionPath() === key || focusedRecentActionPath() === key,
@@ -564,7 +562,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                               data-sidecar={folder.kind === "sidecar" ? folder.path : undefined}
                               onMouseEnter={() => {
                                 if (isLoading()) return
-                                setFocusMode(null)
+                                setHighlightRecent(false)
                                 setSelectedIndex(index())
                               }}
                             >
@@ -587,7 +585,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     <div class="flex-1 min-w-0">
                                       <div class="flex items-center gap-2 mb-1">
                                         <RecentTabIcon recent={folder} class="w-4 h-4 flex-shrink-0 icon-muted" />
-                                        <span id={projectLabelId()} class="text-sm font-medium truncate text-primary">
+                                        <span class="text-sm font-medium truncate text-primary">
                                           {projectName()}
                                         </span>
                                         <Show when={existingInstance()}>
@@ -646,15 +644,13 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                 </div>
                                 <Show when={!remoteSource() && folder.kind !== "sidecar"}><Show when={props.blank} fallback={
                                   <>
-                                    <Show when={folder.kind !== "sidecar"}>
-                                      <button type="button" class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
-                                        disabled={isLoading()} title={t("folderSelection.recent.rename")}
-                                        onClick={(event) => openProjectRename(folder, event)}
-                                        onMouseEnter={() => setRecentActionHovered(key, true)} onMouseLeave={() => setRecentActionHovered(key, false)}
-                                        onFocus={() => setRecentActionFocused(key, true)} onBlur={() => setRecentActionFocused(key, false)}>
-                                        <Pencil class="w-3.5 h-3.5 icon-muted" />
-                                      </button>
-                                    </Show>
+                                    <button type="button" class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
+                                      disabled={isLoading()} title={t("folderSelection.recent.rename")}
+                                      onClick={(event) => openProjectRename(folder, event)}
+                                      onMouseEnter={() => setRecentActionHovered(key, true)} onMouseLeave={() => setRecentActionHovered(key, false)}
+                                      onFocus={() => setRecentActionFocused(key, true)} onBlur={() => setRecentActionFocused(key, false)}>
+                                      <Pencil class="w-3.5 h-3.5 icon-muted" />
+                                    </button>
                                     <button type="button" class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
                                       disabled={isLoading()} title={t("folderSelection.recent.remove")}
                                       onClick={(event) => { setRecentActionHovered(key, false); setRecentActionFocused(key, false); handleRemove(folder, event) }}

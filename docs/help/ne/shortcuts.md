@@ -74,4 +74,4 @@ Enter-to-submit अक्षम कन्फिगरेसनमा **इनप
 
 IME composition मा पाठ प्रवेश प्राथमिक हुन्छ। prompt history र Escape कार्य पनि focus, picker/shell अवस्था र हालको कार्यमा निर्भर छन्; हरेक ArrowUp वा Escape सर्तरहित global कार्य हो नमान्नुहोस्। डेस्कटपमा पठाउँदा focus कुराकानीमा सर्छ, त्यसैले arrow, paging key र Space ले यसलाई scroll गर्छन्; कुनै अक्षर टाइप गर्दा त्यही अक्षरसहित कम्पोजरमा फर्किन्छ, र **इनपुटमा फोकस गर्नुहोस्** ले prompt history प्रयोग गर्नुअघि त्यहाँ फर्काउँछ।
 
-लन्चर मेनुमा खोज्न Tab, छान्न एरो र Enter, अनि `+` मा फर्कन Escape थिच्नुहोस्।
+[नयाँ उदाहरण](projects.md#new-instance-launcher).

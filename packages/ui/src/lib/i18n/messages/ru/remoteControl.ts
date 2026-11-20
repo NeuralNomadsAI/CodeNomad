@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "Скопировано",
   "remoteControl.pairing.expires": "Ссылка истекает в {time}.",
   "remoteControl.devices.title": "Сопряжённые устройства",
-  "remoteControl.devices.description": "Эти устройства могут обращаться к хосту через удалённое управление или свой HTTPS-адрес.",
   "remoteControl.devices.empty": "Сопряжённых устройств пока нет.",
   "remoteControl.devices.lastSeen": "Последняя активность: {time}",
   "remoteControl.devices.revoke": "Отозвать",

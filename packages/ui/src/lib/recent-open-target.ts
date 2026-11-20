@@ -37,7 +37,7 @@ export function recentAccessibleName(recent: LaunchableRecent): string {
 }
 
 export function joinRecentOpenTarget(recent: LaunchableRecent, onSelectLocal: (id: string, path: string) => void) {
-  if (recent.kind === "remote") return selectOpenProjectTab(recent.policy, recent.path, true, recent.projectName)
+  if (recent.kind === "remote") return selectOpenProjectTab(recent.policy, recent.path, recent.projectName)
   const tab = recentOpenTarget(recent)
   if (!tab) return false
   if (tab.kind === "instance") onSelectLocal(tab.instance.id, recent.path)

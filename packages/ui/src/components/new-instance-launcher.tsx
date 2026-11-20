@@ -38,14 +38,13 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
               returnFocus = false
             }}>
             <header class="window-header">
-              <Popover.Title class="window-title">{t("newInstanceLauncher.title")}</Popover.Title>
+              <Popover.Title class="window-title">{t("newInstanceLauncher.recentTitle")}</Popover.Title>
               <button type="button" class="window-icon-button !border !border-solid !border-base" disabled={props.isLoading}
                 aria-label={t("folderSelection.temporary.button")} title={t("folderSelection.temporary.button")}
                 onClick={() => { if (!props.isLoading) { close(); props.onNewTemporary() } }}>
                 <Hourglass aria-hidden="true" />
               </button>
             </header>
-            <Popover.Description class="sr-only">{t("newInstanceLauncher.description")}</Popover.Description>
             <RecentTabsMenu active={props.open} isLoading={props.isLoading} onRun={close}
               onSelectFolder={props.onSelectFolder} onSelectExistingInstance={props.onSelectExistingInstance} onOpenSidecar={props.onOpenSidecar} />
           </Popover.Content>

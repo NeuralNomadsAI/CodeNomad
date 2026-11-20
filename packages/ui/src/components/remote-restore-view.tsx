@@ -62,7 +62,7 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
   return <section ref={view} class="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 p-4" data-remote-restore={id()}>
     <h2 class="text-primary">{local() ? props.tab.snapshot.projectName ?? props.tab.snapshot.folder : profile()?.name ?? id()}</h2>
     <Show when={!local()}><span class="text-secondary">{props.tab.snapshot.folder}</span></Show>
-    <span role="status">{t(status() === "absent" || status() === "unauthorized" ? "remoteBrowse.connectionRequired" : `remoteRestore.${status()}`)}</span>
+    <span role="status">{t(status() === "unauthorized" ? "remoteBrowse.connectionRequired" : `remoteRestore.${status()}`)}</span>
     <Show when={error() && !(connecting() && password())}><span role="alert">{t(error())}</span></Show>
     <Show when={!local() && connecting() && profile()} keyed>{server => <>
       <Show when={password()}><RemoteServerSignin busy={busy()} error={error()} onConnect={credentials => void run(credentials)} /></Show>

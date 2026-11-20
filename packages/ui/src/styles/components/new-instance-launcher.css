@@ -59,7 +59,6 @@
 .new-instance-launcher-recent-path, .new-instance-launcher-recent-meta { font-size: var(--font-size-xs); color: var(--text-muted); }
 .new-instance-launcher-recent-meta { flex-shrink: 0; white-space: nowrap; }
 .new-instance-launcher-empty { margin: 0; padding: var(--space-sm); font-size: var(--font-size-sm); color: var(--text-muted); }
-.new-instance-launcher-footer { justify-content: flex-start; background: var(--surface-overlay); }
 
 /* Long press must not select text or open the touch callout on the button. */
 .new-instance-button { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }

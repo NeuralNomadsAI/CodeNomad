@@ -48,7 +48,7 @@ The Preferences window does not own a separate restore state: these controls tar
 
 Browser and remote clients use embedded settings.
 
-An unavailable remote tab stays in place with its drafts. Select it to retry or sign in.
+[Restore remote tabs](projects.md#restore-remote-tabs).
 
 ## Desktop data profiles {#data-profiles}
 

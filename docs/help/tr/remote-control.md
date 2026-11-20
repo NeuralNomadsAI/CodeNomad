@@ -11,13 +11,13 @@ Uzaktan Kontrol, eşleştirilmiş bir tarayıcının veya masaüstü istemcisini
 
 Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur. Bunu bir kimlik bilgisi olarak değerlendirin: Bunu tüketen herkes eşleştirilmiş bir cihaz haline gelebilir. Kod, sorgu dizesinde değil, URL parçasında bulunur. **Yeni eşleştirme bağlantısı oluştur**, önceki kullanılmayan bağlantıyı anında geçersiz kılar. Arka uç kapatma bekleyen eşleştirme bağlantısını iptal eder; durdurma ve tünel arızası bir tünel bağlantısını iptal eder.
 
-Başka bir masaüstü CodeNomad uygulamasında eşleştirme bağlantısını şu alana yapıştırın: **Ayarlar → Sunucular → Sunucu adresi veya bağlantısı**. İstekten önce alan temizlenir; yalnızca köken kaydedilir. Yerel arka uç özel cihaz kimliğini yeniden başlatmalar arasında korur. **Kayıtlı sunucuyu kaldır** önce bu profilin bağlantısını unutur. Eşleştirme TLS doğrular ve proje açmaz.
+Başka bir masaüstü CodeNomad uygulamasında eşleştirme bağlantısını şu alana yapıştırın: **Ayarlar → Sunucular → Sunucu adresi veya bağlantısı**.
 
 Yeniden eşleştirmek için yeni bağlantıyı sunucunun veya projenin bağlantı formuna yapıştırın.
 
 ## Doğrudan HTTPS ile eşleştirin {#direct-https}
 
-Tünel engellendiğinde ama arka uca güvenilir HTTPS ile ulaşılabildiğinde, örneğin gerçek sertifikalı bir ters proxy üzerinden, cihazlar bu adreste eşleştirilebilir. Uygun adresler bu arka ucun kendi HTTPS adresleri ve `CODENOMAD_ALLOWED_ORIGINS` içindeki HTTPS origin adresleridir (bkz. [Yükseltme](remote-access.md#upgrading)); geri döngü adları ve düz HTTP asla eşleştirmez. Uzaktan Kontrolün başlatılması gerekmez.
+Tünel engellendiğinde ama arka uca güvenilir HTTPS ile ulaşılabildiğinde, örneğin gerçek sertifikalı bir ters proxy üzerinden, cihazlar bu adreste eşleştirilebilir. Uygun adresler bu arka ucun kendi HTTPS adresleri ve `CODENOMAD_ALLOWED_ORIGINS` içindeki HTTPS origin adresleridir (bkz. [İzin verilen kaynaklar](remote-access.md#upgrading)); geri döngü adları ve düz HTTP asla eşleştirmez. Uzaktan Kontrolün başlatılması gerekmez.
 
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesini açın.
 2. **Doğrudan HTTPS eşleştirme** altında, birden fazlaysa **HTTPS adresi** seçin, ardından **HTTPS eşleştirme bağlantısı oluştur** öğesini seçin.
@@ -44,7 +44,7 @@ Doğrudan erişim parolasını değiştirmek cihazları **iptal etmez**. **Uzakt
 ### Yerinizi kaybetmeden yeniden eşleştirin {#re-pair}
 
 1. İstemci **Bu cihazı yeniden eşleştirin** gösterirse bu sayfayı açık bırakın.
-2. Ana bilgisayarda **Yeni eşleştirme bağlantısı oluştur** öğesini seçin ve **aynı istemci tarayıcısında/profilinde** açın. Kaydedilmiş bir masaüstü sunucusu için, yeni eşleştirme bağlantısını kullanarak yeniden bağlanın, böylece mevcut uzak pencere depolama alanı yeniden kullanılabilir.
+2. Ana bilgisayarda **Yeni eşleştirme bağlantısı oluştur** öğesini seçin ve **aynı istemci tarayıcısında/profilinde** açın. Ayrı bir uzak pencere için yeni bağlantı, o pencerenin depolama alanını tekrar kullanır.
 3. Bekleme sayfasına dönün ve **Bağlantıyı kontrol et** öğesini seçin; sayfa yeniden odak kazandığında da kontrol tekrarlanır.
 
 Kurtarma, açık sayfayı ve taslakları korur; başarısız bir eylemi tekrarlamaz. Yeniden denemeden önce bir gönderme, yanıtlama veya silme işleminin etkili olup olmadığını kontrol edin. Doğrudan erişim parolası Uzaktan Kontrol eşleştirmesini kurtaramaz.
@@ -77,7 +77,7 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | Otomasyon köprüsü | Kullanılamaz (`/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. |
 | WebSocket yükseltmeleri | Web önizlemelerinde ve eşleştirilmiş cihazlarda [canlı sesli konuşmalarda](voice.md#conversation) kullanılabilir. |
 
-Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`/api/remote-control/`) için ana bilgisayarda loopback bağlantısı kullanın. Doğrudan LAN erişiminde de bu işlemler loopback gerektirir; bkz. [Yükseltme](remote-access.md#upgrading). Uzaktan Kontrol web önizlemeleri, adreslerindeki yetenek belirtecini kullanır ve ana bilgisayarda etkin oldukları sürece kullanılabilir kalır; bu adresi gizli tutun.
+Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`/api/remote-control/`) için ana bilgisayarda loopback bağlantısı kullanın. Doğrudan LAN erişiminde de bu işlemler loopback gerektirir; bkz. [İzin verilen kaynaklar](remote-access.md#upgrading). Uzaktan Kontrol web önizlemeleri, adreslerindeki yetenek belirtecini kullanır ve ana bilgisayarda etkin oldukları sürece kullanılabilir kalır; bu adresi gizli tutun.
 
 ## Aktarma ve gizlilik {#relay-privacy}
 
