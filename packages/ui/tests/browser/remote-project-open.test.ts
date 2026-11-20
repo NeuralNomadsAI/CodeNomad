@@ -164,6 +164,34 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   const openSame = (page: Page) => blank(page).getByRole("button", { name: /^Same ·/ })
   const openFolder = (page: Page) => browserInBlank(page).getByRole("button", { name: "Open", exact: true })
   const serverName = (page: Page, name: string) => blank(page).locator(".remote-server-navigation bdi", { hasText: name })
+  await t.test("the first remote project opened from Home is saved in the host's recent tabs", async () => {
+    const shortcuts = a.state.recents
+    a.state.recents = []
+    const page = await prepare("electron", false, async page => {
+      await page.route(/\/api\/workspaces$/, route => {
+        if (new URL(route.request().url()).pathname !== "/api/workspaces" || route.request().method() !== "GET") return route.continue()
+        return route.fulfill({ json: [] })
+      })
+    })
+    try {
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot().tabs), [])
+      await page.getByRole("tab", { name: "Browse", exact: true }).click()
+      await page.locator('[data-remote-server="a"]').click()
+      const browse = page.locator(".remote-server-browser")
+      await browse.getByRole("button", { name: "app", exact: true }).click()
+      await browse.getByRole("button", { name: "Open", exact: true }).click()
+      await page.getByRole("tab", { name: /Alpha/ }).waitFor()
+      assert.equal(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot().active), "instance:a~w")
+      await select(page, "a")
+      await page.waitForFunction(async () => (await import("/src/stores/preferences.tsx")).remoteProjectHistory().recents.length === 1)
+      assert.deepEqual(readRemoteProjectHistory(undefined, state.remoteProjectHistory).recents.map(({ policy, path }) => [policy.id, path]), [["a", "/srv/projects/app"]])
+      await blank(page).getByRole("region", { name: "Recent tabs", exact: true }).getByRole("button", { name: /^app · Alpha ·/ }).waitFor()
+    } finally {
+      a.state.recents = shortcuts
+      await page.close()
+      delete state.remoteProjectHistory
+    }
+  })
   await t.test("Browse lists the first opened project even when the chosen server has no recents", async () => {
     const shortcuts = a.state.recents
     a.state.recents = []

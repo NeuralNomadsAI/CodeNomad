@@ -25,7 +25,7 @@
 
 - Profile retargeting presents `RemoteServerInUseError` as `remoteRestore.inUse`; unrecognized persistence and transport failures use `settings.preferenceSaveFailed`.
 
-- Profile removal uses the serialized edit lane and rechecks the saved policy before cleanup and persistence. Native Preferences sends the removal intent to its local opener, where confirmation and tab closure run. A cancelled temporary-project close stops removal. Profile persistence compacts the host's recent project history in the same transaction.
+- Profile removal uses the serialized edit lane and rechecks the saved policy before cleanup and persistence. Native Preferences sends the removal intent to its local opener, where confirmation and tab closure run. Tauri uses the most recently focused local main window when the opener is absent or closed. A cancelled temporary-project close stops removal. Profile persistence compacts the host's recent project history in the same transaction.
 
 - A remote notification targeting a waiting occurrence selects its existing placeholder. The placeholder retains its drafts and explicit Retry recovery ownership while the original event attachment remains live.
 
