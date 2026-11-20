@@ -108,7 +108,8 @@ export function useApi4Channel(props: {
     if (!connected) abort()
     else invalidate(true, true)
   }))
-  onCleanup(() => { disposed = true; clearTimeout(timer); abort(); pending.clear(); lifetime.abort() })
+  const dispose = () => { disposed = true; clearTimeout(timer); abort(); pending.clear(); lifetime.abort() }
+  onCleanup(dispose)
   if (granted("repository.worktrees.read")) {
     // Worktrees, their branches, or the family's worktree changed: the frame lists again.
     const worktrees = createMemo(() => JSON.stringify([getWorktrees(props.instanceId).map(worktree => [worktree.slug, worktree.branch ?? null,
@@ -231,12 +232,12 @@ export function useApi4Channel(props: {
     let progress: ToastHandle | undefined
     // Before each host mutation: still mounted, and the server still grants this exact package
     // (a disabled or replaced package fails the lookup's consent check).
-    // With `branch`, the item must still be linked to that exact branch (not deleted and recreated meanwhile).
-    const consented = async (branch?: string) => {
+    // Before each host mutation: the item is still linked to that exact branch of the confirmed repository.
+    const consented = async (branch: string | undefined) => {
       if (disposed || !connected || !nativeConnected) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
       const answer = await panelExtensionsApi4.workItemBranchLookup(authority, kind, number, signal)
       if (disposed || !connected || !nativeConnected) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
-      if (branch !== undefined && (answer.status !== "ok" || answer.branch !== branch)) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
+      if (answer.status !== "ok" || answer.repository !== repository || branch === undefined || answer.branch !== branch) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
     }
     try {
       const accepted = await showConfirmDialog(tGlobal(slug ? "panelExtensions.worktrees.confirmMove" : "panelExtensions.worktrees.confirmCreate", { item, worktree: branchLabel ?? slug }), {
@@ -254,7 +255,7 @@ export function useApi4Channel(props: {
         const fromSlug = getWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session))
         const branch = await panelExtensionsApi4.workItemBranch(authority, kind, number, repository, fromSlug, signal)
         if (branch.status !== "ok") throw new Refusal(tGlobal(`panelExtensions.worktrees.${branch.status}`, { item, branch: "branch" in branch ? branch.branch : "" }))
-        await consented()
+        await consented(branch.branch)
         // Only that branch at that tip: a branch deleted or replaced meanwhile is refused, never recreated.
         destination = (await createWorktree(props.instanceId, branch.branch, "root", branch.revision)).slug
         branchName = branch.branch
@@ -314,7 +315,8 @@ export function useApi4Channel(props: {
     return { result: "added" }
   }
 
-  return async (value: unknown) => {
+  // `dispose`: the frame left its document (self-navigation); its requests and dialog end with it.
+  return Object.assign(async (value: unknown) => {
     const parsed = requestSchema.safeParse(value)
     if (!parsed.success || disposed) return
     const { id, capability, method, input } = parsed.data
@@ -342,5 +344,5 @@ export function useApi4Channel(props: {
       controller.abort()
       answer({ error: true })
     }
-  }
+  }, { dispose })
 }

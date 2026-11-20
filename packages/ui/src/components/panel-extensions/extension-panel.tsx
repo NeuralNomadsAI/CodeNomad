@@ -55,7 +55,7 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   onCleanup(() => { disposed = true; controller.abort(); port?.close() })
   const loaded = () => {
     // Never reconnect the capability channel after self-navigation/reload.
-    if (initialized) { authenticated = false; port?.close(); setDocument(undefined); setFailed(true); return }
+    if (initialized) { authenticated = false; port?.close(); api4?.dispose(); setDocument(undefined); setFailed(true); return }
     initialized = true
     const channel = new MessageChannel()
     port = channel.port1

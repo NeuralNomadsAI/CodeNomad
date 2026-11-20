@@ -1,8 +1,9 @@
-import { execFile, spawn } from "node:child_process"
+import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import type { ForgeProvider, ForgeWorkItemKind } from "../panel-extensions/contract"
 import { runGitProcess } from "../workspaces/git-process"
-import { parseRemoteUrl, readForgeRemote } from "./remote"
+import { stopWindowsProcessTree } from "../process-tree"
+import { readForgeRemote } from "./remote"
 
 /** The project's forge repository and the remote it is fetched from. */
 export interface WorkItemBranchSource { provider: ForgeProvider; host: string; path: string; name: string }
@@ -39,7 +40,8 @@ function git(directory: string, args: string[], timeout = 10_000) {
 }
 
 /** A repository's identity in links and confirmations. */
-export const workItemRepository = (source: Pick<WorkItemBranchSource, "host" | "path">) => `${source.host}/${source.path}`.toLowerCase()
+// The host is case-insensitive; the path keeps its case, as self-hosted forges may distinguish it.
+export const workItemRepository = (source: Pick<WorkItemBranchSource, "host" | "path">) => `${source.host.toLowerCase()}/${source.path}`
 
 /** Every existing local branch linked to an item of `source`'s repository, unbounded but for Git's output budget. */
 async function links(directory: string, source: Pick<WorkItemBranchSource, "host" | "path">): Promise<Link[]> {
@@ -70,22 +72,19 @@ export async function readWorkItemBranches(directory: string, source: Pick<WorkI
 
 
 /**
- * The remote Git selects for the repository right now (no cache: an `upstream` added
- * meanwhile wins) when it is still `source`'s, with its configured URL. Fetching that
- * configured URL lets Git apply `insteadOf` once, as this validation did.
+ * Whether the remote Git selects for the repository right now (no cache: an `upstream`
+ * added meanwhile wins) is still `source`'s remote, naming the same repository through its
+ * URL as `git remote get-url` expands it. Fetching that remote by name expands it the same
+ * single way.
  */
-async function remoteUrl(directory: string, source: WorkItemBranchSource, signal?: AbortSignal): Promise<string | "changed" | undefined> {
+async function remoteUrl(directory: string, source: WorkItemBranchSource, signal?: AbortSignal): Promise<"ok" | "changed" | undefined> {
   const selected = await readForgeRemote(directory, signal).catch(() => undefined)
   if (!selected) return undefined
-  if (selected.name !== source.name || workItemRepository(selected) !== workItemRepository(source)) return "changed"
-  const configured = (await git(directory, ["config", "--get-all", `remote.${source.name}.url`]).catch(() => "")).split(/\r?\n/)[0] ?? ""
-  if (!configured) return undefined
-  const remote = parseRemoteUrl(await git(directory, ["ls-remote", "--get-url", "--", configured]).catch(() => ""))
-  return remote && workItemRepository(remote) === workItemRepository(source) ? configured : "changed"
+  return selected.name === source.name && workItemRepository(selected) === workItemRepository(source) ? "ok" : "changed"
 }
 
-// The reflog message of every branch CodeNomad creates: Git's own creations read
-// `branch: Created from …`, so a name recreated by hand never passes for ours.
+// The reflog message of every branch CodeNomad creates. Git's own creation, copy and
+// rename messages start with `branch:`, so a name recreated by hand never passes for ours.
 const creationMarker = (kind: ForgeWorkItemKind, number: number) => `codenomad: work item ${kind.toLowerCase()}/${number}`
 
 /**
@@ -112,7 +111,7 @@ async function linkedBranch(directory: string, source: WorkItemBranchSource, kin
     git(directory, ["reflog", "show", "--format=%gs", ref, "--"]).catch(() => ""),
   ])
   const created = reflog.split(/\r?\n/).at(-1) ?? ""
-  const recreated = /^branch: (Created from|copied|renamed)/i.test(created) && created !== creationMarker(kind, number)
+  const recreated = /^branch: (Created from|copied|renamed)/i.test(created)
   return contains && !recreated ? { status: "ok", repository: workItemRepository(source), branch: link.branch } : { status: "conflict", branch: link.branch }
 }
 
@@ -135,29 +134,45 @@ export function createWorkItemBranch(directory: string, source: WorkItemBranchSo
  * The pull request fetch, a network process outside the shared Git worker (whose two
  * slots serve local reads), killed when the caller goes away or after 15 s.
  */
-function fetchHead(directory: string, url: string, head: string, scratch: string, signal?: AbortSignal) {
+function fetchHead(directory: string, remote: string, head: string, scratch: string, signal?: AbortSignal) {
   const cleared = Object.fromEntries(Object.keys(process.env)
     .filter(key => key.toUpperCase().startsWith("GIT_") && !/^GIT_SSH(_COMMAND)?$/i.test(key)).map(key => [key, undefined]))
   return new Promise<void>((resolve, reject) => {
-    // Its own process group, so the transport helpers it starts (git-remote-https, ssh) end with it.
-    const child = spawn("git", ["-C", directory, "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--refmap=", "--", url, `${head}:${scratch}`], {
+    // POSIX: its own process group, so the transport helpers it starts end with it.
+    const child = spawn("git", ["-C", directory, "fetch", "--no-tags", "--no-prune", "--no-recurse-submodules", "--no-write-fetch-head", "--refmap=", "--",
+      remote, `${head}:${scratch}`], {
       windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "ignore", "pipe"],
       env: { ...process.env, ...cleared, GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
     })
-    let stderr = ""
+    // Taken once the process exists: the tree stop admits a root started no later than this.
+    const spawnedBy = new Date()
+    let stderr = "", failure: unknown
     child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 64 * 1024) stderr += chunk.toString() })
     const killTree = () => {
       if (child.pid === undefined || child.exitCode !== null) return
-      if (process.platform === "win32") execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }, () => {})
+      if (process.platform === "win32") void stopWindowsProcessTree(child.pid, spawnedBy).then(stopped => { if (stopped === 0) child.kill() }, () => child.kill())
       else try { process.kill(-child.pid, "SIGKILL") } catch { child.kill("SIGKILL") }
     }
-    const stop = (reason: unknown) => { cleanup(); killTree(); reject(reason) }
-    const abort = () => stop(signal!.reason)
+    // The caller learns the outcome once the process tree has closed, so nothing writes the scratch ref after.
+    const stop = (reason: unknown) => {
+      if (failure !== undefined) return
+      failure = reason
+      killTree()
+      // A tree that never closes still frees the caller (stopping one on Windows takes a few seconds).
+      setTimeout(() => reject(reason), 35_000).unref()
+    }
+    const abort = () => stop(signal!.reason ?? new Error("Fetch abandoned"))
     const timer = setTimeout(() => stop(new Error("Pull request fetch timed out")), FETCH_TIMEOUT_MS)
-    const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort) }
     signal?.addEventListener("abort", abort, { once: true })
-    child.once("error", error => { cleanup(); reject(error) })
-    child.once("close", code => { cleanup(); if (code === 0) resolve(); else reject(new Error(stderr.trim() || `git fetch exited with ${code}`)) })
+    const settle = (error?: unknown) => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", abort)
+      if (failure !== undefined) reject(failure)
+      else if (error) reject(error)
+      else resolve()
+    }
+    child.once("error", error => settle(error))
+    child.once("close", code => settle(code === 0 ? undefined : new Error(stderr.trim() || `git fetch exited with ${code}`)))
     if (signal?.aborted) abort()
   })
 }
@@ -178,13 +193,12 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
   let revision: string
   if (kind === "issue") revision = await git(guard.base ?? directory, ["rev-parse", "--verify", "HEAD^{commit}"])
   else {
-    // Fetch from the URL that still names the confirmed repository, never through
-    // the remote's configured refspecs (`--refmap=`), into a scratch ref only.
-    const url = first
+    // Fetch from the remote that still names the confirmed repository, never through
+    // its configured refspecs (`--refmap=`), into a scratch ref only.
     const head = source.provider === "gitlab" ? `refs/merge-requests/${number}/head` : `refs/pull/${number}/head`
     const scratch = `refs/codenomad/fetch/${randomUUID()}`
     try {
-      await fetchHead(directory, url, head, scratch, guard.signal)
+      await fetchHead(directory, source.name, head, scratch, guard.signal)
       revision = await git(directory, ["rev-parse", "--verify", `${scratch}^{commit}`])
     } catch {
       guard.signal?.throwIfAborted()

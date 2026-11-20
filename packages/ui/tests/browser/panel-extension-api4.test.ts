@@ -629,7 +629,8 @@ test("worktrees: a branch replaced while its worktree is created never receives 
     execFileSync("git", ["-C", repository, "branch", "issue-41", tip])
     await page.evaluate(() => (window as any).fixture.release())
     await page.getByText("The worktree for issue #41 changed. Try again.").first().waitFor()
-    assert.deepEqual([await worktreeCalls(page), await page.evaluate(() => (window as any).fixture.location("ses_work"))], [[{ create: "issue-41" }], "/fixture"])
+    // Refused before or after the worktree creation, depending on timing; never moved.
+    assert.deepEqual([(await worktreeCalls(page)).filter((call: any) => call.move), await page.evaluate(() => (window as any).fixture.location("ses_work"))], [[], "/fixture"])
   } finally { await page.evaluate(() => (window as any).fixture.release?.()).catch(() => {}); await page.close() }
 })
 test("worktrees: a lost native connection cancels the confirmation, and concurrent opens get one dialog", async () => {
@@ -644,5 +645,37 @@ test("worktrees: a lost native connection cancels the confirmation, and concurre
     await page.getByRole("button", { name: "Create and move", exact: true }).waitFor({ state: "detached" })
     await page.waitForTimeout(300)
     assert.deepEqual([await worktreeCalls(page), branches().some(branch => /^issue-4[89]$/.test(branch))], [[], false])
+  } finally { await page.close() }
+})
+test("worktrees: a remote changed once the branch exists creates no worktree", async () => {
+  await install()
+  const { page } = await open()
+  const url = execFileSync("git", ["-C", repository, "remote", "get-url", "origin"], { encoding: "utf8" }).trim()
+  let entered!: () => void, release!: () => void
+  const waiting = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
+  transit.branch = () => { entered(); return gate }
+  try {
+    await showPanel(page)
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 89), { ok: "confirming" })
+    await page.getByRole("button", { name: "Create and move", exact: true }).click()
+    await waiting
+    execFileSync("git", ["-C", repository, "remote", "set-url", "origin", "https://github.com/other/repo.git"])
+    release()
+    await page.getByText("The worktree for issue #89 changed. Try again.").first().waitFor()
+    assert.deepEqual(await worktreeCalls(page), [])
+  } finally { release(); execFileSync("git", ["-C", repository, "remote", "set-url", "origin", url]); await page.close() }
+})
+
+test("worktrees: a frame that navigates itself away takes its pending dialog with it", async () => {
+  await install()
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 88), { ok: "confirming" })
+    const confirm = page.getByRole("button", { name: "Create and move", exact: true })
+    await confirm.waitFor()
+    await frameOf(page).locator("body").evaluate(() => { location.href = "about:blank" }).catch(() => {})
+    await confirm.waitFor({ state: "detached" })
+    assert.deepEqual(await worktreeCalls(page), [])
   } finally { await page.close() }
 })

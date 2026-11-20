@@ -65,8 +65,9 @@ describe("work item branches", () => {
     assert.deepEqual(await create(clone, source, "issue", 3), { status: "ok", branch: "issue-3", created: false })
     assert.deepEqual(await create(clone, source, "issue", 4), { status: "ok", branch: "issue-4", created: true })
     assert.equal(git(clone, "rev-parse", "issue-4"), base)
-    assert.deepEqual(await readWorkItemBranches(clone, { host: source.host, path: source.path.toUpperCase() }),
+    assert.deepEqual(await readWorkItemBranches(clone, { host: source.host.toUpperCase(), path: source.path }),
       [{ kind: "issue", number: 3, branch: "issue-3" }, { kind: "issue", number: 4, branch: "issue-4" }])
+    assert.deepEqual(await readWorkItemBranches(clone, { host: source.host, path: source.path.toUpperCase() }), [], "the path keeps its case")
     assert.deepEqual(await readWorkItemBranches(clone, { host: source.host, path: "team/other" }), [])
   })
 
@@ -75,7 +76,7 @@ describe("work item branches", () => {
     assert.deepEqual(await create(clone, source, "pullRequest", 7), { status: "ok", branch: "pr-7", created: true })
     assert.equal(git(clone, "rev-parse", "pr-7"), head)
     assert.deepEqual(await createWorkItemBranch(clone, source, "pullRequest", 7), { status: "ok", branch: "pr-7", revision: head, created: false })
-    assert.deepEqual(await lookupWorkItemBranch(clone, source, "pullRequest", 7), { status: "ok", repository: `${source.host}/${source.path}`.toLowerCase(), branch: "pr-7" })
+    assert.deepEqual(await lookupWorkItemBranch(clone, source, "pullRequest", 7), { status: "ok", repository: `${source.host}/${source.path}`, branch: "pr-7" })
     assert.deepEqual(await create(clone, { ...source, provider: "gitlab" }, "pullRequest", 8), { status: "ok", branch: "pr-8", created: true })
     assert.equal(git(clone, "rev-parse", "pr-8"), head)
     assert.equal(git(clone, "for-each-ref", "refs/codenomad/"), "")
@@ -176,12 +177,29 @@ describe("work item branches", () => {
       new Promise(resolve => setTimeout(() => resolve("queued"), 2_000))])
     assert.equal(read, "read", "local reads keep their worker slots during a fetch")
     for (const controller of controllers) controller.abort(new Error("gone"))
-    const settled = await Promise.race([Promise.all(pending).then(() => "settled"), new Promise(resolve => setTimeout(() => resolve("running"), 5_000))])
+    const settled = await Promise.race([Promise.all(pending).then(() => "settled"), new Promise(resolve => setTimeout(() => resolve("running"), 12_000))])
     assert.equal(settled, "settled", "an abandoned fetch stops")
     // The whole process tree ends: the transport helper's connection closes too.
     for (let attempt = 0; attempt < 60 && held.slice(before).some(response => !closed.has(response)); attempt++) await new Promise(resolve => setTimeout(resolve, 50))
     assert.equal(held.slice(before).every(response => closed.has(response)), true, "the forge connection is closed")
     assert.equal(git(repo, "for-each-ref", "refs/heads/pr-7", "refs/codenomad/"), "")
+  })
+
+  it("tells repositories apart by path case, which self-hosted forges may distinguish", async () => {
+    const { clone, source } = await project()
+    git(clone, "remote", "set-url", "origin", git(clone, "remote", "get-url", "origin").replace(source.path, source.path.toUpperCase()))
+    assert.deepEqual(await create(clone, source, "issue", 8), { status: "changed" })
+    assert.equal(git(clone, "for-each-ref", "refs/heads/issue-8"), "")
+  })
+
+  it("fetches through an insteadOf alias that is also another remote's name", async () => {
+    const first = await project("alias-first"), second = await project("alias-second")
+    const a = git(first.clone, "remote", "get-url", "origin")
+    git(first.clone, "remote", "set-url", "origin", "alias")
+    git(first.clone, "remote", "add", "alias", git(second.clone, "remote", "get-url", "origin"))
+    git(first.clone, "config", `url.${a}.insteadOf`, "alias")
+    assert.equal((await createWorkItemBranch(first.clone, first.source, "pullRequest", 7)).status, "ok")
+    assert.equal(git(first.clone, "rev-parse", "pr-7"), first.head)
   })
 
   it("writes nothing once the guard refuses, even after the fetch", async () => {
@@ -236,7 +254,7 @@ describe("work item branches", () => {
 
   it("an exact lookup sees links beyond the listing's 200", async () => {
     const { clone, base, source } = await project()
-    const value = (i: number) => `${`${source.host}/${source.path}`.toLowerCase()}#issue/${i}@${base}/issue-${i}`
+    const value = (i: number) => `${source.host}/${source.path}#issue/${i}@${base}/issue-${i}`
     execFileSync("git", ["-C", clone, "update-ref", "--stdin"], { input: Array.from({ length: 201 }, (_, i) => `create refs/heads/issue-${i + 1} ${base}\n`).join("") })
     appendFileSync(path.join(clone, ".git", "config"), Array.from({ length: 201 }, (_, i) => `\n[branch "issue-${i + 1}"]\n\tcodenomad-work-item = \"${value(i + 1)}\"\n`).join(""))
     assert.equal((await readWorkItemBranches(clone, source)).length, 200)

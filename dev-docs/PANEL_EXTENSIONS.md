@@ -321,21 +321,20 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   with the branch and never follows a copy or rename (`git branch -c`/`-m`); a branch name alone is never proof, and links of another repository identity
   or whose ref is gone are ignored. The exact lookup (`workItemBranchLookup`, used to open)
   answers `conflict` when the name now holds another branch: one that no longer contains the
-  start commit, or whose reflog begins with another creation than CodeNomad's own (`codenomad: work item <kind>/<number>`, written by `update-ref -m` when it creates the branch). `list` joins the links to the worktree inventory;
+  start commit, or whose reflog begins with Git's own creation, copy or rename message (CodeNomad creates its branches with `update-ref -m 'codenomad: work item <kind>/<number>'`). `list` joins the links to the worktree inventory;
   `current` is the inventory's match for the displayed family, never the `root` fallback of
   a miss. `onChanged` fires when the inventory, a worktree's branch or the family's worktree
   changes, not when a link alone changes.
   `open` answers `confirming` and then shows the host's own confirmation (title: the
-  extension's name; detail: the repository, `<host>/<path>`), one at a time and never over
-  another host dialog, aborted on unmount or connection loss, and reserved before `open` answers (a concurrent `open` answers `busy`); after a refusal the mounting answers `busy` for
+  extension's name; detail: the repository, `<host>/<path>`, the host in lower case and the path as the remote spells it), one at a time and never over
+  another host dialog, aborted on unmount, connection loss or the frame navigating away, and reserved before `open` answers (a concurrent `open` answers `busy`); after a refusal the mounting answers `busy` for
   10 s, so a panel cannot hold the modal up. Opening and acceptance look the item up exactly
   (consent rechecked) and refuse a changed repository or target; without a worktree,
   `workItemBranch` (given the confirmed repository: another one answers `changed`) returns the
   linked branch or creates one under a per-repository lock, never forced: `issue-N` at the HEAD
   of the family's worktree (`fromSlug`, as the worktree selector creates), or `pr-N` at
   `refs/pull/N/head` (GitHub, Gitea) or `refs/merge-requests/N/head` (GitLab), fetched with
-  `--refmap=` (no configured refspec applies) into a scratch ref, by its own process outside the shared Git worker, whose process tree is killed when the caller goes away or after 15 s, from the remote's configured
-  URL whose single `insteadOf` expansion must name the repository; then `git update-ref` creates it only if absent (an
+  `--refmap=` (no configured refspec applies) into a scratch ref, by its own process outside the shared Git worker, whose process tree is stopped (`stopWindowsProcessTree` on Windows, its process group elsewhere) when the caller goes away or after 15 s, from that remote by name, whose URL as `git remote get-url` expands it must name the repository; then `git update-ref` creates it only if absent (an
   unlinked branch of that name is a `conflict`). The selected remote is read again without the forge cache (an `upstream` added meanwhile answers `changed`), and consent and the project are checked
   right before the write and again right after it, a late change undoing the write: the link is removed, and the ref at that tip too unless a checkout or other branch settings adopted it meanwhile; the host checks consent again before it creates the worktree and before it moves the family. Lookups and writes first require that remote check; they
   see every link, and only `list` stops at 200. `createWorktree` then checks out that branch
