@@ -132,6 +132,18 @@ test("auxiliary reconciliation outlives the wake receipt once its run is consume
   assert.equal(consumed, true)
 })
 
+test("a receipt expiring between the committed high-water and claim closure still reconciles", async t => {
+  const f = await receiver(t, "reconciliation")
+  let consumed = false, expired = false
+  const entry = { ...f.entry, consumed: () => { consumed = true },
+    current: (): true => { if (expired && !consumed) throw new Error("schedule-preflight-invalid"); return f.current() } }
+  const close = f.ports.close
+  f.ports.close = async locked => { expired = true; entry.current(); return close(locked) }
+  await f.claim()
+  assert.equal((await receiveNativeMissionScheduleWake("wake", f.input, entry, f.ports)).state, "applied")
+  assert.deepEqual(f.calls, ["close", "owner", "business-reconcile", "owner"])
+})
+
 test("auxiliary business settlement reapplies terminal owner cleanup before replying from the same invocation", async t => {
   const f = await receiver(t, "reconciliation")
   let doc = await f.read()
