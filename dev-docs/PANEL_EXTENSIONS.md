@@ -344,7 +344,7 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
     and refuses any changed repository or target.
   - *Create.* `workItemBranch` (given the confirmed repository) returns the linked branch or creates one,
     never forced, one at a time per Git common directory: `issue-N` at the HEAD of the family's worktree
-    checkout root (`fromSlug`), or `pr-N` at `refs/pull/N/head` (GitHub, Gitea) or
+    checkout root (`fromSlug`, issues only), or `pr-N` at `refs/pull/N/head` (GitHub, Gitea) or
     `refs/merge-requests/N/head` (GitLab), fetched from the selected remote by name with `--refmap=` into
     a scratch ref, in its own process outside the shared Git worker, its tree stopped
     (`stopWindowsProcessTree` on Windows, its process group elsewhere) when the caller goes away or after

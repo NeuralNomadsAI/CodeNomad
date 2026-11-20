@@ -75,11 +75,13 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
     const source = await deps.forge.branchSource(directory, signal)
     if (!source) return { status: "unavailable" }
     if (workItemRepository(source) !== input.repository) return { status: "changed" }
-    const worktree = input.fromSlug === undefined ? undefined : (await deps.workspaceManager.getWorktrees(input.instanceId, "cached"))
-      .worktrees.find(worktree => worktree.slug === input.fromSlug && !worktree.nestedFolderMissing)
+    // Only an issue starts from the family's checkout; a pull request starts from its fetched head.
+    const fromSlug = input.kind === "issue" ? input.fromSlug : undefined
+    const worktree = fromSlug === undefined ? undefined : (await deps.workspaceManager.getWorktrees(input.instanceId, "cached"))
+      .worktrees.find(worktree => worktree.slug === fromSlug && !worktree.nestedFolderMissing)
     // HEAD of the checkout root, as worktree creation reads it, never of a repository nested in the opened folder.
     const base = worktree?.registeredDirectory ?? worktree?.directory
-    if (input.fromSlug !== undefined && !base) return { status: "unavailable" }
+    if (fromSlug !== undefined && !base) return { status: "unavailable" }
     return createWorkItemBranch(directory, source, input.kind, input.number, { base, check: current, signal })
   })
 }

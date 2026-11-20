@@ -98,10 +98,11 @@ test("a branch write starts from the displayed worktree and writes nothing once 
   git(nested, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "nested")
   const writer = await readPanelExtensionArchive(fixtureArchive("<p>Write</p>", { apiVersion: 4,
     permissions: ["session.context", "repository.workItems.read", "repository.worktrees.read", "repository.worktrees.write"] }))
-  let discovery: (() => Promise<void>) | undefined
+  let discovery: (() => Promise<void>) | undefined, inventoryReads = 0
   const forge = { branchSource: async () => { await discovery?.(); return { provider: "github", host: "github.com", path: "o/r", name: "origin" } } } as unknown as ForgeWorkItems
   registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: () => ({ id: "i", path: project }),
-    getWorktrees: async () => ({ worktrees: [{ slug: "root", directory: project }, { slug: "feature", directory: nested, registeredDirectory: displayed }] }) } as any })
+    getWorktrees: async () => { inventoryReads++; return { worktrees: [{ slug: "root", directory: project }, { slug: "feature", directory: nested, registeredDirectory: displayed },
+      { slug: "sibling", directory: path.join(directory, "sibling"), nestedFolderMissing: true }] } } } as any })
   const write = (extra = {}) => app.inject({ method: "POST", url: `/api/panel-extensions/${writer.manifest.id}/workItemBranch`,
     payload: { instanceId: "i", digest: writer.digest, kind: "issue", repository: "github.com/o/r", ...extra } })
   try {
@@ -116,6 +117,10 @@ test("a branch write starts from the displayed worktree and writes nothing once 
     assert.equal(git(project, "branch", "--list", "issue-4"), "")
     assert.deepEqual((await write({ number: 4, fromSlug: "feature" })).json(), { status: "ok", branch: "issue-4", revision: git(displayed, "rev-parse", "HEAD"), created: true })
     assert.equal(git(project, "rev-parse", "issue-4"), git(displayed, "rev-parse", "HEAD"))
+    // A pull request starts from its fetched head: the family's checkout, even one lacking the opened folder, is not its base.
+    inventoryReads = 0
+    await write({ kind: "pullRequest", number: 7, fromSlug: "sibling" })
+    assert.equal(inventoryReads, 0)
   } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
 })
 

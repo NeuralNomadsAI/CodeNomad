@@ -82,7 +82,12 @@ export function useApi4Channel(props: {
     return [...(sessions().get(props.instanceId)?.values() ?? [])].filter(member => getParentSessionId(props.instanceId, member.id) === root)
       .map(member => getWorktreeForSession(props.instanceId, member.id)?.slug)
   }
-  const familyAt = (slug: string | undefined) => slug !== undefined && session !== null && familyPlacement().every(member => member === slug)
+  // The one worktree holding every loaded member, if any (an empty family is unknown, not current).
+  const familyWorktreeSlug = () => {
+    const placement = familyPlacement()
+    return placement.length && placement.every(member => member === placement[0]) ? placement[0] : undefined
+  }
+  const familyAt = (slug: string | undefined) => slug !== undefined && familyWorktreeSlug() === slug
   let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined
   let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false }
   const current = () => !disposed && connected && nativeConnected && (props.host.activeSessionId() ?? null) === props.sessionId
@@ -196,10 +201,10 @@ export function useApi4Channel(props: {
     const [answer] = await Promise.all([panelExtensionsApi4.workItemBranches(authority, signal), reloadWorktrees(props.instanceId, true)])
     if (answer.status !== "ok") return null
     // `worktree`: checked out anywhere, even where the opened folder is missing (Git allows one checkout per branch).
-    const worktrees = getWorktrees(props.instanceId)
+    const worktrees = getWorktrees(props.instanceId), family = familyWorktreeSlug()
     return answer.branches.map((link): PanelWorkItemWorktree => {
       const slug = worktrees.find(worktree => worktree.branch === link.branch)?.slug
-      return { ...link, worktree: slug !== undefined, current: familyAt(slug) }
+      return { ...link, worktree: slug !== undefined, current: slug !== undefined && slug === family }
     })
   }
 
