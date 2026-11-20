@@ -3,6 +3,7 @@
 //! relay (`proxy`) with its session-list scope (`scope`), the executable's update status (`update`).
 pub mod admission;
 pub mod daemon;
+pub mod install;
 pub mod launch;
 pub mod proxy;
 pub mod scope;

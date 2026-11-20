@@ -21,8 +21,8 @@ regex = "1"
 fancy-regex = "0.16"
 icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
 icu_properties = "2.4"
-# rustls-tls: the npm registry read of the OpenCode update status (Mozilla roots, like Node's bundled store).
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+# HTTPS with the Mozilla roots Node bundles: the npm registry (OpenCode installation).
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots"] }
 # The TLS folder shared with the reference: RSA authority keys, as Tauri's aws-lc-rs.
 rcgen = { version = "0.13", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -45,6 +45,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
 tokio-util = "0.7"
 uuid = { version = "1", features = ["serde", "v4"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 zip = { version = "9.7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 chrono-tz = { version = "0.10", features = ["case-insensitive"] }
 
