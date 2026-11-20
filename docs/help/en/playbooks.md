@@ -76,6 +76,8 @@ You get the task reports and a final report; code changes stay uncommitted in yo
 
 ## Debugging {#debug}
 
+If the initial checks show no change is needed, the coordinator can record the result and finish before declaring any task.
+
 Evidence first: prove the bug and its cause, fix it test-first, have two independent reviewers check the fix, address their findings, then validate everything green. Choose it for a reproducible bug, a failing test or a regression where you want proof rather than a guess.
 
 ### Steps and roles {#debug-steps}
