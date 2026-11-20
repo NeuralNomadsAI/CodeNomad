@@ -14,7 +14,14 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{App, Error, Shared, Workspace, app::Inventory, auth, files::paths, now};
+use crate::{
+    App, Error, Shared, Workspace,
+    app::Inventory,
+    auth,
+    files::paths,
+    now,
+    opencode::{Refusal, admission, daemon},
+};
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -94,6 +101,8 @@ async fn create(
         return bad_request("Workspace directory is not authorized".into());
     };
     let validation = async {
+        let deadline = tokio::time::Instant::now() + daemon::TIMEOUT;
+        app.native.acquire(deadline).await?;
         let response = app
             .native
             .get("/api/location")
@@ -101,13 +110,13 @@ async fn create(
             .timeout(Duration::from_secs(15))
             .send()
             .await
-            .ok()?
-            .error_for_status()
-            .ok()?;
-        let native: Value = response.json().await.ok()?;
+            .ok()
+            .and_then(|r| r.error_for_status().ok());
+        let Some(response) = response else { return Ok(None) };
+        let native: Value = response.json().await.unwrap_or_default();
         let location = native.get("data").unwrap_or(&native);
-        let directory = location["directory"].as_str()?;
-        (dunce::canonicalize(directory).ok()? == path).then(|| json!({"directory": directory}))
+        let directory = location["directory"].as_str().filter(|d| dunce::canonicalize(d).is_ok_and(|d| d == path));
+        Ok(directory.map(|directory| json!({"directory": directory})))
     };
     let cancelled =
         || bad_request(format!("Workspace creation request {} was cancelled", request_id.as_deref().unwrap_or("")));
@@ -115,6 +124,21 @@ async fn create(
         _ = cancellation.cancelled() => return cancelled(),
         _ = principal.0.cancelled() => return auth::unauthorized().into_response(),
         location = validation => location,
+    };
+    let location = match location {
+        Ok(location) => location,
+        Err(refusal) => {
+            eprintln!("Workspace failed to start: {refusal}");
+            return match refusal {
+                Refusal::Unsupported { ref actual, reason } => (
+                    Status::UPGRADE_REQUIRED,
+                    Json(json!({"error": "opencode_update_required", "message": refusal.to_string(),
+                        "actualVersion": actual, "minimumVersion": admission::MINIMUM_VERSION, "reason": reason})),
+                )
+                    .into_response(),
+                Refusal::Failed(message) => bad_request(message),
+            };
+        }
     };
     let Some(location) = location else { return bad_request("OpenCode location is unavailable".into()) };
     let _publish = app.project_mutation.lock().await;

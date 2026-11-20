@@ -9,7 +9,7 @@ fn on(name: &str) -> bool {
     env::var(name).as_deref() == Ok("1")
 }
 
-/// The fixture daemon (`CNRS_FIXTURE_URL`, `CNRS_FIXTURE_PASSWORD`), exclusive with a service record.
+/// The fixture daemon (`CNRS_FIXTURE_URL`, `CNRS_FIXTURE_PASSWORD`), in place of the CLI lifecycle.
 pub fn native_endpoint() -> Result<(String, String), env::VarError> {
     Ok((env::var("CNRS_FIXTURE_URL")?, env::var("CNRS_FIXTURE_PASSWORD")?))
 }

@@ -20,9 +20,10 @@ pub fn print_version() -> bool {
 pub fn server_password() -> Result<String, env::VarError> {
     env::var("CNRS_SERVER_PASSWORD")
 }
-/// The `service.json` that `opencode serve --service` writes under its own `XDG_STATE_HOME`.
-pub fn opencode_service_file() -> Option<OsString> {
-    env::var_os("CNRS_OPENCODE_SERVICE_FILE")
+/// An install environment naming a daemon record instead of the daemon's profile: refused, since
+/// discovery through the CLI without that profile would reach the account's own daemon.
+pub fn service_record_named() -> bool {
+    env::var_os("CNRS_OPENCODE_SERVICE_FILE").is_some()
 }
 
 /// HTTPS listener: interface, public name, extra certificate names and supplied PEM files.

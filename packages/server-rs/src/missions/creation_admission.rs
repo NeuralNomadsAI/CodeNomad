@@ -114,7 +114,7 @@ fn no_effect(body: &Value, request: &str, mission: &str) -> bool {
 pub async fn create(app: &App, dir: &str, input: Value, mission: &str) -> Result<Value, Error> {
     let failed = uncertain;
     let request = input["requestID"].as_str().unwrap_or_default().to_owned();
-    let url = app.native.url.join("/api/rpc/codenomad.missions/create").map_err(|_| failed())?;
+    let url = app.native.url().join("/api/rpc/codenomad.missions/create").map_err(|_| failed())?;
     let res = app
         .native
         .request(Method::POST, url)

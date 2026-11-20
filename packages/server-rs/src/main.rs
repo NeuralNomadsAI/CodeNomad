@@ -1,4 +1,5 @@
-//! CodeNomad backend in Rust: `codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>`.
+//! CodeNomad backend in Rust: `codenomad-rs <root> <identity.json> <port or 0> <opencode binary or "">`
+//! (empty: the default OpenCode installation).
 //! Start-up, then every domain's routes behind the loopback password session
 //! and, with HTTPS configured, behind the paired-device admission.
 mod app;
@@ -9,6 +10,7 @@ mod events;
 mod extensions;
 mod files;
 mod git;
+mod host;
 mod memory;
 mod meta;
 #[rustfmt::skip] // Frozen while its contract is redesigned: moved, never reformatted.
@@ -39,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let args: Vec<_> = env::args().skip(1).collect();
     let [root, identity, port, binary] = &args[..] else {
-        return Err("usage: codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>".into());
+        return Err("usage: codenomad-rs <root> <identity.json> <port or 0> <opencode binary or \"\">".into());
     };
     let root = dunce::canonicalize(root)?;
     if !root.is_dir() {
@@ -48,7 +50,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !root.to_str().is_some_and(files::paths::local_absolute) {
         return Err("Workspace root must be a local absolute path".into());
     }
-    let native = opencode::Native::connect().await?;
+    if config::service_record_named() {
+        return Err("CNRS_OPENCODE_SERVICE_FILE is not supported: run the install again".into());
+    }
+    let selected = if binary.is_empty() { opencode::launch::default_binary() } else { binary.clone() };
+    let binary = opencode::launch::resolve(&selected);
+    let native = opencode::Native::connect(&binary)?;
     let listener = TcpListener::bind(("127.0.0.1", port.parse::<u16>()?)).await?;
     let port = listener.local_addr()?.port();
     let identity = Path::new(identity);

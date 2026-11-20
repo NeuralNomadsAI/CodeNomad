@@ -273,7 +273,7 @@ pub async fn prepare(app: &Shared, session: &str) -> Value {
 async fn instruction(app: &Shared, session: &str, value: Option<&str>) -> bool {
     let path =
         format!("/api/experimental/session/{}/instructions/entries/{KEY}", super::identity::encode_component(session));
-    let Ok(url) = app.native.url.join(&path) else { return false };
+    let Ok(url) = app.native.url().join(&path) else { return false };
     let request = match value {
         Some(v) => app.native.request(Method::PUT, url).json(&json!({"value": v})),
         None => app.native.request(Method::DELETE, url),

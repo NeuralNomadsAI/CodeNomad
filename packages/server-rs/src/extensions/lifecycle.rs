@@ -1,8 +1,9 @@
 //! Bundled plugin lifecycle, after the reference `DesktopPluginLifecycle`,
 //! `prepareDesktopPluginPresence` and `provisionDesktopPlugins`.
 //!
-//! Every OpenCode connection provisions: at start, then each time the native
-//! event stream (re)connects (`connected`, called by `events::bridge`). Its
+//! Every OpenCode connection provisions: at start when the endpoint is already
+//! known, then each time the native event stream (re)connects (`connected`, called
+//! by `events::bridge`). Its
 //! discovery root is read again on that connection; an installation already
 //! retained for that root is reused (one backend lease per namespace), a new
 //! root gets its own installation. A failed attempt is retried by the next
@@ -234,8 +235,11 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
     }
     let app = app.clone();
     Ok(Some(tokio::spawn(async move {
-        let attempt = connection(&app, &features);
-        tokio::select! { _ = stop.cancelled() => {}, _ = attempt => {} }
+        // A discovered daemon is first provisioned when its event stream connects.
+        if app.native.endpoint().is_some() {
+            let attempt = connection(&app, &features);
+            tokio::select! { _ = stop.cancelled() => {}, _ = attempt => {} }
+        }
         let mut renewed = tokio::time::Instant::now();
         while !stop.is_cancelled() {
             tokio::select! {

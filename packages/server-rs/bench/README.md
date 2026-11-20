@@ -25,6 +25,7 @@ node compare.mjs http $OpenCode           # one mode
 pwsh -NoProfile -File run-all.ps1 -OpenCode $OpenCode [-Only http,contract]   # all modes, summary and CPU load in out\summary.txt
 node security.mjs $OpenCode
 node hardening.mjs $OpenCode
+node service.mjs $OpenCode
 ```
 
 | Mode | Covers |
@@ -42,6 +43,7 @@ node hardening.mjs $OpenCode
 | `solid` | Real UI served by TS: HTTPS pairing of Rust, two prompts, two isolated tabs, worktree, Files, Rust memory under 48 MiB, no error toast. |
 | `security.mjs` | TLS and pairing: same checks on the Rust HTTPS listener and the TS remote surface, revocation during SSE, certificate reuse and rotation. |
 | `hardening.mjs` | Rust only: HTTPS admission under silent-socket floods, device and network paths, cross-site navigation, Git configuration guard, data folder ACL, SSE budgets. |
+| `service.mjs` | The daemon lifecycle through each server's own CLI discovery, on two isolated profiles and daemon ports: start on the first workspace, discovery after a backend restart, reconnection after a daemon restart, a conversation each time; refusals of a V1 CLI, malformed CLI output and a daemon below the minimum version. |
 
 Results: `bench/out/<mode>.json` (TS and Rust observations, or `error`), redacted logs `out/<mode>-ts.log` / `out/<mode>-rs.log`, screenshots `out/screenshots/<mode>/`. `out/` is ignored by Git; `out/tmp/` keeps each fixture for diagnosis (about 700 MiB after a full run) and can be deleted.
 

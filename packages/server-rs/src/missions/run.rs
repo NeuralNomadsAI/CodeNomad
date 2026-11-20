@@ -63,7 +63,7 @@ pub async fn rpc(
 ) -> Result<Value, Error> {
     let url = app
         .native
-        .url
+        .url()
         .join(&format!("{PREFIX}{method}"))
         .map_err(|_| held())?;
     let res = app

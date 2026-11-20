@@ -17,7 +17,8 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/bench.rs` | Only reader of the comparison bench variables (`CNRS_FIXTURE_*`, traces) |
 | `src/meta.rs`, `service.rs`, `workspaces.rs`, `storage.rs` | Server identity, user service mode, workspace lifecycle, UI preferences |
 | `src/auth/` | Local password session; paired devices, HTTPS admission, TLS |
-| `src/opencode/` | Native client, `/instance` relay, cursors |
+| `src/opencode/` | Shared daemon connection found or started through the OpenCode CLI like the TypeScript server (`opencode service status`/`start`/`get password`, minimum version and declared contract), `/instance` relay, cursors |
+| `src/host/` | Requests to the desktop host (`CODENOMAD_NATIVE_PARENT=1`): the daemon start runs outside this backend's containment |
 | `src/events/` | SSE to the UI, bridge from the daemon stream |
 | `src/files/`, `search/`, `git/` | Project files and links, file search, Git status/diff/history/mutations |
 | `src/worktrees/` | Owned checkouts, linked worktrees, location ownership, deletion fence |
