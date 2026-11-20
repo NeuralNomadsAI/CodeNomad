@@ -4,11 +4,10 @@ import { backendEvents, type ServerEvents } from "../lib/server-events"
 import { serverApi } from "../lib/api-client"
 import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
-import { addInstance, addPendingForm, addPermissionToQueue, ensureYoloStateSynced, getPermissionQueue,
+import { addInstance, addPendingForm, addPermissionToQueue, getPermissionQueue,
   reconcilePendingRequestLiveness, removeInstance, sendFormCancel, sendFormReply, sendPermissionResponse,
-  syncPendingRequests, togglePermissionAutoAcceptForSession } from "./instances"
+  syncPendingRequests } from "./instances"
 import { getFormQueue } from "./forms"
-import { isPermissionAutoAcceptEnabled, setPermissionAutoAcceptEnabled } from "./permission-auto-accept"
 import { hydrateRestoredSessionChain, loadLatestMessageWindow } from "./session-api"
 import { sessions, setSessions } from "./session-state"
 import { getPendingWorktreeSlug, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees"
@@ -40,33 +39,6 @@ function seedSession(id: string, sessionId = "root", status: "idle" | "working" 
     time: { created: 1, updated: 1 } } as any, id, "", undefined, status)
   setSessions(previous => new Map(previous).set(id, new Map([[sessionId, session]])))
 }
-
-test("late Yolo reads, toggle acknowledgements and toggle failures cannot publish on a replacement attachment", async t => {
-  const h = fixture(t, "yolo"), old = deferred<any>()
-  const get = serverApi.getYoloState, toggle = serverApi.toggleYolo
-  t.after(() => { serverApi.getYoloState = get; serverApi.toggleYolo = toggle })
-  let reads = 0
-  serverApi.getYoloState = async () => ++reads === 1 ? old.promise : { enabled: false } as any
-  ensureYoloStateSynced(h.id, "root")
-  h.replace()
-  ensureYoloStateSynced(h.id, "root")
-  await tick()
-  old.resolve({ enabled: true }); await tick()
-  assert.equal(reads, 2)
-  assert.equal(isPermissionAutoAcceptEnabled(h.id, "root"), false)
-  for (const fail of [false, true]) {
-    const response = deferred<any>()
-    setPermissionAutoAcceptEnabled(h.id, "root", false)
-    serverApi.toggleYolo = () => response.promise
-    togglePermissionAutoAcceptForSession(h.id, "root")
-    h.replace()
-    setPermissionAutoAcceptEnabled(h.id, "root", fail)
-    if (fail) response.reject(new Error("late failure"))
-    else response.resolve({ enabled: true })
-    await tick()
-    assert.equal(isPermissionAutoAcceptEnabled(h.id, "root"), fail)
-  }
-})
 
 test("pending scans share their exact Promise on A and cannot publish or retry through B", async t => {
   const h = fixture(t, "pending"), response = deferred<any>()

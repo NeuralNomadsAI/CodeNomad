@@ -40,6 +40,10 @@ Si los colores se vuelven difíciles de leer, elige **Contraste → Activado**. 
 
 En **Configuración → General**, **Mantener el ordenador activo mientras CodeNomad esté en ejecución** está desactivado por defecto. Actívalo para impedir la suspensión del sistema mientras haya una ventana local de CodeNomad abierta (aunque esté minimizada), incluso si ninguna sesión está trabajando; la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando. La opción aparece solo en las ventanas locales de la aplicación de escritorio y en Preferencias; está oculta en las vistas de navegador y remotas.
 
+## Permisos de las conversaciones nuevas {#new-conversation-permissions}
+
+En **Configuración → General → Permisos de las conversaciones nuevas**, elige **Autónomo** (el valor predeterminado) o **Supervisado** para las conversaciones principales que crees en CodeNomad. Las conversaciones existentes no cambian. Para cambiar el modo de una de ellas, abre [Estado → Permisos](permissions.md#conversation-mode) en esa conversación.
+
 ## Memoria persistente del agente {#agent-memory}
 
 Los usuarios autenticados mediante Control remoto, HTTPS verificado, LAN o una PWA instalada pueden revisar y editar la memoria del proyecto local o remoto seleccionado y usar **Ordenar**.
@@ -74,7 +78,7 @@ Arrastra el borde interior de un panel acoplado para cambiar su tamaño.
 
 Reordena cualquier sección de Estado arrastrando o con las teclas Arriba/Abajo. La visibilidad y el orden persisten al recargar.
 
-Estado incluye información de tokens, modo Yolo, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
+Estado incluye información de tokens, Permisos, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
 
 La disposición integrada es disposición de ventana, no una modificación del proyecto. Las casillas de extensiones son distintas: activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).
 

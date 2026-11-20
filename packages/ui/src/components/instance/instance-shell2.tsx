@@ -88,7 +88,6 @@ import { useDrawerResize } from "./shell/useDrawerResize"
 import { clampEmbeddedDrawerWidth } from "./shell/drawer-layout"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
-import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 import { runtimeEnv } from "../../lib/runtime-env"
 import { createProjectServerMeta } from "../../lib/project-server-meta"
@@ -508,12 +507,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return showingPreview() && activeSessionPreview() ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
   })
 
-  const yoloModeEnabled = createMemo(() => {
-    const session = activeSessionForInstance()
-    if (!session) return false
-    return isPermissionAutoAcceptEnabled(props.instance.id, session.id)
-  })
-
   const activeSessionStatusPill = createMemo(() => {
     const activeSessionId = activeSessionIdForInstance()
     if (!activeSessionId || activeSessionId === "info") return null
@@ -586,20 +579,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
   }
 
-  const renderYoloModePill = () => {
-    if (!yoloModeEnabled()) return null
-    return (
-      <span
-        class="status-indicator session-status session-status-list session-yolo-mode"
-        aria-label={t("instanceShell.yoloMode.badgeAriaLabel")}
-        title={t("instanceShell.yoloMode.badgeAriaLabel")}
-      >
-        <span class="status-dot" />
-        <span class="session-status-text">{t("instanceShell.yoloMode.badge")}</span>
-      </span>
-    )
-  }
-
   const renderSessionHeaderIndicators = () => (
     <div ref={setHeaderIndicatorsEl} class="session-header-indicators flex items-center justify-center gap-2">
       <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
@@ -608,7 +587,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           onClick={handleProjectInterruptionClick}
         />
       </Show>
-      {renderYoloModePill()}
     </div>
   )
 

@@ -43,11 +43,11 @@ import { PreviewManager } from "./previews/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { runCliUpgrade } from "./cli-upgrade"
 import { createServerShutdownHandler, installShutdownSignalHandlers, installShutdownStdinHandler, orchestrateServerShutdown } from "./shutdown"
-import { AutoAcceptManager } from "./permissions/auto-accept-manager"
-import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { PermissionReceipts } from "./permissions/receipts"
 import { PermissionReceiptStore } from "./permissions/receipt-store"
-import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
+import { SessionPermissionModes } from "./permissions/session-mode"
+import { connectSessionPermissionRefresh } from "./server/routes/session-permission-refresh"
+import { SessionCleanupFence } from "./server/session-cleanup-fence"
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
@@ -435,19 +435,11 @@ async function main() {
     logger: logger.child({ component: "sidecars" }),
   })
   const previewManager = new PreviewManager()
-  const yoloLogger = logger.child({ component: "yolo" })
-  const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager, settings)
   const permissionReceipts = new PermissionReceipts(
-    new PermissionReceiptStore(path.join(configLocation.baseDir, "permission-receipts")), workspaceManager, eventBus, yoloLogger,
+    new PermissionReceiptStore(path.join(configLocation.baseDir, "permission-receipts")), workspaceManager, eventBus,
+    logger.child({ component: "permission-receipts" }),
   )
   permissionReceipts.start()
-  const yoloManager = new AutoAcceptManager({
-    eventBus,
-    logger: yoloLogger,
-    replier: createOpencodePermissionReplier({ workspaceManager, permissionReceipts }),
-    persistence: sessionMetadataPersistence,
-  })
-  yoloManager.start()
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -554,6 +546,9 @@ async function main() {
   // Every listener admits the same worktrees: one fence (and its mission holds),
   // so a deletion through HTTPS drains a mission admitted through the bridge.
   const worktreeDeletionFence = new WorktreeDeletionFence()
+  const sessionPermissions = { modes: new SessionPermissionModes(settings), cleanup: new SessionCleanupFence() }
+  const stopPermissionRefresh = connectSessionPermissionRefresh(eventBus, workspaceManager, sessionPermissions.modes,
+    worktreeDeletionFence, sessionPermissions.cleanup, logger)
   const missionsHost = () => missionBridge !== "failed"
   const remoteServerBrowseManager = new RemoteServerBrowseManager(settings)
   const reconcileBackends = () => remoteServerBrowseManager.reconcile()
@@ -578,8 +573,8 @@ async function main() {
     clientConnectionManager,
     remoteProxySessionManager,
     remoteControlManager,
-    yoloManager,
     permissionReceipts,
+    sessionPermissions,
     panelExtensions,
     uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
     logger,
@@ -745,7 +740,7 @@ async function main() {
         {
           stopInstanceEventBridge: async () => {
             instanceEventBridge.shutdown()
-            await Promise.all([yoloManager.stop(), permissionReceipts.stop()])
+            await Promise.all([permissionReceipts.stop(), stopPermissionRefresh()])
           },
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
@@ -753,7 +748,6 @@ async function main() {
           stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: async () => {
             // Accepted HTTP mutations can confirm receipts after observers stop.
-            await yoloManager.stop()
             await permissionReceipts.stop()
             const results = await Promise.allSettled([
               workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(), memoryLifecycle.stop(),

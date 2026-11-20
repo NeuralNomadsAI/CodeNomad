@@ -90,8 +90,7 @@ const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["GET POST", /^\/api\/workspaces\/[^/]+\/missions\/[^/]+\/schedule-settings$/],
   ["GET", /^\/api\/workspaces\/[^/]+\/missions\/recurrence\/[^/]+\/(?:current|run-now\/status|passages\/[^/]+|current\/[^/]+\/content)$/],
   ["POST", /^\/api\/workspaces\/[^/]+\/missions\/recurrence\/[^/]+\/(?:control(?:\/status)?|run-now|current\/[^/]+\/page)$/],
-  ["GET", /^\/workspaces\/[^/]+\/yolo\/sessions\/[^/]+$/],
-  ["POST", /^\/workspaces\/[^/]+\/yolo\/sessions\/[^/]+\/toggle$/],
+  ["GET PUT", /^\/api\/workspaces\/[^/]+\/sessions\/[^/]+\/permission-mode$/],
   ["GET POST PUT PATCH DELETE", /^\/workspaces\/[^/]+\/instance\/api\/.+$/],
 ]
 const allowsServerDeviceRoute = (method: string, pathname: string) =>

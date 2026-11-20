@@ -1,5 +1,7 @@
 import type { JSX } from "solid-js"
 
+export const CONVERSATION_PERMISSIONS_SECTION_ID = "permissions"
+
 export interface RightPanelItem {
   id: string
   labelKey: string
@@ -67,8 +69,8 @@ export function parseRightPanelCustomization(value: string | null): RightPanelCu
     return {
       tabOrder: readStringArray(parsed.tabOrder),
       hiddenTabIds: readStringArray(parsed.hiddenTabIds),
-      statusSectionOrder: readStringArray(parsed.statusSectionOrder),
-      hiddenStatusSectionIds: readStringArray(parsed.hiddenStatusSectionIds),
+      statusSectionOrder: readStatusSectionIds(parsed.statusSectionOrder),
+      hiddenStatusSectionIds: readStatusSectionIds(parsed.hiddenStatusSectionIds),
     }
   } catch {
     return { ...DEFAULT_RIGHT_PANEL_CUSTOMIZATION }
@@ -158,4 +160,8 @@ function materializeOrder(orderedIds: readonly string[], displayedIds: readonly 
 
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []
+}
+
+function readStatusSectionIds(value: unknown): string[] {
+  return [...new Set(readStringArray(value).map(id => id === "yolo-mode" ? CONVERSATION_PERMISSIONS_SECTION_ID : id))]
 }

@@ -802,8 +802,10 @@ export interface SpeechSynthesisResponse {
   mimeType: string
 }
 
-export interface YoloStateResponse {
-  enabled: boolean
+export type ConversationPermissionMode = "autonomous" | "supervised"
+export interface ConversationPermissionModeResponse {
+  mode: ConversationPermissionMode
+  rootSessionID?: string
 }
 
 export interface RemoteServerProfile {
@@ -905,8 +907,6 @@ export type WorkspaceEventType =
   | "instance.dataChanged"
   | "instance.event"
   | "instance.eventStatus"
-  | "yolo.stateChanged"
-  | "yolo.autoAccepted"
   | "permission.receiptsChanged"
   | "memory.changed"
   | "panelExtensions.notesChanged"
@@ -950,8 +950,6 @@ export type WorkspaceEventPayload =
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string }
-  | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
-  | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
   | { type: "permission.receiptsChanged"; instanceId: string; sessionId: string; messageId?: string }
   /** A package's `panel.notes` changed in some project; frames re-read their own. */
   | { type: "panelExtensions.notesChanged"; id: string }

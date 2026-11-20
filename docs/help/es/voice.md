@@ -78,7 +78,7 @@ En **Conversación**, elige el **Motor de conversación**:
 
 Si el proveedor deja de estar disponible mientras el aviso sigue abierto, elige **Ajustes de voz** para abrir la tarjeta de conversación.
 
-El modelo de voz puede leer el estado de la sesión fijada al inicio, la última respuesta visible y los errores recientes. No tiene acceso a archivos. Si le pides que envíe una solicitud al agente, la envía directamente como mensaje tuyo, sin confirmación en pantalla. Se mantienen los permisos y las preguntas del agente, así como el ajuste Yolo.
+El modelo de voz puede leer el estado de la sesión fijada al inicio, la última respuesta visible y los errores recientes. No tiene acceso a archivos. Si le pides que envíe una solicitud al agente, la envía directamente como mensaje tuyo, sin confirmación en pantalla. Se mantienen el [modo de permisos de la conversación](permissions.md#conversation-mode) y las preguntas del agente.
 
 El servidor admite una conversación en directo a la vez por usuario autenticado o por dispositivo emparejado con Control remoto. **Detener** finaliza el audio y deja abierta la transcripción. Esta se conserva en memoria hasta que se cierra la ventana; las solicitudes enviadas al agente quedan como mensajes de la sesión. La conversación también termina tras dos minutos sin hablar, a los ocho minutos en total, al cambiar de sesión de destino, al cerrar la ventana o al perder la conexión. No hay reconexión automática ni cambio de proveedor.
 

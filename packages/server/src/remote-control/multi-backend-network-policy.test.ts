@@ -115,7 +115,7 @@ async function fixture(t: TestContext, disabled: boolean, locked: boolean, skipA
     allowedOrigins: [PUBLIC], serverMeta: meta as never,
     workspaceManager: stub, settings: settings as never, fileSystemBrowser: stub, eventBus: stub,
     instanceStore: stub, speechService: stub, clientConnectionManager: stub, remoteProxySessionManager: stub,
-    yoloManager: stub, nativeParent: stub, authManager, previewManager, remoteControlManager: manager,
+    nativeParent: stub, authManager, previewManager, remoteControlManager: manager,
     sidecarManager: {
       get: async () => sidecar, buildProxyBasePath: () => "/sidecars/fixture",
       buildTargetOrigin: () => SideCarManager.prototype.buildTargetOrigin(sidecar),

@@ -117,8 +117,6 @@ test("all CodeNomad envelope identities are scoped, with native identities and l
     { type: "instance.event", instanceId: "ws", event: native },
     { type: "instance.eventStatus", instanceId: "ws", status: "connected", generation: 7 },
     { type: "instance.dataChanged", instanceId: "ws", data: { messageHistory: [], agentModelSelections: {} } },
-    { type: "yolo.stateChanged", instanceId: "ws", sessionId: "session", enabled: true },
-    { type: "yolo.autoAccepted", instanceId: "ws", sessionId: "session", permissionId: "permission" },
     { type: "permission.receiptsChanged", instanceId: "ws", sessionId: "session", messageId: "message" },
     { type: "storage.stateChanged", owner: "ui", value: { untouched: "ws" } },
     { type: "storage.configChanged", owner: "ui", value: {} },

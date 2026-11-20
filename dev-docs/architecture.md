@@ -79,7 +79,7 @@ Authentication and Remote Control admission judge `routedPath()` (`server/routed
 
 Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy exposes an explicit method/path allowlist, adds shared-service authorization, validates prompt files, defaults safe requests to the workspace location, and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`. Never trust a browser-supplied worktree path: resolve ownership server-side. Upstream additions are exposed only after an explicit proxy review.
 
-Yolo state endpoints live at `/workspaces/:id/yolo/sessions/:sessionId`; Yolo notifications use `/api/events`.
+The conversation permission mode route (`/api/workspaces/:id/sessions/:sessionId/permission-mode`) owns the Supervised block of native session rules. OpenCode evaluates the same session rules for CodeNomad and its terminal UI; configuration is read-only to this route. Native `session.permissions` triggers a fresh mode read. See [Native interruption UX](NATIVE_INTERRUPTION_UX.md#conversation-permissions).
 
 ### Published UI compatibility
 
@@ -93,7 +93,7 @@ the server-upgrade status. `ui/__tests__/remote-ui.test.ts` covers both sides of
 
 `packages/ui/src/lib/sdk-manager.ts` uses `OpenCode.make()` and caches generated Promise clients by instance proxy path. `packages/ui/src/stores/opencode-client.ts` is the root-client authority; native directory/location fields select the worktree.
 
-The server holds one `client.event.subscribe()` stream. `InstanceEventBridge` maps native location events to CodeNomad `instance.event` records, and `/api/events` multiplexes them with workspace and Yolo events for the browser; heartbeats use `POST /api/client-connections/pong`. The stream is volatile and has no replay guarantee: reconnect must reconcile sessions and pending requests and reread authoritative file/config state. Pending recovery uses the loaded-only broker, never worktree-wide ordinary lists; see [compatibility](OPENCODE_COMPATIBILITY.md), whose Agent conventions also specify relay ordering and ownership fences.
+The server holds one `client.event.subscribe()` stream. `InstanceEventBridge` maps native location events to CodeNomad `instance.event` records, and `/api/events` multiplexes them with workspace events for the browser; heartbeats use `POST /api/client-connections/pong`. The stream is volatile and has no replay guarantee: reconnect must reconcile sessions and pending requests and reread authoritative file/config state. Pending recovery uses the loaded-only broker, never worktree-wide ordinary lists; see [compatibility](OPENCODE_COMPATIBILITY.md), whose Agent conventions also specify relay ordering and ownership fences.
 
 ### Per-backend transport
 
@@ -511,7 +511,7 @@ Remote tool, Markdown and attachment media use an owning-backend fetch and a mou
 | Interactive PTY management | Separate OpenCode V2 `pty.*` API |
 | Workspace lifecycle and directory authorization | CodeNomad |
 | Git status/diff/stage/unstage/commit | CodeNomad server |
-| Yolo state, persistence and auto-accept | CodeNomad server |
+| Permission evaluation and settlement; session rule block ownership | OpenCode; CodeNomad server |
 | Browser SSE multiplexing | CodeNomad server |
 | Desktop inspection, CDP feedback and browser previews | CodeNomad desktop host/browser controllers and the bundled automation plugin |
 | Remote Control transport, pairing and admission | OpenTunnel SDK route plus `packages/server/src/remote-control/` ([REMOTE_CONTROL.md](REMOTE_CONTROL.md)) |
@@ -522,7 +522,7 @@ The Status panel refreshes background Shells on Shell events/reconnect and allow
 
 CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is read only as migration input.
 
-Backend shutdown closes SSE and upgraded sockets in Fastify's `preClose` hook and drains accepted local HTTP handlers before releasing workspace and native-parent authority. Completing responses close their keep-alive connection, including streams whose headers preceded shutdown, through a shutdown-only response-finish idle sweep. Permission recovery reads are cancelled; queued receipt writes, dispatched Yolo replies and Yolo persistence settle before workspace cleanup. Plugin leases and workspace cleanup run concurrently, and the success handshake follows resource cleanup. Native-parent responses remain readable through this drain. Mission mutations persist through their native RPC handlers in the shared OpenCode service.
+Backend shutdown closes SSE and upgraded sockets in Fastify's `preClose` hook and drains accepted local HTTP handlers before releasing workspace and native-parent authority. Completing responses close their keep-alive connection, including streams whose headers preceded shutdown, through a shutdown-only response-finish idle sweep. Permission recovery reads are cancelled and queued receipt writes settle before workspace cleanup. Plugin leases and workspace cleanup run concurrently, and the success handshake follows resource cleanup. Native-parent responses remain readable through this drain. Mission mutations persist through their native RPC handlers in the shared OpenCode service.
 
 Tauri revokes backend-generation capabilities before requesting shutdown. Its stdout and stderr readers retain their pipes until EOF, recording ordinary output with the launch generation while filtering bootstrap tokens and native-request frames. Revoked generations cannot publish readiness, navigate or dispatch native requests. Confirmed shutdown requires process containment and successful completion of both readers within the same absolute stop deadline (32 seconds on Unix, four seconds on Windows, clipped by the shutdown coordinator's deadline). Reader errors, panics and missing EOF retain ownership for retry and fail shutdown. Server COMPLETE/INCOMPLETE lines remain native diagnostics; process containment and stream completion are tracked separately from the server's functional cleanup status.
 

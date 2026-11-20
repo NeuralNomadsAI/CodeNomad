@@ -13,6 +13,8 @@ import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../s
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
+  ConversationPermissionMode,
+  ConversationPermissionModeResponse,
   PermissionReceiptPage,
   PruneResult,
   BinaryValidationResult,
@@ -51,7 +53,6 @@ import type {
   RemoteControlPairing,
   RemoteControlStartResponse,
   RemoteControlStatus,
-  YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
   WorktreeGitCommitRequest,
@@ -248,6 +249,14 @@ export function createServerApi(ctx: BackendHttp) {
   const requestRaw = (path: string, init?: RequestInit) => sendRawRequest(ctx, path, init)
 
   return {
+    readConversationPermissionMode(instanceId: string, sessionId: string, signal: AbortSignal): Promise<ConversationPermissionModeResponse> {
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/permission-mode`, { signal }))
+    },
+    setConversationPermissionMode(instanceId: string, sessionId: string, mode: ConversationPermissionMode): Promise<ConversationPermissionModeResponse> {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/permission-mode`, {
+        method: "PUT", body: JSON.stringify({ mode }),
+      })
+    },
     fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
       const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
       if (cursor) params.set("cursor", cursor)
@@ -1032,17 +1041,6 @@ export function createServerApi(ctx: BackendHttp) {
     },
     deleteInstanceData(id: string): Promise<void> {
       return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
-    },
-    getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-      return request<YoloStateResponse>(
-        `/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
-      )
-    },
-    toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-      return request<YoloStateResponse>(
-        `/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
-        { method: "POST" },
-      )
     },
     sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
       const init: RequestInit = {

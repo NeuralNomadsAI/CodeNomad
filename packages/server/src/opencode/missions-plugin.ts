@@ -20,6 +20,7 @@ import { MISSION_SCHEMA_VERSION, type MissionEvent, type MissionJsonValue, type 
 import { parseMissionEvent } from "../missions/journal"
 import { parseMissionCreationDefaults, missionCreationSelection } from "../missions/creation-defaults"
 import { missionPausedInstruction } from "../missions/lifecycle-model"
+import { sessionPermissionRules } from "../permissions/session-mode-rules"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { nativeDocumentID } from "../missions/launch-policy"
 import { executionSchema, parseExecution } from "../missions/execution"
@@ -1013,6 +1014,7 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
   if (value.prepared !== undefined && typeof value.prepared !== "boolean") throw new Error("prepared must be boolean")
   if (value.startOnCreation !== undefined && typeof value.startOnCreation !== "boolean") throw new Error("startOnCreation must be boolean")
   return {
+    ...(value.permissions === undefined ? {} : { permissions: sessionPermissionRules.parse(value.permissions) }),
     ...(value.prepared === undefined ? {} : { prepared: value.prepared as boolean }),
     ...(value.startOnCreation === undefined ? {} : { startOnCreation: value.startOnCreation as boolean }),
     ...(value.preparationOptions === undefined ? {} : { preparationOptions: missionPreparationOptionsSchema.strict().parse(value.preparationOptions) }),

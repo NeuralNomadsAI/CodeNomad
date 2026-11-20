@@ -89,8 +89,8 @@ test("conversation API boundaries strip the prefix, including a real history-win
   await api.pruneSessionMessage(key, { sessionID: "s", messageID: "m", indexes: [0], revision: "a".repeat(64) })
   await api.fetchSessionGoal(key, "s")
   await api.getPendingRequests(key, ["/repo"], undefined, ["/old"])
-  await api.getYoloState(key, "s")
-  await api.toggleYolo(key, "s")
+  await api.readConversationPermissionMode(key, "s", new AbortController().signal)
+  await api.setConversationPermissionMode(key, "s", "supervised")
   assert.deepEqual(requests.map(r => r.path), [
     "/api/workspaces/w%2F1/session-history/window",
     "/api/workspaces/w%2F1/sessions/s/permission-receipts?unanchored=true",
@@ -99,7 +99,7 @@ test("conversation API boundaries strip the prefix, including a real history-win
     "/api/workspaces/w%2F1/session-history/prune", "/api/workspaces/w%2F1/session-pruning/prune",
     "/api/workspaces/w%2F1/sessions/s/goal",
     "/api/workspaces/w%2F1/pending-requests?directories=%2Frepo&optionalDirectories=%2Fold",
-    "/workspaces/w%2F1/yolo/sessions/s", "/workspaces/w%2F1/yolo/sessions/s/toggle",
+    "/api/workspaces/w%2F1/sessions/s/permission-mode", "/api/workspaces/w%2F1/sessions/s/permission-mode",
   ])
   assert.equal(requests[0].media, "deferred")
   assert.equal(requests.some(r => r.body.includes("chat~")), false)
@@ -147,13 +147,13 @@ test("local conversation HTTP routes preserve literal baseline requests", async 
   await api.fetchHistoryWindow("w/1", "s", { kind: "latest" })
   await api.fetchPermissionReceipts("w/1", "s", { messageId: "m/1" }, "next")
   await api.getPendingRequests("w/1", ["/repo"], undefined, ["/old"])
-  await api.toggleYolo("w/1", "s")
+  await api.setConversationPermissionMode("w/1", "s", "supervised")
   assert.deepEqual(wire, [
     { url: "/api/workspaces/w%2F1/session-history/window", method: "POST", body: '{"sessionID":"s","target":{"kind":"latest"}}',
       headers: [["content-type", "application/json"], ["x-codenomad-media", "deferred"]], credentials: "include" },
     { url: "/api/workspaces/w%2F1/sessions/s/permission-receipts?messageId=m%2F1&cursor=next", method: "GET", body: undefined, headers: [], credentials: "include" },
     { url: "/api/workspaces/w%2F1/pending-requests?directories=%2Frepo&optionalDirectories=%2Fold", method: "GET", body: undefined, headers: [], credentials: "include" },
-    { url: "/workspaces/w%2F1/yolo/sessions/s/toggle", method: "POST", body: undefined, headers: [], credentials: "include" },
+    { url: "/api/workspaces/w%2F1/sessions/s/permission-mode", method: "PUT", body: '{"mode":"supervised"}', headers: [["content-type", "application/json"]], credentials: "include" },
   ])
 })
 

@@ -40,6 +40,10 @@ If colors become hard to read, set **Contrast → On**. You can also select a bu
 
 In **Settings → General**, **Keep the computer awake while CodeNomad is running** is off by default. Turn it on to prevent system sleep while a local CodeNomad window is open (including minimized), even when no session is working; the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working. This option appears only in local desktop-app windows and Preferences; it is hidden in browser and remote views.
 
+## New conversation permissions {#new-conversation-permissions}
+
+In **Settings → General → New conversation permissions**, choose **Autonomous** (the default) or **Supervised** for new top-level conversations you create in CodeNomad. This leaves existing conversations unchanged. To change one, open [Status → Permissions](permissions.md#conversation-mode) in that conversation.
+
 ## Persistent agent memory {#agent-memory}
 
 Authenticated users over Remote Control, verified HTTPS, LAN or an installed PWA can review, edit and **Tidy up** memory for the selected local or remote project.
@@ -74,7 +78,7 @@ Drag a docked panel's inner edge to resize it.
 
 Reorder any Status section by dragging or with Up/Down keys. Visibility and order persist across reloads.
 
-Status includes token information, Yolo mode, provider Usage, background shells, MCP and Plugins. While the conversation has a [goal](conversations.md#goal), a goal line above these sections shows it; that line is not a section and cannot be hidden or moved. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
+Status includes token information, Permissions, provider Usage, background shells, MCP and Plugins. While the conversation has a [goal](conversations.md#goal), a goal line above these sections shows it; that line is not a section and cannot be hidden or moved. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
 
 Built-in layout is window layout, not a project mutation. Extension checkboxes are different: they activate code across all projects using the configuration. **Reset** does not change extension consent. See [Panel extensions](extensions.md).
 

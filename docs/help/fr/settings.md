@@ -40,6 +40,10 @@ Si les couleurs deviennent difficiles à lire, choisissez **Contraste → Activ�
 
 Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que CodeNomad tourne** est désactivé par défaut. Activez cette option pour empêcher la mise en veille tant qu’une fenêtre locale CodeNomad est ouverte (même minimisée), même sans session au travail ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille. Cette option apparaît uniquement dans les fenêtres locales de l’application de bureau et dans Preferences ; elle est masquée dans les vues navigateur et distantes.
 
+## Permissions des nouvelles conversations {#new-conversation-permissions}
+
+Dans **Paramètres → Général → Permissions des nouvelles conversations**, choisissez **Autonome** (par défaut) ou **Supervisé** pour les nouvelles conversations principales que vous créez dans CodeNomad. Les conversations existantes restent inchangées. Pour en modifier une, ouvrez son panneau [Statut → Permissions](permissions.md#conversation-mode).
+
 ## Mémoire persistante de l’agent {#agent-memory}
 
 Les utilisateurs authentifiés via le Contrôle à distance, HTTPS vérifié, le réseau local ou une PWA installée peuvent consulter et modifier la mémoire du projet local ou distant sélectionné, et utiliser **Ranger**.
@@ -74,7 +78,7 @@ Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner.
 
 Réordonnez toute section Statut par glisser-déposer ou avec les touches Haut/Bas. Le masquage et l’ordre persistent aux rechargements.
 
-Statut inclut les informations de tokens, le mode Yolo, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Tant que la conversation a un [objectif](conversations.md#goal), une ligne d’objectif au-dessus de ces sections l’affiche ; cette ligne n’est pas une section et ne peut être ni masquée ni déplacée. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
+Statut inclut les informations de tokens, Permissions, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Tant que la conversation a un [objectif](conversations.md#goal), une ligne d’objectif au-dessus de ces sections l’affiche ; cette ligne n’est pas une section et ne peut être ni masquée ni déplacée. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
 
 La disposition intégrée est propre à la fenêtre, pas une modification du projet. Les cases d’extension sont différentes : elles activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
 

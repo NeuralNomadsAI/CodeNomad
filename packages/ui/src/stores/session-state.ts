@@ -6,7 +6,7 @@ import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, 
 import { loadMessages, refreshSessionCatalog } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
-import { instances, ensureYoloStateSynced } from "./instances"
+import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
 import { captureBackendOperation } from "../lib/backend-operation"
@@ -816,11 +816,6 @@ function writeSessionSelection(
 function writeActiveSession(instanceId: string, sessionId: string | null): void {
   writeSessionSelection(setActiveSessionId, instanceId, sessionId)
   void refreshSessionCatalog(instanceId).catch((error) => log.warn("Failed to refresh session catalog", { instanceId, error }))
-  if (sessionId) {
-    // Backfill authoritative Yolo state for the now-active session so the badge
-    // matches the server even on first connect / multi-client scenarios.
-    ensureYoloStateSynced(instanceId, sessionId)
-  }
 }
 
 function writeActiveParentSession(instanceId: string, parentSessionId: string | null): void {

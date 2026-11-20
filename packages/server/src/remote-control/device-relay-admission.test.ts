@@ -129,7 +129,7 @@ for (const ingress of [false, true]) {
       ["GET", "/api/workspaces/w/missions/scheduled/requests/r"], ["POST", "/api/workspaces/w/missions/recurrence"],
       ...["current", "current/p/content", "run-now/status", "passages/p"].map(path => ["GET", `/api/workspaces/w/missions/recurrence/s/${path}`] as [string, string]),
       ...["current/p/page", "control", "control/status", "run-now"].map(path => ["POST", `/api/workspaces/w/missions/recurrence/s/${path}`] as [string, string]),
-      ["GET", "/workspaces/w/yolo/sessions/s"], ["POST", "/workspaces/w/yolo/sessions/s/toggle"],
+      ["GET", "/api/workspaces/w/sessions/s/permission-mode"], ["PUT", "/api/workspaces/w/sessions/s/permission-mode"],
       ["POST", "/workspaces/w/instance/api/session/s/prompt"],
     ]
     for (const [method, url] of allowed) {

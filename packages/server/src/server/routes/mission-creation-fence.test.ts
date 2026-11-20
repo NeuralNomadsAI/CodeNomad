@@ -11,6 +11,8 @@ import { prepareMissionCreation } from "./mission-creation-pipeline"
 import { missionRecoveryControlError, missionRecoveryError } from "../../missions/recovery-error"
 import { MissionControlError } from "../../missions/control-error"
 import { prepareCoordinatorMission } from "./mission-prepare"
+import { SessionPermissionModes } from "../../permissions/session-mode"
+import type { PermissionRule } from "@opencode/client"
 
 const directory = "C:/private-fixture/worktree"
 const physical = "C:/private-fixture/physical"
@@ -27,12 +29,19 @@ async function waitForGate(gate: ReturnType<typeof deferred>, effect: Promise<un
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${label}: gate not reached`)), 5_000) })])
   } finally { clearTimeout(timer) }
 }
-async function fixture(useBridge = false, drainTimeout = 2_000) {
+async function fixture(useBridge = false, drainTimeout = 2_000, supervised = false) {
   const app = Fastify()
   const fence = new WorktreeDeletionFence(drainTimeout)
   const storage = new Map<string, any>(), sessions = new Map<string, any>(), tools = new Map<string, any>()
   let handlers: any, creates = 0, writes = 0, current = true, rpcCreates = 0
   let lostAck = false, failedPublication = false, wrongProfile = false, documentCapabilities = true, failedIntentCleanup = false
+  let supportsPermissionMode = true
+  const confirmedPermissions: PermissionRule[][] = []
+  const permissionModes = supervised ? new SessionPermissionModes({
+    getRawConfigOwner: () => ({ settings: { newConversationPermissions: "supervised" } }),
+    getPrivateSessionPermissionState: () => ({}),
+    setPrivateSessionPermissionBlock: (_key, rules) => { if (rules) confirmedPermissions.push(rules) },
+  }) : undefined
   let preferences: unknown, preferenceReads = 0
   let rejectionTransform: ((error: any) => any) | undefined
   let creationGate: ReturnType<typeof deferred> | undefined, publicationGate: ReturnType<typeof deferred> | undefined
@@ -48,19 +57,20 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
     get: async ({ sessionID }: any) => { if (!sessions.has(sessionID)) throw Object.assign(new Error("Absent"), { _tag: "SessionNotFoundError", sessionID }); return sessions.get(sessionID) },
     create: async (input: any) => {
       creates++; creationStarted.resolve(); await creationGate?.promise
-      const value = { ...input, projectID, ...(foreignRoot ? { parentID: "ses_parent" } : {}),
+      const value = { ...input, projectID, time: { created: 100 }, ...(foreignRoot ? { parentID: "ses_parent" } : {}),
         ...(wrongProfile ? { agent: "wrong" } : {}) }; sessions.set(input.id, value); return value
     },
     environment: async () => {}, instructions: { entry: { put: async () => {}, remove: async () => {} } },
     prompt: async () => ({}), synthetic: async () => ({}), hook: async () => ({ dispose: async () => {} }),
   }
   const client: any = {
+    config: { get: async () => [] },
     session, location: { get: async () => ({ directory: nativeDirectory, project: { id: projectID } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
     rpc: () => new Proxy({}, { get: (_, method) => async (input: any) => {
       if (method === "documentCapabilities") {
         if (!documentCapabilities) throw new Error("Document capabilities unavailable")
-        return { version: 1, automaticStart: true }
+        return { version: 1, automaticStart: true, ...(supportsPermissionMode ? { rootPermissions: true } : {}) }
       }
       if (method === "snapshot" && creates && settlementGate) { settlementStarted.resolve(); await settlementGate.promise }
       if (method === "create") rpcCreates++
@@ -114,21 +124,22 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
   const creationLifetime = new AbortController()
   const dispose = await setupMissionsPlugin(context, transport, undefined,
     async (id, input) => {
-      if (!useBridge) return createManagedMissionRoot(manager, fence, id, { kind: "create-root", input }, creationLifetime.signal) as any
+      if (!useBridge) return createManagedMissionRoot(manager, fence, id, { kind: "create-root", input }, creationLifetime.signal, permissionModes) as any
       const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
         headers: { "x-codenomad-automation-token": "private-token" }, payload: { mode: "mission-input", sessionID: id,
           command: { kind: "create-root", input } } })
       if (response.statusCode !== 200) throw new Error(response.json().error)
       return response.json().result
     })
-  registerMissionRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence })
-  registerAutomationPluginRoute(app, { workspaceManager: manager, worktreeDeletionFence: fence, bridgeToken: "private-token",
+  registerMissionRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence, permissionModes })
+  registerAutomationPluginRoute(app, { workspaceManager: manager, worktreeDeletionFence: fence, bridgeToken: "private-token", permissionModes,
     settings: { getRawConfigOwner: (owner: string) => { assert.equal(owner, "ui"); preferenceReads++; return { settings: { missionProfileDefaults: preferences } } } },
     authManager: { isLoopbackRequest: () => true }, nativeParent: {}, developerCdp: {} } as any)
   return {
     app, fence, sessions, storage, tools, handlers, manager, context, creationStarted, publicationStarted, settlementStarted, track,
     get creates() { return creates }, get writes() { return writes }, get rpcCreates() { return rpcCreates },
     get preferenceReads() { return preferenceReads },
+    confirmedPermissions, withoutPermissionModeSupport: () => { supportsPermissionMode = false },
     setPreferences: (value: unknown) => { preferences = value },
     setDocumentCapabilities: (value: boolean) => { documentCapabilities = value },
     failIntentCleanup: () => { failedIntentCleanup = true },
@@ -149,6 +160,28 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
 }
 const payload = { requestId: "create", objective: "Private test", template: "custom", directory }
 
+test("passes and confirms the default at Mission coordinator creation, not on adoption or unsupported runtime", async () => {
+  const f = await fixture(false, 2_000, true)
+  const url = "/api/workspaces/workspace/missions"
+  try {
+    const created = await f.app.inject({ method: "POST", url, payload })
+    assert.equal(created.statusCode, 200, created.body)
+    const coordinatorID = created.json().mission.coordinatorSessionId
+    const block = [{ action: "edit", resource: "*", effect: "ask" }, { action: "shell", resource: "*", effect: "ask" }]
+    assert.deepEqual(f.sessions.get(coordinatorID).permissions, block)
+    assert.deepEqual(f.confirmedPermissions, [block])
+    f.withoutPermissionModeSupport()
+    const unsupported = await f.app.inject({ method: "POST", url, payload: { ...payload, requestId: "unsupported" } })
+    assert.equal(unsupported.statusCode, 503)
+    assert.equal(f.creates, 1)
+    f.sessions.set("ses_existing", { id: "ses_existing", projectID, location: { directory } })
+    const adopted = await f.app.inject({ method: "POST", url, payload: { ...payload, requestId: "adopted", coordinatorSessionId: "ses_existing" } })
+    assert.equal(adopted.statusCode, 200, adopted.body)
+    assert.equal(f.sessions.get("ses_existing").permissions, undefined)
+    assert.equal(f.creates, 1)
+  } finally { await f.close() }
+})
+
 test("lost creation acknowledgement is read by its original request without another create or premature fence release", async () => {
   const f = await fixture(false, 20)
   try {
@@ -162,6 +195,32 @@ test("lost creation acknowledgement is read by its original request without anot
     assert.equal(f.rpcCreates, creates); assert.equal(f.writes, writes)
     await f.fence.run(physical, [physical], async () => {})
   } finally { await f.close() }
+})
+
+test("durable creation settles a lost acknowledgement independently of later coordinator permission edits", async () => {
+  for (const change of ["unrelated", "removed", "ambiguous", "unavailable"] as const) {
+    const f = await fixture(false, 20, true)
+    try {
+      f.loseAck()
+      assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })).json().code, "creation-uncertain")
+      await assert.rejects(f.fence.run(physical, [physical], async () => assert.fail("pending create")), /Timed out/)
+      const root = [...f.sessions.values()][0]
+      const block = structuredClone(root.permissions)
+      const extra = { action: "read", resource: "fixture.txt", effect: "deny" }
+      const changed = change === "unrelated" ? [extra, ...block] : change === "removed" ? [extra] : [...block, extra, ...block]
+      root.permissions = changed
+      if (change === "unavailable") f.sessions.delete(root.id)
+      const { writes } = f
+      const receipt = await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })
+      assert.equal(receipt.json().state, "created", change)
+      assert.equal(receipt.json().mission.coordinatorSessionId, root.id)
+      assert.deepEqual(f.confirmedPermissions, change === "unrelated" ? [block] : [])
+      assert.deepEqual(root.permissions, changed)
+      assert.equal(f.rpcCreates, 1)
+      assert.equal(f.writes, writes)
+      await f.fence.run(physical, [physical], async () => {})
+    } finally { await f.close() }
+  }
 })
 
 test("the original terminal refusal is recoverable; an absent request is unknown", async () => {
@@ -626,8 +685,8 @@ test("connection/ownership retirement during managed creation cannot release an 
   } finally { await f.close() }
 })
 
-test("managed creation uses the authenticated desktop bridge without generic native inputs", async () => {
-  const f = await fixture(true), held = deferred()
+test("managed creation uses the authenticated desktop bridge and applies the configured default", async () => {
+  const f = await fixture(true, 2_000, true), held = deferred()
   try {
     const { mission } = await specialist(f)
     const response = await f.app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
@@ -638,6 +697,9 @@ test("managed creation uses the authenticated desktop bridge without generic nat
     await assert.rejects(delegate(f), /admission failed/); assert.equal(f.creates, 0)
     held.resolve(); await deletion
     await delegate(f); assert.equal(f.creates, 1)
+    const block = [{ action: "edit", resource: "*", effect: "ask" }, { action: "shell", resource: "*", effect: "ask" }]
+    assert.deepEqual([...f.sessions.values()].find(session => session.id !== "ses_coordinator").permissions, block)
+    assert.deepEqual(f.confirmedPermissions, [block])
   } finally { held.resolve(); await f.close() }
 })
 

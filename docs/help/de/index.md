@@ -55,7 +55,7 @@ Die genauen Grenzen erläutern [Browser-Vorschauen und SideCars](browser-sidecar
 | --- | --- |
 | Projekt-Tab / Arbeitsbereich / Instanz | Eine CodeNomad-Verbindung zu einem ausdrücklich geöffneten Ordner; mehrere Tabs können den gemeinsamen Dienst nutzen. |
 | Unterhaltung / Sitzung | Nativer OpenCode-Verlauf und Ausführung, die einem Verzeichnis zugeordnet sind. |
-| Familie | Eine Unterhaltung mit ihren rekursiven Untersitzungen; relevant für Verschieben, Aktivität, Yolo und Missionssteuerung. |
+| Familie | Eine Unterhaltung mit ihren rekursiven Untersitzungen; relevant für Verschieben, Aktivität und Missionssteuerung. |
 | Worktree | Ein zugehöriger Repository-Checkout, der zum Durchsuchen oder als Sitzungsort ausgewählt wurde. Ihn zu durchsuchen verschiebt keine Unterhaltung. |
 | Location | Der verzeichnisbezogene native Laufzeitkontext von OpenCode; das Schließen eines Projekt-Tabs schließt das Projekt nur in CodeNomad und entfernt keine native Location. |
 | CodeNomad-Backend | Der Server für Arbeitsbereiche, Git, Authentifizierung und Client-Verbindungen. Sein Konto und seine Umgebung bestimmen den Dateisystemzugriff des Backends. |
@@ -72,7 +72,7 @@ Das Arbeitsbereichs-Stammverzeichnis begrenzt, welche Ordner CodeNomad öffnet; 
 | Arbeitsbereich installieren oder bereitstellen | [Installation](install.md), [Server-Referenz](server.md), [Netzwerk und TLS](remote-access.md) |
 | Über Checkouts und Unterhaltungen hinweg arbeiten | [Projekte](projects.md), [Unterhaltungen](conversations.md), [Dateien](files.md) |
 | Verlauf finden oder sicher bereinigen | [Verlauf](history.md) |
-| Native Fragen und Berechtigungsanfragen beantworten | [Berechtigungen](permissions.md) |
+| Berechtigungen einer Unterhaltung einstellen oder Anfragen beantworten | [Berechtigungsmodi](permissions.md#conversation-mode), [Fragen und Berechtigungen](permissions.md) |
 | Begrenzte oder geplante Arbeit koordinieren | [Missionen](missions.md) |
 | Ausführung und Integrationen konfigurieren | [OpenCode](opencode.md), [Anbieter](providers.md), [Integrationen](integrations.md) |
 | Weiteres Gerät verbinden | [Fernsteuerung](remote-control.md), [Sicherheit](security.md), [Mobil](mobile.md) |

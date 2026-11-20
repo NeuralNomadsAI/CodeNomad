@@ -78,7 +78,7 @@ In **Conversation**, choose a **Conversation engine**:
 
 If the provider becomes unavailable while the consent dialog is open, choose **Voice settings** to open the **Conversation** card.
 
-The live voice model can read the fixed session's status, latest visible reply and recent errors. It has no file access. When you ask it to send a request to the agent, it sends it directly as a user message, without on-screen confirmation. The usual agent permissions, questions and Yolo setting still apply.
+The live voice model can read the fixed session's status, latest visible reply and recent errors. It has no file access. When you ask it to send a request to the agent, it sends it directly as a user message, without on-screen confirmation. The [conversation's permission mode](permissions.md#conversation-mode) and normal question handling still apply.
 
 The server allows one live conversation at a time per signed-in user, or per paired device with Remote Control. Use **Stop** to end audio and keep the transcript open. CodeNomad keeps the live transcript in memory until its window closes; requests sent to the agent remain ordinary session messages. Live voice also ends after two minutes without speech, after eight minutes total, when the target changes, when you close the window or if the connection drops. There is no automatic reconnection or provider fallback.
 
