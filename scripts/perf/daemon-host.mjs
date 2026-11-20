@@ -30,7 +30,7 @@ export async function withDaemon(cli, root, chunks, run) {
   git("add", ".")
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@invalid", "commit", "-qm", "fixture")
 
-  const markers = new Map()
+  const markers = new Map(), liveToolTurns = new Set()
   const words = ["alpha beta gamma delta epsilon", "render store event frame patch", "eta theta iota kappa lambda"]
   let providerError
   const provider = createServer(async (req, res) => {
@@ -43,17 +43,19 @@ export async function withDaemon(cli, root, chunks, run) {
         res.end(JSON.stringify({ id: "fixture", choices: [{ message: { role: "assistant", content: "Fixture" }, finish_reason: "stop" }] }))
         return
       }
+      // Native instructions can follow the prompt as distinct synthetic messages.
       const user = messages.filter(m => m.role === "user").map(m => typeof m.content === "string" ? m.content : m.content.map(c => c.text ?? "").join(" "))
-        .filter(text => !text.startsWith("The Code Mode tool catalog has changed.")).at(-1) ?? ""
-      const tag = /BENCH:([A-Z]{2}):(\d+) LIVE/.exec(user)
-      const seedTurn = /SEED(\d+)/.exec(user)
-      const tools = tag ? 3 : seedTurn && Number(seedTurn[1]) % 5 === 0 ? 1 : 0
+        .findLast(text => /^\s*(?:BENCH:[A-Z]{2}:\d+ LIVE\b|SEED\d+\b)/.test(text)) ?? ""
+      const tag = /^\s*BENCH:([A-Z]{2}):(\d+) LIVE/.exec(user)
+      const seedTurn = /^\s*SEED(\d+)/.exec(user)
+      const tools = tag ? (liveToolTurns.has(tag[0]) ? 0 : 3) : seedTurn && Number(seedTurn[1]) % 5 === 0 && messages.at(-1)?.role !== "tool" ? 1 : 0
       res.setHeader("Content-Type", "text/event-stream")
       const send = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({
         id: "fixture", object: "chat.completion.chunk", model: "fixture", choices: [{ index: 0, delta, finish_reason }],
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       })}\n\n`)
-      if (tools && messages.at(-1)?.role !== "tool") {
+      if (tools) {
+        if (tag) liveToolTurns.add(tag[0])
         send({ role: "assistant", content: "" })
         for (let i = 0; i < tools; i++) send({ tool_calls: [{ index: i, id: `call_${randomUUID().slice(0, 8)}`, type: "function",
           function: { name: "read", arguments: JSON.stringify({ path: path.join(project, `module-${i}.ts`) }) } }] })

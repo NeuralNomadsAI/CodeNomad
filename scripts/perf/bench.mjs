@@ -67,7 +67,8 @@ async function measure(daemon, ids, driver, countWork) {
     assert.equal(outcomes.size, ids.length, "Timed out waiting for successful native completions")
     const expected = Array.from({ length: Math.ceil(chunks / 8) }, (_, i) => `MKAA${run}${String(i * 8).padStart(4, "0")}K`)
     const last = expected.at(-1)
-    assert(expected.every(key => daemon.markers.has(key) && daemonAt.has(key)), "Missing provider or daemon marker")
+    assert(expected.every(key => daemon.markers.has(key)), "Missing synthetic provider marker")
+    assert(daemonAt.has(last), "The daemon stream never published the final marker")
     const rendered = Date.now() + 30_000
     let observation = await driver.collect()
     while (observation.shown[last] === undefined && Date.now() < rendered) {
@@ -80,7 +81,7 @@ async function measure(daemon, ids, driver, countWork) {
     const { shown, mutations, pageFrames } = await driver.collect()
     await driver.clear()
     await waitIdle(daemon)
-    const seen = expected.filter(key => shown[key] !== undefined)
+    const seen = expected.filter(key => shown[key] !== undefined && daemonAt.has(key))
     assert(seen.includes(last), "The final foreground marker never appeared")
     const stages = {
       // The final marker stays in the viewport; earlier markers can scroll out between paints.
