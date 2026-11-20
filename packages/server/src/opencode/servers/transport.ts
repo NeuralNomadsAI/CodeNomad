@@ -41,6 +41,8 @@ export function createExplicitTransport(options: {
   onSetCookie?: (values: string[]) => void
   /** Explicit server protocols must not carry Fetch's automatically generated browser metadata. */
   omitFetchMetadata?: boolean
+  /** A CodeNomad password connection uses the saved destination's own CSRF origin for writes. */
+  sendOwnOriginOnMutation?: boolean
   /** Preview responses keep redirects for capability-scoped rewriting by their isolated listener. */
   previewRedirects?: boolean
   /** Owned local endpoint that carries this origin (an SSH forward). The origin stays the request and TLS identity. */
@@ -85,6 +87,7 @@ export function createExplicitTransport(options: {
       const headers = filterHeaders(request.headers, requestDenied)
       if (credentials) headers.set("authorization", `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`)
       for (const [name, value] of Object.entries(options.headers?.() ?? {})) if (name.toLowerCase() !== "origin") headers.set(name, value)
+      if (options.sendOwnOriginOnMutation && !["GET", "HEAD", "OPTIONS"].includes(request.method)) headers.set("origin", origin)
       const response = await undiciFetch(url, {
         method: request.method, headers: Object.fromEntries(headers),
         body: request.body as never, duplex: "half", signal, redirect: "manual", dispatcher,
