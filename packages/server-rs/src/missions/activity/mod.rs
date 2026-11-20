@@ -35,7 +35,7 @@ fn foreign() -> Response {
 }
 
 async fn rpc(app: &crate::App, dir: &str, input: &Value) -> Result<J, ()> {
-    let url = app.native.url.join("/api/rpc/codenomad.missions/panelPage").map_err(|_| ())?;
+    let url = app.native.url().join("/api/rpc/codenomad.missions/panelPage").map_err(|_| ())?;
     let mut response = app
         .native
         .request(axum::http::Method::POST, url)

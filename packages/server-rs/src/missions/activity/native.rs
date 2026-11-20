@@ -125,7 +125,7 @@ impl<'a> Observer<'a> {
         if remaining.is_zero() {
             return Err(Fail::Other);
         }
-        let url = self.app.native.url.join(path).map_err(|_| Fail::Other)?;
+        let url = self.app.native.url().join(path).map_err(|_| Fail::Other)?;
         let mut response = self
             .app
             .native

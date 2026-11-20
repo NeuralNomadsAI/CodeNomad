@@ -10,10 +10,11 @@ use rcgen::{BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose
 use rustls::pki_types::CertificateDer;
 use sha2::{Digest, Sha256};
 use std::{
+    ffi::OsString,
     fs,
     io::{self, Write},
-    net::{IpAddr, SocketAddr},
-    path::Path,
+    net::IpAddr,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -152,8 +153,19 @@ fn params(names: Vec<String>, cn: &str, days: i64) -> Result<CertificateParams, 
     params.distinguished_name.push(DnType::CommonName, cn);
     Ok(params)
 }
-fn material(dir: &Path, host: &str) -> Result<(String, String), Failure> {
-    let [key, cert, ca] = crate::config::tls_files();
+/// Where and as what the HTTPS listener runs: interface, public name, `tls/` folder,
+/// supplied key, certificate and CA files, extra certificate names.
+pub struct Settings {
+    pub bind: crate::host::Bind,
+    pub name: String,
+    pub dir: PathBuf,
+    pub files: [Option<OsString>; 3],
+    pub sans: String,
+}
+
+fn material(s: &Settings) -> Result<(String, String), Failure> {
+    let (dir, host) = (s.dir.as_path(), s.name.as_str());
+    let [key, cert, ca] = s.files.clone();
     if key.is_some() || cert.is_some() || ca.is_some() {
         let cert = fs::read_to_string(cert.ok_or("TLS certificate missing")?)?;
         let chain = ca.map(fs::read_to_string).transpose()?.unwrap_or_default();
@@ -162,7 +174,7 @@ fn material(dir: &Path, host: &str) -> Result<(String, String), Failure> {
     private_directory(dir)?;
     let mut names = vec!["localhost".into(), "127.0.0.1".into(), host.trim_matches(['[', ']']).into()];
     names.extend(
-        crate::config::tls_sans()
+        s.sans
             .split(',')
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -173,7 +185,9 @@ fn material(dir: &Path, host: &str) -> Result<(String, String), Failure> {
     let (ca_path, ca_key_path) = (dir.join("ca-cert.pem"), dir.join("ca-key.pem"));
     let (leaf_path, key_path) = (dir.join("server-cert.pem"), dir.join("server-key.pem"));
     let mut ca = fs::read_to_string(&ca_path).unwrap_or_default();
-    let rotate = !fresh(&ca, 0, &[]) || !ca_key_path.is_file();
+    // A CA key this signer cannot load (the reference's RSA PKCS#1) is replaced like a missing one.
+    let usable = fs::read_to_string(&ca_key_path).is_ok_and(|pem| KeyPair::from_pem(&pem).is_ok());
+    let rotate = !fresh(&ca, 0, &[]) || !usable;
     if rotate {
         let key = KeyPair::generate()?;
         let mut p = params(vec![], "CodeNomad Local CA", 365)?;
@@ -199,21 +213,20 @@ fn material(dir: &Path, host: &str) -> Result<(String, String), Failure> {
 }
 
 impl Listener {
-    pub async fn open(root: &Path) -> Result<Option<Self>, Failure> {
-        let Some(bind) = crate::config::https_bind() else { return Ok(None) };
-        let ip: SocketAddr = bind.parse()?;
-        if !match ip.ip() {
+    pub async fn open(settings: Settings) -> Result<Self, Failure> {
+        let ip = settings.bind.ip;
+        if !match ip {
             IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
             IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
         } {
             return Err("An explicit loopback or private TLS interface is required".into());
         }
-        let host = crate::config::https_name()?;
+        let host = settings.name.clone();
         let ingress = crate::bench::ingress();
-        if ingress && !ip.ip().is_loopback() {
+        if ingress && !ip.is_loopback() {
             return Err("Fixture ingress is loopback-only".into());
         }
-        let listener = TcpListener::bind(ip).await?;
+        let listener = settings.bind.listen().await?;
         let port = listener.local_addr()?.port();
         let base = format!("https://{host}");
         let url = reqwest::Url::parse(&base)?;
@@ -221,18 +234,18 @@ impl Listener {
             return Err("Invalid HTTPS listener name".into());
         }
         let origin = if port == 443 { base } else { format!("{base}:{port}") };
-        let (key, cert) = material(&root.join("tls"), &host)?;
+        let (key, cert) = material(&settings)?;
         let certs = rustls_pemfile::certs(&mut cert.as_bytes()).collect::<Result<Vec<_>, _>>()?;
         let fingerprint = format!("{:x}", Sha256::digest(certs.first().ok_or("TLS chain empty")?.as_ref()));
         let private = rustls_pemfile::private_key(&mut key.as_bytes())?.ok_or("TLS private key missing")?;
         let config = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(certs, private)?;
-        Ok(Some(Self {
+        Ok(Self {
             socket: listener,
             acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(config)),
             origin,
             fingerprint,
             ingress,
-        }))
+        })
     }
     pub async fn serve(self, router: Router, shutdown: CancellationToken) -> io::Result<()> {
         let gate = Arc::new(crate::auth::tls_admission::Gate::default());

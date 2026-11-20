@@ -40,7 +40,7 @@ pub async fn native(
 ) -> Result<Value, Error> {
     let mut request = app
         .native
-        .request(method, app.native.url.join(path).map_err(|_| native_error())?)
+        .request(method, app.native.url().join(path).map_err(|_| native_error())?)
         .query(query)
         .timeout(Duration::from_secs(12));
     if let Some(body) = body {
