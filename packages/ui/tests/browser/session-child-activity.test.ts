@@ -58,7 +58,7 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
     assert.equal(await chevron("other").getAttribute("title"), "Expand — 1 subsession working")
     await settlesOn("other", "--session-status-working-fg")
     assert.notEqual(await color("other"), idleColor)
-    assert.equal(await chevron("other").locator(".disclosure-chevron").evaluate(el => getComputedStyle(el).animationName), "pulse")
+    assert.equal(await chevron("other").locator(".disclosure-chevron").evaluate(el => getComputedStyle(el).animationName), "none")
     // No extra badge: the parent's own status area is untouched.
     assert.equal(await page.locator('[data-session-id="other"] .session-item-badges > *').count(), 0)
 
