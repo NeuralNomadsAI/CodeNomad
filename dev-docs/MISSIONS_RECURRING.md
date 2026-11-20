@@ -189,11 +189,11 @@ the Missions metadata key. Existing transcript, title, permissions and unrelated
 remain. After admission the coordinator conversation's agent and model stay its user's
 choice: Mission tools keep working after a switch, while task roots keep their role profile. The user's choice authorizes ordinary Mission controls over that conversation
 and its work, including Stop cancellation of existing queued user/synthetic inputs.
-For human-authored choices, never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
+For human-authored choices, never add other-Mission-membership vetoes to the explicitly adopted root.
 An agent can explicitly select its own eligible root when saving a schedule.
-Selection checks placement, source and ownership while the conversation is active.
-Another root must be idle at selection. Every agent-authored passage requires an
-idle family, including its inbox, claims, tools and pending requests, at adoption.
+Selection and adoption check placement, source and ownership only: never add a busy-work veto.
+An active, queued or waiting family is adopted as is; the passage prompt queues natively
+behind its current turn, and its baseline records that turn as inherited work.
 Deterministic coordinator selection refusals before a write return an exact
 request-bound refusal; incomplete or ambiguous writes retain their recovery hold.
 Preparation, configuration and every authoritative adoption revalidate this boundary before native

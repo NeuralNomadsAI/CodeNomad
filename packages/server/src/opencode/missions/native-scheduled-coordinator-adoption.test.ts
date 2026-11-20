@@ -63,23 +63,19 @@ test("creation Effect prevalidation is read-only, guards native state and foreig
   assert.equal(guard(), true)
   assert.equal(effects, 0)
   assert.equal(db.prepare("SELECT count(*) AS count FROM kv").get()!.count, 0)
+  // A busy root is selected as is: native sessions queue the passage prompt.
   db.exec("INSERT INTO session_inbox VALUES('msg_queued','ses_root',1,'user')")
-  assert.throws(guard, /changed during preparation/)
-  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, input)), /coordinator-busy/)
-  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined,
-    configuration: { ...configuration, coordinatorSelectionAuthor: input.author } })), /coordinator-busy/,
-  "agent configuration retains idle-root safeguards on human-created documents")
-  const human = await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined }))
-  assert.equal(human(), true, "explicit human adoption remains allowed while busy")
-  const self = { coordinatorSessionID: "ses_root" }
-  assert.equal((await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: self })))(), true)
-  db.exec("DELETE FROM session_inbox")
   authorActive = true
   db.exec("UPDATE session_v2 SET time_suspended=1 WHERE id='ses_root'")
   db.exec(`INSERT INTO session_message VALUES('msg_tool','ses_root',1,'assistant',
     '{"content":[{"type":"tool","state":{"status":"running"}}]}')`)
-  await assert.rejects(run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, input)), /coordinator-busy/)
+  assert.equal(guard(), true, "queued, running or suspended work keeps the selection valid")
+  assert.equal((await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, input)))(), true)
+  assert.equal((await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined,
+    configuration: { ...configuration, coordinatorSelectionAuthor: input.author } })))(), true)
+  const self = { coordinatorSessionID: "ses_root" }
   assert.equal((await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: self })))(), true)
+  db.exec("DELETE FROM session_inbox")
   assert.equal((await run(prevalidateAgentScheduledCoordinatorCreation(ctx, run, { ...input, author: undefined,
     configuration: { ...configuration, coordinatorSelectionAuthor: self } })))(), true, "the author can set its own root on an existing schedule")
   authorActive = false

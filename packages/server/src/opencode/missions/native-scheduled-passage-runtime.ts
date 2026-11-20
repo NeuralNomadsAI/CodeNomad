@@ -155,7 +155,7 @@ export const acquireNativeScheduledPassageRuntime = Effect.fn("missions.acquireS
   })
   return {
     preflight: (input: Entry & { missionID: string; wake: DocumentPassageWake; cutoff?: number }) => engine(input).preflight(input),
-    wake: (input: Entry & { missionID: string; wake?: DocumentPassageWake; cutoff?: number }) => engine(input).wake(input),
+    wake: (input: Entry & { missionID: string; wake?: DocumentPassageWake; cutoff?: number; consumed?(): void }) => engine(input).wake(input),
     reconcile: (input: Entry & { missionID: string }) => engine(input).reconcile(input),
     runNow: (input: Entry & { missionID: string; requestID: string; expectedRevision: number; reserved?: (doc: MissionDocument) => true }) => engine(input).runNow(input),
     controlPassage: (input: Entry & ScheduledPassageControl & { missionID: string }): Promise<{ pending: boolean }> => store.withExclusion(async locked => {

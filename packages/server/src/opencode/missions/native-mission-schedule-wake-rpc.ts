@@ -73,11 +73,12 @@ async function receive(mode: "wake" | "status", input: Input, entry: Entry,
       entry.current()
       if (proof.wake.dueAt !== original.dueAt) throw new Error("schedule-wake-original-changed")
       if (current.highWater < wake.run) await locked.change(doc.id, doc.revision, entry.current, value => missionDocumentChanges.processWake(value, original))
+      // The receipt admits consuming the run, committed with its high-water: closure,
+      // owner and passage reconciliation may outlast it.
+      entry.consumed?.()
       return ports.close(locked)
     })
     if (!consumed) return reply("pending")
-    // The receipt admits consuming the run; owner and passage reconciliation may outlast it.
-    entry.consumed?.()
     await ports.owner.reconcile(wake.missionID)
     try { await ports.runtime.reconcile({ ...entry, missionID: wake.missionID }) }
     finally { await ports.owner.reconcile(wake.missionID) }

@@ -41,7 +41,7 @@ const base = { type: "object", properties: { sessionID: text,
   incarnation: { type: "object", properties: { id: text, pid: { type: "integer", minimum: 1 }, url: text, version: text },
     required: ["id", "pid", "url"], additionalProperties: false } }, required: ["sessionID", "binding", "incarnation"], additionalProperties: false } as const
 const output = { type: "object", properties: { selected: { type: "boolean" }, readSessionID: text, value: {},
-  refusal: { type: "object", properties: { message: text, code: text }, required: ["message", "code"], additionalProperties: false } },
+  refusal: { type: "object", properties: { message: text, code: { type: "string", minLength: 1, maxLength: 240 } }, required: ["message", "code"], additionalProperties: false } },
 required: ["selected"], additionalProperties: false } as const
 export const NativeScheduledBusinessRpc = { id: "codenomad.missions.business/v1", methods: {
   select: { input: base, output }, prepare: { input: base, output }, execute: { input: { ...base,
