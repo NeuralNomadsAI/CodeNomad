@@ -590,6 +590,7 @@ jobs:
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/lib/assistant-meta.test.ts
+          packages/ui/src/lib/event-source-handlers.test.ts
           packages/ui/src/lib/server-events-frame.test.ts
           packages/ui/src/lib/sdk-manager.test.ts
           packages/ui/src/lib/tool-content.test.ts

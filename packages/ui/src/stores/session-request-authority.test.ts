@@ -1,15 +1,17 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { describe, it, type TestContext } from "node:test"
 import { createRoot } from "solid-js"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverApi } from "../lib/api-client.ts"
+import { serverEvents } from "../lib/server-events.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { fetchCommands, getCommands } from "./commands.ts"
 import { beginMessageHistoryTraversal, deleteSession, fetchAgents, fetchProviders, fetchSessions, forkSession, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadAllSessions, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
+import { openListedSession } from "./history-search-sessions.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
 import { useActiveSessionMessageLoad } from "../lib/hooks/use-active-session-message-load.ts"
@@ -36,6 +38,14 @@ function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((done) => { resolve = done })
   return { promise, resolve }
+}
+
+function holdEventFrame(t: TestContext) {
+  globalThis.requestAnimationFrame = () => 0
+  t.after(() => {
+    serverEvents.flushPendingBatch()
+    Reflect.deleteProperty(globalThis, "requestAnimationFrame")
+  })
 }
 
 function session(instanceId: string, id: string): Session {
@@ -1190,7 +1200,7 @@ describe("session request authority", () => {
     }
   })
 
-  it("retries a latest-window response raced by a native message event", async () => {
+  it("retries a latest-window response raced by a native message event queued before the frame", async t => {
     const instanceId = "latest-window-race", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
     const staleLatest = deferred<any>()
@@ -1206,25 +1216,57 @@ describe("session request authority", () => {
     try {
       await loadMessages(instanceId, sessionId)
       await loadMoreMessages(instanceId, sessionId)
+      setActiveSession(instanceId, sessionId)
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), false)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const hydration = t.mock.method(store, "hydrateMessages")
+      const revision = getOpenCodeMessageRevision(instanceId, sessionId)
+      holdEventFrame(t)
       const request = loadLatestMessageWindow(instanceId, sessionId)
-      applyOpenCodeDataEvent(instanceId, "/work", {
+      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
         id: "live",
         type: "session.step.started",
         created: 2,
+        location: { directory: "/work" },
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
         data: {
           sessionID: sessionId,
           assistantMessageID: "fresh",
           agent: "build",
           model: { providerID: "provider", id: "model" },
+          started: 2,
         },
-      } as any)
+      } }])
+      assert.equal(getOpenCodeMessageRevision(instanceId, sessionId), revision, "the native event is still queued")
       staleLatest.resolve({ data: [apiMessage("stale")], cursor: {} })
-      await request
+      assert.equal(await request, true)
+      serverEvents.flushPendingBatch()
 
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["fresh"])
       assert.equal(calls, 4)
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["fresh"])
+      assert.ok(hydration.mock.calls.every(({ arguments: [, rows] }) => rows.every(row => row.id !== "stale")))
     } finally {
       destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
+  it("does not prepare or open a listed session deleted before the frame", async t => {
+    const instanceId = "listed-session-deleted-before-frame", sessionId = "session"
+    const { cleanup } = setup(instanceId)
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    holdEventFrame(t)
+    try {
+      let prepared = 0
+      const opening = openListedSession(instanceId, sessionId, () => true, () => { prepared += 1 })
+      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+        id: "deleted", type: "session.deleted", created: 2, location: { directory: "/work" },
+        durable: { aggregateID: sessionId, seq: 1, version: 2 }, data: { sessionID: sessionId },
+      } }])
+      assert.equal(sessions().get(instanceId)?.has(sessionId), true, "the deletion is still queued")
+      assert.deepEqual({ opened: await opening, prepared }, { opened: false, prepared: 0 })
+      assert.equal(sessions().get(instanceId)?.has(sessionId) ?? false, false)
+    } finally {
       cleanup()
     }
   })

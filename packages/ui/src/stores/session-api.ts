@@ -81,6 +81,7 @@ import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
+import { serverEvents } from "../lib/server-events"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { buildProviderCatalog } from "../lib/model-catalog"
 import { getRootClient } from "./opencode-client"
@@ -1797,6 +1798,8 @@ async function loadMessages(
   const force = options?.force ?? false
   const intent = options?.intent ?? "open"
   const revisionRetry = options?.revisionRetry ?? 0
+  // Events already received belong to the baseline of this read.
+  serverEvents.flushPendingBatch()
   const store = messageStoreBus.getOrCreate(instanceId)
   const storedWindow = store.getMessageWindow(sessionId)
   let expectedWindow = storedWindow
@@ -1825,7 +1828,10 @@ async function loadMessages(
   const instanceClient = instance.client
   const client = getRootClient(instanceId)
   const session = sessions().get(instanceId)?.get(sessionId)
-  if (!session) throw new Error("Session not found")
+  if (!session) {
+    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return false
+    throw new Error("Session not found")
+  }
 
   const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
   const loadSignal = getMessageLoadSignal(instanceId, sessionId)!
@@ -1842,6 +1848,11 @@ async function loadMessages(
   const isCurrent = () => isCurrentLoad()
     && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
     && store.getMessageWindow(sessionId) === expectedWindow
+  const isCurrentAfterEvents = () => {
+    // HTTP can complete before the frame for an already received native event.
+    serverEvents.flushPendingBatch()
+    return isCurrent()
+  }
   const commitCurrentWindow = (window: MessageWindowState, windowIntent: MessageWindowIntent) => {
     commitMessageWindow(instanceId, sessionId, window, windowIntent, options?.anchorMessageId)
     expectedWindow = store.getMessageWindow(sessionId)
@@ -1915,7 +1926,7 @@ async function loadMessages(
           limit: MESSAGE_WINDOW_PAGE_SIZE,
           ...(cursor ? { cursor } : { order: "desc" }),
         }, { signal })
-        if (!isCurrent()) return false
+        if (!isCurrentAfterEvents()) return false
         if (response.cursor?.next === planned.seekNewer) {
           resolvedNext = cursor
             ? { kind: "history", resumeCursor: cursor, newerCursors: [null, null] }
@@ -1934,7 +1945,7 @@ async function loadMessages(
         cursor: planned.cursor,
         forward: planned.forward,
         signal,
-        isAuthoritative: isCurrent,
+        isAuthoritative: isCurrentAfterEvents,
       })
       if (!page) return false
       response = {
@@ -1952,7 +1963,7 @@ async function loadMessages(
     // A staged undo leaves its tail in the native transcript until commit.
     // On opening/latest, seek the latest *visible* page rather than treating
     // a page consisting entirely of that hidden tail as an empty session.
-    if (!isCurrent()) return false
+    if (!isCurrentAfterEvents()) return false
     if (!directWindow && (intent === "open" || intent === "latest") && !planned.cursor && session.revert?.messageID) {
       const boundary = session.revert.messageID
       const seen = new Set<string>()
@@ -1967,7 +1978,7 @@ async function loadMessages(
         seen.add(cursor)
         response = await client.message.list({ sessionID: sessionId, limit: MESSAGE_WINDOW_PAGE_SIZE, cursor }, { signal })
         responseAscending = false
-        if (!isCurrent()) return false
+        if (!isCurrentAfterEvents()) return false
       }
     }
     // The first ascending page is the oldest: its boundary cursor promises no older page.
@@ -2046,7 +2057,7 @@ async function loadMessages(
 
       if (!agentName && !providerID && !modelID && (!session.model.providerId || !session.model.modelId)) {
         const defaultModel = await getDefaultModel(instanceId, session.agent)
-        if (!isCurrent()) return false
+        if (!isCurrentAfterEvents()) return false
         agentName = session.agent
         providerID = defaultModel.providerId
         modelID = defaultModel.modelId
@@ -2102,6 +2113,7 @@ async function loadMessages(
     // A revision conflict keeps the flag through its bounded, backed-off retry.
     deferRelease = retryAfterRevisionConflict
   } catch (error) {
+    serverEvents.flushPendingBatch()
     if (signal.aborted || !isCurrentLoad()) return false
     if (error instanceof MissingHistoryAnchorError && intent === "open" && isCurrent()) {
       // A persisted window can outlive its anchor (deletion, compaction, undo).
@@ -2136,7 +2148,7 @@ async function loadMessages(
         }
         await new Promise((resolve) => setTimeout(resolve, LATEST_WINDOW_RETRY_DELAY_MS * (2 ** revisionRetry)))
         signal.throwIfAborted()
-        if (!isCurrent()) return false
+        if (!isCurrentAfterEvents()) return false
         return await loadMessages(instanceId, sessionId, {
           force: true,
           intent: intent === "open" && planned.cursor ? "latest" : intent,
