@@ -15,6 +15,7 @@ mod meta;
 #[rustfmt::skip] // Frozen while its contract is redesigned: moved, never reformatted.
 mod missions;
 mod opencode;
+mod previews;
 mod search;
 mod service;
 mod sessions;
@@ -170,13 +171,24 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     tokio::spawn(sidecars::probe(state.clone()));
     let local = routes
         .merge(auth::local_routes())
+        .merge(previews::routes())
         .merge(sidecars::proxy::routes(ui.clone()))
-        .fallback(move |req: Request| {
+        .fallback({
             let ui = ui.clone();
-            async move { host::ui::serve(&ui, req).await }
+            let app = state.clone();
+            move |req: Request| {
+                let (ui, app) = (ui.clone(), app.clone());
+                async move {
+                    match previews::fallback(&app, req).await {
+                        Ok(response) => response,
+                        Err(req) => host::ui::serve(&ui, req).await,
+                    }
+                }
+            }
         })
-        .layer(from_fn(panic_guard::catch))
         .layer(from_fn_with_state(state.clone(), auth::admit))
+        .layer(from_fn_with_state(state.clone(), previews::admit_local))
+        .layer(from_fn(panic_guard::catch))
         .with_state(state.clone());
     tokio::spawn(auth::Auth::sweep(state.clone()));
     tokio::spawn(events::bridge(state.clone()));

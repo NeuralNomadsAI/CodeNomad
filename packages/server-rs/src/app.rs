@@ -59,6 +59,7 @@ pub struct App {
     pub calendar_holds: missions::calendar::Holds,
     pub sidecars: Lock<Vec<crate::sidecars::SideCar>>,
     pub usage: crate::usage::Usage,
+    pub previews: crate::previews::Previews,
 }
 
 #[derive(Default)]
@@ -107,6 +108,7 @@ impl App {
         Self {
             sidecars: Lock::new(crate::sidecars::load(&settings.owner(crate::settings::Kind::Config, "server"))),
             usage: Default::default(),
+            previews: Default::default(),
             auth,
             port,
             data,

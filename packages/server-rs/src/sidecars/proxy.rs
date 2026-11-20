@@ -320,7 +320,7 @@ async fn body(method: &Method, headers: &HeaderMap, body: Body) -> Result<Option
 }
 
 /// Methods the reference's router serves: Fastify's own and the proxied WebDAV, CalDAV and SEARCH ones.
-fn routed(method: &Method) -> bool {
+pub(crate) fn routed(method: &Method) -> bool {
     const METHODS: [&str; 19] = [
         "GET",
         "HEAD",

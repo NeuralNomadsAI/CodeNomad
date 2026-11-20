@@ -39,6 +39,7 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/subagent_depth/` | `subagent-depth` settings and JSONC edits |
 | `src/sidecars/` | SideCars: `config.yaml` records, port probe and events; HTTP and WebSocket proxy (loopback listener only) |
 | `src/usage.rs` | Settings › Stats: the service's native aggregate and its display cache in `state.yaml` |
+| `src/previews/` | Local preview tokens, cookie-free HTTP/WS proxy and bounded document rewriting |
 | `src/missions/` | Missions and calendar brokering (contract under revision: unchanged here) |
 | `src/shared/` | Cross-domain helpers |
 | `contracts/`, `tests/fixtures/` | Frozen schemas and parity cases generated from the TypeScript server |

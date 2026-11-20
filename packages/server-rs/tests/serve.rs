@@ -43,6 +43,15 @@ impl Server {
         for dir in [&home, &config, &cwd] {
             fs::create_dir_all(dir).unwrap();
         }
+        let config = dunce::canonicalize(config).unwrap();
+        #[allow(deprecated)]
+        let actual_home = std::env::home_dir();
+        assert!(actual_home.is_none_or(|path| !config.starts_with(path)), "Test config is under the user's home");
+        #[cfg(windows)]
+        assert!(
+            !config.to_string_lossy().to_ascii_lowercase().starts_with(r"c:\users\admin\"),
+            "Test config is under the user's home"
+        );
         let mut command = Command::new(exe);
         command.args(args).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).kill_on_drop(true);
         for (name, _) in std::env::vars_os() {
@@ -55,7 +64,13 @@ impl Server {
             .env("CODENOMAD_NATIVE_PARENT", "1")
             .env("CLI_CONFIG", &config)
             .env("HOME", &home)
-            .env("USERPROFILE", &home);
+            .env("USERPROFILE", &home)
+            .env("APPDATA", home.join("AppData/Roaming"))
+            .env("LOCALAPPDATA", home.join("AppData/Local"))
+            .env("XDG_CONFIG_HOME", home.join("xdg/config"))
+            .env("XDG_DATA_HOME", home.join("xdg/data"))
+            .env("XDG_STATE_HOME", home.join("xdg/state"))
+            .env("XDG_CACHE_HOME", home.join("xdg/cache"));
         let mut child = command.spawn().unwrap();
         let (tx, lines) = mpsc::unbounded_channel();
         let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
@@ -180,6 +195,13 @@ async fn desktop_launch_contract() {
     assert_eq!(asset.text().await.unwrap(), "console.log(1)");
     let spa = get("/workspace/route", Some(&cookie)).send().await.unwrap();
     assert!(spa.text().await.unwrap().contains("<title>ui</title>"));
+    let long_sidecar = format!("/sidecars/{}/app", "i".repeat(101));
+    for path in ["/sidecars", "/sidecars?x=1", &long_sidecar] {
+        let fallback = get(path, Some(&cookie)).send().await.unwrap();
+        assert_eq!(fallback.status(), 200, "{path}");
+        assert_eq!(fallback.headers()["content-type"], "text/html", "{path}");
+        assert!(fallback.text().await.unwrap().contains("<title>ui</title>"), "{path}");
+    }
     for hidden in ["/.secret", "/assets%5C..%5C..%5C..%5Ccwd%5Cplain.txt"] {
         let body = get(hidden, Some(&cookie)).send().await.unwrap().text().await.unwrap();
         assert!(body.contains("<title>ui</title>"), "{hidden}: {body}");

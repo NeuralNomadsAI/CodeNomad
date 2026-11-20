@@ -44,6 +44,7 @@ node launch.mjs
 | `host` | Both servers with `--unrestricted-root` on equal `config.yaml`: the `config` owners read at start-up (normalization and repair, speech keys) and the `/api/meta` feed, `state/ui` merge patches and refusals, the folder browser over the home and drives, folder creation and its refusals, a workspace outside the root and its files. Rust alone: lexical refusals (network, device, verbatim paths) with and without the option. |
 | `sidecars` | SideCar records seeded in `config.yaml`, management and its zod and Fastify refusals; the proxy against a recording upstream: prefix modes, raw paths and queries, parsed bodies, redirects, cookies both ways, credential and routing headers, this server's own port, HTTPS without a trusted certificate, a stopped port, WebSocket handshakes and their refusals. |
 | `usage` | Settings › Stats: the native service aggregate, its display cache in `state.yaml`, the restored period, query refusals, an unknown workspace. |
+| `previews` | Local source previews against a loopback fixture: token creation/deletion, HTTP/WS, HTML/CSS/module rewriting, redirects, cookie and credential isolation, partial and compressed documents. |
 | `solid` | Real UI served by TS: HTTPS pairing of Rust, two prompts, two isolated tabs, worktree, Files, Rust memory under 48 MiB, no error toast. |
 | `security.mjs` | TLS and pairing: same checks on the Rust HTTPS listener and the TS remote surface, revocation during SSE, certificate reuse and rotation. |
 | `launch.mjs` | Both servers launched as Tauri launches them (same `serve` arguments and variables, private homes): stdout contract lines, bootstrap token exchange, sign-in pages and redirects, UI bundle and single-page fallback, `tls/` and identity files, stop over stdin. No OpenCode needed. |
@@ -53,6 +54,7 @@ node launch.mjs
 `node host-survey.mjs $OpenCode` records every request the Solid UI makes to a TS local host (start-up, folder picker, conversation, Files, Git, worktree, recents, Settings) in `out/host-survey.json`; [HOST_ROUTES.md](HOST_ROUTES.md) classifies them.
 
 `sidecars` serves a private static UI fixture on both servers to check the SPA fallback for unmatched paths. Set `CNRS_SIDECARS_NO_UI=1` to compare the same paths with no UI bundle. Neither run launches a window.
+`CNRS_BENCH_STARTUP_TIMEOUT_MS` changes the readiness budget for `compare.mjs` when the machine is busy.
 
 Results: `bench/out/<mode>.json` (TS and Rust observations, or `error`), redacted logs `out/<mode>-ts.log` / `out/<mode>-rs.log`, screenshots `out/screenshots/<mode>/`. `out/` is ignored by Git; `out/tmp/` keeps each fixture for diagnosis (about 700 MiB after a full run) and can be deleted.
 

@@ -15,13 +15,16 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
 const bench = mode === "solid" ? undefined : await import(`./${mode === "http" ? "worktrees" : mode}.mjs`)
 await useBenchTemp()
 await outsideUserHome(process.env.TEMP)
+const daemonTemp = path.join(process.env.TEMP, "opencode")
+await mkdir(daemonTemp, { recursive: true })
+await outsideUserHome(daemonTemp)
 const { resolveConfigLocation } = await fromDist("config/location.js")
 const shots = path.join(out, "screenshots", mode)
 await mkdir(shots, { recursive: true })
@@ -29,6 +32,7 @@ await mkdir(shots, { recursive: true })
 const { withProductRuntime, remove: removeRuntime } = await productRuntime()
 
 const HTTP_TIMEOUT = 20000
+const STARTUP_TIMEOUT = Number(process.env.CNRS_BENCH_STARTUP_TIMEOUT_MS ?? 25000)
 const result = { mode, binary: bin, tests: [], browser: {}, statuses: {}, samples: {} }
 const capture = async (page, name) => {
   await page.screenshot({ path: path.join(shots, `${name}.png`), animations: "disabled" })
@@ -92,7 +96,7 @@ async function start(label, fixture, folder, password, trustedCA) {
     await eventually(async () => {
       if (spawnError || child.exitCode !== null) throw Error(`${label} startup: ${spawnError ?? output.slice(-2500)}`)
       return (await request("/api/auth/status").catch(() => undefined))?.status === 200 && (label !== "ts" || output.includes("Local Connection URL"))
-    }, `${label} startup`, 25000).catch(error => { throw Error(`${error.message}\n${output.slice(-2500)}`, { cause: error }) })
+    }, `${label} startup`, STARTUP_TIMEOUT).catch(error => { throw Error(`${error.message}\n${output.slice(-2500)}`, { cause: error }) })
     return { request, close, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), pid: child.pid, status: info.version, daemonPID: info.pid }
   } catch (e) { await close(); throw e }
 }
