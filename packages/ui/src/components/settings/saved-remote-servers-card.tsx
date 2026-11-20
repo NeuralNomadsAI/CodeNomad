@@ -44,7 +44,7 @@ export const SavedRemoteServersCard: Component = () => {
                       title={`${t("folderSelection.servers.dialog.connect")}: ${server.name}`}
                       onClick={() => void connectSavedServer(server.id)}
                     >
-                      <Show when={connectingServerId() === server.id} fallback={<Globe class="w-4 h-4" />}><Loader2 class="w-4 h-4 animate-spin" /></Show>
+                      <Show when={connectingServerId() === server.id} fallback={<Globe class="w-4 h-4" />}><span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" /></span></Show>
                     </button>
                     <button
                       type="button"
