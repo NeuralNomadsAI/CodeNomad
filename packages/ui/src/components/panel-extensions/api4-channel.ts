@@ -16,6 +16,7 @@ import { getActiveCatalogLocation } from "../../stores/session-api"
 import { requestComposerFocus } from "../../stores/composer-focus"
 import { resolveImagesConversation, showImagesConversation } from "../../stores/images-conversation"
 import { beginGesture } from "../../stores/session-surface"
+import { sessions } from "../../stores/session-state"
 import type { PromptInputApi } from "../prompt-input/types"
 import { assertThumbnailBounds } from "./image-bounds"
 import { thumbnail } from "./assets-channel"
@@ -75,6 +76,13 @@ export function useApi4Channel(props: {
   const granted = (permission: string) => props.permissions.includes(permission)
   // The family's worktree as the inventory matches it, never the "root" fallback of a miss.
   const familyWorktree = () => session ? getWorktreeForSession(props.instanceId, getParentSessionId(props.instanceId, session)) : undefined
+  // Every loaded member of the displayed family is in that worktree (OpenCode can move one session alone).
+  const familyAt = (slug: string | undefined) => {
+    if (!session || slug === undefined) return false
+    const root = getParentSessionId(props.instanceId, session)
+    return [...(sessions().get(props.instanceId)?.values() ?? [])].filter(member => getParentSessionId(props.instanceId, member.id) === root)
+      .every(member => getWorktreeForSession(props.instanceId, member.id)?.slug === slug)
+  }
   let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined
   let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false }
   const current = () => !disposed && connected && nativeConnected && (props.host.activeSessionId() ?? null) === props.sessionId
@@ -188,10 +196,10 @@ export function useApi4Channel(props: {
     const [answer] = await Promise.all([panelExtensionsApi4.workItemBranches(authority, signal), reloadWorktrees(props.instanceId, true)])
     if (answer.status !== "ok") return null
     // `worktree`: checked out anywhere, even where the opened folder is missing (Git allows one checkout per branch).
-    const worktrees = getWorktrees(props.instanceId), current = familyWorktree()?.slug
+    const worktrees = getWorktrees(props.instanceId)
     return answer.branches.map((link): PanelWorkItemWorktree => {
       const slug = worktrees.find(worktree => worktree.branch === link.branch)?.slug
-      return { ...link, worktree: slug !== undefined, current: slug !== undefined && slug === current }
+      return { ...link, worktree: slug !== undefined, current: familyAt(slug) }
     })
   }
 
@@ -208,7 +216,7 @@ export function useApi4Channel(props: {
     // Checked out where the opened folder is missing: no conversation can go there, and Git refuses a second checkout.
     if (checkout?.nestedFolderMissing) return null
     const slug = checkout?.slug
-    return { repository: answer.repository, branch: answer.branch ?? undefined, slug, current: slug !== undefined && slug === familyWorktree()?.slug }
+    return { repository: answer.repository, branch: answer.branch ?? undefined, slug, current: familyAt(slug) }
   }
 
   // The frame only asks; the host's own dialog decides, then creates and moves.
@@ -284,7 +292,7 @@ export function useApi4Channel(props: {
       await reloadWorktrees(props.instanceId, true)
       // Checked again inside the move queue, right before dispatch.
       await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination,
-        { branch: branchName, admit: () => consented(branchName) }).catch(() => {})
+        { branch: branchName, admit: () => consented(branchName), wholeFamily: true }).catch(() => {})
     } catch (error) {
       if (signal.aborted) return
       showToastNotification({ category: "files", variant: "error", message: error instanceof Refusal ? error.message

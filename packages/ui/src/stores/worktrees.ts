@@ -316,6 +316,8 @@ async function setWorktreeSlugForParentSession(
     branch?: string
     /** Runs inside the move queue right before the move is sent; a rejection cancels it. */
     admit?: () => Promise<void>
+    /** Already there only when every loaded family member is: a split family is moved whole. */
+    wholeFamily?: boolean
     moveFamily?: (instanceId: string, rootSessionId: string, worktreeSlug: string) => Promise<unknown>
     refreshSessions?: (instanceId: string) => Promise<void>
   } = {},
@@ -330,8 +332,10 @@ async function setWorktreeSlugForParentSession(
   // Do not turn that reconciliation into a family move and native move echoes.
   const currentDirectory = sessions().get(instanceId)?.get(rootSessionId)?.location.directory
   const targetDirectory = worktree.serviceDirectory ?? worktree.directory
-  if (getWorktreeForSession(instanceId, rootSessionId)?.slug === normalizedSlug
-    || (currentDirectory && normalizeDirectory(currentDirectory) === normalizeDirectory(targetDirectory))) return
+  const there = (sessionId: string) => getWorktreeForSession(instanceId, sessionId)?.slug === normalizedSlug
+  if (options.wholeFamily
+    ? [...(sessions().get(instanceId)?.values() ?? [])].filter(session => getParentSessionId(instanceId, session.id) === rootSessionId).every(session => there(session.id))
+    : there(rootSessionId) || (currentDirectory && normalizeDirectory(currentDirectory) === normalizeDirectory(targetDirectory))) return
 
   const key = `${instanceId}:${rootSessionId}`
   const previous = familyMoveRequests.get(key)

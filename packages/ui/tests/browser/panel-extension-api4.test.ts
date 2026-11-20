@@ -804,3 +804,37 @@ test("worktrees: the confirmation opens on WebKit without AbortSignal.any", asyn
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+test("worktrees: a family split across worktrees is offered the move, and moved whole", async () => {
+  await install()
+  assert.equal((await createWorkItemBranch(repository, itemSource, "issue", 123)).status, "ok")
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    await page.evaluate(async () => {
+      const fixture = (window as any).fixture
+      fixture.addWorktree("linked", "issue-123")
+      await fixture.reloadWorktrees()
+      const storePath = "/src/stores/session-state.ts"
+      const store = await import(storePath)
+      // The parent is in the item's worktree; the displayed child stayed in the project checkout.
+      store.setSessions((state: any) => {
+        const instance = new Map<any, any>(state.get("api4-instance"))
+        instance.set("ses_work", { ...instance.get("ses_work"), location: { directory: "/fixture/.codenomad/worktrees/linked" } })
+        instance.set("ses_other", { ...instance.get("ses_other"), parentId: "ses_work" })
+        return new Map(state).set("api4-instance", instance)
+      })
+      store.setActiveSession("api4-instance", "ses_other")
+    })
+    await frameOf(page).locator("#ctx").filter({ hasText: "ses_other:4" }).waitFor()
+    assert.equal(((await call(page, "worktrees.list")).ok as any[]).find(entry => entry.number === 123)?.current, false)
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 123), { ok: "confirming" })
+    await page.getByRole("button", { name: "Move", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.snapshot !== undefined)
+    let moves: unknown[] = []
+    for (let attempt = 0; attempt < 60 && !moves.length; attempt++) {
+      await page.waitForTimeout(50)
+      moves = (await worktreeCalls(page)).filter((entry: any) => entry.move)
+    }
+    assert.deepEqual(moves, [{ move: ["ses_work", "linked"] }])
+  } finally { await page.close() }
+})
