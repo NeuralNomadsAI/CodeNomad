@@ -34,7 +34,7 @@ test("renderer probe counts attributes but observes only visible markers and com
     await page.evaluate(() => {
       window.__perf.arm(false)
       const stream = document.querySelector("main")
-      stream.innerHTML = "<p>MKAA020001K</p><p>MKAA020002K</p>"
+      stream.innerHTML = '<p>MKAA020001K</p><p hidden>MKAA020003K</p><p>MKAA020002K</p>'
       queueMicrotask(() => stream.lastElementChild.remove())
     })
     await page.waitForFunction(() => window.__perf.collect().shown.MKAA020001K)

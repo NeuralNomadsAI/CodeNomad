@@ -53,9 +53,9 @@
         for (const [marker, { node, index }] of found) {
           const element = node.parentElement
           const stream = element?.closest(".message-stream")
-          if (!node.isConnected || !stream || node.data.slice(index, index + marker.length) !== marker) continue
+          if (!node.isConnected || !stream || node.data.slice(index, index + marker.length) !== marker
+            || !element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue
           if (!owner.visibleOnly) { owner.shown[marker] ??= at; continue }
-          if (!element.checkVisibility({ visibilityProperty: true })) continue
           range.setStart(node, index)
           range.setEnd(node, index + marker.length)
           const viewport = stream.getBoundingClientRect()

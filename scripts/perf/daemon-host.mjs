@@ -31,6 +31,7 @@ export async function withDaemon(cli, root, chunks, run) {
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@invalid", "commit", "-qm", "fixture")
 
   const markers = new Map(), liveToolTurns = new Set()
+  let batch
   const words = ["alpha beta gamma delta epsilon", "render store event frame patch", "eta theta iota kappa lambda"]
   let providerError
   const provider = createServer(async (req, res) => {
@@ -62,6 +63,10 @@ export async function withDaemon(cli, root, chunks, run) {
         send({}, "tool_calls")
       } else if (tag) {
         const [, code, pass] = tag
+        assert.equal(batch?.pass, pass, "Unexpected benchmark workload pass")
+        batch.ready.add(code)
+        if (batch.ready.size === batch.size) batch.release()
+        await batch.start
         send({ role: "assistant", content: "" })
         for (let i = 0; i < chunks && !res.destroyed; i++) {
           let text = (i % 40 === 0 ? `\n\n### Part ${i / 40}\n\n` : " ") + words[i % words.length]
@@ -102,11 +107,17 @@ export async function withDaemon(cli, root, chunks, run) {
     const call = (method, route, body) => json(`${url}${route}`, { method, body, headers: { authorization } })
     const info = await call("GET", "/api/info")
     assert.equal(info.pid, child.pid, "Bench daemon did not prove its identity")
-    await run({ project, env, url, password, authorization, call, markers, pid: child.pid, cli })
+    await run({ project, env, url, password, authorization, call, markers, pid: child.pid, cli,
+      arm(pass, size) {
+        const { promise: start, resolve: release } = Promise.withResolvers()
+        batch = { pass, size, start, release, ready: new Set() }
+      },
+    })
     if (providerError) throw providerError
   } finally {
     try { await stopFixtureChild(child, stopped) } finally {
       provider.closeAllConnections()
+      batch?.release()
       await new Promise(resolve => provider.close(resolve))
       await writeFile(path.join(root, "daemon.log"), output.replaceAll(password, "<fixture password>"))
     }

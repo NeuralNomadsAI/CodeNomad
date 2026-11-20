@@ -19,8 +19,8 @@ export function budgetReport(budgets, counter, ratios) {
   function check(name, value, { max }, detail = "") {
     assert(Number.isFinite(value) && Number.isFinite(max) && max >= 0, `Missing or invalid measurement or budget: ${name}`)
     const ok = value <= max
-    rows.push(`| ${ok ? "OK" : "**FAIL**"} | ${name} | ${value.toFixed(2)} | ${max.toFixed(2)} | ${detail} |`)
-    if (!ok) failures.push(`${name}: ${value.toFixed(2)} exceeds ${max.toFixed(2)}`)
+    rows.push(`| ${ok ? "OK" : "**FAIL**"} | ${name} | ${ok ? value.toFixed(2) : value} | ${ok ? max.toFixed(2) : max} | ${detail} |`)
+    if (!ok) failures.push(`${name}: ${value} exceeds ${max}`)
   }
   for (const [key, value] of Object.entries(counter.metrics)) check(`L8 ${key}`, value, budgets.counters[key])
   for (const [level, metrics] of Object.entries(ratios)) for (const [name, value] of Object.entries(metrics)) {

@@ -29,3 +29,18 @@ test("each sample forks the same inputs and removes only its own output sessions
   assert.deepEqual(requests.filter(([method]) => method === "DELETE").map(([, route]) => route),
     ["/api/session/fork-1", "/api/session/fork-2", "/api/session/fork-3", "/api/session/fork-4"])
 })
+
+test("sample cleanup attempts every removal and preserves the measurement failure", async () => {
+  const attempts = []
+  const primary = Error("measurement failed")
+  let next = 0
+  const daemon = { async call(method, route) {
+    if (method === "POST") return { data: { id: `fork-${++next}` } }
+    if (method === "DELETE") {
+      attempts.push(route)
+      if (attempts.length === 1) throw Error("cleanup failed")
+    }
+  } }
+  await assert.rejects(() => withSampleSessions(daemon, ["a", "b"], async () => { throw primary }), error => error.cause === primary)
+  assert.deepEqual(attempts, ["/api/session/fork-1", "/api/session/fork-2"])
+})

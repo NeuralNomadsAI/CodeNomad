@@ -35,6 +35,7 @@ export async function seed(daemon, turns, count) {
 
 export async function withSampleSessions(daemon, templates, run) {
   const sessions = []
+  let failure
   try {
     for (let i = 0; i < templates.length; i++) {
       const { data: { id } } = await daemon.call("POST", `/api/session/${templates[i]}/fork`, {})
@@ -42,7 +43,14 @@ export async function withSampleSessions(daemon, templates, run) {
       if (i === 0) await daemon.call("PATCH", `/api/session/${id}`, { title: "Foreground history" })
     }
     await run(sessions)
+  } catch (error) {
+    failure = error
   } finally {
-    for (const id of sessions) await daemon.call("DELETE", `/api/session/${id}`)
+    const cleanup = []
+    for (const id of sessions) {
+      try { await daemon.call("DELETE", `/api/session/${id}`) } catch (error) { cleanup.push(error) }
+    }
+    if (cleanup.length) throw new AggregateError(failure ? [failure, ...cleanup] : cleanup, "Could not remove benchmark sessions", { cause: failure })
   }
+  if (failure) throw failure
 }

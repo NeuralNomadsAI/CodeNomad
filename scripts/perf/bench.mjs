@@ -7,7 +7,7 @@ import { parseArgs } from "node:util"
 import { withBrowser } from "./browser.mjs"
 import { withDaemon } from "./daemon-host.mjs"
 import { privatePath, runDirectory } from "./isolation.mjs"
-import { MARKER, p95, sleep, sseReader } from "./lib.mjs"
+import { MARKER, now, p95, sleep, sseReader } from "./lib.mjs"
 import { seed, waitIdle, withSampleSessions } from "./seed.mjs"
 import { withTui } from "./tui.mjs"
 
@@ -38,6 +38,10 @@ async function measure(daemon, ids, driver, countWork) {
   const run = String(++pass).padStart(2, "0")
   const daemonAt = new Map(), outcomes = new Set()
   const wanted = new Set(ids)
+  const codes = ids.map((_, i) => sessionCode(i))
+  const expected = Array.from({ length: Math.ceil(chunks / 8) }, (_, i) => `MKAA${run}${String(i * 8).padStart(4, "0")}K`)
+  const last = expected.at(-1)
+  const markerFor = (key, code) => key.replace("MKAA", `MK${code}`)
   let daemonFrames = 0, failure
   const stop = await sseReader(`${daemon.url}/api/event`, daemon.authorization, (frame, at) => {
     const event = JSON.parse(frame)
@@ -51,28 +55,34 @@ async function measure(daemon, ids, driver, countWork) {
   })
   try {
     await driver.arm(countWork)
+    daemon.arm(run, ids.length)
     await Promise.all(ids.map((id, i) => daemon.call("POST", `/api/session/${id}/prompt`, { text: `BENCH:${sessionCode(i)}:${run} LIVE stream please` })))
     const keys = []
+    const deadline = Date.now() + 120_000
     const typing = countWork ? Promise.resolve() : (async () => {
-      await sleep(700)
+      while (!failure && !codes.every(code => daemon.markers.has(markerFor(expected[0], code)))) {
+        if (Date.now() >= deadline) throw Error("Not all provider streams started")
+        await sleep(30)
+      }
       for (let i = 0; i < 5; i++) {
-        keys.push(await driver.typeKey(i))
-        await sleep(250)
+        if (failure) return
+        const at = now()
+        keys.push({ at, elapsed: await driver.typeKey(i) })
+        await sleep(100)
       }
     })().catch(error => { failure = error })
-    const deadline = Date.now() + 120_000
     while (!failure && outcomes.size < ids.length && Date.now() < deadline) await sleep(100)
     await typing
     if (failure) throw Error(`Execution failed during measurement: ${failure}`)
     assert.equal(outcomes.size, ids.length, "Timed out waiting for successful native completions")
-    const expected = Array.from({ length: Math.ceil(chunks / 8) }, (_, i) => `MKAA${run}${String(i * 8).padStart(4, "0")}K`)
-    const last = expected.at(-1)
-    for (const i of ids.keys()) {
-      const code = sessionCode(i)
-      const forSession = key => key.replace("MKAA", `MK${code}`)
-      assert(expected.every(key => daemon.markers.has(forSession(key))), `Missing synthetic provider marker for ${code}`)
-      assert(daemonAt.has(forSession(last)), `The daemon stream never published the final marker for ${code}`)
+    for (const code of codes) {
+      assert(expected.every(key => daemon.markers.has(markerFor(key, code))), `Missing synthetic provider marker for ${code}`)
+      assert(daemonAt.has(markerFor(last, code)), `The daemon stream never published the final marker for ${code}`)
     }
+    const start = Math.max(...codes.map(code => daemon.markers.get(markerFor(expected[0], code))))
+    const end = Math.min(...codes.map(code => daemon.markers.get(markerFor(last, code))))
+    assert(start < end, `The ${ids.length} provider streams did not overlap`)
+    assert(keys.every(key => key.at >= start && key.at < end), "A key sample started outside concurrent streaming")
     const rendered = Date.now() + 30_000
     let observation = await driver.collect()
     while (observation.shown[last] === undefined && Date.now() < rendered) {
@@ -83,6 +93,7 @@ async function measure(daemon, ids, driver, countWork) {
     await sleep(800)
     const coverage = countWork ? await driver.coverage() : undefined
     const { shown, mutations, pageFrames } = await driver.collect()
+    const sourceFrames = daemonFrames
     await driver.clear()
     await waitIdle(daemon)
     const seen = expected.filter(key => shown[key] !== undefined && daemonAt.has(key))
@@ -92,13 +103,13 @@ async function measure(daemon, ids, driver, countWork) {
       finalMarkerMs: shown[last] - daemonAt.get(last),
       visibleMarkerP95: p95(seen.map(key => shown[key] - daemonAt.get(key))),
     }
-    if (coverage) assert(pageFrames >= daemonFrames * .95, `Only ${pageFrames}/${daemonFrames} SSE frames reached the renderer`)
+    if (coverage) assert(pageFrames >= sourceFrames * .95, `Only ${pageFrames}/${sourceFrames} SSE frames reached the renderer`)
     const counters = coverage && {
-      callsPerDaemonEvent: coverage.reduce((sum, script) => sum + script.fns.reduce((total, fn) => total + fn[2], 0), 0) / daemonFrames,
-      mutationsPerDaemonEvent: mutations / daemonFrames,
-      pageFramesPerDaemonEvent: pageFrames / daemonFrames,
+      callsPerDaemonEvent: coverage.reduce((sum, script) => sum + script.fns.reduce((total, fn) => total + fn[2], 0), 0) / sourceFrames,
+      mutationsPerDaemonEvent: mutations / sourceFrames,
+      pageFramesPerDaemonEvent: pageFrames / sourceFrames,
     }
-    return { daemonFrames, markers: seen.length, expectedMarkers: expected.length, stages, keys: { p95: p95(keys) }, counters, coverage }
+    return { daemonFrames: sourceFrames, markers: seen.length, expectedMarkers: expected.length, stages, keys: { p95: p95(keys.map(key => key.elapsed)) }, counters, coverage }
   } finally { await stop() }
 }
 
