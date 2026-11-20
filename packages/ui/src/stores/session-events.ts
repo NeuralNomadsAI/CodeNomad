@@ -13,6 +13,7 @@ import type {
   TuiToastShow,
 } from "@opencode/client"
 import { getLogger } from "../lib/logger"
+import { serverEvents } from "../lib/server-events"
 import { reconcileSessionModel } from "./session-model-reconciliation"
 import { handlePruningEvent } from "./session-pruning-events"
 import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"
@@ -203,6 +204,7 @@ export function nativeSessionLifecycleGeneration(instanceId: string, sessionId: 
 }
 
 function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generation: number): boolean {
+  serverEvents.flushPendingBatch()
   return nativeSessionLifecycleGeneration(instanceId, sessionId) === generation
 }
 
@@ -858,8 +860,8 @@ function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled):
   // published; by then the next attempt may have replaced this backoff, or
   // the project may have closed.
   else void resolved.then(() => {
-    if (isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionId)
-      && isCurrentNativeLifecycle(instanceId, sessionId, generation)) showRetryToast(instanceId, sessionId, retry)
+    if (isCurrentNativeLifecycle(instanceId, sessionId, generation)
+      && isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionId)) showRetryToast(instanceId, sessionId, retry)
   })
 }
 

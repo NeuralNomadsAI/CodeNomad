@@ -3,6 +3,7 @@ import { afterEach, beforeEach, test } from "node:test"
 import type { OpenCodeClient, PermissionRequest, SessionActiveOutput } from "@opencode/client"
 import { serverApi } from "../lib/api-client"
 import { sdkManager } from "../lib/sdk-manager"
+import { serverEvents } from "../lib/server-events"
 import { sseManager } from "../lib/sse-manager"
 import { getToastHistory } from "../lib/notifications"
 import {
@@ -228,11 +229,20 @@ test("liveness handles a missed end for an unloaded child, but an active or newl
   assert.equal(brokerReads, 0)
   const active = deferred<SessionActiveOutput>()
   a.client.session.active = () => active.promise
-  const polling = reconcilePendingRequestLiveness(a.id)
-  compact(a, "delta")
-  active.resolve({})
-  await polling
-  assert.equal(brokerReads, 0, "a stale status read cannot settle a newer delta")
+  globalThis.requestAnimationFrame = () => 0
+  try {
+    const polling = reconcilePendingRequestLiveness(a.id)
+    serverEvents["queueBatch"]([{ type: "instance.event", instanceId: a.id, event: {
+      id: "next-delta", type: "session.compaction.delta", created: Date.now() + ++a.clock,
+      location: { directory: a.directory }, data: { sessionID: "unknown-child", text: "summary" },
+    } }])
+    active.resolve({})
+    await polling
+    assert.equal(brokerReads, 0, "a stale status read cannot settle a newer delta queued before the frame")
+  } finally {
+    serverEvents.flushPendingBatch()
+    Reflect.deleteProperty(globalThis, "requestAnimationFrame")
+  }
   a.client.session.active = async () => ({})
   await reconcilePendingRequestLiveness(a.id)
   await until(() => brokerReads === 2)

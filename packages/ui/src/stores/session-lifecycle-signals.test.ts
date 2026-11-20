@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it, mock } from "node:test"
 import toast from "solid-toast"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverEvents } from "../lib/server-events.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 import { tGlobal } from "../lib/i18n/index.tsx"
 import { clearToastHistory, getToastHistory } from "../lib/notifications.tsx"
@@ -10,7 +11,9 @@ import { storage, type OwnerBucket } from "../lib/storage.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { preferences, updatePreferences } from "./preferences.tsx"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { getRootClient } from "./opencode-client.ts"
 import { destroyOpenCodeData } from "./opencode-data.ts"
+import { nativeSessionLifecycleGeneration } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, sessions, setSessions } from "./session-state.ts"
 import "./sessions.ts"
 
@@ -175,6 +178,33 @@ describe("V2 session lifecycle signals", () => {
     run("child", "msg_child", "succeeded")
     await settled("child")
     assert.equal(getToastHistory().length, 0)
+  })
+
+  it("keeps working and skips completion when the next execution is queued before the activity reply", async t => {
+    await enableCompletionHistory()
+    let reply!: (value: Record<string, never>) => void
+    const response = new Promise<Record<string, never>>(resolve => { reply = resolve })
+    const request = t.mock.method(getRootClient(instanceId).session, "active", () => response)
+    globalThis.requestAnimationFrame = () => 0
+    try {
+      run("root", "msg_previous", "succeeded")
+      assert.equal(request.mock.callCount(), 1)
+      const generation = nativeSessionLifecycleGeneration(instanceId, "root")
+      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+        id: "next", type: "session.execution.started", created: ++sequence,
+        durable: { aggregateID: "root", seq: sequence, version: 1 },
+        location: { directory: "/work" }, data: { sessionID: "root" },
+      } }])
+      assert.equal(nativeSessionLifecycleGeneration(instanceId, "root"), generation, "the next execution has not reached the store")
+      reply({})
+      await response
+
+      assert.deepEqual({ status: session("root")?.status, notifications: doneNotifications().length }, { status: "working", notifications: 0 })
+      assert.equal(nativeSessionLifecycleGeneration(instanceId, "root"), generation + 1)
+    } finally {
+      serverEvents.flushPendingBatch()
+      Reflect.deleteProperty(globalThis, "requestAnimationFrame")
+    }
   })
 
   it("notifies when a run fails or is stopped for inactivity, not when a person stops it", async () => {

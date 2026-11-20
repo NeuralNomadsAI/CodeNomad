@@ -155,6 +155,8 @@ the view or reconciling; callbacks from a replaced stream remain fenced.
 Transcript window reads drain before capturing revisions and before checking
 authority after an await. Opening a listed session drains before checking
 hydration and navigation authority, including before preparing the destination.
+Lifecycle reconciliation, pending Form/Permission snapshots and compaction
+liveness drain before checking their publication fences.
 
 `lib/server-events.ts` restarts the shared UI event stream once a connected
 stream has carried no batch, open or ping for 45 s (`lib/stream-staleness.ts`,

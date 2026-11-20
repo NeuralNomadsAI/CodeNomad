@@ -218,7 +218,7 @@ class ServerEvents {
     this.cancelBatchWake = cancel
   }
 
-  /** Delivers accepted events before a synchronous consumer changes their view. */
+  /** Delivers accepted events before a consumer checks authority or changes the view. */
   flushPendingBatch(): void {
     this.cancelBatchWake?.()
     this.cancelBatchWake = undefined

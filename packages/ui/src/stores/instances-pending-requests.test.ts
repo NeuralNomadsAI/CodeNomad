@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { createMemo, createRoot } from "solid-js"
 import type { OpenCodeClient, PermissionRequest } from "@opencode/client"
 import type { WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
 import { PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
@@ -7,14 +8,15 @@ import { serverApi } from "../lib/api-client"
 import { backgroundReads } from "../lib/background-read-queue"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { sdkManager } from "../lib/sdk-manager"
+import { serverEvents } from "../lib/server-events"
 import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, invalidatePendingRequestSync,
-  addPermissionToQueue, getPermissionQueue, markPermissionReplied,
+  addPermissionToQueue, getPermissionQueue, hasRepliedPermission, markPermissionReplied,
   addPendingForm, sendFormReply, sendFormCancel,
   incompletePendingRecovery, clearReloadableInstanceState,
 } from "./instances"
 import { getFormQueue, type FormWithLocation } from "./forms"
-import { markFormSettled } from "./form-settlements"
+import { hasSettledForm, markFormSettled } from "./form-settlements"
 import { sessions, seedRestoredSessionSelection, setSessions, selectActiveSession } from "./session-state"
 import { createClientSession } from "../types/session"
 import { captureWorktreeMoveReconciliation, getPendingWorktreeLocations, getPendingWorktreeSlug, getWorktrees, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees"
@@ -1018,6 +1020,52 @@ test("permission mutations do not discard authoritative Forms; settlement tombst
     assert.deepEqual(getPermissionQueue(h.id), [])
   } finally { h.cleanup() }
 })
+
+for (const kind of ["form", "permission"] as const) {
+  test(`a queued ${kind} settlement fences a stale pending-request snapshot`, async () => {
+    const h = harness()
+    const id = "settled"
+    const isSettled = kind === "form" ? hasSettledForm : hasRepliedPermission
+    const observed: string[] = []
+    const dispose = createRoot(dispose => {
+      createMemo(() => {
+        const queue = kind === "form" ? getFormQueue(h.id) : getPermissionQueue(h.id)
+        observed.push(...queue.map(entry => entry.id))
+      })
+      return dispose
+    })
+    const pending = deferred<WorkspacePendingRequestsResponse>()
+    const started = deferred<void>()
+    let reads = 0
+    serverApi.getPendingRequests = async () => {
+      if (++reads !== 1) return snapshot(h.directory)
+      started.resolve()
+      return pending.promise
+    }
+    globalThis.requestAnimationFrame = () => 0
+    try {
+      const syncing = syncPendingRequests(h.id)
+      await started.promise
+      const location = { directory: h.directory }
+      serverEvents["queueBatch"]([{ type: "instance.event", instanceId: h.id, event: kind === "form"
+        ? { id: "cancelled", type: "form.cancelled", created: 1, location, data: { id, sessionID: "global" } }
+        : { id: "replied", type: "permission.replied", created: 1, location, data: { requestID: id, sessionID: "background", reply: "once" } },
+      }])
+      assert.equal(isSettled(h.id, id), false, "the settlement has not reached the store")
+      pending.resolve(snapshot(h.directory, kind === "permission" ? [permission(id)] : [], kind === "form" ? [form(id)] : []))
+      await syncing
+
+      assert.deepEqual(observed, [], "the stale request never reaches the dock")
+      assert.equal(isSettled(h.id, id), true)
+      assert.equal(reads, 2, "the superseded scan reads again")
+    } finally {
+      dispose()
+      serverEvents.flushPendingBatch()
+      Reflect.deleteProperty(globalThis, "requestAnimationFrame")
+      h.cleanup()
+    }
+  })
+}
 
 test("rejected placement coverage upserts owned pending requests without pruning existing queues", async () => {
   const h = harness()
