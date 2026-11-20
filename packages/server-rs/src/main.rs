@@ -37,6 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if config::print_version() {
         return Ok(());
     }
+    bench::panic_on_start();
     let args: Vec<_> = env::args().skip(1).collect();
     let [root, identity, port, binary] = &args[..] else {
         return Err("usage: codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>".into());

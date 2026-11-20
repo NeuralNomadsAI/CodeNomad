@@ -44,6 +44,10 @@ uuid = { version = "1", features = ["serde", "v4"] }
 zip = { version = "9.7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 chrono-tz = { version = "0.10", features = ["case-insensitive"] }
 
+[profile.release]
+# File and line in release panic backtraces (MSVC: in the PDB staged beside the binary).
+debug = "line-tables-only"
+
 [dev-dependencies]
 jsonschema = { version = "0.33", default-features = false }
 

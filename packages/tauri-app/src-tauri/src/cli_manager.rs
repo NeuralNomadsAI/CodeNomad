@@ -1298,6 +1298,8 @@ impl CliProcessManager {
                 },
             );
             c.env("CODENOMAD_NATIVE_PARENT", "1");
+            // Unix replaces the environment with the user shell's: keep the Rust server's backtraces.
+            c.env("RUST_BACKTRACE", "1");
             c.env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", if cfg!(any(windows, target_os = "macos", target_os = "linux")) { "1" } else { "0" });
             configure_spawn(&mut c);
             if let Some(ref cwd) = cwd {
