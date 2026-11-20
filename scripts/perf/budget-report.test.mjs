@@ -1,0 +1,28 @@
+import assert from "node:assert/strict"
+import { test } from "node:test"
+import { budgetReport } from "./budget-report.mjs"
+
+const budgets = {
+  counters: { "solid.createComputation": { max: 115 } },
+  callsByFile: { "timeline.ts": 100, "sidebar.tsx": 10, "moved.ts": 1 },
+  latency: { 8: { shownP95: { max: 1.15 } } },
+}
+const ratios = { 8: { shownP95: { cn: 60, tui: 50, ratio: 1.2 } } }
+const files = { "timeline.ts": 115, "sidebar.tsx": 12, "composer.tsx": 24, "moved.ts": .5 }
+
+test("an exceeded counter names the metric and ranks positive call growth by file", () => {
+  const { report, failures } = budgetReport(budgets, { metrics: { "solid.createComputation": 118 }, files }, ratios)
+  assert.deepEqual(failures, [
+    "L8 solid.createComputation: 118.00 exceeds 115.00",
+    "L8 shownP95 CodeNomad/TUI: 1.20 exceeds 1.15",
+  ])
+  assert.match(report, /\| composer\.tsx \| 24\.00 \|\n\| timeline\.ts \| 15\.00 \|\n\| sidebar\.tsx \| 2\.00 \|/)
+  assert.doesNotMatch(report, /moved\.ts/)
+})
+
+test("a timing-only failure reports both latencies without attributing it to code files", () => {
+  const { report, failures } = budgetReport(budgets, { metrics: { "solid.createComputation": 115 }, files }, ratios)
+  assert.deepEqual(failures, ["L8 shownP95 CodeNomad/TUI: 1.20 exceeds 1.15"])
+  assert.match(report, /60\.0 ms \/ 50\.0 ms/)
+  assert.doesNotMatch(report, /Largest increases/)
+})

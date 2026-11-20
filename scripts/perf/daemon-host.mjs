@@ -37,7 +37,12 @@ export async function withDaemon(cli, root, chunks, run) {
     try {
       let raw = ""
       for await (const chunk of req) raw += chunk
-      const { messages } = JSON.parse(raw)
+      const { messages, stream } = JSON.parse(raw)
+      if (!stream) {
+        res.setHeader("Content-Type", "application/json")
+        res.end(JSON.stringify({ id: "fixture", choices: [{ message: { role: "assistant", content: "Fixture" }, finish_reason: "stop" }] }))
+        return
+      }
       const user = messages.filter(m => m.role === "user").map(m => typeof m.content === "string" ? m.content : m.content.map(c => c.text ?? "").join(" "))
         .filter(text => !text.startsWith("The Code Mode tool catalog has changed.")).at(-1) ?? ""
       const tag = /BENCH:([A-Z]{2}):(\d+) LIVE/.exec(user)

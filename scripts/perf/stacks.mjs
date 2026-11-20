@@ -18,7 +18,7 @@ export async function withBackend(daemon, tree, root, run) {
     fileURLToPath(new URL("./ts-wrapper.mjs", import.meta.url)),
     "--http", "true", "--http-port", "0", "--https", "false", "--host", "127.0.0.1", "--ui-no-update",
     "--ui-dir", path.dirname(assetsDirectory(tree)), "--config", config, "--workspace-root", daemon.project,
-  ], { env: { ...daemon.env, CLI_CONFIG: config, PERF_SERVER_DIST: path.join(tree, "packages/server/dist"),
+  ], { env: { ...daemon.env, CLI_CONFIG: config, PERF_SERVER_DIST: fileURLToPath(new URL("../../packages/server/dist", import.meta.url)),
     PERF_DAEMON_URL: daemon.url, PERF_DAEMON_PID: String(daemon.pid), CODENOMAD_SERVER_PASSWORD: password,
     CODENOMAD_REMOTE_CONTROL: "disabled" }, cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
   const stopped = new Promise(resolve => child.once("close", resolve))
