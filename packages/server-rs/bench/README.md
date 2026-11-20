@@ -26,6 +26,7 @@ pwsh -NoProfile -File run-all.ps1 -OpenCode $OpenCode [-Only http,contract]   # 
 node security.mjs $OpenCode
 node hardening.mjs $OpenCode
 node service.mjs $OpenCode
+node launch.mjs
 ```
 
 | Mode | Covers |
@@ -42,6 +43,7 @@ node service.mjs $OpenCode
 | `design` | Design request written to the pruning plugin lease according to an API 4 extension state. |
 | `solid` | Real UI served by TS: HTTPS pairing of Rust, two prompts, two isolated tabs, worktree, Files, Rust memory under 48 MiB, no error toast. |
 | `security.mjs` | TLS and pairing: same checks on the Rust HTTPS listener and the TS remote surface, revocation during SSE, certificate reuse and rotation. |
+| `launch.mjs` | Both servers launched as Tauri launches them (same `serve` arguments and variables, private homes): stdout contract lines, bootstrap token exchange, sign-in pages and redirects, UI bundle and single-page fallback, `tls/` and identity files, stop over stdin. No OpenCode needed. |
 | `hardening.mjs` | Rust only: HTTPS admission under silent-socket floods, device and network paths, cross-site navigation, Git configuration guard, data folder ACL, SSE budgets. |
 | `service.mjs` | The daemon lifecycle through each server's own CLI discovery, on two isolated profiles and daemon ports: start on the first workspace, discovery after a backend restart, reconnection after a daemon restart, a conversation each time; refusals of a V1 CLI, malformed CLI output and a daemon below the minimum version. |
 

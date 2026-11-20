@@ -1,9 +1,10 @@
 //! Bundled plugin provisioning, after the reference
 //! `opencode/desktop-plugin-{paths,installation,provisioning}.ts`.
 //!
-//! Opt-in with `CNRS_PROVISION_PLUGINS` (`1` = the reference set, see
-//! `selected`, or a comma list). Payloads come from `CNRS_PLUGIN_ASSETS` or the
-//! `plugins/` folder beside the binary (`<feature>/plugin.mjs`, Missions
+//! Always the reference set under `serve`, like the reference; the positional
+//! launch opts in with `CNRS_PROVISION_PLUGINS` (`1` = the reference set, see
+//! `selected`, or a comma list). Payloads come from the `plugins/` folder beside
+//! the binary (positional launch: `CNRS_PLUGIN_ASSETS` first) (`<feature>/plugin.mjs`, Missions
 //! `provider.mjs`). `lifecycle` runs it on every daemon connection.
 //! The discovery root is the one the connected daemon reports through
 //! `GET /api/config`, never this process's environment. Payloads are

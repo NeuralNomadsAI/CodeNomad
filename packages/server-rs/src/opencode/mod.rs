@@ -43,7 +43,7 @@ pub struct Native {
 static UNCONNECTED: std::sync::LazyLock<Url> = std::sync::LazyLock::new(|| Url::parse("http://127.0.0.1:0/").unwrap());
 
 impl Native {
-    /// The bench's fixture daemon when it is injected, else the CLI lifecycle of `binary`.
+    /// The bench's fixture daemon when the positional launch injects it, else the CLI lifecycle of `binary`.
     pub fn connect(binary: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let client = Client::builder()
             .no_proxy()
@@ -53,7 +53,7 @@ impl Native {
             // sockets the daemon had already closed (ConnectionReset, a 502 in the UI).
             .pool_idle_timeout(Duration::from_secs(4))
             .build()?;
-        let (endpoint, lifecycle) = if bench::native_endpoint_set() {
+        let (endpoint, lifecycle) = if bench::native_endpoint_set() && !crate::config::serve() {
             let (url, password) = bench::native_endpoint()?;
             let url = Url::parse(&url)?;
             let fixture = url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port().is_some();

@@ -1,12 +1,59 @@
-//! Switches reserved for the qualification bench: the injected native endpoint,
-//! fixture-only features and traces. Production never sets them.
-use std::{env, ffi::OsString, sync::LazyLock};
+//! Switches reserved for the qualification bench: the positional launch, the injected native
+//! endpoint, fixture-only features and traces. `serve` never reads them.
+use std::{env, ffi::OsString, net::SocketAddr, path::PathBuf, sync::LazyLock, time::Duration};
 
 use axum::{body::Body, extract::Request, middleware::Next, response::Response};
 use tokio_util::sync::CancellationToken;
 
+use crate::{auth, host};
+
 fn on(name: &str) -> bool {
     env::var(name).as_deref() == Ok("1")
+}
+
+/// `codenomad-rs <root> <identity.json> <port or 0> <opencode binary or "">` (bench and user
+/// service): password `CNRS_SERVER_PASSWORD`, HTTPS from `CNRS_HTTPS_BIND`, `CNRS_HTTPS_NAME`,
+/// `CNRS_TLS_KEY`/`CERT`/`CA` and `CNRS_TLS_SANS`, data beside the identity file.
+pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::Error>> {
+    let [root, identity, port, binary] = args else {
+        return Err("usage: codenomad-rs <root> <identity.json> <port or 0> <opencode binary or \"\">".into());
+    };
+    let identity = PathBuf::from(identity);
+    let data = identity.with_extension("data");
+    let https = match env::var("CNRS_HTTPS_BIND").ok() {
+        Some(bind) => {
+            let bind: SocketAddr = bind.parse()?;
+            Some(auth::tls::Settings {
+                bind: host::Bind { ip: bind.ip(), port: bind.port(), fallback: false },
+                name: env::var("CNRS_HTTPS_NAME")?,
+                dir: data.join("tls"),
+                files: ["CNRS_TLS_KEY", "CNRS_TLS_CERT", "CNRS_TLS_CA"].map(env::var_os),
+                sans: env::var("CNRS_TLS_SANS").unwrap_or_default(),
+            })
+        }
+        None => None,
+    };
+    let auth = auth::Settings {
+        username: auth::DEFAULT_USERNAME.into(),
+        password: Some(env::var("CNRS_SERVER_PASSWORD")?),
+        file: None,
+        cookie: auth::DEFAULT_COOKIE.into(),
+        token: false,
+        skip: false,
+        idle: Duration::from_secs(86400),
+        absolute: Duration::from_secs(7 * 86400),
+    };
+    Ok(host::Launch {
+        root: root.into(),
+        identity,
+        data,
+        binary: binary.into(),
+        http: host::Bind { ip: [127, 0, 0, 1].into(), port: port.parse()?, fallback: false },
+        https,
+        auth,
+        ui: host::ui::Source::Absent,
+        serve: false,
+    })
 }
 
 /// The fixture daemon (`CNRS_FIXTURE_URL`, `CNRS_FIXTURE_PASSWORD`), in place of the CLI lifecycle.
