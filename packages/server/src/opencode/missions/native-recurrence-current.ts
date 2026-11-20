@@ -68,7 +68,8 @@ const readCurrent = Effect.fn("missions.readNativeRecurrenceCurrent")(function* 
     if (doc.pending) {
       passage = missionDocumentPassage(storage, doc, current)
       profiles = doc.pending.configuration.profiles; taskMode = doc.pending.configuration.taskMode
-      source = { owner: "scheduled", projectID: identity.projectID, scheduleID: doc.id, passageID: passage.passageID, missionID: passage.missionID,
+      // Only an admitted passage has a readable Mission; before that, readers see its ID alone.
+      if (doc.pending.admittedAt !== null) source = { owner: "scheduled", projectID: identity.projectID, scheduleID: doc.id, passageID: passage.passageID, missionID: passage.missionID,
         digest: contentDigest(canonicalAuthority({ pending: doc.pending, configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration,
           roots: doc.configuration.roots }, OWNER_BYTES)), configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration }
     }
@@ -80,7 +81,7 @@ const readCurrent = Effect.fn("missions.readNativeRecurrenceCurrent")(function* 
     ownerRevision = doc.revision
     if (doc.pending) {
       passage = recurrencePassage(storage, doc, current); profiles = doc.config.profiles; taskMode = doc.config.taskMode
-      source = { owner: "daily", projectID: identity.projectID, scheduleID: doc.id, passageID: passage.passageID,
+      if (doc.pending.admission) source = { owner: "daily", projectID: identity.projectID, scheduleID: doc.id, passageID: passage.passageID,
         missionID: passage.missionID, digest: contentDigest(canonicalAuthority({ pending: doc.pending, profiles: doc.config.profiles, taskMode: doc.config.taskMode, roots: doc.config.roots }, OWNER_BYTES)) }
     }
     reread = async () => equal(await store.read(doc.id), doc)
