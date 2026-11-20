@@ -45,6 +45,7 @@ node launch.mjs
 | `solid` | Real UI served by TS: HTTPS pairing of Rust, two prompts, two isolated tabs, worktree, Files, Rust memory under 48 MiB, no error toast. |
 | `security.mjs` | TLS and pairing: same checks on the Rust HTTPS listener and the TS remote surface, revocation during SSE, certificate reuse and rotation. |
 | `launch.mjs` | Both servers launched as Tauri launches them (same `serve` arguments and variables, private homes): stdout contract lines, bootstrap token exchange, sign-in pages and redirects, UI bundle and single-page fallback, `tls/` and identity files, stop over stdin. No OpenCode needed. |
+| `tauri-automation.mjs` | Windows real trial: `node tauri-automation.mjs <opencode.exe> <codenomad-tauri.exe>` starts an isolated daemon and the given Tauri build with `CODENOMAD_SERVER_IMPL=rust` in the same private home and profile, then runs the automation plugin's own tool code against it through the private bridge registry: inspect, type, click, screenshot, browser, restart. It stops only processes of that executable path. |
 | `hardening.mjs` | Rust only: HTTPS admission under silent-socket floods, device and network paths, cross-site navigation, Git configuration guard, data folder ACL, SSE budgets. |
 
 `node host-survey.mjs $OpenCode` records every request the Solid UI makes to a TS local host (start-up, folder picker, conversation, Files, Git, worktree, recents, Settings) in `out/host-survey.json`; [HOST_ROUTES.md](HOST_ROUTES.md) classifies them.
