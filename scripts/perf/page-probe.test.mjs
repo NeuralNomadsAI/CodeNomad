@@ -13,9 +13,8 @@ test("renderer probe counts attributes but observes only visible markers and com
   try {
     browser = await chromium.launch({ headless: true, env: await fixtureEnvironment(root) })
     const page = await browser.newPage()
-    await page.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
-    await page.goto("about:blank")
     await page.setContent('<main class="message-stream"></main><textarea id="composer"></textarea><input id="other">')
+    await page.addScriptTag({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
     await page.evaluate(() => {
       window.__perf.arm()
       const stream = document.querySelector("main")
