@@ -1,4 +1,4 @@
-use super::{PreferencesWindow, LABEL};
+use super::{opener_or_recent, PreferencesWindow, LABEL};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -92,6 +92,23 @@ impl ServerSelection {
     }
 }
 
+fn selection_target(
+    section: &str,
+    action: Option<&str>,
+    opener: Option<String>,
+    is_live: impl Fn(&str) -> bool,
+    recent: impl FnOnce() -> Option<String>,
+) -> Result<String, String> {
+    let target = match action {
+        None if section == "servers" => opener.filter(|label| is_live(label)),
+        Some("remove") if matches!(section, "servers" | "remote") => {
+            opener_or_recent(opener, is_live, recent)
+        }
+        _ => return Err("Server selection context changed".into()),
+    };
+    target.ok_or_else(|| "Server selection opener unavailable".into())
+}
+
 #[tauri::command]
 pub(crate) async fn preferences_select_server(
     webview: tauri::Webview,
@@ -106,38 +123,27 @@ pub(crate) async fn preferences_select_server(
         return Err("Server selection requires Preferences".into());
     }
     intent.validate()?;
-    let label = {
+    let (section, opener) = {
         let state = preferences.state.lock().unwrap_or_else(|e| e.into_inner());
-        let allowed = match action.as_deref() {
-            None => state.request.section == "servers",
-            Some("remove") => matches!(state.request.section.as_str(), "servers" | "remote"),
-            _ => false,
-        };
-        if !allowed {
-            return Err("Server selection context changed".into());
-        }
-        state
-            .opener
-            .label
-            .clone()
-            .ok_or("Server selection opener unavailable")?
+        (state.request.section.clone(), state.opener.label.clone())
     };
-    let target = app
-        .get_webview_window(&label)
-        .ok_or("Server selection opener unavailable")?;
-    crate::require_local_app_webview(
-        &app.get_webview(&label)
-            .ok_or("Server selection opener unavailable")?,
-        &app_state,
+    let label = selection_target(
+        &section,
+        action.as_deref(),
+        opener,
+        // A main window hosting an embedded preview still has its primary webview.
+        |label| app.get_webview(label).is_some(),
+        || {
+            app.state::<crate::local_windows::LocalWindows>()
+                .mru_label()
+        },
     )?;
-    let origin = serde_json::to_string(
-        &target
-            .url()
-            .map_err(|e| e.to_string())?
-            .origin()
-            .ascii_serialization(),
-    )
-    .map_err(|e| e.to_string())?;
+    let target = app
+        .get_webview(&label)
+        .ok_or("Server selection opener unavailable")?;
+    let url = crate::require_local_app_webview(&target, &app_state)?;
+    let origin =
+        serde_json::to_string(&url.origin().ascii_serialization()).map_err(|e| e.to_string())?;
     let value = serde_json::to_string(&intent).map_err(|e| e.to_string())?;
     let action = serde_json::to_string(&action).map_err(|e| e.to_string())?;
     let (id, receiver) = preferences.selection.begin(&label)?;
@@ -162,8 +168,9 @@ pub(crate) async fn preferences_select_server(
     };
     preferences.selection.forget(&id);
     result?;
-    target.show().map_err(|e| e.to_string())?;
-    target.set_focus().map_err(|e| e.to_string())
+    let window = target.window();
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -184,6 +191,35 @@ pub(crate) fn server_selection_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn removal_targets_the_live_opener_or_the_most_recent_local_window() {
+        let target = |section, action, opener: Option<&str>, recent: Option<&str>| {
+            selection_target(
+                section,
+                action,
+                opener.map(str::to_owned),
+                |label| matches!(label, "opener" | "recent"),
+                || recent.map(str::to_owned),
+            )
+        };
+        let remove = Some("remove");
+        assert_eq!(
+            target("servers", remove, Some("opener"), Some("recent")).unwrap(),
+            "opener"
+        );
+        assert_eq!(
+            target("servers", remove, Some("closed"), Some("recent")).unwrap(),
+            "recent"
+        );
+        assert_eq!(
+            target("remote", remove, None, Some("recent")).unwrap(),
+            "recent"
+        );
+        assert!(target("servers", remove, None, Some("closed")).is_err());
+        assert!(target("servers", None, Some("closed"), Some("recent")).is_err());
+        assert!(target("general", remove, Some("opener"), Some("recent")).is_err());
+    }
+
     #[test]
     fn validates_saved_policy_only() {
         for value in [
