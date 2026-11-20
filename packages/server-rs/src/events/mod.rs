@@ -243,6 +243,7 @@ pub async fn bridge(app: Shared) {
                 continue;
             }
         };
+        crate::extensions::lifecycle::prepare(&app, &endpoint).await;
         let response = app.native.get("/api/event").header("accept", "text/event-stream").send().await;
         if let Ok(response) = response
             && response.status().is_success()

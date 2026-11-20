@@ -2,8 +2,8 @@
 //! `prepareDesktopPluginPresence` and `provisionDesktopPlugins`.
 //!
 //! Every OpenCode connection provisions: at start when the endpoint is already
-//! known, then each time the native event stream (re)connects (`connected`, called
-//! by `events::bridge`). Its
+//! known, before a discovered connection's first use (`prepare`), then each time
+//! the native event stream (re)connects (`connected`, called by `events::bridge`). Its
 //! discovery root is read again on that connection; an installation already
 //! retained for that root is reused (one backend lease per namespace), a new
 //! root gets its own installation. A failed attempt is retried by the next
@@ -46,15 +46,39 @@ struct State {
     connections: u64,
     reported: HashSet<String>,
     last: Option<String>,
+    features: Vec<&'static str>,
+    /// The connection already prepared (`pluginPreparations`): one attempt each, again after a failure.
+    prepared: Option<Arc<crate::opencode::Endpoint>>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 static CONNECTED: Notify = Notify::const_new();
+/// One provisioning attempt at a time, from a connection's acquirer or from the stream.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// The native event stream connected again: provision on this connection.
 pub fn connected() {
     if STATE.lock().unwrap().active {
         CONNECTED.notify_one();
+    }
+}
+
+/// `OpenCodeSharedService.connect`: a new connection is provisioned before its first use (a
+/// workspace opening, the event stream) returns; a failed attempt leaves it usable and the next
+/// acquisition tries again.
+pub async fn prepare(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) {
+    let _serial = SERIAL.lock().await;
+    let features = {
+        let state = STATE.lock().unwrap();
+        if !state.active || state.prepared.as_ref().is_some_and(|p| Arc::ptr_eq(p, endpoint)) {
+            return;
+        }
+        state.features.clone()
+    };
+    connection(app, &features).await;
+    let mut state = STATE.lock().unwrap();
+    if state.current.is_some() {
+        state.prepared = Some(endpoint.clone());
     }
 }
 
@@ -232,19 +256,28 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
         let mut state = STATE.lock().unwrap();
         state.active = true;
         state.expected = features.len();
+        state.features = features.clone();
     }
     let app = app.clone();
     Ok(Some(tokio::spawn(async move {
         // A discovered daemon is first provisioned when its event stream connects.
-        if app.native.endpoint().is_some() {
+        if let Some(endpoint) = app.native.endpoint() {
+            let _serial = SERIAL.lock().await;
             let attempt = connection(&app, &features);
             tokio::select! { _ = stop.cancelled() => {}, _ = attempt => {} }
+            let mut state = STATE.lock().unwrap();
+            if state.current.is_some() {
+                state.prepared = Some(endpoint);
+            }
         }
         let mut renewed = tokio::time::Instant::now();
         while !stop.is_cancelled() {
             tokio::select! {
                 _ = stop.cancelled() => break,
-                _ = CONNECTED.notified() => connection(&app, &features).await,
+                _ = CONNECTED.notified() => {
+                    let _serial = SERIAL.lock().await;
+                    connection(&app, &features).await
+                }
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {}
             }
             let renew = renewed.elapsed() >= PRESENCE_INTERVAL;

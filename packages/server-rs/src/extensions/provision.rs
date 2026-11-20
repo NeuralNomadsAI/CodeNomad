@@ -3,9 +3,10 @@
 //!
 //! Always the reference set under `serve`, like the reference; the positional
 //! launch opts in with `CNRS_PROVISION_PLUGINS` (`1` = the reference set, see
-//! `selected`, or a comma list). Payloads come from the `plugins/` folder beside
-//! the binary (positional launch: `CNRS_PLUGIN_ASSETS` first) (`<feature>/plugin.mjs`, Missions
-//! `provider.mjs`). `lifecycle` runs it on every daemon connection.
+//! `selected`, or a comma list). Payloads (`<feature>/plugin.mjs`, Missions
+//! `provider.mjs`) come from the packaged TypeScript build's `dist/plugins/`
+//! beside the binary, else `plugins/` (positional launch: `CNRS_PLUGIN_ASSETS` first).
+//! `lifecycle` runs it on every daemon connection.
 //! The discovery root is the one the connected daemon reports through
 //! `GET /api/config`, never this process's environment. Payloads are
 //! content-addressed (`<sha256>.mjs`) in the sibling `.codenomad/<root-hash>/`
@@ -320,7 +321,14 @@ fn assets() -> io::Result<PathBuf> {
         return Ok(dir.into());
     }
     let exe = env::current_exe()?;
-    Ok(exe.parent().ok_or_else(|| io::Error::other("binary has no folder"))?.join("plugins"))
+    let folder = exe.parent().ok_or_else(|| io::Error::other("binary has no folder"))?;
+    Ok(plugin_folder(folder))
+}
+
+/// A desktop package keeps the binary beside the TypeScript build: its `dist/plugins/`, else `plugins/`.
+fn plugin_folder(folder: &Path) -> PathBuf {
+    let packaged = folder.join("dist").join("plugins");
+    if packaged.is_dir() { packaged } else { folder.join("plugins") }
 }
 
 pub fn payloads(feature: &str) -> io::Result<(Vec<u8>, Option<Vec<u8>>)> {

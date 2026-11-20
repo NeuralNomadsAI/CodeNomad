@@ -102,7 +102,8 @@ async fn create(
     };
     let validation = async {
         let deadline = tokio::time::Instant::now() + daemon::TIMEOUT;
-        app.native.acquire(deadline).await?;
+        let endpoint = app.native.acquire(deadline).await?;
+        crate::extensions::lifecycle::prepare(&app, &endpoint).await;
         let response = app
             .native
             .get("/api/location")
