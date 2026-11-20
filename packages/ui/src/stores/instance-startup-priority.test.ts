@@ -77,6 +77,53 @@ it("publishes root sessions before project metadata and checkout discovery, then
   }
 })
 
+it("runs pending recovery without waiting for the session catalog or instance config", async () => {
+  const id = "startup-pending-parallel"
+  let releaseCatalog!: (value: any) => void
+  const catalog = new Promise<any>(resolve => { releaseCatalog = resolve })
+  let catalogReads = 0
+  const oldCreate = sdkManager.createClient
+  const oldWorktrees = serverApi.fetchWorktrees
+  const oldPending = serverApi.getPendingRequests
+  let pendingReads = 0
+  const root = { id: "root", title: "root", projectID: "project", location: { directory: "/repo" },
+    cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 } }
+  const client: any = {
+    location: { get: async () => ({ directory: "/repo", project: { id: "project" } }) },
+    session: { active: async () => ({}), list: async () => ({ data: [root], cursor: {} }) },
+    project: { list: async () => [] },
+    mcp: { list: async () => ({ location: { directory: "/repo" }, data: [] }) },
+    plugin: { list: async () => ({ data: [] }) },
+    agent: { list: async () => ({ data: [] }) },
+    provider: { list: async () => { catalogReads++; await catalog; return { data: [] } } },
+    model: { list: async () => ({ data: [] }), default: async () => ({ data: null }) },
+    command: { list: async () => ({ data: [] }) },
+  }
+  sdkManager.createClient = () => client
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  serverApi.getPendingRequests = async (_id, directories) => {
+    pendingReads++
+    return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [], forms: [] }] })) }
+  }
+  try {
+    ;(serverEvents as any).dispatch({ type: "workspace.started", workspace: {
+      id, path: "/repo", status: "ready", proxyPath: `/workspaces/${id}/instance`,
+    } })
+    for (let attempt = 0; attempt < 100 && pendingReads === 0; attempt++) await new Promise<void>(resolve => setImmediate(resolve))
+    assert.ok(pendingReads > 0, "pending recovery must run while the catalog read is still pending")
+    assert.equal(catalogReads, 1)
+    releaseCatalog({ data: [] })
+    await waitForInstanceInitialHydration(id)
+  } finally {
+    releaseCatalog({ data: [] })
+    sdkManager.createClient = oldCreate
+    serverApi.fetchWorktrees = oldWorktrees
+    serverApi.getPendingRequests = oldPending
+    removeInstance(id, { authoritative: false })
+    sdkManager.destroyClientsForInstance(id)
+  }
+})
+
 it("warns when initial hydration fails before pending recovery can start", async () => {
   const id = "startup-pending-unavailable"
   const oldCreate = sdkManager.createClient, oldWorktrees = serverApi.fetchWorktrees
