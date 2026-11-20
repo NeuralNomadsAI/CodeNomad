@@ -1,6 +1,5 @@
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { promisify } from "node:util"
 import type { ForgeProvider, ForgeWorkItemKind } from "../panel-extensions/contract"
 import { runGitProcess } from "../workspaces/git-process"
 import { parseRemoteUrl, readForgeRemote } from "./remote"
@@ -99,7 +98,11 @@ const creationMarker = (kind: ForgeWorkItemKind, number: number) => `codenomad: 
 export async function lookupWorkItemBranch(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number,
   signal?: AbortSignal): Promise<WorkItemBranchLookup> {
   const url = await remoteUrl(directory, source, signal)
-  if (!url || url === "changed") return { status: "unavailable" }
+  return !url || url === "changed" ? { status: "unavailable" } : linkedBranch(directory, source, kind, number)
+}
+
+/** The exact lookup once the remote was checked. */
+async function linkedBranch(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number): Promise<WorkItemBranchLookup> {
   const link = (await links(directory, source)).find(candidate => candidate.kind === kind && candidate.number === number)
   if (!link) return { status: "ok", repository: workItemRepository(source), branch: null }
   const ref = `refs/heads/${link.branch}`
@@ -132,12 +135,30 @@ export function createWorkItemBranch(directory: string, source: WorkItemBranchSo
  * The pull request fetch, a network process outside the shared Git worker (whose two
  * slots serve local reads), killed when the caller goes away or after 15 s.
  */
-async function fetchHead(directory: string, url: string, head: string, scratch: string, signal?: AbortSignal) {
+function fetchHead(directory: string, url: string, head: string, scratch: string, signal?: AbortSignal) {
   const cleared = Object.fromEntries(Object.keys(process.env)
     .filter(key => key.toUpperCase().startsWith("GIT_") && !/^GIT_SSH(_COMMAND)?$/i.test(key)).map(key => [key, undefined]))
-  await promisify(execFile)("git", ["-C", directory, "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--refmap=", "--", url, `${head}:${scratch}`], {
-    windowsHide: true, timeout: FETCH_TIMEOUT_MS, maxBuffer: 1024 * 1024, signal,
-    env: { ...process.env, ...cleared, GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
+  return new Promise<void>((resolve, reject) => {
+    // Its own process group, so the transport helpers it starts (git-remote-https, ssh) end with it.
+    const child = spawn("git", ["-C", directory, "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--refmap=", "--", url, `${head}:${scratch}`], {
+      windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, ...cleared, GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
+    })
+    let stderr = ""
+    child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 64 * 1024) stderr += chunk.toString() })
+    const killTree = () => {
+      if (child.pid === undefined || child.exitCode !== null) return
+      if (process.platform === "win32") execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }, () => {})
+      else try { process.kill(-child.pid, "SIGKILL") } catch { child.kill("SIGKILL") }
+    }
+    const stop = (reason: unknown) => { cleanup(); killTree(); reject(reason) }
+    const abort = () => stop(signal!.reason)
+    const timer = setTimeout(() => stop(new Error("Pull request fetch timed out")), FETCH_TIMEOUT_MS)
+    const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort) }
+    signal?.addEventListener("abort", abort, { once: true })
+    child.once("error", error => { cleanup(); reject(error) })
+    child.once("close", code => { cleanup(); if (code === 0) resolve(); else reject(new Error(stderr.trim() || `git fetch exited with ${code}`)) })
+    if (signal?.aborted) abort()
   })
 }
 
@@ -146,8 +167,10 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
   const ready = async () => { guard.signal?.throwIfAborted(); await guard.check?.(); guard.signal?.throwIfAborted() }
   await ready()
   // The remote must still name the confirmed repository, whether the branch is reused or created.
-  if (await remoteUrl(directory, source, guard.signal) === "changed") return { status: "changed" }
-  const found = await lookupWorkItemBranch(directory, source, kind, number, guard.signal)
+  const first = await remoteUrl(directory, source, guard.signal)
+  if (first === "changed") return { status: "changed" }
+  if (!first) return { status: "unavailable" }
+  const found = await linkedBranch(directory, source, kind, number)
   if (found.status !== "ok") return found
   if (found.branch) return { status: "ok", branch: found.branch, revision: await git(directory, ["rev-parse", "--verify", `refs/heads/${found.branch}^{commit}`]), created: false }
   const branch = `${kind === "issue" ? "issue" : "pr"}-${number}`
@@ -157,9 +180,7 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
   else {
     // Fetch from the URL that still names the confirmed repository, never through
     // the remote's configured refspecs (`--refmap=`), into a scratch ref only.
-    const url = await remoteUrl(directory, source, guard.signal)
-    if (url === "changed") return { status: "changed" }
-    if (!url) return { status: "unavailable" }
+    const url = first
     const head = source.provider === "gitlab" ? `refs/merge-requests/${number}/head` : `refs/pull/${number}/head`
     const scratch = `refs/codenomad/fetch/${randomUUID()}`
     try {
@@ -185,8 +206,15 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
   if (refused) return refused
   // Created only if absent (empty old value), with CodeNomad's own reflog marker.
   try { await git(directory, ["update-ref", "-m", creationMarker(kind, number), `refs/heads/${branch}`, revision, ""]) } catch { return { status: "conflict", branch } }
-  const undo = () => git(directory, ["config", "--local", "--remove-section", `branch.${branch}`]).catch(() => {})
-    .then(() => git(directory, ["update-ref", "-d", `refs/heads/${branch}`, revision])).catch(() => {})
+  // Undoing removes only CodeNomad's link; the ref goes too unless something adopted it
+  // meanwhile (a checkout, or other branch settings), and then only at that exact tip.
+  const undo = async () => {
+    await git(directory, ["config", "--local", "--unset-all", `branch.${branch}.${KEY}`]).catch(() => {})
+    const [worktrees, settings] = await Promise.all([git(directory, ["worktree", "list", "--porcelain"]).catch(() => undefined),
+      git(directory, ["config", "--local", "--get-regexp", `^branch\\.${branch.replace(/[.\\^$*+?()[\]{}|]/g, "\\$&")}\\.`]).catch(() => "")])
+    if (worktrees === undefined || worktrees.split(/\r?\n/).includes(`branch refs/heads/${branch}`) || settings) return
+    await git(directory, ["update-ref", "-d", `refs/heads/${branch}`, revision]).catch(() => {})
+  }
   try {
     await git(directory, ["config", "--local", `branch.${branch}.${KEY}`, `${workItemRepository(source)}#${kind.toLowerCase()}/${number}@${revision}/${branch}`])
     const late = await admitted()

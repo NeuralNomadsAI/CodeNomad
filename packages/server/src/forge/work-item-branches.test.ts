@@ -19,12 +19,12 @@ const commit = (directory: string, message: string) => git(directory, "-c", "use
 
 // Remotes are served over Git's dumb HTTP protocol, so URLs parse as forge repositories.
 let server: Server, origin = ""
-const held: import("node:http").ServerResponse[] = []
+const held: import("node:http").ServerResponse[] = [], closed = new Set<import("node:http").ServerResponse>()
 before(async () => {
   server = createServer((request, response) => {
     const [, root, repository, ...rest] = decodeURIComponent(new URL(request.url!, "http://x").pathname).split("/")
     // `/hang/…` never answers, as a stalled forge.
-    if (root === "hang") { held.push(response); return }
+    if (root === "hang") { held.push(response); response.on("close", () => { closed.add(response) }); return }
     try { response.end(readFileSync(path.join(tmpdir(), root!, repository!, ...rest))) } catch { response.statusCode = 404; response.end() }
   })
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
@@ -126,6 +126,23 @@ describe("work item branches", () => {
     assert.equal(git(clone, "config", "--list", "--local").includes("branch.issue-16."), false, "nor its link")
   })
 
+  it("an undone write keeps a branch the user adopted meanwhile, removing only the link", async () => {
+    const { clone, source } = await project()
+    const adopted = path.join(clone, "..", "adopted")
+    let checks = 0
+    const check = async () => {
+      if (++checks < 3) return
+      git(clone, "worktree", "add", "-q", adopted, "issue-19")
+      git(clone, "config", "branch.issue-19.description", "mine")
+      throw new Error("revoked")
+    }
+    await assert.rejects(create(clone, source, "issue", 19, { check }), /revoked/)
+    assert.equal(git(adopted, "branch", "--show-current"), "issue-19")
+    assert.equal(git(adopted, "rev-parse", "HEAD"), git(clone, "rev-parse", "main"), "the checkout keeps its commit")
+    assert.equal(git(clone, "config", "branch.issue-19.description"), "mine")
+    assert.equal(git(clone, "config", "--list", "--local").includes("codenomad-work-item"), false)
+  })
+
   it("follows the remote Git selects now: an upstream added after discovery is a change", async () => {
     const { clone, source } = await project()
     git(clone, "remote", "add", "upstream", "https://github.com/parent/repo.git")
@@ -161,6 +178,9 @@ describe("work item branches", () => {
     for (const controller of controllers) controller.abort(new Error("gone"))
     const settled = await Promise.race([Promise.all(pending).then(() => "settled"), new Promise(resolve => setTimeout(() => resolve("running"), 5_000))])
     assert.equal(settled, "settled", "an abandoned fetch stops")
+    // The whole process tree ends: the transport helper's connection closes too.
+    for (let attempt = 0; attempt < 60 && held.slice(before).some(response => !closed.has(response)); attempt++) await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(held.slice(before).every(response => closed.has(response)), true, "the forge connection is closed")
     assert.equal(git(repo, "for-each-ref", "refs/heads/pr-7", "refs/codenomad/"), "")
   })
 

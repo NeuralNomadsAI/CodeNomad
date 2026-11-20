@@ -632,3 +632,17 @@ test("worktrees: a branch replaced while its worktree is created never receives 
     assert.deepEqual([await worktreeCalls(page), await page.evaluate(() => (window as any).fixture.location("ses_work"))], [[{ create: "issue-41" }], "/fixture"])
   } finally { await page.evaluate(() => (window as any).fixture.release?.()).catch(() => {}); await page.close() }
 })
+test("worktrees: a lost native connection cancels the confirmation, and concurrent opens get one dialog", async () => {
+  await install()
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    const answers = await Promise.all([call(page, "worktrees.open", "issue", 48), call(page, "worktrees.open", "issue", 49)])
+    assert.deepEqual(answers.map(answer => answer.ok).sort(), ["busy", "confirming"])
+    await page.getByRole("button", { name: "Create and move", exact: true }).waitFor()
+    await page.evaluate(() => (window as any).fixture.event({ type: "instance.eventStatus", instanceId: "api4-instance", status: "disconnected", generation: 2 }))
+    await page.getByRole("button", { name: "Create and move", exact: true }).waitFor({ state: "detached" })
+    await page.waitForTimeout(300)
+    assert.deepEqual([await worktreeCalls(page), branches().some(branch => /^issue-4[89]$/.test(branch))], [[], false])
+  } finally { await page.close() }
+})

@@ -67,7 +67,8 @@ export function useApi4Channel(props: {
   send: (value: unknown) => void; host: Api4Host
 }) {
   const pending = new Set<AbortController>(), lifetime = new AbortController()
-  let confirming = false, quietUntil = 0
+  // `reserved`: an open answered `confirming` whose dialog has not started; `confirmation` aborts on connection loss.
+  let confirming = false, reserved = false, quietUntil = 0, confirmation: AbortController | undefined
   const authority = { instanceId: props.instanceId, id: props.id, digest: props.digest }
   const session = props.sessionId && props.sessionId !== "info" ? props.sessionId : null
   const granted = (permission: string) => props.permissions.includes(permission)
@@ -76,7 +77,7 @@ export function useApi4Channel(props: {
   let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined
   let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false }
   const current = () => !disposed && connected && nativeConnected && (props.host.activeSessionId() ?? null) === props.sessionId
-  const abort = () => { for (const request of pending) request.abort() }
+  const abort = () => { for (const request of pending) request.abort(); confirmation?.abort(); reserved = false }
   const invalidate = (gallery: boolean, status: boolean) => {
     if (disposed || !granted("session.images.read")) return
     changes = { gallery: changes.gallery || gallery, status: changes.status || status }
@@ -204,10 +205,14 @@ export function useApi4Channel(props: {
     if (!granted("repository.worktrees.write")) throw new Error("Unavailable")
     const { kind, number } = itemSchema.parse(value)
     if (!session) return { result: "no-session" }
-    if (confirming || alertDialogState() || Date.now() < quietUntil) return { result: "busy" }
+    if (confirming || reserved || alertDialogState() || Date.now() < quietUntil) return { result: "busy" }
     const target = await itemWorktree(kind, number, signal)
     if (!target) return { result: "unavailable" }
     if (target.current) return { result: "current" }
+    // Reserved before answering, so a concurrent open answers `busy`; released if the answer never lands.
+    if (confirming || reserved || !connected || !nativeConnected) return { result: "busy" }
+    reserved = true
+    setTimeout(() => { reserved = false }, API4_HOST_DEADLINE_MS)
     return { result: "confirming", after: () => { void confirmWorktree(session, kind, number, target.repository, target.slug, target.branch) } }
   }
 
@@ -216,26 +221,30 @@ export function useApi4Channel(props: {
     branchLabel: string | undefined) {
     // One dialog at a time, never over another host dialog, and none for a while after a refusal,
     // so a panel cannot keep the modal up while the user reaches its checkbox.
-    if (confirming || alertDialogState() || disposed || Date.now() < quietUntil) return
+    reserved = false
+    if (confirming || alertDialogState() || disposed || !connected || !nativeConnected || Date.now() < quietUntil) return
     confirming = true
+    const controller = new AbortController()
+    confirmation = controller
+    const signal = AbortSignal.any([lifetime.signal, controller.signal])
     const item = tGlobal(`panelExtensions.worktrees.${kind}`, { number })
     let progress: ToastHandle | undefined
     // Before each host mutation: still mounted, and the server still grants this exact package
     // (a disabled or replaced package fails the lookup's consent check).
     // With `branch`, the item must still be linked to that exact branch (not deleted and recreated meanwhile).
     const consented = async (branch?: string) => {
-      if (disposed) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
-      const answer = await panelExtensionsApi4.workItemBranchLookup(authority, kind, number, lifetime.signal)
-      if (disposed) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
+      if (disposed || !connected || !nativeConnected) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
+      const answer = await panelExtensionsApi4.workItemBranchLookup(authority, kind, number, signal)
+      if (disposed || !connected || !nativeConnected) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
       if (branch !== undefined && (answer.status !== "ok" || answer.branch !== branch)) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
     }
     try {
       const accepted = await showConfirmDialog(tGlobal(slug ? "panelExtensions.worktrees.confirmMove" : "panelExtensions.worktrees.confirmCreate", { item, worktree: branchLabel ?? slug }), {
-        title: props.name, detail: repository, confirmLabel: tGlobal(slug ? "panelExtensions.worktrees.move" : "panelExtensions.worktrees.create") }, lifetime.signal)
+        title: props.name, detail: repository, confirmLabel: tGlobal(slug ? "panelExtensions.worktrees.move" : "panelExtensions.worktrees.create") }, signal)
       if (!accepted) quietUntil = Date.now() + REFUSED_QUIET_MS
       if (!accepted || disposed) return
       // Consent is read again, and the confirmed worktree must still be the item's.
-      const target = await itemWorktree(kind, number, lifetime.signal)
+      const target = await itemWorktree(kind, number, signal)
       if (!target || !repository || target.repository !== repository || (slug !== undefined && target.slug !== slug)) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
       let destination = target.slug, branchName = target.branch
       if (destination === undefined) {
@@ -243,7 +252,7 @@ export function useApi4Channel(props: {
           message: tGlobal("panelExtensions.worktrees.creating", { item }) })
         // A new issue branch starts from the family's own checkout, as the worktree selector does.
         const fromSlug = getWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session))
-        const branch = await panelExtensionsApi4.workItemBranch(authority, kind, number, repository, fromSlug, lifetime.signal)
+        const branch = await panelExtensionsApi4.workItemBranch(authority, kind, number, repository, fromSlug, signal)
         if (branch.status !== "ok") throw new Refusal(tGlobal(`panelExtensions.worktrees.${branch.status}`, { item, branch: "branch" in branch ? branch.branch : "" }))
         await consented()
         // Only that branch at that tip: a branch deleted or replaced meanwhile is refused, never recreated.
@@ -255,13 +264,14 @@ export function useApi4Channel(props: {
       // The target must still check out the item's branch when the family moves; the move reports its own failure.
       await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination, { branch: branchName }).catch(() => {})
     } catch (error) {
-      if (lifetime.signal.aborted) return
+      if (signal.aborted) return
       showToastNotification({ category: "files", variant: "error", message: error instanceof Refusal ? error.message
         : error instanceof HttpResponseError && error.code === "nested_folder_unavailable" ? tGlobal("instanceShell.worktree.create.nestedFolderUnavailable")
           : tGlobal("panelExtensions.worktrees.error", { item }) })
     } finally {
       progress?.dismiss()
       confirming = false
+      if (confirmation === controller) confirmation = undefined
     }
   }
 
