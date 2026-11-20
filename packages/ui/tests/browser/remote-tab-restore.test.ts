@@ -37,7 +37,12 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       const snapshot = { version: 1, revision: 1, savedAt: 1, layout: {}, session }
       const persisted = JSON.parse(sessionStorage.getItem("restored-state") || "null")
       const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: persisted?.snapshot || snapshot, partitionProtocolVersion: 1 })
-      const commit = (value: any) => { (window as any).committedState = value; sessionStorage.setItem("restored-state", JSON.stringify(value)); return true }
+      const commit = (value: any) => {
+        if ((window as any).holdSnapshotCommit) return new Promise(() => {})
+        ;(window as any).committedState = value
+        sessionStorage.setItem("restored-state", JSON.stringify(value))
+        return true
+      }
       ;(window as any).electronAPI = { claimClientStateAccess: async () => true, loadClientState: async () => load(),
         loadClientStatePartition: async (_token: any, key: string) => persisted?.partitions[key] ?? null, commitClientStatePartitions: async (_token: any, value: any) => commit(value),
         saveClientState: async () => true, setClientStateRestoreEnabled: async () => true }
@@ -157,7 +162,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         if (mode === "auth" || mode === "pairing") {
           await page.getByRole("button", { name: "Connect", exact: true }).click()
           if (mode === "pairing") {
-            const field = page.getByLabel("Pairing link", { exact: true })
+            const field = page.locator('[data-remote-restore="a"]').getByLabel("New pairing link", { exact: true })
             await field.fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
             await field.press("Enter")
           } else {
@@ -191,8 +196,27 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates)
         const before = creates.length
         await page.waitForFunction(() => Boolean((window as any).committedState))
+        const immediateReload = host === "electron" && mode === "reuse"
+        if (immediateReload) {
+          await page.waitForFunction(async () => (await (window as any).restoreFixture.saved())?.session?.tabs[1]?.workspaceId === "a~existing-0")
+          await page.evaluate(() => { (window as any).holdSnapshotCommit = true })
+          await page.getByRole("tab").nth(1).click()
+          assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[1].id)
+          assert.equal(await page.evaluate(async () => (await (window as any).restoreFixture.saved()).session.activeTabIndex), 2)
+          healthy = false
+        }
         await page.reload()
+        if (immediateReload) {
+          await page.locator('[data-restoring="false"]').waitFor()
+          const pending = await page.evaluate(() => (window as any).restoreFixture.tabs())
+          assert.equal(pending[1].kind, "remote-restore")
+          assert.equal(pending[1].drafts.__no_session_draft__, "draft-1")
+          assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), pending[1].id)
+          healthy = true
+          await page.evaluate(() => (window as any).restoreFixture.retry())
+        }
         await page.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
+        assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[immediateReload ? 1 : 2].id)
         assert.deepEqual((await page.evaluate(() => (window as any).restoreFixture.tabs())).map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         const secondWindow = await context.newPage()
         await secondWindow.goto(url)
@@ -225,7 +249,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
           assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), suspended[2].id)
           if (mode === "pairing") {
             await page.getByRole("button", { name: "Connect", exact: true }).click()
-            const field = page.getByLabel("Pairing link", { exact: true })
+            const field = page.locator('[data-remote-restore="a"]').getByLabel("New pairing link", { exact: true })
             await field.fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
             await field.press("Enter")
           } else {

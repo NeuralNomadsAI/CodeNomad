@@ -14,7 +14,7 @@ import { workspaceIdentity } from "./app-session-reconciliation"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { remoteRestoreTabs, type RemoteRestoreTab } from "./remote-restore-tabs"
 import { generateUUID } from "../lib/client-identity"
-import type { ServerSelectionIntent } from "../lib/native/server-selection-intent"
+import { sameServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
 
 export interface InstanceAppTab {
   id: string
@@ -36,13 +36,16 @@ const [blankServer, setBlankServer] = createSignal<ServerSelectionIntent>()
 
 export function openBlankTab(server?: ServerSelectionIntent): void {
   batch(() => {
-    if (server) setBlankServer({ ...server })
     let tab = blankTab()
+    const currentServer = blankServer()
+    const alreadySelected = tab && activeAppTabId() === tab.id
+      && (!server || currentServer && sameServerSelection(server, currentServer))
+    if (server) setBlankServer({ ...server })
     if (!tab) {
       tab = { id: `blank:${generateUUID()}`, kind: "blank", get server() { return blankServer() } }
       setBlankTab(tab)
     }
-    selectAppTab(tab.id)
+    if (!alreadySelected) selectAppTab(tab.id)
   })
 }
 

@@ -92,10 +92,14 @@ async function setup(missing = false, holdEvents = false, web = false) {
     const eventStreamResponse = page.waitForResponse(response => response.request().resourceType() === "eventsource" && new URL(response.url()).pathname === "/api/events", { timeout: 120_000 })
     void eventStreamResponse.catch(() => {}) // Page cleanup may cancel a deliberately held setup stream.
     await page.goto(url)
-    if (!holdEvents) await eventStreamResponse
-    // Loaded Missions enable the current-mission field (nothing is selected by default).
-    await missionRows(page).locator("button.mission-row-select").first().waitFor()
-    await page.evaluate(() => window.missionCrossNavigation.coldCatalogue())
+    if (holdEvents) {
+      await page.waitForFunction(() => !!window.missionCrossNavigation)
+    } else {
+      await eventStreamResponse
+      // Loaded Missions enable the current-mission field (nothing is selected by default).
+      await missionRows(page).locator("button.mission-row-select").first().waitFor()
+      await page.evaluate(() => window.missionCrossNavigation.coldCatalogue())
+    }
     return { page, eventStreamResponse, events, panelReads, missionReads, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
   } catch (error) {
     if (process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE) await writeFile(path.join(process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE, `setup-failure-${Date.now()}.json`), JSON.stringify({ error: String(error), errors, networkErrors, requests,
@@ -109,12 +113,12 @@ test("first native stream open reconciles the completed HTTP catalogue without a
     fixture = await setup(false, true)
     const { page, events, requests, panelReads, errors, networkErrors } = fixture
     // Finish the initial snapshot before admitting the real persistent SSE open.
-    await page.waitForFunction(() => window.fixturePanelReadCancelled("1").then(() => true))
+    await page.waitForFunction(async () => await window.fixturePanelReadCancelled("1") === false)
     assert.equal(requests.filter(request => request === "GET /api/panel-extensions").length, 1)
     const reconciled = page.waitForResponse(response => new URL(response.url()).pathname === "/api/panel-extensions")
     events.release()
     await reconciled
-    await page.waitForFunction(() => window.fixturePanelReadCancelled("2").then(() => true))
+    await page.waitForFunction(async () => await window.fixturePanelReadCancelled("2") === false)
     assert.equal(requests.filter(request => request === "GET /api/panel-extensions").length, 2)
     await panelReads.drain()
     assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])

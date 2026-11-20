@@ -26,8 +26,7 @@ import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
-import { remoteRecentProjectsUsable, removeRecentProject, renameRecentProject, type RecentProject } from "../stores/recent-projects"
-import { normalizeWorkspacePath } from "../stores/app-session-reconciliation"
+import { browsedRemoteRecents, remoteRecentProjectsUsable, removeRecentProject, renameRecentProject, type RecentProject } from "../stores/recent-projects"
 import { renameProject } from "../stores/project-names"
 import { LocaleSelector } from "./locale-selector"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
@@ -88,10 +87,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const allRecents = createMemo<readonly LaunchableRecent[]>(() => {
     const source = remoteSource()
     if (!source) return launchableRecents()
-    const profile = source.profile
-    const serverLabel = qualifiedServerDisplayName(profile, remoteServers())
-    return source.listing?.recents.map(recent => ({ ...recent, kind: "remote", backendId: profile.id, serverLabel,
-      policy: profile, key: JSON.stringify([profile.id, normalizeWorkspacePath(recent.path)]) })) ?? []
+    return source.listing ? browsedRemoteRecents(source.profile, source.listing.recents) : []
   })
   const recentsAvailable = () => !remoteSource() || !!remoteSource()?.listing
   const folders = allRecents

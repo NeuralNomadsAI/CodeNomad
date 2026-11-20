@@ -31,7 +31,7 @@ serverApi.patchStateOwner = async (owner, patch) => {
 serverApi.fetchServerMeta = async () => ({ serversUsable: true }) as never
 serverApi.createWorkspace = async () => { throw new Error("Unexpected local creation") }
 
-const { recentProjects, recordRemoteProjectLaunch, removeRecentProject, renameRecentProject, latestRemoteProjectPath } = await import("./recent-projects")
+const { browsedRemoteRecents, recentProjects, recordRemoteProjectLaunch, removeRecentProject, renameRecentProject, latestRemoteProjectPath } = await import("./recent-projects")
 const { findOpenProjectTab, openRemoteProjectForProfile, selectOpenProjectTab, selectRemoteServer } = await import("./remote-project-open")
 const { preferencesForBackend, editRemoteProjectRecents, updatePreferences } = await import("./preferences")
 const { backendRegistry } = await import("./remote-backends")
@@ -49,6 +49,14 @@ await getServerMeta()
 const remote = (id: string) => recentProjects().find(recent => recent.kind === "remote" && recent.backendId === id)!
 const resume = () => (serverEvents as any).dispatch({ type: "storage.stateChanged", owner: "ui", value: structuredClone(disk) })
 const idle = () => editRemoteProjectRecents(() => undefined)
+
+test("Browse shows host opens for the selected profile even when the destination has no shortcuts", () => {
+  const profile = { ...profiles[0]!, createdAt: "", updatedAt: "" }
+  assert.deepEqual(browsedRemoteRecents(profile, []).map(({ backendId, path }) => [backendId, path]), [[policyA.id, path]])
+  const merged = browsedRemoteRecents(profile, [{ path: "d:/same/", projectName: "Destination name", lastAccessed: 42 }])
+  assert.deepEqual(merged.map(({ path, projectName, lastAccessed }) => [path, projectName, lastAccessed]), [[path, "Destination name", 42]])
+  assert.deepEqual(browsedRemoteRecents({ ...profile, skipTlsVerify: true }, []), [])
+})
 
 test("bounded metadata excludes credentials, malformed records, and duplicate qualified folders", () => {
   const sample = [

@@ -32,7 +32,7 @@ function directory(t: TestContext) {
   return dir
 }
 
-async function fixture(t: TestContext, options: Parameters<typeof startFakeCodeNomad>[0] = {}) {
+async function fixture(t: TestContext, options: Parameters<typeof startFakeCodeNomad>[0] = {}, principalSignal?: AbortSignal) {
   const dir = directory(t)
   const remote = await startFakeCodeNomad(options)
   t.after(() => remote.close())
@@ -41,7 +41,8 @@ async function fixture(t: TestContext, options: Parameters<typeof startFakeCodeN
   const manager = new RemoteServerBrowseManager(settings)
   const app = Fastify()
   let origin = ""
-  registerRemoteServerBrowseRoutes(app, { manager, getSelfOrigins: () => new Set([origin]) })
+  registerRemoteServerBrowseRoutes(app, { manager, getSelfOrigins: () => new Set([origin]),
+    principalSignal: () => principalSignal })
   app.addHook("onClose", async () => manager.close())
   origin = await app.listen({ host: "127.0.0.1", port: 0 })
   t.after(() => app.close())
@@ -58,6 +59,16 @@ test("unpaired Remote Control status requests credentials without attempting pas
   for (let i = 0; i < 2; i++) assert.deepEqual((await f.call('browse')).json(), { error: 'needs_credentials' })
   assert.equal(f.remote.state.logins, 0)
   assert(f.remote.state.requests.every(request => request.path === '/api/auth/status' && request.headers.origin === undefined))
+})
+
+test("a principal-bound browser can sign in when a saved destination requires a password", async t => {
+  const f = await fixture(t, {}, new AbortController().signal)
+  const missing = await f.call("browse")
+  assert.equal(missing.statusCode, 409)
+  assert.deepEqual(missing.json(), { error: "needs_credentials" })
+  assert.deepEqual(f.remote.state.requests.map(request => request.path), ["/api/auth/status"])
+  assert.equal((await f.connect()).statusCode, 200)
+  assert.equal((await f.call("browse")).json().listing.metadata.currentPath, "/srv/projects")
 })
 
 test("saved direct authentication, sanitized folders and recents, one reauthentication after expiry", async t => {

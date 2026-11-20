@@ -19,7 +19,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-test("the real home/browser opens ordinary tabs on two relayed servers, with isolated refusal and cancellation", { timeout: 180_000 }, async t => {
+test("the real home/browser opens ordinary tabs on two relayed servers, with isolated refusal and cancellation", { timeout: 300_000 }, async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-project-open-"))
   const a = await startFakeCodeNomad({ anonymous: true }), b = await startFakeCodeNomad({ anonymous: true })
   let refusal: "contract" | "426" | undefined, hold: (() => void) | undefined, holdCreate = false
@@ -132,8 +132,9 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     fs.rmSync(directory, { recursive: true, force: true })
   })
   const errors: string[] = []
-  async function prepare(host: "electron" | "tauri" | "web" = "electron", native = false) {
+  async function prepare(host: "electron" | "tauri" | "web" = "electron", native = false, beforeNavigation?: (page: Page) => Promise<void>) {
     const page = await browser.newPage({ locale: "en-US" })
+    page.setDefaultTimeout(8_000)
     page.on("pageerror", error => errors.push(error.message))
     await page.addInitScript("window.__name = value => value")
     await page.addInitScript(({ host, native }) => {
@@ -151,14 +152,45 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       return route.fulfill({ json: { apiContract: CODENOMAD_API_CONTRACT, serverId: "local",
         localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false } })
     })
+    await beforeNavigation?.(page)
     await page.goto(`${origin}/fixture${native ? "?preferences" : ""}`)
     await page.waitForFunction(() => !!(window as any).remoteOpenFixture)
     return page
   }
   const select = (page: Page, id: string) => page.evaluate(id => (window as any).remoteOpenFixture.select(id), id)
   const blank = (page: Page) => page.locator("[data-fixture-blank]:visible")
+  const browserInBlank = (page: Page) => blank(page).locator(".remote-server-browser")
   const openSame = (page: Page) => blank(page).getByRole("button", { name: /^Same ·/ })
+  const openFolder = (page: Page) => browserInBlank(page).getByRole("button", { name: "Open", exact: true })
   const serverName = (page: Page, name: string) => blank(page).locator(".remote-server-navigation bdi", { hasText: name })
+  await t.test("Browse lists the first opened project even when the chosen server has no recents", async () => {
+    const shortcuts = a.state.recents
+    a.state.recents = []
+    let releaseMeta!: () => void
+    const heldMeta = new Promise<void>(resolve => { releaseMeta = resolve })
+    const page = await prepare("electron", false, page => page.route(/\/api\/meta$/, async route => {
+      if (new URL(route.request().url()).pathname === "/api/meta") await heldMeta
+      await route.continue()
+    }))
+    try {
+      await select(page, "a")
+      const browse = blank(page).locator(".remote-server-browser")
+      assert.equal(await browse.count(), 0, "the native selection waits for the host's capabilities")
+      releaseMeta()
+      await browse.getByRole("button", { name: "app", exact: true }).click()
+      await browse.getByRole("button", { name: "Open", exact: true }).click()
+      await page.getByRole("tab", { name: /Alpha/ }).waitFor()
+      await select(page, "a")
+      const recents = blank(page).getByRole("region", { name: "Recent tabs", exact: true })
+      await recents.getByRole("button", { name: /^app · Alpha ·/ }).waitFor()
+      assert.equal(await recents.locator(".folder-home-recent-item").count(), 1)
+    } finally {
+      releaseMeta()
+      a.state.recents = shortcuts
+      await page.close()
+      delete state.remoteProjectHistory
+    }
+  })
   await t.test("the Open action selects the restore placeholder without creation or implicit retry", async () => {
     const page = await prepare(), before = mutations.length
     try {
@@ -332,6 +364,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     const unsolicited: string[] = []
     page.on("request", request => { if (/\/api\/(?:remote-servers|backends)\//.test(request.url())) unsolicited.push(request.url()) })
     await page.reload()
+    await recents.click()
     await alpha.waitFor()
     await page.getByRole("button", { name: /^app · Beta ·/ }).waitFor()
     assert.deepEqual(unsolicited, [], "displaying persisted recents after reload does not dial a server")
@@ -401,7 +434,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
         await new Promise<void>(resolve => { release = resolve })
         await route.fulfill({ json: phase === "failure"
           ? { ok: false, errorCode: "unreachable" }
-          : { ok: true, normalizedUrl: a.origin } }).catch(() => undefined)
+          : { ok: true, normalizedUrl: "https://new.example" } }).catch(() => undefined)
       })
       await page.getByRole("tab", { name: "Browse", exact: true }).click()
       const panel = page.locator(".browse-menu")
@@ -411,8 +444,9 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       await entered
       release()
       if (phase === "success") {
-        const row = panel.locator("button[data-remote-server]:focus")
+        const row = panel.getByRole("button", { name: "Open a project on new.example", exact: true })
         await row.waitFor()
+        await page.waitForFunction(() => document.activeElement?.getAttribute("title") === "https://new.example")
         assert.equal(await panel.locator(".remote-server-browser").count(), 0, "saving focuses the row without opening the server")
       } else if (phase === "failure") {
         await panel.locator(".server-add-field-error").waitFor()
@@ -459,7 +493,9 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       assert.equal(await page.evaluate(`window.heldRecent.signal.aborted`), true)
       await page.evaluate(`window.heldRecent.resume()`)
       assert.deepEqual(mutations.slice(start), [])
-      assert.equal(await page.locator(".tab-pill").count(), 1)
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
+        tabs: [{ id: "instance:w", kind: "instance" }], active: "instance:w",
+      })
     } finally {
       await page.evaluate(`window.heldRecent?.resume()`).catch(() => {})
       if (!ui.settings.multiBackend) await page.evaluate(() => (window as any).remoteOpenFixture.enable())
@@ -467,18 +503,20 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       delete state.remoteProjectRecents
     }
   })
-  await t.test("Escape cancels only its in-flight opening and keeps the local occurrence", async () => {
+  await t.test("Escape returns to Browse, cancelling only its in-flight opening", async () => {
     const page = await prepare(), before = mutations.length
     holdCreate = true
     const entered = new Promise<void>(resolve => { createEntered = resolve })
     const cancelled = new Promise<void>(resolve => { cancelEntered = resolve })
     try {
       await select(page, "a")
-      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      await openFolder(page).click()
       await entered
-      await page.keyboard.press("Escape")
-      await dialog(page).waitFor({ state: "detached" })
+      await browserInBlank(page).getByRole("button", { name: "Back to Browse", exact: true }).press("Escape")
+      await browserInBlank(page).waitFor({ state: "detached" })
       await cancelled
+      assert.match(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot().active), /^blank:/)
+      await blank(page).getByRole("button", { name: "Close new tab" }).click()
       assert.equal(await page.locator("[data-project-tabs]").getByRole("tab").count(), 1)
       assert.equal(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot().active), "instance:w")
       assert.deepEqual(mutations.slice(before), ["a:POST", "a:/creation/cancel:POST"])
@@ -493,17 +531,18 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   })
   await t.test("incompatible metadata and HTTP 426 never provision or open a project", async () => {
     for (const verdict of ["contract", "426"] as const) {
-      refusal = verdict
       const page = await prepare(), before = mutations.length
-      await select(page, "b")
-      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
-      await dialog(page).getByRole("alert").filter({ hasText: "Incompatible CodeNomad server." }).waitFor()
-      assert.equal(await page.evaluate(() => (window as any).remoteOpenFixture.state("b")), "refused")
-      assert.equal(mutations.length, before)
-      assert.equal(await page.locator("[role=tab]").count(), 1)
-      await page.close()
+      try {
+        await select(page, "b")
+        await openFolder(page).waitFor()
+        refusal = verdict
+        await openFolder(page).click()
+        await browserInBlank(page).getByRole("alert").filter({ hasText: "Incompatible CodeNomad server." }).waitFor()
+        assert.equal(await page.evaluate(() => (window as any).remoteOpenFixture.state("b")), "refused")
+        assert.equal(mutations.length, before)
+        assert.equal(await page.locator("[data-project-tabs]").getByRole("tab").count(), 1)
+      } finally { refusal = undefined; await page.close() }
     }
-    refusal = undefined
   })
   await t.test("same-policy reselection retains its in-flight opening and releases the selected occurrence", async () => {
     const page = await prepare(), before = mutations.length
@@ -511,13 +550,13 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     const entered = new Promise<void>(resolve => { createEntered = resolve })
     try {
       await select(page, "a")
-      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      await openFolder(page).click()
       await entered
       await select(page, "a")
       const released = page.waitForResponse(response => response.url().includes("/w/creation/release"))
       void released.catch(() => undefined)
       const send = hold; hold = undefined; send?.()
-      await dialog(page).waitFor({ state: "detached", timeout: 3000 })
+      await blank(page).waitFor({ state: "detached" })
       await released
       assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
         tabs: [{ id: "instance:w", kind: "instance" }, { id: "instance:a~w", kind: "instance" }],
@@ -531,7 +570,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       await page.close()
     }
   })
-  for (const mode of ["different-server", "cancel-reselect", "rapid-a-b-a"] as const) await t.test(`${mode} disposes the old dialog before opening only the current selection`, async () => {
+  for (const mode of ["different-server", "cancel-reselect", "rapid-a-b-a"] as const) await t.test(`${mode} disposes the old browser before opening only the current selection`, async () => {
     const page = await prepare(), before = mutations.length
     holdCreate = true
     const entered = new Promise<void>(resolve => { createEntered = resolve })
@@ -539,42 +578,40 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     const target = mode === "different-server" ? "b" : "a"
     try {
       await select(page, "a")
-      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      await openFolder(page).click()
       await entered
       await page.evaluate(() => {
         ;(window as any).oldBrowser = document.querySelector(".remote-server-browser")
-        ;(window as any).oldDialog = document.querySelector("[role=dialog]")
       })
+      const blankId = await page.evaluate(() => (window as any).remoteOpenFixture.snapshot().active)
       if (mode !== "cancel-reselect") {
         await select(page, "b")
         if (mode === "rapid-a-b-a") await select(page, "a")
       }
       else {
-        await page.keyboard.press("Escape")
-        await dialog(page).waitFor({ state: "detached" })
+        await browserInBlank(page).getByRole("button", { name: "Back to Browse", exact: true }).press("Escape")
+        await browserInBlank(page).waitFor({ state: "detached" })
       }
       await cancelled
       assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
-        tabs: [{ id: "instance:w", kind: "instance" }], active: "instance:w",
+        tabs: [{ id: "instance:w", kind: "instance" }, { id: blankId, kind: "blank" }], active: blankId,
       })
       if (mode !== "cancel-reselect") {
         const name = target === "b" ? "Beta" : "Alpha"
-        await dialog(page).getByRole("heading", { name, exact: true }).waitFor()
-        await page.locator(".remote-server-browser").filter({ has: page.getByRole("heading", { name, exact: true }) })
-          .getByRole("button", { name: "Same", exact: true }).waitFor()
+        await serverName(page, name).waitFor()
+        await openFolder(page).waitFor()
         assert.equal(await page.locator(".remote-server-browser").count(), 1)
-        const ids = await dialog(page).locator("[id]").evaluateAll(nodes => nodes.map(node => node.id))
-        assert.equal(new Set(ids).size, ids.length, "dialog IDs remain unique")
+        const ids = await blank(page).locator("[id]").evaluateAll(nodes => nodes.map(node => node.id))
+        assert.equal(new Set(ids).size, ids.length, "empty-tab IDs remain unique")
       }
       assert.equal(await page.evaluate(() => (window as any).oldBrowser.isConnected), false)
-      assert.equal(await page.evaluate(() => (window as any).oldDialog.isConnected), false)
       holdCreate = false
       const send = hold; hold = undefined; send?.()
       if (mode === "cancel-reselect") await select(page, "a")
       const released = page.waitForResponse(response => response.url().includes(`/backends/${target}/api/workspaces/w/creation/release`))
       void released.catch(() => undefined)
-      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
-      await dialog(page).waitFor({ state: "detached" })
+      await openFolder(page).click()
+      await blank(page).waitFor({ state: "detached" })
       await released
       assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
         tabs: [{ id: "instance:w", kind: "instance" }, { id: `instance:${target}~w`, kind: "instance" }],
@@ -619,9 +656,10 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     const page = await prepare()
     const before = mutations.length
     await select(page, "a")
-    await dialog(page).getByRole("button", { name: "Same", exact: true }).waitFor()
+    await openFolder(page).waitFor()
     await page.evaluate(() => (window as any).remoteOpenFixture.disable())
-    await dialog(page).waitFor({ state: "detached" })
+    await browserInBlank(page).waitFor({ state: "detached" })
+    await blank(page).getByRole("button", { name: "This computer", exact: true }).waitFor()
     const rejected = await page.evaluate(intent => {
       try { window.__CODENOMAD_SELECT_SERVER__!(intent); return false }
       catch { return true }

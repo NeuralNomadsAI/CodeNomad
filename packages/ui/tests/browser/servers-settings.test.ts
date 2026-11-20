@@ -270,7 +270,8 @@ test("raw userinfo rejected at the hook boundary; pairing purged before probe an
   assert.equal(await page.getByRole("checkbox", { name: "Skip TLS verification", exact: true }).isChecked(), false)
   const last = f.calls.filter(call => call.url.endsWith("/probe")).at(-1)!
   assert.equal(last.body.skipTlsVerify, false)
-  await page.getByRole("alert").locator('[tabindex="0"]').focus()
+  const alert = page.getByRole("alert").filter({ hasText: "Certificate check failed." })
+  assert.equal(await field(page).getAttribute("aria-describedby"), await alert.getAttribute("id"))
   assert(!(await page.locator("body").innerText()).includes("raw-secret"))
   f.check()
 })
@@ -603,7 +604,7 @@ test("Servers editor preserves SSH policy, suggests aliases, saves offline and f
 test("Add server can save a new SSH-only destination before any direct probe", { timeout: 90_000 }, async t => {
   const f = await fixture(t, true, "en", false, true), { page } = f
   await field(page).waitFor()
-  const add = page.locator(".settings-card-header").getByRole("button", { name: "Add server", exact: true })
+  const add = page.getByRole("button", { name: "Add SSH server", exact: true })
   assert.equal(await add.count(), 1, "A new SSH profile must be reachable without saving a direct profile first")
   await add.click()
   await page.getByRole("textbox", { name: "URL", exact: true }).fill("http://ssh-only.invalid:9898")

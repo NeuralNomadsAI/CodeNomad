@@ -36,6 +36,7 @@ import { addRemoteRestoreTab, remoteRestoreTabs, removeRemoteRestoreTab } from "
 import { replaceRestoredAppTab } from "../../stores/app-tabs"
 import { onInstanceLifecycleAuthority, publishInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { generateUUID } from "../client-identity"
+import { applyReloadTabSelection } from "../native/reload-tab-selection"
 import { detachInstanceTabMembership } from "../../stores/app-tab-membership"
 const log = getLogger("actions")
 const INITIAL_LOAD_TIMEOUT_MS = 15_000
@@ -401,7 +402,7 @@ export function useAppSessionRestore(): void {
     unregisterRecovery = registerOpenCodeRestoreRecovery(resumeRestoration)
   }
   onMount(() => {
-    const snapshot = loadedRestorableSession()
+    const snapshot = applyReloadTabSelection(loadedRestorableSession())
     const shouldRestore = shouldRestoreSessionState(clientStateIsPrimary(), restorePreviousStateEnabled(), snapshot)
     setShowFolderSelection(snapshot?.homeActive === true)
     initialRestore = (async () => {
