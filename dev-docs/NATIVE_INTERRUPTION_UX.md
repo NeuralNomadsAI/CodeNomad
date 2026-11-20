@@ -129,12 +129,18 @@ verified direct source authorizes only adding configuration denies to the copied
 span: the native event cannot distinguish an explicit identical array from
 inheritance. Existing child rules are preserved in order.
 
-A fork's creation response or native `session.forked` event records the direct
-source's exact block when the complete copied array can be matched to the source
-as of creation. Copying history can advance the fork's update timestamp. Returning
-to Autonomous removes only a verified root block; an unverified block in a fork
-keeps its native rules and the switch returns an explicit conflict. Rules have no
-per-entry native identity.
+A fork's creation response or native `session.forked` event can record the
+direct source's exact block when the complete copied array matches as of creation.
+Copying history can advance the fork's update timestamp. A copied block is
+rewritable and removable only when the source is a root with a verified owned
+block. A matched copy from a subagent or an unowned fork permits additive deny
+refreshes; an unmatched copy keeps its native rules. Sends can proceed with the
+stored rules if an optional additive fork refresh fails.
+
+Returning to Autonomous with only a copied, unverified block returns an explicit
+conflict and leaves the array intact. An explicit Supervised write can append a
+separately identifiable block; returning to Autonomous removes exactly that
+block and reports the remaining native mode. Rules have no per-entry native identity.
 Mode writes, projection refreshes and native session PATCHes through the same
 backend share a per-session lock and read fresh state before forwarding. Mode
 writes and refreshes verify the resulting rules and retry a detected concurrent
@@ -163,8 +169,9 @@ changed-diff and late-copy regressions. Both run on isolated fixtures only.
 `permissions/receipts.test.ts` exercises disk reload, all decisions and their
 provenance, cascades, ownership, deletion and mutation failure paths.
 `session-permission-mode.test.ts` covers config and session-event projection,
-unchanged echoes, exact root removal, additive child refresh, late fork timestamps,
-concurrent mode and proxy writes, and deletion of private state.
+unchanged echoes, exact root removal, additive child and fork refresh, late fork
+timestamps, refusal to remove unowned fork copies, concurrent mode and proxy
+writes, and deletion of private state.
 `node scripts/test-session-permission-mode-native.mjs <absolute-opencode-executable>`
 exercises the route and proxy, native child and fork copies, and native config
 and session permission events against a private OpenCode process.

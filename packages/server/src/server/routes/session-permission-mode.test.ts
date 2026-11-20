@@ -16,7 +16,7 @@ import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuat
 import { nativeEventConnections, type ServiceConnection } from "../../workspaces/opencode-service"
 import { SessionCleanupFence } from "../session-cleanup-fence"
 import { registerInstanceProxyRoutes } from "../http-server"
-import { registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./session-permission-mode"
+import { recordPermissionFork, registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./session-permission-mode"
 import { connectSessionPermissionRefresh } from "./session-permission-refresh"
 import { registerSettingsRoutes } from "./settings"
 
@@ -454,6 +454,65 @@ test("a fork with a later update timestamp records its creation block and remain
   fork.permissions = [read, ...block, trailing]
   assert.deepEqual((await f.set("autonomous", "two", fork.id)).json(), { mode: "autonomous" })
   assert.deepEqual(fork.permissions, [read, trailing])
+})
+
+test("forks keep explicit child denies on a direct return to Autonomous and a refresh before send", async t => {
+  const f = await fixture(t)
+  registerInstanceProxyRoutes(f.app, { workspaceManager: f.manager, logger: f.logger, worktreeDeletionFence: f.worktrees,
+    sessionCleanup: f.cleanup, permissionModes: f.modes })
+  t.after(connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger))
+  const deny = shell("deny", "copied deny")
+  const configWith = (rule: PermissionRule): ConfigGetOutput => [...config, { type: "document", info: { permissions: [rule] } }]
+  f.replaceConfig(configWith(deny))
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const copy = [read, ...block, deny]
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id, permissions: [...copy] }
+  f.sessions.set(child.id, child)
+  f.observe(child)
+  const scope = { client: f.client, distro: undefined, signal: t.signal, current() {} }
+  await f.modes.withSessionLock(sessionPermissionTarget(child, scope), async () => {})
+  assert.ok(f.modes.refreshTargets(undefined).targets.some(target => target.id === child.id))
+
+  f.replaceConfig(config)
+  const forkFrom = (source: SessionInfo, id: string) => {
+    const fork = { ...source, id, fork: { sessionID: source.id }, permissions: [...source.permissions!] } as SessionInfo
+    f.sessions.set(id, fork)
+    return fork
+  }
+  const direct = forkFrom(child, "ses_direct_fork")
+  await recordPermissionFork(Response.json({ data: direct }), f.modes, child, scope, async () => true)
+  const refuse = async (session: SessionInfo) => {
+    const refused = await f.set("autonomous", "two", session.id)
+    assert.equal(refused.statusCode, 409)
+    assert.equal(refused.json().code, "PERMISSION_BLOCK_UNVERIFIED")
+  }
+  await refuse(direct)
+  assert.deepEqual(direct.permissions, copy)
+
+  const fork = forkFrom(direct, "ses_fork_again")
+  f.observe(fork)
+  assert.deepEqual((await f.get("two", fork.id)).json(), { mode: "supervised" })
+  const nextDeny = shell("deny", "new deny")
+  f.replaceConfig(configWith(nextDeny))
+  const sends: Array<PermissionRule[] | undefined> = []
+  f.onDispatch(() => sends.push(fork.permissions))
+  const send = () => f.app.inject({ method: "POST", url: `/workspaces/one/instance/api/session/${fork.id}/prompt`, payload: { text: "fixture" } })
+  assert.equal((await send()).statusCode, 204)
+  assert.deepEqual(sends, [[...copy, nextDeny]])
+  f.replaceConfig([{ type: "document", info: { permissions: [edit("deny", "~/fixture/*")] } }])
+  assert.equal((await send()).statusCode, 204, "an optional additive refresh does not block the send")
+  assert.deepEqual(sends[1], [...copy, nextDeny])
+  await refuse(fork)
+
+  f.replaceConfig(config)
+  assert.equal((await f.set("supervised", "one", fork.id)).statusCode, 200)
+  assert.deepEqual(fork.permissions?.slice(0, copy.length + 1), [...copy, nextDeny])
+  assert.ok(fork.permissions!.length > copy.length + 1)
+  assert.equal((await f.set("autonomous", "two", fork.id)).statusCode, 200)
+  assert.deepEqual(fork.permissions, [...copy, nextDeny])
+  await refuse(fork)
+  assert.deepEqual(direct.permissions, copy)
+  assert.deepEqual(child.permissions, copy)
 })
 
 test("unknown fork and child rules never block sends, and only the fork refuses removal", async t => {

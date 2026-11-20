@@ -251,24 +251,63 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
       await client.permission.reply({ sessionID: explicit.id, requestID: ask.id, decision: "reject" }, options)
       console.log("PASS: P1, an explicitly supplied array identical to the parent's stays intact, including its deny and ask")
 
-      const history = await load(revisedChild)
-      await client.session.remove({ sessionID: revisedChild.id }, options)
+      const refuseRemoval = async session => {
+        const reply = await app.inject({ method: "PUT", url: `/api/workspaces/b/sessions/${session.id}/permission-mode`,
+          payload: { mode: "autonomous" } })
+        assert.equal(reply.statusCode, 409, reply.body)
+        assert.equal(reply.json().code, "PERMISSION_BLOCK_UNVERIFIED")
+      }
+      const history = await load(explicit)
+      assert.ok(recorded(explicit))
+      await client.session.remove({ sessionID: explicit.id }, options)
       await client.session.import({ info: history, messages: [
         { id: "msg_permission_child_history", type: "user", text: "Fork fixture", time: { created: history.time.created } },
       ] }, options)
-      const nativeFork = await client.session.fork({ sessionID: revisedChild.id }, options)
+      await writeFile(configPath, JSON.stringify(config))
+      await client.location.reload({ location: { directory } })
+      const proxyCopy = await app.inject({ method: "POST", url: `/workspaces/a/instance/api/session/${explicit.id}/fork`, payload: {} })
+      assert.equal(proxyCopy.statusCode, 200, proxyCopy.body)
+      const directFork = proxyCopy.json().data
+      assert.deepEqual(directFork.permissions, history.permissions)
+      assert.ok(recorded(directFork))
+      await refuseRemoval(directFork)
+      assert.deepEqual((await load(directFork)).permissions, history.permissions)
+      assert.equal((await nativePermission(directFork.id, "shell", deny.resource)).effect, "deny")
+      console.log("PASS: Autonomous refuses to remove a fork's explicit copied deny")
+
+      const nativeFork = await client.session.fork({ sessionID: directFork.id }, options)
       await nextEvent("session.forked", nativeFork.id)
       assert.ok((await load(nativeFork)).time.updated > nativeFork.time.created, "copying history updates the fork timestamp")
       assert.equal(await mode("b", nativeFork.id), "supervised")
       assert.ok(recorded(nativeFork))
-      assert.equal(await mode("a", revisedChild.id), "autonomous")
-      assert.equal(await mode("a", revisedChild.id, "supervised"), "supervised")
+      const newDeny = rule("shell", "echo additive fork refresh", "deny")
+      await writeFile(configPath, JSON.stringify({ permissions: [...config.permissions, newDeny] }))
+      await client.location.reload({ location: { directory } })
       const prompt = await send(nativeFork)
       assert.equal(prompt.statusCode, 200, prompt.body)
-      assert.equal(await mode("b", nativeFork.id, "autonomous"), "autonomous")
-      assert.deepEqual((await load(nativeFork)).permissions, [initial])
-      assert.deepEqual((await load(revisedChild)).permissions, history.permissions)
-      console.log("PASS: P2, native fork from a child with history records its own mode, admits a prompt and restores its rules")
+      const copied = [...history.permissions, newDeny]
+      assert.deepEqual((await load(nativeFork)).permissions, copied)
+      for (const rule of [deny, newDeny]) {
+        assert.equal((await nativePermission(nativeFork.id, "shell", rule.resource)).effect, "deny")
+      }
+      await refuseRemoval(nativeFork)
+      assert.deepEqual((await load(nativeFork)).permissions, copied)
+      console.log("PASS: a fork of an unowned fork admits a prompt and its refresh only adds denies")
+
+      assert.equal(await mode("a", nativeFork.id, "supervised"), "supervised")
+      const layered = (await load(nativeFork)).permissions
+      assert.deepEqual(layered.slice(0, copied.length), copied)
+      assert.ok(layered.length > copied.length)
+      assert.equal(await mode("b", nativeFork.id, "autonomous"), "supervised")
+      assert.deepEqual((await load(nativeFork)).permissions, copied)
+      assert.equal((await nativePermission(nativeFork.id, "shell", deny.resource)).effect, "deny")
+      await refuseRemoval(nativeFork)
+      console.log("PASS: a distinct Supervised block is removable without removing the fork's copy")
+
+      await writeFile(configPath, JSON.stringify({ permissions: [...config.permissions, deny] }))
+      await client.location.reload({ location: { directory } })
+      assert.equal(await mode("a", revisedChild.id), "autonomous")
+      assert.equal(await mode("a", revisedChild.id, "supervised"), "supervised")
 
       const independentDeny = rule("shell", "echo independent deny", "deny")
       const denyParent = await create({ permissions: [independentDeny] })
@@ -285,10 +324,7 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
 
       const unknown = await send(fork)
       assert.equal(unknown.statusCode, 200, unknown.body)
-      const unknownRestore = await app.inject({ method: "PUT", url: `/api/workspaces/b/sessions/${fork.id}/permission-mode`,
-        payload: { mode: "autonomous" } })
-      assert.equal(unknownRestore.statusCode, 409)
-      assert.equal(unknownRestore.json().code, "PERMISSION_BLOCK_UNVERIFIED")
+      await refuseRemoval(fork)
       assert.deepEqual((await load(fork)).permissions, fork.permissions)
       console.log("PASS: unknown fork ownership only refuses rule removal; prompts still work")
 

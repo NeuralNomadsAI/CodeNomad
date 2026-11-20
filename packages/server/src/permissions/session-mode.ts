@@ -30,13 +30,16 @@ type CopyObservation = { session: SessionInfo; source: SessionInfo; rules: Permi
 const blockStart = supervisedRules([], false)
 const savedBlock = sessionPermissionRules.refine(block => sameRules(block.slice(0, 2), blockStart))
 const savedTarget = z.object({ id: z.string().min(1), created: z.number(), directory: z.string().min(1), distro: z.string().nullish() })
+const savedFork = z.object({ copy: savedBlock.nullish() })
 const savedBlocks = z.object({
   active: savedBlock.nullish(), pending: savedBlock.nullish(), target: savedTarget.nullish().catch(undefined),
-  child: z.boolean().optional(),
+  child: z.boolean().optional(), fork: savedFork.nullish(),
 })
 type SavedBlocks = z.infer<typeof savedBlocks>
 const sourceSessionID = (session: SessionInfo) => session.fork?.sessionID ?? session.parentID
 export const isPermissionRoot = (session: SessionInfo) => !!session.fork || !session.parentID
+// A fork needs positive ownership proof: older records may describe an additive copy.
+const ownsRootBlock = (session: SessionInfo, saved: SavedBlocks) => isPermissionRoot(session) && (!session.fork || !!saved.fork)
 const ambiguous = "ambiguous" as const
 
 // Refresh revisions replace the same span. If one is a prefix of another at
@@ -86,11 +89,11 @@ export class SessionPermissionModes {
   }
 
   private remember(key: string, active: PermissionRule[] | null, distro: string | undefined, session: SessionInfo,
-    pending?: PermissionRule[] | null) {
+    pending?: PermissionRule[] | null, fork?: SavedBlocks["fork"]) {
     const target = active || pending
       ? { id: session.id, created: session.time.created, directory: session.location.directory, distro: distro?.toLowerCase() ?? null }
       : undefined
-    this.settings.setPrivateSessionPermissionBlock(key, active, target, pending ?? undefined, !isPermissionRoot(session))
+    this.settings.setPrivateSessionPermissionBlock(key, active, target, pending ?? undefined, !isPermissionRoot(session), fork ?? undefined)
   }
 
   refreshTargets(distro: string | undefined, directory?: string) {
@@ -156,7 +159,8 @@ export class SessionPermissionModes {
       if (!from.active || from.pending || (!isPermissionRoot(source) && !from.child)
         || blockPositions(rules, from.active).length !== 1) return false
       current()
-      this.remember(key, from.active, distro, session)
+      const fork = session.fork && ownsRootBlock(source, from) ? { copy: from.fork?.copy } : undefined
+      this.remember(key, from.active, distro, session, undefined, fork)
       return true
     })
   }
@@ -200,62 +204,73 @@ export class SessionPermissionModes {
   async refresh(target: NativeTarget): Promise<void> {
     return this.exclusive(target, async (key, initial) => {
       const saved = this.owned(key)
-      const child = !isPermissionRoot(initial)
-      if (child && !saved.child) return
-      const currentRules = this.currentRules(target, key, initial)
-      let rules = currentRules(initial)
-      let config: PermissionRule[] | undefined
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const owned = revisionMatch(rules, [saved.active, saved.pending])
-        if (!owned || owned === ambiguous) return
-        const index = blockPositions(rules, owned)[0]
-        const prefix = rules.slice(0, index)
-        config ??= await this.configBlock({ ...target, location: initial.location })
-        // Child creation does not say whether identical rules were explicitly supplied.
-        // Even an exact match permits only adding restrictions, never rewriting a child rule.
-        const replacement = child ? [...owned, ...config.filter(rule => rule.effect === "deny"
-          && !owned.some(entry => sameRules([entry], [rule])))] : appendSessionProjection(config, prefix, target.distro)
-        if (sameRules(owned, replacement)) {
-          const fresh = currentRules(await target.read())
-          if (!sameRules(fresh, rules)) { rules = fresh; continue }
-          if (saved.pending || saved.target?.directory !== initial.location.directory) this.remember(key, owned, target.distro, initial)
-          return
-        }
-        const updated = [...prefix, ...replacement, ...rules.slice(index + owned.length)]
-        if (blockPositions(updated, replacement).length !== 1
-          || (replacement.length > owned.length && blockPositions(rules, replacement).includes(index))
-          || (replacement.length < owned.length && blockPositions(updated, owned).includes(index))) {
-          return
-        }
-        // Retain both possibilities across an interrupted native write.
-        this.remember(key, owned, target.distro, initial, replacement)
-        const beforeWrite = currentRules(await target.read())
-        if (!sameRules(beforeWrite, rules)) {
-          this.remember(key, saved.active ?? null, target.distro, initial, saved.pending)
-          rules = beforeWrite
-          continue
-        }
-        const { confirmed, failure } = await this.replace(target, initial.id, updated, currentRules)
-        if (sameRules(confirmed, updated)) {
-          this.remember(key, replacement, target.distro, initial)
-          return
-        }
-        if (sameRules(confirmed, rules)) this.remember(key, saved.active ?? null, target.distro, initial, saved.pending)
-        if (failure) throw failure.error
-        // Rebase from verified ownership if another client changed other rules.
-        saved.active = owned
-        saved.pending = replacement
-        rules = confirmed
+      if (!isPermissionRoot(initial) && !saved.child) return
+      const addOnly = !ownsRootBlock(initial, saved)
+      try {
+        await this.refreshBlock(target, key, initial, saved, addOnly)
+      } catch (error) {
+        // An optional additive refresh cannot hold a fork's send. Still check its placement.
+        if (!initial.fork || !addOnly) throw error
+        this.currentRules(target, key, initial)(await target.read())
       }
-      throw new SessionModeConflict("Permission rules changed")
     })
+  }
+
+  private async refreshBlock(target: NativeTarget, key: string, initial: SessionInfo, saved: SavedBlocks, addOnly: boolean) {
+    const remember = (active: PermissionRule[] | null, pending?: PermissionRule[] | null) =>
+      this.remember(key, active, target.distro, initial, pending, saved.fork)
+    const currentRules = this.currentRules(target, key, initial)
+    let rules = currentRules(initial)
+    let config: PermissionRule[] | undefined
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const known = revisionMatch(rules, [saved.active, saved.pending])
+      if (!known || known === ambiguous) return
+      const index = blockPositions(rules, known)[0]
+      const prefix = rules.slice(0, index)
+      config ??= await this.configBlock({ ...target, location: initial.location })
+      // An exact copy from a child or an unowned fork permits only adding restrictions.
+      const replacement = addOnly ? [...known, ...config.filter(rule => rule.effect === "deny"
+        && !known.some(entry => sameRules([entry], [rule])))] : appendSessionProjection(config, prefix, target.distro)
+      if (sameRules(known, replacement)) {
+        const fresh = currentRules(await target.read())
+        if (!sameRules(fresh, rules)) { rules = fresh; continue }
+        if (saved.pending || saved.target?.directory !== initial.location.directory) remember(known)
+        return
+      }
+      const updated = [...prefix, ...replacement, ...rules.slice(index + known.length)]
+      if (blockPositions(updated, replacement).length !== 1
+        || (replacement.length > known.length && blockPositions(rules, replacement).includes(index))
+        || (replacement.length < known.length && blockPositions(updated, known).includes(index))) {
+        return
+      }
+      // Retain both possibilities across an interrupted native write.
+      remember(known, replacement)
+      const beforeWrite = currentRules(await target.read())
+      if (!sameRules(beforeWrite, rules)) {
+        remember(saved.active ?? null, saved.pending)
+        rules = beforeWrite
+        continue
+      }
+      const { confirmed, failure } = await this.replace(target, initial.id, updated, currentRules)
+      if (sameRules(confirmed, updated)) {
+        remember(replacement)
+        return
+      }
+      if (sameRules(confirmed, rules)) remember(saved.active ?? null, saved.pending)
+      if (failure) throw failure.error
+      // Rebase from the known span if another client changed other rules.
+      saved.active = known
+      saved.pending = replacement
+      rules = confirmed
+    }
+    throw new SessionModeConflict("Permission rules changed")
   }
 
   write(target: NativeTarget, mode: ConversationPermissionMode): Promise<ConversationPermissionModeResponse> {
     return this.exclusive(target, async (key, initial) => {
       const saved = this.owned(key)
-      const { active, pending } = saved
       if (!isPermissionRoot(initial)) throw new SessionModeConflict("Conversation family changed")
+      const { active, pending } = ownsRootBlock(initial, saved) ? saved : {}
       const currentRules = this.currentRules(target, key, initial)
       const original = currentRules(initial)
       const owned = revisionMatch(original, [active, pending])
@@ -263,17 +278,17 @@ export class SessionPermissionModes {
         if (mode === "autonomous") throw new UnverifiedPermissionBlock()
         return { mode }
       }
-      if (mode === "supervised" && initial.fork && this.mayBeSupervised(initial) && !owned) return { mode }
       const config = mode === "supervised" && !owned ? await this.configBlock({ ...target, location: initial.location }) : undefined
       const forget = () => {
-        if (active || pending) this.settings.setPrivateSessionPermissionBlock(key, null)
+        if (saved.fork?.copy) this.remember(key, saved.fork.copy, target.distro, initial)
+        else if (active || pending) this.settings.setPrivateSessionPermissionBlock(key, null)
       }
-      let retained: PermissionRule[] | undefined
+      let retained: { block: PermissionRule[]; fork?: SavedBlocks["fork"] } | undefined
       for (let attempt = 0; attempt < 3; attempt++) {
         // Read again after config/lock/persistence. The native update replaces
         // the whole array and has no compare-and-swap precondition.
         const rules = currentRules(await target.read())
-        const knownBlock = owned ?? retained
+        const knownBlock = owned ?? retained?.block
         const positions = knownBlock ? blockPositions(rules, knownBlock) : []
         if (!sameRules(rules, original)) {
           const fresh = revisionMatch(rules, [active, pending])
@@ -295,19 +310,22 @@ export class SessionPermissionModes {
         if (mode === "supervised") {
           if (!config) throw new SessionModeConflict("Permission rules changed")
           block = appendSessionProjection(config, rules, target.distro)
-          // Identical unowned rules do not grant a right to remove them later.
-          if (initial.fork && blockPositions(rules, blockStart).length) return { mode }
-          if (blockPositions(rules, config).length || blockPositions(rules, block).length) {
+          // Claim only the separate suffix we are adding, never an identical span in the copy.
+          const matches = blockPositions([...rules, ...block], block)
+          if (matches.length !== 1 || (!initial.fork && blockPositions(rules, config).length)) {
             throw new SessionModeConflict("Permission block already exists without ownership")
           }
-          this.remember(key, block, target.distro, initial)
+          const copy = saved.fork?.copy ?? (initial.fork && !ownsRootBlock(initial, saved)
+            ? revisionMatch(rules, [saved.active, saved.pending]) : undefined)
+          const fork = initial.fork ? { copy: copy === ambiguous ? undefined : copy } : undefined
+          this.remember(key, block, target.distro, initial, undefined, fork)
           const fresh = currentRules(await target.read())
           if (!sameRules(fresh, rules)) {
-            this.remember(key, retained ?? active ?? null, target.distro, initial, pending)
+            this.remember(key, retained?.block ?? saved.active ?? null, target.distro, initial, saved.pending, retained?.fork ?? saved.fork)
             if (blockPositions(fresh, block).length) throw new SessionModeConflict("Permission rules changed")
             continue
           }
-          retained = block
+          retained = { block, fork }
         }
         if (!block) throw new SessionModeConflict("Permission rules changed")
         const index = positions[0]
@@ -315,13 +333,18 @@ export class SessionPermissionModes {
           : [...rules.slice(0, index), ...rules.slice(index + block.length)]
         const { confirmed, failure } = await this.replace(target, initial.id, updated, currentRules)
         if (sameRules(confirmed, updated)) {
-          if (mode === "autonomous") forget()
+          if (mode === "autonomous") {
+            forget()
+            if (initial.fork && this.mayBeSupervised({ permissions: confirmed })) return { mode: "supervised" }
+          }
           return { mode }
         }
         // A failed transport is never replayed. A successful write followed by
         // divergence can rebase against a fresh read in the next iteration.
         if (failure) throw failure.error
-        if (retained && attempt === 2 && !blockPositions(confirmed, block).length) this.remember(key, active ?? null, target.distro, initial, pending)
+        if (retained && attempt === 2 && !blockPositions(confirmed, block).length) {
+          this.remember(key, saved.active ?? null, target.distro, initial, saved.pending, saved.fork)
+        }
       }
       throw new SessionModeConflict("Permission rules changed")
     })
