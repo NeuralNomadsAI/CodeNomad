@@ -103,3 +103,31 @@ test("creation for an expected tip refuses a missing or moved branch before any 
     await rm(root, { recursive: true, force: true })
   }
 })
+test("creation for an expected tip never lets Git guess a deleted branch from a remote-tracking one", async () => {
+  const root = await mkdtemp(path.join(process.platform === "win32" ? path.join(tmpdir(), "opencode") : tmpdir(), "worktree-no-guess-"))
+  const repo = path.join(root, "main"), child = path.join(repo, ".codenomad", "worktrees", "issue-12")
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+  try {
+    git(root, "init", "--initial-branch=main", repo)
+    await mkdir(path.dirname(child), { recursive: true })
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "one")
+    const tip = git(repo, "rev-parse", "HEAD")
+    git(repo, "branch", "issue-12", tip)
+    git(repo, "remote", "add", "origin", "https://example.com/o/r.git")
+    git(repo, "update-ref", "refs/remotes/origin/issue-12", tip)
+    let created = false
+    const client = {
+      location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+      worktree: { refresh: async () => {}, list: async () => [{ directory: repo }, ...(created ? [{ directory: child }] : [])],
+        // The branch disappears after the precheck.
+        create: async () => { git(repo, "branch", "-D", "issue-12"); git(repo, "worktree", "add", "--detach", "-q", child, tip); created = true; return { directory: child } },
+        remove: async () => { git(repo, "worktree", "remove", "--force", child); created = false } },
+    } as unknown as OpenCodeClient
+    await assert.rejects(createNativeWorktree({ client, workspacePath: repo, location: { directory: repo }, toHost: async (directory: string) => directory },
+      "issue-12", "root", tip), /invalid reference|Branch changed/)
+    assert.equal(git(repo, "branch", "--list", "issue-12"), "", "no branch was guessed back")
+    assert.equal(created, false, "the checkout is removed")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

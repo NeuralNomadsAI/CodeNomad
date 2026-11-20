@@ -39,13 +39,12 @@ function git(directory: string, args: string[], timeout = 10_000) {
 
 /** A repository's identity in links and confirmations. */
 export const workItemRepository = (source: Pick<WorkItemBranchSource, "host" | "path">) => `${source.host}/${source.path}`.toLowerCase()
-const repositoryOf = workItemRepository
 
 /** Every existing local branch linked to an item of `source`'s repository, unbounded but for Git's output budget. */
 async function links(directory: string, source: Pick<WorkItemBranchSource, "host" | "path">): Promise<Link[]> {
   const output = await git(directory, ["config", "--local", "--get-regexp", `^branch\\..*\\.${KEY}$`])
     .catch((error: { code?: unknown }) => { if (error.code === 1) return ""; throw error })
-  const repository = repositoryOf(source)
+  const repository = workItemRepository(source)
   const linked: Link[] = []
   for (const line of output.split(/\r?\n/).filter(Boolean)) {
     // `branch.<name>.<key> <value>`: Git lowercases the section and key, never the name.
@@ -75,7 +74,7 @@ async function remoteUrl(directory: string, source: WorkItemBranchSource) {
   const configured = (await git(directory, ["config", "--get-all", `remote.${source.name}.url`]).catch(() => "")).split(/\r?\n/)[0] ?? ""
   if (!configured) return undefined
   const remote = parseRemoteUrl(await git(directory, ["ls-remote", "--get-url", "--", configured]).catch(() => ""))
-  return remote && repositoryOf(remote) === repositoryOf(source) ? configured : undefined
+  return remote && workItemRepository(remote) === workItemRepository(source) ? configured : undefined
 }
 
 /**
@@ -87,7 +86,7 @@ async function remoteUrl(directory: string, source: WorkItemBranchSource) {
 export async function lookupWorkItemBranch(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number): Promise<WorkItemBranchLookup> {
   if (!await remoteUrl(directory, source)) return { status: "unavailable" }
   const link = (await links(directory, source)).find(candidate => candidate.kind === kind && candidate.number === number)
-  if (!link) return { status: "ok", repository: repositoryOf(source), branch: null }
+  if (!link) return { status: "ok", repository: workItemRepository(source), branch: null }
   const ref = `refs/heads/${link.branch}`
   const [contains, reflog] = await Promise.all([
     git(directory, ["merge-base", "--is-ancestor", link.start, ref])
@@ -97,7 +96,7 @@ export async function lookupWorkItemBranch(directory: string, source: WorkItemBr
   ])
   const created = reflog.split(/\r?\n/).at(-1) ?? ""
   const recreated = created.startsWith("branch: Created from ") && created !== `branch: Created from ${link.start}`
-  return contains && !recreated ? { status: "ok", repository: repositoryOf(source), branch: link.branch } : { status: "conflict", branch: link.branch }
+  return contains && !recreated ? { status: "ok", repository: workItemRepository(source), branch: link.branch } : { status: "conflict", branch: link.branch }
 }
 
 /**
@@ -144,10 +143,12 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
     }
   }
   await ready()
+  // The last check before writing: the remote must still name the confirmed repository.
+  if (!await remoteUrl(directory, source)) return { status: "unavailable" }
   // Fails, without force, when the name was taken meanwhile.
   try { await git(directory, ["branch", "--no-track", branch, revision]) } catch { return { status: "conflict", branch } }
   try {
-    await git(directory, ["config", "--local", `branch.${branch}.${KEY}`, `${repositoryOf(source)}#${kind.toLowerCase()}/${number}@${revision}`])
+    await git(directory, ["config", "--local", `branch.${branch}.${KEY}`, `${workItemRepository(source)}#${kind.toLowerCase()}/${number}@${revision}`])
   } catch (error) {
     await git(directory, ["update-ref", "-d", `refs/heads/${branch}`, revision]).catch(() => {})
     throw error

@@ -337,9 +337,11 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   unlinked branch of that name is a `conflict`). Consent and the project are checked again
   right before any ref is written. Lookups and writes first require that remote check; they
   see every link, and only `list` stops at 200. `createWorktree` then checks out that branch
-  only at the returned tip (`revision`: a missing or moved branch is refused, never recreated)
-  and `setWorktreeSlugForParentSession` moves the family, reporting its own failure; the
-  created worktree stays.
+  only at the returned tip (`revision`: a missing or moved branch is refused, never recreated or
+  guessed from a remote-tracking branch) and `setWorktreeSlugForParentSession` moves the family
+  only while the target still checks out that branch (`branch`, checked again right before the
+  move), reporting its own failure; the created worktree stays. `list` is advisory: an entry
+  can still fail the exact lookup as a `conflict`.
 - **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
   and method names select only own entries of `Map`s; never index an object with frame
   data (inherited names such as `constructor` would run). Inputs are validated per

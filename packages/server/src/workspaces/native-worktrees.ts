@@ -191,7 +191,10 @@ export async function createNativeWorktree(context: NativeWorktreeContext, branc
     // Native creation deliberately detaches HEAD. Branch selection remains Git
     // policy: preserve a named branch without duplicating worktree management.
     await attachWorktreeBranch(host, branch, policy.existing)
-    if (revision !== undefined && (await readCheckout(host)).head !== revision) throw new Error("Branch changed before its worktree was created")
+    if (revision !== undefined) {
+      const checkout = await readCheckout(host)
+      if (checkout.head !== revision || checkout.branch !== branch) throw new Error("Branch changed before its worktree was created")
+    }
   } catch (error) {
     try {
       await client.worktree.remove({ projectID: current.project.id, directory: created.directory, force: false }, options)

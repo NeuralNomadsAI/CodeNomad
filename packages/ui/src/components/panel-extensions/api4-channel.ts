@@ -200,7 +200,7 @@ export function useApi4Channel(props: {
     if (answer.status === "unavailable") return null
     const slug = answer.status === "ok" && answer.branch !== null
       ? getWorktrees(props.instanceId).find(worktree => !worktree.nestedFolderMissing && worktree.branch === answer.branch)?.slug : undefined
-    return { repository: answer.status === "ok" ? answer.repository : undefined, slug, current: slug !== undefined && slug === familyWorktree()?.slug }
+    return { repository: answer.status === "ok" ? answer.repository : undefined, branch: answer.status === "ok" ? answer.branch ?? undefined : undefined, slug, current: slug !== undefined && slug === familyWorktree()?.slug }
   }
 
   // The frame only asks; the host's own dialog decides, then creates and moves.
@@ -231,7 +231,7 @@ export function useApi4Channel(props: {
       // Consent is read again, and the confirmed worktree must still be the item's.
       const target = await itemWorktree(kind, number, lifetime.signal)
       if (!target || !repository || target.repository !== repository || (slug !== undefined && target.slug !== slug)) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
-      let destination = target.slug
+      let destination = target.slug, branchName = target.branch
       if (destination === undefined) {
         progress = showToastNotification({ category: "files", variant: "info", transient: true, duration: 60_000,
           message: tGlobal("panelExtensions.worktrees.creating", { item }) })
@@ -241,11 +241,12 @@ export function useApi4Channel(props: {
         if (branch.status !== "ok") throw new Refusal(tGlobal(`panelExtensions.worktrees.${branch.status}`, { item, branch: "branch" in branch ? branch.branch : "" }))
         // Only that branch at that tip: a branch deleted or replaced meanwhile is refused, never recreated.
         destination = (await createWorktree(props.instanceId, branch.branch, "root", branch.revision)).slug
+        branchName = branch.branch
         await reloadWorktrees(props.instanceId)
       }
       if (disposed) return
-      // The family move reports its own failure.
-      await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination).catch(() => {})
+      // The target must still check out the item's branch when the family moves; the move reports its own failure.
+      await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination, { branch: branchName }).catch(() => {})
     } catch (error) {
       if (lifetime.signal.aborted) return
       showToastNotification({ category: "files", variant: "error", message: error instanceof Refusal ? error.message

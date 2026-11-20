@@ -292,6 +292,8 @@ export interface WorktreeCreateRequest {
 
 export interface WorktreeSessionMoveRequest {
   worktreeSlug: string
+  /** The branch the target must still have checked out when the family moves. */
+  branch?: string
 }
 
 export interface WorktreeSessionMoveResponse {

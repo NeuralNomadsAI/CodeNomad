@@ -105,6 +105,14 @@ describe("work item branches", () => {
     assert.notEqual(first.head, second.head)
   })
 
+  it("revalidates the repository at the last check before writing", async () => {
+    const { clone, source } = await project()
+    let checks = 0
+    const retarget = async () => { if (++checks === 2) git(clone, "remote", "set-url", "origin", "https://github.com/o/other.git") }
+    assert.deepEqual(await create(clone, source, "issue", 15, { check: retarget }), { status: "unavailable" })
+    assert.equal(git(clone, "for-each-ref", "refs/heads/issue-15"), "")
+  })
+
   it("writes nothing once the guard refuses, even after the fetch", async () => {
     const { clone, source } = await project()
     let checks = 0

@@ -312,6 +312,8 @@ async function setWorktreeSlugForParentSession(
   slug: string,
   options: {
     currentSlug?: string
+    /** The branch the target must still have checked out when the family moves (checked by the server). */
+    branch?: string
     moveFamily?: (instanceId: string, rootSessionId: string, worktreeSlug: string) => Promise<unknown>
     refreshSessions?: (instanceId: string) => Promise<void>
   } = {},
@@ -332,7 +334,7 @@ async function setWorktreeSlugForParentSession(
   const key = `${instanceId}:${rootSessionId}`
   const previous = familyMoveRequests.get(key)
   const moveFamily = options.moveFamily ?? ((id: string, sessionId: string, worktreeSlug: string) =>
-    serverApi.moveSessionFamily(id, sessionId, { worktreeSlug }))
+    serverApi.moveSessionFamily(id, sessionId, { worktreeSlug, ...(options.branch ? { branch: options.branch } : {}) }))
   const refreshSessions = options.refreshSessions ?? ((id: string) =>
     import("./session-api").then(({ fetchSessions }) => fetchSessions(id, { reset: true, strictStatus: true })))
   const task: Promise<void> = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
