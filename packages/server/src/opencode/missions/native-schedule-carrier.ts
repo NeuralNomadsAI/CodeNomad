@@ -50,7 +50,7 @@ export type NativeScheduleCarrierCandidate = NativeScheduleWake & { dueAt: numbe
 /** Classify resolved native records only, never LLM-projected metadata. RPC must point-read the native user message,
  * revalidate mapping/Location/state, and reserve/advance high-water under CAS. */
 export function nativeScheduleCarrierWakes(mapping: NativeScheduleCarrierMapping, highWater: number,
-  messages: readonly unknown[]): NativeScheduleCarrierCandidate[] {
+  messages: readonly unknown[], selection: "contiguous" | "next" = "contiguous"): NativeScheduleCarrierCandidate[] {
   if (!Number.isSafeInteger(highWater) || highWater < 0 || messages.length > 128
     || Buffer.byteLength(JSON.stringify(messages), "utf8") > 1024 * 1024) throw new Error("schedule-carrier-coverage")
   const candidates = new Map<number, NativeScheduleCarrierCandidate>()
@@ -71,6 +71,10 @@ export function nativeScheduleCarrierWakes(mapping: NativeScheduleCarrierMapping
     const previous = candidates.get(candidate.run)
     if (previous && (previous.dueAt !== candidate.dueAt || previous.late !== candidate.late)) throw new Error("schedule-carrier-wake")
     candidates.set(candidate.run, candidate)
+  }
+  if (selection === "next") {
+    const next = candidates.get(highWater + 1)
+    return next ? [next] : []
   }
   const ordered = [...candidates.values()].sort((a, b) => a.run - b.run)
   if (ordered.length > 32 || ordered.some((candidate, index) => candidate.run !== highWater + index + 1))
