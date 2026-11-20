@@ -30,6 +30,7 @@ const work = () => (window as any).__outlineWork ?? { calls: 0 }
   preset: (preset: ToolCallExpansionPreset) => updatePreferences(transcriptPresetPatch(preset)),
   finish: (text: string) => source.end(text),
   locale: (locale: string) => applyUiSettings({ locale }),
-  snapshot: () => ({ reads, text: source.snapshot().text, replyText: source.snapshot().replyText, ...work(), folds: (window as any).__timelineFolds ?? 0 }),
-  reset: () => { work().calls = 0; (window as any).__timelineFolds = 0 },
+  snapshot: () => ({ reads, text: source.snapshot().text, replyText: source.snapshot().replyText, ...work(),
+    folds: (window as any).__timelineFolds ?? 0, historicalBuilds: (window as any).__historicalMarkerBuilds ?? 0 }),
+  reset: () => { work().calls = 0; (window as any).__timelineFolds = 0; (window as any).__historicalMarkerBuilds = 0 },
 }

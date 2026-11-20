@@ -73,7 +73,7 @@ export function getRevealedRecordParts(instanceId: string, messageId: string): n
   return revealedParts[makeCacheKey(instanceId, messageId)] ?? 0
 }
 
-function getDisplayWindow(instanceId: string, record: MessageRecord) {
+export function getRecordPartDisplayWindow(instanceId: string, record: MessageRecord) {
   const revealed = getRevealedRecordParts(instanceId, record.id)
   const headCount = MESSAGE_DISPLAY_HEAD + revealed
   const hiddenCount = Math.max(0, record.partIds.length - headCount - MESSAGE_PART_TAIL_COUNT)
@@ -81,7 +81,7 @@ function getDisplayWindow(instanceId: string, record: MessageRecord) {
 }
 
 export function getRecordDisplayPartIds(instanceId: string, record: MessageRecord): readonly string[] {
-  const { headCount, hiddenCount } = getDisplayWindow(instanceId, record)
+  const { headCount, hiddenCount } = getRecordPartDisplayWindow(instanceId, record)
   if (hiddenCount === 0) return record.partIds
   return [
     ...record.partIds.slice(0, headCount),
@@ -91,7 +91,7 @@ export function getRecordDisplayPartIds(instanceId: string, record: MessageRecor
 
 /** Whether `record.partIds[index]` renders in the message's current display window. */
 export function isRecordPartDisplayed(instanceId: string, record: MessageRecord, index: number): boolean {
-  const { headCount, hiddenCount } = getDisplayWindow(instanceId, record)
+  const { headCount, hiddenCount } = getRecordPartDisplayWindow(instanceId, record)
   return hiddenCount === 0 || index < headCount || index >= headCount + hiddenCount
 }
 
@@ -102,7 +102,7 @@ export function revealHiddenRecordParts(instanceId: string, messageId: string) {
 
 export function buildRecordDisplayData(instanceId: string, record: MessageRecord): RecordDisplayData {
   // Read the reveal state before the cache check so reactive callers track it.
-  const { revealed, headCount, hiddenCount } = getDisplayWindow(instanceId, record)
+  const { revealed, headCount, hiddenCount } = getRecordPartDisplayWindow(instanceId, record)
   const cacheKey = makeCacheKey(instanceId, record.id)
   const cached = recordDisplayCache.get(cacheKey)
   if (cached && cached.revision === record.revision && cached.revealed === revealed) {
