@@ -12,15 +12,14 @@ use tokio_util::sync::CancellationToken;
 pub fn store(app: &App) -> Store {
     Store::new(&app.data)
 }
+/// The reference's `config.yaml`, where `server.memoryEnabled` lives.
 pub fn settings_file(app: &App) -> PathBuf {
-    app.data.join("config-server.json")
+    app.config.clone()
 }
-/// The raw `server` configuration owner (empty when absent).
+/// The `server` owner fields this server reads (the memory preference only).
 pub fn server_owner(app: &App) -> std::result::Result<Map<String, Value>, ()> {
-    match crate::storage::read_bounded(&settings_file(app), json!({}), 1024 * 1024) {
-        Ok(Value::Object(m)) => Ok(m),
-        _ => Err(()),
-    }
+    let enabled = crate::shared::config_yaml::read_bool(&settings_file(app), "server", "memoryEnabled")?;
+    Ok(enabled.into_iter().map(|v| ("memoryEnabled".to_owned(), json!(v))).collect())
 }
 fn preference() -> MemoryError {
     fail(Code::Unreadable, "Memory preference is unavailable")
@@ -48,10 +47,10 @@ pub async fn set_enabled(app: &App, value: bool, cancel: Option<&CancellationTok
     let guard = super::lock::acquire(&s.directory, cancel).await?;
     let outcome = (|| {
         check(cancel)?;
-        // Fresh authority before the merge preserves external fields.
-        let mut owner = server_owner(app).map_err(|_| preference())?;
-        owner.insert("memoryEnabled".into(), json!(value));
-        crate::storage::write(&settings_file(app), &Value::Object(owner.clone())).map_err(|_| preference())?;
+        // One line of `config.yaml` changes; the reference's other settings stay as they are.
+        crate::shared::config_yaml::write_bool(&settings_file(app), "server", "memoryEnabled", value)
+            .map_err(|_| preference())?;
+        let owner = server_owner(app).map_err(|_| preference())?;
         let mut published = json!({"serverId": app.meta["serverId"], "opencodeBinary": app.binary});
         for (k, v) in owner {
             published[k] = v;

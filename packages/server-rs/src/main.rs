@@ -91,8 +91,9 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     let (watch_tx, watch_rx) = tokio::sync::mpsc::channel(512);
     let calendar_profile = missions::calendar::setup(&data)?;
     let watches = files::watch::Watches::new(watch_tx);
-    let state =
-        Arc::new(App::new(auth, port, data, root, meta, native, launch.binary, devices, watches, calendar_profile));
+    let mut app = App::new(auth, port, data, root, meta, native, launch.binary, devices, watches, calendar_profile);
+    app.config = launch.config;
+    let state = Arc::new(app);
 
     let routes = Router::new()
         .merge(meta::routes())

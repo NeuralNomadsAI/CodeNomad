@@ -20,6 +20,8 @@ pub struct Launch {
     pub root: PathBuf,
     pub identity: PathBuf,
     pub data: PathBuf,
+    /// `config.yaml`, shared with the reference.
+    pub config: PathBuf,
     /// The OpenCode executable workspaces report.
     pub binary: PathBuf,
     pub http: Bind,

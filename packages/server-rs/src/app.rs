@@ -27,6 +27,8 @@ pub struct App {
     pub auth: auth::Auth,
     pub port: u16,
     pub data: PathBuf,
+    /// The reference's `config.yaml`, shared with it (`<data>/config.yaml` unless `--config` names one).
+    pub config: PathBuf,
     pub root: PathBuf,
     pub meta: Value,
     pub native: Native,
@@ -98,6 +100,7 @@ impl App {
         Self {
             auth,
             port,
+            config: data.join("config.yaml"),
             data,
             root,
             meta,

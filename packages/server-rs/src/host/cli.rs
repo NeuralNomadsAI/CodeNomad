@@ -178,10 +178,12 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         None if explicit("ui-dir") => ui::Source::Dir(path("ui-dir").unwrap_or_default().into(), "override"),
         None => ui::Source::bundled(),
     };
+    let config = write_destination(&yaml)?;
     Ok(Command::Serve(Box::new(Launch {
         root,
-        identity: PathBuf::from(format!("{}.server-id", write_destination(&yaml)?.display())),
+        identity: PathBuf::from(format!("{}.server-id", config.display())),
         data: base,
+        config,
         binary: "opencode".into(),
         http: Bind { ip: http_ip, port: if http { http_port } else { 0 }, fallback: !(http && explicit("http-port")) },
         https,

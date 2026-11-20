@@ -46,6 +46,7 @@ pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::E
     Ok(host::Launch {
         root: root.into(),
         identity,
+        config: data.join("config.yaml"),
         data,
         binary: binary.into(),
         http: host::Bind { ip: [127, 0, 0, 1].into(), port: port.parse()?, fallback: false },
