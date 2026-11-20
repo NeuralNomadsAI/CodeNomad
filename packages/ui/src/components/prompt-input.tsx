@@ -835,13 +835,13 @@ export default function PromptInput(props: PromptInputProps) {
     : <SendHorizontal class="h-4 w-4" aria-hidden="true" />)
   const isTranscribing = createMemo(voiceInput.isTranscribing)
   const dictationIcon = createMemo(() => isTranscribing()
-    ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+    ? <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" aria-hidden="true" /></span>
     : <Mic class="h-4 w-4" aria-hidden="true" />)
   const voiceCancelIcon = <X class="h-4 w-4" aria-hidden="true" />
   const conversationIcon = <Volume2 class="h-4 w-4" aria-hidden="true" />
   const attachmentReading = createMemo(isReadingFiles)
   const attachmentIcon = createMemo(() => attachmentReading()
-    ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+    ? <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" aria-hidden="true" /></span>
     : <Paperclip class="h-4 w-4" aria-hidden="true" />)
   const userMessageActions = [
     ["previous", "previousUserMessage", "user-message-prev", <ArrowUp class="h-4 w-4" aria-hidden="true" />],
@@ -1069,7 +1069,7 @@ export default function PromptInput(props: PromptInputProps) {
           <div class="prompt-input-footer-actions">
             <Show when={isReadingFiles()}>
               <span role="status" class="text-xs text-secondary inline-flex items-center gap-1">
-                <Loader2 class="h-3 w-3 animate-spin" aria-hidden="true" />
+                <span class="inline-flex animate-spin"><Loader2 class="h-3 w-3" aria-hidden="true" /></span>
                 {t("promptInput.attachFiles.reading")}
               </span>
             </Show>

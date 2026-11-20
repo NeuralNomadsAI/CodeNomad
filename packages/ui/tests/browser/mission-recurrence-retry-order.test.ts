@@ -124,7 +124,7 @@ test("daily Resume keeps its loading button and progress announcement until HTTP
     await resume.click(); await submitted.promise
     assert.equal(await resume.getAttribute("aria-busy"), "true")
     assert.equal(await resume.isDisabled(), true)
-    assert.equal(await resume.locator("svg.animate-spin").count(), 1)
+    assert.equal(await resume.locator(".animate-spin svg").count(), 1)
     assert.equal(await missionToolbarAction(page, STOP).getAttribute("aria-busy"), null)
     const status = page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]")
     assert.equal(await status.count(), 1); assert.equal(await status.textContent(), "Resuming…")
