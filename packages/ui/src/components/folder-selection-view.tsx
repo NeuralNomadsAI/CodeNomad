@@ -2,7 +2,7 @@ import { Component, createMemo, createSignal, createUniqueId, Show, For, onMount
 import { Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Pencil, Laptop, Server } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import type { RemoteServerBrowseResponse, RemoteServerProfile } from "../../../server/src/api-types"
-import type { ServerSelectionIntent } from "../lib/native/server-selection-intent"
+import { sameServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
 import { qualifiedServerDisplayName } from "../lib/codenomad-link"
 import { captureRequestFocus } from "../lib/request-focus"
 import BrowseMenu, { createBrowseEntryCount } from "./browse-menu"
@@ -26,7 +26,7 @@ import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
-import { browsedRemoteRecents, remoteRecentProjectsUsable, removeRecentProject, renameRecentProject, type RecentProject } from "../stores/recent-projects"
+import { browsedRemoteRecents, remoteRecentProjectsUsable, removeRecentProject, renameRecentProject, type RecentProject, type RemoteRecentProject } from "../stores/recent-projects"
 import { renameProject } from "../stores/project-names"
 import { LocaleSelector } from "./locale-selector"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
@@ -59,7 +59,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const tabId = (tab: string) => `folder-home-tab-${viewId}-${tab}`
   const panelId = (tab: string) => `folder-home-panel-${viewId}-${tab}`
   const [selectedIndex, setSelectedIndex] = createSignal(0)
-  const [connectingRecent, setConnectingRecent] = createSignal<string>()
+  const [connectingRecent, setConnectingRecent] = createSignal<RemoteRecentProject>()
   const [hoveredRecentActionPath, setHoveredRecentActionPath] = createSignal<string | null>(null)
   const [focusedRecentActionPath, setFocusedRecentActionPath] = createSignal<string | null>(null)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>(null)
@@ -67,7 +67,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [isRenamingProject, setIsRenamingProject] = createSignal(false)
   // The canonical selector shared by Home and blank tabs.
   const [homeTab, setHomeTab] = createSignal<"recent" | "browse">("recent")
-  createEffect(on([() => props.active, remoteSource, homeTab], () => setConnectingRecent(undefined), { defer: true }))
+  const sourcePolicy = createMemo(() => remoteSource()?.profile, undefined, {
+    equals: (a, b) => a === b || !!a && !!b && sameServerSelection(a, b),
+  })
+  createEffect(on([() => props.active, sourcePolicy, homeTab], () => setConnectingRecent(undefined), { defer: true }))
   createEffect(() => { if (!remoteRecentProjectsUsable()) setConnectingRecent(undefined) })
   let homeRootRef: HTMLDivElement | undefined
   let recentListRef: HTMLDivElement | undefined
@@ -86,8 +89,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   // This computer's folders, the remote projects this window reopens and SideCars, newest first.
   const allRecents = createMemo<readonly LaunchableRecent[]>(() => {
     const source = remoteSource()
-    if (!source) return launchableRecents()
-    return source.listing ? browsedRemoteRecents(source.profile, source.listing.recents) : []
+    const rows = source ? browsedRemoteRecents(source.profile, source.listing?.recents ?? []) : launchableRecents()
+    const opening = connectingRecent()
+    // The row owns the request until selection; a refreshed timestamp must not replace it.
+    return opening ? rows.map(row => row.kind === "remote" && row.key === opening.key && sameServerSelection(row.policy, opening.policy) ? opening : row) : rows
   })
   const recentsAvailable = () => !remoteSource() || !!remoteSource()?.listing
   const folders = allRecents
@@ -252,7 +257,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   function openRecent(folder: LaunchableRecent) {
     if (isLoading()) return
     if (folder.kind === "sidecar") props.onOpenSidecar?.(folder.path)
-    else if (folder.kind === "remote") setConnectingRecent(folder.key)
+    else if (folder.kind === "remote") setConnectingRecent(folder)
     else handleFolderSelect(folder.path)
   }
 
@@ -563,7 +568,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                 setSelectedIndex(index())
                               }}
                             >
-                              <Show when={folder.kind === "remote" && connectingRecent() === key ? folder : undefined} keyed fallback={
+                              <Show when={folder.kind === "remote" && connectingRecent() === folder ? folder : undefined} keyed fallback={
                               <div class="flex items-center gap-2 w-full px-1">
                                 <div class="panel-list-item-content relative flex-1">
                                   <button

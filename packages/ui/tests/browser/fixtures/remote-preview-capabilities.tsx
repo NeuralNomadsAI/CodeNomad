@@ -10,6 +10,7 @@ import { attachInstanceTabMembership, detachInstanceTabMembership } from "../../
 import { addInstance } from "../../../src/stores/instances"
 import { publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
 import { getSessionSurface } from "../../../src/stores/session-surface"
+import { alertDialogState } from "../../../src/stores/alerts"
 import "../../../src/index.css"
 
 localBackend.api.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
@@ -58,5 +59,6 @@ render(() => <ConfigProvider><I18nProvider>
   },
   history: (id: string) => getSessionPreview("same-session", `${id}~same-workspace`)?.history,
   source: (id: string) => getSessionPreview("same-session", `${id}~same-workspace`)?.contentUrl,
+  alert: () => alertDialogState()?.detail ?? null,
 }
 void start()

@@ -7,11 +7,11 @@ export default function RemoteRecentSession(props: {
 }) {
   const profile = () => remoteRecentProjectsUsable() && savedProjectProfile(props.recent.policy)
   createEffect(() => { if (!profile()) props.onBack() })
-  return <Show when={profile()} keyed>{server =>
+  return <Show when={profile()}>{server =>
     <div data-remote-view-session on:keydown={event => {
       if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); props.onBack() }
     }}>
-      <RemoteServerBrowser profile={server} recent={props.recent} active={props.active} onBack={props.onBack} onOpened={props.onOpened} />
+      <RemoteServerBrowser profile={server()} recent={props.recent} active={props.active} onBack={props.onBack} onOpened={props.onOpened} />
     </div>
   }</Show>
 }

@@ -5,9 +5,10 @@ import { filterRecents, formatRelativeTime, getDisplayPath, getProjectDisplayNam
 import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget, launchableRecents, type LaunchableRecent } from "../lib/recent-open-target"
 import RemoteRecentSession from "./remote-recent-session"
 import RecentTabIcon from "./recent-tab-icon"
-import { remoteRecentProjectsUsable } from "../stores/recent-projects"
+import { remoteRecentProjectsUsable, type RemoteRecentProject } from "../stores/recent-projects"
 import { ensureSidecarsLoaded } from "../stores/sidecars"
 import { sidecarsAllowed } from "../lib/server-meta"
+import { sameServerSelection } from "../lib/native/server-selection-intent"
 
 /** The quick launcher's recent choices, with a separate action to join an open tab. */
 export default function RecentTabsMenu(props: {
@@ -20,11 +21,15 @@ export default function RecentTabsMenu(props: {
 }) {
   const { t } = useI18n()
   const [query, setQuery] = createSignal("")
-  const [connectingRecent, setConnectingRecent] = createSignal<string>()
+  const [connectingRecent, setConnectingRecent] = createSignal<RemoteRecentProject>()
   const listId = `recent-list-${createUniqueId()}`
   const [index, setIndex] = createSignal(0)
   const [keyboardNavigation, setKeyboardNavigation] = createSignal(false)
-  const matches = createMemo(() => filterRecents(launchableRecents(), query()))
+  const matches = createMemo(() => {
+    const rows = filterRecents(launchableRecents(), query())
+    const opening = connectingRecent()
+    return opening ? rows.map(row => row.kind === "remote" && row.key === opening.key && sameServerSelection(row.policy, opening.policy) ? opening : row) : rows
+  })
   let list: HTMLDivElement | undefined
   createEffect(on(() => props.active, (active) => {
     setConnectingRecent(undefined)
@@ -38,7 +43,7 @@ export default function RecentTabsMenu(props: {
   createEffect(() => { if (!remoteRecentProjectsUsable()) setConnectingRecent(undefined) })
   function open(recent: LaunchableRecent) {
     if (props.isLoading) return
-    if (recent.kind === "remote") { setConnectingRecent(recent.key); return }
+    if (recent.kind === "remote") { setConnectingRecent(recent); return }
     props.onRun?.()
     if (recent.kind === "sidecar") return props.onOpenSidecar?.(recent.path)
     props.onSelectFolder(recent.path)
@@ -79,7 +84,7 @@ export default function RecentTabsMenu(props: {
           {(recent, position) => (
             <div class="new-instance-launcher-recent" role="listitem" data-open={recentOpenTarget(recent) ? "true" : undefined}
               data-remote-server={recent.kind === "remote" ? recent.backendId : undefined} data-sidecar={recent.kind === "sidecar" ? recent.path : undefined}>
-              <Show when={recent.kind === "remote" && connectingRecent() === recent.key ? recent : undefined} keyed fallback={<>
+              <Show when={recent.kind === "remote" && connectingRecent() === recent ? recent : undefined} keyed fallback={<>
               <button type="button" class="new-instance-launcher-recent-primary" disabled={props.isLoading}
                 aria-label={recentAccessibleName(recent)} title={recentAccessibleName(recent)} data-launcher-index={position()}
                 onFocus={() => setIndex(position())} onClick={() => open(recent)}>

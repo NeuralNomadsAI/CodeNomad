@@ -150,6 +150,7 @@ test("two real remote apps load HTML/assets/fetch/WS and retain only logical add
   await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-preview-instance="a~same-workspace"] input')?.value.endsWith("/start"))
   await section(f.page, "a").getByRole("button", { name: "Forward", exact: true }).click()
   await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-preview-instance="a~same-workspace"] input')?.value.endsWith("/next?q=1#part"))
+  await appFrame(f.page, "a").locator("#asset").filter({ hasText: "asset-A" }).waitFor()
   const documentId = await appFrame(f.page, "a").locator("h1").getAttribute("data-page")
   await section(f.page, "a").getByRole("button", { name: "Refresh", exact: true }).click()
   await appFrame(f.page, "a").locator(`h1:not([data-page="${documentId}"])`).waitFor()
@@ -158,6 +159,18 @@ test("two real remote apps load HTML/assets/fetch/WS and retain only logical add
   assert.deepEqual(history.urls, [`${f.apps[0]!.origin}/start`, `${f.apps[0]!.origin}/next?q=1#part`])
   assert.equal(history.index, 1)
   assert.ok(history.urls.every((url: string) => !url.includes(".preview.localhost")))
+  assert.equal(await f.page.evaluate(() => (window as any).remotePreviews.alert()), null)
+  const address = section(f.page, "a").locator("input")
+  await address.fill(`${f.apps[0]!.origin}/typed`)
+  await Promise.all([
+    f.page.waitForEvent("framenavigated", { predicate: frame => frame.url().endsWith("/typed") }),
+    address.press("Enter"),
+  ])
+  assert.equal(await address.inputValue(), `${f.apps[0]!.origin}/typed`)
+  assert.equal(await f.page.evaluate(() => (window as any).remotePreviews.alert()), null)
+  await address.fill(initial!)
+  await address.press("Enter")
+  assert.equal(await f.page.evaluate(() => (window as any).remotePreviews.alert()), "Enter a valid HTTP or HTTPS URL.")
   assert.deepEqual(f.errors, [])
 })
 
