@@ -26,6 +26,8 @@ export type PanelStoredNote = z.infer<typeof NoteSchema>
 export type PanelNoteChange = { status: "saved"; revision: number } | { status: "conflict"; note: { text: string; revision: number } | null }
   | { status: "too-large" } | { status: "full" }
 const Project = /^[a-f0-9]{64}$/
+/** A note's session title: at most 256 UTF-16 units, never half a surrogate pair. */
+export const noteTitle = (title: string) => title.slice(0, 256).replace(/[\ud800-\udbff]$/, "")
 
 /** A plain JSON object serialized within the preferences budget, else the reason it is refused. */
 function preferencesOf(value: unknown): Preferences | "invalid" | "too-large" {
@@ -47,13 +49,14 @@ export class PanelExtensionStore {
   }
 
   install(pkg: PanelExtensionPackage, previousDigest?: string): Promise<void> {
+    // Grant changes take the package's notes lock, so no note write commits under a revoked grant.
     return this.mutate(records => {
       const previous = records.find(record => record.manifest.id === pkg.manifest.id)
       if (previous?.digest !== previousDigest) throw new PanelExtensionError("conflict")
       if (previous?.digest === pkg.digest) return records
       // Replacing code revokes every grant, even if its declared permissions are unchanged, and resets its preferences.
       return [...records.filter(record => record !== previous), { ...pkg, global: false }]
-    })
+    }, undefined, true, () => this.lockNotes(pkg.manifest.id))
   }
 
   activate(id: string, digest: string, enabled: boolean): Promise<void> {
@@ -61,7 +64,7 @@ export class PanelExtensionStore {
       if (record.manifest.id !== id) return record
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
       return { ...record, global: enabled }
-    }), id)
+    }), id, true, () => this.lockNotes(id))
   }
 
   /**
@@ -73,7 +76,7 @@ export class PanelExtensionStore {
       if (record.manifest.id !== id) return true
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
       return false
-    }), id, true, async () => {
+    }), id, true, () => this.lockNotes(id), async () => {
       const notes = this.notesDirectory(id), aside = path.join(this.directory, "notes", `.removing-${randomUUID()}`)
       try { await fs.rename(notes, aside) } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
@@ -145,14 +148,15 @@ export class PanelExtensionStore {
   async setNote(id: string, digest: string, project: string, sessionID: string, revision: number,
     next: { title: string; text: string }, guard?: { check(): Promise<void>; final(): void }): Promise<PanelNoteChange> {
     if (Buffer.byteLength(next.text) > PANEL_EXTENSION_LIMITS.noteBytes) return { status: "too-large" }
+    if (!Project.test(project)) throw new PanelExtensionError("invalid")
     return this.serialize(async () => {
-      granted(await this.read(), id, digest, "panel.notes")
-      if (!Project.test(project)) throw new PanelExtensionError("invalid")
-      // Another backend on this profile has its own queue: the cross-process lock agent memory uses
-      // keeps read, compare and write one transaction.
-      await fs.mkdir(this.notesDirectory(id), { recursive: true })
-      const release = await lockMemoryRepository(path.join(this.notesDirectory(id), project))
-      try { return await this.changeNote(id, project, sessionID, revision, next, guard) } finally { await release() }
+      // Another backend on this profile has its own queue: the package's cross-process lock keeps
+      // the grant, the compare and the write one transaction, against its writes and its removal.
+      const release = await this.lockNotes(id)
+      try {
+        granted(await this.read(), id, digest, "panel.notes")
+        return await this.changeNote(id, project, sessionID, revision, next, guard)
+      } finally { await release() }
     })
   }
 
@@ -169,14 +173,19 @@ export class PanelExtensionStore {
       return { status: "saved", revision: 0 }
     }
     if (!current && notes.length >= PANEL_EXTENSION_LIMITS.notes) return { status: "full" }
-    // At most 256 UTF-16 units, never half a surrogate pair.
-    const title = next.title.slice(0, 256).replace(/[\ud800-\udbff]$/, "")
-    const now = Date.now(), note = { sessionID, title, text: next.text, revision: Math.max(now, issued + 1), updated: now }
+    const now = Date.now(), note = { sessionID, title: noteTitle(next.title), text: next.text, revision: Math.max(now, issued + 1), updated: now }
     await this.writeNotes(id, project, [...others, note], note.revision, guard?.final)
     return { status: "saved", revision: note.revision }
   }
 
   private notesDirectory(id: string) { return path.join(this.directory, "notes", id) }
+
+  /** Agent memory's cross-process lock, outside the removable notes directory. */
+  private async lockNotes(id: string) {
+    const locks = path.join(this.directory, "notes-locks")
+    await fs.mkdir(locks, { recursive: true })
+    return lockMemoryRepository(path.join(locks, id))
+  }
 
   private async readNotes(id: string, project: string): Promise<{ notes: PanelStoredNote[]; revision: number }> {
     if (!Project.test(project)) throw new PanelExtensionError("invalid")
@@ -220,23 +229,29 @@ export class PanelExtensionStore {
   }
 
   /** `stage` runs once the update is valid; it is undone if the catalogue write fails, else committed. */
-  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true,
+  private mutate(update: (records: Stored[]) => Stored[], requiredId?: string, notify = true, lock?: () => Promise<() => Promise<void>>,
     stage?: () => Promise<{ commit(): Promise<void>; undo(): Promise<void> } | undefined>): Promise<void> {
     return this.serialize(async () => {
-      const records = await this.read()
-      if (requiredId && !records.some(record => record.manifest.id === requiredId)) throw new PanelExtensionError("missing")
-      const next = update(records)
-      if (!StoreSchema.safeParse({ version: 1, records: next }).success) throw new PanelExtensionError("limit")
-      const text = JSON.stringify({ version: 1, records: next })
-      if (Buffer.byteLength(text) > PANEL_EXTENSION_LIMITS.storageBytes) throw new PanelExtensionError("limit")
-      const staged = await stage?.()
-      try { await this.replace(this.directory, path.join(this.directory, "installed.json"), text) } catch (error) {
-        await staged?.undo()
-        throw error
-      }
-      await staged?.commit()
-      if (notify) this.changed()
+      const release = await lock?.()
+      try { await this.mutateLocked(update, requiredId, notify, stage) } finally { await release?.() }
     })
+  }
+
+  private async mutateLocked(update: (records: Stored[]) => Stored[], requiredId: string | undefined, notify: boolean,
+    stage?: () => Promise<{ commit(): Promise<void>; undo(): Promise<void> } | undefined>): Promise<void> {
+    const records = await this.read()
+    if (requiredId && !records.some(record => record.manifest.id === requiredId)) throw new PanelExtensionError("missing")
+    const next = update(records)
+    if (!StoreSchema.safeParse({ version: 1, records: next }).success) throw new PanelExtensionError("limit")
+    const text = JSON.stringify({ version: 1, records: next })
+    if (Buffer.byteLength(text) > PANEL_EXTENSION_LIMITS.storageBytes) throw new PanelExtensionError("limit")
+    const staged = await stage?.()
+    try { await this.replace(this.directory, path.join(this.directory, "installed.json"), text) } catch (error) {
+      await staged?.undo()
+      throw error
+    }
+    await staged?.commit()
+    if (notify) this.changed()
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {

@@ -55,8 +55,8 @@ test("notes.open: a user action while the host checks wins over the navigation",
   assert.equal(getSessionSurface(current).kind, "file")
 })
 
-test("notes.open: a native generation change or a disconnect after the answer retires the navigation", async t => {
-  for (const change of ["generation", "transport"] as const) {
+test("notes.open: a native generation change or a disconnect after the answer retires the navigation, even once reconnected", async t => {
+  for (const change of ["generation", "transport", "reconnect"] as const) {
     const instanceId = `notes-${change}`
     const { receive, reads } = mount(t, async () => ({ openable: true }), instanceId)
     const status = (generation: number) => (serverEvents as any).dispatch({ type: "instance.eventStatus", instanceId, status: "connected", generation })
@@ -64,6 +64,7 @@ test("notes.open: a native generation change or a disconnect after the answer re
     await receive(open)
     if (change === "generation") status(2)
     else (serverEvents as any).emitTransportStatus("disconnected")
+    if (change === "reconnect") (serverEvents as any).emitTransportStatus("connected")
     await tick()
     assert.notEqual(activeSessionId().get(instanceId), "ses_other", change)
     assert.deepEqual(reads, [], change)

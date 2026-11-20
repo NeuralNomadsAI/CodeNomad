@@ -24,6 +24,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
   onSessionGet?: (sessionID: string, reads: number, signal?: AbortSignal) => unknown
   onSettingsRead?: (signal?: AbortSignal) => unknown
   onLocationGet?: (signal?: AbortSignal) => unknown
+  /** May return another project ID for this read (a remote that changed). */
   onProjectIdentity?: (directory: string) => unknown
   routeBudgetMs?: number
   fence?: WorktreeDeletionFence
@@ -72,7 +73,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
     excludeDesignFolder: async value => { excluded.push(value.directory); return "excluded" },
     checkDesignFolderExclusion: async value => { checked.push(value.directory); return excluded.includes(value.directory) ? "excluded" : "missing" },
     ...(options.routeBudgetMs ? { routeBudgetMs: options.routeBudgetMs } : {}),
-    projectIdentity: async ({ directory }) => (await options.onProjectIdentity?.(directory), { id: (directory === "/repo" ? "a" : "b").repeat(64), source: "local" }),
+    projectIdentity: async ({ directory }) => ({ id: (await options.onProjectIdentity?.(directory) as string | undefined) ?? (["/repo", "/clone"].includes(directory) ? "a" : "b").repeat(64), source: "local" }),
     imageSettings: { read: async (_workspace: string, _location: unknown, signal?: AbortSignal) => {
       await options.onSettingsRead?.(signal)
       return { location: { directory: "/repo" }, mediaStorage: null,
@@ -87,7 +88,9 @@ async function fixture(t: TestContext, permissions: string[], options: {
       desktopPluginsReady: async () => {},
       getWorktreeIdentityForPath: async (_id: string, value: string) => value,
       getServiceWslDistro: () => undefined,
-      getServiceDirectoryForPath: async (id: string, value: string) => id === "i" && owned.has(value) ? value : undefined,
+      // `j`: another open window, on a clone of the same project.
+      getServiceDirectoryForPath: async (id: string, value: string) => id === "i" && owned.has(value) || id === "j" && value === "/clone" ? value : undefined,
+      list: () => [{ id: "i" }, { id: "j" }] as any,
       getHostPathForServicePath: async (_id: string, value: string) => value,
     } })
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }) })
@@ -352,6 +355,10 @@ test("notes: a moved session keeps its written title and cannot be opened; late 
   Object.assign(f.sessions.ses_other, { location: { directory: "/nested" }, title: "Renamed elsewhere" })
   assert.equal((await f.post("notesList", {})).json().notes[0].title, "Other", "no live title from another project")
   assert.deepEqual((await f.post("notesOpen", { target: "ses_other" })).json(), { openable: false })
+  // In a clone of the project open in another window: its live title, but this window cannot open it.
+  Object.assign(f.sessions.ses_other, { location: { directory: "/clone" }, title: "Renamed in the clone" })
+  assert.equal((await f.post("notesList", {})).json().notes[0].title, "Renamed in the clone")
+  assert.deepEqual((await f.post("notesOpen", { target: "ses_other" })).json(), { openable: false })
 
   assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "x".repeat(32 * 1024 + 1), revision: 0 })).json().status, "too-large")
 
@@ -379,4 +386,23 @@ test("notes: a moved session keeps its written title and cannot be opened; late 
   await new Promise(resolve => setTimeout(resolve, 100))
   mock.mock.restore()
   assert.deepEqual(await slow.store.notes(slow.pkg.manifest.id, slow.pkg.digest, project), [])
+})
+test("notes: a remote change during a write refuses it; a committed write answers saved; live titles are bounded", async t => {
+  let reads = 0
+  const moved = await fixture(t, ["session.context", "panel.notes"], { onProjectIdentity: () => ++reads > 1 ? "c".repeat(64) : undefined })
+  assert.equal((await moved.post("notesSet", { sessionID: "ses_work", text: "late", revision: 0 })).statusCode, 409)
+  assert.deepEqual(await moved.store.notes(moved.pkg.manifest.id, moved.pkg.digest, "a".repeat(64)), [])
+
+  const f = await fixture(t, ["session.context", "panel.notes"])
+  const setNote = f.store.setNote.bind(f.store)
+  const mock = t.mock.method(f.store, "setNote", async (...args: Parameters<typeof setNote>) => {
+    const result = await setNote(...args)
+    f.sessions.ses_work.location = { directory: "/elsewhere" }
+    return result
+  })
+  assert.equal((await f.post("notesSet", { sessionID: "ses_work", text: "kept", revision: 0 })).json().status, "saved", "never refused after it committed")
+  mock.mock.restore()
+  f.sessions.ses_work.location = { directory: "/repo" }
+  f.sessions.ses_work.title = "x".repeat(255) + "😀"
+  assert.equal((await f.post("notesList", {})).json().notes[0].title, "x".repeat(255))
 })

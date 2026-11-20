@@ -67,7 +67,8 @@ export function useApi4Channel(props: {
   const authority = { instanceId: props.instanceId, id: props.id, digest: props.digest }
   const session = props.sessionId && props.sessionId !== "info" ? props.sessionId : null
   const granted = (permission: string) => props.permissions.includes(permission)
-  let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined
+  // `epoch` counts disconnections: an approval taken before one never comes back with the reconnection.
+  let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined, epoch = 0
   let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false, notes: false }
   const current = () => !disposed && connected && nativeConnected && (props.host.activeSessionId() ?? null) === props.sessionId
   const abort = () => { for (const request of pending) request.abort() }
@@ -108,13 +109,14 @@ export function useApi4Channel(props: {
     // Another instance resynchronized: it may have missed a deletion in a project these notes share.
     if (event.instanceId !== props.instanceId) { if (event.status === "connected") invalidate(false, false, true); return }
     nativeConnected = event.status === "connected"
+    if (!nativeConnected) epoch++
     if (!nativeConnected || nativeGeneration !== event.generation) abort()
     nativeGeneration = event.generation
     if (nativeConnected) invalidate(true, true, true)
   }))
   onCleanup(serverEvents.onTransportStatus(status => {
     connected = status === "connected"
-    if (!connected) abort()
+    if (!connected) { epoch++; abort() }
     else invalidate(true, true, true)
   }))
   onCleanup(() => { disposed = true; clearTimeout(timer); abort(); pending.clear() })
@@ -202,8 +204,8 @@ export function useApi4Channel(props: {
         if (!openable) return { result: { opened: false } }
         // Answer first: showing the session remounts the panel.
         // The approval holds only for this mounting, transport and native generation.
-        const selected = props.sessionId, generation = nativeGeneration
-        const valid = () => !disposed && connected && nativeConnected && nativeGeneration === generation
+        const selected = props.sessionId, generation = nativeGeneration, approved = epoch
+        const valid = () => !disposed && connected && nativeConnected && nativeGeneration === generation && epoch === approved
           && (props.host.activeSessionId() ?? null) === selected
         return { result: { opened: true }, after: () => {
           void openListedSession(props.instanceId, sessionID, valid,

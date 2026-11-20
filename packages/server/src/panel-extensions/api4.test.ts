@@ -249,3 +249,47 @@ test("notes: same-instant writes list newest first, inconsistent files fail clos
     assert.deepEqual(results.map(result => result.status).sort(), ["conflict", "saved"])
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
+test("notes: a removal from another backend waits for a write in flight, then deletes it too", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-remove-"))
+  try {
+    const a = new PanelExtensionStore(directory), b = new PanelExtensionStore(directory)
+    const pkg = await api4(["session.context", "panel.notes"])
+    await a.install(pkg); await a.activate(pkg.manifest.id, pkg.digest, true)
+    const id = pkg.manifest.id, project = "a".repeat(64)
+    await a.setNote(id, pkg.digest, project, "ses_old", 0, { title: "", text: "old" })
+    let entered!: () => void, resume!: () => void
+    const checking = new Promise<void>(resolve => { entered = resolve }), held = new Promise<void>(resolve => { resume = resolve })
+    const saving = a.setNote(id, pkg.digest, project, "ses_new", 0, { title: "", text: "in flight" },
+      { check: async () => { entered(); await held }, final: () => {} })
+    await checking
+    const removing = b.remove(id, pkg.digest)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.equal((await new PanelExtensionStore(directory).list()).length, 1, "the removal waits for the write's lock")
+    resume()
+    assert.equal((await saving).status, "saved")
+    await removing
+    await b.install(pkg); await b.activate(id, pkg.digest, true)
+    assert.deepEqual(await b.notes(id, pkg.digest, project), [], "nothing comes back on reinstall")
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+test("notes: disabling from another backend waits for a write in flight; the next write is refused", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-notes-disable-"))
+  try {
+    const a = new PanelExtensionStore(directory), b = new PanelExtensionStore(directory)
+    const pkg = await api4(["session.context", "panel.notes"])
+    await a.install(pkg); await a.activate(pkg.manifest.id, pkg.digest, true)
+    const id = pkg.manifest.id, project = "a".repeat(64)
+    let entered!: () => void, resume!: () => void
+    const checking = new Promise<void>(resolve => { entered = resolve }), held = new Promise<void>(resolve => { resume = resolve })
+    const saving = a.setNote(id, pkg.digest, project, "ses_1", 0, { title: "", text: "in flight" },
+      { check: async () => { entered(); await held }, final: () => {} })
+    await checking
+    const disabling = b.activate(id, pkg.digest, false)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.equal((await new PanelExtensionStore(directory).list())[0]!.enabled, true, "the grant change waits for the write's lock")
+    resume()
+    assert.equal((await saving).status, "saved")
+    await disabling
+    await assert.rejects(a.setNote(id, pkg.digest, project, "ses_2", 0, { title: "", text: "late" }), { code: "unavailable" })
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})

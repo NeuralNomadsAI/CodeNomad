@@ -63,7 +63,8 @@ before(async () => {
       ownsLocation: async (id: string, location: { directory: string }) => id === instanceId && location.directory === "/fixture",
       desktopPluginsReady: async () => {}, getWorktreeIdentityForPath: async () => "/fixture", getServiceWslDistro: () => undefined,
       getHostPathForServicePath: async (_id: string, value: string) => value,
-      getServiceDirectoryForPath: async (id: string, value: string) => id === instanceId && value === "/fixture" ? value : undefined },
+      getServiceDirectoryForPath: async (id: string, value: string) => id === instanceId && value === "/fixture" ? value : undefined,
+      list: () => [workspace as any] },
     projectIdentity: async () => ({ id: "f".repeat(64), source: "local" }) })
   fixture = await startProductFixture("panel-extension-api4")
   const canvas = await fixture.browser.newPage()

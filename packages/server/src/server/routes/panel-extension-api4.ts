@@ -2,7 +2,7 @@ import { z } from "zod"
 import type { FastifyInstance } from "fastify"
 import { isSessionNotFoundError, type LocationRef, type OpenCodeClient } from "@opencode/client"
 import type { WorkspaceManager } from "../../workspaces/manager"
-import type { PanelExtensionStore, PanelStoredNote } from "../../panel-extensions/store"
+import { noteTitle, type PanelExtensionStore, type PanelStoredNote } from "../../panel-extensions/store"
 import { PANEL_EXTENSION_LIMITS, type PanelExtensionPermission, type PanelConversationStatus, type PanelNotesPage } from "../../panel-extensions/contract"
 import { resolveMemoryProjectIdentity } from "../../memory/project-identity"
 import { PanelExtensionError } from "../../panel-extensions/archive"
@@ -27,7 +27,7 @@ const ROUTE_BUDGET_MS = 19_000, RPC_TIMEOUT_MS = 8_000
 
 export interface PanelExtensionApi4Deps extends ImagesConversationRouteDeps {
   store: PanelExtensionStore
-  workspaceManager: ImagesConversationRouteDeps["workspaceManager"] & Pick<WorkspaceManager, "getSharedServiceConnection" | "get" | "getServiceDirectoryForPath">
+  workspaceManager: ImagesConversationRouteDeps["workspaceManager"] & Pick<WorkspaceManager, "getSharedServiceConnection" | "get" | "getServiceDirectoryForPath" | "list">
   imageSettings: Pick<ImageSettings, "read">
   checkDesignFolderExclusion?: typeof checkDesignFolderExclusion
   /** Tests only: the agent-memory project identity that files `panel.notes`. */
@@ -47,6 +47,8 @@ interface RouteContext {
   fence(key: string, check: () => Promise<void>): void
   /** A connection the answer was read through, asserted current right before it is sent. */
   pin(connection: { assertCurrent(): void }): void
+  /** A write committed after its own checks: its answer is sent as is, never refused by reads after it. */
+  committed(): void
 }
 
 /** `work`, or a rejection as soon as `signal` aborts; a late outcome is dropped. */
@@ -98,8 +100,10 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
             signal.throwIfAborted()
             for (const connection of pinned) connection.assertCurrent()
           }
+          let written = false
           const result = await run(input, { id, signal, prompts, authorize, fence: (key, check) => { if (!fences.has(key)) fences.set(key, check) },
-            pin: connection => { pinned.add(connection) } })
+            pin: connection => { pinned.add(connection) }, committed: () => { written = true } })
+          if (written) return result
           // After the last read: Location and session ownership, then consent, then (synchronously,
           // with nothing awaited before the answer) every connection the answer was read through.
           for (const check of fences.values()) { signal.throwIfAborted(); await check() }
@@ -286,34 +290,46 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   // panel.notes: one note per session, filed under the agent-memory project identity of the
   // displayed conversation's Location (else the instance's): worktrees share them, clones when their remote normalizes alike.
   const projectIdentity = deps.projectIdentity ?? resolveMemoryProjectIdentity
-  /** Per request: the project identity of a directory this instance owns, else `undefined`. */
+  /**
+   * Per request: the project identity of a directory this instance owns, or (`anyWindow`, for
+   * titles only) another open window does, as agent memory resolves a session's project; else `undefined`.
+   */
   const identities = (instanceId: string) => {
     const known = new Map<string, Promise<string | undefined>>()
-    return (directory: string) => {
-      let found = known.get(directory)
+    const target = async (workspaceId: string, directory: string) => {
+      const owned = await manager.getServiceDirectoryForPath(workspaceId, directory)
+      if (!owned) throw new Error("Not an owner")
+      return { directory: owned, distro: manager.getServiceWslDistro(workspaceId) }
+    }
+    return (directory: string, anyWindow = false) => {
+      const key = `${anyWindow}:${directory}`
+      let found = known.get(key)
       if (!found) {
         found = (async () => {
-          const owned = await manager.getServiceDirectoryForPath(instanceId, directory)
-          return owned ? (await projectIdentity({ directory: owned, distro: manager.getServiceWslDistro(instanceId) })).id : undefined
+          const owner = await target(instanceId, directory).catch(() => anyWindow
+            ? Promise.any(manager.list().filter(workspace => workspace.id !== instanceId).map(workspace => target(workspace.id, directory))).catch(() => undefined)
+            : undefined)
+          return owner ? (await projectIdentity(owner)).id : undefined
         })()
-        known.set(directory, found)
+        known.set(key, found)
       }
       return found
     }
   }
-  const project = async (context: RouteContext, instanceId: string, sessionID: string | undefined) => {
+  /** The request's project; a `write` checks its anchor inside the store queue instead of after the answer. */
+  const project = async (context: RouteContext, instanceId: string, sessionID: string | undefined, write = false) => {
     const connection = await connect(instanceId)
     context.pin(connection)
     const client = connection.client
     const session = sessionID ? await ownedSession(instanceId, client, sessionID, context.signal) : undefined
     const location = session ? readLocationRef(session.location) : manager.getServiceLocation(instanceId)
     if (!location) throw new Refused(403)
-    if (session) fenceSession(context, instanceId, client, sessionID!, session.location)
-    else fenceLocation(context, instanceId, client, location.directory)
+    if (!write && session) fenceSession(context, instanceId, client, sessionID!, session.location)
+    else if (!write) fenceLocation(context, instanceId, client, location.directory)
     // A worktree being deleted (the instance's or a linked one) refuses the answer and any write.
     const display = await captureDisplayIdentities(deps.worktreeDeletionFence, manager, instanceId, [location.directory])
     const displayed = () => { if (display && !display()) throw new Refused(409) }
-    context.fence(`display:${location.directory}`, async () => displayed())
+    if (!write) context.fence(`display:${location.directory}`, async () => displayed())
     const identityAt = identities(instanceId)
     const id = await identityAt(location.directory)
     if (!id) throw new Refused(403)
@@ -329,6 +345,8 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
         const latest = readLocationRef((await ownedSession(instanceId, client, sessionID!, context.signal)).location)
         if (JSON.stringify(latest) !== JSON.stringify(location)) throw new Refused(409)
       } else if (!await manager.ownsLocation(instanceId, { directory: location.directory }, client, { signal: context.signal })) throw new Refused(403)
+      // Read again, uncached: a remote change moves the project without moving the session.
+      if (await identities(instanceId)(location.directory) !== id) throw new Refused(409)
       final()
     }
     return { id, client, session, guard: { check, final }, identityAt }
@@ -347,9 +365,11 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   // JSON escapes can grow the text sixfold: the body limit bounds it, the store's UTF-8 measure answers `too-large`.
   route("notesSet", "panel.notes", { sessionID: Id, text: z.string(), revision: Revision },
     6 * PANEL_EXTENSION_LIMITS.noteBytes + 8192, async (input, context) => {
-      const { id: projectId, session, guard } = await project(context, input.instanceId, input.sessionID)
+      const { id: projectId, session, guard } = await project(context, input.instanceId, input.sessionID, true)
       await context.authorize()
-      return deps.store.setNote(context.id, input.digest, projectId, input.sessionID, input.revision, { title: session!.title ?? "", text: input.text }, guard)
+      const result = await deps.store.setNote(context.id, input.digest, projectId, input.sessionID, input.revision, { title: session!.title ?? "", text: input.text }, guard)
+      if (result.status === "saved") context.committed()
+      return result
     })
   // A live title only for a session still in this project; a moved one keeps its last written title.
   route("notesList", "panel.notes", { sessionID: Id.optional(), cursor: z.string().regex(/^\d{1,4}$/).optional() }, 8192, async (input, context) => {
@@ -358,15 +378,16 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     const start = Number(input.cursor ?? 0), page = all.slice(start, start + PANEL_EXTENSION_LIMITS.notesPage)
     const notes = await Promise.all(page.map(async note => {
       const live = await unlessDeleted(context.signal, client.session.get({ sessionID: note.sessionID }, { signal: bounded(context.signal) }))
-      const here = live && await identityAt(readLocationRef(live.location).directory).catch(() => undefined) === projectId
-      return { sessionID: note.sessionID, title: (here && live.title) || note.title, text: note.text, revision: note.revision, updated: note.updated, orphan: !live }
+      const here = live && await identityAt(readLocationRef(live.location).directory, true).catch(() => undefined) === projectId
+      return { sessionID: note.sessionID, title: (here && live.title && noteTitle(live.title)) || note.title, text: note.text, revision: note.revision, updated: note.updated, orphan: !live }
     }))
     return { notes, cursor: start + page.length < all.length ? String(start + page.length) : null } satisfies PanelNotesPage
   })
   route("notesDelete", "panel.notes", { sessionID: Id.optional(), target: Id, revision: Revision.min(1) }, 8192, async (input, context) => {
-    const { id: projectId, guard } = await project(context, input.instanceId, input.sessionID)
+    const { id: projectId, guard } = await project(context, input.instanceId, input.sessionID, true)
     await context.authorize()
     const result = await deps.store.setNote(context.id, input.digest, projectId, input.target, input.revision, { title: "", text: "" }, guard)
+    if (result.status === "saved") context.committed()
     return { status: result.status === "saved" ? "deleted" as const : "conflict" as const }
   })
   // Only a session with a note in this project, owned by this instance and still in the project, may be shown.
