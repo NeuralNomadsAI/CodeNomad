@@ -53,7 +53,6 @@ export class RemoteControlManager {
   private enabled = false
   private error: string | undefined
   private lastConnectedAt: string | undefined
-  private readonly pushRevokedListeners = new Set<(deviceId: string | null, channel?: "tunnel") => void>()
   private readonly previewInvalidations = new Set<(deviceId?: string, tunnelOnly?: boolean) => void>()
 
   constructor(private readonly options: ManagerOptions) {
@@ -102,18 +101,6 @@ export class RemoteControlManager {
     return [...(this.options.directHttpsOrigins?.() ?? [])]
   }
 
-  tunnelPushEpoch(): string {
-    return this.options.registry.tunnelPushEpoch()
-  }
-
-  devicePushEpoch(id: string): string {
-    return this.options.registry.devicePushEpoch(id)
-  }
-
-  invalidatePushConsent(id: string): void {
-    this.options.registry.invalidatePushConsent(id)
-  }
-
   async start(): Promise<RemoteControlStartResponse> {
     if (this.options.disabledByAdministrator) throw new Error(REMOTE_CONTROL_DISABLED)
     this.enabled = true
@@ -144,7 +131,6 @@ export class RemoteControlManager {
 
   async stop(): Promise<RemoteControlStatus> {
     this.options.registry.setStartsOnLaunch(false)
-    this.notifyPushRevoked(null, "tunnel")
     this.enabled = false
     this.error = undefined
     this.generation += 1
@@ -173,10 +159,10 @@ export class RemoteControlManager {
     return pairingFromCode(origin, this.options.registry.createPairing(origin))
   }
 
-  exchangeDirectPairing(code: string, origin: string, userAgent: string | undefined): { device: RemoteControlDevice; token: string } | null {
+  exchangeDirectPairing(code: string, origin: string, userAgent: string | undefined, serverHostName?: string): { device: RemoteControlDevice; token: string } | null {
     if (this.options.disabledByAdministrator) return null
     if (!this.directHttpsOrigins().includes(origin)) return null
-    const paired = this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent), origin)
+    const paired = this.options.registry.exchange(code, serverHostName === undefined ? deviceNameFromUserAgent(userAgent) : `CodeNomad · ${serverHostName}`, origin)
     if (!paired) return null
     if (paired.evictedId) this.disconnectDevice(paired.evictedId)
     return { device: paired.device, token: paired.token }
@@ -217,30 +203,12 @@ export class RemoteControlManager {
     }
   }
 
-  pushAuthority(id: string, channel: "tunnel" | "https", origin: string): "active" | "suspended" | "revoked" {
-    if (this.options.disabledByAdministrator || !this.options.registry.isPaired(id, channel === "https" ? origin : undefined)) return "revoked"
-    if (channel === "https") return this.directHttpsOrigins().includes(origin) ? "active" : "revoked"
-    if (!this.enabled && !this.options.registry.startsOnLaunch()) return "revoked"
-    return this.tunnel?.status().state === "connected" ? "active" : "suspended"
-  }
-
   revokeDevice(id: string): boolean {
     try {
       return this.options.registry.revoke(id)
     } finally {
       // In-memory revocation still applies if the registry cannot be saved.
       this.disconnectDevice(id)
-    }
-  }
-
-  onPushRevoked(listener: (deviceId: string | null, channel?: "tunnel") => void): () => void {
-    this.pushRevokedListeners.add(listener)
-    return () => { this.pushRevokedListeners.delete(listener) }
-  }
-
-  private notifyPushRevoked(id: string | null, channel?: "tunnel"): void {
-    for (const listener of this.pushRevokedListeners) {
-      try { listener(id, channel) } catch { /* Revocation observers have independent failure boundaries. */ }
     }
   }
 
@@ -347,7 +315,6 @@ export class RemoteControlManager {
 
   private disconnectDevice(id: string): void {
     this.invalidatePreviews(id)
-    this.notifyPushRevoked(id)
     for (const sockets of [this.deviceSockets, this.directDeviceSockets]) {
       for (const [socket, devices] of sockets) {
         if (devices.has(id)) socket.destroy()

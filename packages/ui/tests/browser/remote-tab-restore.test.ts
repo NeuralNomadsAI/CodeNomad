@@ -30,7 +30,8 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: host, __CODENOMAD_WINDOW_CONTEXT__: "local" })
       window.EventSource = class extends EventTarget { close() {} } as any
       const session = { activeTabIndex: 2, tabs: [
-        { folder: "/local" }, { folder: "/same", backendId: "a", occurrence: 0 }, { folder: "/same", backendId: "a", occurrence: 1 },
+        { folder: "/local" }, { folder: "/same", backendId: "a", serverId: "a", occurrence: 0 },
+        { folder: "/same", backendId: "a", serverId: "a", occurrence: 1 },
       ].map((value, index) => ({ kind: "workspace", ...value, drafts: { __no_session_draft__: `draft-${index}` },
         attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} })) }
       const snapshot = { version: 1, revision: 1, savedAt: 1, layout: {}, session }
@@ -51,7 +52,8 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
     let generation = 0
     let profileWrites = 0
     let forgets = 0
-    const projects: any[] = mode === "reuse" ? [0, 1].map(index => descriptor(`existing-${index}`, "/same")) : []
+    const explicitlyOpen = ["create", "closed", "uncertain", "partial-refusal"].includes(mode)
+    const projects: any[] = explicitlyOpen ? [] : [0, 1].map(index => descriptor(`existing-${index}`, "/same"))
     let releaseCreate!: () => void
     const createGate = new Promise<void>(resolve => { releaseCreate = resolve })
     let markCreate!: () => void
@@ -103,25 +105,35 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
     })
     try {
       await page.goto(url)
+      await page.locator('[data-restoring="false"]').waitFor()
+      await page.waitForFunction(() => (window as any).restoreFixture.tabs().some((tab: any) => tab.id === "instance:local"))
+      assert.equal(creates.filter(value => value === "a:/same").length, 0, "startup only reads remote inventory")
+      const openSaved = (index: number) => page.evaluate(index => (window as any).restoreFixture.openSaved(index), index)
       if (mode === "closed") {
+        const opening = openSaved(2)
         await createStarted
         await page.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "remote-restore").length === 2)
         await page.evaluate(() => { const f = (window as any).restoreFixture; for (const tab of f.tabs().filter((tab: any) => tab.kind === "remote-restore")) f.close(tab.id) })
         releaseCreate()
+        await opening
+      } else if (explicitlyOpen) {
+        // Keep the successful binding on the selected tab in the partial-refusal case.
+        const order = mode === "partial-refusal" ? [2, 1] : [1, 2]
+        for (const index of order) await openSaved(index)
       }
-      await page.locator('[data-restoring="false"]').waitFor()
-      await page.waitForFunction(() => (window as any).restoreFixture.tabs().some((tab: any) => tab.id === "instance:local"))
       if (mode === "partial-refusal") {
         const before = await page.evaluate(() => (window as any).restoreFixture.tabs())
         assert.equal(before.length, 3)
         assert.equal(before[1].kind, "remote-restore")
         assert.equal(before[2].drafts.__no_session_draft__, "draft-2")
         await page.evaluate(() => (window as any).restoreFixture.retry())
+        assert.equal(creates.filter(value => value === "a:/same").length, 2, "Retry must not resend the refused create")
+        await openSaved(1)
         const after = await page.evaluate(() => (window as any).restoreFixture.tabs())
         assert.equal(after.length, 3, "Retry must retain both occurrences")
         assert.equal(after[2].id, before[2].id, "the successful active occurrence keeps its binding")
         assert.deepEqual(after.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
-        assert.equal(creates.filter(value => value === "a:/same").length, 3, "only the definitively refused occurrence is recreated")
+        assert.equal(creates.filter(value => value === "a:/same").length, 3, "a new explicit Open can create the refused occurrence")
       }
       if (["offline", "auth", "pairing", "refused", "absent"].includes(mode)) {
         assert.equal(await page.getByRole("tab").count(), 3)
@@ -130,10 +142,13 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         assert.equal(snapshot.tabs[2].drafts.__no_session_draft__, "draft-2")
         if (mode === "offline") {
           const writes = profileWrites
-          assert.equal(await page.evaluate(() => (window as any).restoreFixture.removeServerQueued().then(() => false, () => true)), true)
-          assert.equal(forgets, 0, "queued removal must reject occupied tabs before Forget")
-          assert.equal(await page.evaluate(() => (window as any).restoreFixture.retargetServerQueued().then(() => false, () => true)), true)
-          assert.equal(profileWrites, writes, "queued retarget/removal must preserve the saved profile")
+          for (const action of ["removeServerQueued", "retargetServerQueued"]) {
+            const editing = page.evaluate(action => (window as any).restoreFixture[action](), action)
+            await page.getByRole("button", { name: "Cancel", exact: true }).click()
+            await editing
+          }
+          assert.equal(forgets, 0, "cancelling offline removal keeps the saved connection")
+          assert.equal(profileWrites, writes, "cancelling either confirmation keeps the saved profile")
         }
         if (mode === "auth" || mode === "pairing") {
           await page.getByRole("button", { name: "Connect", exact: true }).click()
@@ -164,7 +179,8 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         assert.deepEqual(tabs.map((tab: any) => tab.folder), ["/local", "/same", "/same"])
         assert.deepEqual(tabs.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[2].id)
-        assert.equal(creates.filter(value => value === "a:/same").length, mode === "reuse" ? 0 : mode === "partial-refusal" ? 3 : 2)
+        const expectedCreates = mode === "partial-refusal" ? 3 : explicitlyOpen ? 2 : 0
+        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates)
         const before = creates.length
         await page.waitForFunction(() => Boolean((window as any).committedState))
         await page.reload()
@@ -174,13 +190,15 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         await secondWindow.goto(url)
         await secondWindow.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
         assert.equal((await secondWindow.evaluate(() => (window as any).restoreFixture.tabs()))[2].drafts.__no_session_draft__, "draft-2")
-        assert.equal(creates.filter(value => value === "a:/same").length, mode === "reuse" ? 0 : mode === "partial-refusal" ? 3 : 2, "restart and another window reuse remote occurrences")
+        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates, "restart and another window reuse remote occurrences")
         assert.equal(creates.length, before + 2, "only the mock local inventory is empty on restart and in the second window")
         await secondWindow.close()
-        // A backend restart replaces UUIDs; Retry recreates the same logical tabs.
+        // Missing records stay unavailable until explicitly opened.
         projects.splice(0); generation++
         await page.evaluate(() => (window as any).restoreFixture.restartBackend())
         await page.evaluate(() => (window as any).restoreFixture.retry())
+        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates)
+        for (const index of [1, 2]) await openSaved(index)
         await page.waitForFunction(() => (window as any).restoreFixture.tabs().filter((tab: any) => tab.id.includes("remote-1")).length === 2)
         const restored = await page.evaluate(() => (window as any).restoreFixture.tabs())
         assert.equal(restored[2].drafts.__no_session_draft__, "draft-2")

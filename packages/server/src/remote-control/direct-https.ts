@@ -40,8 +40,18 @@ export function verifiedDirectHttpsOrigin(request: Pick<FastifyRequest, "raw" | 
   else if (!SAFE_METHODS.has(request.method.toUpperCase())) return null
   else if (referer !== undefined) source = originOf(referer)
   // A Host header is a bare authority: anything URL parsing would drop fails closed.
-  else if (host && !/[\s/\\@?#]/.test(host)) source = originOf(`https://${host}`)
+  else source = httpsHostOrigin(host)
   return source !== undefined && origins.includes(source) ? source : null
+}
+
+export function verifiedDirectServerOrigin(request: Pick<FastifyRequest, "raw" | "headers">, origins: readonly string[]): string | undefined {
+  if (isRemoteSocket(request.raw.socket)) return
+  const origin = httpsHostOrigin(request.headers.host)
+  return origin && origins.includes(origin) ? origin : undefined
+}
+
+function httpsHostOrigin(host: string | undefined): string | undefined {
+  return host && !/[\s/\\@?#]/.test(host) ? originOf(`https://${host}`) : undefined
 }
 
 function originOf(value: string): string | undefined {

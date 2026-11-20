@@ -35,7 +35,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     if (!sessionStorage.getItem("codenomad.client-state.v1")) {
       sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
         version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: ["a", "b"].map((backendId, index) => ({
-          kind: "workspace", folder: "/same", backendId, workspaceId: `${backendId}~same`, occurrence: 0,
+          kind: "workspace", folder: "/same", backendId, serverId: backendId, workspaceId: `${backendId}~same`, occurrence: 0,
           drafts: { __no_session_draft__: `draft-${backendId}` }, attachments: {}, scrollSnapshots: {},
           unseenIdleSince: {}, generationRecovery: {}, viewState: { version: 1, rightPanelTab: index ? "files" : "status" },
         })) },
@@ -181,7 +181,7 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
     } as any
     if (!sessionStorage.getItem("codenomad.client-state.v1")) sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
       version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: [
-        { folder: "/local", workspaceId: "same" }, { folder: "/remote", workspaceId: "a~same", backendId: "a" },
+        { folder: "/local", workspaceId: "same" }, { folder: "/remote", workspaceId: "a~same", backendId: "a", serverId: "a" },
       ].map(project => ({ kind: "workspace", ...project,
         ...(disappears && project.backendId ? { activeParentSessionId: "held-session", activeSessionId: "held-session" } : {}),
         drafts: { __no_session_draft__: project.folder,

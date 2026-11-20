@@ -129,7 +129,7 @@ test("codes and devices stay on their channel: tunnel and direct HTTPS never cro
     request.on("error", reject)
     request.end(JSON.stringify({ code: tunnelCode, hostName: "relay" }))
   })
-  // A direct code is refused by server pairing and is not cancelled by Stop.
+  // A direct code is refused on the tunnel and is not cancelled by Stop.
   const direct = code(f.manager.createDirectPairing(PUBLIC).url)
   assert.equal(f.manager.exchangePairing(direct, undefined, "relay"), null)
   await f.manager.stop()
@@ -148,6 +148,26 @@ test("codes and devices stay on their channel: tunnel and direct HTTPS never cro
     http.get(`http://${f.target()}/api/test/echo`, { agent: false, headers: { host: FAKE_TUNNEL_HOST, cookie } }, response => { response.resume(); resolve(response.statusCode!) }).on("error", reject)
   })
   assert.equal(ingress, 401)
+})
+
+test("a saved server can pair and authenticate on a verified direct HTTPS origin", async t => {
+  const f = await surface(t)
+  const pairing = code(f.manager.createDirectPairing(PUBLIC).url)
+  const headers = { host: PUBLIC_HOST, "x-codenomad-server-pairing": "1", "content-type": "application/json" }
+  const exchange = (extra: Record<string, string> = {}) => f.app.inject({
+    method: "POST", url: SERVER_PAIR_PATH, remoteAddress: LAN_PEER, headers: { ...headers, ...extra },
+    payload: { code: pairing, hostName: "relay" },
+  })
+  assert.equal((await exchange({ host: "foreign.example" })).statusCode, 404)
+  assert.equal((await exchange({ origin: PUBLIC })).statusCode, 403)
+  const result = await exchange()
+  assert.equal(result.statusCode, 200, result.body)
+  assert.equal(result.json().device.origin, PUBLIC)
+  assert.equal((await exchange()).statusCode, 401)
+  const credential = { host: PUBLIC_HOST, cookie: `${DEVICE_COOKIE_NAME}=${result.json().credential}`, "x-codenomad-server-request": "1" }
+  assert.equal((await f.app.inject({ url: "/api/auth/status", headers: credential })).json().authenticated, true)
+  assert.equal((await f.app.inject({ url: "/api/remote-control/devices", headers: credential })).statusCode, 404)
+  assert.equal((await f.app.inject({ url: "/api/auth/status", headers: { ...credential, origin: PUBLIC } })).statusCode, 401)
 })
 
 test("a direct HTTPS device is admitted through a reverse proxy, in device scope, without loopback privileges", async t => {
@@ -303,7 +323,8 @@ async function sidecarSurface(t: test.TestContext, enabled: boolean) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-direct-https-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const location = resolveConfigLocation(root)
-  const setOptIn = (value: boolean) => fs.writeFileSync(location.configYamlPath, `server:\n  sidecarsOverDirectHttps: ${value}\n`)
+  const setOptIn = (value: boolean) => fs.writeFileSync(location.configYamlPath,
+    `server:\n  sidecarsOverDirectHttps: ${value}\nui:\n  settings:\n    multiBackend: false\n`)
   setOptIn(enabled)
   const settings = new SettingsService(location, undefined, { child() { return this }, warn() {}, info() {} } as never)
   // The tunnel origin is listed too: Remote Control ingress must never qualify, even then.

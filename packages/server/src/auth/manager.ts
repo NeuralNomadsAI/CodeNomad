@@ -1,12 +1,10 @@
 import type { FastifyReply, FastifyRequest } from "fastify"
 import path from "path"
-import { createHash } from "node:crypto"
 import type { Logger } from "../logger"
 import { AuthStore } from "./auth-store"
 import { TokenManager } from "./token-manager"
 import { SessionManager } from "./session-manager"
 import { parseCookies } from "./http-auth"
-import { hashPasswordSync } from "./password-hash"
 import { isLocalRequest, isRefusedDeviceRequest, isRemoteRequest, remoteDeviceOf } from "../remote-control/request-origin"
 
 export const BOOTSTRAP_TOKEN_STDOUT_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:" as const
@@ -30,9 +28,7 @@ export class AuthManager {
   private readonly sessionManager: SessionManager
   private readonly cookieName: string
   private readonly authEnabled: boolean
-  private readonly passwordChangedListeners = new Set<() => void>()
   private readonly principalLoggedOutListeners = new Set<(id: string) => void>()
-  private pushEpochCache?: { salt: string; value: string }
 
   constructor(private readonly init: AuthManagerInit, private readonly logger: Logger) {
     this.cookieName = sanitizeCookieName(init.cookieName)
@@ -106,9 +102,6 @@ export class AuthManager {
       throw new Error("Internal authentication is disabled")
     }
     const status = await this.requireAuthStore().setPassword({ password, markUserProvided: true })
-    for (const listener of this.passwordChangedListeners) {
-      try { listener() } catch { /* Observers cannot prevent session revocation after persistence. */ }
-    }
     this.sessionManager.revokeUser(status.username)
     return status
   }
@@ -124,18 +117,6 @@ export class AuthManager {
     if (errors.length) throw errors[0]
   }
 
-  pushCredentialEpoch(salt?: string): string {
-    const password = this.init.password?.trim()
-    if (password && salt !== undefined) {
-      if (this.pushEpochCache?.salt === salt) return this.pushEpochCache.value
-      const derivedSalt = createHash("sha256").update(`codenomad-push:${salt}`).digest().subarray(0, 16)
-      const value = createHash("sha256").update(JSON.stringify(hashPasswordSync(password, derivedSalt))).digest("hex")
-      this.pushEpochCache = { salt, value }
-      return value
-    }
-    return createHash("sha256").update(JSON.stringify(this.authStore?.load()?.password ?? null)).digest("hex")
-  }
-
   onPrincipalLoggedOut(listener: (id: string) => void): () => void {
     this.principalLoggedOutListeners.add(listener)
     return () => { this.principalLoggedOutListeners.delete(listener) }
@@ -147,11 +128,6 @@ export class AuthManager {
 
   isSessionValid(id: string): boolean {
     return this.authEnabled && this.sessionManager.hasSession(id)
-  }
-
-  onPasswordChanged(listener: () => void): () => void {
-    this.passwordChangedListeners.add(listener)
-    return () => { this.passwordChangedListeners.delete(listener) }
   }
 
   /** From this machine's own listeners; tunnelled Remote Control traffic never qualifies. */

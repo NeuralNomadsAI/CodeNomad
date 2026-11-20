@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify"
 import cors from "@fastify/cors"
 import type { ServerMeta } from "../api-types"
 import { isDirectHttpsDeviceRequest, isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
-import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
+import { isServerPairExchange, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { routedPath } from "./routed-path"
 
 type OriginRequest = Pick<FastifyRequest, "raw" | "headers">
@@ -82,6 +82,7 @@ export function registerDirectOriginPolicy(app: FastifyInstance, options: {
 
   app.addHook("onRequest", (request, reply, done) => {
     if (isRemoteRequest(request) || ["GET", "HEAD", "OPTIONS"].includes(request.method) || options.isPreview(request)) return done()
+    if (isServerPairExchange(request, routedPath(request.raw.url ?? "/"))) return done()
     if (allowsSource(request)) return done()
     reply.header("connection", "close").code(403).send({ error: "Cross-origin request rejected" })
   })

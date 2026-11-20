@@ -95,8 +95,6 @@ import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
-import { registerPushRoutes } from "./routes/push"
-import { acquirePushHost, readPushPolicy } from "../web-push/host"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
 import { isLiveVoiceRoute, LiveVoiceGateway, refuseVoiceUpgrade, voiceSource } from "../speech/live-voice-gateway"
@@ -107,7 +105,7 @@ import { proxyWebSocket } from "./proxy-websocket"
 import { guardProxyListener, proxyConnector, ProxyDestinationDenied } from "./proxy-destination"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
-import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
+import { guardServerPairRequest, isServerPairExchange, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
 import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
@@ -184,7 +182,6 @@ interface HttpServerDeps {
   worktreeDeletionFence?: WorktreeDeletionFence
   /** See `registerMissionRoutes`. */
   missionsHost?: () => boolean
-  pushAuthorityReady?: () => boolean
   /** Shared by every listener of one backend; a fresh in-memory one serves a lone server. */
   integrationCatalog?: IntegrationCatalogSource
 }
@@ -209,7 +206,6 @@ function blocksHostProxyTarget(server: object, target: URL): boolean {
 }
 
 export function createHttpServer(deps: HttpServerDeps) {
-  readPushPolicy()
   // Fastify's type-level RawServer inference gets noisy when toggling HTTP vs HTTPS.
   // We keep the runtime behavior correct and cast the instance to a generic FastifyInstance.
   const app = Fastify(
@@ -303,7 +299,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       || deps.allowedOrigins?.includes(target.origin) === true
   })
   app.addHook("onRequest", (request, reply, done) => {
-    if (guardServerPairRequest(request, reply)) return
+    if (guardServerPairRequest(request, reply, remoteGate.directHttpsOrigins?.() ?? [])) return
     if (!gateRemoteRequest(request, reply, requestGate)) done()
   })
 
@@ -326,7 +322,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     const backendUi = request.headers["x-codenomad-server-request"] === undefined
       && multiBackendEnabled() && isBackendUiRoute(pathname, request.method)
     if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request)
-      && !directPairing && !backendUi && !(isSideCarContentPath(pathname) && sidecarOverDirectHttps(request))) {
+      && !directPairing && !isServerPairExchange(request, pathname) && !backendUi && !(isSideCarContentPath(pathname) && sidecarOverDirectHttps(request))) {
       return reply.header("connection", "close").code(404).send({ error: "Not found" })
     }
     done()
@@ -396,15 +392,6 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
 
   registerAuthRoutes(app, { authManager: deps.authManager })
-  let pushHost: ReturnType<typeof acquirePushHost> | undefined
-  const getPushHost = () => pushHost ??= acquirePushHost({ ...deps, authorityReady: deps.pushAuthorityReady })
-  if (multiBackendEnabled() || typeof deps.settings.configYamlPathForAuthority?.() === "string") getPushHost()
-  registerPushRoutes(app, {
-    get push() { return getPushHost().push }, auth: deps.authManager, remoteControl: deps.remoteControlManager,
-    httpsOrigin: request => verifiedDirectHttpsOrigin(request, remoteGate.directHttpsOrigins?.() ?? []),
-    multiBackend: multiBackendEnabled,
-  })
-  app.addHook("onClose", async () => { pushHost?.release() })
 
   app.addHook("preHandler", (request, reply, done) => {
     // Judge the path the router routed: the raw target can differ ("/%61pi" routes as "/api").

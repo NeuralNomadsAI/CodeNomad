@@ -1,4 +1,6 @@
 import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { backendEvents as serverEvents } from "../lib/server-events"
@@ -79,17 +81,24 @@ function clearTemporaryMark(project: Pick<Instance, "folder" | "backendId">) {
 export async function keepTemporaryInstance(instanceId: string): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance?.temporary) return false
+  const owner = captureBackendOperation(instanceId)
   try {
-    await serverApi.keepTemporaryWorkspace(instanceId)
+    owner.signal.throwIfAborted()
+    await backendOf(instanceId).api.keepTemporaryWorkspace(instanceId)
   } catch (error) {
+    if (!owner.current()) return false
     if (!isNoLongerTemporary(error)) {
       showFailure("temporaryInstance.keep.failedTitle", error)
       return false
     }
   }
   clearTemporaryMark(instance)
-  await preferencesOf(instanceId).addNamedRecentFolder(instance.folder, instance.projectName ?? "")
-    .catch((error) => log.error("Failed to add the kept project to recent folders", error))
+  try {
+    await preferencesOf(instanceId).addNamedRecentFolder(instance.folder, instance.projectName ?? "")
+  } catch (error) {
+    log.error("Failed to add the kept project to recent folders", error)
+  }
+  if (!owner.current()) return false
   return true
 }
 
@@ -103,14 +112,20 @@ export async function keepTemporaryInstance(instanceId: string): Promise<boolean
  * no conversation or file.
  */
 async function discardTemporaryInstance(instanceId: string, quiet = false): Promise<boolean> {
+  const owner = captureBackendOperation(instanceId)
   const tabId = getInstanceAppTabId(instanceId)
   const wasActive = activeAppTabId() === tabId
   const neighbour = wasActive ? getAdjacentAppTabId(tabId) : null
   if (wasActive && neighbour) selectAppTab(neighbour)
   else if (wasActive) detachInstanceTab(instanceId)
   try {
-    await trackWorkspaceClose(instanceId, () => serverApi.discardTemporaryWorkspace(instanceId, quiet ? { onlyIfEmpty: true } : {}))
+    const { api } = backendOf(instanceId)
+    await trackWorkspaceClose(instanceId, async () => {
+      owner.signal.throwIfAborted()
+      await api.discardTemporaryWorkspace(instanceId, quiet ? { onlyIfEmpty: true } : {})
+    })
   } catch (error) {
+    if (!owner.current()) return false
     if (!isNoLongerTemporary(error)) {
       if (instances().has(instanceId)) {
         if (neighbour) selectAppTab(tabId)
@@ -127,7 +142,7 @@ async function discardTemporaryInstance(instanceId: string, quiet = false): Prom
     await closeWorkspace(instanceId).catch(() => {})
     return true
   }
-  detachInstanceTab(instanceId)
+  if (owner.current()) detachInstanceTab(instanceId)
   return true
 }
 

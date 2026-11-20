@@ -5,7 +5,7 @@ import { parseCookies, wantsHtml } from "../auth/http-auth"
 import type { RemoteControlDevice } from "../api-types"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { routedPath } from "../server/routed-path"
-import { verifiedDirectHttpsOrigin } from "./direct-https"
+import { verifiedDirectHttpsOrigin, verifiedDirectServerOrigin } from "./direct-https"
 import { attachRemoteDevice, isRemoteSocket, markDirectDeviceRequest } from "./request-origin"
 import { hasBrowserRequestContext, SERVER_PAIR_PATH, validServerPairRequest } from "./server-pairing"
 
@@ -94,6 +94,8 @@ const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", /^\/workspaces\/[^/]+\/yolo\/sessions\/[^/]+\/toggle$/],
   ["GET POST PUT PATCH DELETE", /^\/workspaces\/[^/]+\/instance\/api\/.+$/],
 ]
+const allowsServerDeviceRoute = (method: string, pathname: string) =>
+  SERVER_DEVICE_ROUTES.some(([methods, pattern]) => methods.split(" ").includes(method === "HEAD" ? "GET" : method) && pattern.test(pathname))
 
 export interface RemoteGateDeps {
   /** Public hostname while Remote Control runs; null when stopped. */
@@ -126,6 +128,20 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
   }
   const explicitServer = request.headers["x-codenomad-server-request"] === "1"
   if (!ingress && !explicitServer) return gateDirectHttpsDevice(request, reply, cookies[DEVICE_COOKIE_NAME], deps)
+  const direct = !ingress ? verifiedDirectServerOrigin(request, deps.directHttpsOrigins?.() ?? []) : undefined
+  if (direct) {
+    const device = !hasBrowserRequestContext(request) && deps.authenticateDirect?.(cookies[DEVICE_COOKIE_NAME], direct)
+    if (!device) { reject(reply, 401, "This device is not paired"); return true }
+    const pathname = routedPath(request.raw.url ?? "/")
+    if (!pathname || !allowsServerDeviceRoute(request.method, pathname)) {
+      reject(reply, 404, "Not found"); return true
+    }
+    for (const name of SPOOFABLE_HEADERS) delete request.headers[name]
+    attachRemoteDevice(request, device.id)
+    markDirectDeviceRequest(request, true)
+    deps.assignDirectDevice?.(request.raw.socket, device.id)
+    return false
+  }
 
   const host = deps.publicHost()
   if (!host || (ingress && request.headers.host !== host)) {
@@ -169,7 +185,7 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
     reject(reply, 401, "This device is not paired")
     return true
   }
-  if ((serverRequest || (!ingress && explicitServer)) && !SERVER_DEVICE_ROUTES.some(([methods, pattern]) => methods.split(" ").includes(method === "HEAD" ? "GET" : method) && pattern.test(pathname))) {
+  if ((serverRequest || (!ingress && explicitServer)) && !allowsServerDeviceRoute(method, pathname)) {
     reject(reply, 404, "Not found")
     return true
   }
@@ -275,7 +291,7 @@ function isStaticBundlePath(pathname: string): boolean {
 }
 
 export function isHostOnlyPath(pathname: string, method: string, direct = false): boolean {
-  // Browser logout releases that authenticated device's background consent.
+  // Paired browsers can clear their device cookie.
   if (pathname === "/api/auth/logout" && method === "POST") return false
   // Direct browsers sign in/out with the password; token bootstrap stays local.
   if (direct && ["/login", "/api/auth/login", "/api/auth/logout"].includes(pathname)) return false
@@ -305,5 +321,5 @@ export function isBackendUiRoute(pathname: string, method: string): boolean {
   if (isMemoryRelayRoute(target, method)) return true
   if (verb === "POST" && ["/api/auth/login", "/api/auth/logout"].includes(target)) return true
   return !isHostOnlyPath(target, method) && target !== "/api/remote-control/status"
-    && SERVER_DEVICE_ROUTES.some(([methods, pattern]) => methods.split(" ").includes(verb) && pattern.test(target))
+    && allowsServerDeviceRoute(verb, target)
 }

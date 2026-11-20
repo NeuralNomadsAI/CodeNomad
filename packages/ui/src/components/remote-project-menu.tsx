@@ -8,6 +8,7 @@ import { qualifiedServerDisplayName } from "../lib/codenomad-link"
 import { remoteServerErrorKey, RemoteServerProbeError, useRelayServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 import { useI18n } from "../lib/i18n"
 import { captureRequestFocus } from "../lib/request-focus"
+import { supportsPairingLink } from "../lib/remote-pairing-link"
 import { sameServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
 import { getServerMeta, secretEntryAllowed, serversManageable, serversUsable } from "../lib/server-meta"
 import { backends } from "../lib/backend-client"
@@ -186,7 +187,7 @@ export default function RemoteProjectMenu(props: {
   const needsCredentials = () => ["needs_credentials", "auth", "pairing_unavailable", "unauthorized"].includes(error() ?? "")
   const pairing = () => {
     const profile = active()
-    return needsCredentials() && !!profile && new URL(profile.baseUrl).hostname.endsWith(".opentunnel.xyz")
+    return needsCredentials() && !!profile && supportsPairingLink(profile.baseUrl)
   }
   async function connect(credentials?: { username: string; password: string }) {
     const profile = active()
@@ -342,8 +343,11 @@ export default function RemoteProjectMenu(props: {
                     onClick={() => void browse()}>{t("folderSelection.remoteProject.serverRoot")}</button>
                 </Show>
               </>}>
-                <Show when={pairing()} fallback={<RemoteServerSignin busy={busy()} onConnect={credentials => void connect(credentials)} />}>
+                <Show when={pairing()}>
                   <ServerAddField compact pairingProfile={profile()} disabled={busy()} onAdded={() => void connect()} />
+                </Show>
+                <Show when={!new URL(profile().baseUrl).hostname.endsWith(".opentunnel.xyz")}>
+                  <RemoteServerSignin busy={busy()} onConnect={credentials => void connect(credentials)} />
                 </Show>
               </Show>
             </>}</Show>
