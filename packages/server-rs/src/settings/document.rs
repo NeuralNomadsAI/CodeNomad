@@ -92,13 +92,40 @@ pub fn destination(file: &Path) -> io::Result<PathBuf> {
     }
 }
 
+type Yaml = serde_norway::Value;
+
+/// `value` as YAML whose mappings keep the key order of `template` (the document on disk), new keys
+/// after the known ones, as the reference's merge into its parsed object does. `Doc` itself is
+/// sorted: ordering stays local to writes, without `serde_json/preserve_order` for the whole crate.
+fn ordered(template: Option<&Yaml>, value: &Value) -> Yaml {
+    match value {
+        Value::Object(map) => {
+            let old = template.and_then(Yaml::as_mapping);
+            let known =
+                old.into_iter().flat_map(|m| m.keys()).filter_map(Yaml::as_str).filter(|k| map.contains_key(*k));
+            let added = map.keys().map(String::as_str).filter(|k| !old.is_some_and(|m| m.contains_key(*k)));
+            let child = |key: &str| ordered(old.and_then(|m| m.get(key)), &map[key]);
+            Yaml::Mapping(known.chain(added).map(|key| (Yaml::from(key), child(key))).collect())
+        }
+        Value::Array(items) => {
+            let old = template.and_then(Yaml::as_sequence);
+            Yaml::Sequence(
+                items.iter().enumerate().map(|(i, item)| ordered(old.and_then(|s| s.get(i)), item)).collect(),
+            )
+        }
+        scalar => serde_norway::to_value(scalar).unwrap_or(Yaml::Null),
+    }
+}
+
 /// `persist`: a temporary file beside the target (the target's mode, else private), then a rename.
 pub fn write(file: &Path, doc: &Doc) -> io::Result<()> {
     let target = destination(file)?;
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut text = serde_norway::to_string(doc).map_err(io::Error::other)?;
+    let template = fs::read_to_string(&target).ok().and_then(|text| serde_norway::from_str::<Yaml>(&text).ok());
+    let doc = ordered(template.as_ref(), &Value::Object(doc.clone()));
+    let mut text = serde_norway::to_string(&doc).map_err(io::Error::other)?;
     if !text.ends_with('\n') {
         text.push('\n');
     }
@@ -240,6 +267,24 @@ mod tests {
             assert_eq!(read(&file), Err(Unreadable), "{broken:?}");
         }
         assert_eq!(read(&dir), Err(Unreadable));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The reference merges into the object it parsed: known keys stay in place, new ones come last.
+    #[test]
+    fn writes_keep_the_order_on_disk() {
+        let dir = crate::shared::test_dir("settings-order");
+        let file = dir.join("config.yaml");
+        fs::write(&file, "ui:\n  zeta: 1\n  alpha: 2\nserver:\n  sidecars:\n    - port: 1\n      id: a\n  b: x\n")
+            .unwrap();
+        let current = Value::Object(read(&file).unwrap());
+        let patch = json!({"server": {"memoryEnabled": true, "sidecars": [{"port": 2, "id": "a", "name": "n"}]},
+            "ui": {"alpha": 3}, "added": {}});
+        write(&file, merge(&current, &patch).as_object().unwrap()).unwrap();
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "ui:\n  zeta: 1\n  alpha: 3\nserver:\n  sidecars:\n  - port: 2\n    id: a\n    name: n\n  b: x\n  memoryEnabled: true\nadded: {}\n"
+        );
         let _ = fs::remove_dir_all(dir);
     }
 
