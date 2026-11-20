@@ -201,7 +201,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     }) {
         return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
     }
-    let Ok((_, token)) = crate::auth::cookies(h) else {
+    let Ok((_, token)) = crate::auth::cookies(h, app.auth.cookie_name()) else {
         return cors(reply(Status::BAD_REQUEST, "Invalid cookie"), supplied);
     };
     let owner = token.filter(|_| direct).and_then(|token| {

@@ -75,8 +75,8 @@ function smokeServer(resourcesRoot, target, electron) {
   const appIcon = path.join(serverRoot, "public", "pwa-192x192.png")
   // Tauri only: the Rust server, launched instead of the Node entry under CODENOMAD_SERVER_IMPL=rust,
   // and the debug info that gives its panic backtraces file and line.
-  const rustServer = electron ? [] : [path.join(serverRoot, "dist", rustServerFile(target))]
-  const rustSymbols = !electron && rustServerSymbols(target) ? [path.join(serverRoot, "dist", rustServerSymbols(target))] : []
+  const rustServer = electron ? [] : [path.join(serverRoot, rustServerFile(target))]
+  const rustSymbols = !electron && rustServerSymbols(target) ? [path.join(serverRoot, rustServerSymbols(target))] : []
   const node = electron ? path.resolve(electron) : nodeBinary(resourcesRoot, target)
   const npm = electron ? path.join(resourcesRoot, "node", target, "npm", "bin", "npm-cli.js")
     : path.join(resourcesRoot, "node", target, target.startsWith("win32-") ? "node_modules" : "lib/node_modules", "npm", "bin", "npm-cli.js")

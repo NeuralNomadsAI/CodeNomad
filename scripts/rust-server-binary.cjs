@@ -1,5 +1,5 @@
-// Builds the Rust server (packages/server-rs) for a desktop target and stages it in server/dist,
-// beside the Node entry, where Tauri looks for it under CODENOMAD_SERVER_IMPL=rust.
+// Builds the Rust server (packages/server-rs) for a desktop target and stages it in server/, beside
+// the public/ UI it serves, where Tauri looks for it under CODENOMAD_SERVER_IMPL=rust.
 const fs = require("fs")
 const path = require("path")
 const { spawnSync } = require("child_process")
@@ -40,12 +40,12 @@ function stageRustServer({ workspaceRoot, serverDest, target, log = () => {}, en
   if (result.status !== 0) throw new Error(`cargo build of the Rust server exited with code ${result.status}`)
   const file = rustServerFile(target)
   const built = path.join(env.CARGO_TARGET_DIR ? path.resolve(env.CARGO_TARGET_DIR) : path.join(crate, "target"), triple, "release")
-  const dest = path.join(serverDest, "dist", file)
+  const dest = path.join(serverDest, file)
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   fs.copyFileSync(path.join(built, file), dest)
   fs.chmodSync(dest, 0o755)
   const symbols = rustServerSymbols(target)
-  if (symbols) fs.cpSync(path.join(built, symbols), path.join(serverDest, "dist", symbols), { recursive: true })
+  if (symbols) fs.cpSync(path.join(built, symbols), path.join(serverDest, symbols), { recursive: true })
   log(`staged the Rust server at ${dest}`)
   return dest
 }

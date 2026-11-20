@@ -1909,13 +1909,13 @@ fn prod_entry_candidates(
     exe_dir: Option<PathBuf>,
     workspace: Option<PathBuf>,
 ) -> Vec<Option<PathBuf>> {
-    let mut candidates: Vec<_> = packaged_server_dists(exe_dir).into_iter().map(|dir| Some(dir.join("bin.js"))).collect();
+    let mut candidates: Vec<_> = packaged_servers(exe_dir).into_iter().map(|dir| Some(dir.join("dist/bin.js"))).collect();
     candidates.push(workspace.map(|p| p.join("packages/server/dist/bin.js")));
     candidates
 }
 
-/// The packaged `server/dist` folders (Windows, macOS, Linux layouts), in preference order.
-fn packaged_server_dists(exe_dir: Option<PathBuf>) -> Vec<PathBuf> {
+/// The packaged `server` folders (Windows, macOS, Linux layouts), in preference order.
+fn packaged_servers(exe_dir: Option<PathBuf>) -> Vec<PathBuf> {
     let Some(dir) = exe_dir else { return Vec::new() };
     let resources = dir.join("../Resources");
     let mut roots = vec![dir.join("resources"), resources.clone(), resources.join("resources")];
@@ -1923,18 +1923,18 @@ fn packaged_server_dists(exe_dir: Option<PathBuf>) -> Vec<PathBuf> {
         roots.push(root.clone());
         roots.push(root.join("resources"));
     }
-    roots.into_iter().map(|root| root.join("server/dist")).collect()
+    roots.into_iter().map(|root| root.join("server")).collect()
 }
 
-/// The binary sits in `server/dist` beside the Node entry, so it finds `../public` and `plugins/`
-/// like `dist/bin.js`. Development prefers the newest Cargo build (debug or release).
+/// The packaged binary sits in `server/`, beside the `public/` UI it serves.
+/// Development prefers the newest Cargo build (debug or release).
 fn resolve_rust_server(
     dev: bool,
     exe_dir: Option<PathBuf>,
     workspace: Option<PathBuf>,
     cargo_target_dir: Option<PathBuf>,
 ) -> Option<PathBuf> {
-    let packaged = packaged_server_dists(exe_dir).into_iter().map(|dir| dir.join(RUST_SERVER_FILE)).find(|p| p.is_file());
+    let packaged = packaged_servers(exe_dir).into_iter().map(|dir| dir.join(RUST_SERVER_FILE)).find(|p| p.is_file());
     let built = cargo_target_dir
         .into_iter()
         .chain(workspace.map(|p| p.join("packages/server-rs/target")))
@@ -2179,7 +2179,7 @@ pub(crate) mod tests {
         let custom = place("cargo-target/release");
         assert_eq!(resolve(true, Some(root.path().join("cargo-target"))), Some(custom));
 
-        let packaged = place("app/resources/server/dist");
+        let packaged = place("app/resources/server");
         assert_eq!(resolve(false, None), Some(packaged.clone()));
         assert_eq!(resolve(true, None), Some(debug));
 
