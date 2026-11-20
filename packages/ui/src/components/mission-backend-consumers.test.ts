@@ -4,7 +4,7 @@ import { test } from "node:test"
 import { generateUUID } from "../lib/client-identity"
 import { repositoryIdentitySchema } from "../../../server/src/missions/mission-repository-condition"
 import ts from "typescript"
-import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { isMissionPickerSource } from "./mission-scheduling-data"
 import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 import { buildProjectSessionListOptions, normalizeSessionDirectory } from "../stores/session-list-options"
 import { backgroundReads } from "../lib/background-read-queue"
@@ -181,7 +181,7 @@ for (const kind of ["schedule-success", "mission-completed", "branch-commits"] a
     let dispose!: () => void
     const timers = new Map<number, () => void>()
     let timerId = 0
-    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionGithubKind, getOpenCodeInstanceGeneration: () => 1,
+    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionPickerSource, getOpenCodeInstanceGeneration: () => 1,
       setTimeout: (callback: () => void) => { const key = ++timerId; timers.set(key, callback); return key },
       clearTimeout: (key: number) => timers.delete(key),
     })
@@ -199,7 +199,7 @@ test("coordinator sources keep same-ID roots on A/B, filter foreign rows and rej
     const env = fixture({}, owner), reads: any[] = [], pending = deferred(), pins: string[] = [], timers = new Map<number, () => void>()
     let timerID = 0
     const row = (id: string, extra = {}) => ({ id, title: `${owner}:${id}`, projectID: "p", location: { directory: "/repo" }, ...extra })
-    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionGithubKind,
+    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionPickerSource,
       isReservedMissionScheduleSessionID, buildProjectSessionListOptions, normalizeSessionDirectory, backgroundReads,
       conversationTitleQuery: production("./mission-editor-sources.ts", "conversationTitleQuery", {}),
       getOpenCodeInstanceGeneration: () => 1, setTimeout: (callback: () => void) => { const key = ++timerID; timers.set(key, callback); return key }, clearTimeout: (key: number) => timers.delete(key),
