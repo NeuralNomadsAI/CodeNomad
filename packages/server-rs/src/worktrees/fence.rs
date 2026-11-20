@@ -5,7 +5,10 @@
 //! write queue (`PluginControls.serializeMutation`). One process-wide fence, like the reference's.
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{
+    Arc, LazyLock, Mutex, Weak,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 use tokio::sync::Notify;
 
@@ -13,6 +16,7 @@ use tokio::sync::Notify;
 struct State {
     blocked: HashMap<String, usize>,
     active: HashMap<String, usize>,
+    displays: Vec<(String, Weak<AtomicBool>)>,
 }
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
 static IDLE: LazyLock<Notify> = LazyLock::new(Notify::new);
@@ -43,6 +47,17 @@ pub fn identity(directory: &std::path::Path) -> String {
 pub fn is_blocked(directory: &str) -> bool {
     let target = normalize(directory);
     STATE.lock().unwrap().blocked.keys().any(|b| overlap(b, &target))
+}
+
+/// Display reads do not delay deletion. A deletion that starts and finishes before the response
+/// still invalidates a display that was captured before it.
+pub fn capture_display(directory: &str) -> Arc<AtomicBool> {
+    let key = normalize(directory);
+    let mut state = STATE.lock().unwrap();
+    let live = Arc::new(AtomicBool::new(!state.blocked.keys().any(|b| overlap(b, &key))));
+    state.displays.retain(|(_, t)| t.strong_count() != 0);
+    state.displays.push((key, Arc::downgrade(&live)));
+    live
 }
 
 fn normalized(directories: &[String]) -> Vec<String> {
@@ -98,6 +113,14 @@ pub async fn block(directories: &[String]) -> Result<Blocked, &'static str> {
         for d in &blocked {
             *s.blocked.entry(d.clone()).or_default() += 1;
         }
+        s.displays.retain(|(key, weak)| {
+            let Some(live) = weak.upgrade() else { return false };
+            if blocked.iter().any(|b| overlap(b, key)) {
+                live.store(false, Ordering::Relaxed);
+                return false;
+            }
+            true
+        });
     }
     let guard = Blocked(blocked);
     let deadline = tokio::time::Instant::now() + DRAIN;
@@ -161,5 +184,15 @@ mod tests {
         assert!(enter(&["C:\\fence-test\\Other".into()]).is_some(), "unrelated folders stay writable");
         drop(held);
         assert!(!is_blocked(root) && enter(&[root.to_string()]).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_completed_deletion_invalidates_the_captured_display_only() {
+        let staged = capture_display("/fence-test/repository/tree");
+        let other = capture_display("/fence-test/elsewhere");
+        drop(block(&["/fence-test/repository".into()]).await.unwrap());
+        assert!(!staged.load(Ordering::Relaxed));
+        assert!(other.load(Ordering::Relaxed));
+        assert!(capture_display("/fence-test/repository/tree").load(Ordering::Relaxed));
     }
 }

@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::atomic::Ordering::Relaxed,
     time::Duration,
 };
 
@@ -106,7 +107,7 @@ impl Batch<'_> {
     /// `outsideHistory`: an absent direct child of a canonical folder outside the checkout,
     /// or an existing folder of another repository.
     async fn outside(&self, candidate: &str) -> Result<Option<String>, ()> {
-        if !Path::new(candidate).is_absolute() {
+        if !crate::files::paths::local_absolute(candidate) {
             return Ok(None);
         }
         if missing(candidate) {
@@ -131,9 +132,10 @@ impl Batch<'_> {
             if !missing(&ancestor.to_string_lossy()) {
                 let owned = ownership::resolve(self.app, self.workspace, &ancestor.to_string_lossy()).await?;
                 let fence = fence::identity(&owned.checkout);
+                let common = self.workspace_common().await?;
                 if fence::is_blocked(&fence)
-                    || real(&ancestor) != real(Path::new(&owned.directory))
-                    || ownership::common_directory(&ancestor).await != self.workspace_common().await
+                    || !real(&ancestor).is_some_and(|dir| Some(dir) == real(Path::new(&owned.directory)))
+                    || ownership::common_directory(&ancestor).await.as_ref() != Some(&common)
                 {
                     return None;
                 }
@@ -144,6 +146,9 @@ impl Batch<'_> {
         None
     }
     async fn classify(&self, candidate: &str, optional: bool) -> Candidate {
+        if !crate::files::paths::local_absolute(candidate) {
+            return Candidate::Error(if optional { "unverified" } else { "not-owned" });
+        }
         let Some(owned) = ownership::resolve(self.app, self.workspace, candidate).await else {
             if !optional {
                 return Candidate::Error("not-owned");
@@ -192,7 +197,11 @@ impl Batch<'_> {
             }
             Candidate::Missing { directory, fence, ancestor } => {
                 !fence::is_blocked(fence)
-                    && owned().await.map(|o| o.directory) == *directory
+                    && match (owned().await, directory) {
+                        (None, None) => true,
+                        (Some(o), Some(d)) => &o.directory == d && fence::identity(&o.checkout) == *fence,
+                        _ => false,
+                    }
                     && missing(directory.as_deref().unwrap_or(submitted))
                     && (!ancestor || self.owned_ancestor(submitted).await.as_ref() == Some(fence))
             }
@@ -203,9 +212,12 @@ impl Batch<'_> {
         }
     }
     fn deleting(candidate: &Candidate) -> bool {
+        Self::fence(candidate).is_some_and(fence::is_blocked)
+    }
+    fn fence(candidate: &Candidate) -> Option<&str> {
         match candidate {
-            Candidate::Owned { fence, .. } | Candidate::Missing { fence, .. } => fence::is_blocked(fence),
-            _ => false,
+            Candidate::Owned { fence, .. } | Candidate::Missing { fence, .. } => Some(fence),
+            _ => None,
         }
     }
 }
@@ -224,12 +236,13 @@ fn refused(kind: Refusal) -> Error {
 
 /// `GET /api/workspaces/:id/pending-requests?directories=…[&optionalDirectories=…]`: the pending
 /// permissions and Forms of each owned directory, through the pruning plugin's snapshot RPC.
-pub async fn snapshot(
-    State(app): State<Shared>,
-    Route(id): Route<String>,
-    RawQuery(query): RawQuery,
-) -> Result<Response, Error> {
-    let no_store = |body: Value| ([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response();
+pub async fn snapshot(State(app): State<Shared>, Route(id): Route<String>, RawQuery(query): RawQuery) -> Response {
+    let mut response = snapshot_response(app, id, query).await.into_response();
+    response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    response
+}
+
+async fn snapshot_response(app: Shared, id: String, query: Option<String>) -> Result<Response, Error> {
     let mut parsed = app.native.url();
     parsed.set_query(query.as_deref());
     let items: Vec<(String, String)> = parsed.query_pairs().into_owned().collect();
@@ -252,19 +265,14 @@ pub async fn snapshot(
         }
     }
     if optional.iter().any(|d| !submitted.contains(d)) {
-        return Ok((
-            Status::BAD_REQUEST,
-            [(header::CACHE_CONTROL, "no-store")],
-            Json(json!({"error": "Invalid optional pending request directories"})),
-        )
-            .into_response());
+        return Err(error(Status::BAD_REQUEST, "Invalid optional pending request directories"));
     }
     if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
         return Ok(unavailable());
     }
     let deadline = tokio::time::Instant::now() + SNAPSHOT_TIMEOUT;
     match tokio::time::timeout_at(deadline, read(&app, &id, &workspace, &submitted, &optional, deadline)).await {
-        Ok(Ok(body)) => Ok(no_store(body)),
+        Ok(Ok(body)) => Ok(Json(body).into_response()),
         Ok(Err(Ok(response))) => Ok(response),
         Ok(Err(Err(kind))) => Err(refused(kind)),
         Err(_) => Err(refused(Refusal::Timeout)),
@@ -285,19 +293,25 @@ async fn read(
     let root =
         ownership::resolve(app, workspace, &workspace.path.to_string_lossy()).await.ok_or(Err(Refusal::Unavailable))?;
     let root_fence = fence::identity(&root.checkout);
+    let root_display = fence::capture_display(&root_fence);
     let batch = Batch { app, workspace, root: root.directory.clone(), common: Default::default() };
     if !Path::new(&bootstrap).is_absolute()
         || ownership::resolve(app, workspace, &bootstrap).await.map(|o| o.directory) != Some(root.directory.clone())
     {
         return Err(Err(Refusal::Unavailable));
     }
+    let endpoint = app.native.endpoint().ok_or(Err(Refusal::Unavailable))?;
     let current = || {
+        if !app.native.endpoint().is_some_and(|now| std::sync::Arc::ptr_eq(&now, &endpoint)) {
+            return false;
+        }
         app.workspace(id).is_ok_and(|w| {
             w.id == workspace.id
                 && w.path == workspace.path
                 && w.location["directory"] == bootstrap.as_str()
                 && same_file::Handle::from_path(&w.path).is_ok_and(|h| h == placement)
-        }) && !fence::is_blocked(&root_fence)
+        }) && root_display.load(Relaxed)
+            && !fence::is_blocked(&root_fence)
     };
     if !current() {
         return Err(Err(Refusal::Unavailable));
@@ -306,6 +320,7 @@ async fn read(
     for directory in submitted {
         candidates.push((directory.clone(), batch.classify(directory, optional.contains(directory)).await));
     }
+    let displays: Vec<_> = candidates.iter().map(|(_, c)| Batch::fence(c).map(fence::capture_display)).collect();
     let mut reported: Vec<Value> = Vec::new();
     for (directory, candidate) in &candidates {
         match candidate {
@@ -323,7 +338,6 @@ async fn read(
     let forbidden = |directories: Vec<Value>| {
         Err(Ok((
             Status::FORBIDDEN,
-            [(header::CACHE_CONTROL, "no-store")],
             Json(json!({"error": "Directory does not belong to workspace", "directories": directories})),
         )
             .into_response()))
@@ -341,9 +355,11 @@ async fn read(
     }
     let revalidate = || async {
         let mut failed: Vec<(String, &'static str)> = Vec::new();
-        for (directory, candidate) in &candidates {
-            if !batch.still(directory, candidate).await {
-                failed.push((directory.clone(), if Batch::deleting(candidate) { "deleting" } else { "changed" }));
+        for ((directory, candidate), display) in candidates.iter().zip(&displays) {
+            let still = batch.still(directory, candidate).await;
+            let deleting = Batch::deleting(candidate) || display.as_ref().is_some_and(|live| !live.load(Relaxed));
+            if !still || deleting {
+                failed.push((directory.clone(), if deleting { "deleting" } else { "changed" }));
             }
         }
         failed
