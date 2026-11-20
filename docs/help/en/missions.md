@@ -127,7 +127,7 @@ The flag shows the Mission's state; its chevron carries its tasks' attention sta
 | Colour and shape | Meaning |
 | --- | --- |
 | Red | An open question or permission needs your answer. Select the asking Mission or task to open the interruption dock. |
-| Yellow, pulsing | Native work was observed running. |
+| Yellow | Native work was observed running. |
 | Orange pause symbol | Paused. |
 | Orange warning triangle | Interrupted, with an action to continue. |
 | Green | A Mission, task or successful scheduled run awaits review in this window. |

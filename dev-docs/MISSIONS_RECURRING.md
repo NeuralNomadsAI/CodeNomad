@@ -323,7 +323,7 @@ stale, blocked or unresolved observation keeps **State unconfirmed**. Successful
 attention and exact passage acknowledgement follow the shared marks contract in
 `MISSIONS.md` (Agent conventions): accent icon with a static neutral underline for
 confirmed waiting, accent alone for prepared, orange Pause or warning triangle for
-pause/interruption, yellow pulse during a passage and green for a new successful
+pause/interruption, yellow during a passage and green for a new successful
 passage awaiting review. Explicit attentive selection or **Mark as read** acknowledges
 that exact passage and returns an armed schedule to waiting. The context menu captures
 its passage identity when opened; a result arriving while it is open stays unread.

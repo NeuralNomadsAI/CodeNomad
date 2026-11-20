@@ -114,7 +114,7 @@ Weitere Einträge und Aufgaben laden am Listenende automatisch. Schlägt das Lad
 
 ### Farben und Zustände {#status-colours}
 
-Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, pulsierendes Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause, ein orangefarbenes Warndreieck Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
+Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause, ein orangefarbenes Warndreieck Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
 
 Ein Akzentsymbol mit einem kleinen statischen neutralen Strich darunter bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse, gestoppte Zeitpläne und **Status unbestätigt** sind neutral; lesen Sie den Statustext.
 

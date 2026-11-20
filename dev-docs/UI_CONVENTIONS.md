@@ -2,6 +2,8 @@
 
 ## Agent conventions
 
+- SVG elements never animate: `styles/utilities.css` cancels every animation on `svg` and its children, because Chromium and WebKit run them on the main thread and restyle the whole page each frame. Show progress with a static icon or an animated HTML element (such as `.status-dot`). Covered by `tests/browser/mcp-motion.test.ts`.
+
 - Read-only diagnostic output uses `components/output-window.tsx`, sharing `DismissibleWindow`'s non-modal focus, Escape, outside-interaction and drag geometry. OpenCode logs and background-shell output supply their own bounded reads/rendering inside its shared header, actions, body and close button. Opening an output window preserves the underlying controls and conversation. Put source-specific retrieval outside this frame; render plain log bytes as text, and ANSI output only through the existing ANSI renderer.
 
 - One-way acknowledgement targets opt into the same sweep listener with `toggleSweepClear(element)` and a shared `toggleSweepGroup`. They always contribute the on state and clear through their own click when crossed. Regular toggles retain their own click and checked/pressed-state handling.

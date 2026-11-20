@@ -62,7 +62,8 @@ for (const motion of ["no-preference", "reduce"] as const) {
     await toggle.click()
     await page.locator("svg.animate-spin").waitFor()
     assert.equal(await toggle.isDisabled(), true)
-    assert.equal(await perpetualAnimations(page), motion === "reduce" ? 0 : 2, "only the pending dot and spinner may loop")
+    assert.equal(await perpetualAnimations(page), motion === "reduce" ? 0 : 1, "only the pending dot may loop")
+    assert.equal(await page.evaluate(() => document.getAnimations().filter(a => (a.effect as KeyframeEffect | null)?.target instanceof SVGElement).length), 0, "SVG icons never animate")
     if (motion === "reduce") {
       // Exercise live OS-preference changes rather than only the initial media query.
       await page.emulateMedia({ reducedMotion: "no-preference" })
