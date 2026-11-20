@@ -11,7 +11,7 @@ Le Contrôle à distance permet à un navigateur ou client de bureau appairé d�
 
 Le lien est valable **cinq minutes** et réussit **une seule fois**. Traitez-le comme un identifiant : quiconque le consomme peut devenir un appareil appairé. Le code se trouve dans le fragment d’URL, pas dans la chaîne de requête. **Créer un nouveau lien d’appairage** invalide immédiatement le lien inutilisé précédent. La fermeture du backend annule le lien d’appairage en attente ; l’arrêt et une panne du tunnel annulent un lien de tunnel.
 
-Pour appairer un autre CodeNomad de bureau, choisissez **Se connecter au serveur CodeNomad** sur son accueil, collez le lien dans **URL du serveur**, puis choisissez **Se connecter**. Un lien d’appairage ouvre sa fenêtre même depuis **Enregistrer**, car l’ouvrir consomme le code. Seule l’origine du tunnel est enregistrée comme favori ; le code n’est pas conservé. La vérification TLS reste activée pour les liens d’appairage.
+Sur un autre CodeNomad de bureau, collez le lien d’appairage dans **Paramètres → Serveurs → Adresse ou lien du serveur**. Le champ est vidé avant la requête ; seule l’origine est enregistrée. Le backend local conserve son identité d’appareil privée entre les lancements ; **Supprimer le serveur enregistré** oublie la connexion de ce profil avant son retrait. L’appairage vérifie TLS et n’ouvre aucun projet.
 
 ## Appairer en HTTPS direct {#direct-https}
 
@@ -28,8 +28,6 @@ Un tel appareil se connecte uniquement par son adresse HTTPS, jamais par le tunn
 Ces appareils ont la même [surface](#remote-surface) que les appareils du tunnel et n’obtiennent jamais les privilèges de boucle locale, même via un proxy sur l’hôte.
 
 ## Gérer les appareils appairés {#paired-devices}
-
-Avec les réglages multi-backend expérimentaux, collez le lien d’appairage dans **Paramètres → Serveurs → Adresse ou lien du serveur**. Le champ est vidé avant la requête ; seule l’origine est enregistrée. Le backend local conserve son identité d’appareil privée entre les lancements ; **Supprimer le serveur enregistré** oublie la connexion de ce profil avant son retrait. L’appairage vérifie TLS et n’ouvre aucun projet. Les instructions de fenêtre distante ci-dessus concernent le mode par défaut.
 
 1. Sur l’hôte, revenez à **Paramètres → Accès distant → Contrôle à distance**.
 2. Vérifiez **Appareils appairés** et leur heure **Dernière activité**. Chaque appareil porte le nom de la plateforme et du navigateur qui l’ont appairé, par exemple `iPhone · Safari`.
@@ -70,7 +68,7 @@ Les appareils appairés peuvent utiliser les API ordinaires de projet/conversati
 | Interface authentifiée normale, espaces de travail, conversations et SSE | Disponible à un appareil appairé. |
 | Connexion/déconnexion par mot de passe, changements de mot de passe, initialisation locale par jeton | Indisponibles ; les identifiants d’appareil sont requis même si l’authentification directe est désactivée. |
 | État du Contrôle à distance | Lisible par un appareil appairé ; la gestion est indisponible. Démarrage/arrêt, création d’appairage, liste et révocation des appareils restent sur le chemin d’accès de l’hôte. |
-| Serveurs enregistrés expérimentaux et relais du backend | Les clients distants authentifiés peuvent utiliser/gérer tous les serveurs enregistrés sur l’hôte si la fonction et ses capacités l’autorisent. Les nouveaux mots de passe/liens d’appairage nécessitent le Contrôle à distance ou HTTPS, pas le HTTP simple sur le réseau local. Voir [Serveurs enregistrés](remote-access.md#saved-servers). |
+| Serveurs enregistrés et relais | Les clients distants authentifiés peuvent utiliser/gérer tous les serveurs enregistrés sur l’hôte si la fonction et ses capacités l’autorisent. Les nouveaux mots de passe/liens d’appairage nécessitent le Contrôle à distance ou HTTPS, pas le HTTP simple sur le réseau local. Voir [Serveurs enregistrés](remote-access.md#saved-servers). |
 | Fenêtres distantes de bureau et leur proxy | Réservés à l’hôte (`/api/remote-proxy/`). |
 | **Proxy de contenu** SideCar | Exige la boucle locale (`/sidecars/`), comme les WebSockets SideCar. Les API d’enregistrement `/api/sidecars` sont accessibles aux appareils appairés et aux clients LAN directs authentifiés. |
 | Contenu des aperçus web | Disponible tant que **Aperçus web** est activé (par défaut) dans **Paramètres → Accès distant → Contrôle à distance** sur l’hôte. Chaque adresse d’aperçu ouvre sa page sans appairage : gardez-la privée. Désactiver l’interrupteur arrête les aperçus servis et leurs WebSockets ; les appareils appairés masquent **Ouvrir l'aperçu web** une fois rechargés. |

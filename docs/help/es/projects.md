@@ -1,6 +1,6 @@
 # Proyectos y worktrees
 
-Con múltiples backends activados, despliega **REMOTOS** en el inicio o en el lanzador `+`. Elige **+ Proyecto** junto a un servidor CodeNomad guardado, navega por sus carpetas y elige **Abrir**. Para añadir un servidor, pega su enlace de emparejamiento o dirección debajo de la lista. Los proyectos abiertos aquí quedan en la lista mixta con el icono y el nombre del servidor, incluso sin conexión. Explorar, Clonar y Temporal usan este equipo.
+Despliega **Remotos** en el inicio o en el lanzador `+`. Elige **+ Proyecto** junto a un servidor CodeNomad guardado, navega por sus carpetas y elige **Abrir**. El proyecto se abre en una pestaña normal. Para añadir un servidor, pega su enlace de emparejamiento o dirección debajo de la lista. Los proyectos abiertos aquí aparecen en **Recientes** con el icono y el nombre del servidor, incluso sin conexión. Explorar, Clonar y Temporal usan este equipo.
 
 Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend. Abrir una pestaña, explorar una copia de trabajo y mover una familia de conversaciones son operaciones distintas.
 
@@ -50,7 +50,7 @@ Con la restauración al iniciar activada, cada pestaña restante recupera sus pr
 
 ## Restaurar pestañas remotas {#restore-remote-tabs}
 
-Con multi-backend activado, los proyectos remotos guardados conservan el orden de pestañas, la selección y los borradores de cada pestaña. Un servidor no disponible deja una pestaña en espera: elige **Reintentar** cuando vuelva, o **Conectar** con su usuario/contraseña o un nuevo **Enlace de emparejamiento**. Los demás servidores siguen disponibles.
+Al recargar con la restauración activada, las pestañas remotas conservan su orden, selección y borradores. Un servidor no disponible deja una pestaña en espera: elige **Reintentar** cuando vuelva, o **Conectar** con su usuario/contraseña o un nuevo **Enlace de emparejamiento**. Los demás servidores siguen disponibles.
 
 **Reintentar** también recupera pestañas en espera con la restauración automática al iniciar desactivada. Las notificaciones seleccionan la pestaña en espera existente. Comprueba el resultado de una acción de conversación no confirmada antes de enviarla otra vez.
 

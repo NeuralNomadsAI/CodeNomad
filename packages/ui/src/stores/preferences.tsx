@@ -247,7 +247,7 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 }
 
 const defaultUiSettings: UiSettings = {
-  multiBackend: false,
+  multiBackend: true,
   highContrast: "auto",
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
@@ -364,7 +364,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       ? "collapsed"
       : "expanded"
   return {
-    multiBackend: sanitized.multiBackend === true,
+    multiBackend: sanitized.multiBackend === undefined ? defaultUiSettings.multiBackend : sanitized.multiBackend === true,
     highContrast: normalizeHighContrastPreference(sanitized.highContrast),
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,

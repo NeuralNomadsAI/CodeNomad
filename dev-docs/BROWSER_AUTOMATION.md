@@ -159,7 +159,7 @@ the authority boundary.
 ### Remote-client path capabilities
 
 Remote clients (Remote Control devices, verified direct HTTPS, admitted LAN HTTP
-and their PWAs) cannot resolve `preview.localhost`. Under `multiBackend`, the
+and their PWAs) cannot resolve `preview.localhost`. With `multiBackend` enabled (the default), the
 same creation route issues them a host path capability instead:
 `contentUrl` is `/previews/<capability>/…` on the page's own origin, and the
 remote token stays private. Creation uses the authenticated UI guard

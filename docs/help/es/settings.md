@@ -1,6 +1,6 @@
 # Configuración y disposición
 
-Con el modo experimental multibackend activado, Preferencias usa el servidor del proyecto seleccionado para sus ajustes, proveedores, estadísticas y memoria, incluida la limpieza. Si el servidor no está disponible, los controles del proyecto permanecen inactivos. Los ajustes del dispositivo y los SideCars siguen siendo locales.
+Preferencias usa el servidor del proyecto seleccionado para sus ajustes, proveedores, estadísticas y memoria, incluida la limpieza. Si el servidor no está disponible, los controles del proyecto permanecen inactivos. Los ajustes del dispositivo y los SideCars siguen siendo locales.
 
 ## Abrir la configuración e identificar el ámbito {#open-settings}
 
@@ -42,7 +42,7 @@ En **Configuración → General**, **Mantener el ordenador activo mientras CodeN
 
 ## Memoria persistente del agente {#agent-memory}
 
-Con el modo multibackend experimental (`multiBackend`) activado, los usuarios autenticados mediante Control remoto, HTTPS verificado, LAN o una PWA instalada pueden revisar y editar la memoria del proyecto local o remoto seleccionado y usar **Ordenar**. El proyecto seleccionado determina qué backend gestiona la memoria.
+Los usuarios autenticados mediante Control remoto, HTTPS verificado, LAN o una PWA instalada pueden revisar y editar la memoria del proyecto local o remoto seleccionado y usar **Ordenar**. El proyecto seleccionado determina qué backend gestiona la memoria.
 
 CodeNomad intenta retirar las instrucciones de memoria obsoletas de la sesión; si esa limpieza también falla, las anteriores pueden permanecer hasta una actualización correcta.
 

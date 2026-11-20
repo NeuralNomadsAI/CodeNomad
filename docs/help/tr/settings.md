@@ -1,6 +1,6 @@
 # Ayarlar ve düzen
 
-Deneysel çoklu arka uç etkin olduğunda Tercihler, proje ayarları, sağlayıcılar, istatistikler ve bellek düzenleme için seçili projenin sunucusunu kullanır. Sunucu kullanılamıyorsa proje denetimleri devre dışı kalır. Cihaz ayarları ve SideCars yerel kalır.
+Tercihler, proje ayarları, sağlayıcılar, istatistikler ve bellek düzenleme için seçili projenin sunucusunu kullanır. Sunucu kullanılamıyorsa proje denetimleri devre dışı kalır. Cihaz ayarları ve SideCars yerel kalır.
 
 ## Ayarları açın ve kapsamını belirleyin {#open-settings}
 
@@ -42,7 +42,7 @@ Renklerin okunması zorlaşırsa **Kontrast → Açık** seçin. Yerleşik bir p
 
 ## Kalıcı ajan belleği {#agent-memory}
 
-Deneysel çoklu arka uç (`multiBackend`) etkinken Uzaktan Kontrol, doğrulanmış HTTPS, LAN veya yüklü PWA üzerinden kimliği doğrulanmış kullanıcılar seçili yerel ya da uzak projenin belleğini inceleyebilir, değiştirebilir ve **Düzenle** işlemini kullanabilir. Seçili proje, belleği hangi arka ucun yöneteceğini belirler.
+Uzaktan Kontrol, doğrulanmış HTTPS, LAN veya yüklü PWA üzerinden kimliği doğrulanmış kullanıcılar seçili yerel ya da uzak projenin belleğini inceleyebilir, değiştirebilir ve **Düzenle** işlemini kullanabilir. Seçili proje, belleği hangi arka ucun yöneteceğini belirler.
 
 CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir.
 

@@ -11,7 +11,7 @@ Uzaktan Kontrol, eşleştirilmiş bir tarayıcının veya masaüstü istemcisini
 
 Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur. Bunu bir kimlik bilgisi olarak değerlendirin: Bunu tüketen herkes eşleştirilmiş bir cihaz haline gelebilir. Kod, sorgu dizesinde değil, URL parçasında bulunur. **Yeni eşleştirme bağlantısı oluştur**, önceki kullanılmayan bağlantıyı anında geçersiz kılar. Arka uç kapatma bekleyen eşleştirme bağlantısını iptal eder; durdurma ve tünel arızası bir tünel bağlantısını iptal eder.
 
-Başka masaüstü CodeNomad istemcisini eşleştirmek için onun ana sayfasında **CodeNomad Sunucusuna Bağlan** öğesini seçin, bağlantıyı **Sunucu URL'si** alanına yapıştırıp **Bağlan** eylemini seçin. Eşleştirme bağlantısı **Kaydet** ile bile penceresini açar, çünkü bağlantıyı açmak kodu tüketir. Yer imi yalnızca tünelin origin adresini saklar; kod saklanmaz. Eşleştirme bağlantılarında TLS doğrulaması etkin kalır.
+Başka bir masaüstü CodeNomad uygulamasında eşleştirme bağlantısını şu alana yapıştırın: **Ayarlar → Sunucular → Sunucu adresi veya bağlantısı**. İstekten önce alan temizlenir; yalnızca köken kaydedilir. Yerel arka uç özel cihaz kimliğini yeniden başlatmalar arasında korur. **Kayıtlı sunucuyu kaldır** önce bu profilin bağlantısını unutur. Eşleştirme TLS doğrular ve proje açmaz.
 
 ## Doğrudan HTTPS ile eşleştirin {#direct-https}
 
@@ -28,8 +28,6 @@ Böyle bir cihaz yalnızca HTTPS adresi üzerinden bağlanır, asla tünel üzer
 Bu cihazlar tünel cihazlarıyla aynı [yüzeye](#remote-surface) sahiptir ve ana bilgisayardaki bir proxy üzerinden bile geri döngü ayrıcalıkları kazanmaz.
 
 ## Eşleştirilmiş cihazları yönetin {#paired-devices}
-
-Deneysel çoklu arka uç ayarlarında eşleştirme bağlantısını **Ayarlar → Sunucular → Sunucu adresi veya bağlantısı** alanına yapıştırın. İstekten önce alan temizlenir; yalnızca köken kaydedilir. Yerel arka uç özel cihaz kimliğini yeniden başlatmalar arasında korur. **Kayıtlı sunucuyu kaldır** önce bu profilin bağlantısını unutur. Eşleştirme TLS doğrular ve proje açmaz. Yukarıdaki uzak pencere yönergeleri varsayılan mod içindir.
 
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesine dönün.
 2. **Eşleştirilmiş cihazlar** ve **Son görülme** zamanlarını inceleyin. Her cihaz, onu eşleştiren platform ve tarayıcıya göre adlandırılır; örneğin `iPhone · Safari`.
@@ -70,7 +68,7 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | Normal kimlik doğrulamalı kullanıcı arayüzü, çalışma alanları, konuşmalar ve SSE | Eşleştirilmiş bir cihazda kullanılabilir. |
 | Parolayla giriş/çıkış, parola değişiklikleri, yerel belirteç önyüklemesi | Mevcut değil; doğrudan kimlik doğrulama devre dışı bırakılsa bile cihaz kimlik bilgileri gereklidir. |
 | Uzaktan Kontrol durumu | Eşleştirilmiş bir cihaz tarafından okunabilir; yönetim mevcut değildir. Başlat/Durdur, eşleştirme oluşturma, cihaz listesi ve iptal etme, ana bilgisayar erişim yolunda kalır. |
-| Deneysel kayıtlı sunucular ve backend aktarımı | Özellik ve ana bilgisayar yetenekleri izin verdiğinde kimliği doğrulanmış uzak istemciler tüm kayıtlı sunucuları kullanabilir/yönetebilir. Yeni sunucu parolaları/eşleştirme bağlantıları düz LAN HTTP yerine Uzaktan Kontrol veya HTTPS gerektirir. [Kayıtlı sunuculara](remote-access.md#saved-servers) bakın. |
+| Kayıtlı sunucular ve arka uç aktarımı | Özellik ve ana bilgisayar yetenekleri izin verdiğinde kimliği doğrulanmış uzak istemciler tüm kayıtlı sunucuları kullanabilir/yönetebilir. Yeni sunucu parolaları/eşleştirme bağlantıları düz LAN HTTP yerine Uzaktan Kontrol veya HTTPS gerektirir. [Kayıtlı sunuculara](remote-access.md#saved-servers) bakın. |
 | Masaüstü uzak pencereleri ve pencere proxy'si | Yalnızca ana bilgisayarda (`/api/remote-proxy/`). |
 | SideCar **içerik proxy'si** | SideCar WebSocket'leri gibi loopback gerektirir (`/sidecars/`). `/api/sidecars` kayıt API'leri, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. |
 | Web önizleme içeriği | Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında **Web önizlemeleri** açık olduğu sürece (varsayılan) kullanılabilir. Her önizleme adresi sayfasını eşleştirme olmadan açar; bu yüzden gizli tutun. Anahtarı kapatmak sunulan önizlemeleri ve WebSocket bağlantılarını durdurur; eşleştirilmiş cihazlar yeniden yüklendiğinde **Web önizlemesini aç** seçeneğini gizler. |
