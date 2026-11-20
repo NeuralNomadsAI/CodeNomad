@@ -76,7 +76,7 @@ Obtienes los informes de las tareas y un informe final; los cambios de código q
 
 ## Depuración {#debug}
 
-Si las comprobaciones iniciales indican que no hace falta ningún cambio, el coordinador puede registrar el resultado y cerrar la misión antes de declarar tareas.
+Antes de declarar tareas, el coordinador puede cerrar la misión con pruebas si no hace falta ningún cambio o si se verificó el trabajo sin necesidad de depurarlo, como en una fusión sin conflictos, revisada y probada.
 
 Primero la evidencia: demostrar el error y su causa, corregirlo empezando por una prueba, que dos revisores independientes comprueben la corrección, atender sus hallazgos y validar todo en verde. Elígelo para un error reproducible, una prueba que falla o una regresión, cuando quieres una prueba y no una suposición.
 
