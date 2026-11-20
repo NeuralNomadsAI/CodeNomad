@@ -52,3 +52,5 @@ cargo build --release --locked
 ```
 
 Behaviour must match `packages/server`: every change runs the matching comparison in `bench/` (`node compare.mjs <mode> <opencode>`). Parity cases are regenerated from the TypeScript sources with `bench/generate-*.mjs`.
+
+Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.

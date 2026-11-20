@@ -60,3 +60,21 @@ fn errors_carry_the_reference_status() {
     assert!(layout::cmd_shim_matches(layout::cmd("node_modules\\@opencode\\cli\\bin\\opencode.exe").as_bytes()));
     assert!(!layout::cmd_shim_matches(b"@echo off\r\nother.exe %*\r\n"));
 }
+
+#[test]
+fn the_foreign_notice_has_the_reference_shape() {
+    let foreign = plan::Foreign {
+        command: "C:\\f\\opencode.exe".into(),
+        version: Some("1.5.0".into()),
+        source: "winget",
+        package_id: Some("SST.opencode".into()),
+        blocked: Some(("occupied", "C:\\p\\opencode.cmd".into())),
+    };
+    let notice = plan::notice(&plan::Plan { prefix: None, foreign: Some(foreign) });
+    assert_eq!(
+        notice,
+        json!({"foreignInstallation": {"path": "C:\\f\\opencode.exe", "version": "1.5.0", "source": "winget",
+            "packageId": "SST.opencode", "blocked": {"reason": "occupied", "path": "C:\\p\\opencode.cmd"}}})
+    );
+    assert_eq!(plan::notice(&plan::Plan::default()), json!({}));
+}

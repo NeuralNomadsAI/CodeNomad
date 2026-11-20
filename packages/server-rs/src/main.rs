@@ -81,7 +81,8 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     }
     // An empty selection is the default OpenCode installation (no saved selection is read yet).
     let selected = launch.binary.to_string_lossy();
-    let selected = if selected.is_empty() { opencode::launch::default_binary() } else { selected.into_owned() };
+    let selected =
+        if selected.is_empty() { opencode::install::plan::resolve_default().await.0 } else { selected.into_owned() };
     let binary = opencode::launch::resolve(&selected);
     let native = opencode::Native::connect(&binary)?;
     let listener = launch.http.listen().await?;

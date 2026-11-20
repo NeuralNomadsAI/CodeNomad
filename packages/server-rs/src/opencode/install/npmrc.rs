@@ -191,6 +191,10 @@ impl Config {
                 builder = builder.add_root_certificate(certificate);
             }
         }
+        // npm's `strict-ssl=false` accepts any certificate, as the reference's npm does.
+        if self.get("strict-ssl") == Some("false") {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
         builder.build().map_err(|_| "Cannot create the registry client".into())
     }
 }

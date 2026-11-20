@@ -6,6 +6,7 @@
 pub mod layout;
 pub mod npmrc;
 pub mod package;
+pub mod plan;
 
 use std::{path::Path, time::Duration};
 
@@ -58,10 +59,6 @@ pub struct Installed {
     pub previous: Option<String>,
 }
 
-pub fn user_prefix() -> Result<Prefix, Error> {
-    launch::npm_prefix().map(|root| Prefix { root }).ok_or_else(|| Error::failed("No user npm prefix"))
-}
-
 /// The installation in `prefix` as discovery reads it.
 pub fn installed(prefix: &Prefix) -> Installed {
     Installed {
@@ -72,43 +69,18 @@ pub fn installed(prefix: &Prefix) -> Installed {
     }
 }
 
-/// `sharedInstallationPlan`, for the cases this port admits: no PATH OpenCode (the user prefix),
-/// or a PATH command that is an `@opencode/cli` npm launcher (its prefix). Foreign commands and
-/// OpenCode 1.x replacements are refused.
-pub fn plan() -> Result<Prefix, Error> {
-    let user = user_prefix()?;
-    let Some(command) = launch::path_command() else { return Ok(user) };
-    let directory = Path::new(&command).parent().unwrap_or(Path::new(""));
-    let root =
-        if cfg!(windows) { directory.to_path_buf() } else { directory.parent().unwrap_or(directory).to_path_buf() };
-    let prefix = Prefix { root };
-    if launcher(&command, &prefix) {
-        return Ok(prefix);
-    }
-    Err(Error::new("unsupported_binary", "The PATH executable is not a writable npm installation"))
+pub enum Probed {
+    Version(String),
+    Missing,
+    Failed,
+    /// Timed out or overflowed its output: unknown.
+    Unknown,
 }
 
-/// `npmLauncher` (or an incomplete shim of the exact npm form): `command` runs `prefix`'s package.
-fn launcher(command: &str, prefix: &Prefix) -> bool {
-    let manifest: Option<Value> =
-        std::fs::read(prefix.package().join("package.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
-    let name = Path::new(command).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let declared =
-        manifest.as_ref().is_some_and(|m| m["name"] == package::CLI && m["bin"][&name] == "./bin/opencode.exe");
-    if cfg!(windows) {
-        let exact = std::fs::read(command).is_ok_and(|text| layout::cmd_shim_matches(&text));
-        exact && (declared || !prefix.binary().exists())
-    } else {
-        let same = |a: &Path, b: &Path| {
-            dunce::canonicalize(a).ok().zip(dunce::canonicalize(b).ok()).is_some_and(|(a, b)| a == b)
-        };
-        declared && same(Path::new(command), &prefix.binary())
-    }
-}
-
-/// `opencode --version` within 5 s: `Some(version)` when it runs, the presentation prefix removed.
-pub async fn probe(binary: &str) -> Result<Option<String>, ()> {
-    let Ok(spec) = launch::spec(binary, &["--version"]) else { return Err(()) };
+/// `opencode --version` within `timeout` (spawn.ts `parseBinaryVersion`): the first output line,
+/// its presentation prefix removed.
+pub async fn probe_version(binary: &str, timeout: Duration) -> Probed {
+    let Ok(spec) = launch::spec(binary, &["--version"]) else { return Probed::Failed };
     let mut command = tokio::process::Command::new(&spec.command);
     #[cfg(windows)]
     {
@@ -124,21 +96,46 @@ pub async fn probe(binary: &str) -> Result<Option<String>, ()> {
     #[cfg(not(windows))]
     command.args(&spec.args);
     command.stdin(std::process::Stdio::null()).kill_on_drop(true);
-    let output = match tokio::time::timeout(Duration::from_secs(5), command.output()).await {
+    let output = match tokio::time::timeout(timeout, command.output()).await {
         Ok(Ok(output)) => output,
-        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        _ => return Err(()),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => return Probed::Missing,
+        Ok(Err(_)) => return Probed::Failed,
+        Err(_) => return Probed::Unknown,
     };
-    if !output.status.success() {
-        return Err(());
+    if output.stdout.len() + output.stderr.len() > 64 * 1024 {
+        return Probed::Unknown;
     }
-    let text = format!("{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
-    let version = line.strip_prefix("opencode2 ").or_else(|| line.strip_prefix("opencode ")).unwrap_or(line);
+    if !output.status.success() {
+        return Probed::Failed;
+    }
+    let first = |b: &[u8]| String::from_utf8_lossy(b).lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_owned);
+    let line = first(&output.stdout).or_else(|| first(&output.stderr)).unwrap_or_default();
+    let version = line.strip_prefix("opencode2 ").or_else(|| line.strip_prefix("opencode ")).unwrap_or(&line);
     let version = version.strip_prefix('v').filter(|v| v.starts_with(|c: char| c.is_ascii_digit())).unwrap_or(version);
-    Ok(Some(version.to_owned()))
+    Probed::Version(version.to_owned())
 }
 
+/// The installed binary's version: `Ok(None)` when it is missing.
+pub async fn probe(binary: &str) -> Result<Option<String>, ()> {
+    match probe_version(binary, Duration::from_secs(5)).await {
+        Probed::Version(v) => Ok(Some(v)),
+        Probed::Missing => Ok(None),
+        _ => Err(()),
+    }
+}
+
+/// `assertExecutableWritable`: Windows cannot replace a mapped executable through npm.
+fn assert_writable(binary: &Path) -> Result<(), Error> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    match std::fs::OpenOptions::new().read(true).write(true).open(binary) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(Error::new("installation_in_use", "The OpenCode executable is in use or not writable"))
+        }
+        _ => Ok(()),
+    }
+}
 /// `compareVersionStrings` for exact stable versions.
 fn newer(left: &str, right: &str) -> bool {
     let parse = |v: &str| v.split('.').map(|p| p.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
@@ -163,13 +160,13 @@ pub async fn install(version: &str) -> Result<Installed, Error> {
             admission::Refusal::Unsupported { actual: version.into(), reason: "native_contract" }.to_string(),
         ));
     }
-    let prefix = plan()?;
+    let prefix = plan::plan(false).await.prefix()?;
     let _lock = layout::lock(&prefix)?;
-    if plan()?.root != prefix.root {
+    if plan::plan(false).await.prefix.is_none_or(|p| p.root != prefix.root) {
         return Err(Error::failed("The OpenCode installation changed; check its status again"));
     }
     let binary = prefix.binary();
-    let existing = if binary.exists() { probe(&binary.to_string_lossy()).await.ok().flatten() } else { None };
+    let existing = probe(&binary.to_string_lossy()).await.ok().flatten();
     if let Some(existing) = &existing
         && !package::exact(existing)
         && !existing.starts_with("0.0.0-beta-")
@@ -180,6 +177,15 @@ pub async fn install(version: &str) -> Result<Installed, Error> {
         Some(existing) if package::exact(existing) && newer(existing, version) => existing.clone(),
         _ => version.to_owned(),
     };
+    let published = plan::npm_command(&prefix).is_some();
+    if existing.as_deref() != Some(target.as_str()) || !published {
+        // 2.0.15+ replaces its own running image (`opencode upgrade`); otherwise the reference's
+        // npm reinstall needs a writable executable on Windows.
+        let upgradable = existing.as_deref().is_some_and(|e| package::exact(e) && !newer("2.0.15", e) && e != target);
+        if !(upgradable && published) {
+            assert_writable(&binary)?;
+        }
+    }
     let names = if existing.as_deref() == Some(target.as_str()) {
         bin_names(&prefix.package())?
     } else {
@@ -203,7 +209,7 @@ pub async fn install(version: &str) -> Result<Installed, Error> {
 
 /// The previous package back in place (reversible: the replaced one becomes the previous).
 pub async fn rollback() -> Result<Installed, Error> {
-    let prefix = plan()?;
+    let prefix = plan::plan(false).await.prefix()?;
     let _lock = layout::lock(&prefix)?;
     let Some(previous) = layout::version(&prefix.previous()) else {
         return Err(Error::failed("No previous OpenCode installation to restore"));
@@ -299,14 +305,20 @@ pub async fn upgrade(app: &Shared) -> Result<String, Error> {
         app.settings.owner(Kind::Config, "server").get("opencodeBinary").and_then(Value::as_str).map(str::to_owned);
     let default =
         configured.as_deref().is_none_or(|c| c.is_empty() || c == "opencode" || c == "opencode2" || launch::retired(c));
-    let (selected, source) = launch::default_binary_source();
+    let (selected, source) = plan::resolve_default().await;
     let binary = launch::resolve(&selected);
-    let current = match probe(&binary).await {
-        Ok(version) => version.map(|v| if v.is_empty() { "unknown".into() } else { v }),
-        Err(()) => return Err(Error::new("binary_unavailable", "Unable to read OpenCode version")),
+    let current_plan = plan::plan(false).await;
+    // A foreign command that cannot run is installed beside, never repaired.
+    let foreign = current_plan.foreign.as_ref().is_some_and(|f| f.command == binary);
+    let current = match probe_version(&binary, Duration::from_secs(5)).await {
+        Probed::Version(v) => Some(if v.is_empty() { "unknown".into() } else { v }),
+        Probed::Missing => None,
+        _ if foreign => None,
+        _ => return Err(Error::new("binary_unavailable", "Unable to read OpenCode version")),
     };
-    let prefix = plan().ok();
-    let latest = latest(prefix.as_ref().map_or(&user_prefix()?, |p| p)).await?;
+    let prefix = current_plan.prefix;
+    let user = plan::user_prefix().ok_or_else(|| Error::failed("No user npm prefix"))?;
+    let latest = latest(prefix.as_ref().unwrap_or(&user)).await?;
     if admission::below_minimum(&latest) {
         return Err(Error::new(
             "upgrade_failed",
@@ -337,7 +349,7 @@ pub async fn upgrade(app: &Shared) -> Result<String, Error> {
         _ => latest.clone(),
     };
     install(&target).await?;
-    let installed = probe(&launch::resolve(&launch::default_binary())).await.ok().flatten().unwrap_or_default();
+    let installed = probe(&launch::resolve(&plan::resolve_default().await.0)).await.ok().flatten().unwrap_or_default();
     if !package::exact(&installed) || newer(&target, &installed) {
         return Err(Error::new(
             "upgrade_verification_failed",
@@ -363,11 +375,23 @@ pub fn routes() -> Router<Shared> {
 
 /// `codenomad-rs opencode install [<version>] | rollback | status`: one JSON line, exit 1 on refusal.
 pub async fn command(args: &[String]) -> i32 {
+    if let [action] = args
+        && action == "status"
+    {
+        let current = plan::plan(true).await;
+        let (path, source) = plan::resolve_default().await;
+        let mut status = json!({"ok": true, "plan": current.prefix.as_ref().map(|p| p.root.to_string_lossy()),
+            "resolved": {"path": path, "source": source}, "installed": current.prefix.as_ref().or(plan::user_prefix().as_ref()).map(installed)});
+        if let (Value::Object(status), Value::Object(notice)) = (&mut status, plan::notice(&current)) {
+            status.extend(notice);
+        }
+        println!("{status}");
+        return 0;
+    }
     let result = async {
         match args {
-            [action] if action == "status" => Ok(installed(&plan()?)),
             [action] if action == "rollback" => rollback().await,
-            [action] if action == "install" => install(&latest(&plan()?).await?).await,
+            [action] if action == "install" => install(&latest(&plan::plan(false).await.prefix()?).await?).await,
             [action, version] if action == "install" => install(version).await,
             _ => Err(Error::failed("usage: codenomad-rs opencode install [<version>] | rollback | status")),
         }

@@ -15,6 +15,8 @@ const LOCK: &str = ".codenomad-opencode-install.lock";
 const PREVIOUS: &str = ".codenomad-opencode-previous";
 /// The binary every `@opencode/cli` declares (`bin` of its package.json), on every platform.
 pub const BIN: &str = "bin/opencode.exe";
+/// That binary as the manifest's `bin` declares it.
+pub const DECLARED_BIN: &str = "./bin/opencode.exe";
 
 pub struct Prefix {
     pub root: PathBuf,

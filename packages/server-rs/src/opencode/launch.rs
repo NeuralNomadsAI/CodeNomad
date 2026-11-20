@@ -137,24 +137,6 @@ pub fn path_command() -> Option<String> {
     None
 }
 
-/// `BinaryResolver.resolveDefault` without a saved selection (`resolveDefaultInstallation`):
-/// the PATH command, else the user npm prefix's `@opencode/cli` executable, else the bare
-/// `opencode2`; with where it came from (`path`, `user`, none).
-pub fn default_binary_source() -> (String, Option<&'static str>) {
-    if let Some(command) = path_command() {
-        return (command, Some("path"));
-    }
-    let npm = npm_prefix().map(|p| super::install::layout::Prefix { root: p }.binary());
-    match npm.filter(|b| b.is_file() && !retired(&b.to_string_lossy())) {
-        Some(binary) => (binary.to_string_lossy().into_owned(), Some("user")),
-        None => ("opencode2".into(), None),
-    }
-}
-
-pub fn default_binary() -> String {
-    default_binary_source().0
-}
-
 /// `resolveBinaryPath`: a bare name through `where`/`which`; Windows prefers `.exe`, `.cmd`, `.bat`, `.ps1`.
 pub fn resolve(identifier: &str) -> String {
     let path_like =

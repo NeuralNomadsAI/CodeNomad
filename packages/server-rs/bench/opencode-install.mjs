@@ -1,8 +1,9 @@
 // Mode `opencode-install`: OpenCode installed by each server on a machine without it (Windows).
 // TS installs through npm (`installSharedOpenCode`), Rust without Node (`codenomad-rs opencode`),
 // each in its own private profile (home, AppData, npm prefix, npmrc, cache) against a loopback
-// registry that requires a token (the `@opencode` scope of the private npmrc). Steps: fresh
-// install, update, a tampered package refused, then Rust's rollback. Neither the account's npm
+// registry that requires a token (the `@opencode` scope of the private npmrc). Steps: a foreign
+// PATH OpenCode (superseded, current), a running 2.0.14, fresh install, update, a tampered package,
+// then Rust's rollback; every layout is read by the TS functions and by Rust alike. Neither the account's npm
 // prefix nor its user PATH may change. `node opencode-install.mjs`
 import assert from "node:assert/strict"
 import { execFile, spawn } from "node:child_process"
@@ -46,10 +47,12 @@ await writeFile(fakeSource, `fn main() {
     _ => std::process::exit(2),
   }
 }\n`)
+const fakes = {}
 const fake = async version => {
+  if (fakes[version]) return fakes[version]
   const exe = path.join(root, `fake-${version}.exe`)
   await run("rustc", ["--edition", "2021", "-C", "opt-level=1", "-o", exe, fakeSource], { env: { ...process.env, FAKE_VERSION: version }, windowsHide: true })
-  return readFile(exe)
+  return (fakes[version] = await readFile(exe))
 }
 
 function tarball(entries) {
@@ -137,8 +140,9 @@ async function route(side) {
 }
 
 const system = [path.join(process.env.SystemRoot, "System32"), process.env.SystemRoot, path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0"), path.dirname(process.execPath)].join(";")
-async function profile(label) {
-  const home = path.join(root, label)
+/** A private profile; `foreign` puts a non-npm `opencode.exe` of that version first in PATH. */
+async function profile(label, name = label, foreign) {
+  const home = path.join(root, name)
   const env = { SystemRoot: process.env.SystemRoot, windir: process.env.windir, ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT,
     SystemDrive: process.env.SystemDrive, PROCESSOR_ARCHITECTURE: process.env.PROCESSOR_ARCHITECTURE, PROCESSOR_IDENTIFIER: process.env.PROCESSOR_IDENTIFIER,
     NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS,
@@ -149,13 +153,23 @@ async function profile(label) {
   await writeFile(env.npm_config_userconfig, `@opencode:registry=${scope}\n${scope.replace(/^http:/, "")}:_authToken=${token}\n`)
   const prefix = path.join(env.APPDATA, "npm")
   assert(prefix.startsWith(root) && env.npm_config_userconfig.startsWith(root))
-  return { label, env, prefix }
+  let front = ""
+  if (foreign) {
+    const dir = path.join(home, "foreign")
+    await mkdir(dir, { recursive: true })
+    await writeFile(path.join(dir, "opencode.exe"), await fake(foreign))
+    front = `${dir};`
+    env.PATH = front + system
+  }
+  return { label, env, prefix, home, front }
 }
 
 const tsInstall = path.join(root, "ts-install.mjs")
 await writeFile(tsInstall, `import { register } from "node:module"
 register(new URL("loader.js", ${JSON.stringify(dist.href)}), import.meta.url)
-const { installSharedOpenCode } = await import(new URL("opencode-update/shared-installation.js", ${JSON.stringify(dist.href)}))
+const { installSharedOpenCode, prepareForeignProbe } = await import(new URL("opencode-update/shared-installation.js", ${JSON.stringify(dist.href)}))
+// As OpenCodeUpdateService.upgrade: the foreign probe settles first.
+await prepareForeignProbe({ env: process.env, home: process.env.USERPROFILE })
 try {
   const binary = await installSharedOpenCode(process.argv[2], { env: process.env, home: process.env.USERPROFILE, registerPath: async () => {},
     node: process.execPath, npm: ${JSON.stringify(path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"))} })
@@ -172,23 +186,34 @@ async function act(side, args) {
 const discover = path.join(root, "ts-discover.mjs")
 await writeFile(discover, `import { register } from "node:module"
 register(new URL("loader.js", ${JSON.stringify(dist.href)}), import.meta.url)
-const { resolveDefaultInstallation, sharedInstallationPlan } = await import(new URL("opencode-update/shared-installation.js", ${JSON.stringify(dist.href)}))
+const { prepareForeignProbe, resolveDefaultInstallation, sharedInstallationPlan } = await import(new URL("opencode-update/shared-installation.js", ${JSON.stringify(dist.href)}))
 const prefix = process.argv[2], host = { env: process.env, home: process.env.USERPROFILE }
-const local = value => value && value.startsWith(prefix) ? "<prefix>" + value.slice(prefix.length) : value
-const found = resolveDefaultInstallation(host)
-console.log(JSON.stringify({ path: local(found.path), source: found.source ?? null, plan: local(sharedInstallationPlan(host).prefix) ?? null }))
+const home = process.env.USERPROFILE
+const local = value => value?.startsWith(prefix) ? "<prefix>" + value.slice(prefix.length) : value?.startsWith(home) ? "<home>" + value.slice(home.length) : value
+// The foreign probe settles before the synchronous reads, as the reference's status read does.
+await prepareForeignProbe(host, { force: true })
+const found = resolveDefaultInstallation(host), plan = sharedInstallationPlan(host)
+const foreign = plan.foreign && { path: local(plan.foreign.command), source: plan.foreign.source, ...(plan.foreign.version ? { version: plan.foreign.version } : {}),
+  ...(plan.foreign.blocked ? { blocked: { reason: plan.foreign.blocked.reason, path: local(plan.foreign.blocked.path) } } : {}) }
+console.log(JSON.stringify({ path: local(found.path), source: found.source ?? null, plan: local(plan.prefix) ?? null, foreign: foreign ?? null }))
 `)
 async function observe(side) {
   const shims = {}
   // The extensionless `sh` shim follows the cmd-shim of each npm release: recorded, not compared.
   for (const name of (await readdir(side.prefix).catch(() => [])).filter(n => /^opencode2?(\.cmd|\.ps1)$/.test(n)).sort()) shims[name] = sha(await readFile(path.join(side.prefix, name)))
   const shellShim = await readFile(path.join(side.prefix, "opencode2")).then(sha, () => null)
-  const env = { ...side.env, PATH: `${side.prefix};${system}` }
+  const env = { ...side.env, PATH: `${side.front}${side.prefix};${system}` }
   const version = (await run(path.join(side.prefix, "opencode2.cmd"), ["--version"], { env, windowsHide: true, shell: true }).catch(() => ({ stdout: "" }))).stdout.trim() || null
   const discovery = lastJson((await run(process.execPath, [discover, side.prefix], { env, windowsHide: true })).stdout)
   const manifest = await readFile(path.join(side.prefix, "node_modules", "@opencode", "cli", "package.json")).then(sha, () => null)
-  const rust = lastJson((await run(bin, ["opencode", "status"], { env, windowsHide: true }).catch(e => e)).stdout).installed?.version ?? null
-  return { version, discovery, shims, manifest, rustStatus: rust, shellShim }
+  const status = lastJson((await run(bin, ["opencode", "status"], { env, windowsHide: true }).catch(e => e)).stdout)
+  const local = value => value?.startsWith(side.prefix) ? "<prefix>" + value.slice(side.prefix.length) : value?.startsWith(side.home) ? "<home>" + value.slice(side.home.length) : value
+  const f = status.foreignInstallation
+  // The same layout through Rust's functions: resolution, plan and the foreign notice.
+  const rustView = { path: local(status.resolved.path), source: status.resolved.source, plan: local(status.plan) ?? null,
+    foreign: f ? { path: local(f.path), source: f.source, ...(f.version ? { version: f.version } : {}), ...(f.blocked ? { blocked: { reason: f.blocked.reason, path: local(f.blocked.path) } } : {}) } : null }
+  assert.deepEqual(rustView, discovery, `${side.label}: Rust and TS read the same layout alike`)
+  return { version, discovery, shims, manifest, rustStatus: status.installed?.version ?? null, shellShim }
 }
 
 const npmReason = async side => {
@@ -196,8 +221,37 @@ const npmReason = async side => {
   const texts = await Promise.all((await readdir(logs).catch(() => [])).map(n => readFile(path.join(logs, n), "utf8")))
   return texts.some(t => /EINTEGRITY/.test(t)) ? "EINTEGRITY" : "unknown"
 }
-const result = { binary: bin, steps: {}, reasons: {} }
+const result = { binary: bin, steps: {}, reasons: {}, foreign: {} }
 try {
+  // Foreign OpenCode in PATH: below the minimum, 2 goes beside it and is preferred (the foreign file
+  // untouched); a current one keeps its authority and nothing is installed.
+  for (const label of ["ts", "rs"]) {
+    const steps = result.foreign[label] = {}
+    for (const [name, version] of [["superseded", "1.5.0"], ["current", "2.4.0"]]) {
+      const side = await profile(label, `${label}-foreign-${name}`, version)
+      const foreignFile = path.join(side.home, "foreign", "opencode.exe"), before = sha(await readFile(foreignFile))
+      const status = await observe(side)
+      const outcome = await act(side, ["install", "2.4.0"])
+      steps[name] = { before: status, ok: outcome.ok, error: outcome.ok ? null : outcome.error, after: await observe(side), untouched: sha(await readFile(foreignFile)) === before }
+    }
+    // A 2.0.14 that runs cannot be replaced: the reference refuses before changing anything.
+    const side = await profile(label, `${label}-in-use`)
+    assert((await act(side, ["install", "2.4.0"])).ok)
+    await writeFile(path.join(side.prefix, "node_modules", "@opencode", "cli", "bin", "opencode.exe"), await fake("2.0.14"))
+    const running = spawn(path.join(side.prefix, "node_modules", "@opencode", "cli", "bin", "opencode.exe"), ["sleep"], { windowsHide: true, stdio: "ignore" })
+    try {
+      const outcome = await act(side, ["install", "2.5.0"])
+      steps.inUse = { ok: outcome.ok, error: outcome.ok ? null : outcome.error, after: await observe(side) }
+    } finally { running.kill() }
+  }
+  const strip = ({ shellShim, ...rest }) => rest
+  const view = ({ before, after, ...rest }) => ({ ...rest, ...(before ? { before: strip(before) } : {}), after: strip(after) })
+  for (const name of ["superseded", "current", "inUse"]) assert.deepEqual(view(result.foreign.rs[name]), view(result.foreign.ts[name]), name)
+  assert.equal(result.foreign.rs.superseded.after.discovery.source, "managed")
+  assert.equal(result.foreign.rs.superseded.untouched, true)
+  assert.equal(result.foreign.rs.current.error, "The PATH executable is not a writable npm installation")
+  assert.equal(result.foreign.rs.inUse.error, "The OpenCode executable is in use or not writable")
+
   for (const side of [await profile("ts"), await profile("rs")]) {
     const steps = result.steps[side.label] = {}
     const step = async (name, args) => {
