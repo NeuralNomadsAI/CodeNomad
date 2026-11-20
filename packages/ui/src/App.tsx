@@ -9,7 +9,7 @@ import FolderSelectionView from "./components/folder-selection-view"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { useDesktopConnectionLaunch } from "./lib/hooks/use-desktop-connection-launch"
-import { installKeyboardOffset } from "./lib/keyboard-offset"
+import { AppViewport } from "./components/app-viewport"
 import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
@@ -204,12 +204,6 @@ const App: Component = () => {
     syncBrowserFullscreenState()
     document.addEventListener("fullscreenchange", syncBrowserFullscreenState)
     onCleanup(() => document.removeEventListener("fullscreenchange", syncBrowserFullscreenState))
-  })
-
-  onMount(() => {
-    if (typeof window === "undefined") return
-    // On-screen keyboard inset, limited to touch devices editing text.
-    onCleanup(installKeyboardOffset(window))
   })
 
   // If the user exits browser fullscreen via browser UI, restore chrome.
@@ -761,7 +755,7 @@ const App: Component = () => {
           </div>
         </Dialog.Portal>
       </Dialog>
-      <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
+      <AppViewport>
         <Show when={hasNativeTitlebar}>
           <NativeTitlebar title={t("window.title.main")} logo menus actions />
         </Show>
@@ -897,7 +891,7 @@ const App: Component = () => {
             className: "bg-transparent border-none shadow-none p-0",
           }}
         />
-      </div>
+      </AppViewport>
     </>
   )
 }

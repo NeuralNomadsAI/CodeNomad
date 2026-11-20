@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { installKeyboardOffset, isTextEntry, keyboardInset } from "./keyboard-offset"
+import { hasKeyboardOcclusion, installKeyboardOffset, isTextEntry, keyboardInset } from "./keyboard-offset"
 
 const stale = { innerHeight: 900, viewportHeight: 763, viewportOffsetTop: 0 }
 
@@ -26,6 +26,20 @@ test("text entry covers text inputs, textareas and contenteditable only", () => 
   assert.equal(isTextEntry(null), false)
 })
 
+test("height loss diagnoses an unzoomed keyboard while pan does not determine the detection", () => {
+  const viewport = { height: 520, offsetTop: 240, scale: 1 }
+  const win = { innerHeight: 800, visualViewport: viewport, matchMedia: () => ({ matches: true }),
+    document: { activeElement: { tagName: "TEXTAREA" } } } as unknown as Window
+  assert.equal(hasKeyboardOcclusion(win), true)
+  viewport.height = 800
+  assert.equal(hasKeyboardOcclusion(win), false, "pure pan")
+  viewport.height = 750
+  assert.equal(hasKeyboardOcclusion(win), false, "browser chrome while focused")
+  viewport.height = 520
+  viewport.scale = 1.5
+  assert.equal(hasKeyboardOcclusion(win), false, "zoom")
+})
+
 test("the offset is recomputed on window resize and focus changes, and removed on cleanup", () => {
   const listeners = new Map<string, () => void>()
   const target = (prefix: string) => ({ addEventListener: (type: string, fn: () => void) => listeners.set(`${prefix}:${type}`, fn),
@@ -35,7 +49,7 @@ test("the offset is recomputed on window resize and focus changes, and removed o
   const doc = { ...target("document"), activeElement: { tagName: "TEXTAREA" } as unknown, documentElement: { style: {
     setProperty: (name: string, value: string) => properties.set(name, value), removeProperty: (name: string) => properties.delete(name) } } }
   const media = { matches: true, ...target("media") }
-  const vv = { height: 763, offsetTop: 0, ...target("viewport") }
+  const vv = { height: 763, offsetTop: 0, scale: 1, ...target("viewport") }
   const win = { ...target("window"), innerHeight: 900, visualViewport: vv, document: doc, matchMedia: () => media,
     requestAnimationFrame: (fn: () => void) => frames.push(fn), cancelAnimationFrame: () => {} }
   const flush = () => { while (frames.length) frames.shift()!() }
