@@ -333,8 +333,10 @@ async function setWorktreeSlugForParentSession(
   const currentDirectory = sessions().get(instanceId)?.get(rootSessionId)?.location.directory
   const targetDirectory = worktree.serviceDirectory ?? worktree.directory
   const there = (sessionId: string) => getWorktreeForSession(instanceId, sessionId)?.slug === normalizedSlug
+  const family = [...(sessions().get(instanceId)?.values() ?? [])].filter(session => getParentSessionId(instanceId, session.id) === rootSessionId)
+  // A family with no loaded member is unknown, never already there.
   if (options.wholeFamily
-    ? [...(sessions().get(instanceId)?.values() ?? [])].filter(session => getParentSessionId(instanceId, session.id) === rootSessionId).every(session => there(session.id))
+    ? family.length > 0 && family.every(session => there(session.id))
     : there(rootSessionId) || (currentDirectory && normalizeDirectory(currentDirectory) === normalizeDirectory(targetDirectory))) return
 
   const key = `${instanceId}:${rootSessionId}`

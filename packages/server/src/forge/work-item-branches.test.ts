@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { execFile, execFileSync } from "node:child_process"
+import { execFile, execFileSync, spawnSync } from "node:child_process"
 import { promisify } from "node:util"
 import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { createServer, type Server } from "node:http"
@@ -176,7 +176,9 @@ describe("work item branches", () => {
     assert.deepEqual(await lookup(clone, source, "pullRequest", 7), { status: "ok", branch: "pr-7" })
   })
 
-  it("keeps a rebased branch in a reftable repository, whose reflogs are not files", async () => {
+  // `--ref-format` needs Git 2.45 (Ubuntu 24.04 ships 2.43).
+  const reftable = spawnSync("git", ["clone", "-h"], { encoding: "utf8" }).stdout.includes("ref-format")
+  it("keeps a rebased branch in a reftable repository, whose reflogs are not files", { skip: !reftable && "Git without --ref-format" }, async () => {
     const { root, clone, source } = await project()
     const reftable = path.join(root, "reftable")
     await promisify(execFile)("git", ["clone", "-q", "--ref-format=reftable", git(clone, "remote", "get-url", "origin"), reftable])
