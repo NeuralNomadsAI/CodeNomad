@@ -65,11 +65,17 @@ export class MissionDocumentPassageEngine {
     })
   }
 
-  wake(input: { missionID: string; wake?: DocumentPassageWake; cutoff?: number }): Promise<DocumentPassageResult> {
+  wake(input: { missionID: string; wake?: DocumentPassageWake; cutoff?: number; consumed?(): void }): Promise<DocumentPassageResult> {
     return this.store.withExclusion(async locked => {
       let doc = await this.read(locked, input.missionID)
       if (!doc || doc.oneTime && !doc.dormantJournal || doc.preparation?.pending) return "idle"
       const incoming = input.wake
+      // Once its high-water commits, the run no longer needs its wake receipt:
+      // admission and observation of the passage may outlast it.
+      const consumedBy = (value: MissionDocument) => {
+        if (incoming && incoming.run <= (value.calendars.find(item => item.scheduleID === incoming.scheduleID)?.highWater ?? -1)) input.consumed?.()
+        return value
+      }
       const calendar = incoming && doc.calendars.find(item => item.scheduleID === incoming.scheduleID)
       if (incoming && (!calendar || calendar.sessionID !== incoming.sessionID || calendar.timeGeneration !== incoming.generation
         || incoming.missionID !== doc.id)) return "ignored"
@@ -87,16 +93,16 @@ export class MissionDocumentPassageEngine {
       if (doc.pending) {
         let slot: SlotNews | undefined
         if (!auxiliary && verified && incoming!.run === calendar!.highWater + 1 && !coalesces(doc))
-          doc = await this.change(locked, doc, next => changes.processWake(next, verified.wake), verified.current)
+          doc = consumedBy(await this.change(locked, doc, next => changes.processWake(next, verified.wake), verified.current))
         else if (!auxiliary && verified && incoming!.run === calendar!.highWater + 1) {
           // Never a second passage: the trigger waits for this one to settle. An unread slot
           // stays unconsumed; the passage's suppressed window decides it later.
           slot = await this.slotNews(doc)
-          if (slot) doc = await this.change(locked, doc, next => {
+          if (slot) doc = consumedBy(await this.change(locked, doc, next => {
             this.recordCheck(next)
             changes.defer(next, verified.wake, next.pending!.id, slot!.news)
             changes.processWake(next, verified.wake)
-          }, () => { slot!.current(); return verified.current() })
+          }, () => { slot!.current(); return verified.current() }))
         }
         // The same read decides the passage's other slots of this fan-in.
         await this.closeSuppressedWindow(locked, doc, slot)
@@ -121,7 +127,7 @@ export class MissionDocumentPassageEngine {
         const wakes = observed.filter(wake => doc!.slotEndsAt === null || wake.dueAt <= doc!.slotEndsAt)
         if (!this.contiguous(doc, coverage.wakes) || !this.contiguous(doc, observed) || !this.contiguous(doc, wakes)) return "unknown"
         if (window.suppress || !wakes.length) {
-          doc = await this.consume(locked, doc, observed, coverage.current)
+          doc = consumedBy(await this.consume(locked, doc, observed, coverage.current))
           if (incoming!.run <= doc.calendars.find(item => item.scheduleID === incoming!.scheduleID)!.highWater)
             return await this.launchDeferred(locked, doc.id) ?? "ignored"
           continue
@@ -129,7 +135,7 @@ export class MissionDocumentPassageEngine {
         const snapshot = await this.ports.snapshot(doc)
         snapshot.current(); coverage.current()
         if (!missionLaunches(doc, wakes, snapshot.news)) {
-          await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true)
+          consumedBy(await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true))
           return await this.launchDeferred(locked, doc.id) ?? "ignored"
         }
         // Launch criteria record which calendars decided the launch: an "else" period counts
@@ -137,7 +143,7 @@ export class MissionDocumentPassageEngine {
         const launchedBy = coalesces(doc) ? [...new Set(wakes.filter(wake => missionLaunches(doc!, [wake], snapshot.news)).map(wake => wake.scheduleID))] : undefined
         // reserve accepts one next occurrence per principal. Older contiguous
         // occurrences are ignored in the SAME CAS, preserving the latest fan-in.
-        await this.change(locked, doc, next => {
+        consumedBy(await this.change(locked, doc, next => {
           this.recordCheck(next)
           const selected: MissionWake[] = []
           for (const principal of next.calendars.filter(item => item.role === "principal")) {
@@ -152,7 +158,7 @@ export class MissionDocumentPassageEngine {
             if (principal && wake.run > principal.highWater) changes.processWake(next, wake)
           }
           next.fanIn!.completed = true
-        }, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate)
+        }, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate))
         const reconciled = await this.reconcileLocked(locked, doc.id)
         return reconciled === "pending" ? "started" : reconciled
       }
