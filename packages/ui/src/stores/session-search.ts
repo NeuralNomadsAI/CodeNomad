@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js"
 import type { SessionSearchMatch } from "../lib/session-search"
+import { supportsWorkspaceCapability } from "./workspace-capabilities"
 
 const [target, setTarget] = createSignal<{ instanceId: string; sessionId: string } | null>(null)
 const [destination, setDestination] = createSignal<{ instanceId: string; sessionId: string; query: string; match: SessionSearchMatch }>()
@@ -21,7 +22,10 @@ export function isSessionSearchOpen(instanceId: string, sessionId: string): bool
   return target()?.instanceId === instanceId && target()?.sessionId === sessionId
 }
 
+/** Session search reads the backend's history routes. */
+export const sessionSearchSupported = (instanceId: string) => supportsWorkspaceCapability(instanceId, "history-search")
+
 export function setSessionSearchOpen(instanceId: string, sessionId: string, open: boolean): void {
-  if (open) setTarget({ instanceId, sessionId })
+  if (open) { if (sessionSearchSupported(instanceId)) setTarget({ instanceId, sessionId }) }
   else if (isSessionSearchOpen(instanceId, sessionId)) setTarget(null)
 }

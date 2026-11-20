@@ -4,7 +4,7 @@
 use std::{io, path::Path};
 
 /// Creates `data` if needed, refuses a folder owned by another account, then
-/// protects it like `tls/` and `devices/` (owner and SYSTEM only).
+/// protects it like `tls/` (owner and SYSTEM only).
 pub fn protect(data: &Path) -> io::Result<()> {
     std::fs::create_dir_all(data)?;
     if !owned_by_current_user(data)? {

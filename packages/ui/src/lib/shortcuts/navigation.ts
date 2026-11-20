@@ -3,6 +3,7 @@ import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import { activeSessionId, getVisibleSessionIds, selectSessionFromList } from "../../stores/sessions"
 import { openSettings } from "../../stores/settings-screen"
+import { hostSupports } from "../backend-capabilities"
 
 export function registerNavigationShortcuts(isMainView: () => boolean = () => true) {
   const hasInstance = () => isMainView() && Boolean(activeInstanceId())
@@ -74,7 +75,7 @@ export function registerNavigationShortcuts(isMainView: () => boolean = () => tr
 
   keyboardRegistry.register({
     id: "switch-to-info",
-    condition: isMainView,
+    condition: () => isMainView() && hostSupports("opencode-admin"),
     handler: () => {
       void openSettings("opencode")
     },
