@@ -28,10 +28,6 @@
         const element = node.parentElement
         if (owner.visibleOnly && !element?.closest(".message-stream")) return
         for (const match of node.data.matchAll(markers)) {
-          if (!owner.visibleOnly) {
-            owner.shown[match[0]] ??= now()
-            continue
-          }
           if (!(match[0] in owner.shown)) found.set(match[0], { node, index: match.index })
         }
       }
@@ -50,8 +46,10 @@
         const range = document.createRange()
         for (const [marker, { node, index }] of found) {
           const element = node.parentElement
+          if (node.data.slice(index, index + marker.length) !== marker) continue
+          if (!owner.visibleOnly) { owner.shown[marker] ??= at; continue }
           const stream = element?.closest(".message-stream")
-          if (!stream || node.data.slice(index, index + marker.length) !== marker) continue
+          if (!stream) continue
           if (!element.checkVisibility({ visibilityProperty: true })) continue
           range.setStart(node, index)
           range.setEnd(node, index + marker.length)

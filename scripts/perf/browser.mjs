@@ -42,7 +42,7 @@ export async function withBrowser(daemon, tree, root, run) {
           const before = now()
           const pageTime = await page.evaluate(() => window.__perf.now())
           offset = pageTime - (before + now()) / 2
-          await page.evaluate(visibleOnly => window.__perf.arm(visibleOnly), !counters)
+          await page.evaluate(() => window.__perf.arm(false))
           if (counters) {
             await cdp.send("Profiler.startPreciseCoverage", { callCount: true, detailed: false })
             await cdp.send("Profiler.takePreciseCoverage")

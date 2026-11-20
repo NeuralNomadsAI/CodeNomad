@@ -82,10 +82,11 @@ The PR build runs `scripts/perf/bench.mjs` on Linux against a pinned OpenCode
 binary, a loopback provider, an owned daemon and a private headless Chromium
 profile. The foreground session has 300 history turns. The guard compares three
 8-session samples of JavaScript calls, Solid computations and DOM mutations per
-native event. It measures the final foreground marker's display latency and
-p95 key latency against the TUI on the same runner at 8 and 32 sessions.
-Both clients must show the final marker; intermediate-marker coverage is
-reported separately. Ratios floor both inputs at 50 ms.
+native event. At 8 and 32 sessions it compares the final foreground marker at
+the next browser frame or on the TUI screen, plus p95 key latency. The browser
+probe does not require transcript rows to intersect the viewport during the
+sample. Both clients must observe the final marker; intermediate-marker coverage
+is reported separately. Ratios floor both inputs at 50 ms.
 
 Reproduce with the tools and build steps from `pr-build.yml`, then run
 `node scripts/perf/bench.mjs /absolute/path/to/opencode`. Run

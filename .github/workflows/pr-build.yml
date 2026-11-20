@@ -83,6 +83,13 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .perf-base
+          persist-credentials: false
+          sparse-checkout: scripts/perf/perf-budgets.json
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
@@ -104,7 +111,10 @@ jobs:
           results=(scripts/perf/run/perf-*/results)
           test "${#results[@]}" = 1
           node scripts/perf/perf-check.mjs "${results[0]}" --calibrate > "${results[0]}/budget-candidate.json"
-          node scripts/perf/perf-check.mjs "${results[0]}" --summary "$GITHUB_STEP_SUMMARY"
+          base=.perf-base/scripts/perf/perf-budgets.json
+          args=()
+          if test -f "$base"; then args=(--base "$base"); fi
+          node scripts/perf/perf-check.mjs "${results[0]}" --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@v7.0.2
