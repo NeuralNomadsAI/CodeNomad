@@ -125,8 +125,10 @@ including blocks retired by a source that changed modes. Returning to Autonomous
 removes only the matching block from the selected conversation, preserving the
 order and content of all other rules; ambiguous matches are left unchanged.
 A refresh replaces the block in place and retains prior versions to identify
-child and fork copies. A rule deliberately added by another native client after
-the block keeps its native precedence.
+child and fork copies. Exact matches from different ancestors at the same offset
+identify one inherited span, using the nearest matching ancestor. Different offsets
+or competing activations of one source remain ambiguous. A rule deliberately
+added by another native client after the block keeps its native precedence.
 A missing or unowned ancestor ends the lookup. Proof uses
 native lineage and exact rule values; rules have no per-entry native identity.
 Mode writes, projection refreshes and native session PATCHes through the same

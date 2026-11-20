@@ -62,6 +62,7 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
     getSharedServiceConnection: async () => connection,
     getSharedServiceClient: async () => client,
     getInstanceAuthorizationHeader: () => undefined,
+    getSessionEnvironment: async () => ({}),
     getServiceDirectory: () => directory,
     getServiceWslDistro: () => undefined,
     getWorktreeIdentityForPath: async (id, candidate) => {
@@ -201,13 +202,13 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
       types: ["config.updated", "session.permissions"] })[Symbol.asyncIterator]()
     try {
       assert.equal((await refreshStream.next()).value.type, "server.connected")
-      const nextPermissions = async () => {
+      const nextPermissions = async (sessionID = created.id) => {
         for (;;) {
           const { value: event, done } = await refreshStream.next()
           if (done) assert.fail("native permission event did not arrive")
           nativeEventConnections.set(event, connection)
           bus.publish({ type: "instance.event", event, instanceId: "a" })
-          if (event.type === "session.permissions" && event.data.sessionID === created.id) return event.data.permissions
+          if (event.type === "session.permissions" && event.data.sessionID === sessionID) return event.data.permissions
         }
       }
       const deny = rule("shell", "echo refresh-fixture", "deny")
@@ -216,6 +217,25 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
       assert.equal((await nativePermission(created.id, "shell", deny.resource)).effect, "deny")
       const insertedShell = rule("shell", "echo inserted", "deny")
       const insertedEdit = rule("edit", path.join(directory, "private.txt"), "deny")
+      const revisedChild = await client.session.create({ parentID: created.id }, options)
+      const childRules = [initial, insertedEdit, ...expected, deny, appended]
+      await client.session.update({ sessionID: revisedChild.id, permissions: childRules }, options)
+      assert.deepEqual(await nextPermissions(revisedChild.id), childRules)
+      const grandchildRules = [initial, insertedEdit, ...expected, deny, insertedEdit, appended]
+      assert.deepEqual(await nextPermissions(revisedChild.id), grandchildRules)
+      const grandchild = await client.session.create({ parentID: revisedChild.id }, options)
+      assert.deepEqual(grandchild.permissions, grandchildRules)
+      assert.equal(await mode("a", grandchild.id), "supervised")
+      assert.equal((await nativePermission(grandchild.id, "edit", insertedEdit.resource)).effect, "deny")
+      const prompt = await app.inject({ method: "POST", url: `/workspaces/a/instance/api/session/${grandchild.id}/prompt`,
+        payload: { text: "Inherited permissions fixture", resume: false } })
+      const restore = await app.inject({ method: "PUT", url: `/api/workspaces/b/sessions/${grandchild.id}/permission-mode`,
+        payload: { mode: "autonomous" } })
+      assert.deepEqual([prompt.statusCode, restore.statusCode], [200, 200], `${prompt.body}\n${restore.body}`)
+      assert.deepEqual((await client.session.get({ sessionID: grandchild.id }, options)).permissions, [initial, insertedEdit, appended])
+      assert.deepEqual((await client.session.get({ sessionID: revisedChild.id }, options)).permissions, grandchildRules)
+      console.log("PASS: native grandchild admits a prompt, keeps the edit deny and removes only its copied block")
+
       const prefix = [initial, insertedShell, insertedEdit]
       const otherClientRules = [...prefix, ...expected, deny, appended]
       await client.session.update({ sessionID: created.id, permissions: otherClientRules }, options)

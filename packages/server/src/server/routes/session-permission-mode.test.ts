@@ -442,6 +442,60 @@ test("finds inherited blocks in native child and fork lineage, and removes only 
   assert.deepEqual(f.writes, [f.session.id, child.id, f.session.id, descendant.id])
 })
 
+test("uses the refreshed parent block when a grandparent's prefix matches at the same position", async t => {
+  const f = await fixture(t)
+  registerInstanceProxyRoutes(f.app, { workspaceManager: f.manager, logger: f.logger, worktreeDeletionFence: f.worktrees,
+    sessionCleanup: f.cleanup, permissionModes: f.modes })
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const deny = edit("deny", "private.txt")
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id, permissions: [read, deny, ...block, external] }
+  f.sessions.set(child.id, child)
+  const target = sessionPermissionTarget(child, { client: f.client, distro: undefined, signal: t.signal, current: () => t.signal.throwIfAborted() },
+    location => f.manager.ownsLocation("one", location))
+  assert.deepEqual(await f.modes.refresh(target), { mode: "supervised" })
+  const inherited = [read, deny, ...block, deny, external]
+  assert.deepEqual(child.permissions, inherited)
+  const grandchild = { ...child, id: "ses_grandchild", parentID: child.id, permissions: [...inherited, ...block] }
+  f.sessions.set(grandchild.id, grandchild)
+  const send = () => f.app.inject({ method: "POST", url: `/workspaces/one/instance/api/session/${grandchild.id}/prompt`, payload: { text: "fixture" } })
+  const sends: PermissionRule[][] = []
+  f.onDispatch(() => sends.push(grandchild.permissions))
+  assert.equal((await send()).statusCode, 503, "a short match at another position still blocks a refresh")
+  assert.equal((await f.set("autonomous", "two", grandchild.id)).statusCode, 409)
+  assert.deepEqual(grandchild.permissions, [...inherited, ...block])
+
+  grandchild.permissions = inherited
+  assert.deepEqual((await f.get("one", grandchild.id)).json(), { mode: "supervised" })
+  const sent = await send()
+  assert.equal(sent.statusCode, 204, sent.body)
+  assert.deepEqual(sends, [inherited])
+  assert.equal((await f.set("autonomous", "two", grandchild.id)).statusCode, 200)
+  assert.deepEqual(grandchild.permissions, [read, deny, external])
+  assert.deepEqual(child.permissions, inherited)
+  assert.deepEqual(f.session.permissions, [read, ...block])
+  assert.deepEqual(f.writes, [f.session.id, child.id, grandchild.id])
+})
+
+test("keeps a trailing rule that completes a more distant ancestor's block", async t => {
+  const f = await fixture(t)
+  const trailing = edit("deny", "private.txt")
+  f.replaceConfig([...config, { type: "document", info: { permissions: [trailing] } }])
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  assert.equal((await f.set("autonomous")).statusCode, 200)
+
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
+  f.sessions.set(child.id, child)
+  f.replaceConfig(config)
+  assert.equal((await f.set("supervised", "one", child.id)).statusCode, 200)
+  child.permissions = [read, ...block, trailing]
+  const grandchild = { ...child, id: "ses_grandchild", parentID: child.id }
+  f.sessions.set(grandchild.id, grandchild)
+
+  assert.equal((await f.set("autonomous", "two", grandchild.id)).statusCode, 200)
+  assert.deepEqual(grandchild.permissions, [read, trailing])
+  assert.deepEqual(child.permissions, [read, ...block, trailing])
+})
+
 test("projects ordered session rules after config and restores the exact original rules", async t => {
   const f = await fixture(t)
   const original = [read, shell("allow", "echo *"), edit("ask", "notes/*"), external,

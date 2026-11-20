@@ -139,7 +139,7 @@ export class SessionPermissionModes {
     if (!source || !blockPositions(rules, blockStart).length) return
     const state = this.settings.getPrivateSessionPermissionState()
     const visited = new Set([session.id])
-    let match: PermissionRule[] | undefined
+    let inherited: { block: PermissionRule[]; offset: number } | undefined
     while (source) {
       if (visited.has(source) || visited.size > 64) throw new SessionModeConflict("Invalid permission ancestry")
       visited.add(source)
@@ -148,16 +148,25 @@ export class SessionPermissionModes {
       const { active, previous, revisions, pending } = this.owned(this.key(target.distro, ancestor), state)
       const current = revisions.length || pending ? revisionMatch(rules, [active, pending, ...revisions]) : active
       if (current === ambiguous) return ambiguous
+      let match: PermissionRule[] | undefined
       for (const entry of current ? [current, ...previous] : previous) {
         const block = revisionMatch(rules, Array.isArray(entry[0]) ? entry as PermissionRule[][] : [entry as PermissionRule[]])
         if (block === ambiguous) return ambiguous
         if (!block) continue
-        if (match && !sameRules(match, block)) return "ambiguous" as const
+        // Separate activations on one source can leave unrelated copies.
+        if (match && !sameRules(match, block)) return ambiguous
         match = block
+      }
+      if (match) {
+        // Different ancestors can describe the same span. Keep the nearest
+        // source's boundary, but refuse a separate candidate elsewhere.
+        const [offset] = blockPositions(rules, match)
+        if (inherited && inherited.offset !== offset) return ambiguous
+        inherited ??= { block: match, offset }
       }
       source = sourceSessionID(ancestor)
     }
-    return match
+    return inherited?.block
   }
 
   private async configBlock({ client, location, distro, signal }: NativeCreation) {
