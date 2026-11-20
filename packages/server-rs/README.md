@@ -1,6 +1,10 @@
 # codenomad-rs
 
-Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It already runs as a remote backend; it does not replace the TypeScript server inside the desktop hosts yet.
+Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It runs as a remote backend, and the desktop hosts launch it instead of the TypeScript server when started with `CODENOMAD_SERVER_IMPL=rust`.
+
+## Desktop hosts
+
+Electron (`electron/main/server-impl.ts`) and Tauri (`cli_manager.rs`, `Runner::Rust`) run the binary directly with the TypeScript server's arguments, environment and stdio contract. Packaged builds stage it in `server/dist/codenomad-rs[.exe]` beside `dist/bin.js` (`scripts/rust-server-binary.cjs`, called by Electron's `prepare-resources.js` and Tauri's `prebuild.js`), so `../public` and `plugins/` resolve as for the Node entry. Development runs the newest `debug` or `release` build under `CARGO_TARGET_DIR` or `packages/server-rs/target`, then the staged copy.
 
 ## Architecture
 
