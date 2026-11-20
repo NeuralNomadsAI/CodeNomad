@@ -7,6 +7,7 @@ import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
+import { compactRemoteProjectHistory } from "./remote-project-history"
 import { readAdmissionEnvironment } from "./admission-environment"
 import { ServerFlagReader } from "./server-flag-reader"
 import { canonicalScope } from "../host-lifetime/protocol"
@@ -96,7 +97,7 @@ export class SettingsService {
     this.stateStore = new YamlDocStore(
       location.stateYamlPath,
       logger.child({ component: "settings-state" }),
-      { throwOnPersistError: true },
+      { throwOnPersistError: true, normalize: compactRemoteProjectHistory },
     )
     this.serverFlags = new ServerFlagReader(location.configYamlPath)
   }

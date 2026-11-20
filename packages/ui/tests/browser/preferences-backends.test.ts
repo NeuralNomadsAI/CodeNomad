@@ -62,7 +62,7 @@ async function api(page: Page, selected: () => string) {
   let restored = false, unavailable = false, missing = false, failWrites = false, identity = "server-a"
   let verificationFailure: { path: string; status: "network" | 401 | 503 } | undefined
   page.on("pageerror", error => errors.push(error.message))
-  await page.route(/\/(?:api|workspaces)\//, async route => {
+  await page.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
     const request = route.request(), raw = new URL(request.url()).pathname
     const match = /^\/api\/backends\/([^/]+)(\/.*)$/.exec(raw)
     const owner = match?.[1] ?? "local", path = match?.[2] ?? raw, method = request.method()

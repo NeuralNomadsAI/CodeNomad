@@ -1,4 +1,11 @@
 export const folderSelectionMessages = {
+  "folderSelection.remoteProject.serverRoot": "サーバーのルート",
+  "folderSelection.remoteProject.title": "リモート",
+  "folderSelection.remoteProject.project": "プロジェクト",
+  "folderSelection.remoteProject.openProject": "{name} でプロジェクトを開く",
+  "folderSelection.remoteProject.back": "サーバー一覧に戻る",
+  "folderSelection.remoteProject.add": "サーバーを追加",
+  "folderSelection.remoteProject.addPlaceholder": "ペアリングリンクまたはアドレス",
   "remoteBrowse.secretEntryForbidden": "認証情報を入力するには HTTPS またはリモートコントロールを使用してください。",
   "remoteBrowse.incompatible": "互換性のない CodeNomad サーバーです。",
   "remoteBrowse.unreachable": "サーバーに接続できません。",

@@ -903,6 +903,7 @@ const App: Component = () => {
             onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
             isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
             onOpenSidecar={handleOpenSidecarPicker}
+            onRemoteOpened={() => setShowFolderSelection(false)}
           />
         </Show>
 
@@ -915,6 +916,7 @@ const App: Component = () => {
                 onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
+                onRemoteOpened={() => setShowFolderSelection(false)}
                 onClose={() => {
                   setShowFolderSelection(false)
                   clearLaunchError()

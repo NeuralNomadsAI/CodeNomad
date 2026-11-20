@@ -1,4 +1,11 @@
 export const folderSelectionMessages = {
+  "folderSelection.remoteProject.serverRoot": "Корень сервера",
+  "folderSelection.remoteProject.title": "Удалённые",
+  "folderSelection.remoteProject.project": "Проект",
+  "folderSelection.remoteProject.openProject": "Открыть проект на {name}",
+  "folderSelection.remoteProject.back": "Назад к серверам",
+  "folderSelection.remoteProject.add": "Добавить сервер",
+  "folderSelection.remoteProject.addPlaceholder": "Ссылка для сопряжения или адрес",
   "remoteBrowse.secretEntryForbidden": "Для ввода учётных данных используйте HTTPS или удалённое управление.",
   "remoteBrowse.incompatible": "Несовместимый сервер CodeNomad.",
   "remoteBrowse.unreachable": "Сервер недоступен.",

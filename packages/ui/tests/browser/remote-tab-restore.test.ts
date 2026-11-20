@@ -56,7 +56,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
     const createGate = new Promise<void>(resolve => { releaseCreate = resolve })
     let markCreate!: () => void
     const createStarted = new Promise<void>(resolve => { markCreate = resolve })
-    await context.route(/\/(?:api|workspaces)\//, async route => {
+    await context.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
       const request = route.request(), pathname = new URL(request.url()).pathname
       const remote = pathname.startsWith("/api/backends/a/")
       const path = remote ? pathname.slice("/api/backends/a".length) : pathname

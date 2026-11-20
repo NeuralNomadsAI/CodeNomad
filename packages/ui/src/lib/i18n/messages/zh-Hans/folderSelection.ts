@@ -1,4 +1,11 @@
 export const folderSelectionMessages = {
+  "folderSelection.remoteProject.serverRoot": "服务器根目录",
+  "folderSelection.remoteProject.title": "远程",
+  "folderSelection.remoteProject.project": "项目",
+  "folderSelection.remoteProject.openProject": "在 {name} 上打开项目",
+  "folderSelection.remoteProject.back": "返回服务器列表",
+  "folderSelection.remoteProject.add": "添加服务器",
+  "folderSelection.remoteProject.addPlaceholder": "配对链接或地址",
   "remoteBrowse.secretEntryForbidden": "请使用 HTTPS 或远程控制输入凭据。",
   "remoteBrowse.incompatible": "不兼容的 CodeNomad 服务器。",
   "remoteBrowse.unreachable": "无法连接服务器。",

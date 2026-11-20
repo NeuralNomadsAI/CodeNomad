@@ -230,7 +230,7 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
   }, web)
   let sequence = 0
   let inventory = ["web-0", "web-1"]
-  await page.route(/\/(?:api|workspaces)\//, async route => {
+  await page.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
     const path = new URL(route.request().url()).pathname
     let body: any = {}
     if (path === "/api/workspaces") {

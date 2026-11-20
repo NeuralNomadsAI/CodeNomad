@@ -46,7 +46,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
   const inventories = new Map(["a", "b"].map(id => [id, !["reuse", "offline"].includes(mode) && id === "b" ? [] : [
     descriptor("sibling", "/same"), descriptor("same", "/same"),
   ]]))
-  await context.route(/\/(?:api|workspaces)\//, async route => {
+  await context.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname
     const owner = /^\/api\/backends\/([ab])/.exec(pathname)?.[1]
     const path = owner ? pathname.slice(`/api/backends/${owner}`.length) : pathname
@@ -189,7 +189,7 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
         attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {}, viewState: { version: 1, rightPanelTab: "files" } })) },
     }))
   }, disappears)
-  await context.route(/\/(?:api|workspaces)\//, async route => {
+  await context.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname
     const remote = pathname.startsWith("/api/backends/a/")
     const path = remote ? pathname.slice("/api/backends/a".length) : pathname
@@ -354,7 +354,7 @@ for (const { multiBackend, recovery, initiallyUnavailable } of primaryCases) {
         }] },
       }))
     })
-    await context.route(/\/(?:api|workspaces)\//, async route => {
+    await context.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
       const request = route.request(), path = new URL(request.url()).pathname
       assert.equal(path.startsWith("/api/backends/"), false, "primary recovery keeps its host API")
       let body: any = {}

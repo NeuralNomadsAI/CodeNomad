@@ -1,8 +1,14 @@
 # Projekte und Worktrees
 
-Wenn Multi-Backend aktiviert ist, wählen Sie einen gespeicherten Server auf der Startseite oder **Öffnen** unter **Einstellungen → Server**. Das Hauptfenster zeigt dessen Ordner und zuletzt verwendete Projekte. Navigieren Sie zu einem Ordner oder geben Sie einen Pfad ein und drücken Sie Enter, um einen normalen Projekt-Tab zu öffnen. Entfernte Tabs zeigen ein Serversymbol und den Servernamen. Schließen Sie den Browser zum Abbrechen; inkompatible Server benötigen einen kompatiblen CodeNomad-Server. Klonen und temporäre Projekte auf der Startseite verwenden diesen Computer.
+Bei aktiviertem Multi-Backend klappen Sie **REMOTE** auf der Startseite oder im `+`-Schnellstarter auf. Wählen Sie **+ Projekt** neben einem gespeicherten CodeNomad-Server, durchsuchen Sie dort seine Ordner und wählen Sie **Öffnen**. Zum Hinzufügen fügen Sie den Kopplungslink oder die Adresse unter der Serverliste ein. Hier geöffnete Projekte bleiben auch bei getrenntem Server mit Symbol und Servernamen in der gemeinsamen Liste. Durchsuchen, Klonen und temporäre Projekte verwenden diesen Computer.
 
 Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Das Öffnen eines Tabs, Durchsuchen eines Checkouts und Verschieben einer Unterhaltungsfamilie sind verschiedene Vorgänge.
+
+**+ Projekt** beginnt beim zuletzt bekannten Projektpfad. Wurde der Ordner verschoben oder gelöscht, wählen Sie **Server-Stammordner**. Beim Öffnen eines zuletzt verwendeten Projekts führt **Abbrechen** zurück zur Serverliste.
+
+In der Liste erscheinen nur Remote-Projekte, die Sie hier erfolgreich öffnen. Beim Durchsuchen von Ordnern kommen keine Einträge hinzu. Gespeicherte Verknüpfungen bleiben für genau diese Verbindung (Profil, Adresse, TLS-Prüfeinstellung und SSH-Ziel) auch offline verfügbar. Gibt es für den Ordner bereits einen wartenden Tab, wird er mit seinen Entwürfen ausgewählt. Sie entscheiden, wann Sie es erneut versuchen.
+
+Eine entfernte Verknüpfung bleibt ausgeblendet, bis Sie den Ordner erneut öffnen.
 
 ## Projekt öffnen {#open-project}
 
@@ -23,7 +29,7 @@ Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** 
 1. Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
 2. Suchen Sie zuletzt verwendete Projekte oder wählen Sie **Durchsuchen…**, **Temporär** oder **Klonen…**.
 
-Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Schnellstarter ist ein Direktzugriff, keine Verwaltungsoberfläche: Benennen/entfernen Sie zuletzt verwendete Projekte und verwalten Sie Server-Lesezeichen auf der Startseite. Escape schließt den Schnellstarter und setzt den Fokus auf `+` zurück.
+Ein normaler Klick öffnet die Startseite. Der Schnellstarter wechselt zum offenen Projekt; die Startseite öffnet einen neuen Tab, sofern kein wartender Tab ausgewählt wird. In **REMOTE** kehrt Escape zur Serverliste zurück, klappt sie zu und schließt dann den Schnellstarter mit Fokus auf `+`.
 
 ## Projekt-Tab schließen {#close-stop}
 

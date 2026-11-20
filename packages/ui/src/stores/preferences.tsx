@@ -6,6 +6,7 @@ import { backendEvents } from "../lib/backend-events"
 import { tGlobal } from "../lib/i18n"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { generateUUID } from "../lib/client-identity"
+import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
 import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
@@ -208,6 +209,8 @@ interface UiStateBucket {
   colorSchemePresets?: unknown
   activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
+  remoteProjectRecents?: unknown
+  remoteProjectHistory?: unknown
   /** The folder the last clone was created in, where the next clone is suggested. */
   lastCloneParent?: string
   opencodeBinaries?: OpenCodeBinary[]
@@ -233,7 +236,7 @@ interface NormalizedUiState {
   }
 }
 
-const MAX_RECENT_FOLDERS = 20
+const MAX_RECENT_FOLDERS = RECENT_PROJECT_LIMIT
 const MAX_RECENT_MODELS = 5
 const MAX_FAVORITE_MODELS = 50
 
@@ -1253,6 +1256,22 @@ function addRecentFolder(folderPath: string): void {
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to add recent folder", error))
 }
 
+const remoteProjectHistory = createMemo(() => readRemoteProjectHistory(
+  local ? uiStateBucket().remoteProjectRecents : undefined, local ? uiStateBucket().remoteProjectHistory : undefined,
+))
+let remoteProjectRecentWrites = Promise.resolve()
+function editRemoteProjectRecents(edit: (current: ReturnType<typeof readRemoteProjectHistory>) => Record<string, RemoteProjectRecentEdit | null> | undefined): Promise<void> {
+  if (!local) throw new Error("Remote project recents belong to the host")
+  const write = remoteProjectRecentWrites.then(async () => {
+    await ensureLoaded()
+    const bucket = await storage.loadStateOwner("ui")
+    const next = edit(readRemoteProjectHistory(bucket.remoteProjectRecents, bucket.remoteProjectHistory))
+    if (next) await patchStateOwner("ui", { remoteProjectHistory: next })
+  })
+  remoteProjectRecentWrites = storage.trackWrite(write.catch(() => {}))
+  return write
+}
+
 // This window's latest clone parent wins over the saved one, whatever the
 // outcome of saves; the saved one carries it to other windows and restarts.
 // Every clone saves its parent, one save after another, so the last clone's is kept.
@@ -1732,7 +1751,7 @@ function subscribe() {
       unsubStateUi()
     }
 }
-return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, patchHotkeyPreferences, setUpdateFeed, setSidecarsOverDirectHttps, subscribe, ensureEditDocument,
+return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, remoteProjectHistory, editRemoteProjectRecents, patchHotkeyPreferences, setUpdateFeed, setSidecarsOverDirectHttps, subscribe, ensureEditDocument,
   settleStateWrite: async () => { await Promise.all([favoritesOnlyWriteQueue, cloneParentSaves]); await stateWrite } }
 }
 
@@ -1923,6 +1942,8 @@ export const {
   removeRecentFolder,
   renameRecentFolderProject,
   addNamedRecentFolder,
+  remoteProjectHistory,
+  editRemoteProjectRecents,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   recordWorkspaceLaunch,

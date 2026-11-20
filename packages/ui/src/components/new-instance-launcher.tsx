@@ -1,11 +1,14 @@
 import { Popover } from "@kobalte/core/popover"
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
-import { Folder, FolderPlus, GitBranch, Hourglass, Search } from "lucide-solid"
+import { Folder, FolderPlus, GitBranch, Hourglass, Search, Server } from "lucide-solid"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useI18n } from "../lib/i18n"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 import { getExistingInstanceForFolder } from "../stores/instances"
 import { useConfig } from "../stores/preferences"
+import { recentProjects, type RecentProject } from "../stores/recent-projects"
+import { findOpenProjectTab } from "../stores/remote-project-open"
+import RemoteProjectMenu, { type RemoteRecentRequest } from "./remote-project-menu"
 
 interface NewInstanceLauncherProps {
   open: boolean
@@ -29,6 +32,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   const { recentFolders } = useConfig()
   const [query, setQuery] = createSignal("")
   const [activeIndex, setActiveIndex] = createSignal(0)
+  const [remoteRecent, setRemoteRecent] = createSignal<RemoteRecentRequest>()
   let listRef: HTMLDivElement | undefined
 
   const dialogs = createNewInstanceDialogs({
@@ -39,7 +43,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
 
   const matches = createMemo(() => {
     const needle = query().trim().toLowerCase()
-    const folders = recentFolders()
+    const folders = recentProjects()
     if (!needle) return folders
     return folders.filter((folder) =>
       getProjectDisplayName(folder.path, folder.projectName).toLowerCase().includes(needle)
@@ -53,6 +57,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
 
   // Each opening starts from an empty filter on the most recent project.
   createEffect(on(() => props.open, (open) => {
+    setRemoteRecent(undefined)
     if (!open) return
     setQuery("")
     setActiveIndex(0)
@@ -72,7 +77,13 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
     action()
   }
 
-  function openRecent(path: string) {
+  function openRecent(folder: RecentProject) {
+    if (props.isLoading) return
+    const { path } = folder
+    if (folder.kind === "remote") {
+      setRemoteRecent({ profile: folder.policy, path, projectName: folder.projectName })
+      return
+    }
     const existing = getExistingInstanceForFolder(path)
     run(() => existing ? props.onSelectExistingInstance(existing.id, path) : props.onSelectFolder(path))
   }
@@ -88,7 +99,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
     else if (event.key === "ArrowUp") { event.preventDefault(); moveActive(-1) }
     else if (event.key === "Enter") {
       const folder = matches()[activeIndex()]
-      if (folder) { event.preventDefault(); openRecent(folder.path) }
+      if (folder) { event.preventDefault(); openRecent(folder) }
     }
   }
 
@@ -106,7 +117,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
         <Popover.Portal>
           <Popover.Content class="window-shell new-instance-launcher" aria-busy={props.isLoading}
             ref={contentRef}
-            onEscapeKeyDown={() => { returnFocus = true }}
+            onEscapeKeyDown={(event) => { if (!event.defaultPrevented) returnFocus = true }}
             onCloseAutoFocus={(event) => {
               // The popup has an anchor, not a Kobalte trigger: restore focus ourselves,
               // unless another surface has taken it meanwhile.
@@ -151,11 +162,11 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
               <For
                 each={matches()}
                 fallback={<p class="new-instance-launcher-empty">
-                  {t(recentFolders().length ? "newInstanceLauncher.noMatch" : "newInstanceLauncher.empty")}
+                  {t(recentProjects().length ? "newInstanceLauncher.noMatch" : "newInstanceLauncher.empty")}
                 </p>}
               >
                 {(folder, index) => {
-                  const existing = () => getExistingInstanceForFolder(folder.path)
+                  const existing = () => folder.kind === "remote" ? findOpenProjectTab(folder.path, folder.backendId) : getExistingInstanceForFolder(folder.path)
                   return (
                     <div
                       id={optionId(index())}
@@ -167,11 +178,16 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                       data-open={existing() ? "true" : undefined}
                       title={folder.path}
                       onMouseMove={() => setActiveIndex(index())}
-                      onClick={() => openRecent(folder.path)}
+                      onClick={() => openRecent(folder)}
                     >
-                      <Folder class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+                      <Show when={folder.kind === "remote"} fallback={<Folder class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />}>
+                        <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+                      </Show>
                       <span class="new-instance-launcher-recent-name">{getProjectDisplayName(folder.path, folder.projectName)}</span>
-                      <span class="new-instance-launcher-recent-path" dir="ltr">{getDisplayPath(folder.path)}</span>
+                      <span class="new-instance-launcher-recent-path" dir="ltr">
+                        <Show when={folder.kind === "remote" && folder.serverLabel}>{name => <><bdi dir="auto" title={name()}>{name()}</bdi>{" · "}</>}</Show>
+                        {getDisplayPath(folder.path)}
+                      </span>
                       <Show
                         when={existing()}
                         fallback={<span class="new-instance-launcher-recent-meta">{formatRelativeTime(t, folder.lastAccessed)}</span>}
@@ -201,6 +217,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 <span>{t("newInstanceLauncher.clone")}</span>
               </button>
             </div>
+            <RemoteProjectMenu isLoading={props.isLoading} recent={remoteRecent()} focusExisting onOpened={close} />
           </Popover.Content>
         </Popover.Portal>
       </Popover>

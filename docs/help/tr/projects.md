@@ -1,8 +1,14 @@
 # Projeler ve çalışma ağaçları
 
-Çoklu arka uç etkinse ana sayfadan kayıtlı bir sunucu seçin veya ayarlardaki sunucu listesinden açın. Ana pencere o sunucunun klasörlerini ve son projelerini gösterir. Klasörlerde gezinin ya da bir yol yazıp Enter tuşuna basarak normal bir proje sekmesi açın. Uzak sekmeler sunucu simgesini ve adını gösterir. İptal etmek için tarayıcıyı kapatın; uyumsuz sunucular için uyumlu bir CodeNomad sunucusu gerekir. Ana sayfadaki klonlama ve geçici proje işlemleri bu bilgisayarı kullanır.
+Çoklu arka uç etkinse ana sayfada veya `+` başlatıcısında **UZAKLAR** bölümünü genişletin. Kayıtlı CodeNomad sunucusunun yanında **+ Proje**'yi seçin, aynı yerde klasörlere göz atın ve **Aç**'ı seçin. Sunucu eklemek için eşleştirme bağlantısını veya adresi listenin altına yapıştırın. Burada açılan projeler, sunucu çevrimdışı olsa bile simgesi ve adıyla ortak listede kalır. Göz atma, klonlama ve geçici projeler bu bilgisayarı kullanır.
 
 Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. Sekme açmak, bir çalışma kopyasına göz atmak ve konuşma ailesini taşımak farklı işlemlerdir.
+
+**+ Proje**, sunucunun bilinen son proje yolundan başlar. Klasör taşındıysa veya silindiyse **Sunucu kök dizini**'ni seçin. Son kullanılan proje açılırken **İptal** sunucu listesine döndürür.
+
+Son kullanılanlarda yalnızca burada başarıyla açtığınız uzak projeler görünür. Klasörlere göz atmak kısayol eklemez. Kayıtlı kısayollar aynı bağlantı (profil, adres, TLS doğrulama ayarı ve SSH hedefi) için çevrimdışıyken de görünür. Uzak klasör için zaten bekleyen bir sekme varsa o sekme seçilir ve taslakları korunur. Yeniden denemeyi siz başlatırsınız.
+
+Kaldırdığınız kısayol, o klasörü yeniden açana kadar son kullanılan projelerde görünmez.
 
 ## Bir proje açın {#open-project}
 
@@ -23,7 +29,7 @@ Aynı klasörü iki kez açıp her iki sekmede de aynı konuşmayı seçerek bir
 1. `+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
 2. Son projeleri arayın veya **Gözat…**, **Geçici** veya **Klonla…** öğesini seçin.
 
-Normal bir tıklama yine de tam ana sayfayı açar. Başlatıcı, yönetim yüzeyi değil, bir kısayoldur: ana sayfadaki son projeleri yeniden adlandırın/kaldırın ve sunucu yer imlerini yönetin. Escape, başlatıcıyı kapatır ve odağı `+`'ye döndürür.
+Normal tıklama ana sayfayı açar. Başlatıcı açık projeye geçer; ana sayfa, bekleyen bir sekme seçilmedikçe yeni bir sekme açar. **UZAKLAR** bölümünde Escape sunuculara döner, listeyi daraltır, ardından başlatıcıyı kapatıp odağı `+`'ya döndürür.
 
 ## Bir projeyi kapatın {#close-stop}
 

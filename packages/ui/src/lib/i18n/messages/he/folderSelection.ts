@@ -1,4 +1,11 @@
 export const folderSelectionMessages = {
+  "folderSelection.remoteProject.serverRoot": "תיקיית השורש של השרת",
+  "folderSelection.remoteProject.title": "מרוחקים",
+  "folderSelection.remoteProject.project": "פרויקט",
+  "folderSelection.remoteProject.openProject": "פתיחת פרויקט בשרת {name}",
+  "folderSelection.remoteProject.back": "חזרה לשרתים",
+  "folderSelection.remoteProject.add": "הוספת שרת",
+  "folderSelection.remoteProject.addPlaceholder": "קישור צימוד או כתובת",
   "remoteBrowse.secretEntryForbidden": "יש להשתמש ב־HTTPS או בשליטה מרחוק להזנת פרטי התחברות.",
   "remoteBrowse.incompatible": "שרת CodeNomad אינו תואם.",
   "remoteBrowse.unreachable": "השרת אינו נגיש.",

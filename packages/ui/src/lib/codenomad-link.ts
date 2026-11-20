@@ -38,3 +38,9 @@ export function serverDisplayName(profile: ServerNaming, servers: readonly Serve
   } catch {}
   return name || profile.baseUrl
 }
+
+export function qualifiedServerDisplayName(profile: ServerNaming & { id: string }, servers: readonly ServerNaming[]): string {
+  const name = serverDisplayName(profile, servers)
+  return servers.some(other => other.id !== profile.id && serverDisplayName(other, servers) === name)
+    ? `${name} (${profile.id})` : name
+}

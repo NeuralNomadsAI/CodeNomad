@@ -3,7 +3,7 @@ import { createSignal, lazy, Show } from "solid-js"
 import { render } from "solid-js/web"
 import InstanceTabs from "../../../src/components/instance-tabs"
 import NewInstanceLauncher from "../../../src/components/new-instance-launcher"
-import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
+import { ConfigProvider, preferencesForBackend } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { addInstance } from "../../../src/stores/instances"
 import type { AppTabRecord } from "../../../src/stores/app-tabs"
@@ -36,5 +36,5 @@ function Fixture() {
 }
 
 render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-await updatePreferences({ locale: "en" })
+await preferencesForBackend("local").ensureLoaded()
 ;(window as any).launcherFixture = { calls, close: () => setLauncherOpen(false) }
