@@ -55,7 +55,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- |
 | 项目标签页 / 工作区 / 实例 | CodeNomad 与显式打开的文件夹之间的连接；多个标签页可以使用共享服务。 |
 | 对话 / 会话 | 与其目录关联的原生 OpenCode 历史记录和执行。 |
-| 会话族 | 一个对话及其递归子会话；涉及移动、活动、Yolo 和任务控件。 |
+| 会话族 | 一个对话及其递归子会话；涉及移动、活动 和任务控件。 |
 | 工作树 | 选择用于浏览或放置会话的、归属已确认的仓库检出目录。浏览它不会移动对话。 |
 | Location | OpenCode 按目录划分的原生运行时上下文；关闭项目标签页时 CodeNomad 不会卸载它，其生命周期由 OpenCode 管理。 |
 | CodeNomad 后端 | 提供工作区、Git、认证和客户端连接的服务器。其账户和环境决定后端的文件系统访问权限。 |
@@ -72,7 +72,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | 安装或提供工作区服务 | [安装](install.md)、[服务器参考](server.md)、[网络与 TLS](remote-access.md) |
 | 跨检出目录和对话工作 | [项目](projects.md)、[对话](conversations.md)、[文件](files.md) |
 | 查找历史记录或安全清理 | [历史记录](history.md) |
-| 回答原生问题和权限请求 | [权限](permissions.md) |
+| 设置对话权限或回应请求 | [权限模式](permissions.md#conversation-mode)、[问题与权限](permissions.md) |
 | 协调有界任务或计划工作 | [任务](missions.md) |
 | 配置执行和集成 | [OpenCode](opencode.md)、[提供商](providers.md)、[集成](integrations.md) |
 | 连接另一台设备 | [远程控制](remote-control.md)、[安全](security.md)、[移动设备](mobile.md) |

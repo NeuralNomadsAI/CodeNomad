@@ -38,6 +38,10 @@ Si los colores se vuelven difíciles de leer, elige **Contraste → Activado**. 
 
 En **Configuración → General**, **Mantener el ordenador activo mientras CodeNomad esté en ejecución** está desactivado por defecto. Actívalo para impedir la suspensión del sistema mientras haya una ventana local de CodeNomad abierta (aunque esté minimizada), incluso si ninguna sesión está trabajando; la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando. La opción aparece solo en las ventanas locales de la aplicación de escritorio y en Preferencias; está oculta en las vistas de navegador y remotas.
 
+## Permisos de las conversaciones nuevas {#new-conversation-permissions}
+
+En **Configuración → General → Permisos de las conversaciones nuevas**, elige **Autónomo** (el valor predeterminado) o **Supervisado** para las conversaciones principales que crees en CodeNomad. Las conversaciones existentes no cambian. Para cambiar el modo de una de ellas, abre [Estado → Permisos](permissions.md#conversation-mode) en esa conversación.
+
 ## Memoria persistente del agente {#agent-memory}
 
 CodeNomad intenta retirar las instrucciones de memoria obsoletas de la sesión; si esa limpieza también falla, las anteriores pueden permanecer hasta una actualización correcta.
@@ -70,7 +74,7 @@ Arrastra el borde interior de un panel acoplado para cambiar su tamaño.
 
 Reordena cualquier sección de Estado arrastrando o con las teclas Arriba/Abajo. La visibilidad y el orden persisten al recargar.
 
-Estado incluye información de tokens, modo Yolo, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
+Estado incluye información de tokens, Permisos, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
 
 La disposición integrada es disposición de ventana, no una modificación del proyecto. Las casillas de extensiones son distintas: activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).
 
@@ -83,7 +87,7 @@ La disposición integrada es disposición de ventana, no una modificación del p
 
 La línea de tiempo tiene un marcador por cada respuesta, razonamiento, herramienta, compactación y contexto del sistema que muestra la conversación, en el mismo orden. Sus marcadores siguen **Contenido de los mensajes**: ocultar allí un tipo de herramienta, el razonamiento o los mensajes del sistema también oculta sus marcadores, salvo el de una herramienta con un permiso pendiente, y **Nada** oculta todos los marcadores de herramientas. Los ajustes de visibilidad y expansión solo cambian la presentación. No eliminan herramientas/razonamientos almacenados ni compactan el contexto del modelo. Consulta [Historial y limpieza](history.md) para operaciones destructivas.
 
-La altura del editor sigue la conversación visible, incluido el teclado en pantalla: mínimo del 8% con un suelo de 44 px, máximo del 60%. La altura manual se recuerda proporcionalmente; la anchura estrecha y el texto largo no elevan esos límites. Un permiso/pregunta expandido minimiza temporalmente el editor sin cambiar su altura guardada ni su borrador. Contrae o resuelve la solicitud para volver a cambiar su tamaño.
+El ajuste manual del editor toma como referencia la altura de la conversación sin el teclado en pantalla: mínimo del 8 % con un límite inferior de 44 px, máximo del 60 %. Una pantalla estrecha o un texto largo no elevan esos límites. Al abrirse el teclado, el campo puede reducirse temporalmente para dejar espacio a los controles y mensajes, sin cambiar la proporción de altura guardada. Un permiso/pregunta expandido minimiza temporalmente el editor sin cambiar su altura guardada ni su borrador. Contrae o resuelve la solicitud para volver a cambiar su tamaño.
 
 ## Notificaciones e indicadores {#notifications}
 

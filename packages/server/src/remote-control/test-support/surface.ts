@@ -108,7 +108,6 @@ export async function startRemoteSurface(t: TestContext, options: {
     authManager,
     clientConnectionManager: stub,
     remoteProxySessionManager: stub,
-    yoloManager: stub,
     uiStaticDir: uiDir,
     logger: serverLogger,
     nativeParent: stub,

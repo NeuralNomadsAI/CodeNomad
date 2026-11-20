@@ -32,12 +32,14 @@ import { verifyMissionHumanAnswer } from "./mission-human-answer"
 import { verifyRecurrenceRequest, type VerifyScheduleAgentCreation } from "./mission-recurrence-proof"
 import { BrowserPage } from "../../automation/browser-page"
 import type { SettingsService } from "../../settings/service"
+import type { SessionPermissionModes } from "../../permissions/session-mode"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import type { MemoryService } from "../../memory/service"
 import { memoryErrorReply } from "./memory"
 import { prepareSessionMemoryContext } from "../../workspaces/session-memory-context"
 
 interface AutomationPluginRouteDeps {
+  permissionModes?: SessionPermissionModes
   authManager: AuthManager
   bridgeToken: string
   nativeParent: NativeParent
@@ -175,9 +177,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         // admission does not use this bridge or gain a new native API fallback.
         const fence = deps.worktreeDeletionFence
          const result = commandKind === "create-root"
-          ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal)
+          ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal, deps.permissionModes)
           : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal,
-             { settings: deps.settings, bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation })
+             { settings: deps.settings, bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation }, deps.permissionModes)
              : commandKind === "project-read" ? await readAgentMissionProject(deps, body.sessionID, body.command, signal)
              : commandKind === "project-control" ? await controlAgentMission(deps, body.sessionID, body.command, signal)
              : commandKind === "project-control-verify" || commandKind === "project-update"
@@ -189,7 +191,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
            }, body.sessionID, body.command, signal)
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)
-          : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory)
+           : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory, deps.permissionModes)
         return reply.send({ result })
       } catch (error) {
         if (commandKind === "settings" && (error instanceof MissionPreferenceConflictError || error instanceof PluginControlsError || error instanceof z.ZodError)) {

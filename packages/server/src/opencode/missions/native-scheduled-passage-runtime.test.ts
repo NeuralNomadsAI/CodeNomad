@@ -165,7 +165,12 @@ test("real SQLite factory fences broken initial/business capabilities but observ
         roles: { specialist: { agent: "worker", model: { providerID: "unit", id: "model" } } } },
       launch: { timing: { kind: "every", intervalMs: 900_000 }, condition: null, ends: { maxLaunches: null, at: null, afterMs: null } } }
     owner = await Effect.runPromiseWith(graph)(acquireNativeMissionDocumentStore(ctx))
-    let doc = await owner.create("review", configuration, at, current)
+    const debugConfiguration: MissionConfiguration = { ...configuration, template: "debug", profiles: {
+      coordinator: configuration.profiles!.coordinator,
+      roles: Object.fromEntries(["diagnostician", "implementer", "review-standards", "review-spec", "resolver", "validator"]
+        .map(role => [role, configuration.profiles!.roles!.specialist])),
+    } }
+    let doc = await owner.create("review", debugConfiguration, at, current)
     doc = await owner.change(doc.id, doc.revision, current, next => {
       changes.play(next, "first_play", at, [])
       const digest = "a".repeat(64)
@@ -242,7 +247,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     writeFileSync(installation.provider.file, "damaged bytes")
     await assert.rejects(invoke(runtime => runtime.prepareBusiness(pending.coordinatorSessionID, entry)))
     await assert.rejects(invoke(runtime => runtime.executeBusiness(pending.coordinatorSessionID, entry, control => control.declare(pending.coordinatorSessionID,
-      { taskKey: "refused_task", title: "Refused", brief: "Do bounded work", role: "specialist", blockedBy: [] }))))
+      { taskKey: "refused_task", title: "Refused", brief: "Do bounded work", role: "diagnostician", blockedBy: [] }))))
     assert.equal((await owner.read("review") as MissionDocument).everCreatedTask, false)
     assert.equal(environments, 2); assert.equal(sends, 1)
     // The user may switch the coordinator conversation's model after admission.
@@ -251,7 +256,9 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     await invoke(async runtime => {
       assert.equal((await runtime.businessSelection(pending.coordinatorSessionID, entry))?.readSessionID, pending.coordinatorSessionID)
       const result = await runtime.executeBusiness(pending.coordinatorSessionID, entry, control => control.report(pending.coordinatorSessionID,
-        { final: true, outcome: "completed", summary: "Bounded work delivered", evidence: [], next: [] }))
+        { final: true, outcome: "completed", summary: "The reviewed sync merged without conflicts.",
+          artifact: { kind: "verified-completion" },
+          evidence: ["Independent review and focused tests passed on the frozen merge candidate.", "Verified source ancestry after the merge."], next: [] }))
       assert.equal(result?.value.mission.status, "completed")
     })
     active.clear()
@@ -260,6 +267,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: "review" })), "settled")
     doc = await owner.read("review") as MissionDocument
     assert.equal(doc.pending, null); assert.equal(doc.history[0].outcome, "completed"); assert.equal(sends, 1)
+    assert.equal(doc.successfulCount, 1); assert.equal(doc.blocked, null)
     await t.test("unconfirmed coordinator cleanup survives history eviction and an idle Check reconciles its exact native ACK", async () => {
       let releaseDoc = await owner!.create("cleanup_retention", { ...configuration, coordinatorSessionID: "ses_retiring" }, at, current)
       releaseDoc = await owner!.change(releaseDoc.id, releaseDoc.revision, current, next => {

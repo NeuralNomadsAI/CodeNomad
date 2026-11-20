@@ -38,6 +38,10 @@ Werden Farben schwer lesbar, wählen Sie **Kontrast → Ein**. Sie können auch 
 
 Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNomad läuft** standardmäßig deaktiviert. Aktivieren Sie die Option, um den Ruhezustand zu verhindern, solange ein lokales CodeNomad-Fenster geöffnet ist (auch minimiert), auch wenn keine Sitzung arbeitet; der Bildschirm kann sich weiterhin ausschalten. Wenn deaktiviert, hält CodeNomad den Computer nur wach, während eine Sitzung arbeitet. Die Option erscheint nur in lokalen Desktop-App-Fenstern und im nativen Einstellungsfenster; in Browser-/Remote-Ansichten ist sie ausgeblendet.
 
+## Berechtigungen für neue Unterhaltungen {#new-conversation-permissions}
+
+Wählen Sie unter **Einstellungen → Allgemein → Berechtigungen für neue Unterhaltungen** den Modus **Autonom** (Standard) oder **Beaufsichtigt** für neue Hauptunterhaltungen, die Sie in CodeNomad erstellen. Bestehende Unterhaltungen bleiben unverändert. Zum Ändern öffnen Sie in der jeweiligen Unterhaltung [Status → Berechtigungen](permissions.md#conversation-mode).
+
 ## Dauerhaftes Agentengedächtnis {#agent-memory}
 
 CodeNomad versucht, veraltete Speicheranweisungen der Sitzung zu entfernen; schlägt auch dies fehl, können die bisherigen Anweisungen bis zur nächsten erfolgreichen Aktualisierung erhalten bleiben.
@@ -70,7 +74,7 @@ Ziehen Sie am inneren Rand eines angedockten Panels, um seine Größe zu ändern
 
 Ordnen Sie jeden Statusabschnitt per Ziehen oder mit den Tasten Auf/Ab um. Sichtbarkeit und Reihenfolge bleiben beim Neuladen erhalten.
 
-Status enthält Tokeninformationen, Yolo-Modus, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
+Status enthält Tokeninformationen, Berechtigungen, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
 
 Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskästchen sind anders: Sie aktivieren Code über alle Projekte dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
 
@@ -83,7 +87,7 @@ Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskäst
 
 Die Timeline hat eine Markierung für jede Antwort, jeden Denkprozess, jedes Werkzeug, jede Komprimierung und jeden Systemkontext, die das Gespräch zeigt, in derselben Reihenfolge. Ihre Markierungen folgen **Nachrichteninhalt**: Werden dort ein Werkzeugtyp, Denkprozesse oder Systemnachrichten ausgeblendet, verschwinden auch ihre Markierungen, außer bei einem Werkzeug mit offener Berechtigung, und **Nichts** blendet alle Werkzeugmarkierungen aus. Sichtbarkeits- und Aufklappeinstellungen ändern nur die Darstellung. Sie entfernen keine gespeicherten Werkzeuge/Denkprozesse und komprimieren keinen Modellkontext. Destruktive Vorgänge siehe [Verlauf und Bereinigung](history.md).
 
-Die Eingabehöhe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtastatur: mindestens 8 % mit 44-Pixel-Untergrenze, höchstens 60 %. Manuelle Höhe wird proportional gemerkt; schmale Breite und langer Text erhöhen diese Grenzen nicht. Eine aufgeklappte Berechtigung/Frage minimiert das Eingabefeld vorübergehend, ohne gespeicherte Höhe oder Entwurf zu ändern. Klappen/erledigen Sie die Anfrage, um Größenänderung fortzusetzen.
+Beim manuellen Ändern der Eingabehöhe zählt die Höhe der Unterhaltung ohne Bildschirmtastatur: mindestens 8 % mit einer Untergrenze von 44 Pixeln, höchstens 60 %. Ein schmales Layout oder langer Text erhöhen diese Grenzen nicht. Bei geöffneter Tastatur kann das Feld vorübergehend kleiner werden, damit Bedienelemente und Nachrichten erreichbar bleiben. Das gespeicherte Höhenverhältnis bleibt dabei unverändert. Eine aufgeklappte Berechtigung/Frage minimiert das Eingabefeld vorübergehend, ohne gespeicherte Höhe oder Entwurf zu ändern. Klappen/erledigen Sie die Anfrage, um Größenänderung fortzusetzen.
 
 ## Benachrichtigungen und Abzeichen {#notifications}
 

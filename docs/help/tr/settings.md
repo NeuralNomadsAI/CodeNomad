@@ -38,6 +38,10 @@ Renklerin okunması zorlaşırsa **Kontrast → Açık** seçin. Yerleşik bir p
 
 **Ayarlar → Genel** bölümündeki **CodeNomad çalışırken bilgisayarı uyanık tut** seçeneği varsayılan olarak kapalıdır. Hiçbir oturum çalışmasa bile yerel bir CodeNomad penceresi açıkken (simge durumuna küçültülmüş olsa bile) sistemin uykuya geçmesini önlemek için açın; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar. Seçenek yalnızca masaüstü uygulamasının yerel pencerelerinde ve Tercihler penceresinde görünür; tarayıcı ve uzak görünümlerde gizlidir.
 
+## Yeni konuşmaların izinleri {#new-conversation-permissions}
+
+CodeNomad’da oluşturduğunuz yeni ana konuşmalar için **Ayarlar → Genel → Yeni konuşmaların izinleri** bölümünden **Özerk** (varsayılan) veya **Denetimli** modunu seçin. Mevcut konuşmalar değişmez. Bir konuşmanın modunu değiştirmek için o konuşmada [Durum → İzinler](permissions.md#conversation-mode) bölümünü açın.
+
 ## Kalıcı ajan belleği {#agent-memory}
 
 CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir.
@@ -70,7 +74,7 @@ Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyi
 
 Tüm Durum bölümlerini sürükleyerek veya Yukarı/Aşağı tuşlarıyla sıralayın. Görünürlük ve sıra yeniden yüklemelerde korunur.
 
-Durum; belirteç bilgilerini, Yolo modunu, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Görüşmenin bir [hedefi](conversations.md#goal) olduğu sürece bu bölümlerin üzerindeki bir hedef satırı onu gösterir; bu satır bir bölüm değildir, gizlenemez ve taşınamaz. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
+Durum; belirteç bilgilerini, **İzinler** bölümünü, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Görüşmenin bir [hedefi](conversations.md#goal) olduğu sürece bu bölümlerin üzerindeki bir hedef satırı onu gösterir; bu satır bir bölüm değildir, gizlenemez ve taşınamaz. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
 
 Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı onay kutuları farklıdır: yapılandırmayı kullanan tüm projelerde kodu etkinleştirir. **Sıfırla** uzantı onayını değiştirmez. Bkz. [Panel uzantıları](extensions.md).
 
@@ -83,7 +87,7 @@ Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı ona
 
 Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, sıkıştırma ve sistem bağlamı için aynı sırayla bir işaretçi bulunur. İşaretçiler **Mesaj içeriği** ayarlarını izler: orada bir araç türünü, akıl yürütmeyi veya sistem mesajlarını gizlemek, bekleyen izni olan araç dışında bunların işaretçilerini de gizler; **Hiçbir şey** tüm araç işaretçilerini gizler. Görünürlük ve genişletme ayarları yalnızca sunumu değiştirir. Saklanan araçları/akıl yürütmeyi kaldırmaz veya model bağlamını sıkıştırmaz. Yıkıcı işlemler için bkz. [Geçmiş ve temizleme](history.md).
 
-İleti düzenleyicisinin yüksekliği ekran klavyesi dahil görünür konuşmayı izler: en az 44 piksel tabanıyla minimum %8, maksimum %60. Elle seçilen yükseklik oran olarak saklanır; dar genişlik ve uzun metin sınırları yükseltmez. Genişletilmiş izin/soru, kayıtlı yüksekliği veya taslağı değiştirmeden düzenleyiciyi geçici küçültür. Yeniden boyutlandırmaya dönmek için isteği daraltın veya sonuçlandırın.
+İleti düzenleyicisinin yüksekliğini elle ayarlarken ekran klavyesi kapalıyken konuşma alanının yüksekliği esas alınır: en az %8 (44 pikselden az olamaz), en çok %60. Dar bir düzen veya uzun metin bu sınırları yükseltmez. Klavye açıldığında kontroller ve mesajlar için yer bırakmak üzere alan geçici olarak küçülebilir; kayıtlı yükseklik oranı değişmez. Genişletilmiş izin/soru, kayıtlı yüksekliği veya taslağı değiştirmeden düzenleyiciyi geçici küçültür. Yeniden boyutlandırmaya dönmek için isteği daraltın veya sonuçlandırın.
 
 ## Bildirimler ve rozetler {#notifications}
 

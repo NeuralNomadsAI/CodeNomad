@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { createEffect, createRoot, createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
@@ -74,14 +74,6 @@ import {
   markPermissionReplied,
 } from "./permission-replies"
 import { clearSettledForms, hasSettledForm, markFormSettled } from "./form-settlements"
-import {
-  clearPermissionAutoAcceptForInstance,
-  isPermissionAutoAcceptEnabled,
-  resolvePermissionAutoAcceptFamilyRoot,
-  setPermissionAutoAcceptEnabled,
-  setPermissionAutoAcceptFamilyRootResolver,
-  togglePermissionAutoAccept,
-} from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { clearInstanceMetadata } from "./instance-metadata"
@@ -124,37 +116,6 @@ import { WorkspaceListReconciliationFence } from "./workspace-list-reconciliatio
 import { usesClientState } from "../lib/runtime-env"
 
 const log = getLogger("api")
-
-setPermissionAutoAcceptFamilyRootResolver((instanceId, sessionId) => {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return sessionId
-  return resolvePermissionAutoAcceptFamilyRoot(sessionId, (id) => instanceSessions.get(id))
-})
-
-// Server is authoritative for Yolo state; mirror toggles (incl. from other
-// clients) arriving over the CodeNomad server event stream into the local
-// projection so the badge/switch stay in sync.
-serverEvents.on("yolo.stateChanged", (event) => {
-  if (event.type !== "yolo.stateChanged") return
-  const { instanceId, sessionId, enabled } = event
-  if (typeof instanceId !== "string" || typeof sessionId !== "string" || typeof enabled !== "boolean") return
-  log.info(`[SSE] Yolo state changed: ${instanceId}:${sessionId} -> ${enabled}`)
-  setPermissionAutoAcceptEnabled(instanceId, sessionId, enabled)
-})
-
-// When the server auto-accepts a permission, clean up the UI queue immediately
-// instead of waiting for the OpenCode permission.replied SSE event (which may
-// be delayed or missed on a flaky connection). This preserves the #424
-// invariant: auto-accept cleanup happens at the queue level, not tied to
-// external event timing.
-serverEvents.on("yolo.autoAccepted", (event) => {
-  if (event.type !== "yolo.autoAccepted") return
-  const { instanceId, permissionId } = event
-  if (typeof instanceId !== "string" || typeof permissionId !== "string") return
-  markPermissionReplied(instanceId, permissionId)
-  removePermissionFromQueue(instanceId, permissionId)
-  removePermissionV2(instanceId, permissionId)
-})
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 
@@ -274,6 +235,9 @@ const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
 const pendingRequestSyncEpochs = new Map<string, number>()
 const successfulPendingRecoveries = new Map<string, number>()
+// Directories the last completed untargeted recovery scanned, per instance.
+// Activation only accelerates a scan; the liveness sweep stays the backstop.
+const lastScannedRequestDirectories = new Map<string, Set<string>>()
 const pendingPermissionMutationEpochs = new Map<string, number>()
 const pendingFormMutationEpochs = new Map<string, number>()
 const pendingRequestSyncGenerations = new Map<string, number>()
@@ -349,11 +313,17 @@ const deferredPendingDiscovery = new Set<string>()
 let pendingDiscoveryResume: Promise<void> | undefined
 let nextPendingRequestSyncGeneration = 0
 
+// A client compaction hold cannot outlast the daemon's own bounded compaction, and
+// the backend's loaded-only deferral remains the authoritative fence: an aged-out
+// hold only risks a read the server will 503-defer on its own.
+const PENDING_COMPACTION_HOLD_MAX_MS = 10 * 60_000
+
 function isPendingDiscoveryCompacting(): boolean {
   // ponytail: one daemon per backend; only observed compactions are known here.
+  const now = Date.now()
   for (const instance of instances().values()) {
     const tracked = pendingCompactions.get(instance.id)
-    if (Array.from(tracked?.values() ?? []).some((entry) => entry.active)) return true
+    if (Array.from(tracked?.values() ?? []).some((entry) => entry.active && now - entry.created <= PENDING_COMPACTION_HOLD_MAX_MS)) return true
     if (!instance.client || instance.status !== "ready") continue
     if (Array.from(sessions().get(instance.id)?.values() ?? []).some((session) => session.status === "compacting" && !tracked?.has(session.id))) return true
   }
@@ -1100,6 +1070,9 @@ async function runPendingRequestSync(
       if (!targetLocations && isCurrent()) {
         successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
         markPendingRecovery(instanceId, false)
+        if (coverage?.supported) lastScannedRequestDirectories.set(instanceId, new Set(coverage.directories
+          .filter((entry) => entry.status !== "excluded")
+          .map((entry) => normalizeWorkspacePath(entry.directory))))
         if (notices && coverage?.supported) {
           const covered = coverage.directories.map(entry => entry.directory)
           notices.release(covered)
@@ -1208,6 +1181,44 @@ function schedulePendingRequestReconciliation(instanceId: string, location?: Req
   })
 }
 
+/** The session someone just opened must not wait for the slow liveness sweep:
+ * when the last completed recovery never covered the session's directory, a
+ * fresh untargeted scan starts right away. Read-only and SSE-independent. */
+function requestPendingRequestScanForActiveSession(instanceId: string, sessionId: string | null | undefined): void {
+  if (!sessionId || sessionId === "info") return
+  const instance = instances().get(instanceId)
+  if (!instance?.client || instance.status !== "ready") return
+  const directory = sessions().get(instanceId)?.get(sessionId)?.location?.directory
+  if (!directory) return
+  const needed = () => {
+    const scanned = lastScannedRequestDirectories.get(instanceId)
+    return !scanned || !scanned.has(normalizeWorkspacePath(directory))
+  }
+  if (!needed()) return
+  const run = () => {
+    if (!needed()) return
+    void syncPendingRequests(instanceId).catch((error) => {
+      log.warn("Failed to sync pending requests after session activation", { instanceId, error })
+    })
+  }
+  // A scan started before this session loaded may finish without its directory;
+  // re-check afterwards instead of superseding the in-flight read.
+  const inFlight = pendingRequestSyncs.get(instanceId)
+  if (inFlight && !inFlight.targeted) void inFlight.promise.then(run, run)
+  else run()
+}
+
+createRoot(() => {
+  let previous = new Map<string, string | null | undefined>()
+  createEffect(() => {
+    const current = new Map(activeSessionId())
+    for (const [instanceId, sessionId] of current) {
+      if (previous.get(instanceId) !== sessionId) requestPendingRequestScanForActiveSession(instanceId, sessionId)
+    }
+    previous = current
+  })
+})
+
 async function runPendingRequestLiveness(instanceId: string): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
@@ -1292,14 +1303,16 @@ async function hydrateInstanceData(instanceId: string, options?: {
           workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
         }
       : startInstanceSessionHydration(instanceId, options?.force)
-    // Composer catalogues must not wait for the complete historical inventory.
-    await Promise.all([
+    // Pending recovery needs only the session inventory and worktree metadata;
+    // catalogue and config reads must not delay the first interruption scan.
+    const pendingRecovery = Promise.all([
       hydration.sessions,
       hydration.workspaceMetadata,
-      refreshSessionCatalog(instanceId, options?.force),
+    ]).then(() => syncPendingRequests(instanceId))
+    await Promise.all([
+      pendingRecovery,
+      refreshSessionCatalog(instanceId, options?.force).then(() => ensureInstanceConfigLoaded(instanceId)),
     ])
-    await ensureInstanceConfigLoaded(instanceId)
-    await syncPendingRequests(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
     if (options?.propagateErrors) throw error
@@ -1310,6 +1323,7 @@ function clearReloadableInstanceState(instanceId: string): void {
   clearCacheForInstance(instanceId)
   clearCommands(instanceId)
   clearInstanceMetadata(instanceId)
+  lastScannedRequestDirectories.delete(instanceId)
   // Recovery can be unavailable; only authoritative coverage or settlement
   // removes known interruptions, not a catalogue/location rehydration.
   markPendingRecovery(instanceId, true)
@@ -1456,8 +1470,6 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
     case "workspace.error":
       upsertWorkspace(event.workspace)
       showWorkspaceLaunchError(event.workspace)
-      clearPermissionAutoAcceptForInstance(event.workspace.id)
-      clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
     case "workspace.stopped": {
       const instance = instances().get(event.workspaceId)
@@ -1664,12 +1676,11 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   clearPermissionQueue(id)
   clearRepliedPermissions(id)
   clearSettledForms(id)
+  lastScannedRequestDirectories.delete(id)
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
   destroyOpenCodeData(id)
   cancelTranscriptProjections(id)
-  clearPermissionAutoAcceptForInstance(id)
-  clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
   initialSessionHydrations.delete(id)
   initialWorkspaceMetadataHydrations.delete(id)
@@ -2161,61 +2172,6 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
   }
 }
 
-function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
-  const wasEnabled = isPermissionAutoAcceptEnabled(instanceId, sessionId)
-  togglePermissionAutoAccept(instanceId, sessionId)
-  void serverApi
-    .toggleYolo(instanceId, sessionId)
-    .then((state) => {
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
-    })
-    .catch((error) => {
-      log.warn("Failed to toggle Yolo on server", { instanceId, sessionId, error })
-      // revert to the pre-toggle state (not a naive flip, which can be wrong
-      // if an SSE yolo.stateChanged arrived between toggle and catch)
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, wasEnabled)
-    })
-}
-
-/**
- * Sessions whose Yolo state has been backfilled from the server. The server is
- * authoritative but only pushes changes (`yolo.stateChanged`); a freshly
- * connected client must fetch the effective state for a session so the badge
- * matches reality from the start. De-duped per session and reset on SSE
- * reconnect so state re-syncs after a server restart.
- */
-const syncedYoloSessions = new Set<string>()
-
-export function ensureYoloStateSynced(instanceId: string, sessionId: string): void {
-  if (!instanceId || !sessionId || sessionId === "info") return
-  const key = `${instanceId}:${sessionId}`
-  if (syncedYoloSessions.has(key)) return
-  syncedYoloSessions.add(key)
-  void serverApi
-    .getYoloState(instanceId, sessionId)
-    .then((state) => {
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
-    })
-    .catch((error) => {
-      // allow retry on next activation (e.g. instance not ready yet)
-      syncedYoloSessions.delete(key)
-      log.warn("Failed to sync Yolo state", { instanceId, sessionId, error })
-    })
-}
-
-serverEvents.onOpen(() => {
-  syncedYoloSessions.clear()
-})
-
-function clearSyncedYoloSessionsForInstance(instanceId: string): void {
-  const prefix = `${instanceId}:`
-  for (const key of Array.from(syncedYoloSessions)) {
-    if (key.startsWith(prefix)) {
-      syncedYoloSessions.delete(key)
-    }
-  }
-}
-
 function clearPermissionQueue(instanceId: string): void {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   permissionRequestLocations.delete(instanceId)
@@ -2599,7 +2555,6 @@ export {
   removePermissionFromQueue,
   markPermissionReplied,
   hasRepliedPermission,
-  togglePermissionAutoAcceptForSession,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,

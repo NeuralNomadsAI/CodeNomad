@@ -127,7 +127,7 @@ Le drapeau indique l’état de la Mission ; son chevron porte l’attention de 
 | Couleur et forme | Sens |
 | --- | --- |
 | Rouge | Une question ou permission attend votre réponse. Sélectionnez la Mission ou la tâche concernée pour ouvrir le panneau d’interruption. |
-| Jaune pulsant | Une activité native a été observée. |
+| Jaune | Une activité native a été observée. |
 | Symbole pause orange | En pause. |
 | Triangle d’avertissement orange | Interrompue, avec une action pour continuer. |
 | Vert | Une Mission, tâche ou exécution programmée réussie attend votre consultation dans cette fenêtre. |

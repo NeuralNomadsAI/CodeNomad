@@ -14,6 +14,9 @@ const REGISTRATION_LOCK_TIMEOUT: Duration = Duration::from_millis(250);
 const REGISTRATION_LOCK_RETRY_DELAY: Duration = Duration::from_millis(10);
 pub(super) const RUNNING_MARKER_PREFIX: &str = "client-state.running.";
 pub(super) const RUNNING_MARKER_SUFFIX: &str = ".lock";
+/// Tells Electron this marker belongs to an election-aware host, never a legacy one.
+/// The marker is locked, so the flag lives in its name.
+const CROSS_HOST_MARKER: &str = ".cross-host";
 
 static NEXT_RUNNING_MARKER_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -302,7 +305,7 @@ fn create_running_marker(
             .map(|registration_id| format!(".acknowledges.{registration_id}"))
             .unwrap_or_default();
         let path = app_data_dir.join(format!(
-            "{RUNNING_MARKER_PREFIX}{}.{marker_id}{acknowledgement}{RUNNING_MARKER_SUFFIX}",
+            "{RUNNING_MARKER_PREFIX}{}.{marker_id}{CROSS_HOST_MARKER}{acknowledgement}{RUNNING_MARKER_SUFFIX}",
             std::process::id()
         ));
         match marker.persist_noclobber(&path) {
@@ -461,7 +464,9 @@ mod tests {
             .file_name()
             .unwrap()
             .to_string_lossy();
-        assert!(marker_name.contains(&format!(".acknowledges.{registration_id}")));
+        assert!(marker_name.contains(&format!(
+            "{CROSS_HOST_MARKER}.acknowledges.{registration_id}"
+        )));
 
         FileExt::unlock(&owner).unwrap();
         registration.finish().release_locks();

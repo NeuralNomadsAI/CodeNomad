@@ -112,7 +112,7 @@ Más entradas y tareas se cargan automáticamente al acercarse al final. Si fall
 
 ### Colores y estados {#status-colours}
 
-La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo pulsante indica trabajo observado. Un símbolo de pausa naranja indica pausa; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
+La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo indica trabajo observado. Un símbolo de pausa naranja indica pausa; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
 
 Un icono de acento con una pequeña línea neutra estática debajo significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados, las programaciones detenidas y **Estado sin confirmar** son neutros; consulta el texto de estado.
 

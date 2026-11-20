@@ -10,10 +10,8 @@ import type { ServiceConnection } from "../workspaces/opencode-service"
 import { nativeEventConnections } from "../workspaces/opencode-service"
 import type { InstanceStreamEvent, PermissionReceipt } from "../api-types"
 import { EventBus } from "../events/bus"
-import { PermissionReceiptStore, permissionSnapshot } from "./receipt-store"
+import { PermissionReceiptStore, permissionSnapshot, receiptHash } from "./receipt-store"
 import { PermissionReceipts } from "./receipts"
-import { createOpencodePermissionReplier } from "./opencode-replier"
-import { AutoAcceptManager } from "./auto-accept-manager"
 import { registerPermissionReceiptRoutes } from "../server/routes/permission-receipts"
 import { registerInstanceProxyRoutes } from "../server/http-server"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
@@ -243,23 +241,15 @@ test("unanchored native decisions survive, pending snapshots are not receipts, d
   } finally { await f.close() }
 })
 
-test("Yolo is confirmed only on success; a failed transport creates no receipt and never replays", async () => {
+test("historical automatic provenance remains readable without sending a permission reply", async () => {
   const f = await fixture()
   try {
-    const replier = createOpencodePermissionReplier({ workspaceManager: f.manager, permissionReceipts: f.receipts })
-    f.state.failure = true
-    await assert.rejects(replier({ instanceId: "w", sessionId: "s", permissionId: "failed" }), /after dispatch/)
-    assert.equal(f.state.replies, 1)
-    assert.equal((await f.receipts.list("w", "s", { messageId: "m" })).receipts.length, 0)
-    f.state.failure = false
-    await replier({ instanceId: "w", sessionId: "s", permissionId: "accepted" })
-    assert.equal(f.state.replies, 2)
-    const [receipt] = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
+    const scope = JSON.stringify([`host:${process.platform}`, "/native/config", receiptHash(JSON.stringify(["basic", "opencode", "fixture-only"]))])
+    await f.store.resolve(scope, { ...permissionSnapshot(pending("historic"))!, decision: "once", origin: "yolo", resolvedAt: 123 })
+    const reloaded = new PermissionReceipts(new PermissionReceiptStore(f.root), f.manager, f.bus, logger)
+    const [receipt] = (await reloaded.list("w", "s", { messageId: "m" })).receipts
     assert.equal(receipt.origin, "yolo")
-    assert.equal(receipt.reason, undefined)
-    f.state.owned = false
-    await assert.rejects(replier({ instanceId: "w", sessionId: "s", permissionId: "foreign" }), /does not belong/)
-    assert.equal(f.state.replies, 2)
+    assert.equal(f.state.replies, 0)
   } finally { await f.close() }
 })
 
@@ -296,34 +286,6 @@ test("shutdown cancels every recovery read and fences late ownership results", {
   }
 })
 
-test("Yolo stop drains dispatched replies before receipt and workspace shutdown", async () => {
-  const f = await fixture()
-  let dispatched!: () => void
-  let release!: () => void
-  const started = new Promise<void>(resolve => { dispatched = resolve })
-  Object.assign(f.connection.client.permission, { reply: async () => {
-    dispatched()
-    await new Promise<void>(resolve => { release = resolve })
-  } })
-  const yolo = new AutoAcceptManager({ eventBus: f.bus, logger,
-    replier: createOpencodePermissionReplier({ workspaceManager: f.manager, permissionReceipts: f.receipts }) })
-  try {
-    yolo.handleInstanceEvent("w", { type: "session.created", data: { id: "s" } })
-    yolo.toggle("w", "s")
-    yolo.handleInstanceEvent("w", { type: "permission.asked", data: pending() })
-    await started
-    let stopped = false
-    const stopping = yolo.stop().then(() => { stopped = true })
-    await new Promise<void>(resolve => setImmediate(resolve))
-    assert.equal(stopped, false)
-    release()
-    await stopping
-    await f.receipts.stop()
-    const rows = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
-    assert.equal(rows[0]?.origin, "yolo")
-  } finally { release?.(); await yolo.stop(); await f.close() }
-})
-
 test("route validates queries and fresh session ownership, returns bounded continuation pages", async () => {
   const f = await fixture()
   const app = Fastify()
@@ -358,8 +320,7 @@ test("failed disk writes publish no success; snapshot failure prevents a native 
   try {
     await rm(f.root, { recursive: true })
     await writeFile(f.root, "not a directory")
-    const replier = createOpencodePermissionReplier({ workspaceManager: f.manager, permissionReceipts: f.receipts })
-    await assert.rejects(replier({ instanceId: "w", sessionId: "s", permissionId: "p" }))
+    await assert.rejects(f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad"))
     assert.equal(f.state.replies, 0)
     assert.equal(f.changed.length, 0)
   } finally { await f.close() }
@@ -452,25 +413,6 @@ test("confirmed native success is not turned into retryable failure when receipt
     await confirm()
     assert.equal(f.changed.length, 0)
   } finally { await f.close() }
-})
-
-test("Yolo never replays a dispatched failure on duplicate events or toggles", async () => {
-  const bus = new EventBus()
-  let calls = 0
-  const manager = new AutoAcceptManager({ eventBus: bus, logger, replier: async () => {
-    calls++; throw Object.assign(new Error("ambiguous transport"), { retryable: false })
-  } })
-  manager.start()
-  try {
-    manager.handleInstanceEvent("w", { type: "session.created", data: { sessionID: "s" } })
-    manager.toggle("w", "s")
-    manager.handleInstanceEvent("w", { type: "permission.asked", data: pending() })
-    await new Promise<void>(resolve => setImmediate(resolve))
-    manager.handleInstanceEvent("w", { type: "permission.asked", data: pending() })
-    manager.toggle("w", "s"); manager.toggle("w", "s")
-    await new Promise<void>(resolve => setImmediate(resolve))
-    assert.equal(calls, 1)
-  } finally { manager.stop() }
 })
 
 test("store bounds request fields and page IO; native namespaces do not collide", async () => {

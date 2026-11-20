@@ -69,7 +69,7 @@ the bearer `Authorization` header on their provider WebSockets.
   execution, settlement or a fresh idle observation. While browsing history,
   `get_last_reply` and `get_recent_errors` read a bounded recent page without
   moving the transcript.
-  Normal permission, question and Yolo handling apply. A call ID is
+  The conversation's permission mode and normal question handling apply. A call ID is
   admitted once per voice session. Cancellation and target changes fence queued
   admission and late results; an unconfirmed send stays unconfirmed.
 - The two voices are transcribed in memory until the window is dismissed.

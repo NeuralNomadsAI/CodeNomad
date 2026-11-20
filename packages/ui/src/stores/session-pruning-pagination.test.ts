@@ -39,9 +39,7 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
     } as Session
     addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
     setSessions(new Map([[instanceId, new Map([[sessionId, session]])]]))
-    const savedYolo = serverApi.getYoloState
     const savedPrune = serverApi.pruneSessionHistory
-    serverApi.getYoloState = async () => ({ enabled: false }) as any
     const messages: SessionMessageInfo[] = Array.from({ length: 400 }, (_, index) => ({
       id: `m${String(index).padStart(3, "0")}`, type: "assistant", agent: "build",
       model: { providerID: "p", id: "model" }, time: { created: index + 1, completed: index + 2 },
@@ -165,7 +163,6 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
       setSessions(new Map())
       removeInstance(instanceId, { authoritative: false })
       sdkManager.destroyClientsForInstance(instanceId)
-      serverApi.getYoloState = savedYolo
       serverApi.pruneSessionHistory = savedPrune
     }
   })

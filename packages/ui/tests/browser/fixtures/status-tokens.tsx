@@ -62,7 +62,7 @@ const [sessionId, select] = createSignal("parent")
 const [expanded, setExpanded] = createSignal<string[]>([])
 const [width, setWidth] = createSignal(460)
 const [customization, setCustomization] = createSignal({ ...DEFAULT_RIGHT_PANEL_CUSTOMIZATION,
-  hiddenStatusSectionIds: ["yolo-mode", "provider-usage", "background-processes", "mcp", "plugins"] })
+  hiddenStatusSectionIds: ["permissions", "provider-usage", "background-processes", "mcp", "plugins"] })
 const Fixture = () => {
   const { t } = useI18n()
   return <div style={{ display: "flex", gap: "24px", padding: "16px", "align-items": "start" }}>

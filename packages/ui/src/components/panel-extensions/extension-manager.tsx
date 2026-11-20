@@ -82,7 +82,7 @@ export function ExtensionManager(props: { controller: PanelExtensionsController 
         value={query()} onInput={event => setQuery(event.currentTarget.value)} />
       <button type="button" class="window-icon-button" title={t("instanceShell.rightPanel.actions.refresh")} aria-label={t("instanceShell.rightPanel.actions.refresh")}
         disabled={loading() || busy()} onClick={() => { void load(true); void props.controller.refresh() }}>
-        <RefreshCw class={loading() ? "animate-spin" : ""} />
+        <span class="inline-flex" classList={{ "animate-spin": loading() }}><RefreshCw /></span>
       </button>
       <button class="window-icon-button panel-extension-zip" type="button" title={t("panelExtensions.install")} aria-label={t("panelExtensions.install")}
         disabled={busy() || !props.controller.verified()} onClick={() => picker.click()}><FileArchive /></button>

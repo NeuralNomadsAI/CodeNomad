@@ -570,6 +570,85 @@ describe("partitioned client state", () => {
     assert.equal(commits.length, 1)
   })
 
+  it("skips an unchanged debounced commit, clears a stale error and republishes on flush", async (t) => {
+    const encoded = await encodeClientSnapshotV2(snapshot("restored"))
+    const commits: any[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => { commits.push(value); return true },
+      clearClientState: async () => true, setClientStateRestoreEnabled: async () => true,
+    })
+    const debounced = async (sidecar: string) => {
+      state.updateRestorableSession(session(sidecar))
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    }
+    for (const sidecar of ["first", "first", "first", "second"]) await debounced(sidecar)
+    assert.deepEqual(commits.map((commit) => commit.snapshot.revision), [2, 5])
+    // A save that fails before committing, then a return to the committed graph,
+    // leaves no stale error for the next flush.
+    const digest = t.mock.method(crypto.subtle, "digest", async () => { throw new Error("digest failed") })
+    await debounced("broken")
+    digest.mock.restore()
+    await debounced("second")
+    assert.equal(commits.length, 2)
+    // The skipped save left the host copy unverified: the next flush republishes it,
+    // so a lost host copy heals, and a further flush has nothing left to write.
+    await state.flushClientState()
+    assert.equal(commits.length, 3)
+    await state.flushClientState()
+    assert.equal(commits.length, 3)
+    // An explicit flush of a fresh capture republishes even an unchanged graph.
+    state.updateRestorableSession(session("second"))
+    await state.flushClientState()
+    assert.equal(commits.length, 4)
+    // Clearing forgets the committed graph, so the same state is written again.
+    await state.clearRestoredClientState()
+    await state.setRestorePreviousStateEnabled(true)
+    await debounced("second")
+    assert.equal(commits.length, 5)
+  })
+
+  it("republishes on the next flush after a failed clear", async () => {
+    const encoded = await encodeClientSnapshotV2(snapshot("restored"))
+    const commits: any[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => { commits.push(value); return true },
+      clearClientState: async () => { throw new Error("host unavailable") },
+    })
+    state.updateRestorableSession(session("kept"))
+    await state.flushClientState()
+    await assert.rejects(state.clearRestoredClientState(), /host unavailable/)
+    await state.flushClientState()
+    assert.equal(commits.length, 2)
+  })
+
+  it("forgets a commit recorded by an in-flight save when the clear then fails", async () => {
+    const encoded = await encodeClientSnapshotV2(snapshot("restored"))
+    const commits: any[] = []
+    let gate: ReturnType<typeof deferred<void>> | null = null
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => { await gate?.promise; commits.push(value); return true },
+      clearClientState: async () => { throw new Error("host unavailable") },
+    })
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+    state.updateRestorableSession(session("a"))
+    await state.flushClientState()
+    gate = deferred<void>()
+    state.updateRestorableSession(session("b"))
+    await wait(400)
+    const clear = state.clearRestoredClientState()
+    gate.resolve()
+    await assert.rejects(clear, /host unavailable/)
+    state.updateRestorableSession(session("b"))
+    await wait(400)
+    assert.equal(commits.length, 3, "the identical capture rewrites the unknown host copy")
+  })
+
   it("commits one atomic graph without a monolithic save or automatic load rewrite", async () => {
     const encoded = await encodeClientSnapshotV2(snapshot("restored", { [layoutKey]: "380" }))
     const commits: any[] = []; let monolithicSaves = 0

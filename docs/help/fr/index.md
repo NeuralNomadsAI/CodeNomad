@@ -55,7 +55,7 @@ Pour les limites précises, consultez [aperçus navigateur et SideCars](browser-
 | --- | --- |
 | Onglet de projet / espace de travail / instance | Connexion CodeNomad à un dossier explicitement ouvert ; plusieurs onglets peuvent utiliser le service partagé. |
 | Conversation / session | Historique et exécution natifs OpenCode associés à leur répertoire. |
-| Famille | Conversation et ses sous-sessions récursives ; intervient dans les déplacements, l’activité, Yolo et les commandes des Missions. |
+| Famille | Conversation et ses sous-sessions récursives ; intervient dans les déplacements, l’activité et les commandes des Missions. |
 | Worktree | Copie de travail détenue d’un dépôt, sélectionnée pour la navigation ou l’emplacement des sessions. La parcourir ne déplace pas une conversation. |
 | Location | Contexte d’exécution natif OpenCode propre à un répertoire ; fermer un onglet de projet ferme uniquement le projet dans CodeNomad, sans décharger la Location native. |
 | Backend CodeNomad | Serveur fournissant l’espace de travail, Git, l’authentification et la connectivité des clients. Son compte et son environnement déterminent l’accès au système de fichiers du backend. |
@@ -72,7 +72,7 @@ La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce 
 | Installer ou servir l’espace de travail | [Installation](install.md), [Référence serveur](server.md), [Réseau et TLS](remote-access.md) |
 | Travailler avec plusieurs copies de travail et conversations | [Projets](projects.md), [Conversations](conversations.md), [Fichiers](files.md) |
 | Rechercher dans l’historique ou le nettoyer sans risque | [Historique](history.md) |
-| Répondre aux questions et autorisations natives | [Autorisations](permissions.md) |
+| Régler les permissions d’une conversation ou répondre aux demandes | [Modes de permissions](permissions.md#conversation-mode), [Questions et autorisations](permissions.md) |
 | Coordonner un travail délimité ou programmé | [Missions](missions.md) |
 | Configurer l’exécution et les intégrations | [OpenCode](opencode.md), [Fournisseurs](providers.md), [Intégrations](integrations.md) |
 | Connecter un autre appareil | [Contrôle à distance](remote-control.md), [Sécurité](security.md), [Mobile](mobile.md) |

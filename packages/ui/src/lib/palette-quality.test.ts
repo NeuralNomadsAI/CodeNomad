@@ -81,7 +81,7 @@ describe("palette quality", () => {
           assert.ok(contrastRatio(c[key], bg) >= minimum, `${key} on ${bg}`)
         }
       }
-      for (const key of ["accentPrimary", "statusSuccess", "statusWarning", "statusError", "userAccent", "agentAccent", "compactionAccent", "yoloAccent"] as const) {
+      for (const key of ["accentPrimary", "statusSuccess", "statusWarning", "statusError", "userAccent", "agentAccent", "compactionAccent"] as const) {
         for (const bg of [c.surfaceBase, c.surfaceSecondary]) {
           if (savedEmphasisPairs.has(`${scheme.id}:${key}:${c[key]}:${bg}`)) continue
           assert.ok(contrastRatio(c[key], bg) >= 3, `${scheme.id}: ${key} on ${bg}: ${contrastRatio(c[key], bg)}`)
@@ -112,7 +112,7 @@ describe("palette quality", () => {
         assert.equal(c.agentAccent, "#D97706")
         return
       }
-      const otherRoles: (keyof ColorSchemeColors)[] = ["accentPrimary", "statusSuccess", "statusWarning", "statusError", "compactionAccent", "yoloAccent"]
+      const otherRoles: (keyof ColorSchemeColors)[] = ["accentPrimary", "statusSuccess", "statusWarning", "statusError", "compactionAccent"]
       assert.ok(distance(c.userAccent, c.agentAccent) >= 12)
       for (const role of ["userAccent", "agentAccent"] as const) {
         for (const other of otherRoles) assert.ok(distance(c[role], c[other]) >= 7, `${role}/${other}: ${distance(c[role], c[other])}`)

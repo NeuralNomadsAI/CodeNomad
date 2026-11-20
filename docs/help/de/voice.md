@@ -78,7 +78,7 @@ Wählen Sie in **Gespräch** eine **Gesprächs-Engine**:
 
 Wird der Anbieter bei geöffnetem Einwilligungsdialog nicht mehr verfügbar, öffnen Sie über **Spracheinstellungen** die Karte für Gespräche.
 
-Das Sprachmodell kann den Status der beim Start festgelegten Sitzung, die letzte sichtbare Antwort und aktuelle Fehler lesen. Es hat keinen Dateizugriff. Wenn Sie es bitten, eine Anfrage an den Agenten zu senden, sendet es sie direkt als Nutzernachricht, ohne Bildschirmbestätigung. Berechtigungen, Rückfragen und die Yolo-Einstellung gelten wie gewohnt.
+Das Sprachmodell kann den Status der beim Start festgelegten Sitzung, die letzte sichtbare Antwort und aktuelle Fehler lesen. Es hat keinen Dateizugriff. Wenn Sie es bitten, eine Anfrage an den Agenten zu senden, sendet es sie direkt als Nutzernachricht, ohne Bildschirmbestätigung. Der [Berechtigungsmodus der Unterhaltung](permissions.md#conversation-mode) und Rückfragen gelten wie gewohnt.
 
 Der Server erlaubt gleichzeitig ein Live-Gespräch pro angemeldetem Nutzer oder bei Fernsteuerung pro gekoppeltem Gerät. **Stoppen** beendet die Audioübertragung und lässt die Abschrift offen. Sie bleibt bis zum Schließen des Fensters im Arbeitsspeicher; gesendete Anfragen bleiben in der Sitzung. Das Gespräch endet auch nach zwei Minuten ohne Sprache, nach insgesamt acht Minuten, beim Wechsel der Zielsitzung, beim Schließen des Fensters oder bei Verbindungsabbruch. Weder Wiederverbindung noch Anbieterwechsel erfolgen automatisch.
 

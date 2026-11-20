@@ -145,7 +145,7 @@ export const SideCarsSettingsSection: Component = () => {
           <div class="flex justify-end">
             <button type="button" class="selector-button selector-button-primary w-auto" disabled={creating()} onClick={() => void handleCreate()}>
               <Show when={creating()} fallback={<Plus class="w-4 h-4" />}>
-                <Loader2 class="w-4 h-4 animate-spin" />
+                <span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" /></span>
               </Show>
               <span>{t("sidecars.form.add")}</span>
             </button>

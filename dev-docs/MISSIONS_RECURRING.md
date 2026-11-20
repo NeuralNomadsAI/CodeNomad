@@ -323,7 +323,7 @@ stale, blocked or unresolved observation keeps **State unconfirmed**. Successful
 attention and exact passage acknowledgement follow the shared marks contract in
 `MISSIONS.md` (Agent conventions): accent icon with a static neutral underline for
 confirmed waiting, accent alone for prepared, orange Pause or warning triangle for
-pause/interruption, yellow pulse during a passage and green for a new successful
+pause/interruption, yellow during a passage and green for a new successful
 passage awaiting review. Explicit attentive selection or **Mark as read** acknowledges
 that exact passage and returns an armed schedule to waiting. The context menu captures
 its passage identity when opened; a result arriving while it is open stays unread.
@@ -1001,10 +1001,10 @@ poses as a cookie session. When the mark cannot be prepared before forwarding
 (no authenticated principal, plugin/binding unavailable, revocation or a
 session move), the answer falls back to the ordinary reply without a mark; the
 user is never blocked from answering. The human-answer header alone (automation,
-Yolo, SDK) never mints a mark. The dock sends `x-codenomad-human-answer` only for a
+SDK) never mints a mark. The dock sends `x-codenomad-human-answer` only for a
 real pointer click or submit keydown on that exact question, never for
 `element.click()`, `requestSubmit()`, synthetic events, developer automation,
-Auto/Yolo or SDK calls (`tests/browser/interruption-dock.test.ts`,
+automatic or SDK calls (`tests/browser/interruption-dock.test.ts`,
 `automation-input.test.ts`). The input captures a one-use token bound to the exact
 request, schema and answer (`lib/form-answer-interaction.ts`); it expires with that
 input task and is consumed at the SDK send in `stores/instances.ts`. Only a dispatched mark reply with a lost outcome is

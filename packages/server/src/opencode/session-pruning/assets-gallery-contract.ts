@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { assetTargetSchema, assetReadResultSchema } from "./assets-contract"
+import { sessionPermissionRules } from "../../permissions/session-mode-rules"
 
 // Fixed gallery methods over image `read` parts of one session (dev-docs/SESSION_PRUNING_RPC.md#image-gallery).
 const Id = z.string().min(1).max(256)
@@ -13,6 +14,7 @@ export const imageReferenceInputSchema = z.object({ sessionID: Id, target: z.uni
 export const imagesConversationInputSchema = z.object({ mode: z.enum(["lookup", "open", "new"]), title: z.string().min(1).max(256).optional(),
   agent: z.string().min(1).max(256).optional(),
   model: z.object({ providerID: Id, id: Id, variant: z.string().min(1).max(256).optional() }).strict().optional() }).strict()
+export const imagesConversationNativeInputSchema = imagesConversationInputSchema.extend({ permissions: sessionPermissionRules.optional() }).strict()
 
 const blocked = z.object({ status: z.literal("blocked"), reason: z.string().max(80) }).strict()
 const annotation = { prompt: z.string().max(8192).optional(), promptTruncated: z.literal(true).optional(), model: z.string().max(256).optional() }
@@ -37,4 +39,5 @@ export type ImagesResult = z.infer<typeof imagesResultSchema>
 export type GalleryEntry = Extract<ImagesResult, { status: "page" }>["entries"][number]
 export type ImageReferenceResult = z.infer<typeof imageReferenceResultSchema>
 export type ImagesConversationInput = z.infer<typeof imagesConversationInputSchema>
+export type ImagesConversationNativeInput = z.infer<typeof imagesConversationNativeInputSchema>
 export type ImagesConversationResult = z.infer<typeof imagesConversationResultSchema>

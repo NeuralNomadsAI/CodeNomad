@@ -20,6 +20,7 @@ import { MISSION_SCHEMA_VERSION, type MissionEvent, type MissionJsonValue, type 
 import { parseMissionEvent } from "../missions/journal"
 import { parseMissionCreationDefaults, missionCreationSelection } from "../missions/creation-defaults"
 import { missionPausedInstruction } from "../missions/lifecycle-model"
+import { sessionPermissionRules } from "../permissions/session-mode-rules"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { nativeDocumentID } from "../missions/launch-policy"
 import { executionSchema, parseExecution } from "../missions/execution"
@@ -869,7 +870,7 @@ const reportSchema = {
     summary: { type: "string", minLength: 1, maxLength: 20_000 },
     evidence: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
     next: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
-    artifact: { description: "Optional structured playbook evidence. Required for completed Debugging tasks and Compare comparator reports. Compare uses a version 1 comparison with completed model-a/model-b runRefs, criterion scores for both, evidence and verdict a, b, equivalent or inconclusive; run roles return ordinary output without artifacts. A completed Wayfinder decision readout passes your own decision ({kind: decision, decidedBy: coordinator, question, decision, rationale}), or omits the artifact once the human answered a question ending with the task's questionTag and naming no other decision (when several answers qualify, pass the one mission.inspect({ taskKey }) lists, unchanged)." },
+    artifact: { description: "Optional structured playbook evidence. Required for completed Debugging tasks and Compare comparator reports. For a completed Debugging final report before any task is declared, provide the actual checks in evidence and use {kind: \"no-change\"} if no change is needed or {kind: \"verified-completion\"} if the objective was met without debugging. Compare uses a version 1 comparison with completed model-a/model-b runRefs, criterion scores for both, evidence and verdict a, b, equivalent or inconclusive; run roles return ordinary output without artifacts. A completed Wayfinder decision readout passes your own decision ({kind: decision, decidedBy: coordinator, question, decision, rationale}), or omits the artifact once the human answered a question ending with the task's questionTag and naming no other decision (when several answers qualify, pass the one mission.inspect({ taskKey }) lists, unchanged)." },
     final: { type: "boolean", description: "Coordinator-only terminal mission report. A one-time mission finishes only as completed; when nothing can proceed without the human, ask them with the native question tool instead of finishing." },
   },
   required: ["outcome", "summary"],
@@ -1013,6 +1014,7 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
   if (value.prepared !== undefined && typeof value.prepared !== "boolean") throw new Error("prepared must be boolean")
   if (value.startOnCreation !== undefined && typeof value.startOnCreation !== "boolean") throw new Error("startOnCreation must be boolean")
   return {
+    ...(value.permissions === undefined ? {} : { permissions: sessionPermissionRules.parse(value.permissions) }),
     ...(value.prepared === undefined ? {} : { prepared: value.prepared as boolean }),
     ...(value.startOnCreation === undefined ? {} : { startOnCreation: value.startOnCreation as boolean }),
     ...(value.preparationOptions === undefined ? {} : { preparationOptions: missionPreparationOptionsSchema.strict().parse(value.preparationOptions) }),

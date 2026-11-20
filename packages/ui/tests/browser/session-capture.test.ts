@@ -66,11 +66,14 @@ test("capture defers only busy usage through both real-store effects and keeps f
         page.evaluate(([field, id, sessionId]) => (window as any).fixture.change(field, id, sessionId), [field, id, sessionId])
       const usage = (id = "first", sessionId = "parent") =>
         page.evaluate(([id, sessionId]) => (window as any).fixture.usage(id, sessionId), [id, sessionId])
-      const mutate = async (path: string, value: unknown) => {
-        const before = await count()
+      // A checkpoint is a capture; it writes natively only when persisted content changed.
+      const captures = () => page.evaluate(() => (window as any).fixture.captures())
+      const mutate = async (path: string, value: unknown, writes = 1) => {
+        const [beforeCaptures, beforeWrites] = [await captures(), await count()]
         await page.evaluate(([path, value]) => (window as any).fixture.mutate(path, value), [path, value])
         await settle()
-        assert.equal(await count(), before + 1, `${host}: in-place ${path} checkpoints`)
+        assert.equal(await captures(), beforeCaptures + 1, `${host}: in-place ${path} checkpoints`)
+        assert.equal(await count(), beforeWrites + writes, `${host}: in-place ${path} writes ${writes ? "its change" : "nothing"}`)
       }
       await settle()
       assert.equal(await page.evaluate(() => (window as any).fixture.draftValue("first", "missing")), "")
@@ -125,21 +128,22 @@ test("capture defers only busy usage through both real-store effects and keeps f
       await page.evaluate(() => (window as any).fixture.seen()); await settle()
       assert.equal((await state()).tabs[0].seenInterruptions.parent, 1)
       await mutate("generationRecovery", null)
-      await mutate("runtimeStatusKnown", true)
-      await mutate("outcome", "succeeded")
+      await mutate("runtimeStatusKnown", true, 0)
+      await mutate("outcome", "succeeded", 0)
       assert.equal((await state()).tabs[0].seenInterruptions.parent, 1, "the same idle boundary keeps acknowledgement")
       await mutate("time.idle", 2)
       assert.equal((await state()).tabs[0].seenInterruptions?.parent, undefined, "native settlement past the seen boundary drops its saved marker")
-      await mutate("time.busy", 2)
+      // Runtime-only fields checkpoint but persist nothing, so they write nothing.
+      await mutate("time.busy", 2, 0)
       for (const field of ["pendingPermission", "pendingForm"]) {
-        await mutate(field, true)
-        await mutate(field, false)
+        await mutate(field, true, 0)
+        await mutate(field, false, 0)
       }
-      await mutate("retry", { attempt: 1, message: "retry", next: 1 })
-      await mutate("retry.attempt", 2)
-      await mutate("retry.message", "changed")
-      await mutate("retry.next", 2)
-      await mutate("retry", null)
+      await mutate("retry", { attempt: 1, message: "retry", next: 1 }, 0)
+      await mutate("retry.attempt", 2, 0)
+      await mutate("retry.message", "changed", 0)
+      await mutate("retry.next", 2, 0)
+      await mutate("retry", null, 0)
       await mutate("generationRecovery", "interrupted")
       saved = await state()
       assert.equal(saved.tabs[0].generationRecovery.parent, "interrupted")

@@ -38,6 +38,10 @@ If colors become hard to read, set **Contrast → On**. You can also select a bu
 
 In **Settings → General**, **Keep the computer awake while CodeNomad is running** is off by default. Turn it on to prevent system sleep while a local CodeNomad window is open (including minimized), even when no session is working; the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working. This option appears only in local desktop-app windows and Preferences; it is hidden in browser and remote views.
 
+## New conversation permissions {#new-conversation-permissions}
+
+In **Settings → General → New conversation permissions**, choose **Autonomous** (the default) or **Supervised** for new top-level conversations you create in CodeNomad. This leaves existing conversations unchanged. To change one, open [Status → Permissions](permissions.md#conversation-mode) in that conversation.
+
 ## Persistent agent memory {#agent-memory}
 
 CodeNomad attempts to remove the session's stale memory instructions; if that cleanup also fails, the previous instructions can remain until a successful refresh.
@@ -70,7 +74,7 @@ Drag a docked panel's inner edge to resize it.
 
 Reorder any Status section by dragging or with Up/Down keys. Visibility and order persist across reloads.
 
-Status includes token information, Yolo mode, provider Usage, background shells, MCP and Plugins. While the conversation has a [goal](conversations.md#goal), a goal line above these sections shows it; that line is not a section and cannot be hidden or moved. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
+Status includes token information, Permissions, provider Usage, background shells, MCP and Plugins. While the conversation has a [goal](conversations.md#goal), a goal line above these sections shows it; that line is not a section and cannot be hidden or moved. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
 
 Built-in layout is window layout, not a project mutation. Extension checkboxes are different: they activate code across all projects using the configuration. **Reset** does not change extension consent. See [Panel extensions](extensions.md).
 
@@ -83,7 +87,7 @@ Built-in layout is window layout, not a project mutation. Extension checkboxes a
 
 The timeline has one marker for each reply, thinking block, tool, compaction and system context shown in the conversation, in the same order. Its markers follow **Message content**: hiding a tool type, thinking or system messages there also hides their markers, except a tool with a pending permission, and **Nothing** hides every tool marker. Visibility and expansion settings only change presentation. They do not remove stored tools/reasoning or compact the model context. See [History and cleanup](history.md) for destructive operations.
 
-Composer height follows the visible conversation, including the software keyboard: minimum 8% with a 44 px floor, maximum 60%. Manual height is remembered proportionally; narrow width and long text do not raise those limits. An expanded permission/question temporarily minimizes the composer without changing its saved height or draft. Collapse or settle the request to resume resizing.
+Manual composer sizing uses the conversation height without the on-screen keyboard: minimum 8% with a 44 px floor, maximum 60%. Narrow width and long text do not raise those limits. When the keyboard opens, the field can shrink temporarily to leave room for controls and messages, without changing the saved height proportion. An expanded permission/question temporarily minimizes the composer without changing its saved height or draft. Collapse or settle the request to resume resizing.
 
 ## Notifications and badges {#notifications}
 

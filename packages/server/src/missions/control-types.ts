@@ -1,4 +1,4 @@
-import type { SessionMetadata } from "@opencode/client"
+import type { PermissionRule, SessionMetadata } from "@opencode/client"
 import type { MissionExecution } from "./execution"
 import type { MissionTaskExecutionMode, MissionTaskMode } from "./task-execution-mode"
 import type { MissionActor, MissionJsonValue, MissionMap, MissionReportOutcome, MissionTemplateId, MissionNativeBinding } from "./model"
@@ -27,6 +27,7 @@ export interface MissionSessionAdapter {
     title: string
     location: { directory: string; workspaceID?: string }
     metadata: SessionMetadata
+    permissions?: PermissionRule[]
     agent?: MissionExecution["agent"]
     model?: MissionExecution["model"]
   }): Promise<NativeMissionSession>
@@ -144,6 +145,7 @@ export interface MissionInspection {
 }
 
 export interface MissionCreateInput extends MissionStartInput {
+  permissions?: PermissionRule[]
   preparationOptions?: MissionPreparationOptions
   startOnCreation?: boolean
   /** Original agent request and frozen preference provenance, supplied by the owning backend. */

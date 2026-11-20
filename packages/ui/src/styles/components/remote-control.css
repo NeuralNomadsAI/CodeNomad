@@ -66,8 +66,11 @@
   image-rendering: pixelated;
 }
 
+/* A still frame: only the icon inside it spins. */
 .remote-control-qr-loading {
-  padding: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-secondary);
   background: var(--surface-secondary);
 }
@@ -100,12 +103,4 @@
 
 .remote-control-device:last-child {
   border-bottom: 0;
-}
-
-.remote-spin {
-  animation: remote-spin 1s linear infinite;
-}
-
-@keyframes remote-spin {
-  to { transform: rotate(360deg); }
 }

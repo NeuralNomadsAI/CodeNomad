@@ -1,19 +1,27 @@
 import { Popover } from "@kobalte/core/popover"
 import { Info } from "lucide-solid"
-import type { JSX } from "solid-js"
+import { createSignal, type JSX } from "solid-js"
 
 /**
  * The shared "i" button: a short accessible name; Enter or Space opens its text, Escape closes it and returns focus
  * to the button. `label` and `children` may be catalogue text, which never passes through the i18n catalogue.
  */
 export function InfoPopoverButton(props: { label: string; children: JSX.Element; class?: string }) {
+  const [open, setOpen] = createSignal(false)
+  const dismissOnEscape = (event: KeyboardEvent) => {
+    if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || !open()) return
+    event.preventDefault()
+    event.stopPropagation()
+    setOpen(false)
+  }
   return (
-    <Popover placement="top" gutter={4}>
-      <Popover.Trigger type="button" class={`section-info-trigger ${props.class ?? ""}`} aria-label={props.label} title={props.label}>
+    <Popover open={open()} onOpenChange={setOpen} placement="top" gutter={4}>
+      <Popover.Trigger type="button" class={`section-info-trigger ${props.class ?? ""}`} aria-label={props.label} title={props.label}
+        on:keydown={dismissOnEscape}>
         <Info class="section-info-icon" aria-hidden="true" />
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content class="section-info-tooltip info-popover-content">
+        <Popover.Content class="section-info-tooltip info-popover-content" aria-label={props.label} on:keydown={dismissOnEscape}>
           <div class="info-popover-text">{props.children}</div>
         </Popover.Content>
       </Popover.Portal>

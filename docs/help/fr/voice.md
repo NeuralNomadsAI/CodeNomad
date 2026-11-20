@@ -78,7 +78,7 @@ Dans **Conversation**, choisissez un **Moteur de conversation** :
 
 Si le fournisseur devient indisponible pendant que la boîte de dialogue est ouverte, choisissez **Réglages vocaux** pour ouvrir la carte **Conversation**.
 
-Le modèle vocal peut lire l’état de la session fixée au démarrage, la dernière réponse visible et les erreurs récentes. Il n’a pas accès aux fichiers. Quand vous lui demandez de transmettre une demande à l’agent, il l’envoie directement comme un message de votre part, sans confirmation à l’écran. Les autorisations et questions de l’agent et le réglage Yolo s’appliquent toujours.
+Le modèle vocal peut lire l’état de la session fixée au démarrage, la dernière réponse visible et les erreurs récentes. Il n’a pas accès aux fichiers. Quand vous lui demandez de transmettre une demande à l’agent, il l’envoie directement comme un message de votre part, sans confirmation à l’écran. Le [mode de permissions de la conversation](permissions.md#conversation-mode) et les questions de l’agent s’appliquent toujours.
 
 Le serveur autorise une seule conversation en direct à la fois par utilisateur connecté, ou par appareil appairé avec le Contrôle à distance. **Arrêter** coupe l’audio en laissant la transcription ouverte. Celle-ci reste en mémoire jusqu’à la fermeture de la fenêtre ; les demandes envoyées à l’agent restent dans la session. La conversation s’arrête aussi après deux minutes sans parole, au bout de huit minutes au total, si la session cible change, si vous fermez la fenêtre ou si la connexion est perdue. Il n’y a ni reconnexion automatique ni bascule vers un autre fournisseur.
 

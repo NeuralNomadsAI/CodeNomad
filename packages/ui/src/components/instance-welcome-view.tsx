@@ -19,7 +19,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
     >
       <ul>
         <li class="flex items-center justify-center gap-2">
-          <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+          <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" aria-hidden="true" /></span>
           <span class="truncate" title={props.instance.folder}>{props.instance.folder}</span>
         </li>
       </ul>

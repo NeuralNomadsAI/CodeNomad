@@ -1,4 +1,4 @@
-import { createRoot } from "solid-js"
+import { createEffect, createRoot, on } from "solid-js"
 import { useAppSessionCapture } from "../../../src/lib/hooks/use-app-session-capture"
 import { initializeClientState, loadedRestorableSession, flushClientState, clientStateIsPrimary } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
@@ -29,6 +29,9 @@ for (const id of ids) {
 }
 let hydrated = 0
 onSessionDraftHydrated(() => { hydrated++ })
+// Captures, independent of whether their content needs a native write.
+let captures = 0
+createRoot(() => createEffect(on(loadedRestorableSession, () => { captures++ }, { defer: true })))
 let dispose!: () => void
 const capture = createRoot(cleanup => { dispose = cleanup; return useAppSessionCapture() })
 capture.start({ activeTabIndex: 0, tabs: ids.map(id => ({
@@ -39,6 +42,7 @@ ids.forEach((id, index) => capture.recordRestoredTab(index, getInstanceAppTabId(
 await capture.ready
 ;(window as any).fixture = {
   hydrated: () => hydrated,
+  captures: () => captures,
   state: loadedRestorableSession,
   flushStore: flushClientState,
   primary: clientStateIsPrimary,
