@@ -264,6 +264,12 @@ details[open] > summary .disclosure-chevron {
   to { transform: rotate(360deg); }
 }
 
+/* SVG animations run on the main thread and restyle the page every frame: icons stay still. */
+svg,
+svg * {
+  animation: none !important;
+}
+
 /* Shared layout helpers */
 .status-dot {
   @apply w-1 h-1 rounded-full;
