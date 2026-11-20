@@ -90,6 +90,45 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
     const id = created.body.id
     for (let i = 0; i < 100; i++) { if ((await send(local, `/api/workspaces/${id}`, { headers: H() })).body?.status === "ready") break; await delay(100) }
 
+    // ---- F3: a new stream starts with the workspace statuses; a paused one is neither cut nor flooded
+    const frames = response => {
+      const seen = []; let buffer = ""
+      response.setEncoding("utf8")
+      response.on("data", chunk => { buffer += chunk; let i; while ((i = buffer.indexOf("\n\n")) >= 0) { const data = buffer.slice(0, i).split("\n").filter(l => l.startsWith("data:")).map(l => l.slice(5).trim()).join("\n"); buffer = buffer.slice(i + 2); if (data) seen.push(JSON.parse(data)) } })
+      return seen
+    }
+    const connection = { clientId: "slow", connectionId: randomUUID() }
+    const streamPath = `/api/events?${new URLSearchParams(connection)}`
+    const stream = () => send(local, streamPath, { headers: H({ accept: "text/event-stream" }), stream: true })
+    const slow = await stream()
+    open.push(slow.response)
+    slow.closed = false; slow.response.on("close", () => slow.closed = true)
+    const slowFrames = frames(slow.response)
+    const connected = seen => seen.find(e => e.type === "instance.eventStatus" && e.instanceId === id && e.status === "connected")
+    for (let i = 0; i < 50 && !connected(slowFrames); i++) await delay(100)
+    const replayed = connected(slowFrames)
+    note("F3.status-replay", { status: replayed?.status }, replayed?.status === "connected")
+    slow.response.pause()
+    const patches = 60, pad = "x".repeat(100_000)
+    for (let i = 0; i < patches; i++) {
+      const r = await send(local, "/api/storage/state/ui", { method: "PATCH", headers: M(), body: JSON.stringify({ recentFolders: [`${pad}${i}`] }) })
+      assert.equal(r.status, 200, JSON.stringify(r.body))
+    }
+    slow.response.resume()
+    const final = `${pad}${patches - 1}`
+    for (let i = 0; i < 50 && !slowFrames.some(e => e.value?.recentFolders?.[0] === final); i++) await delay(100)
+    const states = slowFrames.filter(e => e.type === "storage.stateChanged" && e.owner === "ui")
+    note("F3.slow-subscriber-folds", { patches, delivered: states.length, closed: slow.closed, last: states.at(-1)?.value?.recentFolders?.[0]?.slice(-2) },
+      !slow.closed && states.length > 0 && states.length < patches && states.at(-1).value.recentFolders[0] === final)
+    const replacement = await stream()
+    open.push(replacement.response)
+    const replay = frames(replacement.response)
+    for (let i = 0; i < 50 && (!slow.closed || !connected(replay)); i++) await delay(100)
+    const pong = await send(local, "/api/client-connections/pong", { method: "POST", headers: M(), body: JSON.stringify(connection) })
+    note("F3.reconnect-same-key", { oldClosed: slow.closed, status: connected(replay)?.status, pong: pong.status },
+      slow.closed && connected(replay)?.generation === replayed?.generation && pong.status === 204)
+    replacement.response.destroy()
+
     // ---- M2: cross-site navigation with the local cookie
     for (const [site, expected] of [["cross-site", 403], ["same-site", 403], ["same-origin", 200], ["none", 200], [undefined, 200]]) {
       const headers = site ? H({ "sec-fetch-site": site, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }) : H()

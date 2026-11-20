@@ -14,9 +14,10 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 /// Backlog one subscriber may hold, and all subscribers together.
-pub const SUBSCRIBER_BYTES: usize = 4 << 20;
-pub const RETAINED_BYTES: usize = 32 << 20;
-pub const BACKLOG: &str = "Event backlog exceeded";
+const SUBSCRIBER_BYTES: usize = 4 << 20;
+const RETAINED_BYTES: usize = 32 << 20;
+const BACKLOG: &str = "Event backlog exceeded";
+const FOLD_BYTES: usize = 64 << 10;
 /// Folded file changes beyond this collapse to one whole-directory change each.
 const CHANGES: usize = 256;
 
@@ -65,7 +66,9 @@ fn classify(v: &Value) -> (Option<String>, Option<String>, Option<(String, Fold)
             "session.usage.updated" => Some((native.to_owned(), Fold::Replace)),
             _ => None,
         };
-        let fold = fold.filter(|(_, how)| !matches!(how, Fold::Append(f) if !data[*f].is_string()));
+        let fold = fold.filter(|(_, how)| {
+            event.get("durable").is_none() && !matches!(how, Fold::Append(f) if !data[*f].is_string())
+        });
         return (workspace.clone(), Some(format!("{ws}\0{session}")), fold);
     }
     let key = match ty {
@@ -133,6 +136,7 @@ impl Hub {
             }
         }
         subs.push(sub.clone());
+        self.trim_shared(&subs);
         sub
     }
 
@@ -145,7 +149,8 @@ impl Hub {
 
     pub fn publish(&self, value: Value) {
         let status = value["type"] == "instance.eventStatus";
-        if !status && self.subs.lock().unwrap().is_empty() {
+        let subs = self.subs.lock().unwrap();
+        if !status && subs.is_empty() {
             return;
         }
         let frame = Arc::new(Frame::new(&value));
@@ -158,18 +163,34 @@ impl Hub {
                 statuses.insert(id.to_owned(), (value["generation"].as_u64().unwrap_or(0), frame.clone()));
             }
         }
-        for sub in self.subs.lock().unwrap().iter() {
+        for sub in subs.iter() {
             let mut q = sub.queue.lock().unwrap();
             if q.closing {
                 continue;
             }
             if !q.fold(&frame, &value, &self.retained) {
                 q.push(Item::new(frame.clone()), &self.retained);
-                if q.over(&self.retained) {
-                    q.shed(&self.statuses.lock().unwrap(), &self.retained);
-                }
+            }
+            if q.over() {
+                q.shed(&self.statuses.lock().unwrap(), &self.retained, false);
             }
             drop(q);
+            sub.ready.notify_one();
+        }
+        self.trim_shared(&subs);
+    }
+
+    fn trim_shared(&self, subs: &[Arc<Sub>]) {
+        while self.retained.load(Relaxed) > RETAINED_BYTES {
+            let worst = subs
+                .iter()
+                .filter_map(|sub| {
+                    let q = sub.queue.lock().unwrap();
+                    (!q.closing && q.bytes > 0).then_some((q.bytes, sub))
+                })
+                .max_by_key(|(bytes, _)| *bytes);
+            let Some((_, sub)) = worst else { break };
+            sub.queue.lock().unwrap().shed(&self.statuses.lock().unwrap(), &self.retained, true);
             sub.ready.notify_one();
         }
     }
@@ -177,6 +198,11 @@ impl Hub {
     pub fn pop(&self, sub: &Sub) -> Next {
         let mut q = sub.queue.lock().unwrap();
         let Some(item) = q.items.pop_front() else { return if q.closing { Next::Closed } else { Next::Empty } };
+        if let Some(scope) = &item.frame.scope
+            && q.tails.get(scope) == Some(&q.base)
+        {
+            q.tails.remove(scope);
+        }
         q.base += 1;
         q.bytes -= item.bytes;
         self.retained.fetch_sub(item.bytes, Relaxed);
@@ -224,13 +250,16 @@ impl Queue {
             Fold::Replace => *item = Item::new(frame.clone()),
             Fold::Append(field) => {
                 let Some(next) = value["event"]["data"][field].as_str() else { return false };
+                if item.bytes + frame.text.len() > FOLD_BYTES {
+                    return false;
+                }
                 let folded =
                     item.folded.get_or_insert_with(|| serde_json::from_str(&item.frame.text).unwrap_or_default());
                 let Some(Value::String(text)) = folded.pointer_mut(&format!("/event/data/{field}")) else {
                     return false;
                 };
                 text.push_str(next);
-                item.bytes += next.len();
+                item.bytes = item.frame.text.len() + folded.to_string().len();
             }
             Fold::Changes => {
                 let Some(next) = value["changes"].as_array() else { return false };
@@ -252,7 +281,7 @@ impl Queue {
                     }
                     *changes = dirs;
                 }
-                item.bytes = folded.to_string().len();
+                item.bytes = item.frame.text.len() + folded.to_string().len();
             }
         }
         self.bytes = self.bytes + item.bytes - before;
@@ -261,20 +290,17 @@ impl Queue {
         true
     }
 
-    /// Over its own bound (sparing its largest frame, as the TS backlog does), or holding a
-    /// share of an exceeded shared bound: a subscriber that keeps up is never shed for others.
-    fn over(&self, retained: &AtomicUsize) -> bool {
-        let largest = || self.items.iter().map(|i| i.bytes).max().unwrap_or(0);
-        self.items.len() > 1
-            && ((self.bytes > SUBSCRIBER_BYTES && self.bytes - largest() > SUBSCRIBER_BYTES)
-                || (retained.load(Relaxed) > RETAINED_BYTES && self.bytes > SUBSCRIBER_BYTES / 4))
+    /// One legal large frame may pass even when it exceeds the subscriber's backlog limit.
+    fn over(&self) -> bool {
+        self.bytes > SUBSCRIBER_BYTES
+            && self.bytes - self.items.iter().map(|i| i.bytes).max().unwrap_or(0) > SUBSCRIBER_BYTES
     }
 
     /// Drops the native frames of the workspace holding the most bytes, owing it a resync,
     /// until the backlog fits; what still overflows is replaced by a global resync.
-    fn shed(&mut self, statuses: &HashMap<String, (u64, Arc<Frame>)>, retained: &AtomicUsize) {
+    fn shed(&mut self, statuses: &HashMap<String, (u64, Arc<Frame>)>, retained: &AtomicUsize, shared: bool) {
         self.tails.clear();
-        while self.over(retained) {
+        while self.over() || (shared && retained.load(Relaxed) > RETAINED_BYTES) {
             let mut native = HashMap::<&str, usize>::new();
             for item in &self.items {
                 if let Some(ws) = &item.frame.workspace {
@@ -296,7 +322,7 @@ impl Queue {
             retained.fetch_sub(freed, Relaxed);
             self.resync(&ws, statuses, retained);
         }
-        if self.over(retained) {
+        if self.over() || (shared && retained.load(Relaxed) > RETAINED_BYTES) {
             retained.fetch_sub(std::mem::take(&mut self.bytes), Relaxed);
             self.items.clear();
             self.owed.clear();
@@ -494,5 +520,25 @@ mod tests {
         assert_eq!(drain(&hub, &hub.subscribe()), [status("connected")]);
         hub.publish(json!({"type":"instance.eventStatus","instanceId":WS,"status":"disconnected","generation":3,"reason":"workspace stopped"}));
         assert!(drain(&hub, &hub.subscribe()).is_empty());
+    }
+
+    #[test]
+    fn shared_budget_recovers_the_slowest_queues_without_dropping_the_fast_stream() {
+        let hub = Hub::default();
+        hub.publish(status("connected"));
+        let mut slow = Vec::new();
+        for _ in 0..16 {
+            slow.push(hub.subscribe());
+        }
+        let fast = hub.subscribe();
+        assert_eq!(drain(&hub, &fast), [status("connected")]);
+        let pad = "x".repeat(256 << 10);
+        for i in 0..16 {
+            let frame = native(WS, json!({"type":"session.text.started","data":{"sessionID":"ses_a","n":i,"pad":pad}}));
+            hub.publish(frame.clone());
+            assert!(hub.retained.load(Relaxed) <= RETAINED_BYTES);
+            assert_eq!(drain(&hub, &fast), [frame]);
+        }
+        assert!(slow.iter().any(|s| drain(&hub, s).iter().any(|v| v["reason"] == BACKLOG)));
     }
 }

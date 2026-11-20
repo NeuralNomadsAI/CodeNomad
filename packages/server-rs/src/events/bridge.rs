@@ -91,20 +91,27 @@ impl Routes {
         let Some(session) = session else { return located };
         let mut cache = self.locations.lock().unwrap();
         let now = Instant::now();
-        if matches!(kind, "session.moved" | "session.deleted") {
+        if matches!(kind, "session.moved" | "session.deleted") || event["location"].get("workspaceID").is_some() {
             cache.remove(session);
-        } else if let Some(dir) = located.as_ref().filter(|_| event["location"].get("workspaceID").is_none()) {
-            if cache.len() >= SESSION_RECIPIENT_LIMIT {
-                cache.retain(|_, (until, _)| *until > now);
-            }
-            cache.insert(session.to_owned(), (now + LOCATION_TTL, dir.clone()));
+        } else if let Some(dir) = &located {
+            Self::cache(&mut cache, session, dir, now);
         } else if located.is_none() {
             return cache.get(session).filter(|(until, _)| *until > now).map(|(_, dir)| dir.clone());
         }
         located
     }
     fn learn(&self, session: &str, dir: &str) {
-        self.locations.lock().unwrap().insert(session.to_owned(), (Instant::now() + LOCATION_TTL, dir.to_owned()));
+        Self::cache(&mut self.locations.lock().unwrap(), session, dir, Instant::now());
+    }
+
+    fn cache(cache: &mut HashMap<String, (Instant, String)>, session: &str, dir: &str, now: Instant) {
+        if cache.len() >= SESSION_RECIPIENT_LIMIT && !cache.contains_key(session) {
+            cache.retain(|_, (until, _)| *until > now);
+            if cache.len() >= SESSION_RECIPIENT_LIMIT {
+                return;
+            }
+        }
+        cache.insert(session.to_owned(), (now + LOCATION_TTL, dir.to_owned()));
     }
 }
 
@@ -140,7 +147,9 @@ struct Lanes {
 impl Lanes {
     /// Queues `job` behind its lane, starting the lane when idle; false past the budget.
     fn enqueue(self: &Arc<Self>, app: &Shared, routes: &Arc<Routes>, key: String, job: Job) -> bool {
-        if self.jobs.fetch_add(1, Relaxed) >= ROUTING_JOBS || self.bytes.fetch_add(job.bytes, Relaxed) > ROUTING_BYTES {
+        if self.jobs.fetch_add(1, Relaxed) >= ROUTING_JOBS
+            || self.bytes.fetch_add(job.bytes, Relaxed) + job.bytes > ROUTING_BYTES
+        {
             return false;
         }
         let mut queues = self.queues.lock().unwrap();
@@ -166,7 +175,7 @@ impl Lanes {
             tokio::select! {
                 biased;
                 _ = self.failed.cancelled() => return,
-                done = tokio::time::timeout(ROUTING_TIMEOUT, route(&app, &routes, job)) => if done.is_err() {
+                done = tokio::time::timeout(ROUTING_TIMEOUT.saturating_sub(job.received.0.elapsed()), route(&app, &routes, job)) => if done.is_err() {
                     return self.failed.cancel();
                 },
             }
