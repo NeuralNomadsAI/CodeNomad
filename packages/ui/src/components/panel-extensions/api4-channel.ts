@@ -67,7 +67,7 @@ export function useApi4Channel(props: {
   instanceId: string; id: string; digest: string; name: string; permissions: readonly string[]; sessionId: string | null
   send: (value: unknown) => void; host: Api4Host
 }) {
-  const pending = new Set<AbortController>(), lifetime = new AbortController()
+  const pending = new Set<AbortController>()
   // `reserved`: an open answered `confirming` whose dialog has not started; `confirmation` aborts on connection loss.
   let confirming = false, reserved = false, quietUntil = 0, confirmation: AbortController | undefined
   const authority = { instanceId: props.instanceId, id: props.id, digest: props.digest }
@@ -111,7 +111,7 @@ export function useApi4Channel(props: {
     if (!connected) abort()
     else { invalidate(true, true); worktreesRecovered() }
   }))
-  const dispose = () => { disposed = true; clearTimeout(timer); abort(); pending.clear(); lifetime.abort() }
+  const dispose = () => { disposed = true; clearTimeout(timer); abort(); pending.clear() }
   onCleanup(dispose)
   if (granted("repository.worktrees.read")) {
     // Worktrees, their branches, or the family's worktree changed: the frame lists again.
@@ -222,6 +222,7 @@ export function useApi4Channel(props: {
     // A name already holding another branch: no dialog can help.
     if ("conflict" in target) return { result: "conflict" }
     if (target.current) return { result: "current" }
+    if (alertDialogState()) return { result: "busy" }
     // Reserved before answering, so a concurrent open answers `busy`; released if the answer never lands.
     // An answer the dispatcher will drop (deadline, unmount) must not hold the reservation.
     signal.throwIfAborted()
@@ -241,7 +242,8 @@ export function useApi4Channel(props: {
     confirming = true
     const controller = new AbortController()
     confirmation = controller
-    const signal = AbortSignal.any([lifetime.signal, controller.signal])
+    // `abort()` (disposal, connection loss) aborts it.
+    const signal = controller.signal
     const item = tGlobal(`panelExtensions.worktrees.${kind}`, { number })
     let progress: ToastHandle | undefined
     // Before each host mutation: still mounted, and the server still grants this exact package

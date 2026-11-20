@@ -176,6 +176,18 @@ describe("work item branches", () => {
     assert.deepEqual(await lookup(clone, source, "pullRequest", 7), { status: "ok", branch: "pr-7" })
   })
 
+  it("keeps a rebased branch in a reftable repository, whose reflogs are not files", async () => {
+    const { root, clone, source } = await project()
+    const reftable = path.join(root, "reftable")
+    await promisify(execFile)("git", ["clone", "-q", "--ref-format=reftable", git(clone, "remote", "get-url", "origin"), reftable])
+    assert.equal(git(reftable, "rev-parse", "--show-ref-format"), "reftable")
+    assert.equal((await createWorkItemBranch(reftable, source, "pullRequest", 7)).status, "ok")
+    commit(reftable, "main moves on")
+    git(reftable, "-c", "user.name=T", "-c", "user.email=t@example.com", "rebase", "-q", "main", "pr-7")
+    git(reftable, "switch", "-q", "main")
+    assert.deepEqual(await lookup(reftable, source, "pullRequest", 7), { status: "ok", branch: "pr-7" })
+  })
+
   it("keeps a link whose creation entry expired from a reflog that goes on", async () => {
     const { clone, source } = await project()
     assert.equal((await createWorkItemBranch(clone, source, "issue", 43)).status, "ok")

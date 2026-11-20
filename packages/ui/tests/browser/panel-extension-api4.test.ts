@@ -123,7 +123,7 @@ async function install(permissions: string[] = ALL) {
   await store.install(installed)
   await store.activate(installed.manifest.id, installed.digest, true)
 }
-async function open(options: { phone?: boolean } = {}) {
+async function open(options: { phone?: boolean; withoutAbortSignalAny?: boolean } = {}) {
   const page = await fixture.browser.newPage({ viewport: options.phone ? { width: 390, height: 844 } : { width: 1200, height: 800 }, locale: "en-US" })
   const errors: string[] = [], requests: string[] = [], aborted: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -143,6 +143,8 @@ async function open(options: { phone?: boolean } = {}) {
     if (branchAnswer) await transit.branch?.()
     await route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body }).catch(() => {})
   })
+  // WebKit before 17.4 (early macOS 14) has no AbortSignal.any.
+  if (options.withoutAbortSignalAny) await page.addInitScript(() => { Reflect.deleteProperty(AbortSignal, "any") })
   await page.goto(`${fixture.url}${options.phone ? "?phone=1" : ""}`)
   await page.waitForFunction(() => Boolean((window as any).fixture))
   return { page, errors, requests, aborted }
@@ -790,5 +792,15 @@ test("worktrees: a reconnected panel hears that it should list again", async () 
       after = await frameOf(page).locator("body").evaluate(() => (window as any).worktreeChanges)
     }
     assert.ok(after > before, "the frame was told to list again")
+  } finally { await page.close() }
+})
+test("worktrees: the confirmation opens on WebKit without AbortSignal.any", async () => {
+  await install()
+  const { page, errors } = await open({ withoutAbortSignalAny: true })
+  try {
+    await showPanel(page)
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 42), { ok: "confirming" })
+    await page.getByText("Create a worktree for issue #42 and move this conversation there?").waitFor()
+    assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

@@ -194,7 +194,7 @@ export async function createNativeWorktree(context: NativeWorktreeContext, branc
     await attachWorktreeBranch(host, branch, policy.existing)
     if (revision !== undefined) {
       // The full ref: a same-named tag makes the short name `heads/<branch>`.
-      const [head, ref] = await Promise.all([readCheckout(host).then(checkout => checkout.head),
+      const [head, ref] = await Promise.all([runWorktreeGit(host, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined),
         runWorktreeGit(host, ["symbolic-ref", "--quiet", "HEAD"]).catch(() => undefined)])
       if (head !== revision || ref !== `refs/heads/${branch}`) throw new Error("Branch changed before its worktree was created")
     }
