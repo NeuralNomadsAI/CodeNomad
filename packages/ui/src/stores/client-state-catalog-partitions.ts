@@ -1,4 +1,3 @@
-import { canonicalJson } from "./client-state-partition-json"
 import { normalizeSessionCatalog, type PersistedSessionCatalogEntry } from "./session-catalog-persistence"
 
 const encoder = new TextEncoder()
@@ -8,7 +7,8 @@ export async function encodeCatalogPartitions(rows: PersistedSessionCatalogEntry
   const keys: string[] = []
   let entries: PersistedSessionCatalogEntry[] = [], bytes = 0
   for (const row of rows) {
-    const size = encoder.encode(canonicalJson(row)).byteLength + 1
+    // Canonical and plain JSON differ only in key order, so they have the same size.
+    const size = encoder.encode(JSON.stringify(row)).byteLength + 1
     if (size > CHUNK_BYTES) throw new Error("Session catalog entry exceeds the native partition size")
     if (bytes + size > CHUNK_BYTES) {
       keys.push(await add({ format: 1, index: keys.length, entries }))

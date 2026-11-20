@@ -32,6 +32,11 @@ let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
 let partitionProtocolVersion: 1 | undefined
+// Content of the last accepted partitioned commit (root without revision/savedAt):
+// status-only captures re-encode to the same graph and need no native write.
+let committedContent: string | null = null
+// A skipped save leaves the host copy unverified: the next explicit flush republishes it.
+let republishOnFlush = false
 const layoutMigrations = new Map<string, { source: string; remaining: string | null }>()
 // Browser tabs restore their session from sessionStorage while layout values keep
 // their shared localStorage entries, written and read immediately.
@@ -90,7 +95,9 @@ const cancelSaveTimer = () => {
   saveTimer = null
 }
 
-function enqueuePendingSave(): Promise<void> {
+// Explicit flushes (navigation, close, host requests) always republish, so a graph
+// lost on the host side is rewritten; debounced saves skip an unchanged graph.
+function enqueuePendingSave(republish = false): Promise<void> {
   cancelSaveTimer()
   if (!dirty || !canWriteSnapshot()) return writeQueue
   const snapshot: ClientSnapshotV1 = {
@@ -107,12 +114,19 @@ function enqueuePendingSave(): Promise<void> {
   const saveAttempt = writeQueue.then(async () => {
     try {
       const partitioned = partitionProtocolVersion === 1 ? await encodeClientSnapshotV2(normalizedSnapshot) : null
+      const content = partitioned && JSON.stringify({ ...partitioned.root, revision: 0, savedAt: 0 })
+      if (!republish && content && content === committedContent) {
+        lastSaveError = undefined
+        republishOnFlush = true
+        return
+      }
       if (partitioned && !canCommitClientSnapshotV2(partitioned)) {
         throw new Error("Client snapshot exceeds the native partition count or size limits")
       }
       if (!partitioned && new TextEncoder().encode(JSON.stringify(normalizedSnapshot)).byteLength > MAX_V1_SNAPSHOT_BYTES) {
         throw new Error("Client snapshot exceeds the V1 1 MiB limit and partition persistence is unavailable")
       }
+      committedContent = null
       const accepted = partitioned
         ? await commitNativeClientStatePartitions({
           protocolVersion: 1,
@@ -125,6 +139,8 @@ function enqueuePendingSave(): Promise<void> {
         setClientStateIsPrimary(false)
         throw new Error("Native client state save was rejected")
       }
+      committedContent = content || null
+      republishOnFlush = false
       lastSaveError = undefined
       // Retire the legacy entries only after a snapshot carrying descriptor views
       // is durably accepted. Changed concurrent legacy writes retain their authority.
@@ -164,6 +180,8 @@ function scheduleSave() {
     .catch((error) => console.warn("[client-state] failed to save client snapshot", error)), SAVE_DEBOUNCE_MS)
 }
 function resetLoadedState(snapshot: ClientSnapshotV1 | null = null, resetRevision = false) {
+  committedContent = null
+  republishOnFlush = false
   layout = snapshot ? { ...snapshot.layout } : Object.create(null)
   if (resetRevision) revision = snapshot?.revision ?? 0
   setLoadedClientSnapshotExists(snapshot !== null)
@@ -173,6 +191,8 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
   const previousWriteBlock = writeBlock
   let retryDirty = dirty
   writeBlock = "transaction"
+  committedContent = null
+  republishOnFlush = false
   transactionLayoutWrites.clear()
   cancelSaveTimer()
   dirty = false
@@ -199,6 +219,10 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
     transactionLayoutWrites.clear()
     writeBlock = previousWriteBlock
     dirty = retryDirty
+    // The host copy is unknown after a failed operation, even if a save that was in
+    // flight recorded a commit meanwhile: the next save or flush rewrites it.
+    committedContent = null
+    republishOnFlush = true
     if (dirty) scheduleSave()
     throw error
   }
@@ -277,6 +301,7 @@ export async function flushClientState(): Promise<void> {
       await pending
       if (pending === writeQueue) break
     }
+    if (republishOnFlush && canWriteSnapshot()) dirty = true
     if (!dirty) {
       if (lastError !== undefined) throw lastError
       return
@@ -287,7 +312,7 @@ export async function flushClientState(): Promise<void> {
       return
     }
     try {
-      await enqueuePendingSave()
+      await enqueuePendingSave(true)
       lastError = undefined
     } catch (error) {
       lastError = error

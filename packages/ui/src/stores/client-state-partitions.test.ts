@@ -3,6 +3,7 @@ import { it } from "node:test"
 
 import type { ClientSnapshotV1, RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import { canCommitClientSnapshotV2, canonicalJson, decodeClientSnapshotV2, encodeClientSnapshotV2, sha256 } from "./client-state-partitions.ts"
+import { encodePartition } from "./client-state-partition-json.ts"
 
 const attachment = (id: string) => ({
   id,
@@ -150,6 +151,42 @@ it("produces stable deduplicated hashes and complete sorted partition keys", asy
   assert.deepEqual(first.root.partitionKeys, first.partitionKeys)
   assert.deepEqual(Object.keys(first.partitions), first.partitionKeys)
   assert.ok(first.partitionKeys.includes(first.root.sessionPartition))
+})
+
+it("re-encodes an unchanged catalog-heavy snapshot without hashing it again", async (t) => {
+  const row = (index: number) => ({ id: `session-${index}`, title: `Title ${index}`, parentId: null, projectID: "p",
+    location: { directory: "/repo" }, time: { created: index, updated: index }, agent: "build",
+    model: { providerId: "openai", modelId: "m" }, cost: 0, tokens: { input: 1, output: 2, reasoning: 0, cache: { read: 0, write: 0 } } })
+  const snapshot: ClientSnapshotV1 = { ...graphSnapshot(), session: { tabs: [{ ...workspace(0, "draft"),
+    sessionCatalog: Array.from({ length: 3000 }, (_, index) => row(index)) }], activeTabIndex: 0 } }
+  const first = await encodeClientSnapshotV2(structuredClone(snapshot))
+  const digest = t.mock.method(crypto.subtle, "digest")
+  const second = await encodeClientSnapshotV2(structuredClone(snapshot))
+  assert.deepEqual(second, first)
+  assert.equal(digest.mock.callCount(), 0)
+  // A changed row is hashed again and changes the graph.
+  const changed = structuredClone(snapshot)
+  ;(changed.session!.tabs[0] as RestorableWorkspaceTabState).sessionCatalog![7]!.title = "Renamed"
+  const third = await encodeClientSnapshotV2(changed)
+  assert.notEqual(third.root.sessionPartition, first.root.sessionPartition)
+  assert.ok(digest.mock.callCount() > 0)
+})
+
+it("keeps one cached copy of a partition encoded concurrently", async (t) => {
+  const value = { format: 2, index: 0, data: "x".repeat(700 * 1024) }
+  // Counted once per call, 24 copies would exceed the bound and evict the value.
+  await Promise.all(Array.from({ length: 24 }, () => encodePartition(value)))
+  const digest = t.mock.method(crypto.subtle, "digest")
+  // The bound counted the value once, so it is still cached.
+  await encodePartition(structuredClone(value))
+  assert.equal(digest.mock.callCount(), 0)
+})
+
+it("rejects an oversized partition without hashing or caching it", async (t) => {
+  const value = { format: 2, draft: "y".repeat(64) }
+  const digest = t.mock.method(crypto.subtle, "digest")
+  for (let attempt = 0; attempt < 2; attempt++) assert.equal((await encodePartition(value, 16)).key, "")
+  assert.equal(digest.mock.callCount(), 0)
 })
 
 it("uses the native graph cap without truncating the encoded key list", async () => {
