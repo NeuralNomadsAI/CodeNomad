@@ -570,7 +570,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                         </div>
                                       </div>
                                       <Show when={connectingServerId() === server.id}>
-                                        <Loader2 class="w-4 h-4 animate-spin icon-muted" />
+                                        <span class="inline-flex animate-spin"><Loader2 class="w-4 h-4 icon-muted" /></span>
                                       </Show>
                                     </div>
                                   </button>
