@@ -1126,7 +1126,13 @@ fn open_remote_window_locked(
     #[cfg(not(target_os = "linux"))]
     let builder = builder.on_permission_request(move |webview, kind| {
         if kind == tauri::webview::PermissionKind::Microphone {
-            remote_dictation::authorize_renderer_microphone(&webview, window_generation);
+            let authorized =
+                remote_dictation::authorize_renderer_microphone(&webview, window_generation);
+            // WebKit can complete macOS system consent before asking the webview delegate.
+            // WebView2 asks before its default prompt and can persist a Deny in the profile.
+            if cfg!(target_os = "macos") && !authorized {
+                return tauri::webview::PermissionResponse::Deny;
+            }
         }
         tauri::webview::PermissionResponse::Default
     });

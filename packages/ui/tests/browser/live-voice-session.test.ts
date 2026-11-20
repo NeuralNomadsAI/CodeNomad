@@ -751,12 +751,20 @@ test("the live reply control identifies local-only Gemini playback and OpenAI in
       await openConsent()
       const send = await acceptConsent()
       send(engine === "gemini" ? { type: "thinking" } : { type: "thinking", responseId: "reply" })
+      const assistant = live.locator('[data-role="assistant"] p')
+      if (engine === "gemini") {
+        send({ type: "transcript", role: "assistant", text: "Beginning of reply. ", final: false })
+        await assistant.waitFor()
+      }
       await live.getByRole("button", { name: engine === "gemini" ? "Stop playback" : "Interrupt reply", exact: true }).click()
       if (engine === "openai") {
         assert.deepEqual(await waitForSent(item => item.type === "interrupt"), { type: "interrupt", responseId: "reply" })
       } else {
+        send({ type: "transcript", role: "assistant", text: "End of reply.", final: true })
+        send({ type: "turn-complete" })
         send({ type: "tool-call", id: "send", name: "send_to_agent", arguments: { text: "Still a live request" } })
         assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "send")).output), { delivery: "submitted" })
+        assert.deepEqual(await assistant.allTextContents(), ["Beginning of reply. End of reply."])
         assert.equal(sent.some(item => item.type === "interrupt" || item.type === "truncate"), false)
       }
     } finally { await context.close() }

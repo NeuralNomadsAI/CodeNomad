@@ -384,7 +384,7 @@ pub(crate) struct DeviceSpeech {
 
 impl DeviceSpeech {
     #[cfg(not(target_os = "linux"))]
-    pub(crate) fn authorize_remote_renderer_microphone(&self, owner: &str) {
+    pub(crate) fn authorize_remote_renderer_microphone(&self, owner: &str) -> bool {
         let mut slots = self.slots.lock();
         slots.expire_microphone(Instant::now());
         if let Some(lease) = slots
@@ -393,7 +393,9 @@ impl DeviceSpeech {
             .filter(|lease| lease.owner == owner)
         {
             lease.expires_at = None;
+            return true;
         }
+        false
     }
 
     pub(crate) fn new(path: PathBuf, driver: Option<Arc<dyn Driver>>) -> Self {

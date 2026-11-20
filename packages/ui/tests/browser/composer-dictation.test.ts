@@ -348,12 +348,13 @@ test("MediaRecorder releases its lease before an oversize upload and retains a c
   assert.equal(await page.evaluate(() => (window as any).capture.tracksStopped), 1)
   assert.equal(await page.evaluate(() => (window as any).capture.requests.length), 0)
   assert.equal(await page.evaluate(() => navigator.locks.request("codenomad:microphone", { ifAvailable: true }, lock => !!lock)), true)
-  await confirm.click()
+  await confirm.press("Enter")
   await page.waitForFunction(() => (window as any).capture.requests.length === 1)
   const bytes = await page.evaluate(() => new TextEncoder().encode(JSON.stringify((window as any).capture.requests[0].input)).byteLength)
   assert.ok(bytes > 900_000 && bytes < 1024 * 1024)
   await finish(page, "excerpt")
   assert.equal(await field(page).inputValue(), "excerpt ")
+  assert.ok(await field(page).evaluate(el => el === document.activeElement))
 }))
 
 test("a pending transcript belongs to its session, including after composer remount", () => withComposer(async page => {
@@ -811,10 +812,13 @@ test("remote Linux Tauri API retains the host-bounded excerpt until explicit tra
   await page.waitForFunction(() => (window as any).native.microphoneState === "recording")
   await setLimit()
   assert.equal(await page.evaluate(() => (window as any).capture.requests.length), 0)
-  await page.getByRole("button", { name: "Transcribe", exact: true }).click()
+  await page.getByRole("button", { name: "Transcribe", exact: true }).press("Enter")
   await page.waitForFunction(() => (window as any).capture.requests.length === 1)
+  const other = page.getByRole("button", { name: "Other control" })
+  await other.focus()
   await finish(page, "bounded text")
   assert.equal(await field(page).inputValue(), "bounded text ")
+  assert.ok(await other.evaluate(el => el === document.activeElement))
 }, false, "tauri-remote-api"))
 
 test("sending a draft preserves the stopped Linux Tauri excerpt until explicit transcription", () => withComposer(async page => {
@@ -932,7 +936,10 @@ for (const surface of ["composer", "Voice settings"] as const) {
         await cancel.focus()
         await page.keyboard.press("Shift+Tab")
         assert.equal(await transcribe.evaluate(el => el === document.activeElement), true)
-        await page.keyboard.press("Enter")
+        if (inComposer) {
+          await other.focus()
+          await transcribe.evaluate((button: HTMLButtonElement) => button.click())
+        } else await page.keyboard.press("Enter")
         await page.waitForFunction(() => (window as any).capture.requests.length === 1)
         const { mimeType, audioBase64 } = await page.evaluate(() => (window as any).capture.requests[0].input)
         const wav = Buffer.from(audioBase64, "base64")
@@ -942,6 +949,7 @@ for (const surface of ["composer", "Voice settings"] as const) {
         await finish(page, "confirmed")
         if (inComposer) {
           assert.equal(await field(page).inputValue(), "before confirmed after")
+          assert.ok(await other.evaluate(el => el === document.activeElement))
         } else {
           await page.getByText("confirmed", { exact: true }).waitFor()
           assert.equal(await field(page).inputValue(), draft)

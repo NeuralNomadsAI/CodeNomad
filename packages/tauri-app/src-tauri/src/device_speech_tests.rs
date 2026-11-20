@@ -443,7 +443,7 @@ fn unused_remote_microphone_reservation_expires_and_navigation_releases_it() {
     );
     #[cfg(not(target_os = "linux"))]
     {
-        device.authorize_remote_renderer_microphone("local");
+        assert!(!device.authorize_remote_renderer_microphone("local"));
         assert!(device
             .slots
             .lock()
@@ -454,10 +454,12 @@ fn unused_remote_microphone_reservation_expires_and_navigation_releases_it() {
             .is_some());
     }
     device.slots.lock().microphone.as_mut().unwrap().expires_at = Some(Instant::now());
+    #[cfg(not(target_os = "linux"))]
+    assert!(!device.authorize_remote_renderer_microphone("remote"));
     assert_eq!(remote_claim().unwrap(), json!({ "busy": null }));
     #[cfg(not(target_os = "linux"))]
     {
-        device.authorize_remote_renderer_microphone("remote");
+        assert!(device.authorize_remote_renderer_microphone("remote"));
         assert!(device
             .slots
             .lock()

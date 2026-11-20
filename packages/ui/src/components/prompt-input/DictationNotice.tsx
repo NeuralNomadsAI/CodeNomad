@@ -4,7 +4,7 @@ import { useI18n } from "../../lib/i18n"
 export default function DictationNotice(props: {
   recordingLimitReached: boolean
   focusDraft: () => void
-  onTranscribe: () => void
+  onTranscribe: (restoreFocus: boolean) => void
   onCancelRecording: () => void
   transcript?: string
   canInsertTranscript: boolean
@@ -19,7 +19,8 @@ export default function DictationNotice(props: {
   return <>
     <Show when={props.recordingLimitReached}><div class="composer-notice">
       <div class="composer-notice-text" role="status">{t("promptInput.voiceInput.limitReached")}</div>
-      <button type="button" class="window-action composer-notice-action" onClick={props.onTranscribe}>{t("promptInput.voiceInput.transcribe")}</button>
+      <button type="button" class="window-action composer-notice-action"
+        onClick={({ currentTarget }) => props.onTranscribe(currentTarget === currentTarget.ownerDocument.activeElement)}>{t("promptInput.voiceInput.transcribe")}</button>
       <button type="button" class="window-action composer-notice-action" onClick={event => dismiss(event.currentTarget, props.onCancelRecording)}>{t("alertDialog.actions.cancel")}</button>
     </div></Show>
     <Show when={props.transcript}>{text => <div class="composer-notice">

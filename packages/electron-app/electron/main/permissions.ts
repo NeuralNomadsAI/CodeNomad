@@ -14,7 +14,7 @@ export function configureMediaPermissionHandlers(
   getAllowedOrigins: () => string[],
   targetSession: Session = session.defaultSession,
   dictationOrigins?: (sender: WebContents | null, mainFrame: boolean, audioOnly: boolean) => string[] | undefined,
-  onAudioGranted?: (contents: WebContents) => void,
+  authorizeAudio?: (contents: WebContents) => boolean,
 ) {
   const isAudioMediaRequest = (permission: string, details?: unknown) => {
     if (permission !== "media") {
@@ -44,8 +44,7 @@ export function configureMediaPermissionHandlers(
     const audioOnly = "mediaTypes" in details && details.mediaTypes?.length === 1 && details.mediaTypes[0] === "audio"
     const allowed = isAllowedRendererOrigin(requestingOrigin,
       dictationOrigins?.(webContents, details.isMainFrame, audioOnly) ?? getAllowedOrigins())
-    if (allowed && details.isMainFrame && audioOnly) onAudioGranted?.(webContents)
-    callback(allowed)
+    callback(allowed && (!authorizeAudio || (details.isMainFrame && audioOnly && authorizeAudio(webContents))))
   })
 }
 

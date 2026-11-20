@@ -99,9 +99,11 @@ export class DeviceSpeech {
     return this.microphone
   }
 
-  authorizeRendererMicrophone(owner: number): void {
+  authorizeRendererMicrophone(owner: number): boolean {
     const lease = this.currentMicrophone()
-    if (lease?.owner === owner) lease.expiresAt = undefined
+    if (lease?.owner !== owner) return false
+    lease.expiresAt = undefined
+    return true
   }
 
   private capabilities(): DeviceSpeechCapabilities {

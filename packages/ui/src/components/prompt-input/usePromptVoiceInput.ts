@@ -43,7 +43,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     if (saved?.directory === options.directory() && saved.owner()) return saved.text
   }
   const discardTranscript = () => setPromptTranscript(options.instanceId(), options.sessionId(), undefined)
-  type ActiveCapture = { controller?: VoiceInputController; current: () => boolean; selectionChanged: () => void }
+  type ActiveCapture = { controller?: VoiceInputController; current: () => boolean; selectionChanged: () => void; restoreFocus?: boolean }
   const [activeCapture, setActiveCapture] = createSignal<ActiveCapture>()
   let composing = false
 
@@ -144,6 +144,9 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
           return
         }
         insertTranscript(textarea, text, range.selectionStart, range.selectionEnd)
+        if (capture.restoreFocus && textarea.ownerDocument.activeElement === textarea.ownerDocument.body) {
+          textarea.focus({ preventScroll: true })
+        }
       },
       onError: (errorKey, detail) => {
         if (!held()) return
@@ -179,9 +182,11 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     canStartRecording,
     startRecording,
     stopRecording: () => activeCapture()?.controller?.stopRecording(),
-    confirmTranscription: () => {
+    confirmTranscription: (restoreFocus: boolean) => {
       const capture = activeCapture()
-      if (capture?.current()) capture.controller?.confirmTranscription?.()
+      if (!capture?.current()) return
+      capture.restoreFocus = restoreFocus
+      capture.controller?.confirmTranscription?.()
     },
     cancelRecording,
     selectionChanged: () => activeCapture()?.selectionChanged(),

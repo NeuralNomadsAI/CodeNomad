@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { registerHooks } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test, { type TestContext } from "node:test"
-import type { BrowserWindow, IpcMainInvokeEvent } from "electron"
+import type { BrowserWindow, IpcMainInvokeEvent, Session, WebContents } from "electron"
 import { isDeviceSpeechRequest } from "../../../desktop-speech/contract"
 import vectors from "../../../desktop-speech/request-vectors.json"
 import { DeviceSpeech, DeviceSpeechPreference, type DeviceSpeechDriver, type SpeechOperationControl } from "./device-speech"
@@ -26,6 +27,48 @@ test("an unused remote microphone reservation expires; an authorized one stays h
   assert.deepEqual(claim(1), { ok: true, value: { busy: "dictation" } })
   device.revokeRendererMicrophone(2)
   assert.deepEqual(claim(1), { ok: true, value: { busy: null } })
+})
+
+test("a remote microphone permission request cannot grant a reservation expired during system consent", async t => {
+  const hooks = registerHooks({
+    resolve(specifier, context, next) {
+      if (specifier === "electron") return {
+        shortCircuit: true,
+        url: "data:text/javascript,export const BrowserWindow={},desktopCapturer={},dialog={},session={},systemPreferences={},webContents={}",
+      }
+      return next(specifier, context)
+    },
+  })
+  t.after(() => hooks.deregister())
+  const { configureMediaPermissionHandlers } = await import("./permissions")
+  let now = 0
+  const { device } = fixture(t, undefined, undefined, () => now)
+  const claim = (owner: number) => device.request(owner, {
+    action: "claimMicrophone", id: "c2d420ea-2677-4dbd-a521-92435a6ba004", purpose: "conversation",
+  }, true)
+  const origin = "https://remote.example"
+  let handler!: NonNullable<Parameters<Session["setPermissionRequestHandler"]>[0]>
+  const session = {
+    setPermissionCheckHandler() {},
+    setPermissionRequestHandler(callback: typeof handler) { handler = callback },
+  } as unknown as Session
+  configureMediaPermissionHandlers(() => [origin], session, undefined, contents => device.authorizeRendererMicrophone(contents.id))
+  const request = (id: number) => {
+    let granted: boolean | undefined
+    handler({ id, getURL: () => origin } as WebContents, "media", result => { granted = result }, {
+      requestingUrl: origin, isMainFrame: true, mediaTypes: ["audio"],
+    })
+    return granted
+  }
+
+  assert.deepEqual(claim(1), { ok: true, value: { busy: null } })
+  now = 11_000
+  assert.equal(request(1), false)
+  assert.deepEqual(claim(2), { ok: true, value: { busy: null } })
+  assert.equal(request(1), false)
+  assert.equal(request(2), true)
+  now += 11_000
+  assert.deepEqual(claim(1), { ok: true, value: { busy: "conversation" } })
 })
 
 function fixture(t: TestContext, driver?: DeviceSpeechDriver, hexDriver?: DeviceSpeechDriver, now?: () => number) {

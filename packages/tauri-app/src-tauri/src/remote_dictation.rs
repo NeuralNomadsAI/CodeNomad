@@ -241,19 +241,20 @@ fn is_microphone_document(entry: &crate::RemoteWindowMetadata, current: &Url) ->
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn authorize_renderer_microphone(webview: &Webview, generation: u64) {
-    let Ok(current) = webview.url() else { return };
+pub(crate) fn authorize_renderer_microphone(webview: &Webview, generation: u64) -> bool {
+    let Ok(current) = webview.url() else {
+        return false;
+    };
     let app = webview.app_handle();
     let state = app.state::<AppState>();
     let Ok(metadata) = state.remote_navigation.lock() else {
-        return;
+        return false;
     };
-    if metadata.get(webview.label()).is_some_and(|entry| {
+    metadata.get(webview.label()).is_some_and(|entry| {
         entry.window_generation == generation && is_microphone_document(entry, &current)
-    }) {
-        app.state::<DeviceSpeech>()
-            .authorize_remote_renderer_microphone(webview.label());
-    }
+    }) && app
+        .state::<DeviceSpeech>()
+        .authorize_remote_renderer_microphone(webview.label())
 }
 
 #[cfg(target_os = "linux")]

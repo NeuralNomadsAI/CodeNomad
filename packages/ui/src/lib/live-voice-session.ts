@@ -74,6 +74,7 @@ export function openLiveVoiceSession(options: {
   let responseSpoken = false
   let responseId: string | undefined
   let discardResponse = false
+  let silenceGeminiReply = false
   let idle: ReturnType<typeof setTimeout> | undefined
   let setup: ReturnType<typeof setTimeout> | undefined
   const absolute = setTimeout(() => stop("duration"), LIVE_VOICE_ABSOLUTE_MS)
@@ -156,7 +157,7 @@ export function openLiveVoiceSession(options: {
   function updateActivity() {
     if (!ready || signal.aborted) return
     const pending = pendingTool()
-    const canInterrupt = playing || (!discardResponse && (responseOpen || Boolean(pending?.responseId)))
+    const canInterrupt = playing || (!discardResponse && !silenceGeminiReply && (responseOpen || Boolean(pending?.responseId)))
     options.onActivity(playing || responseSpoken ? "speaking" : canInterrupt || pending ? "thinking" : "listening", canInterrupt)
   }
 
@@ -246,6 +247,18 @@ export function openLiveVoiceSession(options: {
     responseId = undefined
     if (signal.aborted) return
     finishTurn(true)
+    if (!silenceGeminiReply) marker("interrupted")
+    updateActivity()
+  }
+
+  function stopPlayback() {
+    if (options.engine !== "gemini-live") return interrupt(true)
+    if (!ready || !audio || !current() || !(playing || responseOpen)) return
+    if (discardResponse) return interrupt(true)
+    if (silenceGeminiReply) return
+    silenceGeminiReply = responseOpen
+    responseSpoken = false
+    flushPlayback(false)
     marker("interrupted")
     updateActivity()
   }
@@ -253,7 +266,7 @@ export function openLiveVoiceSession(options: {
   function completeTurn() {
     audio?.turnComplete()
     finishTurn(discardResponse)
-    responseOpen = responseSpoken = discardResponse = false
+    responseOpen = responseSpoken = discardResponse = silenceGeminiReply = false
     updateActivity()
     publish()
   }
@@ -329,7 +342,7 @@ export function openLiveVoiceSession(options: {
         if (typeof value.pcm !== "string" || (options.engine === "openai-realtime" &&
           (!liveVoiceIdentifier(value.itemId) || !Number.isInteger(value.contentIndex) ||
             Number(value.contentIndex) < 0 || Number(value.contentIndex) > 32))) return stop("invalid-message")
-        if (!discardResponse) {
+        if (!discardResponse && !silenceGeminiReply) {
           responseOpen = responseSpoken = true
           if (audio.play(value as AudioEvent) === "overflow") interrupt(true, true)
         }
@@ -420,7 +433,7 @@ export function openLiveVoiceSession(options: {
   void start()
   return {
     stop,
-    interrupt: () => interrupt(true),
+    interrupt: stopPlayback,
     setMuted(value: boolean) {
       if (!ready || !audio || !current()) return false
       if (muted === value) return true
