@@ -45,6 +45,16 @@ import { showToastNotification } from "../lib/notifications"
 import { backendRegistry } from "../stores/remote-backends"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { getServerMeta, serversUsable } from "../lib/server-meta"
+import { hostSupports } from "../lib/backend-capabilities"
+import { supportsWorkspaceCapability } from "../stores/workspace-capabilities"
+import type { CodeNomadCapability } from "../../../server/src/meta-contract"
+
+/** Sections backed by an optional route family. */
+const SECTION_CAPABILITIES: Partial<Record<SettingsSectionId, CodeNomadCapability>> = {
+  speech: "speech", remote: "remote-control", opencode: "opencode-admin", missions: "missions",
+  usage: "service-usage", sidecars: "sidecars", "config-files": "config-files",
+}
+const PROJECT_SECTIONS = new Set<SettingsSectionId>(["missions", "usage"])
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -79,6 +89,12 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const projectUnavailable = () => props.projectUnavailable || !props.standalone && !props.providerContext &&
     parseInstanceKey(activeInstanceId() ?? "").backendId !== "local" && !embeddedProject()
 
+  // Project-scoped sections follow the backend of the project they edit, the others the host.
+  const sectionSupported = (id: SettingsSectionId) => {
+    const capability = SECTION_CAPABILITIES[id]
+    const instanceId = PROJECT_SECTIONS.has(id) ? props.providerContext?.instanceId ?? activeInstanceId() : undefined
+    return !capability || (instanceId ? supportsWorkspaceCapability(instanceId, capability) : hostSupports(capability))
+  }
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
       { id: "general", icon: SlidersHorizontal, label: t("settings.nav.general") },
@@ -97,8 +113,9 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     ]
     items.splice(5, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
     if (serversEnabled()) items.splice(6, 0, { id: "servers", icon: Server, label: t("settings.nav.servers") })
-    return items
+    return items.filter(item => sectionSupported(item.id))
   })
+  createEffect(() => { if (!sectionSupported(activeSettingsSection())) setActiveSettingsSection("general") })
 
   const activeSection = createMemo(() => sections().find((section) => section.id === activeSettingsSection()) ?? sections()[0])
 

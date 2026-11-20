@@ -38,6 +38,8 @@ import { ExtensionPanel } from "../../../panel-extensions/extension-panel"
 import { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
 import { RightPanelCustomizationPopover } from "./RightPanelCustomizationPopover"
 import type { RightPanelModule } from "./registry"
+import { supportsWorkspaceCapability } from "../../../../stores/workspace-capabilities"
+import { supportsStatusSection } from "./status-capabilities"
 
 function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
@@ -222,7 +224,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         host={extensionHost} />,
     }] }
   }))
-  const rightPanelModules = createMemo(() => [coreModule, missionsModule, ...externalModules()])
+  const rightPanelModules = createMemo(() => [coreModule,
+    ...(supportsWorkspaceCapability(props.instanceId, "missions") ? [missionsModule] : []), ...externalModules()])
   const extraStatusContent = createMemo(() => rightPanelModules().flatMap(module => module.renderStatusExtras ? [module.renderStatusExtras] : []), [],
     { equals: (left, right) => left.length === right.length && left.every((item, index) => item === right[index]) })
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
@@ -238,7 +241,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   // Same sections, same array: Status keeps its rows mounted across unrelated module updates.
   const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"), [],
     { equals: (left, right) => left.length === right.length && left.every((item, index) => item === right[index]) })
-  const allStatusSections = createMemo<RightPanelItem[]>(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()])
+  const allStatusSections = createMemo<RightPanelItem[]>(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()]
+    .filter(section => supportsStatusSection(props.instanceId, section.id)))
   const orderedStatusSections = createMemo(() => applyRightPanelItemCustomization(allStatusSections(), rightPanelCustomization().statusSectionOrder, []))
   const visibleStatusSections = createMemo(() =>
     applyRightPanelItemCustomization(

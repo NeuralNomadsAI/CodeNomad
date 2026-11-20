@@ -97,6 +97,7 @@ import {
 } from "./stores/sidecars"
 import { parseInstanceKey, backendIdOf } from "./lib/backend-identity"
 import { captureBackendOperation } from "./lib/backend-operation"
+import { hostSupports } from "./lib/backend-capabilities"
 import {
   activeAppTab,
   activeAppTabId,
@@ -557,6 +558,7 @@ const App: Component = () => {
   useDesktopConnectionLaunch()
 
   async function handleNewTemporaryInstance(): Promise<void> {
+    if (!hostSupports("temporary-workspaces")) return
     clearLaunchError()
     setIsSelectingFolder(true)
     try {

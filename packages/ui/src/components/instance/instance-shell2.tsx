@@ -18,7 +18,7 @@ import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
 
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette, getCommandPaletteFocusRequest } from "../../stores/command-palette"
-import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
+import { isSessionSearchOpen, sessionSearchSupported, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
 import InstanceWelcomeView from "../instance-welcome-view"
 import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
@@ -670,7 +670,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       onSelect: handleCommandPaletteClick,
     }]
     if (showingInfoView()) return items
-    items.push({
+    if (sessionSearchSupported(props.instance.id)) items.push({
       key: "search",
       checked: searchOpen(),
       label: t("instanceShell.chatSearch.openAriaLabel"),
@@ -1145,7 +1145,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           <CommandIcon class="w-5 h-5" aria-hidden="true" />
                         </IconButton>
                         <Show when={!showingInfoView()}>
-                          <IconButton
+                          <Show when={sessionSearchSupported(props.instance.id)}><IconButton
                             color="inherit"
                             onClick={handleChatSearchClick}
                             class="icon-toggle"
@@ -1157,7 +1157,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             size="small"
                           >
                             <Search class="w-5 h-5" aria-hidden="true" />
-                          </IconButton>
+                          </IconButton></Show>
                           <Show when={!previewsUnavailable()}>{renderPreviewToggleButton()}</Show>
                           {renderFullscreenButton()}
                           <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}

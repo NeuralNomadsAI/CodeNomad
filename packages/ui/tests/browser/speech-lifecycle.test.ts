@@ -137,6 +137,7 @@ test("stop and disposal fence buffered responses and capabilities still loading"
     const f = (window as any).fixture
     f.holdCapabilities(); f.mount("b", "capabilities"); f.toggle("b"); f.remove("b"); f.resolveCapabilities()
   })
+  await page.waitForFunction(() => (window as any).fixture.capabilitiesRequested())
   // Cross one event-loop turn so all deliberately resolved continuations run.
   await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)))
   assert.equal((await snapshot(page)).pending, 2, "disposed capability wait must not start synthesis")

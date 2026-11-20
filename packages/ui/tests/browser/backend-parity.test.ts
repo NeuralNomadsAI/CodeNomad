@@ -4,7 +4,8 @@ import { chromium, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-async function fixturePage(run: (page: Page) => Promise<void>) {
+/** `meta` answers the host's `/api/meta` from the first read, which startup already makes. */
+async function fixturePage(run: (page: Page) => Promise<void>, meta: object = {}) {
   const fixture = await borrowFixture({ name: "backend-parity", routes: [{ path: "/fixture", html:
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-parity.tsx"></script></body></html>' }] })
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
@@ -33,7 +34,7 @@ async function fixturePage(run: (page: Page) => Promise<void>) {
       close() {}
     }
   })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/meta" ? meta : {} }))
   try {
     await page.goto(fixture.url)
     await page.waitForFunction(() => Boolean((window as any).parity) && document.querySelectorAll(".image-settings select:not(:disabled)").length === 3
@@ -167,9 +168,6 @@ test("embedded Settings Missions reads the selected qualified project's worktree
 }))
 
 test("web clients manage and select saved servers through embedded Settings without a native bridge", async () => fixturePage(async page => {
-  await page.route("**/api/meta", route => route.fulfill({ json: {
-    localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false,
-  } }))
   await page.evaluate(() => (window as any).parity.openServers())
   const row = page.locator('[data-remote-server="A"]')
   await row.waitFor()
@@ -183,4 +181,4 @@ test("web clients manage and select saved servers through embedded Settings with
   await row.getByRole("button", { name: "Open: Server A", exact: true }).click()
   await page.waitForFunction(() => (window as any).parity.serverSelection()?.id === "A")
   assert.equal(await page.evaluate(() => Boolean(window.electronAPI || (window as any).__TAURI_INTERNALS__)), false)
-}))
+}, { localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false }))

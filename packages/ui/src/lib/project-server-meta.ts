@@ -1,5 +1,6 @@
 import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
 import type { ServerMeta } from "../../../server/src/api-types"
+import { declaresCapability } from "./backend-capabilities"
 import { backendOf, localBackend, type BackendClient } from "./backend-client"
 import { backendEvents } from "./backend-events"
 import { localServerMeta, previewsAvailabilityResolved as hostPreviewsResolved, previewsUnavailable as hostPreviewsUnavailable } from "./server-meta"
@@ -41,6 +42,6 @@ export function createProjectServerMeta(instanceId: Accessor<string | undefined>
     meta,
     previewsAvailabilityResolved,
     previewsUnavailable: () => !owner() || (owner() !== localBackend && !previewsAvailabilityResolved())
-      || meta()?.previewsUnavailable === true || hostPreviewsUnavailable(),
+      || meta()?.previewsUnavailable === true || !declaresCapability(meta(), "previews") || hostPreviewsUnavailable(),
   }
 }

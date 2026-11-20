@@ -22,6 +22,7 @@ import { tGlobal, useI18n } from "../i18n"
 import { helpUrl } from "../help-url"
 import { openExternalUrl } from "../external-url"
 import { openSettings } from "../../stores/settings-screen"
+import { hostSupports } from "../backend-capabilities"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
@@ -135,6 +136,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.newTemporaryInstance.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.newTemporaryInstance.keywords"),
+      disabled: () => !hostSupports("temporary-workspaces"),
       action: options.handleNewTemporaryInstance,
     })
 

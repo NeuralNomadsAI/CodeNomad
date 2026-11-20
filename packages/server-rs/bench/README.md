@@ -9,12 +9,12 @@ Requirements, from the repository root:
 ```powershell
 npm ci
 npm run build --workspace @neuralnomads/codenomad                       # TS server dist and bundled plugins
-node --max-old-space-size=8192 packages/server-rs/bench/build-ui.mjs    # Solid UI with ui-capabilities.patch → bench/out/ui
+node --max-old-space-size=8192 packages/server-rs/bench/build-ui.mjs    # Solid UI of this checkout → bench/out/ui
 cargo build --release --locked --manifest-path packages/server-rs/Cargo.toml
 npx playwright install chromium                                         # or CODENOMAD_BROWSER_PATH
 ```
 
-`ui-capabilities.patch` (hides panels the backend does not declare in `capabilities`, sends `expectedVersion` with writes) is not part of `packages/ui`: `build-ui.mjs` applies it to copies loaded by Vite without touching the sources. Only the `solid` mode uses that UI.
+Only the `solid` mode uses that UI. It hides the features of route families a backend leaves out of `capabilities` in `/api/meta`.
 
 Rust binary: `CODENOMAD_RS_BINARY` or `CNRS_RUST_BINARY`, else `$CARGO_TARGET_DIR/release/codenomad-rs.exe`, else `packages/server-rs/target/release/`. OpenCode: absolute path of a native OpenCode 2 executable (not an npm shim), passed as an argument.
 
