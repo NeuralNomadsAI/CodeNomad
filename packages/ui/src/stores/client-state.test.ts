@@ -570,6 +570,28 @@ describe("partitioned client state", () => {
     assert.equal(commits.length, 1)
   })
 
+  it("skips the native commit when a capture re-encodes to the committed graph", async () => {
+    const encoded = await encodeClientSnapshotV2(snapshot("restored"))
+    const commits: any[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => { commits.push(value); return true },
+      clearClientState: async () => true, setClientStateRestoreEnabled: async () => true,
+    })
+    for (const sidecar of ["first", "first", "first", "second"]) {
+      state.updateRestorableSession(session(sidecar))
+      await state.flushClientState()
+    }
+    assert.deepEqual(commits.map((commit) => commit.snapshot.revision), [2, 5])
+    // Clearing forgets the committed graph, so the same state is written again.
+    await state.clearRestoredClientState()
+    await state.setRestorePreviousStateEnabled(true)
+    state.updateRestorableSession(session("second"))
+    await state.flushClientState()
+    assert.equal(commits.length, 3)
+  })
+
   it("commits one atomic graph without a monolithic save or automatic load rewrite", async () => {
     const encoded = await encodeClientSnapshotV2(snapshot("restored", { [layoutKey]: "380" }))
     const commits: any[] = []; let monolithicSaves = 0

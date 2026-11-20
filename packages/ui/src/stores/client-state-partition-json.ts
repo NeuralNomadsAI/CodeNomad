@@ -13,3 +13,26 @@ export async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value))
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")
 }
+
+export interface EncodedPartition { key: string; text: string; bytes: number }
+// Saves repeat most partitions unchanged; reuse their canonical text and key by plain
+// JSON, which equal values share. Bounded LRU: blob-heavy snapshots simply miss.
+const MAX_CACHED_CHARACTERS = 8 * 1024 * 1024
+const cache = new Map<string, EncodedPartition>()
+let cachedCharacters = 0
+export async function encodePartition(value: unknown): Promise<EncodedPartition> {
+  const plain = JSON.stringify(value)
+  if (plain === undefined) throw new TypeError("Client state partition must be JSON-serializable")
+  const hit = cache.get(plain)
+  if (hit) { cache.delete(plain); cache.set(plain, hit); return hit }
+  const text = canonicalJson(value)
+  const encoded = { key: await sha256(text), text, bytes: encoder.encode(text).byteLength }
+  cache.set(plain, encoded)
+  cachedCharacters += plain.length + text.length
+  for (const [oldest, entry] of cache) {
+    if (cachedCharacters <= MAX_CACHED_CHARACTERS) break
+    cache.delete(oldest)
+    cachedCharacters -= oldest.length + entry.text.length
+  }
+  return encoded
+}

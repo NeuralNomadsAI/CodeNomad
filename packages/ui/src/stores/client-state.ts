@@ -32,6 +32,9 @@ let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
 let partitionProtocolVersion: 1 | undefined
+// Content of the last accepted partitioned commit (root without revision/savedAt):
+// status-only captures re-encode to the same graph and need no native write.
+let committedContent: string | null = null
 const layoutMigrations = new Map<string, { source: string; remaining: string | null }>()
 // Browser tabs restore their session from sessionStorage while layout values keep
 // their shared localStorage entries, written and read immediately.
@@ -113,6 +116,9 @@ function enqueuePendingSave(): Promise<void> {
       if (!partitioned && new TextEncoder().encode(JSON.stringify(normalizedSnapshot)).byteLength > MAX_V1_SNAPSHOT_BYTES) {
         throw new Error("Client snapshot exceeds the V1 1 MiB limit and partition persistence is unavailable")
       }
+      const content = partitioned && JSON.stringify({ ...partitioned.root, revision: 0, savedAt: 0 })
+      if (content && content === committedContent) return
+      committedContent = null
       const accepted = partitioned
         ? await commitNativeClientStatePartitions({
           protocolVersion: 1,
@@ -125,6 +131,7 @@ function enqueuePendingSave(): Promise<void> {
         setClientStateIsPrimary(false)
         throw new Error("Native client state save was rejected")
       }
+      committedContent = content || null
       lastSaveError = undefined
       // Retire the legacy entries only after a snapshot carrying descriptor views
       // is durably accepted. Changed concurrent legacy writes retain their authority.
@@ -164,6 +171,7 @@ function scheduleSave() {
     .catch((error) => console.warn("[client-state] failed to save client snapshot", error)), SAVE_DEBOUNCE_MS)
 }
 function resetLoadedState(snapshot: ClientSnapshotV1 | null = null, resetRevision = false) {
+  committedContent = null
   layout = snapshot ? { ...snapshot.layout } : Object.create(null)
   if (resetRevision) revision = snapshot?.revision ?? 0
   setLoadedClientSnapshotExists(snapshot !== null)
@@ -173,6 +181,7 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
   const previousWriteBlock = writeBlock
   let retryDirty = dirty
   writeBlock = "transaction"
+  committedContent = null
   transactionLayoutWrites.clear()
   cancelSaveTimer()
   dirty = false

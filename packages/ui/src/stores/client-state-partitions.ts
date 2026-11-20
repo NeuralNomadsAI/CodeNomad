@@ -1,7 +1,7 @@
 import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableWorkspaceTabState } from "./client-state-codec"
 import type { RestorableAttachment } from "./client-state-attachments-codec"
-import { canonicalJson, sha256 } from "./client-state-partition-json"
+import { canonicalJson, encodePartition, sha256 } from "./client-state-partition-json"
 export { canonicalJson, sha256 } from "./client-state-partition-json"
 import { encodeOutlinePartitions, decodeOutlinePartitions } from "./client-state-outline-partitions"
 import { encodeCatalogPartitions, decodeCatalogPartitions } from "./client-state-catalog-partitions"
@@ -116,13 +116,12 @@ async function encodeAttachments(attachments: RestorableAttachment[], addPartiti
 async function encodeSessionGraph(session: RestorableSessionState | null) {
   const generated: Record<string, string> = Object.create(null)
   const addPartition = async (value: unknown) => {
-    const partition = canonicalJson(value)
-    if (encoder.encode(partition).byteLength > MAX_PARTITION_BYTES) {
+    const partition = await encodePartition(value)
+    if (partition.bytes > MAX_PARTITION_BYTES) {
       throw new Error("Client state partition exceeds the native size limit")
     }
-    const key = await sha256(partition)
-    generated[key] = partition
-    return key
+    generated[partition.key] = partition.text
+    return partition.key
   }
 
   const encodedSession = session === null ? null : {

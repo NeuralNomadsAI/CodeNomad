@@ -141,6 +141,25 @@ it("produces stable deduplicated hashes and complete sorted partition keys", asy
   assert.ok(first.partitionKeys.includes(first.root.sessionPartition))
 })
 
+it("re-encodes an unchanged catalog-heavy snapshot without hashing it again", async (t) => {
+  const row = (index: number) => ({ id: `session-${index}`, title: `Title ${index}`, parentId: null, projectID: "p",
+    location: { directory: "/repo" }, time: { created: index, updated: index }, agent: "build",
+    model: { providerId: "openai", modelId: "m" }, cost: 0, tokens: { input: 1, output: 2, reasoning: 0, cache: { read: 0, write: 0 } } })
+  const snapshot: ClientSnapshotV1 = { ...graphSnapshot(), session: { tabs: [{ ...workspace(0, "draft"),
+    sessionCatalog: Array.from({ length: 3000 }, (_, index) => row(index)) }], activeTabIndex: 0 } }
+  const first = await encodeClientSnapshotV2(structuredClone(snapshot))
+  const digest = t.mock.method(crypto.subtle, "digest")
+  const second = await encodeClientSnapshotV2(structuredClone(snapshot))
+  assert.deepEqual(second, first)
+  assert.equal(digest.mock.callCount(), 0)
+  // A changed row is hashed again and changes the graph.
+  const changed = structuredClone(snapshot)
+  ;(changed.session!.tabs[0] as RestorableWorkspaceTabState).sessionCatalog![7]!.title = "Renamed"
+  const third = await encodeClientSnapshotV2(changed)
+  assert.notEqual(third.root.sessionPartition, first.root.sessionPartition)
+  assert.ok(digest.mock.callCount() > 0)
+})
+
 it("uses the native graph cap without truncating the encoded key list", async () => {
   const encoded = await encodeClientSnapshotV2(sidecarSnapshot)
   assert.equal(canCommitClientSnapshotV2({ ...encoded, partitionKeys: Array(4096).fill("key") }), true)
