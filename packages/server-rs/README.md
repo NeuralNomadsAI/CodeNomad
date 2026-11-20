@@ -1,6 +1,10 @@
 # codenomad-rs
 
-Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It runs as a remote backend, and `codenomad-rs serve [options]` honours the launch contract Tauri uses with the TypeScript server; Tauri still starts the TypeScript server.
+Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It runs as a remote backend, and `codenomad-rs serve [options]` honours the launch contract Tauri uses with the TypeScript server; Tauri launches it instead of the TypeScript server when started with `CODENOMAD_SERVER_IMPL=rust`.
+
+## Desktop host
+
+Tauri (`cli_manager.rs`, `Runner::Rust`) runs the binary directly with the TypeScript server's arguments, environment (including `RUST_BACKTRACE=1`) and stdio contract. Packaged builds stage it as `server/codenomad-rs[.exe]` beside `server/public` (`scripts/rust-server-binary.cjs`, called by `prebuild.js`), with its debug info (`codenomad_rs.pdb`, `codenomad-rs.dSYM`; inside the binary on Linux) so release panic backtraces name files and lines. Development runs the newest `debug` or `release` build under `CARGO_TARGET_DIR` or `packages/server-rs/target`, then the staged copy. `CNRS_FIXTURE_PANIC=1` (bench only) panics at startup to check the backtrace the host logs.
 
 ## Launch
 

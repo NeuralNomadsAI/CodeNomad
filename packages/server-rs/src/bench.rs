@@ -68,6 +68,12 @@ pub fn native_endpoint() -> Result<(String, String), env::VarError> {
 pub fn native_endpoint_set() -> bool {
     env::var_os("CNRS_FIXTURE_URL").is_some()
 }
+/// `CNRS_FIXTURE_PANIC=1`: panic at startup, to check the backtrace a desktop host logs.
+pub fn panic_on_start() {
+    if on("CNRS_FIXTURE_PANIC") {
+        panic!("CNRS_FIXTURE_PANIC: bench-requested startup panic");
+    }
+}
 pub fn ingress() -> bool {
     on("CNRS_FIXTURE_INGRESS")
 }
