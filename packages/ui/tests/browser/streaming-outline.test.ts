@@ -23,10 +23,10 @@ before(async () => {
         if (id.replaceAll("\\", "/").endsWith("/src/components/message-timeline-projection.ts")) {
           // Count the rail's full-history visibility folds the same way.
           const source = await readFile(id, "utf8")
-          const folded = source.replace("const representative = new Map<string, string>()",
+           const folded = source.replace(/const\s+representative\s*=\s*new\s+Map<\s*string,\s*string\s*>\s*\(\s*\)/,
             ";(globalThis as any).__timelineFolds = ((globalThis as any).__timelineFolds ?? 0) + 1; const representative = new Map<string, string>()")
           if (folded === source) throw new Error("timeline fold anchor missing")
-          const counted = folded.replace("const runs = nativeTimelineRuns(record)",
+           const counted = folded.replace(/const\s+runs\s*=\s*nativeTimelineRuns\s*\(\s*record\s*,?\s*\)/,
             ";if (record.id !== 'msg_assistant') (globalThis as any).__historicalMarkerBuilds = ((globalThis as any).__historicalMarkerBuilds ?? 0) + 1; const runs = nativeTimelineRuns(record)")
           if (counted === folded) throw new Error("resident marker build anchor missing")
           return counted
@@ -35,7 +35,7 @@ before(async () => {
         const source = await readFile(id, "utf8")
         // Count the real full-history implementation, without changing inputs,
         // outputs, scheduling or the production interface.
-        const counted = source.replace("const position =", ";(globalThis as any).__outlineWork ??= { calls: 0 }; (globalThis as any).__outlineWork.calls++; const position =")
+         const counted = source.replace(/const\s+position\s*=/, ";(globalThis as any).__outlineWork ??= { calls: 0 }; (globalThis as any).__outlineWork.calls++; const position =")
         if (counted === source) throw new Error("full-history projection anchor missing")
         return counted
       },
