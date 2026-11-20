@@ -186,7 +186,8 @@ Each reservation retains its distinct passage, execution Mission and original me
 IDs and isolated journal, with `coordinatorReused` identifying the explicit selection.
 Adoption applies the frozen agent/model through public native switches and merges only
 the Missions metadata key. Existing transcript, title, permissions and unrelated metadata
-remain. The user's choice authorizes ordinary Mission controls over that conversation
+remain. After admission the coordinator conversation's agent and model stay its user's
+choice: Mission tools keep working after a switch, while task roots keep their role profile. The user's choice authorizes ordinary Mission controls over that conversation
 and its work, including Stop cancellation of existing queued user/synthetic inputs.
 For human-authored choices, never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
 An agent can explicitly select its own eligible root when saving a schedule.

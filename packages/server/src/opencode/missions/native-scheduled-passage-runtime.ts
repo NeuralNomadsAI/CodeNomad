@@ -145,9 +145,10 @@ export const acquireNativeScheduledPassageRuntime = Effect.fn("missions.acquireS
         || mission.id !== doc.pending.missionID || mission.coordinatorSessionId !== doc.pending.coordinatorSessionID)
         throw new Error("Scheduled passage journal unavailable")
       const actor = mission.actors.find(actor => actor.sessionId === id)
-      const selection = id === doc.pending.coordinatorSessionID ? doc.pending.configuration.profiles?.coordinator
-        : doc.pending.configuration.profiles?.roles?.[actor?.roles[0] ?? ""]
-      if (!actor || !selection || !matchesExecution(selection, session)) throw new Error("Scheduled passage root profile differs")
+      // Admission applies the coordinator profile; the conversation's model is its user's choice afterwards.
+      const selection = doc.pending.configuration.profiles?.roles?.[actor?.roles[0] ?? ""]
+      if (!actor || id !== doc.pending.coordinatorSessionID && (!selection || !matchesExecution(selection, session)))
+        throw new Error("Scheduled passage root profile differs")
       return use(scoped, id)
     }
     throw new Error("Scheduled passage ancestry capacity")
