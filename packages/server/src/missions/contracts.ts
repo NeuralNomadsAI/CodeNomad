@@ -272,7 +272,7 @@ export function validateMissionCompletionPolicy(input: {
   }
   if (input.template !== "debug" || input.outcome !== "completed") return
   if (input.tasks.length === 0 && input.evidence?.some(item => item.trim())
-    && z.strictObject({ kind: z.literal("no-change") }).safeParse(input.artifact).success) return
+    && z.strictObject({ kind: z.enum(["no-change", "verified-completion"]) }).safeParse(input.artifact).success) return
   if (input.tasks.some(task => task.executionMode)) {
     const tasks = input.tasks.filter((task): task is MissionTask => Boolean(task.key && task.blockedBy))
     const liveFixes = tasks.filter(task => task.role === "implementer" && task.status !== "withdrawn" && !task.replacedByTaskKey)
