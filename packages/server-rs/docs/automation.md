@@ -1,15 +1,15 @@
 # Desktop automation with the Rust server: design note
 
-Status: proposal for review. Scope: `codenomad.inspect`, `codenomad.act`, `codenomad.screenshot`, `codenomad.browser` and `act({ action: "restart" })` when a desktop host runs the Rust server.
+Status: option B chosen, Tauri only (Electron does not launch the Rust server on this branch). Scope: `codenomad.inspect`, `codenomad.act`, `codenomad.screenshot`, `codenomad.browser` and `act({ action: "restart" })`.
 
 ## 1. What the tools do and the current path
 
 For the agent, the tools do five things (`dev-docs/BROWSER_AUTOMATION.md`, `.opencode/skills/codenomad-automation/SKILL.md`):
 
-- **inspect**: an indented accessibility outline of the focused local CodeNomad window, with refs, budgeted collapse, `ref`/`query` scoping, the window/workspace/conversation context and runtime diagnostics (renderer console and exceptions; Tauri adds its last 32 preview errors).
+- **inspect**: an indented accessibility outline of the focused local CodeNomad window, with refs, budgeted collapse, `ref`/`query` scoping, the window/workspace/conversation context and runtime diagnostics (renderer console and exceptions, the host's last 32 preview errors).
 - **act**: real pointer, wheel and key input aimed at a ref's visible centre and refused when covered; text insertion, native `<select>`, drag, chords, text waits. Every trusted input carries the application's automation provenance marker, so it can never pass as a human Form answer.
 - **screenshot**: a PNG of the inspected page (≤ 5 MiB).
-- **browser**: the same engine on the session's visible preview guest, plus `open`, `navigate` and `screenshot`, which the host performs.
+- **browser**: the same engine on the session's visible preview, plus `open`, `navigate` and `screenshot`, which the host performs.
 - **restart**: the host relaunches gracefully; the plugin waits for the same native identity with a new run and returns a fresh inspection.
 
 Current path and what each layer contributes:
@@ -19,29 +19,48 @@ Current path and what each layer contributes:
 | OpenCode plugin (TS, inside the daemon) | Tool schemas, presence following, discovery of `automation-bridges/` registrations (WSL also reads the Windows directory), "exactly one owning backend", per-session pin of the inspected backend, restart reconnection, text/image formatting. |
 | `curl.exe --noproxy "*"` | Only for a WSL plugin reaching the Windows loopback bridge under WSL2 NAT. |
 | Server bridge `/api/opencode-plugin/automation` | Token and loopback check; **OpenCode session → location → owned workspace** (the only layer that knows both sides); action validation; preview page engine with per-session refs over `browser.page.begin/send/check/end`; app-window page engine over a CDP WebSocket (target discovery through `/json/list`, window/session matching, run pinning, navigation epochs, console capture). |
-| Host (Electron / Tauri) | Window and run identity, Chromium-assigned CDP port (`DevToolsActivePort`), focused-window choice, restart; preview guest registry, leases, document generations, allowlisted operations, native input, preview screenshots, WebKit driver. |
-| Page | Accessibility tree, DevTools input, fixed injected functions (`automation/page/functions.generated.json`), provenance marker. |
+| Tauri host | Window and run identity, WebView2's Chromium-assigned CDP port (`DevToolsActivePort`, Windows only), focused-window choice, restart; preview registry, leases, document generations, allowlisted page operations through a `cdp` driver (WebView2 `CallDevToolsProtocolMethod`) or a `webkit` driver (fixed isolated-world read program, native NSEvent/GDK input), preview screenshots. |
+| Page | Accessibility tree, input, fixed injected programs (`automation/page/functions.generated.json`, WebKit `page_read.generated.h`), provenance marker. |
 
-Two facts shape the rest. The page engine (snapshot renderer, aiming, input sequences, keys, refs: about 1,100 TS lines) runs in the server only because the server was where Node code lived. And both hosts already speak CDP in process to preview guests: Tauri through WebView2 `CallDevToolsProtocolMethod` (`browser_controller.rs`), Electron through `webContents.debugger` (`browser-controller.ts`). Only the application window goes through a debugging port.
+The page engine (snapshot renderer, aiming, input sequences, keys, refs: about 1,100 TS lines) runs in the server only because the server was where Node code lived. The host already reaches every page in process; only the Windows application window goes through a debugging port.
 
-## 2. Simpler Rust architecture
+## 2. Coverage by system, today and with B
 
-**Option A, faithful port into `server-rs`.** Bridge, CDP WebSocket client, target discovery and the whole page engine in the server; hosts unchanged. About 6–8 days. It keeps the unauthenticated loopback CDP port on the app window and leaves two engines (Rust in the server, TS in Electron's preview path) to keep identical. A CDP crate does not pay off here: `chromiumoxide` 0.9.1 (Feb 2026, MIT OR Apache-2.0, actively released) generates the whole protocol and runs its own browser/target handler built to own a browser, while we use about fifteen methods with per-command deadlines on a browser we must not disturb. A raw `tokio-tungstenite` client (~150 lines) would do, and option B needs neither.
+Established from the branch's code and tests (`developer_mode.rs`, `browser_controller.rs`, `browser_controller_page.rs`, `embedded_view/input_*`, their regression tests). Not yet confirmed by a real run on each system: Windows needs the `desktop-hosts` build; the Ubuntu VM has 1.4 GB free and only binaries older than this branch; the macOS VM disk is full.
 
-**Option B, the host drives its own pages (recommended).** The engine moves to whoever owns the page and talks to it in process:
+| Tool | Windows (WebView2) | macOS 14+ (WKWebView) | Linux (WebKitGTK) |
+| --- | --- | --- | --- |
+| inspect, act, screenshot (app window) | Yes: server CDP WebSocket to `--remote-debugging-port=0` → **B**: in-process `CallDevToolsProtocolMethod`, no port | No: `developer.status` refuses ("requires the Tauri Windows runtime"); WebKit has no CDP → **B**: new, WebKit driver on the app's own view | No, as macOS → **B**: new, as macOS |
+| restart | Yes, after an inspection → **B**: yes | No: needs an inspection, and `developer.restart` is refused although the host's relaunch is cross-platform → **B**: yes once inspect works | No, as macOS → **B**: as macOS |
+| browser open, navigate, screenshot | Yes: host navigation, CDP `Page.captureScreenshot` → **B**: unchanged | Yes: `takeSnapshotWithConfiguration` → **B**: unchanged | Yes: `webkit_web_view_get_snapshot` → **B**: unchanged |
+| browser snapshot and page actions | Yes: server engine, host `cdp` driver → **B**: engine in the host, same driver | Yes: server engine, host `webkit` driver → **B**: engine in the host, same driver | Yes, as macOS → **B**: as macOS |
+| inspect diagnostics | Renderer console through CDP events, host preview errors → **B**: WebView2 DevTools event receiver, plus Rust server diagnostics | None (no inspect) → **B**: a fixed page-world console/error hook, plus Rust server diagnostics | As macOS |
 
-- One Rust crate, `codenomad-automation` (engine only, transport-agnostic: a `send(method, params)` closure plus a checkpoint), used by the Tauri host. The injected programs stay the existing JS assets, embedded with `include_str!` as `browser_page_operation.rs` already does.
-- Tauri runs it over `CallDevToolsProtocolMethod` for the application window as for previews, and reads console, exceptions and `Page.frameNavigated` through the DevTools event receiver. Electron runs the existing TS engine in its main process over `webContents.debugger`, moved from `packages/server/src/automation/page` to a shared package (Electron must stop importing `packages/server/src` anyway).
-- Two private native methods replace the rest: `developer.execute { command }` (inspect, act, screenshot, restart) and `browser.execute` extended to `snapshot` and page actions. Refs live in the host per window run and per preview session.
-- Both servers (TS and Rust) become forwarders: authenticate, check session ownership, validate the action, forward, append their own diagnostics. Hosts keep `developer.status` and `browser.page.*` until the TS server forwards too, then those go.
+## 3. Option B on Tauri
 
-Removed: the remote-debugging port and `DevToolsActivePort` handling, `developer-cdp.ts`, `/json/list` probing and window matching, inspection target pinning in the server, the cross-process lease protocol (leases stay but become in-process calls), and in `server-rs` any CDP or engine code. The tool and plugin contract is unchanged: same bridge modes, bodies, errors and restart semantics. About 9–11 days across both hosts. Risks: both hosts change; WebView2 calls hop to the UI thread (keep the engine on a worker, as the preview path does); trusted-input provenance and paint holding through `CallDevToolsProtocolMethod` on the app window must be qualified with the existing `automation-input` tests; the private method change must ship with both servers in step.
+- The engine becomes a module of the Tauri crate (server-rs needs none), driven through the existing operation drivers: `cdp` over `CallDevToolsProtocolMethod`, `webkit` over the read program and native input. Injected programs stay the existing JS and generated assets, embedded with `include_str!` as `browser_page_operation.rs` already does.
+- Windows app window: the main local webview through `CallDevToolsProtocolMethod`; console, exceptions and `Page.frameNavigated` through `GetDevToolsProtocolEventReceiver`. The `--remote-debugging-port` flag and the `DevToolsActivePort` handling go.
+- macOS and Linux app window (new): install the read program in the application view as for previews, aim native input at that view, capture with the existing snapshot calls. The provenance marker (`__codenomadAutomationInputUntil`) must be set in the page world by a fixed program, since WebKit has no CDP input; this and the console hook need their own security review and the `automation-input` tests on WebKit.
+- Two private native methods carry it: `developer.execute { command }` and `browser.execute` extended to `snapshot` and page actions. Refs live in the host, per window run and per preview session.
+- The Rust server only authenticates, checks session ownership, validates the action, forwards and appends its own diagnostics. While Tauri can still launch the TS server, the host keeps `developer.status`, the Windows debugging port and `browser.page.*` for it; switching the TS server to the same forwarding (about half a day) removes them earlier.
+- Unchanged: the plugin, the bridge modes, bodies, errors, restart semantics and the WSL `curl.exe` path.
 
-**Rust-specific diagnostics (either option).** Today `inspect` reports the renderer console and the host's preview errors; Node errors appear only when they reach the renderer. The Rust server adds a bounded ring of its own panics (panic hook with `file:line` and the line-table backtrace from `RUST_BACKTRACE=1`) and logged errors, appended to inspection diagnostics by the bridge. Restart relaunches the host, which relaunches the Rust binary; the WSL `curl.exe` path is untouched because the plugin and bridge wire stay as they are.
+Estimate (Tauri only):
 
-**Fastest path for tranche 14.** The bridge forwarder and its registration (production publication, `0600`, atomic write, `CODENOMAD_NATIVE_PARENT` / `CODENOMAD_NATIVE_BROWSER_AUTOMATION` / `CODENOMAD_AUTOMATION_BRIDGE_TOKEN` handling) are needed by both options and come first. Option B then lands host by host.
+| Work | Days |
+| --- | --- |
+| Engine in Rust (snapshot renderer and budgets, refs, aiming, input sequences and provenance, keys, waits), checked against the existing TS fixtures (`driver.golden.json`, `contract.cases.json`, snapshot cases) | 3–4 |
+| Previews through the in-host engine, both drivers | 1–1.5 |
+| Windows app window, event receiver, input provenance and paint-holding qualification | 1.5–2 |
+| macOS and Linux app window (new capability), VM qualification once their disks have room | 4–6 |
+| Rust server forwarding and bench (bridge and publication already done) | 0.5 |
+| **Windows parity** / **all three systems** | **6–8** / **10–14** |
 
-## 3. Server in the Tauri process
+Risks: WebView2 calls hop to the UI thread (keep the engine on a worker, as the preview path does); trusted input through `CallDevToolsProtocolMethod` on the app window and through WebKit native input must keep the human-answer guarantees; the VMs must be given room before WebKit window automation can be qualified.
+
+**Rust server diagnostics.** Today `inspect` reports the renderer console and the host's preview errors; Node errors appear only when they reach the renderer. The Rust server keeps its last 32 panics (location, plus this crate's frames when `RUST_BACKTRACE=1` and line tables are present) and 5xx refusals with their call site; the bridge appends them to inspection diagnostics.
+
+## 4. Server in the Tauri process
 
 Linking `server-rs` as a library inside the Tauri host removes the stdout readiness line, the bootstrap token and its exchange, the stdin shutdown line and the native-parent stdin/stdout channel: native requests become function calls and `developer.execute` a direct call. The automation bridge stays an HTTP loopback endpoint because the plugin lives in the OpenCode daemon. Electron keeps the separate binary, and so do `npx @neuralnomads/codenomad` and the bench, so the crate becomes a library plus a thin `main`.
 
