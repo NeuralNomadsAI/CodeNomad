@@ -97,6 +97,7 @@ import {
 } from "./stores/sidecars"
 import { parseInstanceKey, backendIdOf } from "./lib/backend-identity"
 import { captureBackendOperation } from "./lib/backend-operation"
+import { hostSupports } from "./lib/backend-capabilities"
 import {
   activeAppTab,
   activeAppTabId,
@@ -541,7 +542,7 @@ const App: Component = () => {
         t("opencodeBinarySelector.validation.v2Required"),
       )
       const missingBinary = isMissingBinaryMessage(message)
-      if (missingBinary || message.includes("opencode_update_required")) {
+      if ((missingBinary || message.includes("opencode_update_required")) && hostSupports("opencode-admin")) {
         openOpenCodeSetup(() => handleSelectFolder(folderPath))
         return false
       }
@@ -557,6 +558,7 @@ const App: Component = () => {
   useDesktopConnectionLaunch()
 
   async function handleNewTemporaryInstance(): Promise<void> {
+    if (!hostSupports("temporary-workspaces")) return
     clearLaunchError()
     setIsSelectingFolder(true)
     try {
@@ -570,7 +572,7 @@ const App: Component = () => {
         t("opencodeBinarySelector.validation.v2Required"),
       )
       const missingBinary = isMissingBinaryMessage(message)
-      if (missingBinary || message.includes("opencode_update_required")) {
+      if ((missingBinary || message.includes("opencode_update_required")) && hostSupports("opencode-admin")) {
         openOpenCodeSetup(() => handleNewTemporaryInstance())
         return
       }
@@ -796,13 +798,15 @@ const App: Component = () => {
                </div>
 
                <div class="flex justify-end gap-2">
-                 <button
-                   type="button"
-                   class="selector-button selector-button-secondary"
-                   onClick={handleLaunchErrorAdvanced}
-                 >
-                   {t("app.launchError.openAdvancedSettings")}
-                 </button>
+                 <Show when={hostSupports("opencode-admin")}>
+                   <button
+                     type="button"
+                     class="selector-button selector-button-secondary"
+                     onClick={handleLaunchErrorAdvanced}
+                   >
+                     {t("app.launchError.openAdvancedSettings")}
+                   </button>
+                 </Show>
                 <button type="button" class="selector-button selector-button-primary" onClick={handleLaunchErrorClose}>
                   {t("app.launchError.close")}
                 </button>

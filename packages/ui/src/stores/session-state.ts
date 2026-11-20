@@ -38,6 +38,7 @@ import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
 import { confirmedSessionListDirectory } from "./session-events"
 import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
 import { getSessionListView } from "./session-list-view"
+import { supportsWorkspaceCapability } from "./workspace-capabilities"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -816,7 +817,7 @@ function writeSessionSelection(
 function writeActiveSession(instanceId: string, sessionId: string | null): void {
   writeSessionSelection(setActiveSessionId, instanceId, sessionId)
   void refreshSessionCatalog(instanceId).catch((error) => log.warn("Failed to refresh session catalog", { instanceId, error }))
-  if (sessionId) {
+  if (sessionId && supportsWorkspaceCapability(instanceId, "yolo")) {
     // Backfill authoritative Yolo state for the now-active session so the badge
     // matches the server even on first connect / multi-client scenarios.
     ensureYoloStateSynced(instanceId, sessionId)

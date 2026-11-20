@@ -20,6 +20,7 @@ import { LocaleSelector } from "./locale-selector"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 import { getServerMeta, localRequest, serversUsable, serversManageable, sidecarsAllowed } from "../lib/server-meta"
+import { hostSupports } from "../lib/backend-capabilities"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 import { preferences } from "../stores/preferences"
 import RemoteProjectMenu, { type RemoteRecentRequest } from "./remote-project-menu"
@@ -792,7 +793,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </div>
                   </button>
 
-                  <button
+                  <Show when={hostSupports("workspace-clone")}><button
                     type="button"
                     onClick={openCloneDialog}
                     disabled={props.isLoading}
@@ -802,9 +803,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                       <GitBranch class="w-4 h-4" />
                       <span>{t("folderSelection.clone.button")}</span>
                     </div>
-                  </button>
+                  </button></Show>
 
-                  <Show when={props.onNewTemporaryInstance}>
+                  <Show when={props.onNewTemporaryInstance && hostSupports("temporary-workspaces")}>
                     <button
                       type="button"
                       onClick={() => props.onNewTemporaryInstance?.()}
@@ -846,7 +847,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 </div>
 
                 {/* OpenCode settings section */}
-                <div class="panel-section w-full">
+                <Show when={hostSupports("opencode-admin")}><div class="panel-section w-full">
                   <button onClick={() => openSettings("opencode")} class="panel-section-header w-full justify-between">
                     <div class="flex items-center gap-2">
                       <Settings class="w-4 h-4 icon-muted" />
@@ -854,7 +855,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </div>
                     <ChevronRight class="w-4 h-4 icon-muted" />
                   </button>
-                </div>
+                </div></Show>
               </div>
 
               <div class="panel shrink-0">

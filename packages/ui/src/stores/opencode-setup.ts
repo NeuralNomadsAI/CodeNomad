@@ -1,6 +1,8 @@
 import { createSignal } from "solid-js"
 import type { OpenCodeUpdateStatus } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { hostDeclares } from "../lib/server-meta"
+import { hostSupports } from "../lib/backend-capabilities"
 
 export const [openCodeSetupStatus, setOpenCodeSetupStatus] = createSignal<OpenCodeUpdateStatus>()
 export const [openCodeSetupOpen, setOpenCodeSetupOpen] = createSignal(false)
@@ -78,7 +80,7 @@ export function openAutomaticOpenCodeSetup(): () => void {
 }
 
 export function reportOpenCodeSetupRequired() {
-  if (openCodeSetupBusy() || notifiedGeneration === generation) return
+  if (openCodeSetupBusy() || notifiedGeneration === generation || !hostSupports("opencode-admin")) return
   notifiedGeneration = generation
   openOpenCodeSetup()
 }
@@ -113,6 +115,8 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
     do {
       request.again = false
       try {
+        // A host without OpenCode administration routes has no setup status to show.
+        if (!await hostDeclares("opencode-admin")) return
         // Only the explicit Check action asks the server to re-probe installations.
         const status = await serverApi.fetchOpenCodeUpdateStatus({ recheck: request.announce })
         if (epoch !== generation) return

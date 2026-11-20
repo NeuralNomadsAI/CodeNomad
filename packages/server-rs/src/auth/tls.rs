@@ -182,34 +182,52 @@ fn material(s: &Settings) -> Result<(String, String), Failure> {
     );
     names.sort();
     names.dedup();
+    // The folder is shared with the reference (`server/tls.ts`), whose `node-forge` reads RSA keys only:
+    // its authority is reused as is, and what this server issues is what the reference issues.
     let (ca_path, ca_key_path) = (dir.join("ca-cert.pem"), dir.join("ca-key.pem"));
     let (leaf_path, key_path) = (dir.join("server-cert.pem"), dir.join("server-key.pem"));
     let mut ca = fs::read_to_string(&ca_path).unwrap_or_default();
-    // A CA key this signer cannot load (the reference's RSA PKCS#1) is replaced like a missing one.
-    let usable = fs::read_to_string(&ca_key_path).is_ok_and(|pem| KeyPair::from_pem(&pem).is_ok());
-    let rotate = !fresh(&ca, 0, &[]) || !usable;
+    let mut ca_key = fs::read_to_string(&ca_key_path).ok().and_then(|pem| KeyPair::from_pem(&pem).ok());
+    let rotate = !fresh(&ca, 0, &[]) || ca_key.is_none();
     if rotate {
-        let key = KeyPair::generate()?;
+        let key = rsa()?;
         let mut p = params(vec![], "CodeNomad Local CA", 365)?;
         p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         p.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign, KeyUsagePurpose::DigitalSignature];
         ca = p.self_signed(&key)?.pem();
-        write_private(&ca_key_path, key.serialize_pem().as_bytes())?;
+        write_private(&ca_key_path, pkcs1_pem(&key)?.as_bytes())?;
         write_private(&ca_path, ca.as_bytes())?;
+        ca_key = Some(key);
     }
+    let ca_key = ca_key.ok_or("TLS authority key missing")?;
     let mut certificate = fs::read_to_string(&leaf_path).unwrap_or_default();
     if rotate || !fresh(&certificate, 3, &names) || !key_path.is_file() {
-        let key = KeyPair::generate()?;
-        let ca_key = KeyPair::from_pem(&fs::read_to_string(ca_key_path)?)?;
+        let key = rsa()?;
         let issuer = CertificateParams::from_ca_cert_pem(&ca)?.self_signed(&ca_key)?;
         let mut p = params(names, if host == "127.0.0.1" { "localhost" } else { host }, 30)?;
-        p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        p.is_ca = IsCa::ExplicitNoCa;
+        p.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
         p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
         certificate = p.signed_by(&key, &issuer, &ca_key)?.pem();
-        write_private(&key_path, key.serialize_pem().as_bytes())?;
+        write_private(&key_path, pkcs1_pem(&key)?.as_bytes())?;
         write_private(&leaf_path, certificate.as_bytes())?;
     }
     Ok((fs::read_to_string(key_path)?, format!("{certificate}{ca}")))
+}
+
+/// RSA-2048 signing with SHA-256, as `forge.pki.rsa.generateKeyPair(2048)` and `md.sha256`.
+fn rsa() -> Result<KeyPair, Failure> {
+    Ok(KeyPair::generate_rsa_for(&rcgen::PKCS_RSA_SHA256, rcgen::RsaKeySize::_2048)?)
+}
+
+/// `RSA PRIVATE KEY` (PKCS#1), as `forge.pki.privateKeyToPem` writes: the key inside the PKCS#8 wrapper.
+fn pkcs1_pem(key: &KeyPair) -> Result<String, Failure> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let (_, pkcs8) = x509_parser::der_parser::parse_der(key.serialized_der()).map_err(|_| "Invalid PKCS#8 key")?;
+    let inner = pkcs8.as_sequence()?.get(2).ok_or("Invalid PKCS#8 key")?.as_slice()?;
+    let body = STANDARD.encode(inner);
+    let lines: Vec<_> = body.as_bytes().chunks(64).map(|l| std::str::from_utf8(l).unwrap_or_default()).collect();
+    Ok(format!("-----BEGIN RSA PRIVATE KEY-----\n{}\n-----END RSA PRIVATE KEY-----\n", lines.join("\n")))
 }
 
 impl Listener {
@@ -295,4 +313,44 @@ impl Listener {
 
 pub fn https_only<B>(req: &Request<B>) -> Option<&Channel> {
     req.extensions().get::<Channel>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reference's layout: RSA PKCS#1 keys, an authority reused as is, the leaf alone renewed.
+    #[test]
+    fn issues_and_keeps_the_reference_authority() {
+        let dir = std::env::temp_dir().join(format!("cnrs-tls-{}", uuid::Uuid::new_v4()));
+        let settings = |sans: &str| Settings {
+            bind: crate::host::Bind { ip: [127, 0, 0, 1].into(), port: 0, fallback: false },
+            name: "localhost".into(),
+            dir: dir.clone(),
+            files: Default::default(),
+            sans: sans.into(),
+        };
+        material(&settings("")).unwrap();
+        let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();
+        let (ca, ca_key, leaf) = (read("ca-cert.pem"), read("ca-key.pem"), read("server-cert.pem"));
+        for key in [&ca_key, &read("server-key.pem")] {
+            assert!(key.starts_with("-----BEGIN RSA PRIVATE KEY-----\n") && KeyPair::from_pem(key).is_ok());
+        }
+        let names = ["localhost".to_owned(), "127.0.0.1".to_owned()];
+        assert!(fresh(&ca, 300, &[]) && fresh(&leaf, 20, &names));
+        material(&settings("")).unwrap();
+        assert_eq!(
+            (read("ca-cert.pem"), read("ca-key.pem"), read("server-cert.pem")),
+            (ca.clone(), ca_key.clone(), leaf.clone())
+        );
+        material(&settings("extra.example")).unwrap();
+        assert_eq!((read("ca-cert.pem"), read("ca-key.pem")), (ca.clone(), ca_key));
+        let renewed = read("server-cert.pem");
+        assert!(renewed != leaf && fresh(&renewed, 20, &["extra.example".to_owned()]));
+        let (issued, authority) = (super::leaf(&renewed).unwrap(), super::leaf(&ca).unwrap());
+        let parse = |der: &CertificateDer| x509_parser::parse_x509_certificate(der).unwrap().1.issuer().to_string();
+        let subject = x509_parser::parse_x509_certificate(&authority).unwrap().1.subject().to_string();
+        assert_eq!(parse(&issued), subject);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

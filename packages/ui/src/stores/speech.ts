@@ -1,9 +1,13 @@
 import { createSignal } from "solid-js"
 import type { SpeechCapabilitiesResponse } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { hostDeclares } from "../lib/server-meta"
 import { getLogger } from "../lib/logger"
 
 const log = getLogger("api")
+/** A host without speech routes: voice controls stay hidden, like an unconfigured provider. */
+const UNSUPPORTED: SpeechCapabilitiesResponse = { available: false, configured: false, provider: "", supportsStt: false, supportsTts: false,
+  supportsStreamingTts: false, sttModel: "", ttsModel: "", ttsVoice: "", ttsFormats: [], streamingTtsFormats: [] }
 
 function normalizeCapabilities(result: SpeechCapabilitiesResponse): SpeechCapabilitiesResponse {
   const r = result as unknown as Record<string, unknown>
@@ -26,8 +30,8 @@ async function loadSpeechCapabilities(force = false): Promise<SpeechCapabilities
 
   setSpeechCapabilitiesLoading(true)
   setSpeechCapabilitiesError(null)
-  speechCapabilitiesPromise = serverApi
-    .fetchSpeechCapabilities()
+  speechCapabilitiesPromise = hostDeclares("speech")
+    .then(declared => declared ? serverApi.fetchSpeechCapabilities() : { ...UNSUPPORTED })
     .then((result) => {
       const raw = result as unknown as Record<string, unknown>
       setServerSupportsSeparateProviders("separateProviders" in raw)

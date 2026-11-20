@@ -5,6 +5,8 @@ import { getPermissionSessionId, mergePermissionRequest } from "../types/permiss
 import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
+import { getServerMeta } from "../lib/server-meta"
+import { hostServerMeta } from "../lib/host-server-meta"
 import { generateUUID } from "../lib/client-identity"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { captureBackendOperation } from "../lib/backend-operation"
@@ -1450,6 +1452,8 @@ async function refreshWorkspaceList(
     .filter((instance) => backendIdOf(instance) === backendId).map(({ id }) => id))
   try {
     const listed = await api.fetchWorkspaces(signal)
+    // Local projects appear with the host's route families known, so no panel shows then vanishes.
+    if (api === serverApi && listed.length > 0 && !hostServerMeta()) await getServerMeta().catch(() => undefined)
     if (!active() || !workspaceListReconciliationFence.isCurrent(requestFence)) return false
     // Workspaces are keyed by instance key: the workspace id itself for the local backend.
     const workspaces = listed.map((workspace) => {

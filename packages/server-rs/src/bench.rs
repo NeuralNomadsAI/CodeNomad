@@ -98,6 +98,10 @@ pub fn panic_on_start() {
         panic!("CNRS_FIXTURE_PANIC: bench-requested startup panic");
     }
 }
+/// `CNRS_FIXTURE_NO_USER_PATH=1`: an OpenCode installation leaves the account's PATH alone.
+pub fn skip_user_path() -> bool {
+    on("CNRS_FIXTURE_NO_USER_PATH")
+}
 pub fn ingress() -> bool {
     on("CNRS_FIXTURE_INGRESS")
 }

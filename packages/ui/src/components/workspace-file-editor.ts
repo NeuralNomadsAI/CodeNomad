@@ -69,7 +69,8 @@ export function useWorkspaceFileEditor(options: {
     try {
       // An unavailable conflict check must never silently permit an overwrite.
       const api = backendOf(options.instanceId).api
-      const disk = decodeWorkspaceText(await api.previewWorkspaceFile(options.instanceId, target.path, target.directory, operation?.signal))
+      const observed = await api.previewWorkspaceFile(options.instanceId, target.path, target.directory, operation?.signal)
+      const disk = decodeWorkspaceText(observed)
       if (!current()) return
       if (disk !== baseline && disk !== value) {
         const confirmed = await showConfirmDialog(options.t("instanceShell.rightPanel.actions.conflict.message", { path: target.path }), {
@@ -78,7 +79,9 @@ export function useWorkspaceFileEditor(options: {
         })
         if (!confirmed || !current()) return
       }
-      if (disk !== value) await api.writeWorkspaceFile(options.instanceId, target.path, value, { directory: target.directory, signal: operation?.signal })
+      if (disk !== value) await api.writeWorkspaceFile(options.instanceId, target.path, value, {
+        directory: target.directory, signal: operation?.signal, expectedVersion: observed.version,
+      })
       if (operation && !operation.current()) return
       const latest = drafts.get(identity)
       if (latest) {

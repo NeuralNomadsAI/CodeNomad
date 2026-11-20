@@ -1,6 +1,8 @@
 import { createSignal } from "solid-js"
 import type { ServerMeta } from "../../../server/src/api-types"
 import { serverApi, type ServerApi } from "./api-client"
+import type { CodeNomadCapability } from "../../../server/src/meta-contract"
+import { declaresCapability } from "./backend-capabilities"
 import { setHostServerMeta } from "./host-server-meta"
 export { secretEntryAllowed } from "./host-server-meta"
 
@@ -51,7 +53,7 @@ export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
   }
 
   return { getServerMeta, recoverInitialServerMeta, meta: (signal?: AbortSignal) => snapshotFor(signal).meta(),
-    previewsUnavailable: () => local.meta()?.previewsUnavailable === true,
+    previewsUnavailable: () => local.meta()?.previewsUnavailable === true || !declaresCapability(local.meta(), "previews"),
     previewsAvailabilityResolved: () => local.meta() !== null }
 }
 
@@ -63,7 +65,8 @@ export const localRequest = () => localServerMeta.meta()?.localRequest === true
 export const serversUsable = () => (localServerMeta.meta()?.serversUsable ?? localRequest()) === true
 export const serversManageable = () => (localServerMeta.meta()?.serversManageable ?? localRequest()) === true
 /** Whether this client may open SideCars: a host-local client, or one the host allows over direct HTTPS. */
-export const sidecarsAllowed = () => localRequest() || localServerMeta.meta()?.sidecarsAllowed === true
+export const sidecarsAllowed = () => declaresCapability(localServerMeta.meta(), "sidecars")
+  && (localRequest() || localServerMeta.meta()?.sidecarsAllowed === true)
 
 /** Whether this client reaches the server through Remote Control while its host keeps web previews off. */
 export const previewsUnavailable = localServerMeta.previewsUnavailable
@@ -71,3 +74,8 @@ export const previewsUnavailable = localServerMeta.previewsUnavailable
 export const previewsAvailabilityResolved = localServerMeta.previewsAvailabilityResolved
 
 export const getServerMeta = localServerMeta.getServerMeta
+
+/** Reads the host metadata first, so no request reaches a route family the host leaves undeclared. */
+export async function hostDeclares(capability: CodeNomadCapability): Promise<boolean> {
+  return declaresCapability(await getServerMeta().catch(() => null), capability)
+}

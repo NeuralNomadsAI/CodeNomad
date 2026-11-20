@@ -8,7 +8,7 @@ Tauri (`cli_manager.rs`, `Runner::Rust`) runs the binary directly with the TypeS
 
 ## Launch
 
-`serve` takes the reference's options and variables with its grammar and defaults (`packages/server/src/index.ts`), keeps its files in the config folder (`~/.config/codenomad`: `config.yaml` and its `.server-id`, `state.yaml`, `instances/`, `auth.json`, `tls/`, `memory/`, `permission-receipts/`, plus Rust-only `devices/`, `session-favorites.json`, `panel-extensions.json`), prints `CODENOMAD_BOOTSTRAP_TOKEN:`, `Local Connection URL :` and `Remote Connection URL :`, stops on `codenomad:shutdown` with `CODENOMAD_SHUTDOWN_STATUS:complete|incomplete`, and answers native requests (`src/host/native_parent.rs`) when `CODENOMAD_NATIVE_PARENT=1`. Refused at start: `--launch`, `--upgrade`, a hostname or all interfaces for `--host`, HTTP on a non-loopback address. Accepted without effect: the remote UI update options, `--log-level`, `--log-destination`; `CODENOMAD_ALLOWED_ORIGINS` is not read. The HTTPS listener admits paired devices only, and the local URL is always the loopback HTTP listener.
+`serve` takes the reference's options and variables with its grammar and defaults (`packages/server/src/index.ts`), shares the config folder with the TypeScript server (`~/.config/codenomad`), writing each shared file in its format: `config.yaml` and `state.yaml` (`src/settings/`, the only writer, as `yaml-doc-store.ts`: whole document, other keys kept, unreadable documents refused), `config.yaml.server-id`, `instances/`, `auth.json`, `tls/` (the RSA authority is reused, RSA PKCS#1 keys), `remote-control-devices.json`, `memory/`, `permission-receipts/`. Its own files there, which the TypeScript server ignores: `session-favorites.json`, `panel-extensions.json`, `plugin-provision.json`, `git-empty-hooks/`. It prints `CODENOMAD_BOOTSTRAP_TOKEN:`, `Local Connection URL :` and `Remote Connection URL :`, stops on `codenomad:shutdown` with `CODENOMAD_SHUTDOWN_STATUS:complete|incomplete`, and answers native requests (`src/host/native_parent.rs`) when `CODENOMAD_NATIVE_PARENT=1`. Refused at start: `--launch`, `--upgrade`, a hostname or all interfaces for `--host`, HTTP on a non-loopback address. Accepted without effect: the remote UI update options, `--log-level`, `--log-destination`; `CODENOMAD_ALLOWED_ORIGINS` is not read. The HTTPS listener admits paired devices only, and the local URL is always the loopback HTTP listener.
 
 The positional launch `codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>` (bench and user service, `src/bench.rs`) keeps its data beside the identity file, its settings there or at `CLI_CONFIG`, and reads `CLI_UNRESTRICTED_ROOT`, `CNRS_SERVER_PASSWORD`, `CNRS_HTTPS_*` and `CNRS_TLS_*`.
 
@@ -29,7 +29,7 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/meta.rs`, `service.rs`, `workspaces.rs`, `storage.rs` | Server identity, user service mode, workspace lifecycle, per-instance documents |
 | `src/settings/` | `config.yaml` / `state.yaml` owners shared with the TypeScript server, server identity |
 | `src/auth/` | Local password session (`auth.json`, bootstrap token, `/login`); paired devices, HTTPS admission, TLS |
-| `src/opencode/` | Shared daemon connection found or started through the OpenCode CLI like the TypeScript server (`opencode service status`/`start`/`get password`, minimum version and declared contract), `/instance` relay, cursors |
+| `src/opencode/` | Shared daemon connection found or started through the OpenCode CLI like the TypeScript server (`opencode service status`/`start`/`get password`, minimum version and declared contract), OpenCode installed and updated without Node or npm in npm's global layout (`install/`, `codenomad-rs opencode install|rollback|status`, `POST /api/opencode/update`), `/instance` relay, cursors |
 | `src/events/` | SSE to the UI, bridge from the daemon stream |
 | `src/files/`, `search/`, `git/` | Project files and links, folder browser (any local folder with `--unrestricted-root`), file search, Git status/diff/history/mutations |
 | `src/worktrees/` | Owned checkouts, linked worktrees, location ownership, deletion fence |
@@ -56,3 +56,5 @@ cargo build --release --locked
 ```
 
 Behaviour must match `packages/server`: every change runs the matching comparison in `bench/` (`node compare.mjs <mode> <opencode>`). Parity cases are regenerated from the TypeScript sources with `bench/generate-*.mjs`.
+
+Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.

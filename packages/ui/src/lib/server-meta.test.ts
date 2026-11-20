@@ -5,6 +5,30 @@ import type { ServerMeta } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
 import { createServerMetaCache, getServerMeta, localRequest, sidecarsAllowed } from "./server-meta"
 import * as hostMeta from "./server-meta"
+import { declaresCapability, hostSupports } from "./backend-capabilities"
+
+it("host route families follow the metadata: an absent list serves every family, a declared one only its own", async () => {
+  const original = serverApi.fetchServerMeta
+  const meta = await getServerMeta().catch(() => ({} as ServerMeta))
+  try {
+    serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: true, capabilities: undefined })
+    await getServerMeta(true)
+    assert.equal(await hostMeta.hostDeclares("speech"), true)
+    assert.equal(hostSupports("previews"), true)
+    assert.equal(sidecarsAllowed(), true)
+    assert.equal(hostMeta.previewsUnavailable(), false)
+    serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: true, capabilities: ["workspaces", "events"] })
+    await getServerMeta(true)
+    for (const capability of ["speech", "opencode-admin", "missions"] as const) {
+      assert.equal(await hostMeta.hostDeclares(capability), false, capability)
+      assert.equal(hostSupports(capability), false, capability)
+    }
+    assert.equal(hostSupports("workspaces"), true)
+    assert.equal(sidecarsAllowed(), false, "an undeclared family overrides local privileges")
+    assert.equal(hostMeta.previewsUnavailable(), true)
+    assert.equal(declaresCapability(null, "speech"), true)
+  } finally { serverApi.fetchServerMeta = original; await getServerMeta(true).catch(() => undefined) }
+})
 
 it("allows a metadata retry after a failed request", async () => {
   const originalFetch = serverApi.fetchServerMeta
