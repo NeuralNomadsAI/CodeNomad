@@ -18,7 +18,7 @@ import { updateSessionAgent } from "../../../src/stores/session-actions"
 import { applyUiSettings } from "./ui-settings"
 import { serverApi } from "../../../src/lib/api-client"
 import AlertDialog from "../../../src/components/alert-dialog"
-import { setWorktreeSlugForParentSession } from "../../../src/stores/worktrees"
+import { reloadWorktrees, setWorktreeSlugForParentSession } from "../../../src/stores/worktrees"
 import { Toaster } from "solid-toast"
 import "../../../src/index.css"
 
@@ -139,6 +139,7 @@ window.addEventListener("message", event => { if (event.data?.fixtureAnswer) fra
   openPanel: () => setPanelOpen(true),
   worktreeCalls: () => worktreeCalls.splice(0),
   refuseMoves: (value: boolean) => { refusal.move = value },
+  reloadWorktrees: () => reloadWorktrees(instanceId),
   freezeInventory: () => { (window as any).fixture.cachedInventory = [...worktrees] },
   addWorktree: (slug: string, branch: string, nestedFolderMissing = false) => {
     worktrees.push({ slug, label: branch, directory: `/fixture/.codenomad/worktrees/${slug}`, kind: "worktree", branch, ...(nestedFolderMissing ? { nestedFolderMissing } : {}) })

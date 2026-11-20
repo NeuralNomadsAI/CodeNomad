@@ -275,6 +275,16 @@ describe("work item branches", () => {
     assert.deepEqual(await lookup(clone, source, "issue", 7), { status: "ok", branch: null })
   })
 
+  it("a copy renamed back to the item's name is not its branch, though Git carried the marker along", async () => {
+    const { clone, source } = await project()
+    assert.equal((await createWorkItemBranch(clone, source, "issue", 44)).status, "ok")
+    git(clone, "branch", "-c", "issue-44", "backup")
+    git(clone, "switch", "-q", "backup"); commit(clone, "other work"); git(clone, "switch", "-q", "main")
+    git(clone, "branch", "-D", "issue-44")
+    git(clone, "branch", "-m", "backup", "issue-44")
+    assert.deepEqual(await lookup(clone, source, "issue", 44), { status: "conflict", branch: "issue-44" })
+  })
+
   it("revalidates the repository before an issue branch is created or reused", async () => {
     const { clone, source } = await project()
     assert.equal((await createWorkItemBranch(clone, source, "issue", 5)).status, "ok")

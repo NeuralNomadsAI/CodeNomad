@@ -137,15 +137,19 @@ async function linkedBranch(directory: string, source: WorkItemBranchSource, kin
     return { status: "conflict", branch: name }
   }
   const link = { branch: name, start: value[4]! }
-  const [contains, first] = await Promise.all([
+  const [contains, first, history] = await Promise.all([
     git(directory, ["merge-base", "--is-ancestor", link.start, ref])
       .then(() => true, (error: { code?: unknown }) => { if (error.code === 1 || error.code === 128) return false; throw error }),
     firstReflogEntry(directory, ref),
+    git(directory, ["reflog", "show", "--format=%gs", ref, "--"]).catch(() => ""),
   ])
   // Git writes a ref's creation as a reflog entry from the null object ID, and deleting the ref
   // deletes its reflog: a surviving creation entry must be CodeNomad's own. Once it expired
   // (later entries kept) or without a reflog, ancestry alone decides.
-  const recreated = first?.creation === true && first.message !== creationMarker(kind, number)
+  // `git branch -c`/`-m` carry config and reflog along, then log the copy or rename: such a
+  // branch came under this name from another one, whatever its first entry says.
+  const recreated = (first?.creation === true && first.message !== creationMarker(kind, number))
+    || /^Branch: (copied|renamed) /im.test(history)
   return contains && !recreated ? { status: "ok", repository: workItemRepository(source), branch: link.branch } : { status: "conflict", branch: link.branch }
 }
 
@@ -197,7 +201,7 @@ function fetchHead(directory: string, remote: string, head: string, scratch: str
       failure = reason
       killTree()
       // A tree that never closes still frees the caller (stopping one on Windows takes a few seconds).
-      setTimeout(() => reject(reason), 35_000).unref()
+      setTimeout(() => { child.kill("SIGKILL"); reject(reason) }, 35_000).unref()
     }
     const abort = () => stop(signal!.reason ?? new Error("Fetch abandoned"))
     const timer = setTimeout(() => stop(new Error("Pull request fetch timed out")), FETCH_TIMEOUT_MS)

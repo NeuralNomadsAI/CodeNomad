@@ -79,6 +79,8 @@ export function useApi4Channel(props: {
   let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false }
   const current = () => !disposed && connected && nativeConnected && (props.host.activeSessionId() ?? null) === props.sessionId
   const abort = () => { for (const request of pending) request.abort(); confirmation?.abort(); reserved = false }
+  // Changes during a disconnection were not delivered: a reconnected panel lists again.
+  const worktreesRecovered = () => { if (!disposed && connected && nativeConnected && granted("repository.worktrees.read")) props.send({ type: "worktrees:changed" }) }
   const invalidate = (gallery: boolean, status: boolean) => {
     if (disposed || !granted("session.images.read")) return
     changes = { gallery: changes.gallery || gallery, status: changes.status || status }
@@ -102,12 +104,12 @@ export function useApi4Channel(props: {
     nativeConnected = event.status === "connected"
     if (!nativeConnected || nativeGeneration !== event.generation) abort()
     nativeGeneration = event.generation
-    if (nativeConnected) invalidate(true, true)
+    if (nativeConnected) { invalidate(true, true); worktreesRecovered() }
   }))
   onCleanup(serverEvents.onTransportStatus(status => {
     connected = status === "connected"
     if (!connected) abort()
-    else invalidate(true, true)
+    else { invalidate(true, true); worktreesRecovered() }
   }))
   const dispose = () => { disposed = true; clearTimeout(timer); abort(); pending.clear(); lifetime.abort() }
   onCleanup(dispose)

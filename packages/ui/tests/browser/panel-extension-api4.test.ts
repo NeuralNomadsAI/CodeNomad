@@ -772,3 +772,23 @@ test("worktrees: a checkout lacking the opened folder still counts, and is never
     assert.equal(await page.getByRole("button", { name: "Create and move", exact: true }).count(), 0)
   } finally { await page.close() }
 })
+test("worktrees: a reconnected panel hears that it should list again", async () => {
+  await install()
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    await page.evaluate(() => (window as any).fixture.event({ type: "instance.eventStatus", instanceId: "api4-instance", status: "disconnected", generation: 2 }))
+    // The inventory changes while disconnected: that notification cannot be delivered.
+    await fixtureCall(page, "addWorktree", "during", "during")
+    await fixtureCall(page, "reloadWorktrees")
+    await page.waitForTimeout(300)
+    const before = await frameOf(page).locator("body").evaluate(() => (window as any).worktreeChanges)
+    await page.evaluate(() => (window as any).fixture.event({ type: "instance.eventStatus", instanceId: "api4-instance", status: "connected", generation: 2 }))
+    let after = before
+    for (let attempt = 0; attempt < 60 && after <= before; attempt++) {
+      await page.waitForTimeout(50)
+      after = await frameOf(page).locator("body").evaluate(() => (window as any).worktreeChanges)
+    }
+    assert.ok(after > before, "the frame was told to list again")
+  } finally { await page.close() }
+})
