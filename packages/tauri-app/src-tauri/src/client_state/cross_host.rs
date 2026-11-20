@@ -1088,14 +1088,16 @@ mod tests {
 
     #[test]
     fn peer_marker_before_its_participant_keeps_the_won_lease() {
+        use crate::client_state::process;
+
         let root = tempfile::tempdir().unwrap();
         let election = root.path().join("election");
         let electron = root.path().join("electron");
+        let tauri = root.path().join("tauri");
         fs::create_dir_all(&electron).unwrap();
-        let registration = Registration::register(&election, true, Some(&electron))
-            .unwrap()
-            .unwrap();
-        assert!(registration.is_primary());
+        fs::create_dir_all(&tauri).unwrap();
+        let registration =
+            process::Registration::initialize(&tauri, &election, Some(&electron)).unwrap();
 
         // Electron writes its running marker before its cross-host participant.
         let peer = Owner {
@@ -1108,11 +1110,14 @@ mod tests {
             serialize_owner(&peer).unwrap(),
         )
         .unwrap();
-        assert!(!registration.is_primary());
-        assert!(registration.owns_shared_lease());
-
-        publish_participant(&participant_path(&election, &peer), &peer).unwrap();
+        // Initialization (and so hydration) follows the won lease...
         assert!(registration.is_primary());
+        let state = registration.finish();
+        // ...while run-time writes wait for the participant.
+        assert!(!state.is_primary());
+        publish_participant(&participant_path(&election, &peer), &peer).unwrap();
+        assert!(state.is_primary());
+        state.release_locks();
     }
 
     #[test]

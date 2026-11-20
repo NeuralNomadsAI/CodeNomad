@@ -200,7 +200,9 @@ export class ClientStateManager {
       if (election) removeProcessOwnerLockIfOwned(this.lockPath, this.owner)
       this.primary = false
     }
-    if (this.isPrimary) {
+    // Hydrate on the won lease, already reconciled with legacy markers; isPrimary
+    // rechecks them for writes, and an unhydrated primary would overwrite saved state.
+    if (this.primary) {
       const legacySharedStatePath = options?.legacySharedStatePath === undefined
         ? (options?.crossHostElectionDirectory ? null : resolveLegacyCrossHostStatePath())
         : options.legacySharedStatePath

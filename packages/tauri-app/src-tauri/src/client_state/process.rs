@@ -137,12 +137,14 @@ impl Registration {
         })
     }
 
+    /// Initialization decision (lock release, migration, hydration): the won
+    /// lease, already reconciled with legacy markers. `ProcessState` rechecks them.
     pub(super) fn is_primary(&self) -> bool {
         self.primary_lock.is_some()
             && self
                 .cross_host_registration
                 .as_ref()
-                .is_some_and(cross_host::Registration::is_primary)
+                .is_some_and(cross_host::Registration::owns_shared_lease)
     }
 
     pub(super) fn finish(self) -> ProcessState {
