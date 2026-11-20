@@ -74,12 +74,12 @@ test("API 4 reads work items with their own permission; item branches each need 
   const page = { kind: "issue", query: "", page: 1, fresh: false }, item = { kind: "pullRequest", number: 7 }
   try {
     for (const pkg of [items, reader, writer]) { await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true) }
-    assert.deepEqual(await Promise.all([post(items, "workItems", page), post(items, "workItemBranches"), post(items, "workItemBranch", item)]), [200, 403, 403])
-    assert.deepEqual(await Promise.all([post(reader, "workItemBranches"), post(reader, "workItemBranchLookup", item), post(reader, "workItemBranch", item)]), [200, 200, 403])
+    assert.deepEqual(await Promise.all([post(items, "workItems", page), post(items, "workItemBranches"), post(items, "workItemBranch", { ...item, repository: "github.com/o/r" })]), [200, 403, 403])
+    assert.deepEqual(await Promise.all([post(reader, "workItemBranches"), post(reader, "workItemBranchLookup", item), post(reader, "workItemBranch", { ...item, repository: "github.com/o/r" })]), [200, 200, 403])
     assert.equal(await post(items, "workItemBranchLookup", item), 403)
-    assert.deepEqual(await Promise.all([post(writer, "workItemBranches"), post(writer, "workItemBranch", item)]), [200, 200])
-    assert.equal(await post(writer, "workItemBranch", { kind: "pullRequest", number: 0 }), 400)
-    assert.equal(await post(writer, "workItemBranch", { ...item, branch: "main" }), 400, "addons never name the branch")
+    assert.deepEqual(await Promise.all([post(writer, "workItemBranches"), post(writer, "workItemBranch", { ...item, repository: "github.com/o/r" })]), [200, 200])
+    assert.equal(await post(writer, "workItemBranch", { kind: "pullRequest", number: 0, repository: "github.com/o/r" }), 400)
+    assert.equal(await post(writer, "workItemBranch", { ...item, repository: "github.com/o/r", branch: "main" }), 400, "addons never name the branch")
   } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
@@ -99,7 +99,7 @@ test("a branch write starts from the displayed worktree and writes nothing once 
   registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: () => ({ id: "i", path: project }),
     getWorktrees: async () => ({ worktrees: [{ slug: "root", directory: project }, { slug: "feature", directory: displayed }] }) } as any })
   const write = (extra = {}) => app.inject({ method: "POST", url: `/api/panel-extensions/${writer.manifest.id}/workItemBranch`,
-    payload: { instanceId: "i", digest: writer.digest, kind: "issue", ...extra } })
+    payload: { instanceId: "i", digest: writer.digest, kind: "issue", repository: "github.com/o/r", ...extra } })
   try {
     await store.install(writer); await store.activate(writer.manifest.id, writer.digest, true)
     discovery = () => store.activate(writer.manifest.id, writer.digest, false)
@@ -108,7 +108,9 @@ test("a branch write starts from the displayed worktree and writes nothing once 
     discovery = undefined
     await store.activate(writer.manifest.id, writer.digest, true)
     assert.equal((await write({ number: 4, fromSlug: "missing" })).json().status, "unavailable")
-    assert.deepEqual((await write({ number: 4, fromSlug: "feature" })).json(), { status: "ok", branch: "issue-4", created: true })
+    assert.deepEqual((await write({ number: 4, repository: "github.com/other/repo" })).json(), { status: "changed" }, "a write for another repository than the confirmed one")
+    assert.equal(git(project, "branch", "--list", "issue-4"), "")
+    assert.deepEqual((await write({ number: 4, fromSlug: "feature" })).json(), { status: "ok", branch: "issue-4", revision: git(displayed, "rev-parse", "HEAD"), created: true })
     assert.equal(git(project, "rev-parse", "issue-4"), git(displayed, "rev-parse", "HEAD"))
   } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
 })

@@ -110,7 +110,8 @@ export function useApi4Channel(props: {
   onCleanup(() => { disposed = true; clearTimeout(timer); abort(); pending.clear(); lifetime.abort() })
   if (granted("repository.worktrees.read")) {
     // Worktrees, their branches, or the family's worktree changed: the frame lists again.
-    const worktrees = createMemo(() => JSON.stringify([getWorktrees(props.instanceId).map(worktree => [worktree.slug, worktree.branch ?? null]),
+    const worktrees = createMemo(() => JSON.stringify([getWorktrees(props.instanceId).map(worktree => [worktree.slug, worktree.branch ?? null,
+      worktree.nestedFolderMissing === true]),
       familyWorktree()?.slug ?? null]))
     createEffect(on(worktrees, () => { if (!disposed && connected && nativeConnected) props.send({ type: "worktrees:changed" }) }, { defer: true }))
   }
@@ -199,7 +200,7 @@ export function useApi4Channel(props: {
     if (answer.status === "unavailable") return null
     const slug = answer.status === "ok" && answer.branch !== null
       ? getWorktrees(props.instanceId).find(worktree => !worktree.nestedFolderMissing && worktree.branch === answer.branch)?.slug : undefined
-    return { slug, current: slug !== undefined && slug === familyWorktree()?.slug }
+    return { repository: answer.status === "ok" ? answer.repository : undefined, slug, current: slug !== undefined && slug === familyWorktree()?.slug }
   }
 
   // The frame only asks; the host's own dialog decides, then creates and moves.
@@ -211,10 +212,11 @@ export function useApi4Channel(props: {
     const target = await itemWorktree(kind, number, signal)
     if (!target) return { result: "unavailable" }
     if (target.current) return { result: "current" }
-    return { result: "confirming", after: () => { void confirmWorktree(session, kind, number, target.slug) } }
+    return { result: "confirming", after: () => { void confirmWorktree(session, kind, number, target.repository, target.slug) } }
   }
 
-  async function confirmWorktree(session: string, kind: ForgeWorkItemKind, number: number, slug: string | undefined) {
+  // The confirmation names the repository; acceptance applies to that repository only.
+  async function confirmWorktree(session: string, kind: ForgeWorkItemKind, number: number, repository: string | undefined, slug: string | undefined) {
     // One dialog at a time, never over another host dialog, and none for a while after a refusal,
     // so a panel cannot keep the modal up while the user reaches its checkbox.
     if (confirming || alertDialogState() || disposed || Date.now() < quietUntil) return
@@ -223,21 +225,22 @@ export function useApi4Channel(props: {
     let progress: ToastHandle | undefined
     try {
       const accepted = await showConfirmDialog(tGlobal(slug ? "panelExtensions.worktrees.confirmMove" : "panelExtensions.worktrees.confirmCreate", { item, worktree: slug }), {
-        title: props.name, confirmLabel: tGlobal(slug ? "panelExtensions.worktrees.move" : "panelExtensions.worktrees.create") }, lifetime.signal)
+        title: props.name, detail: repository, confirmLabel: tGlobal(slug ? "panelExtensions.worktrees.move" : "panelExtensions.worktrees.create") }, lifetime.signal)
       if (!accepted) quietUntil = Date.now() + REFUSED_QUIET_MS
       if (!accepted || disposed) return
       // Consent is read again, and the confirmed worktree must still be the item's.
       const target = await itemWorktree(kind, number, lifetime.signal)
-      if (!target || (slug !== undefined && target.slug !== slug)) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
+      if (!target || !repository || target.repository !== repository || (slug !== undefined && target.slug !== slug)) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
       let destination = target.slug
       if (destination === undefined) {
         progress = showToastNotification({ category: "files", variant: "info", transient: true, duration: 60_000,
           message: tGlobal("panelExtensions.worktrees.creating", { item }) })
         // A new issue branch starts from the family's own checkout, as the worktree selector does.
         const fromSlug = getWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session))
-        const branch = await panelExtensionsApi4.workItemBranch(authority, kind, number, fromSlug, lifetime.signal)
+        const branch = await panelExtensionsApi4.workItemBranch(authority, kind, number, repository, fromSlug, lifetime.signal)
         if (branch.status !== "ok") throw new Refusal(tGlobal(`panelExtensions.worktrees.${branch.status}`, { item, branch: "branch" in branch ? branch.branch : "" }))
-        destination = (await createWorktree(props.instanceId, branch.branch)).slug
+        // Only that branch at that tip: a branch deleted or replaced meanwhile is refused, never recreated.
+        destination = (await createWorktree(props.instanceId, branch.branch, "root", branch.revision)).slug
         await reloadWorktrees(props.instanceId)
       }
       if (disposed) return

@@ -6,8 +6,11 @@ import { parseRemoteUrl } from "./remote"
 /** The project's forge repository and the remote it is fetched from. */
 export interface WorkItemBranchSource { provider: ForgeProvider; host: string; path: string; name: string }
 export interface WorkItemBranch { kind: ForgeWorkItemKind; number: number; branch: string }
-export type WorkItemBranchLookup = { status: "ok"; branch: string | null } | { status: "conflict"; branch: string } | { status: "unavailable" }
-export type WorkItemBranchResult = { status: "ok"; branch: string; created: boolean } | { status: "conflict"; branch: string } | { status: "unavailable" }
+/** `repository` is the identity the host shows and binds its confirmation to (`<host>/<path>`, lower case). */
+export type WorkItemBranchLookup = { status: "ok"; repository: string; branch: string | null } | { status: "conflict"; branch: string } | { status: "unavailable" }
+/** `revision` is the branch tip a worktree must then check out. */
+export type WorkItemBranchResult = { status: "ok"; branch: string; revision: string; created: boolean } | { status: "conflict"; branch: string }
+  | { status: "unavailable" | "changed" }
 export interface WorkItemBranchGuard {
   /** The checkout whose HEAD a new issue branch starts from (the displayed one); the project folder otherwise. */
   base?: string
@@ -34,7 +37,9 @@ function git(directory: string, args: string[], timeout = 10_000) {
     env: { ...cleared, GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" } }).then(output => output.trim())
 }
 
-const repositoryOf = (source: Pick<WorkItemBranchSource, "host" | "path">) => `${source.host}/${source.path}`.toLowerCase()
+/** A repository's identity in links and confirmations. */
+export const workItemRepository = (source: Pick<WorkItemBranchSource, "host" | "path">) => `${source.host}/${source.path}`.toLowerCase()
+const repositoryOf = workItemRepository
 
 /** Every existing local branch linked to an item of `source`'s repository, unbounded but for Git's output budget. */
 async function links(directory: string, source: Pick<WorkItemBranchSource, "host" | "path">): Promise<Link[]> {
@@ -62,11 +67,15 @@ export async function readWorkItemBranches(directory: string, source: Pick<WorkI
   return (await links(directory, source)).slice(0, MAX_LISTED).map(({ start: _start, ...link }) => link)
 }
 
-/** The selected remote's current URL when it still names `source`'s repository. */
+/**
+ * The selected remote's configured URL when its expansion still names `source`'s repository.
+ * Fetching that same configured URL lets Git apply `insteadOf` once, as the validation did.
+ */
 async function remoteUrl(directory: string, source: WorkItemBranchSource) {
-  const url = await git(directory, ["remote", "get-url", "--", source.name]).catch(() => "")
-  const remote = parseRemoteUrl(url)
-  return remote && repositoryOf(remote) === repositoryOf(source) ? url : undefined
+  const configured = (await git(directory, ["config", "--get-all", `remote.${source.name}.url`]).catch(() => "")).split(/\r?\n/)[0] ?? ""
+  if (!configured) return undefined
+  const remote = parseRemoteUrl(await git(directory, ["ls-remote", "--get-url", "--", configured]).catch(() => ""))
+  return remote && repositoryOf(remote) === repositoryOf(source) ? configured : undefined
 }
 
 /**
@@ -78,7 +87,7 @@ async function remoteUrl(directory: string, source: WorkItemBranchSource) {
 export async function lookupWorkItemBranch(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number): Promise<WorkItemBranchLookup> {
   if (!await remoteUrl(directory, source)) return { status: "unavailable" }
   const link = (await links(directory, source)).find(candidate => candidate.kind === kind && candidate.number === number)
-  if (!link) return { status: "ok", branch: null }
+  if (!link) return { status: "ok", repository: repositoryOf(source), branch: null }
   const ref = `refs/heads/${link.branch}`
   const [contains, reflog] = await Promise.all([
     git(directory, ["merge-base", "--is-ancestor", link.start, ref])
@@ -88,7 +97,7 @@ export async function lookupWorkItemBranch(directory: string, source: WorkItemBr
   ])
   const created = reflog.split(/\r?\n/).at(-1) ?? ""
   const recreated = created.startsWith("branch: Created from ") && created !== `branch: Created from ${link.start}`
-  return contains && !recreated ? { status: "ok", branch: link.branch } : { status: "conflict", branch: link.branch }
+  return contains && !recreated ? { status: "ok", repository: repositoryOf(source), branch: link.branch } : { status: "conflict", branch: link.branch }
 }
 
 /**
@@ -113,7 +122,7 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
   // The remote must still name the confirmed repository, whether the branch is reused or created.
   const found = await lookupWorkItemBranch(directory, source, kind, number)
   if (found.status !== "ok") return found
-  if (found.branch) return { status: "ok", branch: found.branch, created: false }
+  if (found.branch) return { status: "ok", branch: found.branch, revision: await git(directory, ["rev-parse", "--verify", `refs/heads/${found.branch}^{commit}`]), created: false }
   const branch = `${kind === "issue" ? "issue" : "pr"}-${number}`
   if (await git(directory, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).catch(() => "")) return { status: "conflict", branch }
   let revision: string
@@ -143,5 +152,5 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
     await git(directory, ["update-ref", "-d", `refs/heads/${branch}`, revision]).catch(() => {})
     throw error
   }
-  return { status: "ok", branch, created: true }
+  return { status: "ok", branch, revision, created: true }
 }

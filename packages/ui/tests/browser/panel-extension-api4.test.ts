@@ -577,3 +577,20 @@ test("worktrees: read-only consent lists links but has no way to open one", asyn
     assert.ok((await call(page, "worktrees.open", "issue", 3)).error)
   } finally { await page.close() }
 })
+test("worktrees: the dialog names the repository, and a remote changed while it is open creates nothing", async () => {
+  await install()
+  const { page } = await open()
+  const url = execFileSync("git", ["-C", repository, "remote", "get-url", "origin"], { encoding: "utf8" }).trim()
+  try {
+    await showPanel(page)
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 12), { ok: "confirming" })
+    await page.getByText(/^127\.0\.0\.1:\d+\/team\/app$/).waitFor()
+    execFileSync("git", ["-C", repository, "remote", "set-url", "origin", "https://github.com/other/repo.git"])
+    await page.getByRole("button", { name: "Create and move", exact: true }).click()
+    await page.getByText("The worktree for issue #12 changed. Try again.").first().waitFor()
+    assert.deepEqual([await worktreeCalls(page), branches().includes("issue-12")], [[], false])
+  } finally {
+    execFileSync("git", ["-C", repository, "remote", "set-url", "origin", url])
+    await page.close()
+  }
+})

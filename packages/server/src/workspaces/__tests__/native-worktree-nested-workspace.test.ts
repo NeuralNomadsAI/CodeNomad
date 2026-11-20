@@ -77,3 +77,29 @@ test("sibling checkouts without the opened nested folder keep ownership but are 
     t.diagnostic(`Owned fixture removed: ${root}`)
   }
 })
+
+test("creation for an expected tip refuses a missing or moved branch before any checkout exists", async t => {
+  const root = await mkdtemp(path.join(process.platform === "win32" ? path.join(tmpdir(), "opencode") : tmpdir(), "worktree-expected-tip-"))
+  const repo = path.join(root, "main")
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+  try {
+    git(root, "init", "--initial-branch=main", repo)
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "one")
+    const first = git(repo, "rev-parse", "HEAD")
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "two")
+    git(repo, "branch", "issue-12", first)
+    let nativeCreates = 0
+    const client = {
+      location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+      worktree: { refresh: async () => {}, list: async () => [{ directory: repo }], create: async () => { nativeCreates++; throw new Error("native creation reached") } },
+    } as unknown as OpenCodeClient
+    const context = { client, workspacePath: repo, location: { directory: repo }, toHost: async (directory: string) => directory }
+    await assert.rejects(createNativeWorktree(context, "issue-13", "root", first), /Branch changed/)
+    assert.equal(git(repo, "branch", "--list", "issue-13"), "", "a missing branch is never created from HEAD")
+    await assert.rejects(createNativeWorktree(context, "issue-12", "root", git(repo, "rev-parse", "HEAD")), /Branch changed/)
+    assert.equal(nativeCreates, 0)
+    await assert.rejects(createNativeWorktree(context, "issue-12", "root", first), /native creation reached/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

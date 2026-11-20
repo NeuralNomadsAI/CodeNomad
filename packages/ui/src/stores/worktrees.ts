@@ -180,7 +180,8 @@ export function getDirectoryOnlyWorktree(instanceId: string): WorktreeDescriptor
   return getWorktrees(instanceId).find(worktree => worktree.slug === "root" && worktree.directoryOnly)
 }
 
-async function createWorktree(instanceId: string, slug: string, fromSlug = "root"): Promise<{ slug: string; directory: string; branch?: string }> {
+/** `revision`: the existing branch's expected tip; the server refuses instead of creating the branch. */
+async function createWorktree(instanceId: string, slug: string, fromSlug = "root", revision?: string): Promise<{ slug: string; directory: string; branch?: string }> {
   if (!instanceId) {
     throw new Error("Missing instanceId")
   }
@@ -188,7 +189,7 @@ async function createWorktree(instanceId: string, slug: string, fromSlug = "root
   if (!trimmed) {
     throw new Error("Worktree name is required")
   }
-  return serverApi.createWorktree(instanceId, { slug: trimmed, fromSlug })
+  return serverApi.createWorktree(instanceId, { slug: trimmed, fromSlug, ...(revision ? { revision } : {}) })
 }
 
 async function deleteWorktree(

@@ -240,7 +240,7 @@ exact package before and after IO. Never add a permission registry, generic RPC 
 | `images.conversation` | `conversation.status()`, `conversation.open()`, `conversation.startNew()` | the displayed conversation's Location (else the instance's), `images-conversation.ts` |
 | `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
 | `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
-| `repository.workItems.read` | API 3's `workItems.list(options)`, `workItems.open(kind, number)`, same messages and routes | as API 3 |
+| `repository.workItems.read` | API 3's `workItems.list(options)`, `workItems.open(kind, number)`, same messages and routes | as API 3, through API 3's own dispatcher and limits (not the API 4 channel's) |
 | `repository.worktrees.read` (requires the above) | `worktrees.list()`, `worktrees.onChanged(listener)` | the repository's linked branches (`forge/work-item-branches.ts`) joined to the worktree inventory |
 | `repository.worktrees.write` (requires the above) | `worktrees.open(kind, number)` | a host dialog, then `workItemBranch`, `createWorktree` and the family move |
 
@@ -324,19 +324,22 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   a miss. `onChanged` fires when the inventory, a worktree's branch or the family's worktree
   changes, not when a link alone changes.
   `open` answers `confirming` and then shows the host's own confirmation (title: the
-  extension's name), one at a time and never over another host dialog, aborted on unmount;
-  after a refusal the mounting answers `busy` for 10 s, so a panel cannot hold the modal up.
-  Opening and acceptance look the item up exactly (consent rechecked) and refuse a changed
-  target; without a worktree, `workItemBranch` returns the linked branch or creates one
-  under a per-repository lock, never forced: `issue-N` at the HEAD of the family's worktree
-  (`fromSlug`, as the worktree selector creates), or `pr-N` at `refs/pull/N/head` (GitHub,
-  Gitea) or `refs/merge-requests/N/head` (GitLab), fetched with `--refmap=` (no configured
-  refspec applies) from the selected remote's current URL, which must still name the
-  repository, into a scratch ref; then `git branch` (an unlinked branch of that name is a
-  `conflict`). Consent and the project are checked again right before any ref is written.
-  Lookups and writes first require the selected remote's current URL to name the repository;
-  they see every link, and only `list` stops at 200. Then `createWorktree` reuses that branch and `setWorktreeSlugForParentSession`
-  moves the family, reporting its own failure; the created worktree stays.
+  extension's name; detail: the repository, `<host>/<path>`), one at a time and never over
+  another host dialog, aborted on unmount; after a refusal the mounting answers `busy` for
+  10 s, so a panel cannot hold the modal up. Opening and acceptance look the item up exactly
+  (consent rechecked) and refuse a changed repository or target; without a worktree,
+  `workItemBranch` (given the confirmed repository: another one answers `changed`) returns the
+  linked branch or creates one under a per-repository lock, never forced: `issue-N` at the HEAD
+  of the family's worktree (`fromSlug`, as the worktree selector creates), or `pr-N` at
+  `refs/pull/N/head` (GitHub, Gitea) or `refs/merge-requests/N/head` (GitLab), fetched with
+  `--refmap=` (no configured refspec applies) into a scratch ref, from the remote's configured
+  URL whose single `insteadOf` expansion must name the repository; then `git branch` (an
+  unlinked branch of that name is a `conflict`). Consent and the project are checked again
+  right before any ref is written. Lookups and writes first require that remote check; they
+  see every link, and only `list` stops at 200. `createWorktree` then checks out that branch
+  only at the returned tip (`revision`: a missing or moved branch is refused, never recreated)
+  and `setWorktreeSlugForParentSession` moves the family, reporting its own failure; the
+  created worktree stays.
 - **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
   and method names select only own entries of `Map`s; never index an object with frame
   data (inherited names such as `constructor` would run). Inputs are validated per

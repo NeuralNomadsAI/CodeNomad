@@ -284,6 +284,8 @@ export interface WorktreeListResponse {
 export interface WorktreeCreateRequest {
   slug: string
   fromSlug?: string
+  /** The existing branch's expected tip: refuse a missing or moved branch instead of creating one. */
+  revision?: string
   /** Optional branch name (defaults to slug). */
   branch?: string
 }

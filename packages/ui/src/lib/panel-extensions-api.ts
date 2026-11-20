@@ -41,8 +41,8 @@ export const panelExtensionsApi4 = {
     api4<{ status: "ok"; branches: WorkItemBranch[] } | { status: "unavailable" }>(id, "workItemBranches", authority, signal),
   workItemBranchLookup: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, signal: AbortSignal) =>
     api4<WorkItemBranchLookup>(id, "workItemBranchLookup", { ...authority, kind, number }, signal),
-  workItemBranch: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, fromSlug: string, signal: AbortSignal) =>
-    api4<WorkItemBranchResult>(id, "workItemBranch", { ...authority, kind, number, fromSlug }, signal),
+  workItemBranch: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, repository: string, fromSlug: string, signal: AbortSignal) =>
+    api4<WorkItemBranchResult>(id, "workItemBranch", { ...authority, kind, number, repository, fromSlug }, signal),
 }
 export const panelExtensionsApi = {
   assets: (instanceId: string, id: string, digest: string, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>

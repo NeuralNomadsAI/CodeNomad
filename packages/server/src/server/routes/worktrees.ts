@@ -33,6 +33,7 @@ const WorktreeCreateSchema = z.object({
   slug: z.string().trim().min(1),
   branch: z.string().trim().min(1).optional(),
   fromSlug: z.string().trim().min(1).optional(),
+  revision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/).optional(),
 })
 
 const WorktreeSessionMoveSchema = z.object({
@@ -98,7 +99,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       const release = deps.worktreeDeletionFence.enter(identities as string[])
       if (!release) throw new ProjectSessionError("A worktree is being removed", 409)
       try {
-        const created = await deps.workspaceManager.createWorktree(workspace.id, slug, source.slug)
+        const created = await deps.workspaceManager.createWorktree(workspace.id, slug, source.slug, body.revision)
         invalidateWorktreeCache(workspace.id)
         reply.code(201)
         return created

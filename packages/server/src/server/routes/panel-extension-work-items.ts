@@ -4,7 +4,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
 import { PanelExtensionError } from "../../panel-extensions/archive"
 import { FORGE_MAX_PAGE, type ForgeWorkItems } from "../../forge/work-items"
-import { createWorkItemBranch, lookupWorkItemBranch, readWorkItemBranches } from "../../forge/work-item-branches"
+import { createWorkItemBranch, lookupWorkItemBranch, readWorkItemBranches, workItemRepository } from "../../forge/work-item-branches"
 import type { PanelExtensionPermission } from "../../panel-extensions/contract"
 
 const kind = z.enum(["issue", "pullRequest"])
@@ -12,7 +12,8 @@ const authority = { instanceId: z.string().min(1).max(256), digest: z.string().r
 const idSchema = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,39}\.[a-z][a-z0-9-]{1,39}$/) }).strict()
 const listSchema = z.object({ ...authority, kind, query: z.string().max(200), page: z.number().int().min(1).max(FORGE_MAX_PAGE), fresh: z.boolean() }).strict()
 const urlSchema = z.object({ ...authority, kind, number: z.number().int().min(1).max(999_999_999) }).strict()
-const branchSchema = urlSchema.extend({ fromSlug: z.string().min(1).max(200).optional() }).strict()
+// `repository` is the identity the host's dialog showed: a write for another one is refused.
+const branchSchema = urlSchema.extend({ repository: z.string().min(3).max(1024), fromSlug: z.string().min(1).max(200).optional() }).strict()
 
 /**
  * `repository.workItems.read` (API 3, and API 4 alongside the worktree permissions below): bounded issue and pull request pages of
@@ -72,6 +73,7 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
   route("workItemBranch", "repository.worktrees.write", branchSchema, async (directory, input, signal, current) => {
     const source = await deps.forge.branchSource(directory, signal)
     if (!source) return { status: "unavailable" }
+    if (workItemRepository(source) !== input.repository) return { status: "changed" }
     const base = input.fromSlug === undefined ? undefined : (await deps.workspaceManager.getWorktrees(input.instanceId, "cached"))
       .worktrees.find(worktree => worktree.slug === input.fromSlug && !worktree.nestedFolderMissing)?.directory
     if (input.fromSlug !== undefined && !base) return { status: "unavailable" }
