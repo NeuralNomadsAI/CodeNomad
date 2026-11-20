@@ -99,8 +99,12 @@ own matching rules. The projection preserves `deny` and `ask` and turns `allow`
 into `ask`, keeping native ordering. Home-relative edit resources that need
 expansion by the native config loader are refused if their native absolute path
 cannot be established. The block takes precedence over agent-specific rules where
-they overlap. Configuration files remain read-only; a fresh enable of Supervised
-reads the effective configuration at the session's native Location.
+they overlap. CodeNomad reads the effective configuration at the conversation's
+native Location when enabling Supervised, when `config.updated` invalidates a
+known Supervised conversation, on native stream reconnection, and before
+forwarding a prompt, command or shell from CodeNomad. A send waits for a
+successful refresh. The event refresh covers conversations observed by the
+running backend; other conversations are checked when CodeNomad next sends input.
 
 Matching saved project **Always Allow** approvals can still settle an `ask`.
 Reads, external-directory actions, MCP and delegation retain their own rules.
@@ -114,6 +118,9 @@ the copy against blocks recorded along its owned native parent or fork lineage,
 including blocks retired by a source that changed modes. Returning to Autonomous
 removes only the matching block from the selected conversation, preserving the
 order and content of all other rules; ambiguous matches are left unchanged.
+A refresh replaces the block in place and retains prior versions to identify
+child and fork copies. A rule deliberately added by another native client after
+the block keeps its native precedence.
 A missing or unowned ancestor ends the lookup. Proof uses
 native lineage and exact rule values; rules have no per-entry native identity.
 Writes from one backend serialize, read immediately before and after the native
@@ -141,11 +148,11 @@ changed-diff and late-copy regressions. Both run on isolated fixtures only.
 
 `permissions/receipts.test.ts` exercises disk reload, all decisions and their
 provenance, cascades, ownership, deletion and mutation failure paths.
-`session-permission-mode.test.ts` covers config projection, two tabs, exact
-removal, inherited blocks, concurrent changes and private state.
+`session-permission-mode.test.ts` covers config projection and refresh, two tabs,
+exact removal, inherited blocks, concurrent changes and private state.
 `node scripts/test-session-permission-mode-native.mjs <absolute-opencode-executable>`
-exercises the route and proxy, including native child and fork copies, against
-a private OpenCode process.
+exercises the route and proxy, native child and fork copies, and native config
+events against a private OpenCode process.
 `tests/browser/conversation-permissions.test.ts` exercises the native Status
 selector, a second window, reconnect, saved customization and General settings.
 `tests/browser/permission-receipts.test.ts` covers reload, hidden tools, empty-page

@@ -191,7 +191,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
            }, body.sessionID, body.command, signal)
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)
-          : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory)
+           : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory, deps.permissionModes)
         return reply.send({ result })
       } catch (error) {
         if (commandKind === "settings" && (error instanceof MissionPreferenceConflictError || error instanceof PluginControlsError || error instanceof z.ZodError)) {

@@ -199,9 +199,12 @@ export class SettingsService {
     return this.stateStore.getAuthoritativeOwner(SESSION_PERMISSION_BLOCKS_OWNER)
   }
 
-  setPrivateSessionPermissionBlock(key: string, active: PermissionRule[] | null, previous: PermissionRule[][] = []): void {
+  setPrivateSessionPermissionBlock(key: string, active: PermissionRule[] | null, previous: Array<PermissionRule[] | PermissionRule[][]> = [],
+    revisions: PermissionRule[][] = [], pending?: PermissionRule[]): void {
     this.getPrivateSessionPermissionState()
-    this.stateStore.mergePatchOwner(SESSION_PERMISSION_BLOCKS_OWNER, { [key]: previous.length ? { active, previous } : active })
+    this.stateStore.mergePatchOwner(SESSION_PERMISSION_BLOCKS_OWNER, {
+      [key]: previous.length || revisions.length || pending ? { active, previous, revisions, pending: pending ?? null } : active,
+    })
   }
 
   /** A cleanup decision requires readable persisted favorites, not the display fallback. */

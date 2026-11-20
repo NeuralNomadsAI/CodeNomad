@@ -1,12 +1,14 @@
 // No discovery or shared daemon. Invoke with an absolute OpenCode executable.
 import assert from "node:assert/strict"
 import path from "node:path"
-import { mkdir } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import Fastify from "fastify"
 import pino from "pino"
-import { tsImport } from "tsx/esm/api"
+import { register } from "tsx/esm/api"
 import { runIsolated } from "./test-opencode-location-native.mjs"
 
+// Use the same module instance as the relay's native event attribution map.
+const { import: tsImport } = register({ namespace: "session-permission-mode-native" })
 const rule = (action, resource, effect) => ({ action, resource, effect })
 const config = { permissions: [
   rule("read", "*", "allow"), rule("shell", "*", "allow"), rule("shell", "rm *", "deny"),
@@ -15,7 +17,9 @@ const config = { permissions: [
 await runIsolated(process.argv[2], async ({ client, connection: native, root }) => {
   const { registerInstanceProxyRoutes } = await tsImport("../packages/server/src/server/http-server.ts", import.meta.url)
   const { registerSessionPermissionModeRoutes } = await tsImport("../packages/server/src/server/routes/session-permission-mode.ts", import.meta.url)
+  const { connectSessionPermissionRefresh } = await tsImport("../packages/server/src/server/routes/session-permission-refresh.ts", import.meta.url)
   const { SessionPermissionModes } = await tsImport("../packages/server/src/permissions/session-mode.ts", import.meta.url)
+  const { nativeEventConnections } = await tsImport("../packages/server/src/workspaces/opencode-service.ts", import.meta.url)
   const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
   const { SessionCleanupFence } = await tsImport("../packages/server/src/server/session-cleanup-fence.ts", import.meta.url)
   const { resolveConfigLocation } = await tsImport("../packages/server/src/config/location.ts", import.meta.url)
@@ -25,10 +29,14 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
   const profile = path.join(root, "codenomad-profile")
   await mkdir(profile)
   const profileLocation = resolveConfigLocation(profile)
-  const settings = new SettingsService(profileLocation, new EventBus(), logger)
+  const bus = new EventBus()
+  const settings = new SettingsService(profileLocation, bus, logger)
   const modes = new SessionPermissionModes(settings)
   const worktreeDeletionFence = new WorktreeDeletionFence(), cleanup = new SessionCleanupFence()
   const app = Fastify()
+  const configPath = path.join(root, "config", "opencode.json")
+  await writeFile(configPath, JSON.stringify(config))
+  await client.location.reload({ location: { directory: root } })
   const location = await client.location.get({ location: { directory: root } })
   const directory = location.directory
   const otherDirectory = path.join(directory, "other")
@@ -146,6 +154,34 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
     assert.deepEqual((await read()).permissions, [initial, appended])
     assert.ok((await client.permission.list({ sessionID: original.id }, options)).some(request => request.id === pending.id))
     await client.permission.reply({ sessionID: original.id, requestID: pending.id, decision: "reject" }, options)
+    const stopRefresh = connectSessionPermissionRefresh(bus, workspaceManager, modes, worktreeDeletionFence, cleanup, logger)
+    const watching = new AbortController()
+    const refreshStream = client.event.subscribe({ signal: AbortSignal.any([watching.signal, AbortSignal.timeout(15_000)]),
+      types: ["config.updated", "session.permissions"] })[Symbol.asyncIterator]()
+    try {
+      assert.equal((await refreshStream.next()).value.type, "server.connected")
+      const deny = rule("shell", "echo refresh-fixture", "deny")
+      await writeFile(configPath, JSON.stringify({ permissions: [...config.permissions, deny] }))
+      let refreshed = false
+      for await (const event of { [Symbol.asyncIterator]: () => refreshStream }) {
+        if (event.type === "config.updated") {
+          nativeEventConnections.set(event, connection)
+          bus.publish({ type: "instance.event", event, instanceId: "a" })
+        } else if (event.type === "session.permissions" && event.data.sessionID === created.id) {
+          assert.deepEqual(event.data.permissions, [initial, ...expected, deny])
+          refreshed = true
+          break
+        }
+      }
+      assert.equal(refreshed, true, "native configuration event must update the active block")
+      assert.equal((await nativePermission(created.id, "shell", deny.resource)).effect, "deny")
+      assert.equal(await mode("a", created.id, "autonomous"), "autonomous")
+      assert.deepEqual((await client.session.get({ sessionID: created.id })).permissions, [initial])
+    } finally {
+      watching.abort()
+      await refreshStream.return?.()
+      await stopRefresh()
+    }
     console.log("PASS: native root default, config deny/read, two clients and SSE, preserved rules, saved approval, independent child/fork modes and pending request")
   } finally { await app.close() }
-}, config)
+})

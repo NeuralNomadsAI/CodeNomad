@@ -112,7 +112,8 @@ import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { SessionPermissionModes } from "../permissions/session-mode"
 import { appendSessionProjection, sessionPermissionRules, blockPositions } from "../permissions/session-mode-rules"
-import { registerSessionPermissionModeRoutes } from "./routes/session-permission-mode"
+import { registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./routes/session-permission-mode"
+import { connectSessionPermissionRefresh } from "./routes/session-permission-refresh"
 import { requestAdmission } from "./request-admission"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 import { DEFERRED_MEDIA_HEADER, deferToolMedia, wantsDeferredMedia } from "../opencode/session-media"
@@ -477,6 +478,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, permissionModes })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
   const sessionCleanup = new SessionCleanupFence()
+  const stopPermissionRefresh = connectSessionPermissionRefresh(deps.eventBus, deps.workspaceManager, permissionModes,
+    worktreeDeletionFence, sessionCleanup, apiLogger)
+  app.addHook("onClose", async () => stopPermissionRefresh())
   registerSessionPermissionModeRoutes(app, { workspaceManager: deps.workspaceManager, modes: permissionModes, worktreeDeletionFence, cleanup: sessionCleanup })
   const isProtected = registerSessionFavoritesRoutes(app, { workspaceManager: deps.workspaceManager, settings: deps.settings, eventBus: deps.eventBus, cleanup: sessionCleanup })
   registerSessionCleanupRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, cleanup: sessionCleanup, isProtected })
@@ -843,6 +847,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         accounts: deps.accounts,
         memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
+        permissionModes: deps.permissionModes,
         humanAnswers: deps.humanAnswers,
         sessionCleanup: deps.sessionCleanup,
         pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
@@ -1442,6 +1447,27 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           releaseMutation?.()
           if (error instanceof AccountSelectionFailed) return reply.code(502).send({ error: "PROVIDER_ACCOUNT_SELECTION_FAILED" })
           throw error
+        }
+      }
+      const modes = args.permissionModes
+      if (modes && authorizedSession) {
+        try {
+          if (modes.mayBeSupervised(authorizedSession)) {
+            const client = await clientForRequest()
+            const refreshSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+            const current = () => {
+              refreshSignal.throwIfAborted()
+              connection?.assertCurrent()
+              if (workspaceManager.get(workspaceId) !== workspace) throw new Error("Workspace changed")
+            }
+            await wait(modes.refresh(sessionPermissionTarget(authorizedSession, {
+              client, current, signal: refreshSignal, distro: workspaceManager.getServiceWslDistro?.(workspaceId),
+            }, location => workspaceManager.ownsLocation(workspaceId, location, client, { signal: refreshSignal }))))
+          }
+        } catch {
+          signal.throwIfAborted()
+          releaseMutation?.()
+          return reply.code(503).send({ error: "Conversation permissions unavailable" })
         }
       }
     }

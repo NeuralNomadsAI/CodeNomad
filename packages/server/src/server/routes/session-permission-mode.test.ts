@@ -3,7 +3,7 @@ import test, { type TestContext } from "node:test"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
-import type { ConfigGetOutput, PermissionRule, SessionInfo } from "@opencode/client"
+import type { ConfigGetOutput, OpenCodeEvent, PermissionRule, SessionInfo } from "@opencode/client"
 import Fastify from "fastify"
 import { resolveConfigLocation } from "../../config/location"
 import { EventBus } from "../../events/bus"
@@ -12,9 +12,11 @@ import { SessionPermissionModes } from "../../permissions/session-mode"
 import { supervisedRules } from "../../permissions/session-mode-rules"
 import { SESSION_PERMISSION_BLOCKS_OWNER, SettingsService } from "../../settings/service"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import type { ServiceConnection } from "../../workspaces/opencode-service"
+import { nativeEventConnections, type ServiceConnection } from "../../workspaces/opencode-service"
 import { SessionCleanupFence } from "../session-cleanup-fence"
-import { registerSessionPermissionModeRoutes } from "./session-permission-mode"
+import { registerInstanceProxyRoutes } from "../http-server"
+import { registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./session-permission-mode"
+import { connectSessionPermissionRefresh } from "./session-permission-refresh"
 import { registerSettingsRoutes } from "./settings"
 
 const shell = (effect: PermissionRule["effect"], resource = "*"): PermissionRule => ({ action: "shell", resource, effect })
@@ -51,8 +53,11 @@ async function fixture(t: TestContext) {
   const writes: string[] = []
   let mutate: ((rules: PermissionRule[]) => void) | undefined
   let configEntries = config
+  let dispatched: (() => void) | undefined
   const client = {
+    rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
     session: {
+      environment: async () => {},
       get: async ({ sessionID }: { sessionID: string }) => {
         actions.push("read")
         const selected = sessions.get(sessionID)
@@ -72,26 +77,141 @@ async function fixture(t: TestContext) {
       return configEntries
     } },
   } as unknown as ServiceConnection["client"]
-  const connection = { client, assertCurrent() {} } as ServiceConnection
+  const endpoint = { url: "http://127.0.0.1:1" }
+  const connection = { client, endpoint, assertCurrent() {}, invalidate() {}, profile: async () => "modern",
+    fetch: async (input: string) => {
+      if (!input.endsWith("/prompt")) return new Response(null, { status: 404 })
+      dispatched?.()
+      return new Response(null, { status: 204 })
+    },
+  } as ServiceConnection
   const workspaces = { one: {}, two: {}, foreign: {} } as Record<string, {} | undefined>
   const manager = {
     get: (id: string) => workspaces[id] as never,
+    getSharedServiceClient: async () => client,
+    getSharedServiceEndpoint: async () => endpoint,
     getSharedServiceConnection: async () => connection,
     getServiceWslDistro: () => undefined,
+    getServiceDirectory: () => "/worktree",
+    getSessionEnvironment: async () => ({}),
+    getInstanceAuthorizationHeader: () => undefined,
     ownsLocation: async (id: string, location: SessionInfo["location"]) => id !== "foreign" && location.directory === "/worktree",
+    ownsPath: async () => true,
+    ownsDirectory: async (_id: string, directory: string) => directory === "/worktree",
     getWorktreeIdentityForPath: async () => "/worktree",
   }
   const modes = new SessionPermissionModes(settings)
-  registerSessionPermissionModeRoutes(app, { workspaceManager: manager, modes,
-    worktreeDeletionFence: new WorktreeDeletionFence(), cleanup: new SessionCleanupFence() })
+  const worktrees = new WorktreeDeletionFence(), cleanup = new SessionCleanupFence()
+  registerSessionPermissionModeRoutes(app, { workspaceManager: manager, modes, worktreeDeletionFence: worktrees, cleanup })
   registerSettingsRoutes(app, { settings, logger })
   t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }) })
   const url = (id: string, selected: string) => `/api/workspaces/${id}/sessions/${selected}/permission-mode`
-  return { app, bus, settings, modes, actions, writes, session, sessions, client, mutate: (next: typeof mutate) => { mutate = next },
+  return { app, bus, settings, modes, actions, writes, session, sessions, client, manager, logger, worktrees, cleanup,
+    publish: (value: object) => {
+      const event = { id: "evt_fixture", created: 0, ...value } as OpenCodeEvent
+      nativeEventConnections.set(event, connection)
+      bus.publish({ type: "instance.event", instanceId: "one", event })
+    },
+    mutate: (next: typeof mutate) => { mutate = next },
+    onDispatch: (next: () => void) => { dispatched = next },
     replaceConfig: (next: ConfigGetOutput) => { configEntries = next },
     get: (id = "one", selected = sessionID) => app.inject({ url: url(id, selected) }),
     set: (mode: string, id = "one", selected = sessionID) => app.inject({ method: "PUT", url: url(id, selected), payload: { mode } }) }
 }
+
+test("the session proxy refreshes before forwarding without a config event and blocks on refresh failure", async t => {
+  const f = await fixture(t)
+  registerInstanceProxyRoutes(f.app, { workspaceManager: f.manager, logger: f.logger, worktreeDeletionFence: f.worktrees,
+    sessionCleanup: f.cleanup, permissionModes: f.modes })
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const deny = shell("deny", "fixture *")
+  f.replaceConfig([...config, { type: "document", info: { permissions: [deny] } }])
+  const sends: Array<PermissionRule[] | undefined> = []
+  f.onDispatch(() => sends.push(f.session.permissions))
+  const send = () => f.app.inject({ method: "POST", url: `/workspaces/one/instance/api/session/${f.session.id}/prompt`, payload: { text: "fixture" } })
+  const sent = await send()
+  assert.equal(sent.statusCode, 204, sent.body)
+  assert.deepEqual(sends, [[read, ...block, deny]], f.actions.join(", "))
+  f.replaceConfig([{ type: "document", info: { permissions: [edit("deny", "~/fixture/*")] } }])
+  assert.equal((await send()).statusCode, 503)
+  assert.equal(sends.length, 1)
+  assert.deepEqual(f.session.permissions, [read, ...block, deny])
+})
+
+test("refreshes known supervised conversations on a location config event, including copied rules", async t => {
+  const f = await fixture(t)
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
+  const fork = { ...f.session, id: "ses_fork", fork: { sessionID: f.session.id } } as SessionInfo
+  for (const copy of [child, fork]) f.sessions.set(copy.id, copy)
+
+  let waiters = new Map<string, () => void>()
+  const refresh = f.modes.refresh.bind(f.modes)
+  t.mock.method(f.modes, "refresh", async (...args: Parameters<typeof refresh>) => {
+    const result = await refresh(...args)
+    const session = await args[0].read()
+    waiters.get(session.id)?.()
+    return result
+  })
+  const waitFor = (...ids: string[]) => {
+    waiters = new Map()
+    return Promise.all(ids.map(id => new Promise<void>(resolve => waiters.set(id, resolve))))
+  }
+  const stop = connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger)
+  t.after(stop)
+  const observed = waitFor(child.id, fork.id)
+  f.publish({ type: "session.created", data: { sessionID: child.id, parentID: f.session.id, permissions: child.permissions } })
+  f.publish({ type: "session.forked", data: { sessionID: fork.id, parentID: f.session.id } })
+  await observed
+  assert.deepEqual(f.writes, [f.session.id], "observed copies already match the active configuration")
+
+  const deny = shell("deny", "fixture *")
+  const suffix = shell("allow", "explicit *")
+  child.permissions = [read, ...block, suffix]
+  f.replaceConfig([...config, { type: "document", info: { permissions: [deny] } }])
+  f.publish({ type: "config.updated", location: { directory: "/other" }, data: {} })
+  const refreshed = waitFor(f.session.id, child.id, fork.id)
+  f.publish({ type: "config.updated", location: f.session.location, data: {} })
+  await refreshed
+  assert.deepEqual(f.session.permissions, [read, ...block, deny])
+  assert.deepEqual(child.permissions, [read, ...block, deny, suffix])
+  assert.deepEqual(fork.permissions, f.session.permissions)
+
+  // Contraction can leave a longer copy on a descendant not observed by the relay.
+  const missed = { ...child, id: "ses_missed", parentID: child.id, permissions: [read, ...block, deny] }
+  f.sessions.set(missed.id, missed)
+  f.replaceConfig(config)
+  const contracted = waitFor(f.session.id, child.id, fork.id)
+  f.publish({ type: "config.updated", location: f.session.location, data: {} })
+  await contracted
+  assert.deepEqual(child.permissions, [read, ...block, suffix])
+  const signal = AbortSignal.timeout(5_000)
+  const target = sessionPermissionTarget(missed, { client: f.client, distro: undefined, signal, current: () => signal.throwIfAborted() },
+    location => f.manager.ownsLocation("one", location))
+  assert.deepEqual(await f.modes.refresh(target), { mode: "supervised" })
+  assert.deepEqual(missed.permissions, [read, ...block])
+  for (const copy of [f.session, child, fork, missed]) {
+    assert.equal((await f.set("autonomous", "two", copy.id)).statusCode, 200)
+    assert.deepEqual(copy.permissions, copy === child ? [read, suffix] : [read])
+  }
+})
+
+test("preserves a verified refresh after a concurrent native addition and an uncertain response", async t => {
+  const f = await fixture(t)
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const configDeny = shell("deny", "fixture *")
+  f.replaceConfig([...config, { type: "document", info: { permissions: [configDeny] } }])
+  const signal = AbortSignal.timeout(5_000)
+  const target = sessionPermissionTarget(f.session, { client: f.client, distro: undefined, signal, current: () => signal.throwIfAborted() },
+    location => f.manager.ownsLocation("one", location))
+  f.mutate(rules => { f.session.permissions = [...rules, external]; throw Error("lost response") })
+  await assert.rejects(f.modes.refresh(target), /lost response/)
+  assert.equal(f.writes.length, 2, "an uncertain write is not replayed")
+  assert.deepEqual((await f.get()).json(), { mode: "supervised" })
+  f.mutate(undefined)
+  assert.equal((await f.set("autonomous", "two")).statusCode, 200)
+  assert.deepEqual(f.session.permissions, [read, external])
+})
 
 test("serializes two windows on one session, confirms each mode from native reads and removes only the owned block", async t => {
   const f = await fixture(t)

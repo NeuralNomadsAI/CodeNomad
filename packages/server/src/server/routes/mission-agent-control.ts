@@ -18,9 +18,11 @@ import type { MemoryService } from "../../memory/service"
 import { MissionControlError } from "../../missions/control-error"
 import { readMissionMutationError } from "../../missions/rpc-errors"
 import { isPlainObject } from "../../settings/merge-patch"
+import { sessionPermissionTarget } from "./session-permission-mode"
 
 type Deps = Omit<MissionRouteDeps, "workspaceManager" | "settings"> & {
   workspaceManager: MissionRouteDeps["workspaceManager"] & Pick<WorkspaceManager, "list" | "getSessionEnvironment">
+    & Partial<Pick<WorkspaceManager, "getServiceWslDistro">>
   settings?: MissionRouteDeps["settings"] & Partial<Pick<SettingsService, "getRawConfigOwner">>
   memory?: MemoryService
 }
@@ -163,6 +165,7 @@ async function requestUpdate(deps: Deps, agent: Awaited<ReturnType<typeof ownedM
       || target.projectID !== mission.projectID || !sameLocation(target.location, actor.location)
       || !await deps.workspaceManager.ownsLocation(workspace.id, target.location, client, { signal, strict: true }))
       throw new Error("Mission coordinator changed")
+    return target
   }
   const owned = await prepareMissionMapMutation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence,
     workspaceID: workspace.id, directory: actor?.location.directory, signal })
@@ -173,7 +176,16 @@ async function requestUpdate(deps: Deps, agent: Awaited<ReturnType<typeof ownedM
     await client.session.environment({ sessionID: mission.coordinatorSessionId, variables }, { signal })
     try { await syncSessionGitContext(client, mission.coordinatorSessionId, signal) } catch { /* advisory */ }
     await syncSessionMemoryContext(agent.connection, deps.memory, mission.coordinatorSessionId, signal)
-    await owned.refresh(); await assertCurrent()
+    await owned.refresh()
+    const target = await assertCurrent()
+    const modes = deps.permissionModes
+    if (modes?.mayBeSupervised(target)) {
+      const current = () => { signal.throwIfAborted(); agent.connection.assertCurrent() }
+      await modes.refresh(sessionPermissionTarget(target, {
+        client, current, signal, distro: deps.workspaceManager.getServiceWslDistro?.(workspace.id),
+      }, location => deps.workspaceManager.ownsLocation(workspace.id, location, client, { signal, strict: true })))
+      await assertCurrent()
+    }
     const id = `msg_${createHash("sha256").update(`mission-briefing\0${mission.id}\0${original.requestID}`).digest("hex").slice(0, 28)}`
     await client.session.prompt({ sessionID: mission.coordinatorSessionId, id, delivery: "steer",
       text: missionBriefingRequestText(mission, original.requestID!, original.language ?? "en") },
