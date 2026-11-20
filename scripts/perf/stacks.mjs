@@ -14,6 +14,7 @@ export async function withBackend(daemon, tree, root, run) {
   await mkdir(root, { recursive: true })
   const password = randomUUID()
   const config = path.join(root, "server.yaml")
+  await writeFile(config, JSON.stringify({ server: { opencodeBinary: daemon.cli } }))
   const child = spawn(process.execPath, [
     fileURLToPath(new URL("./ts-wrapper.mjs", import.meta.url)),
     "--http", "true", "--http-port", "0", "--https", "false", "--host", "127.0.0.1", "--ui-no-update",
@@ -30,7 +31,9 @@ export async function withBackend(daemon, tree, root, run) {
     let origin
     while (!(origin = output.match(/Local Connection URL\s*:\s*(http:\/\/127\.0\.0\.1:\d+)/)?.[1])) {
       if (spawnError) throw spawnError
-      if (child.exitCode !== null || Date.now() >= deadline) throw Error(`CodeNomad failed to start: ${output.slice(-3000)}`)
+      if (child.exitCode !== null || child.signalCode !== null || Date.now() >= deadline) {
+        throw Error(`CodeNomad failed to start (${child.exitCode ?? child.signalCode ?? "timeout"}): ${output.slice(-3000)}`)
+      }
       await sleep(50)
     }
     const request = (route, method, body, cookie) => fetch(`${origin}${route}`, {

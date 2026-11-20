@@ -1,3 +1,4 @@
+import assert from "node:assert/strict"
 import { sleep } from "./lib.mjs"
 
 export async function waitIdle(daemon, id) {
@@ -19,6 +20,8 @@ export async function seed(daemon, turns, count) {
   const prompt = async (id, text) => {
     await daemon.call("POST", `/api/session/${id}/prompt`, { text })
     await waitIdle(daemon, id)
+    const { data } = await daemon.call("GET", `/api/session/${id}`)
+    assert.equal(data.outcome, "succeeded", `Seed turn failed: ${text}`)
   }
   await Promise.all(background.map(async id => {
     for (let i = 1; i <= 3; i++) await prompt(id, `SEED${i} background`)

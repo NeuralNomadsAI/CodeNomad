@@ -18,7 +18,12 @@ export async function withTui(cli, daemon, session, run) {
     const at = now()
     term.write(raw, () => {
       const b = term.buffer.active
-      screen = Array.from({ length: rows }, (_, y) => b.getLine(b.viewportY + y)?.translateToString(true) ?? "").join("\n")
+      screen = ""
+      for (let y = 0; y < rows; y++) {
+        const line = b.getLine(b.viewportY + y)
+        if (y > 0 && !line?.isWrapped) screen += "\n"
+        screen += line?.translateToString(!b.getLine(b.viewportY + y + 1)?.isWrapped) ?? ""
+      }
       if (seen) for (const marker of screen.match(MARKER) ?? []) seen[marker] ??= at
       waiter?.(screen, at)
     })

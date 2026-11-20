@@ -10,12 +10,12 @@ export function budgetReport(budgets, counter, ratios) {
     if (!ok) failures.push(`${name}: ${value.toFixed(2)} exceeds ${max.toFixed(2)}`)
   }
   for (const [key, value] of Object.entries(counter.metrics)) check(`L8 ${key}`, value, budgets.counters[key])
-  const counterExceeded = failures.length > 0
   for (const [level, metrics] of Object.entries(ratios)) for (const [name, value] of Object.entries(metrics)) {
-    check(`L${level} ${name} CodeNomad/TUI`, value.ratio, budgets.latency[level][name], `${value.cn.toFixed(1)} ms / ${value.tui.toFixed(1)} ms`)
+    const raw = value.tui > 0 ? `; raw ${(value.cn / value.tui).toFixed(2)}×` : ""
+    check(`L${level} ${name} CodeNomad/TUI (50 ms floor)`, value.ratio, budgets.latency[level][name], `${value.cn.toFixed(1)} ms / ${value.tui.toFixed(1)} ms${raw}`)
   }
   const lines = ["### Performance guard", "", "| | Metric | Value | Limit | Detail |", "|---|---|---:|---:|---|", ...rows]
-  if (counterExceeded) {
+  if (failures.length) {
     const growth = Object.entries(counter.files).map(([file, now]) => [file, now - (budgets.callsByFile[file] ?? 0)])
       .filter(([, delta]) => delta >= .01).sort((a, b) => b[1] - a[1]).slice(0, 12)
     lines.push("", "Largest increases in JavaScript calls per native event:", "", "| Source file | +calls/event |", "|---|---:|",

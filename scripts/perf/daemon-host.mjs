@@ -100,7 +100,7 @@ export async function withDaemon(cli, root, chunks, run) {
     const call = (method, route, body) => json(`${url}${route}`, { method, body, headers: { authorization } })
     const info = await call("GET", "/api/info")
     assert.equal(info.pid, child.pid, "Bench daemon did not prove its identity")
-    await run({ project, env, url, password, authorization, call, markers, pid: child.pid, version: info.version })
+    await run({ project, env, url, password, authorization, call, markers, pid: child.pid, cli })
     if (providerError) throw providerError
   } finally {
     try { await stopFixtureChild(child, stopped) } finally {

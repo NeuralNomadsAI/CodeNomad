@@ -88,13 +88,14 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: node --test scripts/perf/budget-report.test.mjs
+      - run: node --test scripts/perf/budget-report.test.mjs scripts/perf/seed.test.mjs
       - run: npm run build --workspace @neuralnomads/codenomad
       - name: Install Chromium and the pinned benchmark tools
         run: |
           npx --workspace @codenomad/ui playwright install --with-deps chromium
           npm install --prefix scripts/perf/tools --ignore-scripts --no-audit --no-fund \
             @lydell/node-pty@1.2.0-beta.18 @xterm/headless@6.0.0 @opencode/cli-linux-x64@2.3.2
+      - run: node --test scripts/perf/page-probe.test.mjs
       - name: Measure renderer work and latency against the TUI
         run: |
           node scripts/perf/bench.mjs "$PWD/scripts/perf/tools/node_modules/@opencode/cli-linux-x64/bin/opencode"

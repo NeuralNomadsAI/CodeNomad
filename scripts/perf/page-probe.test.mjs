@@ -1,0 +1,38 @@
+import assert from "node:assert/strict"
+import { mkdtemp, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { test } from "node:test"
+import { fileURLToPath } from "node:url"
+import { chromium } from "playwright"
+import { fixtureEnvironment } from "../native-product-fixture.mjs"
+
+test("renderer probe counts attributes but observes only visible markers and composer input", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "cn-perf-probe-"))
+  let browser
+  try {
+    browser = await chromium.launch({ headless: true, env: await fixtureEnvironment(root) })
+    const page = await browser.newPage()
+    await page.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
+    await page.goto("about:blank")
+    await page.setContent('<main class="message-stream"></main><textarea id="composer"></textarea><input id="other">')
+    await page.evaluate(() => {
+      window.__perf.arm()
+      const stream = document.querySelector("main")
+      stream.classList.add("fixture")
+      stream.setAttribute("aria-busy", "true")
+      stream.innerHTML = '<p>MKAA010001K</p><div style="display:none">MKAA010002K</div><div style="position:absolute;left:-900px">MKAA010003K</div>'
+      window.__perf.clearKey(document.querySelector("#composer"))
+    })
+    await page.waitForFunction(() => window.__perf.collect().shown.MKAA010001K)
+    await page.locator("#other").press("x")
+    const shot = await page.evaluate(() => ({ ...window.__perf.collect(), keyAt: window.__perf.keyAt() }))
+    assert.deepEqual(Object.keys(shot.shown), ["MKAA010001K"])
+    assert(shot.mutations >= 3, "Expected two attributes and one insertion")
+    assert.equal(shot.keyAt, undefined)
+    await page.locator("#composer").press("a")
+    await page.waitForFunction(() => window.__perf.keyAt())
+  } finally {
+    try { await browser?.close() } finally { await rm(root, { recursive: true, force: true }) }
+  }
+})

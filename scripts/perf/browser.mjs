@@ -16,7 +16,7 @@ export async function withBrowser(daemon, tree, root, run) {
     try {
       context = await chromium.launchPersistentContext(profile, {
         headless: true, channel: "chromium", env: { ...daemon.env, ...(socketDir && { TMPDIR: socketDir }) },
-        viewport: { width: 1440, height: 960 }, locale: "en-US", serviceWorkers: "block",
+        viewport: { width: 1440, height: 1440 }, locale: "en-US", serviceWorkers: "block",
       })
       await context.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
       await context.addCookies([{ name: "codenomad_session", value: cookie, url }])
@@ -42,7 +42,7 @@ export async function withBrowser(daemon, tree, root, run) {
           const before = now()
           const pageTime = await page.evaluate(() => window.__perf.now())
           offset = pageTime - (before + now()) / 2
-          await page.evaluate(() => window.__perf.arm())
+          await page.evaluate(visibleOnly => window.__perf.arm(visibleOnly), !counters)
           if (counters) {
             await cdp.send("Profiler.startPreciseCoverage", { callCount: true, detailed: false })
             await cdp.send("Profiler.takePreciseCoverage")
@@ -61,10 +61,13 @@ export async function withBrowser(daemon, tree, root, run) {
           }))
         },
         async typeKey(i) {
-          await page.evaluate(() => window.__perf.clearKey())
+          await composer.evaluate(element => {
+            element.focus()
+            window.__perf.clearKey(element)
+          })
           const start = now()
-          await page.keyboard.type(String.fromCharCode(97 + i))
-          const at = await page.waitForFunction(() => window.__perf.keyAt(), undefined, { timeout: 10_000 })
+          await composer.press(String.fromCharCode(97 + i))
+          const at = await page.waitForFunction(() => window.__perf.keyAt(), undefined, { timeout: 10_000, polling: 25 })
           try { return await at.jsonValue() - offset - start } finally { await at.dispose() }
         },
         async clear() {

@@ -47,14 +47,17 @@ function latency(level, selector) {
   const rows = records.filter(r => r.scenario === "latency" && r.level === level)
   const read = kind => {
     const matches = rows.filter(r => r.label === kind)
-    assert.equal(matches.length, 3, `Missing ${kind} latency rounds at L${level}`)
+    checkRounds(matches, `${kind} latency at L${level}`)
     return median(matches.map(selector))
   }
   const cn = read(values.client), tui = read("tui")
   return { cn, tui, ratio: Math.max(cn, 50) / Math.max(tui, 50) }
 }
+function checkRounds(samples, name) {
+  assert.deepEqual(samples.map(row => row.round).sort(), [0, 1, 2], `Expected distinct rounds 0–2 for ${name}`)
+}
 const counter = byLevel[8]
-assert.equal(counter?.rounds, 3, "Expected three counter rounds at L8")
+checkRounds(counters.filter(row => row.level === 8), "counters at L8")
 const ratios = Object.fromEntries([8, 32].map(level => [level, {
   daemonToShownP95: latency(level, r => r.stages.daemonToShown.p95),
   keysP95: latency(level, r => r.keys.p95),

@@ -22,24 +22,49 @@
     new MutationObserver(records => {
       if (!sample) return
       const owner = sample
-      const found = new Set()
-      function scan(text) {
-        if (text?.includes("MK")) for (const marker of text.match(markers) ?? []) {
-          if (!owner.pending.has(marker)) {
-            owner.pending.add(marker)
-            found.add(marker)
+      const found = new Map()
+      function scanText(node) {
+        if (!node.data.includes("MK")) return
+        const element = node.parentElement
+        if (owner.visibleOnly && !element?.closest(".message-stream")) return
+        for (const match of node.data.matchAll(markers)) {
+          if (!owner.visibleOnly) {
+            owner.shown[match[0]] ??= now()
+            continue
           }
+          if (!(match[0] in owner.shown)) found.set(match[0], { node, index: match.index })
         }
+      }
+      function scan(node) {
+        if (node.nodeType === Node.TEXT_NODE) return scanText(node)
+        if (!node.textContent?.includes("MK")) return
+        const texts = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
+        while (texts.nextNode()) scanText(texts.currentNode)
       }
       owner.mutations += records.length
       for (const record of records) {
-        if (record.type === "characterData") scan(record.target.data)
-        else for (const node of record.addedNodes) scan(node.textContent)
+        if (record.type === "characterData") scan(record.target)
+        else for (const node of record.addedNodes) scan(node)
       }
-      if (found.size) afterPaint(at => { for (const marker of found) owner.shown[marker] = at })
-    }).observe(document.documentElement, { subtree: true, childList: true, characterData: true })
+      if (found.size) afterPaint(at => {
+        const range = document.createRange()
+        for (const [marker, { node, index }] of found) {
+          const element = node.parentElement
+          const stream = element?.closest(".message-stream")
+          if (!stream || node.data.slice(index, index + marker.length) !== marker) continue
+          if (!element.checkVisibility({ visibilityProperty: true })) continue
+          range.setStart(node, index)
+          range.setEnd(node, index + marker.length)
+          const viewport = stream.getBoundingClientRect()
+          const rect = range.getBoundingClientRect()
+          if (rect.width > 0 && rect.height > 0
+            && rect.right > Math.max(0, viewport.left) && rect.left < Math.min(innerWidth, viewport.right)
+            && rect.bottom > Math.max(0, viewport.top) && rect.top < Math.min(innerHeight, viewport.bottom)) owner.shown[marker] ??= at
+        }
+      })
+    }).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true })
     document.addEventListener("input", event => {
-      if (!sample || !event.isTrusted) return
+      if (!sample || !event.isTrusted || event.target !== sample.composer) return
       const owner = sample
       afterPaint(at => { owner.keyAt = at })
     }, true)
@@ -47,11 +72,11 @@
   if (document.documentElement) start()
   else document.addEventListener("DOMContentLoaded", start, { once: true })
   window.__perf = {
-    arm() { sample = { shown: {}, pending: new Set(), mutations: 0, pageFrames: 0 } },
+    arm(visibleOnly = true) { sample = { shown: {}, mutations: 0, pageFrames: 0, visibleOnly } },
     disarm() { sample = undefined },
     collect() { return { shown: sample.shown, mutations: sample.mutations, pageFrames: sample.pageFrames } },
     now,
-    clearKey() { sample.keyAt = undefined },
+    clearKey(composer) { sample.keyAt = undefined; sample.composer = composer },
     keyAt() { return sample.keyAt },
   }
 })()
