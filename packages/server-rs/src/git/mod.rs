@@ -303,7 +303,7 @@ pub async fn init(
     }
     let response = app
         .native
-        .request(reqwest::Method::POST, app.native.url.join("/api/vcs/init").unwrap())
+        .request(reqwest::Method::POST, app.native.url().join("/api/vcs/init").unwrap())
         .query(&[("location[directory]", native), ("provider", "git")])
         .timeout(Duration::from_secs(15))
         .send()

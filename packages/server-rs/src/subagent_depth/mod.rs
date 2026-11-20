@@ -109,7 +109,7 @@ async fn service_directory(app: &App, w: &Workspace, dir: &str) -> Option<String
     crate::worktrees::ownership::resolve(app, w, dir).await.map(|o| o.directory)
 }
 async fn native(app: &App, path: &str, query: &[(&str, &str)], timeout: u64, max: usize) -> Result<Value, ()> {
-    let url = app.native.url.join(path).map_err(|_| ())?;
+    let url = app.native.url().join(path).map_err(|_| ())?;
     let response = app
         .native
         .request(Method::GET, url)

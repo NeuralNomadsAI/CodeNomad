@@ -59,6 +59,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Serves until a stop request; true when every listener and task stopped cleanly.
 async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
+    if launch.serve {
+        config::set_serve();
+    }
     let root = dunce::canonicalize(&launch.root)?;
     if !root.is_dir() {
         return Err("Workspace root must be a directory".into());
@@ -70,7 +73,14 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     if let Some(token) = auth.bootstrap_token().filter(|_| launch.serve) {
         host::line(&format!("CODENOMAD_BOOTSTRAP_TOKEN:{token}"));
     }
-    let native = opencode::Native::connect().await?;
+    if !launch.serve && config::service_record_named() {
+        return Err("CNRS_OPENCODE_SERVICE_FILE is not supported: run the install again".into());
+    }
+    // An empty selection is the default OpenCode installation (no saved selection is read yet).
+    let selected = launch.binary.to_string_lossy();
+    let selected = if selected.is_empty() { opencode::launch::default_binary() } else { selected.into_owned() };
+    let binary = opencode::launch::resolve(&selected);
+    let native = opencode::Native::connect(&binary)?;
     let listener = launch.http.listen().await?;
     let port = listener.local_addr()?.port();
     let (identity, data) = (launch.identity.as_path(), launch.data);
@@ -102,7 +112,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         settings,
         meta,
         native,
-        launch.binary,
+        binary.into(),
         devices,
         watches,
         calendar_profile,

@@ -25,9 +25,7 @@ async function observe(label, command, prefix) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(CODENOMAD_|CLI_|CNRS_)/.test(key)))
   Object.assign(env, { CODENOMAD_NATIVE_PARENT: "1", CLI_CONFIG: config, CLI_UI_DIR: ui, CLI_UI_NO_UPDATE: "1",
     HOME: home, USERPROFILE: home, APPDATA: path.join(home, "AppData", "Roaming"), LOCALAPPDATA: path.join(home, "AppData", "Local"),
-    XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local", "share"), XDG_STATE_HOME: path.join(home, ".local", "state"),
-    // Rust's daemon endpoint until the OpenCode service is ported; nothing listens there.
-    ...(label === "rs" ? { CNRS_FIXTURE_URL: "http://127.0.0.1:9/", CNRS_FIXTURE_PASSWORD: "placeholder" } : {}) })
+    XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local", "share"), XDG_STATE_HOME: path.join(home, ".local", "state") })
   const child = spawn(command, [...prefix, ...args], { cwd, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
   let buffer = "", log = ""
   const lines = [], waiters = []

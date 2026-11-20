@@ -180,7 +180,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         data: base,
         settings,
         unrestricted,
-        binary: "opencode".into(),
+        // No saved selection is read yet: the default OpenCode installation.
+        binary: PathBuf::new(),
         http: Bind { ip: http_ip, port: if http { http_port } else { 0 }, fallback: !(http && explicit("http-port")) },
         https,
         auth,

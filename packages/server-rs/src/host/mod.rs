@@ -24,7 +24,7 @@ pub struct Launch {
     pub settings: crate::settings::document::Location,
     /// `--unrestricted-root`: any local folder may be browsed and opened.
     pub unrestricted: bool,
-    /// The OpenCode executable workspaces report.
+    /// The selected OpenCode executable; empty for the default installation.
     pub binary: PathBuf,
     pub http: Bind,
     pub https: Option<crate::auth::tls::Settings>,

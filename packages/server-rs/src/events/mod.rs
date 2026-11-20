@@ -231,6 +231,19 @@ pub async fn bridge(app: Shared) {
             app.opened.notified().await;
         }
         status(&app, "connecting", None);
+        // Each subscription acquires the shared connection: a daemon that stopped is found
+        // again, or started, before the stream reconnects.
+        let deadline = tokio::time::Instant::now() + crate::opencode::daemon::TIMEOUT;
+        let endpoint = match app.native.acquire(deadline).await {
+            Ok(endpoint) => endpoint,
+            Err(refusal) => {
+                eprintln!("Shared OpenCode event stream disconnected: {refusal}");
+                status(&app, "error", Some(&refusal.to_string()));
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+        crate::extensions::lifecycle::prepare(&app, &endpoint).await;
         let response = app.native.get("/api/event").header("accept", "text/event-stream").send().await;
         if let Ok(response) = response
             && response.status().is_success()
@@ -366,6 +379,8 @@ pub async fn bridge(app: Shared) {
                 }
             }
         }
+        app.native.invalidate(&endpoint);
+        eprintln!("Shared OpenCode event stream disconnected: Shared OpenCode event stream ended");
         status(&app, "error", Some("Shared OpenCode event stream ended"));
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
