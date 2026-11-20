@@ -29,7 +29,7 @@ const app = Fastify()
 const rpc = { calls: [] as Array<{ method: string; input: any }>, hold: undefined as undefined | ((method: string) => Promise<void>),
   references: [] as unknown[], conversation: "ses_images", image: { status: "asset", mime: "image/png", uri: "" } as Record<string, unknown> }
 let installed: PanelExtensionPackage | undefined, realPng = "", repository = "", remoteServer: Server
-const transit = { hold: undefined as undefined | (() => Promise<void>) }
+const transit = { hold: undefined as undefined | (() => Promise<void>), branch: undefined as undefined | (() => Promise<void>) }
 
 const png = (width: number, height: number) => {
   const bytes = Buffer.alloc(33)
@@ -97,7 +97,7 @@ before(async () => {
   rpc.image.uri = realPng
 })
 afterEach(async () => {
-  rpc.hold = undefined; transit.hold = undefined; rpc.calls = []; rpc.references = []; rpc.conversation = "ses_images"; rpc.image = { status: "asset", mime: "image/png", uri: realPng }
+  rpc.hold = undefined; transit.hold = undefined; transit.branch = undefined; rpc.calls = []; rpc.references = []; rpc.conversation = "ses_images"; rpc.image = { status: "asset", mime: "image/png", uri: realPng }
   if (installed) await store.remove(installed.manifest.id, installed.digest).catch(() => {})
   installed = undefined
 })
@@ -135,8 +135,10 @@ async function open(options: { phone?: boolean } = {}) {
     if (!url.pathname.startsWith("/api/panel-extensions")) return route.fulfill({ json: { entries: [], files: [], records: [], messages: [], data: [] } })
     requests.push(url.pathname)
     if (url.pathname.endsWith("/images")) await transit.hold?.()
+    const branchAnswer = url.pathname.endsWith("/workItemBranch")
     const response = await app.inject({ method: request.method() as any, url: url.pathname + url.search,
       payload: request.postData() ?? undefined, headers: { "content-type": "application/json" } })
+    if (branchAnswer) await transit.branch?.()
     await route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body }).catch(() => {})
   })
   await page.goto(`${fixture.url}${options.phone ? "?phone=1" : ""}`)
@@ -593,4 +595,21 @@ test("worktrees: the dialog names the repository, and a remote changed while it 
     execFileSync("git", ["-C", repository, "remote", "set-url", "origin", url])
     await page.close()
   }
+})
+test("worktrees: an extension revoked once its branch exists creates no worktree and moves nothing", async () => {
+  await install()
+  const { page } = await open()
+  let entered!: () => void, release!: () => void
+  const waiting = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
+  transit.branch = () => { entered(); return gate }
+  try {
+    await showPanel(page)
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 37), { ok: "confirming" })
+    await page.getByRole("button", { name: "Create and move", exact: true }).click()
+    await waiting
+    await store.activate(installed!.manifest.id, installed!.digest, false)
+    release()
+    await page.getByText("Couldn't open the worktree for issue #37.").first().waitFor()
+    assert.deepEqual([await worktreeCalls(page), await page.evaluate(() => (window as any).fixture.location("ses_work"))], [[], "/fixture"])
+  } finally { release(); await page.close() }
 })

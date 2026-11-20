@@ -335,7 +335,7 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   `--refmap=` (no configured refspec applies) into a scratch ref, from the remote's configured
   URL whose single `insteadOf` expansion must name the repository; then `git branch` (an
   unlinked branch of that name is a `conflict`). Consent and the project are checked again
-  right before any ref is written. Lookups and writes first require that remote check; they
+  right before any ref is written, and by the host again before it creates the worktree and before it moves the family. Lookups and writes first require that remote check; they
   see every link, and only `list` stops at 200. `createWorktree` then checks out that branch
   only at the returned tip (`revision`: a missing or moved branch is refused, never recreated or
   guessed from a remote-tracking branch) and `setWorktreeSlugForParentSession` moves the family

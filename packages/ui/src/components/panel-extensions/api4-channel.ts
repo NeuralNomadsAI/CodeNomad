@@ -223,6 +223,13 @@ export function useApi4Channel(props: {
     confirming = true
     const item = tGlobal(`panelExtensions.worktrees.${kind}`, { number })
     let progress: ToastHandle | undefined
+    // Before each host mutation: still mounted, and the server still grants this exact package
+    // (a disabled or replaced package fails the lookup's consent check).
+    const consented = async () => {
+      if (disposed) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
+      await panelExtensionsApi4.workItemBranchLookup(authority, kind, number, lifetime.signal)
+      if (disposed) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
+    }
     try {
       const accepted = await showConfirmDialog(tGlobal(slug ? "panelExtensions.worktrees.confirmMove" : "panelExtensions.worktrees.confirmCreate", { item, worktree: slug }), {
         title: props.name, detail: repository, confirmLabel: tGlobal(slug ? "panelExtensions.worktrees.move" : "panelExtensions.worktrees.create") }, lifetime.signal)
@@ -239,12 +246,13 @@ export function useApi4Channel(props: {
         const fromSlug = getWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session))
         const branch = await panelExtensionsApi4.workItemBranch(authority, kind, number, repository, fromSlug, lifetime.signal)
         if (branch.status !== "ok") throw new Refusal(tGlobal(`panelExtensions.worktrees.${branch.status}`, { item, branch: "branch" in branch ? branch.branch : "" }))
+        await consented()
         // Only that branch at that tip: a branch deleted or replaced meanwhile is refused, never recreated.
         destination = (await createWorktree(props.instanceId, branch.branch, "root", branch.revision)).slug
         branchName = branch.branch
         await reloadWorktrees(props.instanceId)
       }
-      if (disposed) return
+      await consented()
       // The target must still check out the item's branch when the family moves; the move reports its own failure.
       await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination, { branch: branchName }).catch(() => {})
     } catch (error) {
