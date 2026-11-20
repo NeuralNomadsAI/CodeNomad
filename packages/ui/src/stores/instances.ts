@@ -109,7 +109,7 @@ import { retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
 import { remoteRestoreTabs } from "./remote-restore-tabs"
 import { clearInstanceSeenInterruptions } from "./session-interruption-seen"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
-import { getUnavailableWorkspaceIds, redundantDuplicateFolderInstances, uniqueFolderWorkspaces } from "./app-session-reconciliation"
+import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
 import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "../lib/trailing-resync"
@@ -1685,15 +1685,6 @@ function handleWorkspaceLog(entry: WorkspaceLogEntry) {
     message: entry.message,
   }
   addLog(entry.workspaceId, logEntry)
-}
-
-/** A workspace record whose folder already has a different instance here; its
- * create/restore commit upserts it directly when this window opened it. */
-function isRedundantFolderWorkspace(workspace: WorkspaceDescriptor): boolean {
-  if (instances().has(workspace.id)) return false
-  const key = normalizeWorkspacePath(workspace.path)
-  return Array.from(instances().values()).some((instance) => instance.id !== workspace.id
-    && normalizeWorkspacePath(instance.folder) === key)
 }
 
 function ensureLogContainer(id: string) {

@@ -39,46 +39,6 @@ export function getUnavailableWorkspaceIds(
   return [...localIds].filter((id) => !remoteIds.has(id) && !isProtected(id))
 }
 
-/** One record per folder reaches the instance store: the record already
- * instantiated, else the first (oldest) the backend reports. Duplicate records
- * of a folder stay inert until the backend closes them. */
-export function uniqueFolderWorkspaces<T extends { id: string; path: string }>(
-  workspaces: readonly T[],
-  hasInstance: (id: string) => boolean,
-): T[] {
-  const groups = new Map<string, T[]>()
-  for (const workspace of workspaces) {
-    const key = normalizeWorkspacePath(workspace.path)
-    groups.set(key, [...(groups.get(key) ?? []), workspace])
-  }
-  const keep = new Set<string>()
-  for (const group of groups.values()) {
-    keep.add((group.find((workspace) => hasInstance(workspace.id)) ?? group[0]!).id)
-  }
-  return workspaces.filter((workspace) => keep.has(workspace.id))
-}
-
-/** Local instances of duplicate folder records that hold no tab; the tab-bound
- * (or first) instance of each folder stays. */
-export function redundantDuplicateFolderInstances(
-  instances: Iterable<{ id: string; folder: string }>,
-  hasTab: (id: string) => boolean,
-): string[] {
-  const groups = new Map<string, Array<{ id: string; hasTab: boolean }>>()
-  for (const instance of instances) {
-    const key = normalizeWorkspacePath(instance.folder)
-    groups.set(key, [...(groups.get(key) ?? []), { id: instance.id, hasTab: hasTab(instance.id) }])
-  }
-  const redundant: string[] = []
-  for (const group of groups.values()) {
-    if (group.length < 2) continue
-    const keep = group.find((instance) => instance.hasTab) ?? group[0]!
-    for (const instance of group) {
-      if (instance.id !== keep.id && !instance.hasTab) redundant.push(instance.id)
-    }
-  }
-  return redundant
-}
 export function reconcileWorkspaceTabs(
   tabs: readonly ReconcileTabDescriptor[],
   liveWorkspaces: readonly LiveWorkspaceDescriptor[],
