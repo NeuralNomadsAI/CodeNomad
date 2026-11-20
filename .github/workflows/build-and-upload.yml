@@ -1134,6 +1134,8 @@ jobs:
             libgtk-3-dev \
             libglib2.0-dev \
             libwebkit2gtk-4.1-dev \
+            libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-good \
             libsoup-3.0-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
@@ -1394,6 +1396,8 @@ jobs:
             libgtk-3-dev:arm64 \
             libglib2.0-dev:arm64 \
             libwebkit2gtk-4.1-dev:arm64 \
+            libgstreamer-plugins-base1.0-dev:arm64 \
+            gstreamer1.0-plugins-good:arm64 \
             libsoup-3.0-dev:arm64 \
             libayatana-appindicator3-dev:arm64 \
             librsvg2-dev:arm64
@@ -1412,6 +1416,8 @@ jobs:
           CODENOMAD_NODE_TARGET: linux-arm64
           TAURI_BUILD_TARGET: aarch64-unknown-linux-gnu
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+          GSTREAMER_PLUGINS_DIR: /usr/lib/aarch64-linux-gnu/gstreamer-1.0
+          GSTREAMER_HELPERS_DIR: /usr/lib/aarch64-linux-gnu/gstreamer1.0/gstreamer-1.0
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar

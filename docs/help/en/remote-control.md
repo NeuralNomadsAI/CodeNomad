@@ -17,7 +17,7 @@ To pair another desktop CodeNomad, choose **Connect CodeNomad Server** on its ho
 
 1. On the host, return to **Settings → Remote Access → Remote Control**.
 2. Review **Paired devices** and their **Last seen** time. Each device is named after the platform and browser that paired it, such as `iPhone · Safari`.
-3. Choose **Revoke** for a device that should no longer connect.
+3. Choose **Revoke** for a device that should no longer connect. If it shows **Revocation pending**, retry **Revoke** before restarting the host.
 
 Revocation ends that device's current HTTP/SSE connections as well as future access. Pair again with a new link to restore access. A device expires after **30 days without use**. At the **32-device limit**, a new pairing replaces the least recently seen device and closes its connections.
 
@@ -58,7 +58,7 @@ Paired devices can use ordinary project/conversation APIs, send prompts, inspect
 | SideCar **content proxy** | Requires loopback (`/sidecars/`), as do SideCar WebSockets. The `/api/sidecars` registration APIs are available to paired devices and authenticated direct LAN clients. |
 | Web preview content | Available while **Web previews** is on (the default) under **Settings → Remote Access → Remote Control** on the host. Each preview address opens its page without pairing, so keep it private. Turning the switch off stops served previews and their WebSockets; paired devices hide **Open web preview** once they reload. |
 | Automation bridge | Unavailable (`/api/opencode-plugin/`). Native desktop capabilities do not become browser capabilities. |
-| WebSocket upgrades | Available for web previews only. |
+| WebSocket upgrades | Available for web previews and, on paired devices, [live voice conversations](voice.md#conversation). |
 
 Use a loopback connection on the host for host-only proxy/WebSocket surfaces and Remote Control management (`/api/remote-control/`). Direct LAN access also requires loopback for these operations; see [Upgrading](remote-access.md#upgrading). Remote Control web previews use a capability token in the preview address and remain available while enabled on the host; keep that address private.
 

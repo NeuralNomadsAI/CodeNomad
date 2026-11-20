@@ -1,9 +1,10 @@
 import fs from "fs"
 import path from "path"
 import { randomUUID } from "node:crypto"
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
+import { stringify as stringifyYaml } from "yaml"
 import type { Logger } from "../logger"
 import { applyMergePatch, isPlainObject } from "./merge-patch"
+import { parseSettingsYaml } from "./parse-yaml"
 
 export type SettingsDoc = Record<string, unknown>
 
@@ -67,12 +68,13 @@ export class YamlDocStore {
       }
 
       const content = fs.readFileSync(this.filePath, "utf-8")
-      const parsed = parseYaml(content)
+      const parsed = parseSettingsYaml(content)
       this.cache = normalizeDoc(parsed)
       this.loaded = true
       return this.cache
-    } catch (error) {
-      this.logger.warn({ err: error, filePath: this.filePath }, "Failed to read YAML doc; using empty object")
+    } catch {
+      // Parser diagnostics can include config credentials.
+      this.logger.warn({ filePath: this.filePath }, "Failed to read YAML doc; using empty object")
       this.cache = {}
       this.loaded = true
       return this.cache
@@ -115,13 +117,15 @@ export class YamlDocStore {
   }
 
   /** Fresh, read-only authority; the forgiving display cache is not a CAS base. */
-  getAuthoritativeOwner(owner: string): SettingsDoc {
+  getAuthoritativeOwner(owner: string, { refreshCache = true } = {}): SettingsDoc {
     const doc = this.readAuthoritative()
     if (Object.prototype.hasOwnProperty.call(doc, owner) && !isPlainObject(doc[owner])) throw new SettingsReadError()
     // Publish a refreshed cache only after a successful, valid document read.
     // The following synchronous owner merge therefore retains external fields.
-    this.cache = doc
-    this.loaded = true
+    if (refreshCache) {
+      this.cache = doc
+      this.loaded = true
+    }
     return doc[owner] as SettingsDoc ?? {}
   }
 
@@ -155,7 +159,7 @@ export class YamlDocStore {
 
     let doc: unknown
     try {
-      doc = parseYaml(content)
+      doc = parseSettingsYaml(content)
     } catch {
       throw new SettingsReadError()
     }

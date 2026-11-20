@@ -29,7 +29,7 @@ const localeLoaders: Record<Locale, () => Promise<Messages>> = {
   tr: async () => (await import("./messages/tr")).trMessages,
 }
 
-function getLocaleDirection(locale: Locale): "ltr" | "rtl" {
+export function getLocaleDirection(locale: Locale): "ltr" | "rtl" {
   return RTL_LOCALES.has(locale) ? "rtl" : "ltr"
 }
 

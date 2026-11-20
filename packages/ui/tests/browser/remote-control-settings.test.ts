@@ -76,6 +76,26 @@ test("a backend that did not resume offers no Stop that would clear the owner's 
   } finally { await page.close() }
 })
 
+test("a pending revocation stays visible and retryable after refreshing the device list", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    await page.goto(`${url}?scenario=connected`)
+    const device = page.locator(".remote-control-device")
+    const revoke = device.getByRole("button", { name: "Revoke", exact: true })
+    const pending = device.getByText("Revocation pending", { exact: true })
+    await revoke.click()
+    await pending.waitFor()
+    const reads = await page.evaluate(() => (window as unknown as { statusReads: () => number }).statusReads())
+    await page.getByRole("button", { name: "Refresh", exact: true }).click()
+    await page.waitForFunction(before => (window as unknown as { statusReads: () => number }).statusReads() > before
+      && !document.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')?.disabled, reads)
+    await pending.waitFor()
+    await revoke.click()
+    await device.waitFor({ state: "detached" })
+    await page.getByText("No devices are paired yet.", { exact: true }).waitFor()
+  } finally { await page.close() }
+})
+
 test("an administrator-disabled Remote Control offers no Start or previews, explains why and keeps devices revocable", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   const errors: string[] = []

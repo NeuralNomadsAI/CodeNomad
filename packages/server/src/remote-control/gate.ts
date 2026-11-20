@@ -70,7 +70,7 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
     return true
   }
 
-  const device = deps.authenticate(parseCookies(request.headers.cookie)[DEVICE_COOKIE_NAME])
+  const device = deps.authenticate(parseCookies(request.headers.cookie)?.[DEVICE_COOKIE_NAME])
   if (device) {
     attachRemoteDevice(request, device.id)
     deps.assignDevice(request.raw.socket, device.id)
@@ -98,6 +98,18 @@ export function admitRemoteUpgrade(request: IncomingMessage, deps: RemoteGateDep
   for (const name of SPOOFABLE_HEADERS) delete request.headers[name]
   const parsed = parsePreviewUpgradePath(target)
   return parsed !== null && deps.servesPreview(parsed.token)
+}
+
+/** Audio uses the exact tunnel origin and the device credential on this request. */
+export function admitRemoteVoiceUpgrade(request: IncomingMessage, deps: RemoteGateDeps): RemoteControlDevice | null {
+  const host = deps.publicHost()
+  if (!isRemoteRequest({ raw: request }) || !host || request.headers.host !== host || request.headers.origin !== `https://${host}`) return null
+  for (const name of SPOOFABLE_HEADERS) delete request.headers[name]
+  const cookies = parseCookies(request.headers.cookie)
+  if (!cookies) return null
+  const device = deps.authenticate(cookies[DEVICE_COOKIE_NAME])
+  if (device) deps.assignDevice(request.socket, device.id)
+  return device
 }
 
 export function deviceCookie(token: string): string {

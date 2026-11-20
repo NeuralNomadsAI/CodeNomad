@@ -27,4 +27,5 @@ export const remoteControlMessages = {
   "remoteControl.devices.empty": "Сопряжённых устройств пока нет.",
   "remoteControl.devices.lastSeen": "Последняя активность: {time}",
   "remoteControl.devices.revoke": "Отозвать",
+  "remoteControl.devices.revocationPending": "Отзыв доступа ожидает сохранения",
 } as const

@@ -55,6 +55,7 @@
 - [Browser test suite](BROWSER_TESTING.md): the runner-owned fixture daemon, tiered local runner, CI shards, logs and cleanup, exemption map, and the native fixtures' fake registry and integration.
 - [Device emulation](BROWSER_DEVICE_EMULATION.md): touch profiles and sizing contracts.
 - [Desktop data profiles](DESKTOP_DATA_PROFILES.md): profile resolution, isolation and cleanup.
+- [Desktop dictation](DESKTOP_SPEECH.md): device preference, native authority and driver contract.
 - [Tauri updates](TAURI_UPDATER.md): signed updates, the update feed and Linux AppImage distribution.
 - [Remote Control](REMOTE_CONTROL.md): OpenTunnel transport, pairing and device admission.
 - [Vendored Tauri crates](../packages/tauri-app/vendor/README.md): vendored crate provenance, local patches, re-qualification, validation commands and override removal criteria.

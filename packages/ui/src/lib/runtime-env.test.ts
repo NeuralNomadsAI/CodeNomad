@@ -29,6 +29,11 @@ describe("usesClientState", () => {
     assert.equal(usesClientState(environment("electron", "local")), true)
     assert.equal(usesClientState(environment("web", "remote")), true)
   })
+
+  it("keeps the trusted dictation renderer outside client-state authority", () => {
+    assert.equal(usesClientState(environment("electron", "dictation")), false)
+    assert.equal(usesClientState(environment("tauri", "dictation")), false)
+  })
 })
 
 describe("Preferences native capabilities", () => {
@@ -45,6 +50,24 @@ describe("Preferences native capabilities", () => {
       assert.equal(canUseNativeDialogs(), true)
       assert.equal(canOpenRemoteWindows(), true)
       assert.equal(canRestartCli(), true)
+    } finally {
+      Object.assign(globalThis, { window: previousWindow })
+    }
+  })
+})
+
+describe("Dictation window capabilities", () => {
+  it("does not inherit native application capabilities", () => {
+    const previousWindow = globalThis.window
+    Object.assign(globalThis, { window: {
+      __CODENOMAD_RUNTIME_HOST__: "electron",
+      __CODENOMAD_WINDOW_CONTEXT__: "dictation",
+      electronAPI: {},
+    } })
+    try {
+      assert.equal(canUseNativeDialogs(), false)
+      assert.equal(canOpenRemoteWindows(), false)
+      assert.equal(canRestartCli(), false)
     } finally {
       Object.assign(globalThis, { window: previousWindow })
     }

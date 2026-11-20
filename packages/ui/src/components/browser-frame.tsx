@@ -998,6 +998,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
               }}
               referrerPolicy="same-origin"
               sandbox={framePolicy.sandbox}
+              allow="microphone 'none'; camera 'none'"
               onLoad={syncPathInputFromFrame}
             />
           </Show>

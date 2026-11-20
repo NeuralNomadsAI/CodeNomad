@@ -7,6 +7,8 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { messageStoreBus } from "./message-v2/bus"
 import { sseManager } from "../lib/sse-manager"
+import { sessions, withSession } from "./session-state"
+import { idleReadAdmissionEpoch } from "./session-generation-recovery"
 import { getLogger } from "../lib/logger"
 import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
@@ -298,6 +300,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       },
       async syncAuthoritative(sessionId: string, isCurrent: () => boolean) {
         const client = getRootClient(instanceId)
+        const baseline = sessions().get(instanceId)?.get(sessionId)
         const activeRequest = client.session.active()
         data.session.invalidate(sessionId)
         data.session.pending.invalidate(sessionId)
@@ -314,6 +317,13 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         ])
         if (!isCurrent()) return false
         data.session.setStatus(sessionId, sessionId in active ? "running" : "idle")
+        if (!(sessionId in active) && baseline?.generationAdmissionEpoch !== undefined) {
+          withSession(instanceId, sessionId, session => {
+            const epoch = idleReadAdmissionEpoch(baseline, session)
+            if (session.idleReadAdmissionEpoch === epoch) return false
+            session.idleReadAdmissionEpoch = epoch
+          })
+        }
         return true
       },
       dispose() {

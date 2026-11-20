@@ -1,4 +1,4 @@
-import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainInvokeEvent } from "electron"
+import { Notification, dialog, ipcMain, powerSaveBlocker, shell, type BrowserWindow, type IpcMainInvokeEvent } from "electron"
 import fs from "node:fs"
 import { setupDialogIPC } from "./dialog-ipc"
 import { requestMicrophoneAccess } from "./permissions"
@@ -17,6 +17,8 @@ interface LocalSender {
 interface CliIPCDependencies {
   resolveLocal(sender: IpcMainInvokeEvent["sender"]): LocalSender | undefined
   resolvePreferences?(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
+  resolveRemote(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
+  resolveDictation?(event: IpcMainInvokeEvent): BrowserWindow | undefined
   getAllowedOrigins(window: BrowserWindow): string[]
   openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }): Promise<void>
   newWindow(): Promise<unknown>
@@ -70,7 +72,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return window
   }
   const anyTrusted = (event: IpcMainInvokeEvent): BrowserWindow => {
-    const window = BrowserWindow.fromWebContents(event.sender)
+    const window = dependencies.resolveLocal(event.sender)?.window ?? dependencies.resolvePreferences?.(event.sender) ?? dependencies.resolveRemote(event.sender)
     if (!window) throw new Error("Native operation requires a window")
     validateMainFrame(event, window, dependencies.getAllowedOrigins(window))
     return window
@@ -199,8 +201,10 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
   })
 
   ipcMain.handle("media:requestMicrophoneAccess", async (event): Promise<{ granted: boolean }> => {
-    anyTrusted(event)
-    return { granted: await requestMicrophoneAccess() }
+    const dictation = dependencies.resolveDictation?.(event)
+    if (!dictation) anyTrusted(event)
+    const granted = await requestMicrophoneAccess()
+    return { granted: granted && (!dictation || dependencies.resolveDictation?.(event) === dictation) }
   })
   ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }) => {
     settings(event)

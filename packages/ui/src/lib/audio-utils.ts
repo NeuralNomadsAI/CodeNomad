@@ -8,16 +8,16 @@ export async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(binary)
 }
 
-export function createMediaRecorder(stream: MediaStream): MediaRecorder {
-  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
-  const supported = candidates.find(
-    (candidate) => typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(candidate),
+export function supportedRecordingType() {
+  return ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find(
+    candidate => typeof MediaRecorder !== "undefined" &&
+      (typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(candidate)),
   )
-  return supported ? new MediaRecorder(stream, { mimeType: supported }) : new MediaRecorder(stream)
 }
 
-export function stopTracks(stream: MediaStream | null) {
-  stream?.getTracks().forEach((track) => track.stop())
+export function createMediaRecorder(stream: MediaStream): MediaRecorder {
+  const supported = supportedRecordingType()
+  return new MediaRecorder(stream, { audioBitsPerSecond: 128_000, ...(supported ? { mimeType: supported } : {}) })
 }
 
 export function createObjectUrlFromBase64(audioBase64: string, mimeType: string): string {
