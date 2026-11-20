@@ -9,6 +9,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Service } from "@opencode/client/service"
 import { Context, Effect, Scope, Option } from "effect"
 import { MissionControl } from "../../missions/control"
+import { MissionControlError } from "../../missions/control-error"
 import { NativeMissionDocumentStore } from "../../missions/mission-document-store"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
 import { missionCalendarOwnerSchema } from "../../missions/mission-calendar-owner-state"
@@ -236,6 +237,23 @@ test("partial client graphs cross HTTP into a fresh full receiver; mutation proj
   assert.equal(f.calls.http, 3); assert.equal(f.calls.acquired, 3)
   assert.ok(f.calls.privateSource.includes(false) && f.calls.privateSource.includes(true))
   assert.deepEqual(f.calls.method, ["declare", "contextFor"])
+})
+
+test("a Mission refusal crosses the RPC with its message and code; other failures stay generic", async t => {
+  const f = await fixture(t)
+  const control = f.control as unknown as Record<string, unknown>
+  await f.invoke(async () => {
+    const route = await f.bridge.select(f.rootID)
+    assert.ok(route)
+    const declare = () => route.execute!(control => control.declare(f.rootID, { taskKey: "owned", title: "Owned", role: "specialist", brief: "Work",
+      blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } }))
+    control.declare = async () => { throw new MissionControlError("The Debugging review-standards role requires dependency-connected implementer evidence", "invalid-contract") }
+    await assert.rejects(declare(), (error: unknown) => error instanceof MissionControlError
+      && error.code === "invalid-contract" && /requires dependency-connected implementer evidence/.test(error.message))
+    control.declare = async () => { throw new Error("private detail") }
+    await assert.rejects(declare(), (error: unknown) => !(error instanceof MissionControlError)
+      && error instanceof Error && error.message === "Scheduled Mission business unavailable")
+  })
 })
 
 test("prompt membership never enters HTTP or the document lock; context reconciles the original once before ENV and selection", async t => {
