@@ -303,7 +303,7 @@ pub fn lease_requested(app: &crate::App) -> bool {
     if app.mission_bridge.is_none() {
         return false;
     }
-    let stamp = std::fs::metadata(service::settings_file(app)).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
+    let stamp = std::fs::metadata(&app.settings.location.config).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
     let mut seen = SEEN.lock().unwrap();
     if let Some((known, requested)) = *seen
         && known == stamp
@@ -314,15 +314,4 @@ pub fn lease_requested(app: &crate::App) -> bool {
     let requested = service::enabled(app).unwrap_or(false);
     *seen = Some((stamp, requested));
     requested
-}
-
-/// `GET /api/storage/config/server`: this backend's fields and the stored preference.
-pub fn server_config(app: &crate::App) -> Value {
-    let mut value = json!({"serverId": app.meta["serverId"], "opencodeBinary": app.binary});
-    if let Ok(owner) = service::server_owner(app) {
-        for (k, v) in owner {
-            value[k] = v;
-        }
-    }
-    value
 }

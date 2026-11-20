@@ -56,7 +56,8 @@ fn same(a: Component, b: Component) -> bool {
 }
 
 /// `path` is [`local_absolute`] and lexically equal to or below `root`
-/// (case-insensitive on Windows; separators and repeated separators ignored).
+/// (case-insensitive on Windows; separators and repeated separators ignored);
+/// an empty `root` (`--unrestricted-root`) admits every local absolute path.
 pub fn under(root: &Path, path: &Path) -> bool {
     let Some(text) = path.to_str() else { return false };
     if !local_absolute(text) {
@@ -125,5 +126,10 @@ mod tests {
     fn admitted_paths_still_resolve() {
         let dir = dunce::canonicalize(std::env::temp_dir()).unwrap();
         assert_eq!(canonical(&dir, &dir).as_deref(), Some(dir.as_path()));
+        // Unrestricted: any local absolute path, never a network or relative one.
+        let anywhere = Path::new("");
+        assert!(under(anywhere, &dir) && !under(anywhere, Path::new("relative")));
+        #[cfg(windows)]
+        assert!(!under(anywhere, Path::new(r"\\host\share\x")) && !under(anywhere, Path::new(r"C:\a\..\b")));
     }
 }

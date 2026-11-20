@@ -2,18 +2,13 @@
 //! a flag wins over its `CLI_*`/`CODENOMAD_*` variable, which wins over the default; bare words such
 //! as `serve` are ignored. Options with no ported effect are accepted, or refused when ignoring them
 //! would silently drop what was asked (`--launch`, `--upgrade`, all interfaces).
-use std::{
-    collections::HashMap,
-    env,
-    ffi::OsString,
-    fs,
-    net::IpAddr,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{collections::HashMap, env, ffi::OsString, net::IpAddr, path::PathBuf, time::Duration};
 
 use super::{Bind, Launch, ui};
-use crate::auth;
+use crate::{
+    auth,
+    settings::document::{Location, destination},
+};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -131,8 +126,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     let (https_port, http_port) = (port("https-port", 9898)?, port("http-port", 9899)?);
     let root =
         path("workspace-root").map_or_else(env::current_dir, |p| Ok(PathBuf::from(p))).map_err(|e| e.to_string())?;
-    flag("unrestricted-root")?;
-    let (base, yaml) = config_location(&value("config").unwrap_or_default())?;
+    let unrestricted = flag("unrestricted-root")?;
+    let settings = Location::resolve(&value("config").unwrap_or_default());
+    let (base, yaml) = (settings.base.clone(), settings.config.clone());
 
     let ip: IpAddr =
         host.parse().map_err(|_| format!("--host {host}: the Rust server listens on IP addresses only"))?;
@@ -180,8 +176,10 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     };
     Ok(Command::Serve(Box::new(Launch {
         root,
-        identity: PathBuf::from(format!("{}.server-id", write_destination(&yaml)?.display())),
+        identity: PathBuf::from(format!("{}.server-id", destination(&yaml).map_err(|e| e.to_string())?.display())),
         data: base,
+        settings,
+        unrestricted,
         binary: "opencode".into(),
         http: Bind { ip: http_ip, port: if http { http_port } else { 0 }, fallback: !(http && explicit("http-port")) },
         https,
@@ -192,7 +190,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
 }
 
 /// `parseBooleanSwitchEnv`: switches without a value read their variable strictly.
-fn switch(name: &str) -> Result<bool, String> {
+pub fn switch(name: &str) -> Result<bool, String> {
     match env::var(name).unwrap_or_default().trim().to_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
         "0" | "false" | "no" | "off" | "" => Ok(false),
@@ -236,39 +234,6 @@ fn timeout(name: &str, default: u64) -> Result<Duration, String> {
         .ok_or(format!("{name} must be a positive integer number of seconds"))
 }
 
-/// `resolveConfigLocation`: a YAML or legacy JSON file names its folder; anything else is the folder.
-fn config_location(raw: &str) -> Result<(PathBuf, PathBuf), String> {
-    let input = if raw.trim().is_empty() { "~/.config/codenomad/config.json" } else { raw.trim() };
-    let resolved = match input.strip_prefix("~/") {
-        Some(rest) => {
-            let home = env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok_or("No home directory")?;
-            PathBuf::from(home).join(rest)
-        }
-        None => std::path::absolute(input).map_err(|e| e.to_string())?,
-    };
-    let lower = resolved.to_string_lossy().to_lowercase();
-    if lower.ends_with(".yaml") || lower.ends_with(".yml") {
-        Ok((resolved.parent().unwrap_or(&resolved).to_path_buf(), resolved))
-    } else if lower.ends_with(".json") {
-        let base = resolved.parent().unwrap_or(&resolved).to_path_buf();
-        Ok((base.clone(), base.join("config.yaml")))
-    } else {
-        Ok((resolved.clone(), resolved.join("config.yaml")))
-    }
-}
-
-/// `resolveWriteDestination`: the file a chain of symbolic links names.
-fn write_destination(path: &Path) -> Result<PathBuf, String> {
-    let mut current = path.to_path_buf();
-    for _ in 0..40 {
-        match fs::read_link(&current) {
-            Ok(target) => current = current.parent().unwrap_or(Path::new("")).join(target),
-            Err(_) => return Ok(current),
-        }
-    }
-    Err(format!("Circular settings symlink: {}", path.display()))
-}
-
 fn help() -> String {
     let mut text = String::from("Usage: codenomad [serve] [options]\n\nOptions:\n  -v, --version\n  -h, --help\n");
     for (name, kind, variable) in OPTIONS {
@@ -306,7 +271,7 @@ mod tests {
         assert_eq!((l.http.ip.to_string(), l.http.port, l.http.fallback), ("127.0.0.1".into(), 9899, true));
         let https = l.https.unwrap();
         assert_eq!((https.bind.port, https.bind.fallback, https.name.as_str()), (9898, true, "localhost"));
-        assert!(l.data.ends_with(Path::new(".config").join("codenomad")) && https.dir == l.data.join("tls"));
+        assert!(l.data.ends_with(std::path::Path::new(".config").join("codenomad")) && https.dir == l.data.join("tls"));
         assert_eq!(l.identity, l.data.join("config.yaml.server-id"));
         assert_eq!(l.auth.file.unwrap(), l.data.join("auth.json"));
         assert_eq!((l.auth.idle.as_secs(), l.auth.absolute.as_secs()), (86400, 604800));

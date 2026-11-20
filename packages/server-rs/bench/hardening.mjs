@@ -102,11 +102,8 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
     // ---- M2: no route opens a client-chosen device or network path
     const routes = [
       ["filesystem.path", p => ["GET", `/api/filesystem?path=${encodeURIComponent(p)}`]],
-      ["filesystem.files.content", p => ["GET", `/api/filesystem/files/content?path=${encodeURIComponent(p)}`]],
       ["files.directory", p => ["GET", `/api/workspaces/${id}/files?directory=${encodeURIComponent(p)}`]],
       ["files.path", p => ["GET", `/api/workspaces/${id}/files?path=${encodeURIComponent(p)}`]],
-      ["files.content.directory", p => ["GET", `/api/workspaces/${id}/files/content?path=a.txt&directory=${encodeURIComponent(p)}`]],
-      ["files.content.path", p => ["GET", `/api/workspaces/${id}/files/content?path=${encodeURIComponent(p)}`]],
       ["files.preview.directory", p => ["GET", `/api/workspaces/${id}/files/preview?path=a.txt&directory=${encodeURIComponent(p)}`]],
       ["files.put.directory", p => ["PUT", `/api/workspaces/${id}/files/content?path=a.txt&directory=${encodeURIComponent(p)}`, { contents: "x" }]],
       ["workspaces.create.path", p => ["POST", "/api/workspaces", { path: p }]],

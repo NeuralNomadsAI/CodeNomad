@@ -46,6 +46,11 @@ pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::E
     Ok(host::Launch {
         root: root.into(),
         identity,
+        // `CLI_CONFIG` and `CLI_UNRESTRICTED_ROOT` as `serve` reads them; settings beside the data otherwise.
+        settings: crate::settings::document::Location::resolve(
+            &env::var("CLI_CONFIG").unwrap_or_else(|_| data.to_string_lossy().into_owned()),
+        ),
+        unrestricted: host::cli::switch("CLI_UNRESTRICTED_ROOT")?,
         data,
         binary: binary.into(),
         http: host::Bind { ip: [127, 0, 0, 1].into(), port: port.parse()?, fallback: false },

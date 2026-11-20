@@ -96,7 +96,7 @@ pub async fn owns_event(app: &Shared, w: &Workspace, directory: &str) -> bool {
     if w.location["directory"] == directory {
         return dunce::canonicalize(directory).ok().as_ref() == Some(&w.path);
     }
-    if !crate::files::paths::canonical(&app.root, directory).is_some_and(|p| p.starts_with(&app.root)) {
+    if !crate::files::paths::canonical(&app.scope, directory).is_some_and(|p| p.starts_with(&app.scope)) {
         return false;
     }
     crate::worktrees::linked::event_catalogue(app, w).await.is_some_and(|c| c.by_directory(directory).is_some())
@@ -119,7 +119,7 @@ pub async fn placement(app: &App, w: &Workspace, location: &serde_json::Value) -
     if w.location["directory"] == directory && path == w.path {
         return Ok("root".into());
     }
-    let owned = if path.starts_with(&app.root) {
+    let owned = if path.starts_with(&app.scope) {
         match crate::worktrees::linked::catalogue(app, w, false).await {
             Ok(c) => c.by_directory(directory).map(|t| t.slug.clone()),
             // Without a Git catalogue only the opened folder is authority, and
@@ -141,7 +141,7 @@ pub async fn owns(app: &App, w: &Workspace, directory: &str) -> bool {
     if w.location["directory"] == directory && dunce::canonicalize(directory).ok().as_ref() == Some(&w.path) {
         return true;
     }
-    if !crate::files::paths::canonical(&app.root, directory).is_some_and(|path| path.starts_with(&app.root)) {
+    if !crate::files::paths::canonical(&app.scope, directory).is_some_and(|path| path.starts_with(&app.scope)) {
         return false;
     }
     crate::worktrees::linked::catalogue(app, w, false).await.ok().is_some_and(|c| c.by_directory(directory).is_some())

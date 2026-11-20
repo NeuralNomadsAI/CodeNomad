@@ -20,6 +20,10 @@ pub struct Launch {
     pub root: PathBuf,
     pub identity: PathBuf,
     pub data: PathBuf,
+    /// `--config`: where `config.yaml` and `state.yaml` live.
+    pub settings: crate::settings::document::Location,
+    /// `--unrestricted-root`: any local folder may be browsed and opened.
+    pub unrestricted: bool,
     /// The OpenCode executable workspaces report.
     pub binary: PathBuf,
     pub http: Bind,

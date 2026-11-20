@@ -86,10 +86,15 @@ async fn create(
         None
     };
     let candidate = app.root.join(input.path);
-    if !paths::under(&app.root, &candidate) {
+    // `--unrestricted-root`: any local folder, absolute or relative to the root (audit M2 still applies).
+    let candidate = match app.unrestricted {
+        true => std::path::PathBuf::from(crate::files::browse::normalize(&candidate.to_string_lossy())),
+        false => candidate,
+    };
+    if !paths::under(&app.scope, &candidate) {
         return bad_request("Workspace directory is not authorized".into());
     }
-    let authorized = |path: &std::path::PathBuf| path.starts_with(&app.root) && path.is_dir();
+    let authorized = |path: &std::path::PathBuf| path.starts_with(&app.scope) && path.is_dir();
     let Some(path) = dunce::canonicalize(candidate).ok().filter(authorized) else {
         return bad_request("Workspace directory is not authorized".into());
     };

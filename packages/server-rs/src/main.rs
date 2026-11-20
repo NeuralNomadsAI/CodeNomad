@@ -18,6 +18,7 @@ mod opencode;
 mod search;
 mod service;
 mod sessions;
+mod settings;
 mod shared;
 mod storage;
 mod subagent_depth;
@@ -87,12 +88,25 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         Some(tls) => Some(auth::devices::open(&data, tls)?),
         None => None,
     };
-    let meta = meta::document(identity, port, &root, tls.as_ref(), launch.ui.meta())?;
+    let settings = settings::Settings::new(launch.settings);
+    let meta = meta::document(settings.server_id()?, port, &root, tls.as_ref(), launch.ui.meta())?;
     let (watch_tx, watch_rx) = tokio::sync::mpsc::channel(512);
     let calendar_profile = missions::calendar::setup(&data)?;
     let watches = files::watch::Watches::new(watch_tx);
-    let state =
-        Arc::new(App::new(auth, port, data, root, meta, native, launch.binary, devices, watches, calendar_profile));
+    let state = Arc::new(App::new(
+        auth,
+        port,
+        data,
+        root,
+        launch.unrestricted,
+        settings,
+        meta,
+        native,
+        launch.binary,
+        devices,
+        watches,
+        calendar_profile,
+    ));
 
     let routes = Router::new()
         .merge(meta::routes())
@@ -103,6 +117,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(git::routes())
         .merge(worktrees::routes())
         .merge(storage::routes())
+        .merge(settings::routes())
         .merge(memory::routes())
         .merge(subagent_depth::routes())
         .merge(sessions::routes())
