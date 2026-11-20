@@ -340,17 +340,24 @@ impl Registration {
         result
     }
 
+    /// The won election alone, without the legacy Electron recheck: registration
+    /// already reconciled markers with a grace period, and a peer may publish its
+    /// running marker just before its participant.
+    pub(super) fn owns_shared_lease(&self) -> bool {
+        !self.released
+            && self.primary
+            && read_if_exists(&owner_path(&self.election_directory))
+                .ok()
+                .flatten()
+                .and_then(|value| parse_owner(&value))
+                .is_some_and(|owner| owner == self.owner)
+    }
+
     pub(super) fn is_primary(&self) -> bool {
-        if self.released || !self.primary {
+        if !self.owns_shared_lease() {
             return false;
         }
-        let shared = read_if_exists(&owner_path(&self.election_directory))
-            .ok()
-            .flatten()
-            .and_then(|value| parse_owner(&value))
-            .is_some_and(|owner| owner == self.owner);
-        let legacy_clear = self
-            .legacy_electron_data
+        self.legacy_electron_data
             .as_deref()
             .map(|path| {
                 has_live_legacy_electron_with(
@@ -363,8 +370,7 @@ impl Registration {
             })
             .transpose()
             .map(|blocked| !blocked.unwrap_or(false))
-            .unwrap_or(false);
-        shared && legacy_clear
+            .unwrap_or(false)
     }
 
     pub(super) fn release(&mut self) -> Result<bool, String> {
@@ -1078,6 +1084,35 @@ mod tests {
         assert_ne!(node_primary, rust.is_primary());
         rust.release_locks();
         stop_node(node);
+    }
+
+    #[test]
+    fn peer_marker_before_its_participant_keeps_the_won_lease() {
+        let root = tempfile::tempdir().unwrap();
+        let election = root.path().join("election");
+        let electron = root.path().join("electron");
+        fs::create_dir_all(&electron).unwrap();
+        let registration = Registration::register(&election, true, Some(&electron))
+            .unwrap()
+            .unwrap();
+        assert!(registration.is_primary());
+
+        // Electron writes its running marker before its cross-host participant.
+        let peer = Owner {
+            pid: std::process::id(),
+            run_token: "peer".to_string(),
+            process_start_identity: process_start_identity(std::process::id()).unwrap(),
+        };
+        fs::write(
+            electron.join(format!("client-state.running.{}.peer.json", peer.pid)),
+            serialize_owner(&peer).unwrap(),
+        )
+        .unwrap();
+        assert!(!registration.is_primary());
+        assert!(registration.owns_shared_lease());
+
+        publish_participant(&participant_path(&election, &peer), &peer).unwrap();
+        assert!(registration.is_primary());
     }
 
     #[test]

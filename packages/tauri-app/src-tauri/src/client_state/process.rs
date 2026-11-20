@@ -121,7 +121,7 @@ impl Registration {
         };
         if !cross_host_registration
             .as_ref()
-            .is_some_and(cross_host::Registration::is_primary)
+            .is_some_and(cross_host::Registration::owns_shared_lease)
         {
             if let Some(file) = primary_lock.take() {
                 release_primary_file(&file);
