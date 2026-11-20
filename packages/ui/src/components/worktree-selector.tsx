@@ -500,7 +500,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
           </div>
           <Select.Icon class="selector-trigger-icon">
             <Show when={movingSlug()} fallback={<ChevronDown class="w-3 h-3" />}>
-              <Loader2 class="w-3 h-3 animate-spin" aria-hidden="true" />
+              <span class="inline-flex animate-spin"><Loader2 class="w-3 h-3" aria-hidden="true" /></span>
             </Show>
           </Select.Icon>
         </Select.Trigger>

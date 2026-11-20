@@ -857,7 +857,7 @@ export default function PromptInput(props: PromptInputProps) {
       key: "voice",
       label: voiceMenuLabel(voiceInput.buttonTitle(), dictationReason && t(dictationReason)),
       icon: voiceInput.isTranscribing()
-        ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+        ? <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" aria-hidden="true" /></span>
         : <Mic class="h-4 w-4" aria-hidden="true" />,
       disabled: dictationReason === "voice.command.pendingTranscription",
       selectBeforeClose: !dictationReason,
@@ -899,7 +899,7 @@ export default function PromptInput(props: PromptInputProps) {
       label: t(isReadingFiles() ? "promptInput.attachFiles.reading" : "promptInput.attachFiles.title"),
       description: t("promptInput.attachFiles.help"),
       icon: isReadingFiles()
-        ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+        ? <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" aria-hidden="true" /></span>
         : <Paperclip class="h-4 w-4" aria-hidden="true" />,
       disabled: Boolean(props.disabled) || isReadingFiles(),
       onSelect: handleUploadFiles,
@@ -1066,7 +1066,7 @@ export default function PromptInput(props: PromptInputProps) {
           <div class="prompt-input-footer-actions">
             <Show when={isReadingFiles()}>
               <span role="status" class="text-xs text-secondary inline-flex items-center gap-1">
-                <Loader2 class="h-3 w-3 animate-spin" aria-hidden="true" />
+                <span class="inline-flex animate-spin"><Loader2 class="h-3 w-3" aria-hidden="true" /></span>
                 {t("promptInput.attachFiles.reading")}
               </span>
             </Show>

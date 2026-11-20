@@ -53,7 +53,7 @@ export default function PromptAsideWindow(props: {
               <button type="submit" class="window-action" disabled={!aside.question().trim()}
                 title={withHotkey(t("promptInput.btw.ask"), "aside-send")}>{t("promptInput.btw.ask")}</button>
             }>
-              <span role="status" class="session-aside-loading"><Loader2 class="animate-spin" size={14} />{t("promptInput.btw.loading")}</span>
+              <span role="status" class="session-aside-loading"><span class="inline-flex animate-spin"><Loader2 size={14} /></span>{t("promptInput.btw.loading")}</span>
               <button type="button" class="window-action" onClick={aside.cancel}>{t("promptInput.btw.cancel")}</button>
             </Show>
           </div>
