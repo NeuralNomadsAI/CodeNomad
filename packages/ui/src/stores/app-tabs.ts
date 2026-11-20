@@ -31,21 +31,27 @@ export interface SideCarAppTab {
 interface BlankAppTab { id: string; kind: "blank"; server?: ServerSelectionIntent }
 export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab | BlankAppTab
 
-const [blankTabs, setBlankTabs] = createSignal<BlankAppTab[]>([])
+const [blankTab, setBlankTab] = createSignal<BlankAppTab>()
+const [blankServer, setBlankServer] = createSignal<ServerSelectionIntent>()
 
 export function openBlankTab(server?: ServerSelectionIntent): void {
-  const tab: BlankAppTab = { id: `blank:${generateUUID()}`, kind: "blank", server }
   batch(() => {
-    setBlankTabs(tabs => [...tabs, tab])
+    if (server) setBlankServer({ ...server })
+    let tab = blankTab()
+    if (!tab) {
+      tab = { id: `blank:${generateUUID()}`, kind: "blank", get server() { return blankServer() } }
+      setBlankTab(tab)
+    }
     selectAppTab(tab.id)
   })
 }
 
 export function closeBlankTab(id: string): void {
-  if (!blankTabs().some(tab => tab.id === id)) return
+  if (blankTab()?.id !== id) return
   const fallback = getAdjacentAppTabId(id)
   batch(() => {
-    setBlankTabs(tabs => tabs.filter(tab => tab.id !== id))
+    setBlankServer(undefined)
+    setBlankTab(undefined)
     setTabOrder(ids => ids.filter(entry => entry !== id))
     setAppTabOrderRevision(revision => revision + 1)
     if (activeAppTabId() === id) selectAppTab(fallback)
@@ -54,10 +60,11 @@ export function closeBlankTab(id: string): void {
 
 /** A successful choice occupies its originating blank tab's position. */
 export function replaceBlankTab(blankId: string | undefined, chosenId: string): void {
-  if (!blankId || !blankTabs().some(tab => tab.id === blankId) || !getAppTabById(chosenId)) return
+  if (!blankId || blankTab()?.id !== blankId || !getAppTabById(chosenId)) return
   const ids = appTabs().map(tab => tab.id).filter(id => id !== chosenId)
   batch(() => {
-    setBlankTabs(tabs => tabs.filter(tab => tab.id !== blankId))
+    setBlankServer(undefined)
+    setBlankTab(undefined)
     setAppTabOrder(ids.map(id => id === blankId ? chosenId : id))
     setAppTabOrderRevision(revision => revision + 1)
   })
@@ -107,8 +114,9 @@ const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
   // Solid's <For> keys by object identity. Metadata refreshes and opening another
   // project must not remount every shell (and restart their Git/status reads).
   const previousById = new Map(previous.map((tab) => [tab.id, tab]))
+  const blank = blankTab()
   const currentTabs = [
-    ...blankTabs(),
+    ...(blank ? [blank] : []),
     ...remoteRestoreTabs(),
     ...Array.from(instances().values())
       .filter((instance) => openInstanceTabIds().has(instance.id))

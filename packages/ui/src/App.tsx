@@ -7,11 +7,13 @@ import AlertDialog from "./components/alert-dialog"
 import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { selectRemoteServer } from "./stores/remote-project-open"
+import { normalizeServerSelection, sameServerSelection } from "./lib/native/server-selection-intent"
+import { serversManageable } from "./lib/server-meta"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { useDesktopConnectionLaunch } from "./lib/hooks/use-desktop-connection-launch"
 import { installKeyboardOffset } from "./lib/keyboard-offset"
-import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
+import { openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
@@ -88,10 +90,8 @@ import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-stat
 import { shouldAppHoldWakeLock } from "./stores/wake-lock-eligibility"
 import { openSettings } from "./stores/settings-screen"
 import { showCommandPalette } from "./stores/command-palette"
-import {
-  closeSidecarTab,
-  openSidecarTab,
-} from "./stores/sidecars"
+import { openSidecarTab } from "./stores/sidecars"
+import { closeAppTab } from "./stores/app-tab-close"
 import { parseInstanceKey, backendIdOf } from "./lib/backend-identity"
 import { captureBackendOperation } from "./lib/backend-operation"
 import {
@@ -104,12 +104,8 @@ import {
   replaceBlankTab,
   getInstanceAppTabId,
   getSidecarAppTabId,
-  closeInstanceTab,
   detachInstanceTab,
   ensureActiveAppTab,
-  getAdjacentAppTabId,
-  getAppTabById,
-  markAppTabUserInteraction,
   moveAppTab,
   selectAppTab,
   selectInstanceTab,
@@ -147,7 +143,21 @@ async function withForegroundRefreshTimeout<T>(
 
 const App: Component = () => {
   onMount(() => {
-    window.__CODENOMAD_SELECT_SERVER__ = selectRemoteServer
+    window.__CODENOMAD_SELECT_SERVER__ = (intent, action) => {
+      if (action !== "remove") return selectRemoteServer(intent)
+      const target = normalizeServerSelection(intent)
+      const host = preferencesForBackend("local")
+      const relay = host.preferences().multiBackend
+      const current = () => relay === host.preferences().multiBackend && (relay !== true || serversManageable())
+      if (!target || !current() || !host.remoteServers().some(profile => sameServerSelection(target, profile))) {
+        throw new Error("Server selection changed")
+      }
+      void host.removeRemoteServerProfile(target.id, current).catch(error => {
+        if (error?.name !== "AbortError") showAlertDialog(t("settings.preferenceSaveFailed"), {
+          title: t("folderSelection.servers.remove"), variant: "warning",
+        })
+      })
+    }
     onCleanup(() => { delete window.__CODENOMAD_SELECT_SERVER__ })
   })
   onMount(() => onCleanup(startNotificationIconBadge()))
@@ -669,34 +679,6 @@ const App: Component = () => {
     }
   }
 
-  async function handleCloseAppTab(tabId: string) {
-    const tab = getAppTabById(tabId)
-    if (!tab) return
-    markAppTabUserInteraction()
-
-    const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
-
-    if (tab.kind === "instance" && tab.instance.temporary) {
-      // Asks to keep or discard unless untouched; a refused discard restores the tab.
-      await closeTemporaryInstance(tab.instance.id)
-      return
-    }
-
-    if (tab.kind === "instance") {
-      closeInstanceTab(tab.instance.id)
-    } else if (tab.kind === "remote-restore") {
-      tab.remove()
-    } else if (tab.kind === "blank") {
-      closeBlankTab(tab.id)
-    } else {
-      closeSidecarTab(tab.sidecarTab.token)
-    }
-
-    if (!getAppTabById(tabId)) {
-      ensureActiveAppTab(fallbackTabId)
-    }
-  }
-
   const handleSidebarAgentChange = async (instanceId: string, sessionId: string, agent: string) => {
     if (!instanceId || !sessionId || sessionId === "info") return
     await updateSessionAgent(instanceId, sessionId, agent)
@@ -725,7 +707,7 @@ const App: Component = () => {
     setToolInputsVisibility,
     handleNewInstanceRequest,
     handleNewTemporaryInstance: () => handleNewTemporaryInstance(),
-    handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
+    handleCloseActiveTab: () => closeAppTab(activeAppTabId() ?? ""),
     handleNewSession,
     handleCloseSession,
     getActiveInstance: activeInstance,
@@ -737,7 +719,7 @@ const App: Component = () => {
     executeCommand,
     setEscapeInDebounce,
     handleNewInstanceRequest,
-    handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
+    handleCloseActiveTab: () => closeAppTab(activeAppTabId() ?? ""),
     handleNewSession,
     handleCloseSession,
     showFolderSelection,
@@ -843,7 +825,7 @@ const App: Component = () => {
                   tabs={appTabs()}
                   activeTabId={activeAppTabId()}
                   onSelect={selectAppTab}
-                  onClose={(tabId) => void handleCloseAppTab(tabId)}
+                  onClose={(tabId) => void closeAppTab(tabId)}
                   onNew={handleNewInstanceRequest}
                   onOpenLauncher={(anchor) => {
                     // The home page already offers everything; a hidden tab bar must not reopen it.

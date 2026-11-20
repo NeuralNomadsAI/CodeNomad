@@ -19,13 +19,13 @@
 
 - `openSettingsConfigFile(id)` opens Configuration files and selects only an ID present in the editor's server catalogue. It shares `openSettingsRow`'s short-lived same-origin hint with native Preferences on Electron and Tauri. A reopened editor preserves its dirty-discard confirmation; unavailable IDs preserve the current file. The editor consumes each target once and focuses its file selector.
 
-- Servers opens a new tab with the chosen server selected in Browse. Removing a profile confirms once, forgets its connection and keeps the open tabs. URL/TLS/SSH target edits use `confirmRemoteServerChange`: check tabs, drafts and remote inventory, then confirm the connection change for saved tabs in other windows. Rename preserves the connection. Profile operation errors stay in Servers.
+- Servers Open reuses the window's single empty tab and selects the chosen server in Browse. Click `+` or press Cmd/Ctrl+N to select that same tab, or create it when absent. URL/TLS/SSH target edits use `confirmRemoteServerChange`. Rename preserves the connection.
 
 - The usage check reserves the Preferences renderer's current native remote context, including an unavailable project, before remote IO and after the inventory read. Reopening Settings from another project releases that context; native context read failures refuse the change.
 
-- Positively observed tabs, restored occurrences, native Preferences context or occupied workspace inventory produce `RemoteServerInUseError`, retained through profile save/removal consumers as `remoteRestore.inUse`. Failed admission, native context reads and inventory checks block the mutation with the generic `settings.preferenceSaveFailed` presentation, alongside unrecognized persistence and transport failures.
+- Profile retargeting presents `RemoteServerInUseError` as `remoteRestore.inUse`; unrecognized persistence and transport failures use `settings.preferenceSaveFailed`.
 
-- Guarded profile edits apply the same usage check inside their serialized lane. Removal checks usage and confirmation before invoking its captured Forget callback, releases the same registry client after successful Forget, rechecks view authority, then persists the removal. A failed persistence keeps the saved row; fresh authentication restores the forgotten connection before another usage check. Cancelled policy edits retain the saved profile; connection admission requires the intended committed origin/TLS/SSH policy.
+- Profile removal uses the serialized edit lane and rechecks the saved policy before cleanup and persistence. Native Preferences sends the removal intent to its local opener, where confirmation and tab closure run. A cancelled temporary-project close stops removal. Profile persistence compacts the host's recent project history in the same transaction.
 
 - A remote notification targeting a waiting occurrence selects its existing placeholder. The placeholder retains its drafts and explicit Retry recovery ownership while the original event attachment remains live.
 

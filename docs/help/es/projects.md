@@ -50,7 +50,9 @@ Al recargar con la restauración activada, las pestañas remotas conservan su or
 
 **Reintentar** también recupera pestañas en espera con la restauración automática al iniciar desactivada. Las notificaciones seleccionan la pestaña en espera existente. Comprueba el resultado de una acción de conversación no confirmada antes de enviarla otra vez.
 
-Antes de eliminar un servidor o cambiar su dirección, cierra sus pestañas de proyecto en todas las ventanas y vuelve a abrir **Configuración** desde otro proyecto si sigue usando ese servidor. Un inventario de proyectos inaccesible bloquea el cambio hasta que pueda comprobarse.
+En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar**. Reutiliza la pestaña vacía de la ventana, igual que `+` y `Ctrl/Cmd+N`. Tras elegir un proyecto, `+` abre otra pestaña vacía.
+
+**Eliminar** indica cuántas pestañas se cerrarán y cuántos proyectos recientes se quitarán. La conexión guardada desaparece de **Explorar**; los proyectos y las conversaciones permanecen en el servidor. Los proyectos temporales conservan sus opciones de cierre habituales.
 
 ## Espacios de trabajo temporales {#temporary-workspaces}
 

@@ -145,6 +145,10 @@ export function tGlobal(key: string, params?: TranslateParams): string {
   return translateFrom(globalMessages, key, params)
 }
 
+export function getGlobalLocale(): Locale {
+  return globalLocale
+}
+
 export interface I18nContextValue {
   locale: () => Locale
   t: (key: string, params?: TranslateParams) => string

@@ -4,7 +4,6 @@ import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { serverDisplayName } from "../../lib/codenomad-link"
 import { useRelayServerProfiles, remoteServerErrorKey, type RemoteServerInput } from "../../lib/hooks/use-remote-server-profiles"
-import { showConfirmDialog } from "../../stores/alerts"
 import { RemoteServerDialog } from "../remote-server-dialog"
 import ServerAddField from "../server-add-field"
 import { serversUsable, serversManageable } from "../../lib/server-meta"
@@ -26,12 +25,8 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
     const target = { ...server }, op = capture(target)
     try {
       if (!op.current()) return
-      const confirmed = await showConfirmDialog(t("folderSelection.remoteProject.removeConfirm", { name: displayName(target) }), {
-        title: t("folderSelection.servers.remove"), variant: "warning", confirmLabel: t("folderSelection.servers.remove"),
-      }, op.signal)
-      if (!confirmed || !op.current() || !manageable()) return
       setError(undefined)
-      try { await removeServer(target) }
+      try { await removeServer(target, manageable) }
       catch (failure) { if (op.current()) setError(remoteServerErrorKey(failure)) }
     } finally { op.dispose() }
   }

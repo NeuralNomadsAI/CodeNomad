@@ -50,7 +50,9 @@ When you reload with restoration enabled, remote tabs keep their order, selectio
 
 **Retry** also recovers waiting tabs when automatic startup restoration is off. Notifications select the existing waiting tab. Check an unconfirmed conversation action's outcome before sending it again.
 
-Before removing a server or changing its address, close its project tabs in every window and reopen **Settings** from another project if it still targets that server. An unreachable project inventory blocks the change until checked.
+In **Settings → Servers**, **Open** selects the server in **Browse**. It reuses the window's empty tab, just like `+` and `Ctrl/Cmd+N`. After you choose a project, `+` opens another empty tab.
+
+**Remove** shows how many tabs will close and recent projects will be removed. It removes the saved connection from **Browse** and leaves projects and conversations on the server. Temporary projects still offer their usual close choices.
 
 ## Temporary workspaces {#temporary-workspaces}
 

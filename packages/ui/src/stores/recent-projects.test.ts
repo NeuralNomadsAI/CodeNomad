@@ -35,9 +35,11 @@ const { recentProjects, recordRemoteProjectLaunch, removeRecentProject, renameRe
 const { findOpenProjectTab, openRemoteProjectForProfile, selectOpenProjectTab, selectRemoteServer } = await import("./remote-project-open")
 const { preferencesForBackend, editRemoteProjectRecents, updatePreferences } = await import("./preferences")
 const { backendRegistry } = await import("./remote-backends")
-const { addInstance, removeInstance } = await import("./instances")
-const { attachInstanceTab, activeAppTab, appTabs, activeAppTabId, closeBlankTab, selectAppTab } = await import("./app-tabs")
+const { addInstance, removeInstance, updateInstance } = await import("./instances")
+const { attachInstanceTab, activeAppTab, appTabs, activeAppTabId, closeBlankTab, openBlankTab, selectAppTab } = await import("./app-tabs")
 const { addRemoteRestoreTab, removeRemoteRestoreTab, remoteRestoreTabs } = await import("./remote-restore-tabs")
+const { alertDialogState, dismissAlertDialog } = await import("./alerts")
+const { preloadLocaleMessages } = await import("../lib/i18n")
 const { serverEvents } = await import("../lib/server-events")
 const host = preferencesForBackend("local")
 await host.ensureLoaded()
@@ -205,8 +207,14 @@ test("the Open action joins actual tabs including a waiting tab; the row always 
   add(`${policyB.id}~live`, policyB.id)
   attachInstanceTab("local-live")
   attachInstanceTab(`${policyB.id}~live`)
+  openBlankTab()
+  const empty = activeAppTab()
+  selectRemoteServer(policyA)
+  assert.equal(activeAppTab(), empty)
+  assert.equal(empty?.kind === "blank" && empty.server?.id, policyA.id)
   selectRemoteServer(policyB)
   const blank = activeAppTab()
+  assert.equal(blank, empty)
   assert.equal(blank?.kind === "blank" && blank.server?.id, policyB.id)
   try {
     assert.equal(findOpenProjectTab(path, "local")?.id, "instance:local-live")
@@ -236,6 +244,98 @@ test("the Open action joins actual tabs including a waiting tab; the row always 
     removeRemoteRestoreTab("waiting-a")
     for (const id of ["local-live", `${policyA.id}~inventory`, `${policyB.id}~live`]) removeInstance(id, { authoritative: false, drafts: "skip" })
   }
+})
+
+test("removing a saved server counts and closes only its live and waiting tabs, then forgets its connection and recents", async t => {
+  const saved = disk
+  disk = { ...saved, remoteProjectHistory: Object.fromEntries(initialRecents.map(item => [remoteProjectRecentKey(item), item])) }
+  resume()
+  const instanceId = `${policyA.id}~remove`
+  const otherId = "local-kept-on-removal"
+  const dialog = async () => {
+    for (let attempt = 0; attempt < 20 && !alertDialogState(); attempt++) {
+      await new Promise<void>(resolve => setImmediate(resolve))
+    }
+    assert.ok(alertDialogState())
+    return alertDialogState()!
+  }
+  const add = (id: string, backendId?: string) => {
+    addInstance({ id, backendId, folder: path, port: 0, pid: 0, proxyPath: "", status: "ready", client: null })
+    attachInstanceTab(id)
+  }
+  add(instanceId, policyA.id)
+  add(otherId)
+  const removed = t.mock.fn((options?: { retainWorkspace?: boolean }) => {
+    assert.equal(options?.retainWorkspace, true)
+    removeRemoteRestoreTab("waiting-removal")
+  })
+  addRemoteRestoreTab({
+    id: "waiting-removal", kind: "remote-restore", retry: async () => {}, remove: removed,
+    snapshot: { kind: "workspace", backendId: policyA.id, folder: path, occurrence: 1,
+      drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} },
+  })
+  selectAppTab("waiting-removal")
+  const forget = t.mock.method(serverApi, "forgetRemoteServer", async (id: string) => {
+    assert.equal(id, policyA.id)
+    assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${otherId}`])
+    assert.equal(host.remoteServers().length, 2)
+    return { ok: true as const }
+  })
+  try {
+    await preloadLocaleMessages("en")
+    const cancelled = host.removeRemoteServerProfile(policyA.id)
+    const confirm = await dialog()
+    assert.match(confirm.message, /closing 2 open tabs and removing 1 recent project/)
+    dismissAlertDialog()
+    confirm.resolve?.(false)
+    await cancelled
+    assert.equal(appTabs().length, 3)
+    assert.equal(forget.mock.callCount(), 0)
+
+    updateInstance(instanceId, { temporary: true })
+    const temporaryCancelled = host.removeRemoteServerProfile(policyA.id)
+    const cleanup = await dialog()
+    dismissAlertDialog()
+    cleanup.resolve?.(true)
+    const choice = await dialog()
+    assert.equal(choice.type, "choice")
+    assert.deepEqual(choice.choices?.map(entry => entry.value), ["discard", "keep"])
+    dismissAlertDialog()
+    choice.resolveChoice?.(null)
+    await temporaryCancelled
+    assert.equal(appTabs().length, 3)
+    assert.equal(forget.mock.callCount(), 0)
+    updateInstance(instanceId, { temporary: false })
+
+    const confirmed = host.removeRemoteServerProfile(policyA.id)
+    const second = await dialog()
+    dismissAlertDialog()
+    second.resolve?.(true)
+    await confirmed
+    assert.equal(forget.mock.callCount(), 1)
+    assert.equal(removed.mock.callCount(), 1)
+    assert.equal(activeAppTabId(), `instance:${otherId}`)
+    assert.deepEqual(host.remoteServers().map(profile => profile.id), [policyB.id])
+    assert.deepEqual(host.remoteProjectHistory().recents.map(recent => recent.policy.id), [policyB.id])
+  } finally {
+    dismissAlertDialog()
+    removeRemoteRestoreTab("waiting-removal")
+    for (const id of [instanceId, otherId]) removeInstance(id, { authoritative: false, drafts: "skip" })
+    disk = saved
+    resume()
+  }
+})
+
+test("server removal impact omits zero counts and uses the locale's plural forms", async () => {
+  const { serverRemovalMessage } = await import("./remote-server-removal")
+  try {
+    await preloadLocaleMessages("en")
+    assert.equal(serverRemovalMessage("Build", 0, 0), "Remove Build?")
+    assert.equal(serverRemovalMessage("Build", 1, 0), "Remove Build, closing 1 open tab?")
+    assert.equal(serverRemovalMessage("Build", 0, 2), "Remove Build, removing 2 recent projects?")
+    await preloadLocaleMessages("ru")
+    assert.match(serverRemovalMessage("Build", 2, 5), /2 открытые вкладки.*5 недавних проектов/)
+  } finally { await preloadLocaleMessages("en") }
 })
 
 test("only a live remote tab counts as an opening in Recents", async () => {

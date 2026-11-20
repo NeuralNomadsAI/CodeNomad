@@ -8,7 +8,7 @@ import { showAlertDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
 import { carriesCredentials, classifyCodeNomadLink, codeNomadLinkName } from "../codenomad-link"
 import { RemoteServerInUseError, RemoteServerRequestError } from "../remote-server-request"
-import { backends } from "../backend-client"
+import { requestServerRemoval } from "../native/server-selection"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { normalizeExplicitOrigin } from "../../../../server/src/opencode/servers/origin"
 import { secretEntryAllowed } from "../server-meta"
@@ -105,19 +105,11 @@ export function useRelayServerProfiles() {
       return profile
     } finally { op.dispose() }
   }
-  const removeServer = async (profile: RemoteServerProfile) => {
-    profile = { ...profile }
+  const removeServer = async (profile: RemoteServerProfile, viewCurrent: () => boolean = () => true) => {
     const op = capture({ ...profile })
     try {
       op.assert()
-      try { await config.removeRemoteServerProfileAsync(profile.id, op.current, async () => {
-        const { backendRegistry } = await import("../../stores/remote-backends")
-        op.assert()
-        const backend = backends.get(profile.id)
-        await serverApi.forgetRemoteServer(profile.id, op.signal)
-        op.assert()
-        if (backends.get(profile.id) === backend) backendRegistry.detach(profile.id)
-      }) }
+      try { await requestServerRemoval(profile, () => op.current() && viewCurrent(), op.signal) }
       catch (error) { op.assert(); throw error instanceof RemoteServerInUseError ? error : new RemoteServerProbeError("save") }
     } finally { op.dispose() }
   }
@@ -126,7 +118,7 @@ export function useRelayServerProfiles() {
 
 export function useRemoteServerProfiles() {
   const { t } = useI18n()
-  const { remoteServers, saveRemoteServerProfile, markRemoteServerConnected, removeRemoteServerProfile } = useConfig()
+  const { remoteServers, saveRemoteServerProfile, markRemoteServerConnected } = useConfig()
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
 
   const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
@@ -204,9 +196,12 @@ export function useRemoteServerProfiles() {
   }
 
   return { remoteServers, connectingServerId, saveServer, connectSavedServer,
-    removeRemoteServerProfile: (id: string) => void removeRemoteServerProfile(id).catch(error =>
+    removeRemoteServerProfile: (id: string) => {
+      const profile = remoteServers().find(entry => entry.id === id)
+      if (profile) void requestServerRemoval(profile).catch(error =>
       showAlertDialog(error instanceof Error ? error.message : String(error), {
         title: t("folderSelection.servers.errorTitle"), variant: "warning",
-      })),
+      }))
+    },
   }
 }

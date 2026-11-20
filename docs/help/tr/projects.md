@@ -50,7 +50,9 @@ Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçi
 
 **Yeniden dene**, başlangıçta otomatik geri yükleme kapalıyken de bekleyen sekmeleri kurtarır. Bildirimler mevcut bekleyen sekmeyi seçer. Onaylanmamış bir konuşma işlemini yeniden göndermeden önce sonucunu kontrol edin.
 
-Sunucuyu kaldırmadan veya adresini değiştirmeden önce tüm pencerelerdeki proje sekmelerini kapatın ve Ayarlar hâlâ bu sunucuyu kullanıyorsa **Ayarlar**'ı başka bir projeden yeniden açın. Erişilemeyen proje listesi, kontrol edilene kadar değişikliği engeller.
+**Ayarlar → Sunucular** altında **Aç**, sunucuyu **Gözat** bölümünde seçer. `+` ve `Ctrl/Cmd+N` gibi penceredeki boş sekmeyi kullanır. Bir proje seçtikten sonra `+` yeni bir boş sekme açar.
+
+**Kaldır**, kapanacak sekmelerin ve listeden kaldırılacak son projelerin sayısını gösterir. Kayıtlı bağlantı **Gözat** bölümünden kalkar; projeler ve konuşmalar sunucuda kalır. Geçici projeler için olağan kapatma seçenekleri gösterilir.
 
 ## Geçici çalışma alanları {#temporary-workspaces}
 

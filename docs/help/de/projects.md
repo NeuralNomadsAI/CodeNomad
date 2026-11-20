@@ -50,7 +50,9 @@ Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und
 
 **Wiederholen** stellt wartende Tabs auch bei deaktivierter automatischer Startwiederherstellung wieder her. Benachrichtigungen wählen den vorhandenen wartenden Tab aus. Prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie erneut senden.
 
-Bevor Sie einen Server entfernen oder seine Adresse ändern, schließen Sie seine Projekttabs in allen Fenstern und öffnen Sie **Einstellungen** von einem anderen Projekt aus, falls die Einstellungen noch diesen Server verwenden. Ein unerreichbarer Projektbestand blockiert die Änderung bis zur Prüfung.
+Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** aus. Wie `+` und `Ctrl/Cmd+N` verwendet es den leeren Tab des Fensters. Nach der Projektauswahl öffnet `+` einen weiteren leeren Tab.
+
+**Entfernen** zeigt, wie viele Tabs geschlossen und wie viele zuletzt geöffnete Projekte aus der Liste entfernt werden. Die gespeicherte Verbindung verschwindet aus **Durchsuchen**; Projekte und Unterhaltungen bleiben auf dem Server. Für temporäre Projekte gelten die üblichen Optionen beim Schließen.
 
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 

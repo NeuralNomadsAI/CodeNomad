@@ -159,8 +159,10 @@ function hasUnsentWork(instanceId: string): boolean {
  * discard does not succeed, closing it asks whether to keep it as
  * a project or discard it. Cancelling leaves the tab open.
  */
-export async function closeTemporaryInstance(instanceId: string): Promise<void> {
-  if (getSessions(instanceId).length === 0 && !hasUnsentWork(instanceId)
+export async function closeTemporaryInstance(
+  instanceId: string, { retainWorkspace = false, current = () => true }: { retainWorkspace?: boolean; current?: () => boolean } = {},
+): Promise<void> {
+  if (!retainWorkspace && getSessions(instanceId).length === 0 && !hasUnsentWork(instanceId)
     && await discardTemporaryInstance(instanceId, true)) return
   const choice = await showChoiceDialog(tGlobal("temporaryInstance.close.message"), [
     { value: "discard", label: tGlobal("temporaryInstance.close.discard"), tone: "danger" },
@@ -170,8 +172,12 @@ export async function closeTemporaryInstance(instanceId: string): Promise<void> 
     variant: "warning",
     cancelLabel: tGlobal("temporaryInstance.close.cancel"),
   })
+  if (!current()) return
   if (choice === "keep") {
-    if (await keepTemporaryInstance(instanceId)) closeInstanceTab(instanceId)
+    if (await keepTemporaryInstance(instanceId)) {
+      if (retainWorkspace) detachInstanceTab(instanceId)
+      else closeInstanceTab(instanceId)
+    }
   } else if (choice === "discard") {
     await discardTemporaryInstance(instanceId)
   }

@@ -315,13 +315,13 @@ export function useAppSessionRestore(): void {
     addRemoteRestoreTab({ id, kind: "remote-restore", snapshot: tab, instanceId,
       retry: () => retryRemote(backendIdOf(tab)),
       open: () => retryRemote(backendIdOf(tab), index),
-      remove() {
+      remove({ retainWorkspace = false } = {}) {
         const binding = capture.restoredTabIds()[index]
         const workspaceId = binding?.startsWith("instance:") ? binding.slice("instance:".length) : instanceId
         removeRemoteRestoreTab(id)
         capture.removeRestoredTab(index)
         const instance = workspaceId ? instances().get(workspaceId) : undefined
-        if (instance && matchesRestoredServer(tab, instance.serverId)
+        if (!retainWorkspace && instance && matchesRestoredServer(tab, instance.serverId)
           && matchesRestoredServer(tab, backendRegistry.serverId(backendIdOf(tab)))) void closeWorkspace(instance.id).catch(() => {})
       },
     })

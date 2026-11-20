@@ -9,7 +9,7 @@ export interface RemoteRestoreTab {
   instanceId?: string
   retry(): Promise<void>
   open?(): Promise<void>
-  remove(): void
+  remove(options?: { retainWorkspace?: boolean }): void
 }
 
 const [remoteRestoreTabs, setRemoteRestoreTabs] = createSignal<RemoteRestoreTab[]>([])
@@ -17,10 +17,10 @@ export { remoteRestoreTabs }
 export function addRemoteRestoreTab(tab: RemoteRestoreTab) {
   const owned: RemoteRestoreTab = {
     ...tab,
-    remove() {
+    remove(options) {
       if (!remoteRestoreTabs().includes(owned)) return
       retainClosedWorkspaceSnapshot(tab.snapshot)
-      tab.remove()
+      tab.remove(options)
     },
   }
   setRemoteRestoreTabs(tabs => tabs.some(value => value.id === tab.id) ? tabs : [...tabs, owned])

@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onMount } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, on, onMount } from "solid-js"
 import { Globe, Laptop, Server } from "lucide-solid"
 import type { RemoteServerBrowseResponse, RemoteServerProfile, SideCar } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -41,11 +41,12 @@ export default function BrowseMenu(props: BrowseMenuProps) {
   const { remoteServers } = useConfig()
   const [selectedServer, setSelectedServer] = createSignal<RemoteServerProfile>()
   const [connectionFailures, setConnectionFailures] = createSignal<string[]>([])
-  onMount(() => {
-    void getServerMeta().catch(() => {})
-    const initial = props.initialServer && savedProjectProfile(props.initialServer)
-    if (initial) selectServer(initial)
-  })
+  onMount(() => { void getServerMeta().catch(() => {}) })
+  createEffect(on(() => props.initialServer, intent => {
+    const profile = intent && savedProjectProfile(intent)
+    const selected = selectedServer()
+    if (profile && (!selected || !sameServerSelection(profile, selected))) selectServer(profile)
+  }))
   createEffect(() => {
     const selected = selectedServer()
     if (selected && (!remoteRecentProjectsUsable() || !remoteServers().some(profile => sameServerSelection(profile, selected)))) selectServer(undefined)

@@ -50,7 +50,9 @@ Au rechargement, si la restauration est activée, les onglets distants retrouven
 
 **Réessayer** reprend aussi les onglets en attente lorsque la restauration automatique au démarrage est désactivée. Les notifications sélectionnent l’onglet en attente existant. Vérifiez le résultat d’une action de conversation incertaine avant de la renvoyer.
 
-Avant de supprimer un serveur ou de changer son adresse, fermez ses onglets de projet dans chaque fenêtre et rouvrez **Paramètres** depuis un autre projet si les paramètres ciblent encore ce serveur. Un inventaire de projets inaccessible bloque le changement jusqu’à sa vérification.
+Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir**. Comme `+` et `Ctrl/Cmd+N`, il réutilise l’onglet vide de la fenêtre. Une fois un projet choisi, `+` ouvre un nouvel onglet vide.
+
+**Supprimer** indique combien d’onglets seront fermés et combien de projets récents seront retirés. La connexion enregistrée disparaît de **Parcourir** ; les projets et les conversations restent sur le serveur. Les projets temporaires gardent leurs choix de fermeture habituels.
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 

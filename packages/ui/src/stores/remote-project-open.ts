@@ -68,7 +68,7 @@ async function openCapturedRemoteProject(
     transferred = selectInstanceTab(result.instanceId, creation)
     if (!transferred) return false
     recordRemoteProjectLaunch(intent, instances().get(result.instanceId)?.folder ?? path, path, options?.projectName)
-    options?.onOpened?.(result.instanceId)
+    if (activeAppTabId() === `instance:${result.instanceId}`) options?.onOpened?.(result.instanceId)
     return true
   } finally {
     if (!transferred) await creation?.discard()

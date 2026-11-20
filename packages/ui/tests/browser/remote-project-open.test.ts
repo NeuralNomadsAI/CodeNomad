@@ -206,7 +206,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       assert.deepEqual(records, ["w"], "stale A leaves no orphan occurrence")
       if (boundary !== "ensure" && boundary !== "inventory") await cancel
       const snapshot = await page.evaluate(() => (window as any).remoteOpenFixture.snapshot())
-      assert.deepEqual(snapshot.tabs.map((tab: { kind: string }) => tab.kind), ["instance", "blank", "blank"])
+      assert.deepEqual(snapshot.tabs.map((tab: { kind: string }) => tab.kind), ["instance", "blank"])
       assert.equal(snapshot.active, snapshot.tabs.at(-1).id)
       const receipts = await page.evaluate(async () => (await import("/src/stores/instances.ts") as any).__openingReceipts())
       assert.equal(receipts.some((r: any) => r.backendId === "a"), false, "the exact stale receipt is settled")
@@ -232,8 +232,9 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       await released
       await page.waitForFunction(() => !(window as any).__openingReceipts().some((r: any) => r.backendId === "a"))
       const snapshot = await page.evaluate(() => (window as any).remoteOpenFixture.snapshot())
-      assert.deepEqual(snapshot.tabs.slice(0, 2).map((tab: { id: string }) => tab.id), ["instance:w", "instance:a~w"])
-      assert.equal(snapshot.active, snapshot.tabs.at(-1).id)
+      assert.deepEqual(snapshot.tabs.map((tab: { kind: string }) => tab.kind), ["instance", "blank", "instance"])
+      assert.equal(snapshot.tabs.at(-1).id, "instance:a~w")
+      assert.equal(snapshot.active, snapshot.tabs[1].id)
       assert.deepEqual(mutations.slice(before), ["a:POST", "a:/w/creation/release:POST"])
     } finally { await page.close() }
   })

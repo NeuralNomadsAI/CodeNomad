@@ -238,13 +238,15 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         }
         if (mode === "create") {
           const beforeWrites = profileWrites, beforeForgets = forgets, beforeRecords = projects.length
-          await page.evaluate(() => (window as any).restoreFixture.removeServerQueued())
-          await page.waitForFunction(() => (window as any).restoreFixture.tabs().filter((tab: any) => tab.kind === "remote-restore").length === 2)
-          assert.equal(await page.getByRole("tab").count(), 3, "forgetting a server keeps its tabs")
+          await page.evaluate(() => { (window as any).__removedServer = (window as any).restoreFixture.removeServerQueued() })
+          await page.getByText(/closing 2 open tabs/).waitFor()
+          await page.getByRole("button", { name: "Remove", exact: true }).click()
+          await page.evaluate(() => (window as any).__removedServer)
+          await page.waitForFunction(() => (window as any).restoreFixture.tabs().length === 1)
+          assert.equal(await page.getByRole("tab").count(), 1, "forgetting a server closes only its tabs")
           assert.equal(forgets, beforeForgets + 1)
           assert.equal(profileWrites, beforeWrites + 1)
           assert.equal(projects.length, beforeRecords, "forgetting a server does not delete its records")
-          assert.equal(await page.getByText("Sign-in required", { exact: true }).isVisible(), true)
         }
       }
       assert.equal(creates.filter(value => value.startsWith("local:")).every(value => value === "local:/local"), true)

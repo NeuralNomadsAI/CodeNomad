@@ -6,6 +6,7 @@ import { backendEvents } from "../lib/backend-events"
 import { tGlobal } from "../lib/i18n"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { generateUUID } from "../lib/client-identity"
+import { sameServerSelection } from "../lib/native/server-selection-intent"
 import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
 import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
@@ -1367,17 +1368,18 @@ async function markRemoteServerConnected(id: string): Promise<void> {
   await patchStateOwner("ui", { remoteServers: buildRemoteServerList(updated, remoteServers()) })
 }
 
-async function removeRemoteServerProfile(id: string): Promise<void> {
-  if (preferences().multiBackend === true && !await (await import("./remote-server-usage")).confirmRemoteServerChange(id)) return
-  const next = remoteServers().filter((entry) => entry.id !== id)
-  await patchStateOwner("ui", { remoteServers: next })
-}
-
-function removeRemoteServerProfileAsync(id: string, current: () => boolean, beforeRemove?: () => Promise<void>): Promise<void> {
-  return queueRemoteServerEdit(current, async () => {
-    if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
-    await beforeRemove?.()
-    await patchStateOwner("ui", { remoteServers: remoteServers().filter(entry => entry.id !== id) }, current)
+function removeRemoteServerProfile(id: string, current: () => boolean = () => true, signal?: AbortSignal): Promise<void> {
+  const target = remoteServers().find(entry => entry.id === id)
+  if (!target) return Promise.resolve()
+  const isCurrent = () => {
+    const saved = remoteServers().find(entry => entry.id === id)
+    return current() && !signal?.aborted && !!saved && sameServerSelection(target, saved)
+  }
+  return queueRemoteServerEdit(isCurrent, async () => {
+    const { confirmAndCloseServerTabs } = await import("./remote-server-removal")
+    if (!await confirmAndCloseServerTabs(id, isCurrent, signal)) return
+    if (preferences().multiBackend === true) await backend.api.forgetRemoteServer(id, signal)
+    await patchStateOwner("ui", { remoteServers: remoteServers().filter(entry => entry.id !== id) }, isCurrent)
   })
 }
 
@@ -1630,7 +1632,6 @@ interface ConfigContextValue {
   saveRemoteServerProfile: typeof saveRemoteServerProfile
   markRemoteServerConnected: typeof markRemoteServerConnected
   removeRemoteServerProfile: typeof removeRemoteServerProfile
-  removeRemoteServerProfileAsync: typeof removeRemoteServerProfileAsync
   recordWorkspaceLaunch: typeof recordWorkspaceLaunch
   addRecentModelPreference: typeof addRecentModelPreference
   isFavoriteModelPreference: typeof isFavoriteModelPreference
@@ -1716,7 +1717,6 @@ const configContextValue: ConfigContextValue = {
   saveRemoteServerProfile,
   markRemoteServerConnected,
   removeRemoteServerProfile,
-  removeRemoteServerProfileAsync,
   recordWorkspaceLaunch,
   addRecentModelPreference,
   isFavoriteModelPreference,
@@ -1779,7 +1779,7 @@ const hostPreferenceMethods = [
   "customColorSchemePreference", "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId",
   "setColorSchemePreference", "selectColorSchemePreset", "saveColorSchemeOverride", "resetColorSchemeOverride",
   "saveColorSchemePreset", "deleteColorSchemePreset", "remoteServers", "saveRemoteServerProfile",
-  "markRemoteServerConnected", "removeRemoteServerProfile", "removeRemoteServerProfileAsync", "patchHotkeyPreferences", "setUpdateFeed",
+  "markRemoteServerConnected", "removeRemoteServerProfile", "patchHotkeyPreferences", "setUpdateFeed",
   "toggleShowThinkingBlocks", "toggleShowMessageTimeline", "toggleUsageMetrics", "toggleAutoCleanupBlankSessions",
   "toggleShowPromptVoiceInput", "setDiffViewMode", "setToolOutputExpansion", "setDiagnosticsExpansion",
   "setThinkingBlocksExpansion", "setToolInputsVisibility",

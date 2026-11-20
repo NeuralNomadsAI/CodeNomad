@@ -79,7 +79,7 @@ describe("renderer-local workspace tabs", () => {
     toast.custom = () => "test-toast"
   })
   afterEach(() => { serverApi.deleteWorkspace = originalDelete; toast.custom = originalToast })
-  it("replaces only the originating blank, excludes empty tabs from capture, and closes them locally", () => {
+  it("reselects a single blank until it is filled, excludes it from capture, and closes it locally", () => {
     const existing = instance("before-blank")
     const chosen = instance("blank-choice")
     addInstance(existing)
@@ -89,23 +89,29 @@ describe("renderer-local workspace tabs", () => {
     selectInstanceTab(existing.id)
     openBlankTab()
     const first = activeAppTabId()!
-    openBlankTab()
-    const second = activeAppTabId()!
+    let second: string | undefined
     try {
+      selectInstanceTab(existing.id)
+      openBlankTab()
+      assert.equal(activeAppTabId(), first)
+      assert.equal(appTabs().filter(tab => tab.kind === "blank").length, 1)
       assert.deepEqual(captureState(new Map()).tabIds, [`instance:${existing.id}`])
       selectInstanceTab(chosen.id)
       replaceBlankTab(first, `instance:${chosen.id}`)
-      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`, second])
+      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`])
       const captured = captureState(new Map())
       assert.equal(captured.state.activeTabIndex, 1)
       assert.equal(captured.authorities.length, 2)
+      openBlankTab()
+      second = activeAppTabId()!
+      assert.notEqual(second, first)
       replaceBlankTab(first, `instance:${existing.id}`)
       assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`, second])
       closeBlankTab(second)
       assert.equal(deletes, 0)
     } finally {
       closeBlankTab(first)
-      closeBlankTab(second)
+      if (second) closeBlankTab(second)
       removeInstance(chosen.id, { authoritative: false })
       removeInstance(existing.id, { authoritative: false })
     }

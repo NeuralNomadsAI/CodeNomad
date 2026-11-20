@@ -484,10 +484,10 @@ function runPrimary(firstIntent: LaunchIntent) {
     getAllowedOrigins,
     openPreferences,
     getRequest: (window) => preferencesWindows.request(window),
-    selectServer: async (window, intent) => {
+    selectServer: async (window, intent, action) => {
       const opener = preferencesWindows.opener(window)
       const target = opener?.id ? registry.get(opener.id)?.window : undefined
-      await selectServerInWindow(target, intent, url => isAllowedRendererOrigin(url, getAllowedOrigins(target ?? null)))
+      await selectServerInWindow(target, intent, url => isAllowedRendererOrigin(url, getAllowedOrigins(target ?? null)), action)
       target?.show()
       target?.focus()
     },
