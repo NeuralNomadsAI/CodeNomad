@@ -84,11 +84,29 @@ async fn read(Path(id): Path<String>) -> Result<Json<Value>, Error> {
 async fn save(Path(id): Path<String>, headers: HeaderMap, bytes: Bytes) -> Result<Response, Error> {
     let file = find(&id)?;
     let body = match fastify::body(&headers, &bytes)? {
-        Some(fastify::Body::Json(body)) => body,
-        _ => Value::Null,
+        Some(fastify::Body::Json(body)) if !body.is_null() => body,
+        Some(fastify::Body::Text(text)) => Value::String(text),
+        _ => json!({}),
     };
     let Some(contents) = body.get("contents").and_then(Value::as_str) else {
-        return Err(error(Status::BAD_REQUEST, "Invalid config file contents"));
+        let (expected, path, value) = if body.is_object() {
+            ("string", "[\n      \"contents\"\n    ]", body.get("contents"))
+        } else {
+            ("object", "[]", Some(&body))
+        };
+        let received = match value {
+            None => "undefined",
+            Some(Value::Null) => "null",
+            Some(Value::Bool(_)) => "boolean",
+            Some(Value::Number(_)) => "number",
+            Some(Value::Array(_)) => "array",
+            Some(Value::Object(_)) => "object",
+            Some(Value::String(_)) => "string",
+        };
+        let message = format!(
+            "[\n  {{\n    \"expected\": \"{expected}\",\n    \"code\": \"invalid_type\",\n    \"path\": {path},\n    \"message\": \"Invalid input: expected {expected}, received {received}\"\n  }}\n]"
+        );
+        return Err(error(Status::BAD_REQUEST, &message));
     };
     let target = absolute(file);
     let failed = |e: io::Error| error(Status::BAD_REQUEST, &e.to_string());

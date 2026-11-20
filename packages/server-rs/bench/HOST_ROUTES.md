@@ -2,23 +2,23 @@
 
 Recorded by `node host-survey.mjs <opencode>`: the TS server of this checkout serves its own UI as the desktop hosts start it (`--unrestricted-root`, private profile, isolated daemon); the journey is start-up, folder picker (navigation, new folder, selection), conversation, Files, Git (Changes, Commits), worktree selector and creation dialog, recents, then every Settings section once. `:id`, `:ses` and `:slug` stand for identifiers; query keys are listed without values.
 
-Rust state: **ported** before this survey, **here** ported for this usage, **host-cli** served by the UI host work, **decided** not ported (below).
+The Rust column describes the current host. **Excluded** routes are listed below.
 
 | Method | Route | Steps | TS | Rust |
 |---|---|---|---|---|
-| GET | `/`, static assets, `/monaco/*` | all | 200 | host-cli |
+| GET | `/`, static assets, `/monaco/*` | all | 200 | served |
 | GET | `/api/events?clientId&connectionId` | start-up | 200 | ported |
 | POST | `/api/client-connections/pong` | all | 204 | ported |
-| GET | `/api/meta` | start-up, project, Remote Access | 200 | ported; here: `updateFeed` from `config.yaml` |
+| GET | `/api/meta` | start-up, project, Remote Access | 200 | ported; `updateFeed` from `config.yaml` |
 | GET | `/api/auth/status` | Remote Access | 200 | ported |
-| GET | `/api/storage/config/server`, `/api/storage/config/ui` | start-up | 200 | here (`config.yaml`) |
-| GET, PATCH | `/api/storage/state/ui` | start-up, project | 200 | here (`state.yaml`) |
-| GET, PUT | `/api/storage/instances/:id` | project, conversation | GET 200 and 403, PUT 404 | ported; here: files under the profile's `instances/` |
-| GET | `/api/filesystem?includeFiles&path` | folder picker | 200 | here: whole filesystem, drives, `directoryIdentity` |
-| POST | `/api/filesystem/folders` | folder picker | 201 | here |
-| GET, POST | `/api/workspaces` | start-up, project | 200, 201 | ported; here: folders outside the root |
+| GET | `/api/storage/config/server`, `/api/storage/config/ui` | start-up | 200 | ported (`config.yaml`) |
+| GET, PATCH | `/api/storage/state/ui` | start-up, project | 200 | ported (`state.yaml`) |
+| GET, PUT | `/api/storage/instances/:id` | project, conversation | GET 200 and 403, PUT 404 | ported; profile's `instances/` |
+| GET | `/api/filesystem?includeFiles&path` | folder picker | 200 | ported; local drives, `directoryIdentity` |
+| POST | `/api/filesystem/folders` | folder picker | 201 | ported |
+| GET, POST | `/api/workspaces` | start-up, project | 200, 201 | ported; outside the root in unrestricted mode |
 | GET | `/api/workspaces/:id/files`, `files/preview` | project, Files | 200 | ported |
-| GET | `/api/workspaces/:id/pending-requests?directories[&optionalDirectories]` | conversation, worktree | 200 | here: every owned directory (linked worktrees, optional history) |
+| GET | `/api/workspaces/:id/pending-requests?directories[&optionalDirectories]` | conversation, worktree | 200 | ported; linked worktrees and optional history |
 | GET | `/api/workspaces/:id/session-favorites?reconcile` | project | 200 | ported |
 | POST | `/api/workspaces/:id/session-history/outline`, `outlinePreview` | conversation | 200 | ported |
 | GET | `/api/workspaces/:id/sessions/:ses/permission-receipts` | conversation | 200 | ported |
@@ -29,12 +29,13 @@ Rust state: **ported** before this survey, **here** ported for this usage, **hos
 | GET | `/api/panel-extensions` | project | 200 | ported |
 | GET | `/api/remote-control/devices` | Remote Access | 200 | ported |
 | * | `/workspaces/:id/instance/api/*` (agent, command, location, mcp, model, provider, project, session, prompt, model, inbox, instructions, integration, websearch/provider) | conversation, Providers | 200, 204 | ported (allow list) |
-| GET | `/workspaces/:id/yolo/sessions/:ses` | conversation | 200 | decided |
-| GET | `/api/opencode/update` | start-up, project, OpenCode | 200 | here |
-| POST | `/api/storage/binaries/validate` | Providers | 200 | here |
-| PATCH | `/api/storage/config/:owner` (preferences, `?conditional=missions-v1`) | any preference change | 200 | here |
-| GET, PUT | `/api/config-files`, `/api/config-files/:id/content` | Config Files | 200 | here |
-| GET | `/api/remote-control/status` | Remote Access | 200 | here |
+| GET | `/workspaces/:id/yolo/sessions/:ses` | conversation | 200 | excluded |
+| GET | `/api/opencode/update` | start-up, project, OpenCode | 200 | ported |
+| POST | `/api/storage/binaries/validate` | Providers | 200 | ported |
+| PATCH | `/api/storage/config/:owner` (preferences, `?conditional=missions-v1`) | preference change | 200 | ported |
+| GET | `/api/config-files`, `/api/config-files/:id/content` | Config Files | 200 | ported |
+| PUT | `/api/config-files/:id/content` | Config Files › Save | 204 | ported |
+| GET | `/api/remote-control/status` | Remote Access | 200 | ported |
 | GET | `/api/opencode/login-start` | Missions | 200 | frozen with the Missions |
 | GET | `/api/speech/capabilities` | start-up | 200 | separate work |
 | GET | `/api/sidecars` | SideCars | 200 | separate work |
@@ -58,10 +59,10 @@ The `host` mode also reads, on both servers, the conversation list (by directory
 
 ## Differences kept on purpose
 
-- Settings are always read from disk: an edit outside the server is seen at once (the reference keeps its cache, and its `/api/meta` feed, until an event). An unreadable `state.yaml` refuses writes (503) instead of being replaced. Keys are written in sorted order.
+- Settings are read from disk: an external edit is visible at once (the reference caches until an event). An unreadable `state.yaml` refuses writes (503) instead of being replaced.
 - `PATCH /api/storage/state/ui` touching multi-backend profiles (`remoteServers`, remote project history) answers 501: this host does not serve them and does not compact their history.
 - The unrestricted folder browser and workspace creation still refuse UNC shares and device paths (audit M2).
 - Session favorites stay in the data folder rather than in `state.yaml`.
 - The Files tree omits `.git` and refuses paths inside it (the reference lists and edits it): an edited Git configuration or hook would run during later Git commands.
-- `/api/opencode/update`: installing, upgrading, restarting and reloading OpenCode are not served, so `canUpgrade`, `canRestart` and `canReload` are false and no 1.x or foreign installation notice is reported; the status probes the executable saved in `config.yaml` (else the default installation) and discovers the daemon of the executable the server started with.
+- `/api/opencode/update` uses the installer’s configured registry and installation plan, including `foreignInstallation`. `canRestart` and `canReload` stay false; OpenCode 1.x migration is outside this contract.
 - `/api/remote-control/status`: this server has no tunnel and serves no web previews, so Remote Control is stopped, never resumes, and `previews` is false; the direct HTTPS origin and paired devices come from its own registry.

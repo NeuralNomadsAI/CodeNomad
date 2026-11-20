@@ -114,9 +114,13 @@ impl Native {
     }
     /// `lifecycle.discover()`: the running daemon, never started. The bench's fixture endpoint
     /// reports the version its `/api/info` declares, as the reference remembers it.
-    pub async fn discover(&self, deadline: Instant) -> Result<Option<Endpoint>, String> {
+    pub async fn discover(&self, binary: &str, deadline: Instant) -> Result<Option<Endpoint>, String> {
         if let Some(lifecycle) = &self.lifecycle {
-            return lifecycle.discover(deadline).await;
+            return if lifecycle.binary == binary {
+                lifecycle.discover(deadline).await
+            } else {
+                daemon::Lifecycle::new(binary.to_owned(), self.client.clone()).discover(deadline).await
+            };
         }
         let Some(mut endpoint) = self.endpoint().map(|e| (*e).clone()) else { return Ok(None) };
         let info = self.get("/api/info").timeout(Duration::from_secs(5)).send().await.map_err(|e| e.to_string())?;

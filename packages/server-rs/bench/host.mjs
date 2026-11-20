@@ -2,6 +2,7 @@
 // `config.yaml` owners it reads at start-up and the feed in `/api/meta`, `state.yaml`'s UI owner, the
 // folder browser over the real home and drives, folder creation and a workspace outside the root.
 // Paths, identities and times are scrubbed.
+import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -9,7 +10,7 @@ import path from "node:path"
 const send = (body, method = "PATCH", type = "application/json") =>
   ({ method, headers: { "content-type": type }, body: typeof body === "string" ? body : JSON.stringify(body) })
 
-/** Rust serves no install, restart, reload or web preview: those flags differ by design (HOST_ROUTES.md). */
+/** Rust serves no restart, reload or web preview: those flags differ by design (HOST_ROUTES.md). */
 export const comparable = ({ updateActions, remoteControlPreviews, ...rest }) => rest
 
 export async function run({ call, fixture, folder, root }) {
@@ -23,7 +24,8 @@ export async function run({ call, fixture, folder, root }) {
     }
     if (Array.isArray(value)) return value.map(scrub)
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value)
-      .filter(([key]) => !["modifiedAt", "serverId", "id", "createdAt", "updatedAt", "binaryId", "binaryLabel", "binaryVersion", "proxyPath"].includes(key))
+      .filter(([key, item]) => key === "id" && typeof item === "string" && item.startsWith("opencode-global-config")
+        || !["modifiedAt", "serverId", "id", "createdAt", "updatedAt", "binaryId", "binaryLabel", "binaryVersion", "proxyPath"].includes(key))
       .map(([key, item]) => [key, scrub(item)]))
     return value
   }
@@ -81,7 +83,9 @@ export async function run({ call, fixture, folder, root }) {
   out.configFileSaved = await read("/api/config-files/opencode-global-config/content", send({ contents: "{\n  // edited\n}\n", extra: 1 }, "PUT"))
   out.configFileRead = await read("/api/config-files/opencode-global-config/content")
   out.configFileDisk = await readFile(path.join(home, ".config", "opencode", "opencode.json"), "utf8")
-  out.configFileInvalid = await statusOnly(read("/api/config-files/opencode-global-config/content", send({ contents: 1 }, "PUT")))
+  out.configFileInvalid = await read("/api/config-files/opencode-global-config/content", send({ contents: 1 }, "PUT"))
+  out.configFileJsoncSaved = await read("/api/config-files/opencode-global-config-jsonc/content", send({ contents: "// JSONC\n{}\n" }, "PUT"))
+  out.configFileJsoncRead = await read("/api/config-files/opencode-global-config-jsonc/content")
   out.configFileUnknown = await read("/api/config-files/other/content")
   out.configFileForeign = await read("/api/config-files/other/content", send({ contents: "x" }, "PUT"))
 
@@ -92,12 +96,16 @@ export async function run({ call, fixture, folder, root }) {
   out.binaryDefault = await read("/api/storage/binaries/validate", send({ path: "opencode2" }, "POST"))
   out.binaryInvalid = await statusOnly(read("/api/storage/binaries/validate", send({}, "POST")))
   await owner("server", { opencodeBinary: binary })
-  const update = (await read("/api/opencode/update")).body
-  // Not served by this server (no install, restart or reload); required false.
-  out.updateActions = ["canUpgrade", "canRestart", "canReload"].map(key => [key, update[key]])
-  for (const key of ["canUpgrade", "canRestart", "canReload"]) delete update[key]
+  const updateResponse = await read("/api/opencode/update?recheck=1")
+  assert.equal(updateResponse.status, 200)
+  const update = updateResponse.body
+  assert.equal(update.binaryPath, binary)
+  out.updateActions = ["canRestart", "canReload"].map(key => [key, update[key]])
+  for (const key of ["canRestart", "canReload"]) delete update[key]
   out.update = update
-  const remote = (await read("/api/remote-control/status")).body
+  const remoteResponse = await read("/api/remote-control/status")
+  assert.equal(remoteResponse.status, 200)
+  const remote = remoteResponse.body
   out.remoteControlPreviews = remote.previews
   delete remote.previews
   out.remoteControl = remote
@@ -118,6 +126,7 @@ export async function run({ call, fixture, folder, root }) {
   await mkdir(path.join(outside, "inner"), { recursive: true })
   await writeFile(path.join(outside, "note.txt"), "Outside the root.\n")
   out.browseDefault = await listing("/api/filesystem")
+  assert.equal(out.browseDefault.body?.metadata?.homePath, "<home>", "Refusing to navigate a non-fixture home")
   out.browseFolders = await listing(`/api/filesystem?includeFiles=&path=${encodeURIComponent(root)}`)
   out.browseAbsolute = await listing(`/api/filesystem?path=${encodeURIComponent(outside)}`)
   out.browseRelative = await listing("/api/filesystem?path=bench-home")
@@ -173,6 +182,8 @@ export async function run({ call, fixture, folder, root }) {
   const created = await tree.json()
   const both = new URLSearchParams([["directories", at], ["directories", created.serviceDirectory ?? created.directory ?? ""]])
   const fresh = await read(`/api/workspaces/${project.id}/pending-requests?${both}`)
+  assert.equal(fresh.status, 200, JSON.stringify(fresh.body))
+  assert.deepEqual(fresh.body?.directories?.map(d => d.status), ["ok", "ok"])
   out.pendingAfterWorktree = { created: tree.status, status: fresh.status, directories: fresh.body?.directories?.map(d => d.status), error: fresh.body?.error }
   const pending = async (directories, optional = []) => {
     const query = new URLSearchParams([...directories.map(d => ["directories", d]), ...optional.map(d => ["optionalDirectories", d])])

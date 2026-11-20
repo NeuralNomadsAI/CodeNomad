@@ -1,13 +1,12 @@
 //! The selected OpenCode executable (`settings/binaries.ts`), its `--version` and `service --help` probes
 //! (`spawn.ts`) and the update status (`opencode-update/service.ts` `getStatus`) with the npm release and
-//! the running daemon's admission. Installing, upgrading, restarting and reloading are not served here:
-//! `canUpgrade`, `canRestart` and `canReload` stay false.
+//! the running daemon's admission. The installer owns upgrade; restart and reload stay unavailable.
 use std::{cmp::Ordering, time::Duration};
 
 use axum::{
     Json,
     body::Bytes,
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode as Status},
     response::{IntoResponse, Response},
 };
@@ -16,33 +15,23 @@ use tokio::time::Instant;
 
 use super::{
     admission::{self, MINIMUM_VERSION, Refusal},
-    daemon, launch,
+    daemon, install, launch,
 };
 use crate::{Shared, settings::Kind, shared::fastify};
 
 const RECOMMENDED_VERSION: &str = "2.3.2";
-const REGISTRY: &str = "https://registry.npmjs.org/-/package/%40opencode%2Fcli/dist-tags";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `BinaryResolver.resolveDefault` then `resolveBinaryPath`: the saved selection, else the default
 /// installation (its source: a PATH command or the user npm prefix).
-fn selected(app: &crate::App) -> (String, Option<&'static str>) {
+fn custom_binary(app: &crate::App) -> Option<String> {
     let saved = app.settings.owner(Kind::Config, "server");
-    let saved = saved.get("opencodeBinary").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
-    let path = match saved {
-        Some(path) if path != "opencode" && path != "opencode2" && !launch::retired(path) => {
-            return (launch::resolve(path), None);
-        }
-        _ => launch::default_binary(),
-    };
-    let source = if path == "opencode2" {
-        None
-    } else if path.replace('\\', "/").ends_with("node_modules/@opencode/cli/bin/opencode.exe") {
-        Some("user")
-    } else {
-        Some("path")
-    };
-    (launch::resolve(&path), source)
+    saved
+        .get("opencodeBinary")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !matches!(*s, "" | "opencode" | "opencode2") && !launch::retired(s))
+        .map(launch::resolve)
 }
 
 /// One bounded `execFile`: exit status, spawn or timeout error (`missing` for ENOENT) and output.
@@ -176,7 +165,11 @@ pub async fn validate(headers: HeaderMap, bytes: Bytes) -> Response {
     let Some(path) = body.get("path").and_then(Value::as_str) else {
         return (Status::BAD_REQUEST, Json(json!({"valid": false, "error": "Invalid request"}))).into_response();
     };
-    let binary = if path == "opencode" || path == "opencode2" { launch::default_binary() } else { path.to_owned() };
+    let binary = if path == "opencode" || path == "opencode2" {
+        install::plan::resolve_default().await.0
+    } else {
+        path.to_owned()
+    };
     Json(validate_binary(&binary).await).into_response()
 }
 
@@ -205,26 +198,33 @@ fn compare(left: &str, right: &str) -> Ordering {
     l.cmp(&r).then(r_pre.cmp(&l_pre))
 }
 
-/// The `latest` npm dist-tag of `@opencode/cli`, a stable release.
-async fn latest() -> Result<String, ()> {
-    let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(10)).build().map_err(|_| ())?;
-    let response = client.get(REGISTRY).header("accept", "application/json").send().await.map_err(|_| ())?;
-    let tags: Value = response.error_for_status().map_err(|_| ())?.json().await.map_err(|_| ())?;
-    let version =
-        tags["latest"].as_str().filter(|v| regex::Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+$").unwrap().is_match(v));
-    version.map(str::to_owned).ok_or(())
-}
-
-/// `GET /api/opencode/update` (`?recheck=1` only refreshes probes the reference caches).
-pub async fn status(State(app): State<Shared>) -> Json<Value> {
-    let (binary, source) = selected(&app);
+/// `GET /api/opencode/update`: an explicit recheck refreshes the installation plan's cached probes.
+pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, String)>>) -> Json<Value> {
+    let force = query.iter().filter(|(key, _)| key == "recheck").map(|(_, value)| value.as_str()).eq(["1"]);
+    let plan = install::plan::plan(force).await;
+    let user = install::plan::user_prefix();
+    let (binary, source, default_selection) = match custom_binary(&app) {
+        Some(path) => (path, None, false),
+        None => {
+            let (path, source) = install::plan::resolve_default().await;
+            let path = match (source, &user) {
+                (Some("user" | "managed"), Some(prefix)) => install::installed(prefix).binary,
+                _ => path,
+            };
+            (launch::resolve(&path), source, true)
+        }
+    };
     let probe = parse_version(&run(&binary, &["--version"]).await);
     let quoted = cfg!(windows) && binary.contains(['"', '\r', '\n']);
     let current = (probe.valid && !quoted).then(|| {
         probe.version.clone().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()).unwrap_or("unknown".into())
     });
     let (missing, invalid) = if current.is_some() { (false, false) } else { (probe.missing, !probe.missing) };
-    let latest = latest().await.ok();
+    let prefix = plan.prefix.as_ref().or(user.as_ref());
+    let latest = match prefix {
+        Some(prefix) => install::latest(prefix).await.ok(),
+        None => None,
+    };
     let state = if invalid {
         "error"
     } else if missing {
@@ -235,14 +235,25 @@ pub async fn status(State(app): State<Shared>) -> Json<Value> {
         "update_required"
     };
     let update = match (&latest, &current) {
-        (Some(latest), Some(current)) if comparable(current) => json!(compare(latest, current) == Ordering::Greater),
-        (Some(_), None) => json!(true),
-        _ => Value::Null,
+        (Some(latest), Some(current)) if comparable(current) => Some(compare(latest, current) == Ordering::Greater),
+        (Some(_), None) => Some(true),
+        _ => None,
     };
+    let needs_shared = source == Some("user");
+    let foreign = plan.foreign.as_ref().is_some_and(|f| f.command == binary);
+    let can_upgrade = default_selection
+        && !launch::wsl(&binary)
+        && (!invalid || foreign)
+        && plan.prefix.is_some()
+        && (update == Some(true) || needs_shared)
+        && latest.as_deref().is_some_and(|version| !admission::below_minimum(version));
     let mut status = json!({"currentVersion": current, "latestVersion": latest, "updateAvailable": update,
-        "canUpgrade": false, "minimumVersion": MINIMUM_VERSION, "recommendedVersion": RECOMMENDED_VERSION,
-        "state": state, "binaryPath": binary, "needsSharedInstallation": source == Some("user"),
+        "canUpgrade": can_upgrade, "minimumVersion": MINIMUM_VERSION, "recommendedVersion": RECOMMENDED_VERSION,
+        "state": state, "binaryPath": binary, "needsSharedInstallation": needs_shared,
         "target": if launch::wsl(&binary) { "wsl" } else { "host" }, "canRestart": false});
+    if default_selection && let Some(notice) = install::plan::notice(&plan).get("foreignInstallation") {
+        status["foreignInstallation"] = notice.clone();
+    }
     if let Some(source) = source {
         status["installationSource"] = json!(source);
     }
@@ -251,7 +262,7 @@ pub async fn status(State(app): State<Shared>) -> Json<Value> {
     }
     if !missing && !invalid {
         let deadline = Instant::now() + daemon::TIMEOUT;
-        match app.native.discover(deadline).await {
+        match app.native.discover(&binary, deadline).await {
             Err(_) => {
                 (status["serviceState"], status["serviceError"]) = (json!("error"), json!("service_check_failed"))
             }

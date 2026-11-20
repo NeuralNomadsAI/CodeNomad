@@ -35,10 +35,23 @@ fn parse(body: &Value) -> Option<(Value, Vec<Expected>)> {
     Some((Value::Object(Map::from_iter([("settings".into(), Value::Object(settings.clone()))])), expected))
 }
 
+fn equal_json(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
+        (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b).all(|(a, b)| equal_json(a, b)),
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len() && a.iter().all(|(k, a)| b.get(k).is_some_and(|b| equal_json(a, b)))
+        }
+        _ => a == b,
+    }
+}
+
 fn holds(settings: &Map<String, Value>, expected: &[Expected]) -> bool {
-    expected
-        .iter()
-        .all(|e| settings.contains_key(&e.key) == e.present && (!e.present || settings.get(&e.key) == e.value.as_ref()))
+    expected.iter().all(|e| match (settings.get(&e.key), e.value.as_ref()) {
+        (None, None) => !e.present,
+        (Some(a), Some(b)) => e.present && equal_json(a, b),
+        _ => false,
+    })
 }
 
 /// `applyConditionalMissionPreferences`
