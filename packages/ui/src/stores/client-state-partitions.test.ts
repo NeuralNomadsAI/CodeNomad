@@ -163,7 +163,8 @@ it("re-encodes an unchanged catalog-heavy snapshot without hashing it again", as
 
 it("keeps one cached copy of a partition encoded concurrently", async (t) => {
   const value = { format: 2, index: 0, data: "x".repeat(700 * 1024) }
-  await Promise.all(Array.from({ length: 16 }, () => encodePartition(value)))
+  // Counted once per call, 24 copies would exceed the bound and evict the value.
+  await Promise.all(Array.from({ length: 24 }, () => encodePartition(value)))
   const digest = t.mock.method(crypto.subtle, "digest")
   // The bound counted the value once, so it is still cached.
   await encodePartition(structuredClone(value))

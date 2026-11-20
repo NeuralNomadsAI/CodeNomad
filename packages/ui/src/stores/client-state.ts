@@ -219,7 +219,9 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
     transactionLayoutWrites.clear()
     writeBlock = previousWriteBlock
     dirty = retryDirty
-    // The host copy is unknown after a failed operation: the next flush rewrites it.
+    // The host copy is unknown after a failed operation, even if a save that was in
+    // flight recorded a commit meanwhile: the next save or flush rewrites it.
+    committedContent = null
     republishOnFlush = true
     if (dirty) scheduleSave()
     throw error

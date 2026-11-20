@@ -625,6 +625,30 @@ describe("partitioned client state", () => {
     assert.equal(commits.length, 2)
   })
 
+  it("forgets a commit recorded by an in-flight save when the clear then fails", async () => {
+    const encoded = await encodeClientSnapshotV2(snapshot("restored"))
+    const commits: any[] = []
+    let gate: ReturnType<typeof deferred<void>> | null = null
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => { await gate?.promise; commits.push(value); return true },
+      clearClientState: async () => { throw new Error("host unavailable") },
+    })
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+    state.updateRestorableSession(session("a"))
+    await state.flushClientState()
+    gate = deferred<void>()
+    state.updateRestorableSession(session("b"))
+    await wait(400)
+    const clear = state.clearRestoredClientState()
+    gate.resolve()
+    await assert.rejects(clear, /host unavailable/)
+    state.updateRestorableSession(session("b"))
+    await wait(400)
+    assert.equal(commits.length, 3, "the identical capture rewrites the unknown host copy")
+  })
+
   it("commits one atomic graph without a monolithic save or automatic load rewrite", async () => {
     const encoded = await encodeClientSnapshotV2(snapshot("restored", { [layoutKey]: "380" }))
     const commits: any[] = []; let monolithicSaves = 0
