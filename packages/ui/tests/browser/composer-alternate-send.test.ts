@@ -1,11 +1,39 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import type { Page } from "playwright"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { startProductFixture } from "./fixtures/product-fixture-server"
 
 let fixture: Awaited<ReturnType<typeof startProductFixture>>
-before(async () => { fixture = await startProductFixture("composer-alternate-send") })
-after(async () => { await fixture?.close() })
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
+before(async () => {
+  fixture = await startProductFixture("composer-alternate-send")
+  events = await fixtureEventStream(fixture.url)
+})
+after(async () => {
+  try { await fixture?.close() }
+  finally { await events?.close() }
+})
+
+async function setup(page: Page) {
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
+  page.on("response", response => { if (!response.ok()) errors.push(`${response.status()} ${response.url()}`) })
+  page.on("requestfailed", request => errors.push(`${request.url()}: ${request.failure()?.errorText}`))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await events.route(page)
+  try {
+    const [stream] = await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === "/api/events", { timeout: 60_000 }),
+      page.goto(fixture.url, { waitUntil: "domcontentloaded" }).then(() =>
+        page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 60_000 })),
+    ])
+    assert.match(stream.headers()["content-type"], /text\/event-stream/)
+  } catch (error) {
+    throw new Error(`Composer fixture failed: ${errors.join("; ")}`, { cause: error })
+  }
+}
 
 const menuItem = (page: Page, name: string) => page.getByRole("menuitem", { name: new RegExp(`^${name}`) })
 const openMenu = (page: Page) => page.getByRole("button", { name: "More actions", exact: true }).click()
@@ -18,9 +46,7 @@ test("the composer menu and Alt+Enter send with the other follow-up delivery whi
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   try {
-    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-    await page.goto(fixture.url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await setup(page)
     const input = page.locator("textarea").first()
 
     // Enter steers: the menu offers queueing, with its shortcut.
@@ -70,9 +96,7 @@ test("the composer menu and Alt+Enter send with the other follow-up delivery whi
 test("the prompt menu disables transcript navigation when its session is absent", async () => {
   const page = await fixture.browser.newPage()
   try {
-    await page.route("**/api/**", route => route.fulfill({ json: {} }))
-    await page.goto(fixture.url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await setup(page)
     await page.locator("textarea").first().fill("Keep the draft")
     await page.evaluate(async () => {
       const { setSessions } = await import("/src/stores/session-state.ts" as string)
@@ -84,5 +108,34 @@ test("the prompt menu disables transcript navigation when its session is absent"
     await page.keyboard.press("Escape")
     assert.equal(await page.locator("textarea").first().inputValue(), "Keep the draft")
     assert.deepEqual(await sends(page), [])
+  } finally { await page.close() }
+})
+
+test("composer updates keep unchanged menu icons mounted and still switch the alternate icon", async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await setup(page)
+    await page.locator("textarea").first().fill("Draft")
+    await openMenu(page)
+    await menuItem(page, "Queue message").waitFor()
+    const observed = await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      const keys = ["alternate-send", "voice", "conversation", "attach", "user-message-prev", "user-message-next", "clear"]
+      const rows = keys.map(key => document.querySelector(`[data-action-key="${key}"]`)!)
+      const original = rows.map(row => row.querySelector("svg"))
+      fixture.setBusy(false)
+      return {
+        disabled: rows[0].getAttribute("aria-disabled"),
+        retained: keys.filter((_, i) => original[i] !== null && rows[i].querySelector("svg") === original[i]),
+        distinct: new Set(original).size,
+      }
+    })
+    assert.deepEqual(observed, {
+      disabled: "true",
+      retained: ["alternate-send", "voice", "conversation", "attach", "user-message-prev", "user-message-next", "clear"],
+      distinct: 7,
+    })
+    await page.evaluate(() => (window as any).fixture.setPreferences({ followUpBehavior: "queue" }))
+    await menuItem(page, "Steer now").locator("svg.lucide-send-horizontal").waitFor()
   } finally { await page.close() }
 })

@@ -827,18 +827,37 @@ export default function PromptInput(props: PromptInputProps) {
     void voiceInput.startRecording()
   }
 
+  // This menu is the only owner of these nodes, so refreshing action state
+  // can reuse them. Give each row its own icon even when the glyph is shared.
+  const alternate = createMemo(() => preferences().followUpBehavior === "queue" ? "steer" : "queue")
+  const alternateIcon = createMemo(() => alternate() === "queue"
+    ? <ListEnd class="h-4 w-4" aria-hidden="true" />
+    : <SendHorizontal class="h-4 w-4" aria-hidden="true" />)
+  const isTranscribing = createMemo(voiceInput.isTranscribing)
+  const dictationIcon = createMemo(() => isTranscribing()
+    ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+    : <Mic class="h-4 w-4" aria-hidden="true" />)
+  const voiceCancelIcon = <X class="h-4 w-4" aria-hidden="true" />
+  const conversationIcon = <Volume2 class="h-4 w-4" aria-hidden="true" />
+  const attachmentReading = createMemo(isReadingFiles)
+  const attachmentIcon = createMemo(() => attachmentReading()
+    ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+    : <Paperclip class="h-4 w-4" aria-hidden="true" />)
+  const userMessageActions = [
+    ["previous", "previousUserMessage", "user-message-prev", <ArrowUp class="h-4 w-4" aria-hidden="true" />],
+    ["next", "nextUserMessage", "user-message-next", <ArrowDown class="h-4 w-4" aria-hidden="true" />],
+  ] as const
+  const clearIcon = <X class="h-4 w-4" aria-hidden="true" />
+
   const buildPromptActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
     // The other follow-up delivery than Enter's, like the alternate-send shortcut:
     // queue when Enter steers, send now when Enter queues. Only a running session differs.
-    const alternate = preferences().followUpBehavior === "queue" ? "steer" : "queue"
     items.push({
       key: "alternate-send",
-      label: t(alternate === "queue" ? "promptInput.send.queueAriaLabel" : "promptQueue.actions.steer"),
+      label: t(alternate() === "queue" ? "promptInput.send.queueAriaLabel" : "promptQueue.actions.steer"),
       description: hotkeyLabel("prompt-alternate-send") || undefined,
-      icon: alternate === "queue"
-        ? <ListEnd class="h-4 w-4" aria-hidden="true" />
-        : <SendHorizontal class="h-4 w-4" aria-hidden="true" />,
+      icon: alternateIcon(),
       disabled: mode() !== "normal" || !(props.isSessionBusy || sessionPromptAwaitingExecution(props.instanceId, props.sessionId)) || !canSendDraft(),
       // The shortcut's own resolution: an idle session always sends normally.
       onSelect: () => void handleSend(true),
@@ -847,9 +866,7 @@ export default function PromptInput(props: PromptInputProps) {
     items.push({
       key: "voice",
       label: voiceMenuLabel(voiceInput.buttonTitle(), dictationReason && t(dictationReason)),
-      icon: voiceInput.isTranscribing()
-        ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
-        : <Mic class="h-4 w-4" aria-hidden="true" />,
+      icon: dictationIcon(),
       disabled: dictationReason === "voice.command.pendingTranscription",
       selectBeforeClose: !dictationReason,
       onSelect: dictationReason ? () => openSettingsRow("speech", "voice-dictation")
@@ -859,7 +876,7 @@ export default function PromptInput(props: PromptInputProps) {
       items.push({
         key: "voice-cancel",
         label: t("promptInput.voiceInput.cancel"),
-        icon: <X class="h-4 w-4" aria-hidden="true" />,
+        icon: voiceCancelIcon,
         selectBeforeClose: true,
         onSelect: voiceInput.cancelRecording,
       })
@@ -874,7 +891,7 @@ export default function PromptInput(props: PromptInputProps) {
       label: reason || (liveEngine && !running)
         ? voiceMenuLabel(t("voice.command.conversation"), reason?.text)
         : t(running ? "promptInput.conversationMode.disable.title" : "promptInput.conversationMode.enable.title"),
-      icon: <Volume2 class="h-4 w-4" aria-hidden="true" />,
+      icon: conversationIcon,
       checked: reason || liveEngine ? undefined : running,
       selectBeforeClose: liveEngine && !reason && !running && !retained && !liveVoice.needsConsent(),
       focusAfterSelect: focusLiveWindow,
@@ -886,21 +903,19 @@ export default function PromptInput(props: PromptInputProps) {
     })
     items.push({
       key: "attach",
-      label: t(isReadingFiles() ? "promptInput.attachFiles.reading" : "promptInput.attachFiles.title"),
+      label: t(attachmentReading() ? "promptInput.attachFiles.reading" : "promptInput.attachFiles.title"),
       description: t("promptInput.attachFiles.help"),
-      icon: isReadingFiles()
-        ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
-        : <Paperclip class="h-4 w-4" aria-hidden="true" />,
-      disabled: Boolean(props.disabled) || isReadingFiles(),
+      icon: attachmentIcon(),
+      disabled: Boolean(props.disabled) || attachmentReading(),
       onSelect: handleUploadFiles,
     })
-    for (const [direction, label, shortcut] of [["previous", "previousUserMessage", "user-message-prev"], ["next", "nextUserMessage", "user-message-next"]] as const) {
+    for (const [direction, label, shortcut, icon] of userMessageActions) {
       const target = { instanceId: props.instanceId, sessionId: props.sessionId, direction }
       items.push({
         key: shortcut,
         label: t(`commands.${label}.label`),
         description: hotkeyLabel(shortcut) || undefined,
-        icon: direction === "previous" ? <ArrowUp class="h-4 w-4" aria-hidden="true" /> : <ArrowDown class="h-4 w-4" aria-hidden="true" />,
+        icon,
         disabled: !canNavigateUserMessages(),
         onSelect: () => requestUserMessageJump(target),
       })
@@ -925,16 +940,14 @@ export default function PromptInput(props: PromptInputProps) {
       key: "clear",
       label: t("promptInput.clear.title"),
       description: hotkeyLabel("clear-input") || undefined,
-      icon: <X class="h-4 w-4" aria-hidden="true" />,
+      icon: clearIcon,
       disabled: !canClearPrompt(),
       onSelect: handleClearPrompt,
     })
     return items
   }
 
-  // Memoized so composer-state updates (voice transcription ticks, drafts) do
-  // not rebuild the item array and its icon DOM on every re-render.
-  const promptActionMenuItems = createMemo(() => buildPromptActionMenuItems())
+  const promptActionMenuItems = createMemo(buildPromptActionMenuItems)
 
   return (
     <div class="prompt-input-container"

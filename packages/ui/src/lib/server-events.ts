@@ -14,6 +14,7 @@ import { authRecovery } from "./auth-recovery"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
+const FRAME_FALLBACK_MS = 32
 const log = getLogger("sse")
 
 function logSse(message: string, context?: Record<string, unknown>) {
@@ -32,6 +33,8 @@ class ServerEvents {
   private connectGeneration = 0
   private retryDelay = RETRY_BASE_DELAY
   private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private pendingBatch: WorkspaceEventPayload[] = []
+  private cancelBatchWake: (() => void) | undefined
   private watchdog = createStreamStalenessWatchdog({
     onStale: () => this.restart("stream stale"),
   })
@@ -44,6 +47,7 @@ class ServerEvents {
       window.addEventListener?.("online", () => this.probeStale("network online"))
       if (typeof document !== "undefined") {
         document.addEventListener?.("visibilitychange", () => {
+          this.flushPendingBatch()
           if (document.visibilityState === "visible") {
             this.probeStale("visibility restored")
           }
@@ -71,7 +75,7 @@ class ServerEvents {
         onBatch: (events) => {
           if (generation !== this.connectGeneration) return
           this.watchdog.activity()
-          this.dispatchBatch(events)
+          this.queueBatch(events)
         },
         onError: () => {
           if (generation !== this.connectGeneration) {
@@ -189,6 +193,44 @@ class ServerEvents {
     })
   }
 
+  private queueBatch(events: WorkspaceEventPayload[]): void {
+    if (!events.length) return
+    if (typeof document === "undefined" && typeof requestAnimationFrame !== "function") {
+      this.dispatchBatch(events)
+      return
+    }
+    for (const event of events) this.pendingBatch.push(event)
+    if (this.cancelBatchWake) return
+
+    const wake = () => {
+      if (this.cancelBatchWake === cancel) this.flushPendingBatch()
+    }
+    const frame = typeof requestAnimationFrame === "function" && !(typeof document !== "undefined" && document.hidden)
+      ? requestAnimationFrame(wake)
+      : undefined
+    // A hidden or suspended compositor may not deliver a frame.
+    const fallback = setTimeout(wake, FRAME_FALLBACK_MS)
+    const cancel = () => {
+      if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame)
+      clearTimeout(fallback)
+    }
+    this.cancelBatchWake = cancel
+  }
+
+  private flushPendingBatch(): void {
+    this.cancelBatchWake?.()
+    this.cancelBatchWake = undefined
+    const events = this.pendingBatch
+    if (!events.length) return
+    this.pendingBatch = []
+    try {
+      this.dispatchBatch(events)
+    } catch (error) {
+      // The reactive flush runs outside the EventSource handler's error boundary.
+      log.error("Failed to dispatch event", error)
+    }
+  }
+
   private dispatchBatch(events: WorkspaceEventPayload[]) {
     if (events.length === 0) {
       return
@@ -203,6 +245,8 @@ class ServerEvents {
   }
 
   private emitTransportStatus(status: WorkspaceEventTransportStatus) {
+    // Deliver already accepted events before reconnect observers read authority.
+    this.flushPendingBatch()
     this.notify(this.statusHandlers, status, "transport-status")
   }
 
