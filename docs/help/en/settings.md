@@ -91,7 +91,7 @@ Built-in layout is window layout, not a project mutation. Extension checkboxes a
 
 The timeline has one marker for each reply, thinking block, tool, compaction and system context shown in the conversation, in the same order. Its markers follow **Message content**: hiding a tool type, thinking or system messages there also hides their markers, except a tool with a pending permission, and **Nothing** hides every tool marker. Visibility and expansion settings only change presentation. They do not remove stored tools/reasoning or compact the model context. See [History and cleanup](history.md) for destructive operations.
 
-Composer height follows the visible conversation, including the software keyboard: minimum 8% with a 44 px floor, maximum 60%. Manual height is remembered proportionally; narrow width and long text do not raise those limits. An expanded permission/question temporarily minimizes the composer without changing its saved height or draft. Collapse or settle the request to resume resizing.
+Manual composer sizing uses the conversation height without the on-screen keyboard: minimum 8% with a 44 px floor, maximum 60%. Narrow width and long text do not raise those limits. When the keyboard opens, the field can shrink temporarily to leave room for controls and messages, without changing the saved height proportion. An expanded permission/question temporarily minimizes the composer without changing its saved height or draft. Collapse or settle the request to resume resizing.
 
 ## Notifications and badges {#notifications}
 

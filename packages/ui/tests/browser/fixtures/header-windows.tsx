@@ -1,5 +1,6 @@
 import { render } from "solid-js/web"
-import { Show, createSignal } from "solid-js"
+import { Show, createSignal, type ParentProps } from "solid-js"
+import { AppViewport } from "../../../src/components/app-viewport"
 import { useViewMenu } from "../../../src/lib/native/view-menu"
 import { useAppLifecycle } from "../../../src/lib/hooks/use-app-lifecycle"
 import { registerNavigationShortcuts } from "../../../src/lib/shortcuts/navigation"
@@ -25,12 +26,15 @@ import { setSessions, setActiveSession, setActiveParentSession, clearActiveParen
 import { clearSelectedSession, selectActiveParentSession, selectActiveSession } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
+import { setDraftAttachments } from "../../../src/stores/attachments"
+import { createFileAttachment } from "../../../src/types/attachment"
 import "../../../src/index.css"
 
 // Optional, synchronous test-only marks; no observer is installed on native pages.
 const bootStage = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)
+const useKeyboardViewport = new URLSearchParams(location.search).has("keyboardViewport")
 bootStage("imports-complete")
-if (new URLSearchParams(location.search).has("drawerWidth")) await initializeClientState()
+if (useKeyboardViewport || new URLSearchParams(location.search).has("drawerWidth")) await initializeClientState()
 // Model optional app registrations without reintroducing inline shortcut hints.
 if (new URLSearchParams(location.search).has("shortcutHints")) registerNavigationShortcuts()
 const remote = new URLSearchParams(location.search).has("remotePreview")
@@ -104,6 +108,8 @@ const [active, setActive] = createSignal(true)
 const duplicateId = "header-duplicate"
 const duplicate = new URLSearchParams(location.search).has("duplicate")
 const [selectedOccurrence, setSelectedOccurrence] = createSignal(id)
+const Viewport = useKeyboardViewport ? AppViewport
+  : (props: ParentProps) => <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>{props.children}</div>
 if (duplicate) {
   addInstance({ ...instances().get(id)!, id: duplicateId, proxyPath: `/workspaces/${duplicateId}/instance` })
   ;(sdkManager as any).clients.set(`${duplicateId}:/workspaces/${duplicateId}/instance`, client)
@@ -127,7 +133,7 @@ function Fixture() {
     getActiveSessionIdForInstance: () => activeSessionId().get(id) ?? null,
   })
   return (
-  <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
+  <Viewport>
     <button id="outside">Outside target</button>
     <AlertDialog />
     <SessionPreviewHost />
@@ -145,7 +151,7 @@ function Fixture() {
           handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0} />
       </div>
     </Show>
-  </div>
+  </Viewport>
   )
 }
 bootStage("render-before")
@@ -213,5 +219,7 @@ bootStage("preferences-after")
   escapeStates: () => escapeStates,
   interrupts: () => interrupts,
   promptHeight: () => promptInputHeight(id),
+  setComposerAttachment: (attached: boolean) => setDraftAttachments(id, sessionId,
+    attached ? [createFileAttachment("fixture-height.txt", "fixture-height.txt")] : []),
 }
 bootStage("published")
