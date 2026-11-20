@@ -46,6 +46,7 @@ Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 - **Browser previews and automation**: `dev-docs/BROWSER_AUTOMATION.md`, `dev-docs/BROWSER_DEVICE_EMULATION.md`.
 - **Desktop hosts**: data profiles `dev-docs/DESKTOP_DATA_PROFILES.md`; updates and update feed `dev-docs/TAURI_UPDATER.md`; vendored Tauri crates (Tao, updater) `packages/tauri-app/vendor/README.md`; desktop runtimes (Tauri's bundled Node, Electron's integrated Node, both hosts' bundled npm) `dev-docs/RUNTIME_MAINTENANCE.md`.
 - **Public help** (`docs/help/`, help entry points): `dev-docs/USER_HELP.md`.
+- **Rust server** (`packages/server-rs/`: behaviour matches `packages/server`, checked by its comparison bench): `packages/server-rs/README.md`.
 
 ## Multi-Language Support (i18n)
 

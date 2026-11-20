@@ -1,0 +1,841 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "output": {
+      "type": "object",
+      "properties": {
+        "originDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "data": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "directory": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "status": {
+                "type": "string",
+                "const": "complete"
+              },
+              "locations": {
+                "maxItems": 64,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "location": {
+                      "type": "object",
+                      "properties": {
+                        "directory": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096
+                        },
+                        "workspaceID": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "directory"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "permissions": {
+                      "maxItems": 1024,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "sessionID": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "resources": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "save": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "const": "tool"
+                              },
+                              "messageID": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "messageID",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "sessionID",
+                          "action",
+                          "resources"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "forms": {
+                      "maxItems": 1024,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "sessionID": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          "fields": {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "title": {
+                                      "type": "string"
+                                    },
+                                    "description": {
+                                      "type": "string"
+                                    },
+                                    "required": {
+                                      "type": "boolean"
+                                    },
+                                    "hidden": {
+                                      "type": "boolean"
+                                    },
+                                    "when": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string"
+                                          },
+                                          "op": {
+                                            "type": "string",
+                                            "enum": [
+                                              "eq",
+                                              "neq"
+                                            ]
+                                          },
+                                          "value": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "Infinity",
+                                                      "-Infinity",
+                                                      "NaN"
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "op",
+                                          "value"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "const": "string"
+                                    },
+                                    "format": {
+                                      "type": "string",
+                                      "enum": [
+                                        "email",
+                                        "uri",
+                                        "date",
+                                        "date-time"
+                                      ]
+                                    },
+                                    "minLength": {
+                                      "type": "number"
+                                    },
+                                    "maxLength": {
+                                      "type": "number"
+                                    },
+                                    "pattern": {
+                                      "type": "string"
+                                    },
+                                    "placeholder": {
+                                      "type": "string"
+                                    },
+                                    "default": {
+                                      "type": "string"
+                                    },
+                                    "options": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "value": {
+                                            "type": "string"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          },
+                                          "description": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "value",
+                                          "label"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "custom": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "title": {
+                                      "type": "string"
+                                    },
+                                    "description": {
+                                      "type": "string"
+                                    },
+                                    "required": {
+                                      "type": "boolean"
+                                    },
+                                    "hidden": {
+                                      "type": "boolean"
+                                    },
+                                    "when": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string"
+                                          },
+                                          "op": {
+                                            "type": "string",
+                                            "enum": [
+                                              "eq",
+                                              "neq"
+                                            ]
+                                          },
+                                          "value": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "Infinity",
+                                                      "-Infinity",
+                                                      "NaN"
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "op",
+                                          "value"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "const": "number"
+                                    },
+                                    "minimum": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "Infinity",
+                                            "-Infinity",
+                                            "NaN"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "maximum": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "Infinity",
+                                            "-Infinity",
+                                            "NaN"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "default": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "Infinity",
+                                            "-Infinity",
+                                            "NaN"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "title": {
+                                      "type": "string"
+                                    },
+                                    "description": {
+                                      "type": "string"
+                                    },
+                                    "required": {
+                                      "type": "boolean"
+                                    },
+                                    "hidden": {
+                                      "type": "boolean"
+                                    },
+                                    "when": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string"
+                                          },
+                                          "op": {
+                                            "type": "string",
+                                            "enum": [
+                                              "eq",
+                                              "neq"
+                                            ]
+                                          },
+                                          "value": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "Infinity",
+                                                      "-Infinity",
+                                                      "NaN"
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "op",
+                                          "value"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "const": "integer"
+                                    },
+                                    "minimum": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "Infinity",
+                                            "-Infinity",
+                                            "NaN"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "maximum": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "Infinity",
+                                            "-Infinity",
+                                            "NaN"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "default": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "Infinity",
+                                            "-Infinity",
+                                            "NaN"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "title": {
+                                      "type": "string"
+                                    },
+                                    "description": {
+                                      "type": "string"
+                                    },
+                                    "required": {
+                                      "type": "boolean"
+                                    },
+                                    "hidden": {
+                                      "type": "boolean"
+                                    },
+                                    "when": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string"
+                                          },
+                                          "op": {
+                                            "type": "string",
+                                            "enum": [
+                                              "eq",
+                                              "neq"
+                                            ]
+                                          },
+                                          "value": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "Infinity",
+                                                      "-Infinity",
+                                                      "NaN"
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "op",
+                                          "value"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "const": "boolean"
+                                    },
+                                    "default": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "title": {
+                                      "type": "string"
+                                    },
+                                    "description": {
+                                      "type": "string"
+                                    },
+                                    "required": {
+                                      "type": "boolean"
+                                    },
+                                    "hidden": {
+                                      "type": "boolean"
+                                    },
+                                    "when": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string"
+                                          },
+                                          "op": {
+                                            "type": "string",
+                                            "enum": [
+                                              "eq",
+                                              "neq"
+                                            ]
+                                          },
+                                          "value": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "Infinity",
+                                                      "-Infinity",
+                                                      "NaN"
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "op",
+                                          "value"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "const": "multiselect"
+                                    },
+                                    "options": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "value": {
+                                            "type": "string"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          },
+                                          "description": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "value",
+                                          "label"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "minItems": {
+                                      "type": "number"
+                                    },
+                                    "maxItems": {
+                                      "type": "number"
+                                    },
+                                    "custom": {
+                                      "type": "boolean"
+                                    },
+                                    "default": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type",
+                                    "options"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "title": {
+                                      "type": "string"
+                                    },
+                                    "description": {
+                                      "type": "string"
+                                    },
+                                    "required": {
+                                      "type": "boolean"
+                                    },
+                                    "hidden": {
+                                      "type": "boolean"
+                                    },
+                                    "when": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string"
+                                          },
+                                          "op": {
+                                            "type": "string",
+                                            "enum": [
+                                              "eq",
+                                              "neq"
+                                            ]
+                                          },
+                                          "value": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "Infinity",
+                                                      "-Infinity",
+                                                      "NaN"
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "op",
+                                          "value"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "const": "external"
+                                    },
+                                    "url": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type",
+                                    "url"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "sessionID",
+                          "title",
+                          "fields"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "location",
+                    "permissions",
+                    "forms"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "directory",
+              "status",
+              "locations"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "originDirectory",
+        "data"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "output"
+  ],
+  "additionalProperties": false
+}

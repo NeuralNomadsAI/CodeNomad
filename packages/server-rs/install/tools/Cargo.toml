@@ -1,0 +1,20 @@
+[package]
+name = "cnrs-tools"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Own root: never part of the backend crate.
+[workspace]
+
+[dependencies]
+minisign = { version = "0.10", default-features = false }
+sha2 = "0.10"
+
+[[bin]]
+name = "cnrs-release"
+path = "src/release.rs"
+
+[[bin]]
+name = "cnrs-supervisor"
+path = "src/supervisor.rs"

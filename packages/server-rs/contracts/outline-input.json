@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "sessionID": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "cursor": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "through": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "after",
+        "through"
+      ],
+      "additionalProperties": false
+    },
+    "after": {
+      "type": "integer",
+      "minimum": -1,
+      "maximum": 9007199254740991
+    },
+    "known": {
+      "maxItems": 512,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 9007199254740991
+          },
+          "through": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "after",
+          "through",
+          "digest"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "sessionID"
+  ],
+  "additionalProperties": false
+}

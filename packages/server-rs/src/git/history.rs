@@ -1,0 +1,142 @@
+//! Commit history and one commit's changed files with their contents.
+use super::{
+    TWO_MIB, bad, repo, run, sha,
+    status_read::{changes, mime},
+};
+use crate::{Error, Shared, files};
+use axum::{
+    Json,
+    extract::{Path as Route, Query, State},
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::path::Path;
+
+async fn git(dir: &Path, args: &[&str]) -> Result<String, Error> {
+    Ok(run(dir, args, TWO_MIB).await?.ok()?.text())
+}
+#[derive(Deserialize)]
+pub struct Page {
+    #[serde(default)]
+    offset: u64,
+    head: Option<String>,
+}
+pub async fn history(
+    State(app): State<Shared>,
+    Route((id, slug)): Route<(String, String)>,
+    Query(q): Query<Page>,
+) -> Result<Json<Value>, Error> {
+    let w = repo(&app, &id, &slug).await?;
+    if q.offset > 9007199254740991 {
+        return Err(bad("Invalid history offset"));
+    }
+    let head = if let Some(h) = q.head {
+        if !sha(&h) {
+            return Err(bad("Invalid commit ID"));
+        }
+        Some(h)
+    } else {
+        let h = run(&w.path, &["rev-parse", "--verify", "--quiet", "HEAD"], 1024).await?;
+        if h.code == 1 { None } else { Some(h.ok()?.text().trim().to_owned()) }
+    };
+    let b = git(&w.path, &["branch", "--show-current"]).await?;
+    let branch = Some(b.trim()).filter(|v| !v.is_empty());
+    let mut commits = Vec::new();
+    let mut more = false;
+    if let Some(head) = &head {
+        let text = git(
+            &w.path,
+            &[
+                "log",
+                "-z",
+                "--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%D",
+                "--max-count=51",
+                &format!("--skip={}", q.offset),
+                head,
+                "--",
+            ],
+        )
+        .await?;
+        for fields in text.split('\0').collect::<Vec<_>>().chunks_exact(6) {
+            if commits.len() == 50 {
+                more = true;
+                break;
+            }
+            commits.push(json!({"id":fields[0],"parents":fields[1].split_whitespace().collect::<Vec<_>>(),"author":fields[2],"date":fields[3],"subject":fields[4],"refs":fields[5]}));
+        }
+    }
+    app.workspace(&id)?;
+    Ok(Json(json!({"head":head,"branch":branch,"commits":commits,"hasMore":more})))
+}
+async fn file(dir: &Path, revision: &str, p: &str, binary: bool) -> Result<Vec<u8>, Error> {
+    let out = git(dir, &["ls-tree", "-z", revision, "--", p]).await?;
+    let (meta, path) = out.trim_end_matches('\0').split_once('\t').ok_or_else(|| bad("Commit file is unavailable"))?;
+    let mut fields = meta.split(' ');
+    let mode = fields.next().unwrap_or_default();
+    let kind = fields.next().unwrap_or_default();
+    let object = fields.next().filter(|p| sha(p)).ok_or_else(|| bad("Commit file is unavailable"))?;
+    if path != p {
+        return Err(bad("Commit file is unavailable"));
+    }
+    if mode == "160000" && kind == "commit" {
+        return Ok(format!("Subproject commit {object}\n").into_bytes());
+    }
+    if kind != "blob" {
+        return Err(bad("Commit file is unavailable"));
+    }
+    Ok(run(dir, &["cat-file", "blob", object], if binary { files::MAX } else { TWO_MIB }).await?.ok()?.bytes)
+}
+#[derive(Deserialize)]
+pub struct Details {
+    path: Option<String>,
+}
+pub async fn commit_details(
+    State(app): State<Shared>,
+    Route((id, slug, commit)): Route<(String, String, String)>,
+    Query(q): Query<Details>,
+) -> Result<Json<Value>, Error> {
+    if !sha(&commit) {
+        return Err(bad("Invalid commit ID"));
+    }
+    let w = repo(&app, &id, &slug).await?;
+    let _slot = app.file_reader.acquire().await.unwrap();
+    let text = git(&w.path, &["show", "-s", "--format=%P%x00%B", &format!("{commit}^{{commit}}"), "--"])
+        .await
+        .map_err(|_| bad("Object is not a commit"))?;
+    let (parents, message) = text.split_once('\0').ok_or_else(|| bad("Object is not a commit"))?;
+    let parent = parents.split_whitespace().next().filter(|p| sha(p));
+    let mut args = vec!["diff-tree", "--root", "--no-commit-id", "-r", "-M", "--name-status", "-z"];
+    if let Some(parent) = parent {
+        args.push(parent);
+    }
+    args.extend([commit.as_str(), "--"]);
+    let changed = git(&w.path, &args).await?;
+    let list: Vec<_> = changes(&changed).collect();
+    let response = if let Some(input) = q.path {
+        let p = files::relative(&input, false)?;
+        let (kind, _, old) =
+            *list.iter().find(|(_, p, _)| *p == input).ok_or_else(|| bad("File does not belong to this commit"))?;
+        if let Some(old) = old {
+            files::relative(old, false)?;
+        }
+        let image = mime(&p);
+        let before = if let Some(parent) = parent.filter(|_| kind != "A") {
+            Some(file(&w.path, parent, old.unwrap_or(&p), image.is_some()).await?)
+        } else {
+            None
+        };
+        let after = if kind != "D" { Some(file(&w.path, &commit, &p, image.is_some()).await?) } else { None };
+        let mut out = json!({"path":p,"before":"","after":"","isBinary":false});
+        super::sides(&mut out, image, before, after);
+        out
+    } else {
+        let files = list
+            .into_iter()
+            .filter(|(_, p, _)| files::relative(p, false).is_ok())
+            .map(|(s, p, old)| json!({"path":p,"originalPath":old,"status":&s[..1]}))
+            .collect::<Vec<_>>();
+        json!({"id":commit,"parent":parent,"message":message.trim_end(),"files":files})
+    };
+    app.workspace(&id)?;
+    Ok(Json(response))
+}

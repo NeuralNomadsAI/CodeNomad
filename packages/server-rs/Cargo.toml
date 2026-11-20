@@ -1,0 +1,54 @@
+[package]
+name = "codenomad-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-stream = "0.3"
+axum = "0.8"
+base64 = "0.22"
+bytes = "1"
+cap-std = "3"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+dunce = "1"
+futures-util = "0.3"
+getrandom = "0.4"
+memchr = "2"
+notify = "8"
+percent-encoding = "2"
+regex = "1"
+# Agent memory: lookbehind heuristics, NFKC and UAX #29 word properties (already in the lock).
+fancy-regex = "0.16"
+icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
+icu_properties = "2.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+rcgen = { version = "0.13", features = ["x509-parser"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
+hmac = "0.12"
+time = "0.3"
+x509-parser = "0.16"
+scrypt = { version = "0.11", default-features = false }
+same-file = "1"
+subtle = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
+tokio-util = "0.7"
+uuid = { version = "1", features = ["serde", "v4"] }
+zip = { version = "9.7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+chrono-tz = { version = "0.10", features = ["case-insensitive"] }
+
+[dev-dependencies]
+jsonschema = { version = "0.33", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

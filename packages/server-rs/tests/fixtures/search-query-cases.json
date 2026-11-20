@@ -1,0 +1,642 @@
+[
+ {
+  "query": "",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "q=",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  }\n]"
+ },
+ {
+  "query": "q",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  }\n]"
+ },
+ {
+  "query": "q=%20",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  }\n]"
+ },
+ {
+  "query": "q=+",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  }\n]"
+ },
+ {
+  "query": "q=%09%0A",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  }\n]"
+ },
+ {
+  "query": "q=%C2%A0",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  }\n]"
+ },
+ {
+  "query": "q=%EF%BB%BF",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  }\n]"
+ },
+ {
+  "query": "q=%C2%85",
+  "ok": {
+   "q": ""
+  }
+ },
+ {
+  "query": "q=a",
+  "ok": {
+   "q": "a"
+  }
+ },
+ {
+  "query": "q=a&q=b",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received array\"\n  }\n]"
+ },
+ {
+  "query": "q=a&q=b&q=c",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received array\"\n  }\n]"
+ },
+ {
+  "query": "q=%zz",
+  "ok": {
+   "q": "%zz"
+  }
+ },
+ {
+  "query": "q=a%zz%41",
+  "ok": {
+   "q": "a%zz%41"
+  }
+ },
+ {
+  "query": "q=%41",
+  "ok": {
+   "q": "A"
+  }
+ },
+ {
+  "query": "q=%E2%82%AC",
+  "ok": {
+   "q": "€"
+  }
+ },
+ {
+  "query": "q=%C0%80",
+  "ok": {
+   "q": "%C0%80"
+  }
+ },
+ {
+  "query": "q=%ED%A0%80",
+  "ok": {
+   "q": "%ED%A0%80"
+  }
+ },
+ {
+  "query": "q=a+b",
+  "ok": {
+   "q": "a b"
+  }
+ },
+ {
+  "query": "q=a%2Bb",
+  "ok": {
+   "q": "a+b"
+  }
+ },
+ {
+  "query": "q=%",
+  "ok": {
+   "q": "%"
+  }
+ },
+ {
+  "query": "q=a=b",
+  "ok": {
+   "q": "a=b"
+  }
+ },
+ {
+  "query": "q==a",
+  "ok": {
+   "q": "=a"
+  }
+ },
+ {
+  "query": "=x&q=a",
+  "ok": {
+   "q": "a"
+  }
+ },
+ {
+  "query": "&&q=a&&",
+  "ok": {
+   "q": "a"
+  }
+ },
+ {
+  "query": "q=x&unknown=1",
+  "ok": {
+   "q": "x"
+  }
+ },
+ {
+  "query": "Q=a",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "q%3D=a",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "q[]=a",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "directory=&q=a",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"directory\"\n    ],\n    \"message\": \"Too small: expected string to have >=1 characters\"\n  }\n]"
+ },
+ {
+  "query": "directory=%20&q=a",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"directory\"\n    ],\n    \"message\": \"Too small: expected string to have >=1 characters\"\n  }\n]"
+ },
+ {
+  "query": "directory=x&directory=y&q=a",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"directory\"\n    ],\n    \"message\": \"Invalid input: expected string, received array\"\n  }\n]"
+ },
+ {
+  "query": "directory=x&directory=y",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"directory\"\n    ],\n    \"message\": \"Invalid input: expected string, received array\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "directory=x",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "directory=%20x%20&q=a",
+  "ok": {
+   "directory": "x",
+   "q": "a"
+  }
+ },
+ {
+  "query": "q=a&type=all",
+  "ok": {
+   "q": "a",
+   "type": "all"
+  }
+ },
+ {
+  "query": "q=a&type=file",
+  "ok": {
+   "q": "a",
+   "type": "file"
+  }
+ },
+ {
+  "query": "q=a&type=directory",
+  "ok": {
+   "q": "a",
+   "type": "directory"
+  }
+ },
+ {
+  "query": "q=a&type=File",
+  "error": "[\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"all\",\n      \"file\",\n      \"directory\"\n    ],\n    \"path\": [\n      \"type\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"all\\\"|\\\"file\\\"|\\\"directory\\\"\"\n  }\n]"
+ },
+ {
+  "query": "q=a&type=",
+  "error": "[\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"all\",\n      \"file\",\n      \"directory\"\n    ],\n    \"path\": [\n      \"type\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"all\\\"|\\\"file\\\"|\\\"directory\\\"\"\n  }\n]"
+ },
+ {
+  "query": "q=a&type=x&type=y",
+  "error": "[\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"all\",\n      \"file\",\n      \"directory\"\n    ],\n    \"path\": [\n      \"type\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"all\\\"|\\\"file\\\"|\\\"directory\\\"\"\n  }\n]"
+ },
+ {
+  "query": "q=a&type=file&type=file",
+  "error": "[\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"all\",\n      \"file\",\n      \"directory\"\n    ],\n    \"path\": [\n      \"type\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"all\\\"|\\\"file\\\"|\\\"directory\\\"\"\n  }\n]"
+ },
+ {
+  "query": "q=a&refresh=true",
+  "ok": {
+   "q": "a",
+   "refresh": true
+  }
+ },
+ {
+  "query": "q=a&refresh=TRUE",
+  "ok": {
+   "q": "a",
+   "refresh": false
+  }
+ },
+ {
+  "query": "q=a&refresh=1",
+  "ok": {
+   "q": "a",
+   "refresh": false
+  }
+ },
+ {
+  "query": "q=a&refresh=",
+  "ok": {
+   "q": "a",
+   "refresh": false
+  }
+ },
+ {
+  "query": "q=a&refresh",
+  "ok": {
+   "q": "a",
+   "refresh": false
+  }
+ },
+ {
+  "query": "q=a&refresh=true&refresh=true",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"refresh\"\n    ],\n    \"message\": \"Invalid input: expected string, received array\"\n  }\n]"
+ },
+ {
+  "query": "refresh=x&refresh=y",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"refresh\"\n    ],\n    \"message\": \"Invalid input: expected string, received array\"\n  }\n]"
+ },
+ {
+  "query": "limit=abc",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "limit=0&type=x&refresh=a&refresh=b&directory=",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"directory\"\n    ],\n    \"message\": \"Too small: expected string to have >=1 characters\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"all\",\n      \"file\",\n      \"directory\"\n    ],\n    \"path\": [\n      \"type\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"all\\\"|\\\"file\\\"|\\\"directory\\\"\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"refresh\"\n    ],\n    \"message\": \"Invalid input: expected string, received array\"\n  }\n]"
+ },
+ {
+  "query": "q=%20&limit=1.5&type=",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  },\n  {\n    \"expected\": \"int\",\n    \"format\": \"safeint\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected int, received number\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"all\",\n      \"file\",\n      \"directory\"\n    ],\n    \"path\": [\n      \"type\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"all\\\"|\\\"file\\\"|\\\"directory\\\"\"\n  }\n]"
+ },
+ {
+  "query": "directory=a&directory=b&q=&limit=-1&type=no&refresh=1&refresh=2",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"directory\"\n    ],\n    \"message\": \"Invalid input: expected string, received array\"\n  },\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"all\",\n      \"file\",\n      \"directory\"\n    ],\n    \"path\": [\n      \"type\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"all\\\"|\\\"file\\\"|\\\"directory\\\"\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"refresh\"\n    ],\n    \"message\": \"Invalid input: expected string, received array\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=%20",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=0",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=-0",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=1",
+  "ok": {
+   "q": "a",
+   "limit": 1
+  }
+ },
+ {
+  "query": "q=a&limit=2",
+  "ok": {
+   "q": "a",
+   "limit": 2
+  }
+ },
+ {
+  "query": "q=a&limit=199",
+  "ok": {
+   "q": "a",
+   "limit": 199
+  }
+ },
+ {
+  "query": "q=a&limit=200",
+  "ok": {
+   "q": "a",
+   "limit": 200
+  }
+ },
+ {
+  "query": "q=a&limit=201",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 200,\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected number to be <=200\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=-1",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=1.5",
+  "error": "[\n  {\n    \"expected\": \"int\",\n    \"format\": \"safeint\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected int, received number\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=-1.5",
+  "error": "[\n  {\n    \"expected\": \"int\",\n    \"format\": \"safeint\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected int, received number\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=1e2",
+  "ok": {
+   "q": "a",
+   "limit": 100
+  }
+ },
+ {
+  "query": "q=a&limit=1e3",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 200,\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected number to be <=200\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=2e-1",
+  "error": "[\n  {\n    \"expected\": \"int\",\n    \"format\": \"safeint\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected int, received number\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=1e300",
+  "error": "[\n  {\n    \"code\": \"too_big\",\n    \"maximum\": 9007199254740991,\n    \"note\": \"Integers must be within the safe integer range.\",\n    \"origin\": \"int\",\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected int to be <=9007199254740991\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 200,\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected number to be <=200\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=-1e300",
+  "error": "[\n  {\n    \"code\": \"too_small\",\n    \"minimum\": -9007199254740991,\n    \"note\": \"Integers must be within the safe integer range.\",\n    \"origin\": \"int\",\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected int to be >=-9007199254740991\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=9007199254740991",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 200,\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected number to be <=200\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=9007199254740992",
+  "error": "[\n  {\n    \"code\": \"too_big\",\n    \"maximum\": 9007199254740991,\n    \"note\": \"Integers must be within the safe integer range.\",\n    \"origin\": \"int\",\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected int to be <=9007199254740991\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 200,\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected number to be <=200\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=9007199254740993",
+  "error": "[\n  {\n    \"code\": \"too_big\",\n    \"maximum\": 9007199254740991,\n    \"note\": \"Integers must be within the safe integer range.\",\n    \"origin\": \"int\",\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected int to be <=9007199254740991\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 200,\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected number to be <=200\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=-9007199254740992",
+  "error": "[\n  {\n    \"code\": \"too_small\",\n    \"minimum\": -9007199254740991,\n    \"note\": \"Integers must be within the safe integer range.\",\n    \"origin\": \"int\",\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected int to be >=-9007199254740991\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=abc",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=0x10",
+  "ok": {
+   "q": "a",
+   "limit": 16
+  }
+ },
+ {
+  "query": "q=a&limit=0X1f",
+  "ok": {
+   "q": "a",
+   "limit": 31
+  }
+ },
+ {
+  "query": "q=a&limit=0b11",
+  "ok": {
+   "q": "a",
+   "limit": 3
+  }
+ },
+ {
+  "query": "q=a&limit=0o7",
+  "ok": {
+   "q": "a",
+   "limit": 7
+  }
+ },
+ {
+  "query": "q=a&limit=0x",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=%2B0x10",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=-0x10",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=Infinity",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"Infinity\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received Infinity\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=-Infinity",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"-Infinity\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received -Infinity\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=%2BInfinity",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"Infinity\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received Infinity\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=infinity",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=NaN",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=%205%20",
+  "ok": {
+   "q": "a",
+   "limit": 5
+  }
+ },
+ {
+  "query": "q=a&limit=%095%0A",
+  "ok": {
+   "q": "a",
+   "limit": 5
+  }
+ },
+ {
+  "query": "q=a&limit=%C2%A05",
+  "ok": {
+   "q": "a",
+   "limit": 5
+  }
+ },
+ {
+  "query": "q=a&limit=%EF%BB%BF5",
+  "ok": {
+   "q": "a",
+   "limit": 5
+  }
+ },
+ {
+  "query": "q=a&limit=%C2%855",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=5abc",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=%2B5",
+  "ok": {
+   "q": "a",
+   "limit": 5
+  }
+ },
+ {
+  "query": "q=a&limit=.5",
+  "error": "[\n  {\n    \"expected\": \"int\",\n    \"format\": \"safeint\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected int, received number\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=5.",
+  "ok": {
+   "q": "a",
+   "limit": 5
+  }
+ },
+ {
+  "query": "q=a&limit=1_000",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=%D9%A1",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=00012",
+  "ok": {
+   "q": "a",
+   "limit": 12
+  }
+ },
+ {
+  "query": "q=a&limit=1.0",
+  "ok": {
+   "q": "a",
+   "limit": 1
+  }
+ },
+ {
+  "query": "q=a&limit=0.0",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=1e",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=e5",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=--1",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=0x1.8",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=0xFFFFFFFFFFFFFFFFFFFF",
+  "error": "[\n  {\n    \"code\": \"too_big\",\n    \"maximum\": 9007199254740991,\n    \"note\": \"Integers must be within the safe integer range.\",\n    \"origin\": \"int\",\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected int to be <=9007199254740991\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 200,\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected number to be <=200\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=1%2C2",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=100%25",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=%2531%2530",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "limit=",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "limit=%20",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "limit=0",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "limit=-0",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "limit=1",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "limit=2",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "limit=199",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "limit=200",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+ },
+ {
+  "query": "limit=201",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_big\",\n    \"maximum\": 200,\n    \"inclusive\": true,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too big: expected number to be <=200\"\n  }\n]"
+ },
+ {
+  "query": "limit=-1",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "limit=1.5",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"int\",\n    \"format\": \"safeint\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected int, received number\"\n  }\n]"
+ },
+ {
+  "query": "limit=-1.5",
+  "error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"int\",\n    \"format\": \"safeint\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected int, received number\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=1&limit=2",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit=5&limit=5",
+  "error": "[\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"received\": \"NaN\",\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received NaN\"\n  }\n]"
+ },
+ {
+  "query": "q=a&limit",
+  "error": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": false,\n    \"path\": [\n      \"limit\"\n    ],\n    \"message\": \"Too small: expected number to be >0\"\n  }\n]"
+ },
+ {
+  "query": "q=%E2%80%A8x%E2%80%A9",
+  "ok": {
+   "q": "x"
+  }
+ },
+ {
+  "query": "q=%E3%80%80",
+  "error": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"q\"\n    ],\n    \"message\": \"Query is required\"\n  }\n]"
+ },
+ {
+  "query": "q=farzher",
+  "ok": {
+   "q": "farzher"
+  }
+ },
+ {
+  "query": "q=%F0%9F%98%80",
+  "ok": {
+   "q": "😀"
+  }
+ },
+ {
+  "query": "q=%F0%9F%98",
+  "ok": {
+   "q": "%F0%9F%98"
+  }
+ },
+ {
+  "query": "q=%FF",
+  "ok": {
+   "q": "%FF"
+  }
+ }
+]

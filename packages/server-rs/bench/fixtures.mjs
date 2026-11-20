@@ -1,0 +1,91 @@
+// Bench paths (TS dist of this checkout, Rust binary, out/) and fixture installers shared by the modes.
+import assert from "node:assert/strict"
+import { execFile } from "node:child_process"
+import { existsSync } from "node:fs"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { register } from "node:module"
+import path from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { promisify } from "node:util"
+
+export const repo = fileURLToPath(new URL("../../../", import.meta.url))
+export const dist = pathToFileURL(path.join(repo, "packages/server/dist/"))
+export const out = fileURLToPath(new URL("./out/", import.meta.url))
+export const fromDist = file => import(new URL(file, dist))
+assert(existsSync(new URL("index.js", dist)), "Build the TS server first: npm run build --workspace @neuralnomads/codenomad")
+register(new URL("loader.js", dist), import.meta.url)
+
+/** Private temp tree of every fixture (the bench lies inside the CodeNomad checkout: see the Git ceiling in compare.mjs). */
+export async function useBenchTemp() {
+  process.env.TMP = process.env.TEMP = process.env.TMPDIR = path.join(out, "tmp")
+  await mkdir(process.env.TMP, { recursive: true })
+}
+const assertFixtureRoot = root => assert(path.resolve(root).startsWith(path.join(out, "tmp", "opencode")), `Not a bench fixture: ${root}`)
+
+export function rustBinary() {
+  const bin = process.env.CODENOMAD_RS_BINARY ?? process.env.CNRS_RUST_BINARY
+    ?? path.join(process.env.CARGO_TARGET_DIR ?? path.join(repo, "packages/server-rs/target"), "release", `codenomad-rs${process.platform === "win32" ? ".exe" : ""}`)
+  assert(path.isAbsolute(bin) && existsSync(bin), `Rust binary not found: ${bin} (CODENOMAD_RS_BINARY, CNRS_RUST_BINARY or CARGO_TARGET_DIR)`)
+  return bin
+}
+
+/** The bundled pruning plugin in the Rust fixture profile, as the TS server installs its own. */
+export async function installPruning({ root, configDirectory }) {
+  assertFixtureRoot(root)
+  const { installPruningPresence } = await fromDist("opencode/pruning-installation.js")
+  const { awaitNativePlugin } = await fromDist("opencode/plugin-activation.js")
+  const presence = await installPruningPresence(await readFile(new URL("plugins/session-pruning/plugin.mjs", dist)),
+    { config: configDirectory, data: path.join(root, "rust-fixture-presence") })
+  return {
+    close: presence,
+    async ready(client, directory) {
+      const location = { directory }
+      await client.location.get({ location })
+      const signal = AbortSignal.timeout(12000)
+      await awaitNativePlugin(client, "codenomad-session-pruning", location, signal)
+      await presence.prepare(directory, signal, () => {})
+    },
+  }
+}
+
+/** The Missions plugin Rust's read-only Missions routes and automation bridge expect (no Missions comparison runs). */
+export async function installMissions({ root, configDirectory }) {
+  assertFixtureRoot(root)
+  const { installDesktopPluginPresence } = await fromDist("opencode/desktop-plugin-installation.js")
+  const [bundle, provider] = await Promise.all(["plugin.mjs", "provider.mjs"].map(name => readFile(new URL(`plugins/missions/${name}`, dist))))
+  return installDesktopPluginPresence("missions", bundle, { config: configDirectory, data: path.join(root, "missions-presence") }, () => {}, () => "", provider)
+}
+
+/** Rust provisions the bundled plugins itself (memory, Design leases), like the TS server. */
+export const provisionEnv = (root, plugins = "1") => ({ CNRS_PROVISION_PLUGINS: plugins,
+  CNRS_PLUGIN_ASSETS: fileURLToPath(new URL("plugins/", dist)), CNRS_PLUGIN_PROFILE_ROOT: root })
+
+/** A Git repository with its own identity and a fake origin URL (never fetched). */
+export async function privateGit(folder, slug) {
+  await mkdir(folder, { recursive: true })
+  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_/.test(key))),
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(path.dirname(folder), "fixture.gitconfig") }
+  const git = (...args) => promisify(execFile)("git", args, { windowsHide: true, env })
+  await git("init", "--quiet", folder)
+  await git("-C", folder, "remote", "add", "origin", `https://fixture.invalid/${slug}.git`)
+}
+
+/** Windows private bytes and working set of each PID. */
+export async function memory(pids) {
+  assert(pids.every(pid => Number.isSafeInteger(pid) && pid > 0))
+  const { stdout } = await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+    `@(${pids.join(",")}) | ForEach-Object { $p=Get-Process -Id $_ -ErrorAction Stop; "{0},{1}" -f $p.PrivateMemorySize64,$p.WorkingSet64 }`], { windowsHide: true })
+  return stdout.trim().split(/\r?\n/).map(row => { const [privateBytes, workingSet] = row.split(",").map(Number); return { privateBytes, workingSet } })
+}
+/** Medians of five readings per PID. */
+export async function measurePair(ts, rs) {
+  const reads = []
+  for (let i = 0; i < 5; i++) { if (i) await new Promise(r => setTimeout(r, 80)); reads.push(await memory([ts.pid, rs.pid])) }
+  const median = rows => Object.fromEntries(["privateBytes", "workingSet"].map(key => {
+    const sorted = rows.map(row => row[key]).sort((a, b) => a - b), i = sorted.length >> 1
+    return [key, sorted.length % 2 ? sorted[i] : (sorted[i - 1] + sorted[i]) / 2]
+  }))
+  return { typescript: median(reads.map(r => r[0])), rust: median(reads.map(r => r[1])), raw: reads }
+}
+
+export const writeJson = (name, value) => writeFile(path.join(out, name), JSON.stringify(value, null, 2))
