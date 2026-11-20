@@ -143,6 +143,16 @@ describe("work item branches", () => {
     assert.deepEqual(await create(clone, source, "issue", 7), { status: "conflict", branch: "issue-7" })
   })
 
+  it("a copied or renamed branch never inherits the link", async () => {
+    const { clone, source } = await project()
+    assert.equal((await createWorkItemBranch(clone, source, "issue", 7)).status, "ok")
+    git(clone, "branch", "-c", "issue-7", "backup")
+    git(clone, "branch", "-D", "issue-7")
+    git(clone, "branch", "-m", "backup", "renamed")
+    assert.deepEqual(await readWorkItemBranches(clone, source), [])
+    assert.deepEqual(await lookup(clone, source, "issue", 7), { status: "ok", branch: null })
+  })
+
   it("revalidates the repository before an issue branch is created or reused", async () => {
     const { clone, source } = await project()
     assert.equal((await createWorkItemBranch(clone, source, "issue", 5)).status, "ok")
@@ -155,7 +165,7 @@ describe("work item branches", () => {
 
   it("an exact lookup sees links beyond the listing's 200", async () => {
     const { clone, base, source } = await project()
-    const value = (i: number) => `${source.host}/${source.path}#issue/${i}@${base}`.toLowerCase()
+    const value = (i: number) => `${`${source.host}/${source.path}`.toLowerCase()}#issue/${i}@${base}/issue-${i}`
     execFileSync("git", ["-C", clone, "update-ref", "--stdin"], { input: Array.from({ length: 201 }, (_, i) => `create refs/heads/issue-${i + 1} ${base}\n`).join("") })
     appendFileSync(path.join(clone, ".git", "config"), Array.from({ length: 201 }, (_, i) => `\n[branch "issue-${i + 1}"]\n\tcodenomad-work-item = \"${value(i + 1)}\"\n`).join(""))
     assert.equal((await readWorkItemBranches(clone, source)).length, 200)

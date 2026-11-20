@@ -20,7 +20,7 @@ export interface WorkItemBranchGuard {
 }
 
 // Host-owned link of a local branch to one item, in the repository's own config:
-// `<host>/<path>#<kind>/<number>@<start commit>`. Git drops it with the branch; a branch
+// `<host>/<path>#<kind>/<number>@<start commit>/<branch>`. Git drops it with the branch; a branch
 // name alone is never proof, and only a branch that still contains its start commit is
 // the one CodeNomad created.
 const KEY = "codenomad-work-item"
@@ -50,8 +50,9 @@ async function links(directory: string, source: Pick<WorkItemBranchSource, "host
     // `branch.<name>.<key> <value>`: Git lowercases the section and key, never the name.
     const space = line.indexOf(" ")
     const branch = line.slice("branch.".length, space - KEY.length - 1)
-    const value = /^(.+)#(issue|pullrequest)\/([1-9]\d{0,8})@([0-9a-f]{40}|[0-9a-f]{64})$/.exec(line.slice(space + 1))
-    if (branch && value?.[1] === repository) {
+    const value = /^([^#]+)#(issue|pullrequest)\/([1-9]\d{0,8})@([0-9a-f]{40}|[0-9a-f]{64})\/(.+)$/.exec(line.slice(space + 1))
+    // The value names its own branch: `git branch -c`/`-m` carry the config to another name, never the link.
+    if (branch && value?.[1] === repository && value[5] === branch) {
       linked.push({ kind: value[2] === "issue" ? "issue" : "pullRequest", number: Number(value[3]), branch, start: value[4]! })
     }
   }
@@ -148,7 +149,7 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
   // Fails, without force, when the name was taken meanwhile.
   try { await git(directory, ["branch", "--no-track", branch, revision]) } catch { return { status: "conflict", branch } }
   try {
-    await git(directory, ["config", "--local", `branch.${branch}.${KEY}`, `${workItemRepository(source)}#${kind.toLowerCase()}/${number}@${revision}`])
+    await git(directory, ["config", "--local", `branch.${branch}.${KEY}`, `${workItemRepository(source)}#${kind.toLowerCase()}/${number}@${revision}/${branch}`])
   } catch (error) {
     await git(directory, ["update-ref", "-d", `refs/heads/${branch}`, revision]).catch(() => {})
     throw error

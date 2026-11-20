@@ -67,6 +67,8 @@ const worktreeCalls: unknown[] = [], refusal = { move: false }
 serverApi.fetchWorktrees = async () => ({ isGitRepo: true, defaultDirectory: "/fixture/.codenomad/worktrees", worktrees: [...worktrees] })
 serverApi.createWorktree = async (_id, input) => {
   worktreeCalls.push({ create: input.slug })
+  // `fixture.gate`, when set, holds the creation until the test opens it.
+  await (window as any).fixture.gate
   const entry = { slug: input.slug, label: input.slug, directory: `/fixture/.codenomad/worktrees/${input.slug}`, kind: "worktree", branch: input.slug }
   worktrees.push(entry)
   return entry

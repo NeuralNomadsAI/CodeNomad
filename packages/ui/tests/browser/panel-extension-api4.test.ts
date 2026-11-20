@@ -613,3 +613,22 @@ test("worktrees: an extension revoked once its branch exists creates no worktree
     assert.deepEqual([await worktreeCalls(page), await page.evaluate(() => (window as any).fixture.location("ses_work"))], [[], "/fixture"])
   } finally { release(); await page.close() }
 })
+test("worktrees: a branch replaced while its worktree is created never receives the family", async () => {
+  await install()
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    await page.evaluate(() => { const fixture = (window as any).fixture; fixture.gate = new Promise(resolve => { fixture.release = resolve }) })
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 41), { ok: "confirming" })
+    await page.getByRole("button", { name: "Create and move", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.release !== undefined && document.readyState === "complete")
+    for (let attempt = 0; attempt < 100 && !branches().includes("issue-41"); attempt++) await page.waitForTimeout(50)
+    await page.waitForTimeout(200)
+    const tip = execFileSync("git", ["-C", repository, "rev-parse", "issue-41"], { encoding: "utf8" }).trim()
+    execFileSync("git", ["-C", repository, "branch", "-D", "issue-41"])
+    execFileSync("git", ["-C", repository, "branch", "issue-41", tip])
+    await page.evaluate(() => (window as any).fixture.release())
+    await page.getByText("The worktree for issue #41 changed. Try again.").first().waitFor()
+    assert.deepEqual([await worktreeCalls(page), await page.evaluate(() => (window as any).fixture.location("ses_work"))], [[{ create: "issue-41" }], "/fixture"])
+  } finally { await page.evaluate(() => (window as any).fixture.release?.()).catch(() => {}); await page.close() }
+})

@@ -212,11 +212,12 @@ export function useApi4Channel(props: {
     const target = await itemWorktree(kind, number, signal)
     if (!target) return { result: "unavailable" }
     if (target.current) return { result: "current" }
-    return { result: "confirming", after: () => { void confirmWorktree(session, kind, number, target.repository, target.slug) } }
+    return { result: "confirming", after: () => { void confirmWorktree(session, kind, number, target.repository, target.slug, target.branch) } }
   }
 
   // The confirmation names the repository; acceptance applies to that repository only.
-  async function confirmWorktree(session: string, kind: ForgeWorkItemKind, number: number, repository: string | undefined, slug: string | undefined) {
+  async function confirmWorktree(session: string, kind: ForgeWorkItemKind, number: number, repository: string | undefined, slug: string | undefined,
+    branchLabel: string | undefined) {
     // One dialog at a time, never over another host dialog, and none for a while after a refusal,
     // so a panel cannot keep the modal up while the user reaches its checkbox.
     if (confirming || alertDialogState() || disposed || Date.now() < quietUntil) return
@@ -225,13 +226,15 @@ export function useApi4Channel(props: {
     let progress: ToastHandle | undefined
     // Before each host mutation: still mounted, and the server still grants this exact package
     // (a disabled or replaced package fails the lookup's consent check).
-    const consented = async () => {
+    // With `branch`, the item must still be linked to that exact branch (not deleted and recreated meanwhile).
+    const consented = async (branch?: string) => {
       if (disposed) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
-      await panelExtensionsApi4.workItemBranchLookup(authority, kind, number, lifetime.signal)
+      const answer = await panelExtensionsApi4.workItemBranchLookup(authority, kind, number, lifetime.signal)
       if (disposed) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
+      if (branch !== undefined && (answer.status !== "ok" || answer.branch !== branch)) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
     }
     try {
-      const accepted = await showConfirmDialog(tGlobal(slug ? "panelExtensions.worktrees.confirmMove" : "panelExtensions.worktrees.confirmCreate", { item, worktree: slug }), {
+      const accepted = await showConfirmDialog(tGlobal(slug ? "panelExtensions.worktrees.confirmMove" : "panelExtensions.worktrees.confirmCreate", { item, worktree: branchLabel ?? slug }), {
         title: props.name, detail: repository, confirmLabel: tGlobal(slug ? "panelExtensions.worktrees.move" : "panelExtensions.worktrees.create") }, lifetime.signal)
       if (!accepted) quietUntil = Date.now() + REFUSED_QUIET_MS
       if (!accepted || disposed) return
@@ -252,7 +255,7 @@ export function useApi4Channel(props: {
         branchName = branch.branch
         await reloadWorktrees(props.instanceId)
       }
-      await consented()
+      await consented(branchName)
       // The target must still check out the item's branch when the family moves; the move reports its own failure.
       await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination, { branch: branchName }).catch(() => {})
     } catch (error) {

@@ -10,6 +10,7 @@ import {
 } from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
 import { GitRequiredError } from "./git-requirement"
+import { runWorktreeGit } from "./git-process"
 
 export class NestedFolderUnavailableError extends Error {
   readonly code = "nested_folder_unavailable"
@@ -192,8 +193,10 @@ export async function createNativeWorktree(context: NativeWorktreeContext, branc
     // policy: preserve a named branch without duplicating worktree management.
     await attachWorktreeBranch(host, branch, policy.existing)
     if (revision !== undefined) {
-      const checkout = await readCheckout(host)
-      if (checkout.head !== revision || checkout.branch !== branch) throw new Error("Branch changed before its worktree was created")
+      // The full ref: a same-named tag makes the short name `heads/<branch>`.
+      const [head, ref] = await Promise.all([readCheckout(host).then(checkout => checkout.head),
+        runWorktreeGit(host, ["symbolic-ref", "--quiet", "HEAD"]).catch(() => undefined)])
+      if (head !== revision || ref !== `refs/heads/${branch}`) throw new Error("Branch changed before its worktree was created")
     }
   } catch (error) {
     try {

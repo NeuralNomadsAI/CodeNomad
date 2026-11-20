@@ -131,3 +131,29 @@ test("creation for an expected tip never lets Git guess a deleted branch from a 
     await rm(root, { recursive: true, force: true })
   }
 })
+test("creation for an expected tip accepts the branch when a tag has the same name", async () => {
+  const root = await mkdtemp(path.join(process.platform === "win32" ? path.join(tmpdir(), "opencode") : tmpdir(), "worktree-tag-"))
+  const repo = path.join(root, "main"), child = path.join(repo, ".codenomad", "worktrees", "issue-7")
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+  try {
+    git(root, "init", "--initial-branch=main", repo)
+    await mkdir(path.dirname(child), { recursive: true })
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "one")
+    const tip = git(repo, "rev-parse", "HEAD")
+    git(repo, "branch", "issue-7", tip)
+    git(repo, "tag", "issue-7", tip)
+    let created = false
+    const client = {
+      location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+      worktree: { refresh: async () => {}, list: async () => [{ directory: repo }, ...(created ? [{ directory: child }] : [])],
+        create: async () => { git(repo, "worktree", "add", "--detach", "-q", child, tip); created = true; return { directory: child } },
+        remove: async () => { git(repo, "worktree", "remove", "--force", child); created = false } },
+    } as unknown as OpenCodeClient
+    const result = await createNativeWorktree({ client, workspacePath: repo, location: { directory: repo }, toHost: async (directory: string) => directory },
+      "issue-7", "root", tip)
+    assert.equal(result.branch?.replace(/^heads\//, ""), "issue-7")
+    assert.equal(git(child, "symbolic-ref", "HEAD"), "refs/heads/issue-7")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
