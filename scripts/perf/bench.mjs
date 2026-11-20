@@ -7,7 +7,7 @@ import { parseArgs } from "node:util"
 import { withBrowser } from "./browser.mjs"
 import { withDaemon } from "./daemon-host.mjs"
 import { privatePath, runDirectory } from "./isolation.mjs"
-import { MARKER, now, p95, sleep, sseReader } from "./lib.mjs"
+import { MARKER, p95, sleep, sseReader } from "./lib.mjs"
 import { seed, waitIdle, withSampleSessions } from "./seed.mjs"
 import { withTui } from "./tui.mjs"
 
@@ -37,18 +37,23 @@ let pass = 0
 async function measure(daemon, ids, driver, countWork) {
   const run = String(++pass).padStart(2, "0")
   const daemonAt = new Map(), outcomes = new Set()
-  const wanted = new Set(ids)
+  const owners = new Map(ids.map((id, i) => [id, sessionCode(i)]))
   const codes = ids.map((_, i) => sessionCode(i))
   const expected = Array.from({ length: Math.ceil(chunks / 8) }, (_, i) => `MKAA${run}${String(i * 8).padStart(4, "0")}K`)
   const last = expected.at(-1)
   const markerFor = (key, code) => key.replace("MKAA", `MK${code}`)
-  let daemonFrames = 0, failure
+  const daemonEvents = new Set()
+  let failure
   const stop = await sseReader(`${daemon.url}/api/event`, daemon.authorization, (frame, at) => {
     const event = JSON.parse(frame)
     if (event.type === "server.connected" || event.type === "server.heartbeat") return
-    daemonFrames++
-    for (const key of frame.match(MARKER) ?? []) if (!daemonAt.has(key)) daemonAt.set(key, at)
-    if (wanted.has(event.data?.sessionID) && event.type?.startsWith("session.execution.")) {
+    if (typeof event.id === "string") daemonEvents.add(event.id)
+    const code = owners.get(event.data?.sessionID)
+    if (code && (event.type === "session.text.delta" || event.type === "session.text.ended")) {
+      const text = event.data.delta ?? event.data.text
+      for (const key of text?.match(MARKER) ?? []) if (key.startsWith(`MK${code}${run}`) && !daemonAt.has(key)) daemonAt.set(key, at)
+    }
+    if (code && event.type?.startsWith("session.execution.")) {
       if (event.type === "session.execution.succeeded") outcomes.add(event.data.sessionID)
       if (event.type === "session.execution.failed" || event.type === "session.execution.interrupted") failure = event.type
     }
@@ -66,8 +71,7 @@ async function measure(daemon, ids, driver, countWork) {
       }
       for (let i = 0; i < 5; i++) {
         if (failure) return
-        const at = now()
-        keys.push({ at, elapsed: await driver.typeKey(i) })
+        keys.push(await driver.typeKey(i))
         await sleep(100)
       }
     })().catch(error => { failure = error })
@@ -92,8 +96,9 @@ async function measure(daemon, ids, driver, countWork) {
     // Let work triggered by the final native events settle before ending coverage.
     await sleep(800)
     const coverage = countWork ? await driver.coverage() : undefined
-    const { shown, mutations, pageFrames } = await driver.collect()
-    const sourceFrames = daemonFrames
+    const { shown, mutations, pageEvents } = await driver.collect(countWork)
+    const sourceFrames = daemonEvents.size
+    const pageFrames = pageEvents?.filter(id => daemonEvents.has(id)).length
     await driver.clear()
     await waitIdle(daemon)
     const seen = expected.filter(key => shown[key] !== undefined && daemonAt.has(key))

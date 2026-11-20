@@ -19,22 +19,49 @@
         if (!sample) return
         let payload
         try { payload = JSON.parse(data) } catch { return }
-        if (payload?.type === "instance.event" && typeof payload.event?.type === "string"
-          && !["server.connected", "server.heartbeat"].includes(payload.event.type)) sample.pageFrames++
+        if (payload?.type === "instance.event" && typeof payload.event?.id === "string"
+          && !["server.connected", "server.heartbeat"].includes(payload.event.type)) sample.pageEvents.add(payload.event.id)
       })
     }
   }
   const start = () => {
+    function paintPending(owner) {
+      if (owner.scheduled || !owner.pending.size) return
+      owner.scheduled = true
+      afterPaint(at => {
+        owner.scheduled = false
+        const range = document.createRange()
+        for (const [marker, { node, index }] of owner.pending) {
+          const element = node.parentElement
+          const stream = element?.closest(".message-stream")
+          if (!node.isConnected || !stream || node.data.slice(index, index + marker.length) !== marker) {
+            owner.pending.delete(marker)
+            continue
+          }
+          if (!element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue
+          if (owner.visibleOnly) {
+            range.setStart(node, index)
+            range.setEnd(node, index + marker.length)
+            const viewport = stream.getBoundingClientRect()
+            const rect = range.getBoundingClientRect()
+            const left = Math.max(0, viewport.left, rect.left), right = Math.min(innerWidth, viewport.right, rect.right)
+            const top = Math.max(0, viewport.top, rect.top), bottom = Math.min(innerHeight, viewport.bottom, rect.bottom)
+            if (!(left < right && top < bottom && element.contains(document.elementFromPoint((left + right) / 2, (top + bottom) / 2)))) continue
+          }
+          owner.shown[marker] = at
+          owner.pending.delete(marker)
+        }
+      })
+    }
     new MutationObserver(records => {
       if (!sample) return
       const owner = sample
-      const found = new Map()
       function scanText(node) {
         if (!node.data.includes("MK")) return
         const element = node.parentElement
         if (!element?.closest(".message-stream")) return
         for (const match of node.data.matchAll(markers)) {
-          if (!(match[0] in owner.shown)) found.set(match[0], { node, index: match.index })
+          if (!(match[0] in owner.shown)) owner.pending.set(match[0], { node, index: match.index })
         }
       }
       function scan(node) {
@@ -45,27 +72,12 @@
       }
       owner.mutations += records.length
       for (const record of records) {
-        if (record.type === "characterData") scan(record.target)
+        if (record.type === "characterData" || (owner.visibleOnly && record.type === "attributes")) scan(record.target)
         else for (const node of record.addedNodes) scan(node)
       }
-      if (found.size) afterPaint(at => {
-        const range = document.createRange()
-        for (const [marker, { node, index }] of found) {
-          const element = node.parentElement
-          const stream = element?.closest(".message-stream")
-          if (!node.isConnected || !stream || node.data.slice(index, index + marker.length) !== marker
-            || !element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue
-          if (!owner.visibleOnly) { owner.shown[marker] ??= at; continue }
-          range.setStart(node, index)
-          range.setEnd(node, index + marker.length)
-          const viewport = stream.getBoundingClientRect()
-          const rect = range.getBoundingClientRect()
-          if (rect.width > 0 && rect.height > 0
-            && rect.right > Math.max(0, viewport.left) && rect.left < Math.min(innerWidth, viewport.right)
-            && rect.bottom > Math.max(0, viewport.top) && rect.top < Math.min(innerHeight, viewport.bottom)) owner.shown[marker] ??= at
-        }
-      })
+      paintPending(owner)
     }).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true })
+    document.addEventListener("scroll", () => { if (sample?.visibleOnly) paintPending(sample) }, true)
     document.addEventListener("input", event => {
       if (!sample || !event.isTrusted || event.target !== sample.composer) return
       const owner = sample
@@ -75,9 +87,9 @@
   if (document.documentElement) start()
   else document.addEventListener("DOMContentLoaded", start, { once: true })
   window.__perf = {
-    arm(visibleOnly = true) { sample = { shown: {}, mutations: 0, pageFrames: 0, visibleOnly } },
+    arm(visibleOnly = true) { sample = { shown: {}, pending: new Map(), mutations: 0, pageEvents: new Set(), visibleOnly } },
     disarm() { sample = undefined },
-    collect() { return { shown: sample.shown, mutations: sample.mutations, pageFrames: sample.pageFrames } },
+    collect(withEvents = false) { return { shown: sample.shown, mutations: sample.mutations, pageEvents: withEvents ? [...sample.pageEvents] : undefined } },
     now,
     clearKey(composer) { sample.keyAt = undefined; sample.composer = composer },
     keyAt() { return sample.keyAt },

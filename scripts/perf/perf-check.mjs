@@ -27,6 +27,11 @@ const median = values => {
 const records = readdirSync(directory).filter(file => /-r\d+-L\d+\.json$/.test(file)).map(file => ({ ...load(path.join(directory, file)), file }))
 const counters = records.filter(r => r.scenario === "counters" && r.label === values.client)
 assert(counters.length, `Missing counter samples for ${values.client}`)
+for (const record of records) {
+  assert(Number.isInteger(record.daemonFrames) && record.daemonFrames > 0
+    && Number.isInteger(record.expectedMarkers) && Number.isInteger(record.markers)
+    && record.markers > 0 && record.markers <= record.expectedMarkers, `Invalid sample: ${record.file}`)
+}
 const assets = assetsDirectory(values.tree)
 const solidDir = path.join(values.tree, "node_modules/solid-js")
 const byLevel = {}
@@ -50,7 +55,9 @@ function latency(level, selector) {
   const read = kind => {
     const matches = rows.filter(r => r.label === kind)
     checkRounds(matches, `${kind} latency at L${level}`)
-    return median(matches.map(selector))
+    const timings = matches.map(selector)
+    assert(timings.every(value => Number.isFinite(value) && value >= 0), `Missing or negative ${kind} latency at L${level}`)
+    return median(timings)
   }
   const cn = read(values.client), tui = read("tui")
   return { cn, tui, ratio: Math.max(cn, 50) / Math.max(tui, 50) }
@@ -78,7 +85,10 @@ if (values.calibrate) {
 const budgets = load(new URL("./perf-budgets.json", import.meta.url))
 if (values.base) {
   const base = load(values.base)
-  assertRatchet(base, budgets)
+  try { assertRatchet(base, budgets) } catch (error) {
+    if (values.summary) appendFileSync(values.summary, `### Performance guard\n\n${error.message}\n`)
+    throw error
+  }
   budgets.callsByFile = base.callsByFile
 }
 const { report, failures } = budgetReport(budgets, counter, ratios)

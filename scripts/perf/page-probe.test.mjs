@@ -20,7 +20,7 @@ test("renderer probe counts attributes but observes only visible markers and com
       const stream = document.querySelector("main")
       stream.classList.add("fixture")
       stream.setAttribute("aria-busy", "true")
-      stream.innerHTML = '<p>MKAA010001K</p><div style="display:none">MKAA010002K</div><div style="position:absolute;left:-900px">MKAA010003K</div>'
+      stream.innerHTML = '<p>MKAA010001K</p><div hidden>MKAA010002K</div><div style="position:absolute;left:-900px">MKAA010003K</div><p style="clip-path:inset(100%)">MKAA010004K</p>'
       window.__perf.clearKey(document.querySelector("#composer"))
     })
     await page.waitForFunction(() => window.__perf.collect().shown.MKAA010001K)
@@ -29,6 +29,8 @@ test("renderer probe counts attributes but observes only visible markers and com
     assert.deepEqual(Object.keys(shot.shown), ["MKAA010001K"])
     assert(shot.mutations >= 3, "Expected two attributes and one insertion")
     assert.equal(shot.keyAt, undefined)
+    await page.locator("[hidden]").evaluate(element => { element.hidden = false })
+    await page.waitForFunction(() => window.__perf.collect().shown.MKAA010002K)
     await page.locator("#composer").press("a")
     await page.waitForFunction(() => window.__perf.keyAt())
     await page.evaluate(() => {

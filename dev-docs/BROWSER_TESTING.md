@@ -84,11 +84,9 @@ profile. The foreground session has 300 history turns. The guard compares three
 8-session samples of JavaScript calls, Solid computations and DOM mutations per
 native event. Each client and level forks the same seed histories and must
 complete the expected stream in every active session. At 8 and 32 sessions the
-guard compares the final foreground marker at
-the next browser frame or on the TUI screen, plus p95 key latency. The browser
-probe does not require transcript rows to intersect the viewport during the
-sample. Both clients must observe the final marker; intermediate-marker coverage
-is reported separately. Ratios floor both inputs at 50 ms.
+guard compares the final foreground marker on screen and p95 key latency.
+Intermediate-marker coverage is reported separately. Ratios floor both inputs
+at 50 ms.
 
 Reproduce with the tools and build steps from `pr-build.yml`, then run
 `node scripts/perf/bench.mjs /absolute/path/to/opencode`. Run

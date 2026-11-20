@@ -53,9 +53,9 @@ export async function withTui(cli, daemon, session, run) {
       async typeKey(i) {
         const char = "жщфывапролдэюбь"[i % 14]
         typed += char
-        const start = now()
+        const at = now()
         p.write(char)
-        return await when(text => text.includes(typed)) - start
+        return { at, elapsed: await when(text => text.includes(typed)) - at }
       },
       async clear() {
         p.write("\x7f".repeat(typed.length))

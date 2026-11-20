@@ -34,6 +34,8 @@ export async function withBrowser(daemon, tree, root, run) {
       await page.getByText(/SEED\d+ history turn/).first().waitFor()
       const composer = page.getByPlaceholder(/type your message/i).first()
       await composer.click()
+      const transcript = page.locator(".message-stream").first()
+      await transcript.evaluate(element => { element.scrollTop = element.scrollHeight })
       const cdp = await context.newCDPSession(page)
       await cdp.send("Profiler.enable")
       let offset
@@ -42,14 +44,14 @@ export async function withBrowser(daemon, tree, root, run) {
           const before = now()
           const pageTime = await page.evaluate(() => window.__perf.now())
           offset = pageTime - (before + now()) / 2
-          await page.evaluate(() => window.__perf.arm(false))
+          await page.evaluate(visibleOnly => window.__perf.arm(visibleOnly), !counters)
           if (counters) {
             await cdp.send("Profiler.startPreciseCoverage", { callCount: true, detailed: false })
             await cdp.send("Profiler.takePreciseCoverage")
           }
         },
-        async collect() {
-          const value = await page.evaluate(() => window.__perf.collect())
+        async collect(withEvents = false) {
+          const value = await page.evaluate(withEvents => window.__perf.collect(withEvents), withEvents)
           return { ...value, shown: Object.fromEntries(Object.entries(value.shown).map(([key, time]) => [key, time - offset])) }
         },
         async coverage() {
@@ -62,13 +64,13 @@ export async function withBrowser(daemon, tree, root, run) {
         },
         async typeKey(i) {
           await composer.evaluate(element => {
-            element.focus()
+            element.focus({ preventScroll: true })
             window.__perf.clearKey(element)
           })
-          const start = now()
-          await composer.press(String.fromCharCode(97 + i))
-          const at = await page.waitForFunction(() => window.__perf.keyAt(), undefined, { timeout: 10_000, polling: 25 })
-          try { return await at.jsonValue() - offset - start } finally { await at.dispose() }
+          const at = now()
+          await page.keyboard.press(String.fromCharCode(97 + i))
+          const painted = await page.waitForFunction(() => window.__perf.keyAt(), undefined, { timeout: 10_000, polling: 25 })
+          try { return { at, elapsed: await painted.jsonValue() - offset - at } } finally { await painted.dispose() }
         },
         async clear() {
           await page.evaluate(() => window.__perf.disarm())
