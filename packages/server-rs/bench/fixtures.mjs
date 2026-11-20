@@ -4,7 +4,6 @@ import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { register } from "node:module"
-import os from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { promisify } from "node:util"
@@ -24,23 +23,6 @@ export async function useBenchTemp() {
 
 export { assertPrivateHost } from "./private-profile.mjs"
 const assertFixtureRoot = root => assert(path.resolve(root).startsWith(path.join(out, "tmp", "opencode")), `Not a bench fixture: ${root}`)
-
-/** The account running the bench, from its token (not the environment a fixture overrides). */
-const accountHome = os.userInfo().homedir
-const under = (folder, file) => {
-  const relative = path.relative(folder, path.resolve(file))
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
-}
-const PROFILE_VARIABLES = ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
-  "XDG_CACHE_HOME", "npm_config_userconfig", "npm_config_cache", "CLI_CONFIG"]
-/** Refuses to start a fixture child whose profile folders or resolved CodeNomad config folder lie
- * under the account's real home: a fixture never reads or writes the user's own profile. */
-export function assertPrivateProfile(env, ...configFolders) {
-  for (const key of PROFILE_VARIABLES) {
-    if (env[key]) assert(!under(accountHome, env[key]), `Refused: ${key}=${env[key]} is under ${accountHome}`)
-  }
-  for (const folder of configFolders) assert(!under(accountHome, folder), `Refused: CodeNomad config ${folder} is under ${accountHome}`)
-}
 
 export function rustBinary() {
   const bin = process.env.CODENOMAD_RS_BINARY ?? process.env.CNRS_RUST_BINARY

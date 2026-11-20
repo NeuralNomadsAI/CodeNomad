@@ -14,7 +14,8 @@ import path from "node:path"
 import { promisify } from "node:util"
 import { gzipSync } from "node:zlib"
 import { startFakeNpmRegistry } from "../../../scripts/fixtures/fake-npm-registry.mjs"
-import { assertPrivateProfile, dist, out, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertOutsideAccount } from "./private-profile.mjs"
+import { dist, out, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 assert.equal(process.platform, "win32", "Windows only")
 const run = promisify(execFile)
@@ -124,7 +125,7 @@ const proxyUrl = `http://127.0.0.1:${proxy.address().port}`
 
 async function route(side) {
   const password = "bench-route"
-  assertPrivateProfile(side.env, path.join(side.env.TEMP, "rust.data"))
+  assertOutsideAccount(side.env, path.join(side.env.TEMP, "rust.data"))
   const child = spawn(bin, [side.env.TEMP, path.join(side.env.TEMP, "rust.json"), "0", ""], { env: { ...side.env, CNRS_SERVER_PASSWORD: password }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
   let output = ""
   for (const s of [child.stdout, child.stderr]) s.on("data", d => { output += d })
@@ -162,7 +163,7 @@ async function profile(label, name = label, foreign) {
     front = `${dir};`
     env.PATH = front + system
   }
-  assertPrivateProfile(env, prefix)
+  assertOutsideAccount(env, prefix)
   return { label, env, prefix, home, front }
 }
 

@@ -80,3 +80,14 @@ export async function assertPrivateHost(env, root, config = env.CLI_CONFIG) {
   await check(folder)
   await check(/\.ya?ml$/i.test(config) ? config : path.join(folder, "config.yaml"))
 }
+
+const PROFILE_VARIABLES = ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
+  "XDG_CACHE_HOME", "npm_config_userconfig", "npm_config_cache", "CLI_CONFIG"]
+/** Refuses to start a fixture child whose profile folders or resolved CodeNomad config folder lie
+ * under the account's real home: a fixture never reads or writes the user's own profile. */
+export function assertOutsideAccount(env, ...configFolders) {
+  for (const key of PROFILE_VARIABLES) {
+    if (env[key]) assert(!unsafeRoots.some(home => within(home, path.resolve(env[key]))), `Refused: ${key}=${env[key]} is under the user's home`)
+  }
+  for (const folder of configFolders) assert(!unsafeRoots.some(home => within(home, path.resolve(folder))), `Refused: CodeNomad config ${folder} is under the user's home`)
+}
