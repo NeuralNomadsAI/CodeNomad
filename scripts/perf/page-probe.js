@@ -90,6 +90,15 @@
     arm(visibleOnly = true) { sample = { shown: {}, pending: new Map(), mutations: 0, pageEvents: new Set(), visibleOnly } },
     disarm() { sample = undefined },
     collect(withEvents = false) { return { shown: sample.shown, mutations: sample.mutations, pageEvents: withEvents ? [...sample.pageEvents] : undefined } },
+    diagnostic() {
+      return [...sample?.pending ?? []].slice(-5).map(([marker, { node, index }]) => {
+        const range = document.createRange()
+        range.setStart(node, index)
+        range.setEnd(node, Math.min(index + marker.length, node.length))
+        const { x, y, width, height } = range.getBoundingClientRect()
+        return { marker, x, y, width, height, attached: node.isConnected, hit: document.elementFromPoint(x + width / 2, y + height / 2)?.tagName }
+      })
+    },
     now,
     clearKey(composer) { sample.keyAt = undefined; sample.composer = composer },
     keyAt() { return sample.keyAt },

@@ -36,7 +36,7 @@ const sessionCode = i => String.fromCharCode(65 + Math.floor(i / 26), 65 + i % 2
 let pass = 0
 async function measure(daemon, ids, driver, countWork) {
   const run = String(++pass).padStart(2, "0")
-  const daemonAt = new Map(), outcomes = new Set()
+  const daemonAt = new Map(), outcomes = new Set(), finalEvents = new Map()
   const owners = new Map(ids.map((id, i) => [id, sessionCode(i)]))
   const codes = ids.map((_, i) => sessionCode(i))
   const expected = Array.from({ length: Math.ceil(chunks / 8) }, (_, i) => `MKAA${run}${String(i * 8).padStart(4, "0")}K`)
@@ -51,7 +51,10 @@ async function measure(daemon, ids, driver, countWork) {
     const code = owners.get(event.data?.sessionID)
     if (code && (event.type === "session.text.delta" || event.type === "session.text.ended")) {
       const text = event.data.delta ?? event.data.text
-      for (const key of text?.match(MARKER) ?? []) if (key.startsWith(`MK${code}${run}`) && !daemonAt.has(key)) daemonAt.set(key, at)
+      for (const key of text?.match(MARKER) ?? []) if (key.startsWith(`MK${code}${run}`)) {
+        if (!daemonAt.has(key)) daemonAt.set(key, at)
+        if (key === markerFor(last, code) && event.type === "session.text.ended") finalEvents.set(code, event.id)
+      }
     }
     if (code && event.type?.startsWith("session.execution.")) {
       if (event.type === "session.execution.succeeded") outcomes.add(event.data.sessionID)
@@ -98,9 +101,8 @@ async function measure(daemon, ids, driver, countWork) {
     const coverage = countWork ? await driver.coverage() : undefined
     const { shown, mutations, pageEvents } = await driver.collect(countWork)
     const sourceFrames = daemonEvents.size
-    const pageFrames = pageEvents?.filter(id => daemonEvents.has(id)).length
-    await driver.clear()
-    await waitIdle(daemon)
+    const delivered = new Set(pageEvents)
+    const pageFrames = [...delivered].filter(id => daemonEvents.has(id)).length
     const seen = expected.filter(key => shown[key] !== undefined && daemonAt.has(key))
     assert(seen.includes(last), "The final foreground marker never appeared")
     const stages = {
@@ -108,12 +110,17 @@ async function measure(daemon, ids, driver, countWork) {
       finalMarkerMs: shown[last] - daemonAt.get(last),
       visibleMarkerP95: p95(seen.map(key => shown[key] - daemonAt.get(key))),
     }
-    if (coverage) assert(pageFrames >= sourceFrames * .95, `Only ${pageFrames}/${sourceFrames} SSE frames reached the renderer`)
+    if (coverage) {
+      assert(pageFrames >= sourceFrames * .95, `Only ${pageFrames}/${sourceFrames} SSE frames reached the renderer`)
+      for (const code of codes) assert(delivered.has(finalEvents.get(code)), `Renderer missed the final native text event for ${code}`)
+    }
     const counters = coverage && {
       callsPerDaemonEvent: coverage.reduce((sum, script) => sum + script.fns.reduce((total, fn) => total + fn[2], 0), 0) / sourceFrames,
       mutationsPerDaemonEvent: mutations / sourceFrames,
       pageFramesPerDaemonEvent: pageFrames / sourceFrames,
     }
+    await driver.clear()
+    await waitIdle(daemon)
     return { daemonFrames: sourceFrames, markers: seen.length, expectedMarkers: expected.length, stages, keys: { p95: p95(keys.map(key => key.elapsed)) }, counters, coverage }
   } finally { await stop() }
 }

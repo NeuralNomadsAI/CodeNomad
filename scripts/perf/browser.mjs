@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -33,9 +33,10 @@ export async function withBrowser(daemon, tree, root, run) {
       await search.click()
       await page.getByText(/SEED\d+ history turn/).first().waitFor()
       const composer = page.getByPlaceholder(/type your message/i).first()
-      await composer.click()
       const transcript = page.locator(".message-stream").first()
-      await transcript.evaluate(element => { element.scrollTop = element.scrollHeight })
+      await transcript.press("End")
+      await page.locator('.message-stream[data-follow-mode="following"]').first().waitFor()
+      await composer.evaluate(element => element.focus({ preventScroll: true }))
       const cdp = await context.newCDPSession(page)
       await cdp.send("Profiler.enable")
       let offset
@@ -77,6 +78,13 @@ export async function withBrowser(daemon, tree, root, run) {
           await composer.fill("")
           if (failures.length) throw Error(`Renderer error: ${failures.join("; ")}`)
         },
+      }).catch(async error => {
+        const diagnostic = await transcript.evaluate(stream => {
+          const pending = window.__perf.diagnostic()
+          return { follow: stream.dataset.followMode, top: stream.scrollTop, height: stream.clientHeight, extent: stream.scrollHeight, pending }
+        }).catch(() => null)
+        if (diagnostic) await writeFile(path.join(root, "browser-observation.json"), JSON.stringify(diagnostic))
+        throw error
       })
     } finally {
       try { await context?.close() } finally {
