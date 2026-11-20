@@ -145,6 +145,7 @@ interface WorkspaceState {
   mediaOwnershipRevision: number
   abortController: AbortController
   settlement?: Promise<void>
+  creationPromise?: Promise<WorkspaceCreateResult>
   cleanupSettlement?: Promise<WorkspaceDescriptor>
   deletePromise?: Promise<WorkspaceDescriptor | undefined>
   published: boolean
@@ -189,6 +190,9 @@ export interface WorkspaceCreateResult {
 }
 export interface WorkspaceCreateOptions {
   requestId?: string
+  /** Bind to the folder's existing published record instead of appending one;
+   * unclaimed duplicates of that folder close. Restore occurrences stay fresh. */
+  reuse?: boolean
 }
 type CreationRequestState = "owner" | "cancelled" | "released"
 export class WorkspaceManager {
@@ -196,6 +200,8 @@ export class WorkspaceManager {
   private readonly deletingWorktreeRoots = new Set<string>()
   private readonly cancelledCreationRequests = new Set<string>()
   private readonly pendingCreationRequests = new Set<string>()
+  /** Same-folder launches in flight, keyed by canonical worktree identity. */
+  private readonly pendingWorkspaceCreations = new Map<string, WorkspaceRecord>()
   private activeWorkspaceCreations = 0
   private shuttingDown = false
   private readonly sharedService: SharedService
@@ -728,16 +734,42 @@ export class WorkspaceManager {
       if (this.shuttingDown) {
         throw new Error("Workspace manager is shutting down")
       }
+      if (options.reuse) {
+        const reusable = this.reusableWorkspaceRecords(workspaceIdentity)
+        if (reusable.length) {
+          // Adopt the folder's oldest free record and close the duplicates no
+          // client can still reference: their close requests are gone for good.
+          const adopted = reusable[0]!
+          this.attachCreationClaim(adopted, options.requestId)
+          this.options.logger.info({ workspaceId: adopted.id, folder: adopted.path }, "Reusing existing workspace")
+          await this.closeWorkspaceRecords(reusable.slice(1))
+          return this.finishCreation({ workspace: adopted, created: false }, options.requestId, adopted)
+        }
+        const pending = this.pendingWorkspaceCreations.get(workspaceIdentity)
+        if (pending) {
+          this.attachCreationClaim(pending, options.requestId)
+          this.options.logger.info({ workspaceId: pending.id, folder: pending.path }, "Joining in-flight workspace creation")
+          await pending[WORKSPACE_STATE].creationPromise
+          return this.finishCreation({ workspace: pending, created: false }, options.requestId, pending)
+        }
+      }
       if (this.activeWorkspaceCreations >= MAX_ACTIVE_WORKSPACE_CREATIONS) {
         throw new Error("Too many workspace creations are already in progress")
       }
       this.activeWorkspaceCreations += 1
       creationCounted = true
       const record = this.reserveWorkspace(workspacePath, name, options, launchDeadlineAt)
+      this.pendingWorkspaceCreations.set(workspaceIdentity, record)
       const creation = this.startCreation(record, launchDeadlineAt, launchTimeoutMs)
       settlementTracked = true
       void record[WORKSPACE_STATE].settlement!.then(() => { this.activeWorkspaceCreations -= 1 })
-      return this.finishCreation(await creation, options.requestId, record)
+      try {
+        return this.finishCreation(await creation, options.requestId, record)
+      } finally {
+        if (this.pendingWorkspaceCreations.get(workspaceIdentity) === record) {
+          this.pendingWorkspaceCreations.delete(workspaceIdentity)
+        }
+      }
     } finally {
       if (creationCounted && !settlementTracked) this.activeWorkspaceCreations -= 1
       if (options.requestId) this.finishCreationRequest(options.requestId)
@@ -792,8 +824,37 @@ export class WorkspaceManager {
     launchDeadlineAt: number, launchTimeoutMs: number): Promise<WorkspaceCreateResult> {
     const launch = this.createResolvedWorkspace(record, launchDeadlineAt)
     const creation = this.createWithDeadline(record, launchDeadlineAt, launchTimeoutMs, launch)
+    record[WORKSPACE_STATE].creationPromise = creation
     record[WORKSPACE_STATE].settlement = launch.then(() => undefined, () => undefined)
     return creation
+  }
+
+  /** Free records for a folder: published, healthy and owned by no in-flight
+   * creation request, oldest first. */
+  private reusableWorkspaceRecords(workspaceIdentity: string): WorkspaceRecord[] {
+    return Array.from(this.workspaces.values())
+      .filter((record) => {
+        const state = record[WORKSPACE_STATE]
+        return state.published
+          && !state.abortController.signal.aborted
+          && !state.deletePromise
+          && record.status === "ready"
+          && !this.hasActiveCreationClaims(state)
+          && canonicalWorktreeIdentity(record.path, this.options.platform) === workspaceIdentity
+      })
+  }
+
+  private attachCreationClaim(record: WorkspaceRecord, requestId: string | undefined): void {
+    if (!requestId) return
+    record[WORKSPACE_STATE].creationClaims.set(requestId, "owner")
+    this.refreshCreationRequestId(record)
+  }
+
+  private async closeWorkspaceRecords(records: WorkspaceRecord[]): Promise<void> {
+    const deletions = records.map((record) => this.delete(record.id).catch((error) => {
+      this.options.logger.warn({ workspaceId: record.id, err: error }, "Failed to close duplicate workspace record")
+    }))
+    await Promise.all(deletions)
   }
   private async createWithDeadline(record: WorkspaceRecord,
     launchDeadlineAt: number, launchTimeoutMs: number,
@@ -1231,6 +1292,10 @@ export class WorkspaceManager {
   ): void {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
+    const pendingIdentity = canonicalWorktreeIdentity(record.path, this.options.platform)
+    if (this.pendingWorkspaceCreations.get(pendingIdentity) === record) {
+      this.pendingWorkspaceCreations.delete(pendingIdentity)
+    }
     this.fileWatches.forget(id)
     this.worktreeInventory.forget(id)
     this.eventWorktreeInventory.forget(id)

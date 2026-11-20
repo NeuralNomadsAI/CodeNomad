@@ -109,7 +109,7 @@ import { retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
 import { remoteRestoreTabs } from "./remote-restore-tabs"
 import { clearInstanceSeenInterruptions } from "./session-interruption-seen"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
-import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
+import { getUnavailableWorkspaceIds, redundantDuplicateFolderInstances, uniqueFolderWorkspaces } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
 import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "../lib/trailing-resync"
@@ -1486,6 +1486,7 @@ async function refreshWorkspaceList(
       if (!workspace) continue
       if (!active()) return false
       if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
+      if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
       restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
       if (restoreCreationCommitGates.deferRefreshWorkspace(workspace)) continue
       if (restoreCreatedWorkspaceCleanup.owns(workspace.id)) {
@@ -1684,6 +1685,15 @@ function handleWorkspaceLog(entry: WorkspaceLogEntry) {
     message: entry.message,
   }
   addLog(entry.workspaceId, logEntry)
+}
+
+/** A workspace record whose folder already has a different instance here; its
+ * create/restore commit upserts it directly when this window opened it. */
+function isRedundantFolderWorkspace(workspace: WorkspaceDescriptor): boolean {
+  if (instances().has(workspace.id)) return false
+  const key = normalizeWorkspacePath(workspace.path)
+  return Array.from(instances().values()).some((instance) => instance.id !== workspace.id
+    && normalizeWorkspacePath(instance.folder) === key)
 }
 
 function ensureLogContainer(id: string) {
@@ -1981,6 +1991,8 @@ async function createInstance(
   options?: {
     backend?: BackendClient
     signal?: AbortSignal
+    /** Bind to the folder's existing backend record instead of appending one. */
+    reuse?: boolean
     shouldCreateCommit?: (instanceId: string) => boolean
     onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
@@ -2047,6 +2059,7 @@ async function createInstance(
       path: folder,
       name: projectName,
       requestId: restoreRequestId,
+      reuse: options?.reuse,
     }, { signal })
     const id = instanceKey(receipt.backendId, response.id)
     const responseReceipt = Object.freeze({ ...receipt, rawId: response.id, instanceId: id })

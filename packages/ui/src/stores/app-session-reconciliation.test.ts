@@ -106,3 +106,39 @@ describe("app session reconciliation", () => {
     }
   })
 })
+
+describe("duplicate folder instances", () => {
+  it("keeps one workspace per folder, preferring the instantiated record", () => {
+    const workspaces = [
+      { id: "oldest", path: "/code/nomad" },
+      { id: "fresh", path: "/code/nomad/" },
+      { id: "other", path: "/code/other" },
+    ]
+    assert.deepEqual(uniqueFolderWorkspaces(workspaces, () => false),
+      [{ id: "oldest", path: "/code/nomad" }, { id: "other", path: "/code/other" }])
+    assert.deepEqual(uniqueFolderWorkspaces(workspaces, (id) => id === "fresh"),
+      [{ id: "fresh", path: "/code/nomad/" }, { id: "other", path: "/code/other" }])
+  })
+
+  it("matches duplicate folders across Windows spellings", () => {
+    assert.deepEqual(uniqueFolderWorkspaces([
+      { id: "host", path: String.raw`C:\Code\Nomad` },
+      { id: "repeat", path: "c:/code/nomad/" },
+    ], () => false), [{ id: "host", path: String.raw`C:\Code\Nomad` }])
+  })
+
+  it("lists only tab-free duplicates of a folder's kept instance", () => {
+    const instances = [
+      { id: "first", folder: "/code/nomad" },
+      { id: "second", folder: "/code/nomad" },
+      { id: "alone", folder: "/code/other" },
+    ]
+    assert.deepEqual(redundantDuplicateFolderInstances(instances, () => false), ["second"])
+    assert.deepEqual(redundantDuplicateFolderInstances(instances, (id) => id === "second"), ["first"])
+    assert.deepEqual(redundantDuplicateFolderInstances([
+      { id: "first", folder: "/code/nomad" },
+      { id: "second", folder: "/code/nomad" },
+      { id: "third", folder: "/code/nomad" },
+    ], (id) => id === "third"), ["first", "second"])
+  })
+})

@@ -24,6 +24,7 @@ const WorkspaceCreateSchema = z.object({
   path: z.string(),
   name: z.string().optional(),
   requestId: z.string().trim().min(1).max(128).optional(),
+  reuse: z.boolean().optional(),
 })
 
 const WorkspaceCloneSchema = z.object({
@@ -131,6 +132,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       const body = WorkspaceCreateSchema.parse(request.body ?? {})
       const result = await deps.workspaceManager.create(body.path, body.name, {
         requestId: body.requestId,
+        reuse: body.reuse,
       })
       reply.code(201)
       return result.created ? result.workspace : { ...result.workspace, reused: true as const }

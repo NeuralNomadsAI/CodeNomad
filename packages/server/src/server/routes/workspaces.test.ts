@@ -137,6 +137,7 @@ describe("workspace routes", () => {
     assert.equal(response.statusCode, 201)
     assert.deepEqual(calls, [["C:/work", "Work", {
       requestId: "restore-request",
+      reuse: undefined,
     }]])
 
     const released = await app.inject({
@@ -250,6 +251,39 @@ describe("workspace routes", () => {
     assert.deepEqual(ownerResponse.json(), { ...descriptor, requestId: "owner-request" })
     assert.equal(reusedResponse.statusCode, 201)
     assert.deepEqual(reusedResponse.json(), { ...descriptor, reused: true })
+    await app.close()
+  })
+
+  it("forwards the reuse option to the workspace manager", async () => {
+    const app = Fastify({ logger: false })
+    const calls: Array<[string, string | undefined, { requestId?: string; reuse?: boolean }]> = []
+    const descriptor: WorkspaceDescriptor = {
+      id: "reused-workspace",
+      path: "C:/work",
+      status: "ready",
+      proxyPath: "/workspaces/reused-workspace/instance",
+      binaryId: "C:/tools/opencode.exe",
+      binaryLabel: "opencode.exe",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }
+    const workspaceManager = {
+      create: async (path: string, name: string | undefined, options: { requestId?: string; reuse?: boolean }) => {
+        calls.push([path, name, options])
+        return { workspace: descriptor, created: false }
+      },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/workspaces",
+      payload: { path: "C:/work", reuse: true },
+    })
+
+    assert.equal(response.statusCode, 201)
+    assert.deepEqual(calls, [["C:/work", undefined, { requestId: undefined, reuse: true }]])
+    assert.deepEqual(response.json(), { ...descriptor, reused: true })
     await app.close()
   })
 })
