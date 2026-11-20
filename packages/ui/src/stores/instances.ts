@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { createEffect, createRoot, createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
@@ -242,6 +242,9 @@ const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
 const pendingRequestSyncEpochs = new Map<string, number>()
 const successfulPendingRecoveries = new Map<string, number>()
+// Directories the last completed untargeted recovery scanned, per instance.
+// Activation only accelerates a scan; the liveness sweep stays the backstop.
+const lastScannedRequestDirectories = new Map<string, Set<string>>()
 const pendingPermissionMutationEpochs = new Map<string, number>()
 const pendingFormMutationEpochs = new Map<string, number>()
 const pendingRequestSyncGenerations = new Map<string, number>()
@@ -1157,6 +1160,9 @@ async function runPendingRequestSync(
       if (!targetLocations && isCurrent()) {
         successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
         markPendingRecovery(instanceId, false)
+        if (coverage?.supported) lastScannedRequestDirectories.set(instanceId, new Set(coverage.directories
+          .filter((entry) => entry.status !== "excluded")
+          .map((entry) => normalizeWorkspacePath(entry.directory))))
         if (notices && coverage?.supported) {
           const covered = coverage.directories.map(entry => entry.directory)
           notices.release(covered)
@@ -1276,6 +1282,45 @@ function schedulePendingRequestReconciliation(instanceId: string, location?: Req
   })
 }
 
+/** The session someone just opened must not wait for the slow liveness sweep:
+ * when the last completed recovery never covered the session's directory, a
+ * fresh untargeted scan starts right away. Read-only and SSE-independent. */
+function requestPendingRequestScanForActiveSession(instanceId: string, sessionId: string | null | undefined): void {
+  if (!sessionId || sessionId === "info") return
+  const instance = instances().get(instanceId)
+  if (!instance?.client || instance.status !== "ready") return
+  const directory = sessions().get(instanceId)?.get(sessionId)?.location?.directory
+  if (!directory) return
+  const operation = captureInstanceOperation(instanceId)
+  const needed = () => {
+    const scanned = lastScannedRequestDirectories.get(instanceId)
+    return !scanned || !scanned.has(normalizeWorkspacePath(directory))
+  }
+  if (!needed()) return
+  const run = () => {
+    if (!operation.current() || activeSessionId().get(instanceId) !== sessionId || !needed()) return
+    void syncPendingRequests(instanceId, undefined, undefined, operation.signal).catch((error) => {
+      log.warn("Failed to sync pending requests after session activation", { instanceId, error })
+    })
+  }
+  // A scan started before this session loaded may finish without its directory;
+  // re-check afterwards instead of superseding the in-flight read.
+  const inFlight = pendingRequestSyncs.get(instanceId)
+  if (inFlight && !inFlight.targeted) void inFlight.promise.then(run, run)
+  else run()
+}
+
+createRoot(() => {
+  let previous = new Map<string, string | null | undefined>()
+  createEffect(() => {
+    const current = new Map(activeSessionId())
+    for (const [instanceId, sessionId] of current) {
+      if (previous.get(instanceId) !== sessionId) requestPendingRequestScanForActiveSession(instanceId, sessionId)
+    }
+    previous = current
+  })
+})
+
 async function runPendingRequestLiveness(instanceId: string, operation = captureInstanceOperation(instanceId)): Promise<void> {
   if (!operation.current()) return
   const instanceSessions = sessions().get(instanceId)
@@ -1377,16 +1422,20 @@ async function hydrateInstanceData(instanceId: string, options?: {
           workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
         }
       : startInstanceSessionHydration(instanceId, options?.force, signal)
-    // Composer catalogues must not wait for the complete historical inventory.
-    await Promise.all([
+    // Pending recovery needs only the session inventory and worktree metadata;
+    // catalogue and config reads must not delay the first interruption scan.
+    const pendingRecovery = Promise.all([
       hydration.sessions,
       hydration.workspaceMetadata,
-      refreshSessionCatalog(instanceId, options?.force),
+    ]).then(() => {
+      if (current()) return syncPendingRequests(instanceId, undefined, undefined, signal)
+    })
+    await Promise.all([
+      pendingRecovery,
+      refreshSessionCatalog(instanceId, options?.force).then(() => {
+        if (current()) return ensureInstanceConfigLoaded(instanceId)
+      }),
     ])
-    if (!current()) return
-    await ensureInstanceConfigLoaded(instanceId)
-    if (!current()) return
-    await syncPendingRequests(instanceId, undefined, undefined, signal)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
     if (options?.propagateErrors) throw error
@@ -1397,6 +1446,7 @@ function clearReloadableInstanceState(instanceId: string): void {
   clearCacheForInstance(instanceId)
   clearCommands(instanceId)
   clearInstanceMetadata(instanceId)
+  lastScannedRequestDirectories.delete(instanceId)
   // Recovery can be unavailable; only authoritative coverage or settlement
   // removes known interruptions, not a catalogue/location rehydration.
   markPendingRecovery(instanceId, true)
@@ -1798,6 +1848,7 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   clearPermissionQueue(id)
   clearRepliedPermissions(id)
   clearSettledForms(id)
+  lastScannedRequestDirectories.delete(id)
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
   destroyOpenCodeData(id)
