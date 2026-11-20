@@ -349,11 +349,17 @@ const deferredPendingDiscovery = new Set<string>()
 let pendingDiscoveryResume: Promise<void> | undefined
 let nextPendingRequestSyncGeneration = 0
 
+// A client compaction hold cannot outlast the daemon's own bounded compaction, and
+// the backend's loaded-only deferral remains the authoritative fence: an aged-out
+// hold only risks a read the server will 503-defer on its own.
+const PENDING_COMPACTION_HOLD_MAX_MS = 10 * 60_000
+
 function isPendingDiscoveryCompacting(): boolean {
   // ponytail: one daemon per backend; only observed compactions are known here.
+  const now = Date.now()
   for (const instance of instances().values()) {
     const tracked = pendingCompactions.get(instance.id)
-    if (Array.from(tracked?.values() ?? []).some((entry) => entry.active)) return true
+    if (Array.from(tracked?.values() ?? []).some((entry) => entry.active && now - entry.created <= PENDING_COMPACTION_HOLD_MAX_MS)) return true
     if (!instance.client || instance.status !== "ready") continue
     if (Array.from(sessions().get(instance.id)?.values() ?? []).some((session) => session.status === "compacting" && !tracked?.has(session.id))) return true
   }
