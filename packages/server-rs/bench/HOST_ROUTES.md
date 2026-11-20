@@ -18,7 +18,7 @@ Rust state: **ported** before this survey, **here** ported for this usage, **hos
 | POST | `/api/filesystem/folders` | folder picker | 201 | here |
 | GET, POST | `/api/workspaces` | start-up, project | 200, 201 | ported; here: folders outside the root |
 | GET | `/api/workspaces/:id/files`, `files/preview` | project, Files | 200 | ported |
-| GET | `/api/workspaces/:id/pending-requests?directories` | conversation | 200 | ported |
+| GET | `/api/workspaces/:id/pending-requests?directories[&optionalDirectories]` | conversation, worktree | 200 | here: every owned directory (linked worktrees, optional history) |
 | GET | `/api/workspaces/:id/session-favorites?reconcile` | project | 200 | ported |
 | POST | `/api/workspaces/:id/session-history/outline`, `outlinePreview` | conversation | 200 | ported |
 | GET | `/api/workspaces/:id/sessions/:ses/permission-receipts` | conversation | 200 | ported |
@@ -47,6 +47,14 @@ The TS worktree creation with a session move stayed pending on this fixture (ove
 - **By decision**: Yolo, sign-out (`/api/auth/logout` and its relayed form), the remote window proxy (`remote-proxy`, `--connect-server`), the downloaded UI (`--ui-auto-update`), the release monitor, old migrations (`settings/migrate.ts`, legacy and retired installations), the dead code of the usage audit's section 2 (`GET /api/workspaces/:id/files/content`, whose `PUT` is served; `GET /api/filesystem/files/content`; `GET`/`PATCH /api/storage/config` and `/api/storage/state`), and `GET`/`PATCH /api/storage/state/:owner` for owners other than `ui` (no caller).
 - **Frozen with the Missions**: `GET`/`POST /api/opencode/login-start` (Mission calendars) and `GET /api/workspaces/:id/git-branches` (Mission editor sources).
 - **Voice, SideCars and usage statistics** (`/api/speech/*`, `/api/sidecars`, `/api/workspaces/:id/service-usage*`): separate work.
+
+## Capabilities
+
+`/api/meta` declares `config-files` with the families already served. `remote-control` stays undeclared (start, stop and previews are not served, so the UI hides the Remote Access section that reads the status), and so does `opencode-admin` until the OpenCode service routes are complete.
+
+## Local host checks
+
+The `host` mode also reads, on both servers, the conversation list (by directory and by project) and `pending-requests` of a Git project, of a folder without Git inside and outside the root, right after a worktree is created and after it is deleted. A list scoped to `project=global` (the project OpenCode gives a folder without Git, which the UI's blank-session cleanup asks for) is refused by both servers.
 
 ## Differences kept on purpose
 

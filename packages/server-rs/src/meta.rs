@@ -31,7 +31,8 @@ pub fn document(
     tls: Option<&tls::Listener>,
     ui: Value,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    let mut capabilities = vec!["workspaces", "events", "workspace-files", "workspace-git", "linked-worktrees"];
+    let mut capabilities =
+        vec!["workspaces", "events", "workspace-files", "workspace-git", "linked-worktrees", "config-files"];
     if bench::missions_run() {
         capabilities.push("missions");
     }
