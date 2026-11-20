@@ -242,7 +242,7 @@ export const RemoteControlSettingsSection: Component = () => {
               <h3 class="settings-card-title">{t("remoteControl.pairing.title")}</h3>
               <p class="settings-card-subtitle">{t("remoteControl.pairing.description")}</p>
             </div>
-            <Show when={qrCode()} fallback={<span class="inline-flex animate-spin self-center"><Loader2 class="remote-control-qr-loading" /></span>}>
+            <Show when={qrCode()} fallback={<span class="remote-control-qr-loading"><span class="inline-flex animate-spin"><Loader2 class="h-9 w-9" /></span></span>}>
               {(source) => <img class="remote-control-qr" src={source()} alt={t("remoteControl.pairing.qrAlt")} />}
             </Show>
             <code class="remote-control-link">{value().url}</code>

@@ -137,9 +137,9 @@ export function PluginRowActions(props: {
         : item.kind === "remove" ? (afterClose = () => runRemove(item.source)) : props.refresh?.()
 
   const icon = (item: Item, pulse = false) => item.kind === "package"
-    ? (item.action === "update"
-      ? <Download class="h-3.5 w-3.5" classList={{ "animate-pulse": pulse }} aria-hidden="true" />
-      : <PackageSearch class="h-3.5 w-3.5" classList={{ "animate-pulse": pulse }} aria-hidden="true" />)
+    ? <span class="inline-flex" classList={{ "animate-pulse": pulse }}>{item.action === "update"
+      ? <Download class="h-3.5 w-3.5" aria-hidden="true" />
+      : <PackageSearch class="h-3.5 w-3.5" aria-hidden="true" />}</span>
     : item.kind === "host" ? <AppWindow class="h-3.5 w-3.5" aria-hidden="true" />
       : item.kind === "docs" ? <BookOpen class="h-3.5 w-3.5" aria-hidden="true" />
         : item.kind === "remove" ? <Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
@@ -159,7 +159,7 @@ export function PluginRowActions(props: {
         ref={trigger}
         title={!props.info && items().length === 1 ? [label(items()[0]!), hint(items()[0]!)].filter(Boolean).join("\n") : triggerLabel()}
         aria-label={triggerLabel()} aria-busy={busy()}>
-        <Show when={lonePackage()} fallback={<MoreHorizontal class="h-3.5 w-3.5" classList={{ "animate-pulse": busy() }} aria-hidden="true" />}>
+        <Show when={lonePackage()} fallback={<span class="inline-flex" classList={{ "animate-pulse": busy() }}><MoreHorizontal class="h-3.5 w-3.5" aria-hidden="true" /></span>}>
           {icon(items()[0]!, busy())}
         </Show>
       </DropdownMenu.Trigger>
