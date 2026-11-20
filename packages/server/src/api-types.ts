@@ -623,6 +623,8 @@ export interface WorkspaceFileResponse {
   /** UTF-8 file contents; binary files should be base64 encoded by the caller. */
   contents: string
   encoding?: "utf-8" | "base64"
+  /** Opaque on-disk version, when the server tracks one; a write echoes it as `expectedVersion`. */
+  version?: string
 }
 
 export type WorkspaceFileSearchResponse = FileSystemEntry[]

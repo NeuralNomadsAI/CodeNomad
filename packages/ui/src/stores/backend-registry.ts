@@ -3,6 +3,8 @@ import { createStore } from "solid-js/store"
 import type { RemoteServerProfile, ServerMeta } from "../../../server/src/api-types"
 import { createRemoteBackendClient, registerBackendClient, type BackendClient } from "../lib/backend-client"
 import { backendCompatibility } from "../lib/backend-compatibility"
+import { declaresCapability } from "../lib/backend-capabilities"
+import type { CodeNomadCapability } from "../../../server/src/meta-contract"
 import { backendEvents, type BackendEvents } from "../lib/backend-events"
 import { isBackendId, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import { RELAY_AUTHORITY_HEADER } from "../../../server/src/codenomad-servers/relay-authority"
@@ -40,6 +42,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
   const events = options.events ?? backendEvents
   const entries = new Map<string, Entry>()
   const [states, setState] = createStore<Record<string, BackendAdmissionState | undefined>>(Object.create(null))
+  const [capabilities, setCapabilities] = createStore<Record<string, string[] | undefined>>(Object.create(null))
   let disposed = false
   const profileFor = (id: string) => options.enabled() === true ? options.profiles().find(p => p.id === id) : undefined
   const sameTarget = (a: RemoteServerProfile, b?: RemoteServerProfile) =>
@@ -58,6 +61,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       entry.remove?.()
       if (entries.get(id) === entry) entries.delete(id)
     }
+    setCapabilities(id, undefined)
     setState(id, state)
   }
 
@@ -110,6 +114,9 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
         detach(id, "refused")
         return false
       }
+      // Each revalidation reads the families again; an unchanged list keeps its subscribers quiet.
+      const declared = Array.isArray(meta!.capabilities) ? [...meta!.capabilities] : undefined
+      if (declared?.join() !== capabilities[id]?.join()) setCapabilities(id, declared)
       if (entry.detach && publish && !entry.inventoryFailed) setState(id, "compatible")
       return active()
     } catch (error) {
@@ -228,6 +235,8 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
     },
     state: (id: string): BackendAdmissionState => states[id] ?? "idle",
     serverId: (id: string) => entries.get(id)?.serverId,
+    /** Route families from the latest admitted metadata; an unadmitted backend has no live consumer. */
+    supports: (id: string, capability: CodeNomadCapability) => declaresCapability({ capabilities: capabilities[id] }, capability),
     dispose() {
       if (disposed) return
       disposed = true

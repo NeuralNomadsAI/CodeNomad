@@ -207,6 +207,8 @@ test("registry admits two real relayed backends and revalidates before reconnect
     await localMetaGate
     await route.continue()
   })
+  // Startup already read the host metadata once (its route families gate the speech read).
+  const metaReadsBefore = local.filter(p => p === "GET /api/meta").length
   const localReads = page.evaluate(async () => {
     await (window as any).registryFixture.localRead()
     await Promise.all(["a", "b"].map(id => (window as any).registryFixture.ensure(id)))
@@ -217,7 +219,7 @@ test("registry admits two real relayed backends and revalidates before reconnect
   releaseLocalMeta()
   await localReads
   assert.equal(a.state.requests.length + b.state.requests.length, 0)
-  assert.deepEqual(local.filter(p => p === "GET /api/meta"), ["GET /api/meta", "GET /api/meta"])
+  assert.equal(local.filter(p => p === "GET /api/meta").length - metaReadsBefore, 2)
   assert.equal(await tab.evaluate(el => el.outerHTML), before)
   const german = await initializedPage("de")
   assert.equal(local.some(route => /^(POST|PUT|PATCH|DELETE) \/api\/storage\//.test(route)), false)

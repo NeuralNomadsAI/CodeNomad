@@ -3,6 +3,7 @@ import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
 import { Folder, FolderPlus, GitBranch, Hourglass, Search, Server } from "lucide-solid"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useI18n } from "../lib/i18n"
+import { hostSupports } from "../lib/backend-capabilities"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 import { getExistingInstanceForFolder } from "../stores/instances"
 import { useConfig } from "../stores/preferences"
@@ -208,14 +209,18 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 <FolderPlus class="w-4 h-4" aria-hidden="true" />
                 <span>{t("newInstanceLauncher.browse")}</span>
               </button>
-              <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(props.onNewTemporaryInstance)}>
-                <Hourglass class="w-4 h-4" aria-hidden="true" />
-                <span>{t("newInstanceLauncher.temporary")}</span>
-              </button>
-              <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(dialogs.clone)}>
-                <GitBranch class="w-4 h-4" aria-hidden="true" />
-                <span>{t("newInstanceLauncher.clone")}</span>
-              </button>
+              <Show when={hostSupports("temporary-workspaces")}>
+                <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(props.onNewTemporaryInstance)}>
+                  <Hourglass class="w-4 h-4" aria-hidden="true" />
+                  <span>{t("newInstanceLauncher.temporary")}</span>
+                </button>
+              </Show>
+              <Show when={hostSupports("workspace-clone")}>
+                <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(dialogs.clone)}>
+                  <GitBranch class="w-4 h-4" aria-hidden="true" />
+                  <span>{t("newInstanceLauncher.clone")}</span>
+                </button>
+              </Show>
             </div>
             <RemoteProjectMenu isLoading={props.isLoading} recent={remoteRecent()} focusExisting onOpened={close} />
           </Popover.Content>

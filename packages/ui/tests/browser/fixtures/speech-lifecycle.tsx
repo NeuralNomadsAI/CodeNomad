@@ -11,7 +11,7 @@ import { resetSpeechCapabilities } from "../../../src/stores/speech"
 const capabilities = { available: true, ttsConfigured: true, supportsTts: true, supportsStreamingTts: true }
 serverApi.fetchSpeechCapabilities = async () => capabilities as any
 const pending: Array<{ resolve: (value: any) => void; signal?: AbortSignal }> = []
-let resolveCapabilities: (() => void) | undefined
+let resolveCapabilities: (() => void) | undefined, capabilitiesReleased = false
 serverApi.synthesizeSpeech = () => new Promise(resolve => pending.push({ resolve }))
 serverApi.synthesizeSpeechStream = (_request, signal) => new Promise(resolve => pending.push({ resolve, signal }))
 
@@ -78,9 +78,16 @@ async function cards(count: number, drift: boolean) {
   mount, cards,
   holdCapabilities: () => {
     resetSpeechCapabilities()
-    serverApi.fetchSpeechCapabilities = () => new Promise(resolve => { resolveCapabilities = () => resolve(capabilities as any) })
+    capabilitiesReleased = false
+    resolveCapabilities = undefined
+    // The read starts once the host metadata answers; a release before then answers it at once.
+    serverApi.fetchSpeechCapabilities = () => new Promise(resolve => {
+      resolveCapabilities = () => resolve(capabilities as any)
+      if (capabilitiesReleased) resolveCapabilities()
+    })
   },
-  resolveCapabilities: () => resolveCapabilities!(),
+  resolveCapabilities: () => { capabilitiesReleased = true; resolveCapabilities?.() },
+  capabilitiesRequested: () => resolveCapabilities !== undefined,
   retained: () => refs.filter(ref => ref.deref()).length,
   change: (key: string, id: string) => owners.get(key)!.setId(id),
   replace: (key: string) => owners.get(key)!.replace(),

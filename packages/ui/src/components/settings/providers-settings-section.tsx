@@ -5,6 +5,8 @@ import { useI18n } from "../../lib/i18n"
 import { ProviderManagerModal } from "../provider-auth/provider-manager-modal"
 import { WebSearchSettingsCard } from "./websearch-settings-card"
 import { ImageSettingsCard } from "./image-settings-card"
+import { supportsWorkspaceCapability } from "../../stores/workspace-capabilities"
+import type { CodeNomadCapability } from "../../../../server/src/meta-contract"
 
 interface ProvidersSettingsSectionProps {
   instanceId?: string
@@ -20,6 +22,7 @@ const [imagesOpen, setImagesOpen] = createSignal(false)
 export const ProvidersSettingsSection: Component<ProvidersSettingsSectionProps> = (props) => {
   const { t } = useI18n()
   const instanceId = () => props.instanceId ?? activeInstanceId() ?? ""
+  const supports = (capability: CodeNomadCapability) => supportsWorkspaceCapability(instanceId(), capability)
   return <div class="settings-section-stack">
     <div class="settings-card settings-group-card">
       <details class="settings-disclosure" open={modelsOpen()} onToggle={event => setModelsOpen(event.currentTarget.open)}>
@@ -29,7 +32,7 @@ export const ProvidersSettingsSection: Component<ProvidersSettingsSectionProps> 
         </section>
       </details>
     </div>
-    <div class="settings-card settings-group-card">
+    <Show when={supports("websearch-settings") && supports("integrations")}><div class="settings-card settings-group-card">
       <details class="settings-disclosure" open={webSearchOpen()} onToggle={event => setWebSearchOpen(event.currentTarget.open)}>
         <summary><h3 id="providers-websearch-heading">{t("settings.websearch.title")}</h3></summary>
         {/* Search connections and defaults are read only while this group is open. */}
@@ -37,8 +40,8 @@ export const ProvidersSettingsSection: Component<ProvidersSettingsSectionProps> 
           <WebSearchSettingsCard instanceId={instanceId()} location={props.location} embedded />
         </Show>
       </details>
-    </div>
-    <div class="settings-card settings-group-card">
+    </div></Show>
+    <Show when={supports("image-settings")}><div class="settings-card settings-group-card">
       <details class="settings-disclosure" open={imagesOpen()} onToggle={event => setImagesOpen(event.currentTarget.open)}>
         <summary><h3 id="providers-images-heading">{t("settings.images.title")}</h3></summary>
         {/* The configuration contract and image models are read only while this group is open. */}
@@ -46,6 +49,6 @@ export const ProvidersSettingsSection: Component<ProvidersSettingsSectionProps> 
           <ImageSettingsCard instanceId={instanceId()} location={props.location} />
         </Show>
       </details>
-    </div>
+    </div></Show>
   </div>
 }

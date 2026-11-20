@@ -23,6 +23,7 @@ import { sessions } from "../stores/sessions"
 import { useI18n } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { canOpenWorkspacePaths, openWorkspacePath } from "../lib/workspace-open"
+import { supportsWorkspaceCapability } from "../stores/workspace-capabilities"
 
 const log = getLogger("session")
 
@@ -150,7 +151,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const movingSlug = createMemo(() => getPendingWorktreeSlug(props.instanceId, parentId()))
 
   const gitRepoStatus = createMemo(() => getGitRepoStatus(props.instanceId))
-  const worktreesUnavailable = createMemo(() => gitRepoStatus() === false || Boolean(getDirectoryOnlyWorktree(props.instanceId)))
+  const worktreesUnavailable = createMemo(() => !supportsWorkspaceCapability(props.instanceId, "linked-worktrees")
+    || gitRepoStatus() === false || Boolean(getDirectoryOnlyWorktree(props.instanceId)))
   const dropdownDisabled = createMemo(() => isChildSession() || worktreesUnavailable() || Boolean(movingSlug()))
   let listbox: HTMLUListElement | undefined
 
@@ -621,15 +623,17 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                 )}
               </Show>
 
-              <label class="flex items-center gap-2 text-sm text-secondary">
-                <input
-                  type="checkbox"
-                  checked={forceDelete()}
-                  onChange={(e) => setForceDelete(e.currentTarget.checked)}
-                  disabled={isDeleting()}
-                />
-                {t("instanceShell.worktree.delete.force")}
-              </label>
+              <Show when={supportsWorkspaceCapability(props.instanceId, "force-worktree-delete")}>
+                <label class="flex items-center gap-2 text-sm text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={forceDelete()}
+                    onChange={(e) => setForceDelete(e.currentTarget.checked)}
+                    disabled={isDeleting()}
+                  />
+                  {t("instanceShell.worktree.delete.force")}
+                </label>
+              </Show>
 
               <div class="flex justify-end gap-2">
                 <button

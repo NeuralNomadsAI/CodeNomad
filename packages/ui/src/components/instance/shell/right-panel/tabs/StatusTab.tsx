@@ -25,6 +25,8 @@ import { togglePermissionAutoAcceptForSession } from "../../../../../stores/inst
 import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
 import { applyRightPanelItemCustomization, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
 import { createCoreStatusSectionManifest } from "../core-plugin"
+import { supportsStatusSection } from "../status-capabilities"
+import { supportsWorkspaceCapability } from "../../../../../stores/workspace-capabilities"
 import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
 import { showToastNotification } from "../../../../../lib/notifications"
@@ -109,7 +111,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   const [removingShells, setRemovingShells] = createSignal<ReadonlySet<string>>(new Set())
 
   createEffect(() => {
-    if (!props.isActive() || !isSectionExpanded("background-processes")
+    if (!props.isActive() || !supportsStatusSection(props.instanceId, "background-processes") || !isSectionExpanded("background-processes")
       || props.customization().hiddenStatusSectionIds.includes("background-processes")) return
     const { directory, workspaceID } = shellLocation()
     onCleanup(shellStore.watch(props.instanceId, directory, workspaceID))
@@ -248,7 +250,8 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         />
       ),
     }).statusSections ?? [])
-  const allStatusSections = createMemo<RightPanelSectionModule[]>(() => [...coreSections, ...(props.extraSections ?? [])])
+  const allStatusSections = createMemo<RightPanelSectionModule[]>(() => [...coreSections, ...(props.extraSections ?? [])]
+    .filter(section => supportsStatusSection(props.instanceId, section.id)))
   const statusSections = createMemo<RightPanelSectionModule[]>(() =>
     applyRightPanelItemCustomization(
       allStatusSections(),
@@ -292,7 +295,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   return (
     <div class="status-tab-container">
-      <Show when={props.activeSession()?.id}>
+      <Show when={supportsWorkspaceCapability(props.instanceId, "session-goals") && props.activeSession()?.id}>
         {(sessionId) => <SessionGoalLine instanceId={props.instanceId} sessionId={sessionId()} active={props.isActive()} />}
       </Show>
       <Accordion.Root

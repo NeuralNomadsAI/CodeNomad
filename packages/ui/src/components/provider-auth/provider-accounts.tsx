@@ -7,6 +7,7 @@ import { requestLocationOptions, toRequestLocation } from "../../stores/request-
 import { backendOf } from "../../lib/backend-client"
 import { parseInstanceKey } from "../../lib/backend-identity"
 import { captureBackendOperation } from "../../lib/backend-operation"
+import { supportsWorkspaceCapability } from "../../stores/workspace-capabilities"
 import { SettingsSwitch } from "../settings/settings-switch"
 import type { ProviderAccountsSnapshot } from "../../../../server/src/api-types"
 
@@ -61,7 +62,7 @@ export function ProviderAccounts(props: {
           const current = catalog.data.find(item => item.id === integrationID)?.connections ?? []
           // The server decides which integrations support automatic selection;
           // only saved credentials can carry logins or become candidates.
-          const snapshot = current.some(item => item.type === "credential")
+          const snapshot = current.some(item => item.type === "credential") && supportsWorkspaceCapability(instanceId, "integrations")
             ? await api.getProviderAccounts(workspaceId, integrationID, location.directory, operation.signal).catch(() => emptySnapshot())
             : emptySnapshot()
           if (operation.current() && !trailing) {

@@ -3,6 +3,7 @@ import { Bell, MonitorUp, Settings } from "lucide-solid"
 import ToastHistoryPanel from "./toast-history-panel"
 import { useI18n } from "../lib/i18n"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
+import { hostSupports } from "../lib/backend-capabilities"
 import { getUnreadToastCountSignal } from "../lib/notifications"
 import { openSettings, toggleSettings } from "../stores/settings-screen"
 
@@ -85,7 +86,7 @@ const AppActions: Component<AppActionsProps> = (props) => {
         </Show>
       </div>
 
-      <Show when={canOpenRemoteWindows()}>
+      <Show when={canOpenRemoteWindows() && hostSupports("remote-control")}>
         <button
           class="new-tab-button tab-remote-button"
           onClick={() => openSettings("remote")}

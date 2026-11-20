@@ -50,6 +50,28 @@ function harness(initial: unknown = true, bound = false) {
     loads: () => loads, streams: () => streams, closes: () => closes }
 }
 
+test("admission records the declared route families, revalidation follows them and detachment forgets them", async () => {
+  const previous = globalThis.window
+  Object.assign(globalThis, { window: { location: { origin: "http://relay.test" } } })
+  const h = harness()
+  h.read(async () => Response.json({ ...metadata, capabilities: ["workspaces", "missions"] }))
+  try {
+    assert.equal(h.registry.supports("saved", "yolo"), true, "an unadmitted backend has no consumer to hide")
+    const client = (await h.registry.ensure("saved"))!
+    assert.equal(h.registry.supports("saved", "missions"), true)
+    assert.equal(h.registry.supports("saved", "yolo"), false)
+    h.read(async () => Response.json({ ...metadata, capabilities: ["workspaces"] }))
+    client.events.restart()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(h.registry.supports("saved", "missions"), false)
+    h.registry.detach("saved")
+    assert.equal(h.registry.supports("saved", "missions"), true)
+    h.read(async () => Response.json(metadata))
+    assert.ok(await h.registry.ensure("saved"))
+    assert.equal(h.registry.supports("saved", "yolo"), true, "metadata without capabilities predates the contract")
+  } finally { h.registry.dispose(); Object.assign(globalThis, { window: previous }) }
+})
+
 test("off is strict and observing or ensuring adds no requests or registrations", async () => {
   for (const value of [undefined, false, null, 0, 1, "true", {}, []]) {
     const h = harness(false)
