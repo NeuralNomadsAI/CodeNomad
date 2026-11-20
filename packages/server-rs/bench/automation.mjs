@@ -2,7 +2,8 @@
 // channel. Registration, token and body refusals, session ownership (root, subfolder, foreign,
 // missing), Missions not-owner answers, browser claim/probe/execute forwarding with the exact
 // native requests, the window status checks and command validation, then the TS plugin's own
-// browser client. Steps that need the page engine (A/B choice) compare their status only.
+// browser client. Window inspection and actions run in the desktop host under Rust (the reference drives
+// a CDP port): their forwarding is asserted on the Rust side only.
 import assert from "node:assert/strict"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
@@ -11,7 +12,55 @@ import { bridgeClient, loopbackFetch } from "./memory.mjs"
 
 export const comparable = value => value.compared
 
-export async function run({ call, fixture, root, pid, native, folder }) {
+/** Rust only: the window commands the bridge forwards to the host (`developer.execute`), the run and
+ * window an inspection pins, refusals by stage, restart and the server's own diagnostics. */
+async function window(native, bridge, sessions, ready, answer) {
+  const ok = result => () => ({ ok: true, result })
+  const { runId, nativeIdentity, windowId } = ready
+  const inspection = { target: { id: "local-window-1", title: "CodeNomad", url: "http://127.0.0.1/" },
+    context: { windowId, instanceId: null, sessionId: null }, snapshot: "- button \"Save\" [e1]", collapsed: 0, diagnostics: [{ level: "log", text: "renderer" }] }
+  let executed = []
+  const host = (execute, status = ready) => answer({
+    "developer.status": ok({ status, logs: [{ level: "error", text: "preview failure" }] }),
+    "developer.execute": params => { executed.push(params); return { ok: true, result: execute(params) } },
+    "developer.restart": ok({ state: "starting", runId, nativeIdentity }),
+  })
+  const call = async (command, mode = "developer-execute") => { executed = []; return bridge(mode, sessions.root, command) }
+  host(() => inspection)
+  assert.deepEqual(await call(undefined, "developer-probe"), { status: 200, body: { result: { available: true, nativeIdentity, runId } } })
+  assert.deepEqual(executed, [], "a probe reads the status only")
+  const act = await call({ action: "click", ref: "e1" })
+  assert.deepEqual([act.status, act.body.error, executed.length], [404, "Run codenomad.inspect before acting on or restarting this CodeNomad window", 0])
+  const inspected = await call({ action: "inspect", query: "Save" })
+  assert.equal(inspected.status, 200)
+  assert.deepEqual(executed, [{ runId, windowId, command: { action: "inspect", query: "Save" } }])
+  assert.deepEqual(inspected.body.result.diagnostics.slice(0, 2), [{ level: "log", text: "renderer" }, { level: "error", text: "preview failure" }])
+  host(({ command }) => ({ ok: true, value: command.text }))
+  const typed = await call({ action: "type", ref: "e1", text: "abc" })
+  assert.deepEqual([typed.status, typed.body.result, executed[0].command], [200, { ok: true, value: "abc" }, { action: "type", ref: "e1", text: "abc", clear: true }])
+  host(() => ({ error: "e1 is covered by div \"Overlay\"; close or move it first, then inspect again", stage: "action" }))
+  const covered = await call({ action: "click", ref: "e1" })
+  assert.deepEqual([covered.status, covered.body.error], [409, "e1 is covered by div \"Overlay\"; close or move it first, then inspect again"])
+  host(() => ({ image: { data: "iVBORw0KGgo=", mime: "image/png" } }))
+  assert.deepEqual((await call({ action: "screenshot" })).body.result, { image: { data: "iVBORw0KGgo=", mime: "image/png" } }, "still pinned after an action failure")
+  host(() => inspection, { ...ready, windowId: "window-2" })
+  const moved = await call({ action: "hover", ref: "e1" })
+  assert.deepEqual([moved.status, executed.length], [404, 0], "another window needs a fresh inspection")
+  host(() => inspection)
+  await call({ action: "inspect" })
+  host(() => ({ error: "CodeNomad window or active session changed; inspect again", stage: "target" }))
+  assert.equal((await call({ action: "press", key: "Enter" })).status, 404)
+  host(() => inspection)
+  assert.equal((await call({ action: "scroll", direction: "down" })).status, 404, "a target failure forgets the pin")
+  await call({ action: "inspect" })
+  native.requests.length = 0
+  const restarted = await call({ action: "restart" })
+  assert.deepEqual([restarted.status, restarted.body.result, native.requests.map(r => r.method)],
+    [200, { state: "starting", runId, nativeIdentity }, ["developer.status", "developer.restart"]])
+  assert.equal((await call({ action: "click", ref: "e1" })).status, 404, "restart forgets the pin")
+}
+
+export async function run({ call, fixture, root, pid, native, folder, data }) {
   assert(native, "the automation mode runs each server under a scripted native host")
   const { registration, file, registry, post, bridge } = await bridgeClient(fixture, pid, 30000)
   const json = (method, body) => ({ method, signal: AbortSignal.timeout(30000), headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
@@ -31,11 +80,11 @@ export async function run({ call, fixture, root, pid, native, folder }) {
   const scrub = value => JSON.parse(JSON.stringify(value ?? null).replace(/ses_[A-Za-z0-9]+/g, id => `<session:${names.get(id) ?? "?"}>`))
 
   const steps = []
-  // `statusOnly`: the reference drives the page engine there; Rust refuses until B lands.
-  const step = async (name, request, { statusOnly = false } = {}) => {
+  // `statusOnly`: only the status compares; `reply`: the reply without the native requests, which`n  // differ where the reference runs the preview engine itself and the host runs it under Rust.
+  const step = async (name, request, { statusOnly = false, reply: only = false } = {}) => {
     native.requests.length = 0
     const reply = await request()
-    steps.push(statusOnly ? { name, status: reply.status } : { name, ...scrub(reply), native: scrub(native.requests) })
+    steps.push(statusOnly ? { name, status: reply.status } : { name, ...scrub(reply), ...(only ? {} : { native: scrub(native.requests) }) })
     return reply
   }
   const answer = replies => { native.answer = (method, params) => replies[method]?.(params) ?? { ok: false, error: { message: `No fixture answer for ${method}` } } }
@@ -74,19 +123,18 @@ export async function run({ call, fixture, root, pid, native, folder }) {
 
     answer({ "developer.status": ok({ status: { ...ready, state: "starting", windowId: undefined } }) })
     await step("developer-probe starting", () => bridge("developer-probe", sessions.root))
-    answer({ "developer.status": ok({ status: { ...ready, cdpUrl: 7 } }) })
+    answer({ "developer.status": ok({ status: { ...ready, windowId: 7 } }) })
     await step("developer-probe malformed status", () => bridge("developer-probe", sessions.root))
     answer({ "developer.status": ok({ status: ready, logs: [] }) })
     for (const [name, command] of [["not object", "inspect"], ["unsupported", { action: "nope" }], ["click without ref", { action: "click" }],
       ["bad modifier", { action: "press", key: "Hyper+K" }], ["bad scroll", { action: "scroll", direction: "up", amount: 0 }],
       ["bad wait", { action: "wait", text: "x", timeout: 20000 }], ["long query", { action: "inspect", query: "q".repeat(201) }]])
       await step(`developer-execute ${name}`, () => bridge("developer-execute", sessions.root, command))
-    await step("developer-probe ready", () => bridge("developer-probe", sessions.root), { statusOnly: true })
-    await step("developer-execute inspect", () => bridge("developer-execute", sessions.root, { action: "inspect" }), { statusOnly: true })
+    if (data) await window(native, bridge, sessions, ready, answer)
 
     answer({
       "browser.probe": ({ sessionID }) => sessionID === sessions.root ? { ok: true, result: { available: true, driver: "cdp" } } : { ok: true, result: { available: false } },
-      "browser.execute": ({ command }) => command.action === "screenshot" ? { ok: false, error: { message: "Fixture preview hidden" } } : { ok: true, result: { url: command.url } },
+      "browser.execute": ({ command }) => ["open", "navigate"].includes(command.action) ? { ok: true, result: { url: command.url } } : { ok: false, error: { message: "Fixture preview hidden" } },
       "browser.page.begin": fail("Fixture preview hidden"),
     })
     for (const session of ["root", "subfolder", "foreign"]) await step(`browser-claim ${session}`, () => post({ mode: "browser-claim", sessionID: sessions[session] }))
@@ -96,8 +144,8 @@ export async function run({ call, fixture, root, pid, native, folder }) {
       ["open", { action: "open", url: "https://fixture.invalid/a", extra: 1 }], ["navigate", { action: "navigate", url: "http://127.0.0.1:1/" }],
       ["screenshot", { action: "screenshot" }]])
       await step(`browser-execute ${name}`, () => bridge("browser-execute", sessions.root, command))
-    await step("browser-execute click", () => bridge("browser-execute", sessions.root, { action: "click", ref: "b1e1" }), { statusOnly: true })
-    await step("browser-execute snapshot", () => bridge("browser-execute", sessions.root, { action: "snapshot" }), { statusOnly: true })
+    await step("browser-execute click", () => bridge("browser-execute", sessions.root, { action: "click", ref: "b1e1" }), { reply: true })
+    await step("browser-execute snapshot", () => bridge("browser-execute", sessions.root, { action: "snapshot" }), { reply: true })
     answer({ "browser.probe": fail("Fixture host busy") })
     await step("browser-probe host error", () => bridge("browser-probe", sessions.root))
 

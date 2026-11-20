@@ -23,7 +23,7 @@ mod emulation;
 mod viewport;
 
 #[path = "browser_controller_page.rs"]
-mod page;
+pub(crate) mod page;
 
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
 #[path = "browser_history.rs"]
@@ -119,6 +119,8 @@ pub(crate) struct BrowserController {
     registration_sequence: Arc<AtomicU64>,
     run_id: Arc<String>,
     pub(crate) embedded_views: EmbeddedViews,
+    /// Refs of each session's snapshots (`browser-page.ts`), one operation at a time per session.
+    page_refs: Arc<Mutex<page::Refs>>,
 }
 
 impl BrowserController {
@@ -134,6 +136,7 @@ impl BrowserController {
             registration_sequence: Arc::new(AtomicU64::new(1)),
             run_id: Arc::new(uuid::Uuid::new_v4().to_string()),
             embedded_views: EmbeddedViews::default(),
+            page_refs: Default::default(),
         }
     }
 
@@ -913,7 +916,7 @@ impl BrowserController {
                     json!({ "image": { "mime": "image/png", "data": data }, "url": webview.url().map_err(|error| error.to_string())? }),
                 )
             }
-            _ => Err("Invalid browser command".to_string()),
+            _ => self.page_action(app, session_id, &command, deadline, fence),
         }
     }
 
@@ -1390,7 +1393,7 @@ fn validate_id(value: &str, max: usize) -> Result<(), String> {
     Ok(())
 }
 
-fn request_deadline(deadline_ms: u64) -> Result<Instant, String> {
+pub(crate) fn request_deadline(deadline_ms: u64) -> Result<Instant, String> {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "Native request expired before execution".to_string())?
@@ -1595,7 +1598,7 @@ fn cdp_guarded(
 }
 
 #[cfg(windows)]
-fn cdp_guarded_inner(
+pub(crate) fn cdp_guarded_inner(
     webview: &tauri::Webview,
     method: &str,
     params: Value,

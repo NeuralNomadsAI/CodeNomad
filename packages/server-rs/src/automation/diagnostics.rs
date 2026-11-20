@@ -69,7 +69,6 @@ pub fn error(status: u16, message: &str, at: &Location) {
 }
 
 /// `inspect` results: the host's last 32 logs, then this server's diagnostics.
-#[allow(dead_code)] // First caller: the window inspection, once its route is chosen (docs/automation.md).
 pub fn extend(inspection: &mut Value, host_logs: &Value) {
     let Some(list) = inspection.get_mut("diagnostics").and_then(Value::as_array_mut) else { return };
     let logs = host_logs.as_array().map_or(&[][..], Vec::as_slice);

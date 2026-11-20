@@ -29,8 +29,6 @@ use crate::{Shared, host::native_parent, shared::fastify};
 pub const PATH: &str = "/api/opencode-plugin/automation";
 const LIMIT: usize = 512 * 1024;
 const NATIVE: Duration = native_parent::DEFAULT_DEADLINE;
-const WINDOW_UNAVAILABLE: &str = "Native window automation is unavailable with this server";
-const PAGE_UNAVAILABLE: &str = "Browser page automation is unavailable with this server";
 static PUBLISHED: AtomicBool = AtomicBool::new(false);
 
 /// 32 random bytes, base64url (`createAutomationBridgeRegistration`).
@@ -186,10 +184,8 @@ async fn session(app: Shared, parts: Parts, bytes: Bytes, body: Value) -> Respon
                 Ok(command) => command,
                 Err(e) => return refuse(Status::BAD_REQUEST, &e),
             };
-            if !matches!(command["action"].as_str(), Some("open" | "navigate" | "screenshot")) {
-                let reason = if native { PAGE_UNAVAILABLE } else { "Native control is unavailable in this host" };
-                return refuse(Status::CONFLICT, reason);
-            }
+            // The host runs open, navigate and screenshot itself, and snapshots and page actions
+            // through its in-host engine.
             match native_parent::request("browser.execute", json!({ "sessionID": id, "command": command }), NATIVE)
                 .await
             {
@@ -197,7 +193,7 @@ async fn session(app: Shared, parts: Parts, bytes: Bytes, body: Value) -> Respon
                 Err(e) => refuse(Status::CONFLICT, &e),
             }
         }
-        _ => developer(mode, &body["command"]).await,
+        _ => developer(&app, id, mode, &body["command"]).await,
     }
 }
 
@@ -228,21 +224,80 @@ async fn owned(app: &Shared, location: &Value, strict: bool) -> Option<bool> {
     (!unreadable).then_some(false)
 }
 
-/// The host's window status and the command's validity; driving the window is the next step.
-async fn developer(mode: &str, command: &Value) -> Response {
-    let status = match native_parent::request("developer.status", json!({}), NATIVE).await {
-        Ok(native) => native["status"].clone(),
+/// The CodeNomad window, driven by the host itself (`developer.execute`): the focused window's
+/// status, the run and window an inspection pins for later actions, the command's validity.
+async fn developer(app: &Shared, session: &str, mode: &str, command: &Value) -> Response {
+    let native = match native_parent::request("developer.status", json!({}), NATIVE).await {
+        Ok(native) => native,
         Err(e) => return refuse(Status::NOT_FOUND, &e),
     };
-    let ready = status["state"] == "ready"
-        && ["runId", "nativeIdentity", "cdpUrl", "windowId"].iter().all(|key| status[key].is_string());
+    let status = &native["status"];
+    let ready =
+        status["state"] == "ready" && ["runId", "nativeIdentity", "windowId"].iter().all(|key| status[key].is_string());
     if !ready {
         return refuse(Status::NOT_FOUND, "Native automation has no active CodeNomad session");
     }
-    if mode == "developer-execute"
-        && let Err(e) = actions::developer(command)
-    {
-        return refuse(Status::BAD_REQUEST, &e);
+    let current = (status["runId"].as_str().unwrap_or_default(), status["windowId"].as_str().unwrap_or_default());
+    if mode == "developer-probe" {
+        return result(
+            json!({ "available": true, "nativeIdentity": status["nativeIdentity"], "runId": status["runId"] }),
+        );
     }
-    refuse(Status::NOT_FOUND, WINDOW_UNAVAILABLE)
+    let command = match actions::developer(command) {
+        Ok(command) => command,
+        Err(e) => return refuse(Status::BAD_REQUEST, &e),
+    };
+    let action = command["action"].as_str().unwrap_or_default();
+    let target = if action == "inspect" { Some(current) } else { app.automation_pins.get(session, current) };
+    let Some((run, window)) = target else {
+        app.automation_pins.forget(session);
+        return refuse(Status::NOT_FOUND, "Run codenomad.inspect before acting on or restarting this CodeNomad window");
+    };
+    if action == "restart" {
+        app.automation_pins.forget(session);
+        return match native_parent::request("developer.restart", json!({}), NATIVE).await {
+            Ok(restarted) => result(restarted),
+            Err(e) => refuse(Status::CONFLICT, &e),
+        };
+    }
+    let request = json!({ "runId": run, "windowId": window, "command": command });
+    let mut done = match native_parent::request("developer.execute", request, NATIVE).await {
+        Ok(done) => done,
+        Err(e) => return refuse(Status::CONFLICT, &e),
+    };
+    if let Some(error) = done["error"].as_str() {
+        let target = done["stage"] == "target";
+        if target {
+            app.automation_pins.forget(session);
+        }
+        return refuse(if target { Status::NOT_FOUND } else { Status::CONFLICT }, error);
+    }
+    if action == "inspect" {
+        diagnostics::extend(&mut done, &native["logs"]);
+        app.automation_pins.remember(session, (run.to_string(), window.to_string()));
+    }
+    result(done)
+}
+
+/// `DeveloperInspectionTargets`: per conversation, the native run and window its last inspection
+/// targeted; another window or run requires a fresh inspection.
+#[derive(Default)]
+pub struct Pins(std::sync::Mutex<Vec<(String, (String, String))>>);
+
+impl Pins {
+    fn remember(&self, session: &str, target: (String, String)) {
+        let mut pins = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        pins.retain(|(s, _)| s != session);
+        pins.push((session.to_string(), target));
+        if pins.len() > 128 {
+            pins.remove(0);
+        }
+    }
+    fn get<'a>(&self, session: &str, current: (&'a str, &'a str)) -> Option<(&'a str, &'a str)> {
+        let pins = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        pins.iter().any(|(s, (run, window))| s == session && run == current.0 && window == current.1).then_some(current)
+    }
+    fn forget(&self, session: &str) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).retain(|(s, _)| s != session);
+    }
 }

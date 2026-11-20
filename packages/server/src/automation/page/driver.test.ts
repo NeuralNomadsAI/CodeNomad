@@ -10,6 +10,7 @@ import { PageDriverUnsupportedError, type PageChannel } from "./protocol"
 import { renderSnapshot, type AxNode } from "./snapshot"
 import { snapshotPage } from "./actions"
 import { RefTable } from "./refs"
+import { engineCases } from "./engine-cases"
 const json = (file: string) => JSON.parse(readFileSync(new URL(file, import.meta.url), "utf8"))
 const golden = json("./driver.golden.json")
 
@@ -21,6 +22,11 @@ test("the shared fixed registry matches the qualified program hashes", () => {
   }
   for (const [id, source] of Object.entries(GLOBAL_FUNCTIONS)) assert.equal(hash(source), golden.globals[id], id)
   assert.deepEqual(json("./functions.generated.json"), nativeFunctionRegistry(), "regenerate the checked-in native resource when programs change")
+  assert.deepEqual(json("./functions.application.generated.json"), nativeFunctionRegistry(true), "regenerate the application registry when programs change")
+})
+
+test("the Rust engine's parity cases are current", async () => {
+  assert.deepEqual(json("./engine.cases.json"), JSON.parse(JSON.stringify(await engineCases())), "node --import tsx scripts/build-page-function-registry.ts")
 })
 
 test("closed driver contract refuses unknown operations, params, programs and malformed arguments", () => {

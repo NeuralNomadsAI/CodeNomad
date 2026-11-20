@@ -1,6 +1,6 @@
 # Desktop automation with the Rust server: design note
 
-Status: option B chosen, Tauri only (Electron does not launch the Rust server on this branch). Scope: `codenomad.inspect`, `codenomad.act`, `codenomad.screenshot`, `codenomad.browser` and `act({ action: "restart" })`.
+Status: option B chosen, Tauri only (Electron does not launch the Rust server on this branch); Windows parity implemented (`packages/tauri-app/src-tauri/src/automation/`), macOS and Linux window automation not started. Scope: `codenomad.inspect`, `codenomad.act`, `codenomad.screenshot`, `codenomad.browser` and `act({ action: "restart" })`.
 
 ## 1. What the tools do and the current path
 

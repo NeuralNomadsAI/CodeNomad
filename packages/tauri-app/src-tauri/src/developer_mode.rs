@@ -32,6 +32,8 @@ pub(crate) struct DeveloperMode {
     run_id: String,
     native_identity: String,
     devtools_active_port: Option<PathBuf>,
+    /// The Rust server: this host drives its own windows (`automation::window`), with no debugging port.
+    in_process: bool,
 }
 
 pub(crate) fn append_node_option(value: Option<&str>, option: &str) -> String {
@@ -73,12 +75,21 @@ pub(crate) fn webview2_arguments(value: Option<&str>, port: Option<u16>) -> Stri
 }
 
 impl DeveloperMode {
-    pub(crate) fn new(native_identity: String, devtools_active_port: Option<PathBuf>) -> Self {
+    pub(crate) fn new(
+        native_identity: String,
+        devtools_active_port: Option<PathBuf>,
+        in_process: bool,
+    ) -> Self {
         Self {
             run_id: uuid::Uuid::new_v4().to_string(),
             native_identity,
             devtools_active_port,
+            in_process,
         }
+    }
+
+    pub(crate) fn run_id(&self) -> &str {
+        &self.run_id
     }
 
     // Call only after the native singleton has been acquired, before creating
@@ -109,7 +120,7 @@ impl DeveloperMode {
     }
 
     fn status(&self, port: Option<u16>, window_id: Option<String>) -> DeveloperTargetStatus {
-        let ready = port.is_some() && window_id.is_some();
+        let ready = (self.in_process || port.is_some()) && window_id.is_some();
         DeveloperTargetStatus {
             state: if ready {
                 DeveloperTargetState::Ready
@@ -135,8 +146,7 @@ impl DeveloperMode {
             return Err("Native automation requires the Tauri Windows runtime".to_string());
         }
         let port = self.discovered_port();
-        let window_id = port
-            .is_some()
+        let window_id = (self.in_process || port.is_some())
             .then(|| Self::focused_window_id(app))
             .flatten();
         Ok(self.snapshot(port, window_id))
@@ -173,7 +183,7 @@ mod tests {
             "snapshot regression",
             "Paramètre incorrect. (0x80070057)",
         );
-        let mode = DeveloperMode::new("tauri:test".into(), None);
+        let mode = DeveloperMode::new("tauri:test".into(), None, false);
         let snapshot = mode.snapshot(None, None);
         assert!(snapshot["logs"].as_array().unwrap().iter().any(|log| {
             log["level"] == "error" && log["text"] == error
@@ -184,7 +194,7 @@ mod tests {
     fn normal_startup_prepares_stable_profile_and_clears_only_stale_endpoint() {
         let root = tempfile::tempdir().unwrap();
         let port_file = root.path().join("local/EBWebView/DevToolsActivePort");
-        let mode = DeveloperMode::new("tauri:test".to_string(), Some(port_file.clone()));
+        let mode = DeveloperMode::new("tauri:test".to_string(), Some(port_file.clone()), false);
         mode.prepare_profile().unwrap();
         let cookie_file = port_file.with_file_name("Cookies");
         std::fs::write(&cookie_file, b"persisted").unwrap();
@@ -233,6 +243,7 @@ mod tests {
             run_id: "run-1".to_string(),
             native_identity: "tauri:test".to_string(),
             devtools_active_port: Some(devtools_active_port),
+            in_process: false,
         };
         assert_eq!(
             json!(mode.status(mode.discovered_port(), Some("window-1".to_string()))),
@@ -256,10 +267,20 @@ mod tests {
     }
 
     #[test]
+    fn in_process_automation_is_ready_without_a_debugging_port() {
+        let mode = DeveloperMode::new("tauri:test".into(), None, true);
+        assert_eq!(
+            json!(mode.status(None, Some("window-1".into()))),
+            json!({ "state": "ready", "runId": mode.run_id(), "nativeIdentity": "tauri:test", "windowId": "window-1" })
+        );
+        assert_eq!(mode.status(None, None).state, DeveloperTargetState::Starting);
+    }
+
+    #[test]
     fn startup_enables_local_instrumentation_without_a_marker_or_global_remote_flags() {
         let source = include_str!("main.rs");
         assert!(source.contains("configure_developer_environment();"));
-        assert!(source.contains("configure_developer_webview(&scope)"));
+        assert!(source.contains("configure_developer_webview(&scope, in_process_automation)"));
         assert!(source.contains("Some(developer_mode::webview2_arguments(None, Some(0)))"));
         assert!(source.contains("scope.webview_data_directory.join(\"developer-mode\")"));
         assert!(!source.contains("developer_mode_active"));

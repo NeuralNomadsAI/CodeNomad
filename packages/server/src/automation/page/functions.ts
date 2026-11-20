@@ -149,10 +149,11 @@ export function declaration(id: keyof typeof ELEMENT_FUNCTIONS, mark: boolean): 
     : `function (...args) { ${element} ${body} }`
 }
 
-/** Compile-time native resource; generation is checked by the contract tests. */
-export function nativeFunctionRegistry() {
-  return Object.fromEntries((Object.keys(FUNCTION_ARGS) as PageFunctionId[]).filter(id => !applicationOnly(id)).map(id => [id, {
+/** Compile-time native resource; generation is checked by the contract tests. `application`: the
+ * trusted application window's marked programs, with the input provenance functions. */
+export function nativeFunctionRegistry(application = false) {
+  return Object.fromEntries((Object.keys(FUNCTION_ARGS) as PageFunctionId[]).filter(id => application || !applicationOnly(id)).map(id => [id, {
     scope: Object.hasOwn(ELEMENT_FUNCTIONS, id) ? "element" : "global", args: FUNCTION_ARGS[id], handle: handleResult(id),
-    source: Object.hasOwn(ELEMENT_FUNCTIONS, id) ? declaration(id as keyof typeof ELEMENT_FUNCTIONS, false) : GLOBAL_FUNCTIONS[id as keyof typeof GLOBAL_FUNCTIONS],
+    source: Object.hasOwn(ELEMENT_FUNCTIONS, id) ? declaration(id as keyof typeof ELEMENT_FUNCTIONS, application) : GLOBAL_FUNCTIONS[id as keyof typeof GLOBAL_FUNCTIONS],
   }]))
 }

@@ -54,6 +54,7 @@ pub struct App {
     pub mission_bridge: Option<String>,
     /// The published automation bridge token: the Missions fixture's when it runs, else fresh.
     pub bridge_token: Option<String>,
+    pub automation_pins: crate::automation::Pins,
     pub mission_control_slot: Semaphore,
     pub calendar_profile: Option<PathBuf>,
     pub calendar_slot: tokio::sync::Mutex<()>,
@@ -107,6 +108,7 @@ impl App {
         let mission_bridge = missions::run::new_token();
         Self {
             bridge_token: mission_bridge.clone().or_else(crate::automation::new_token),
+            automation_pins: Default::default(),
             auth,
             port,
             data,
