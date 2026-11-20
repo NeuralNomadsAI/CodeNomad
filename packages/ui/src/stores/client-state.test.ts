@@ -609,6 +609,22 @@ describe("partitioned client state", () => {
     assert.equal(commits.length, 5)
   })
 
+  it("republishes on the next flush after a failed clear", async () => {
+    const encoded = await encodeClientSnapshotV2(snapshot("restored"))
+    const commits: any[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => { commits.push(value); return true },
+      clearClientState: async () => { throw new Error("host unavailable") },
+    })
+    state.updateRestorableSession(session("kept"))
+    await state.flushClientState()
+    await assert.rejects(state.clearRestoredClientState(), /host unavailable/)
+    await state.flushClientState()
+    assert.equal(commits.length, 2)
+  })
+
   it("commits one atomic graph without a monolithic save or automatic load rewrite", async () => {
     const encoded = await encodeClientSnapshotV2(snapshot("restored", { [layoutKey]: "380" }))
     const commits: any[] = []; let monolithicSaves = 0

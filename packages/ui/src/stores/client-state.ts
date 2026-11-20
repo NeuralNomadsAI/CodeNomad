@@ -219,6 +219,8 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
     transactionLayoutWrites.clear()
     writeBlock = previousWriteBlock
     dirty = retryDirty
+    // The host copy is unknown after a failed operation: the next flush rewrites it.
+    republishOnFlush = true
     if (dirty) scheduleSave()
     throw error
   }
