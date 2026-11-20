@@ -67,7 +67,7 @@ export type PanelPreferencesSetStatus = "saved" | "too-large" | "invalid" | "una
 
 /**
  * API 4 `notes.list()` entry: a note of a session in the displayed project, newest first.
- * `orphan` notes belong to a deleted session and show the last title the host read.
+ * `orphan` notes belong to a deleted session and show the title captured when the note was last saved.
  */
 export interface PanelNote {
   sessionID: string
