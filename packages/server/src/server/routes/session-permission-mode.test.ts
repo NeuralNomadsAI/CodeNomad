@@ -1,13 +1,14 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import test, { type TestContext } from "node:test"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import type { ConfigGetOutput, OpenCodeEvent, PermissionRule, SessionInfo } from "@opencode/client"
 import Fastify from "fastify"
+import pino from "pino"
 import { resolveConfigLocation } from "../../config/location"
 import { EventBus } from "../../events/bus"
-import { createLogger } from "../../logger"
 import { SessionPermissionModes } from "../../permissions/session-mode"
 import { supervisedRules } from "../../permissions/session-mode-rules"
 import { SESSION_PERMISSION_BLOCKS_OWNER, SettingsService } from "../../settings/service"
@@ -44,12 +45,13 @@ async function fixture(t: TestContext) {
   const root = mkdtempSync(path.join(temporary, "codenomad-permission-mode-"))
   const app = Fastify()
   const bus = new EventBus()
-  const logger = createLogger({ level: "silent" })
+  const logger = pino({ level: "silent" })
   const settings = new SettingsService(resolveConfigLocation(root), bus, logger)
   const sessionID = "ses_example"
   const session = { id: sessionID, projectID: "test", time: { created: 100 }, location: { directory: "/worktree" }, permissions: [read] } as SessionInfo
   const sessions = new Map([[sessionID, session]])
   const actions: string[] = []
+  const reads: string[] = []
   const writes: string[] = []
   let mutate: ((rules: PermissionRule[]) => void) | undefined
   let configEntries = config
@@ -60,6 +62,7 @@ async function fixture(t: TestContext) {
       environment: async () => {},
       get: async ({ sessionID }: { sessionID: string }) => {
         actions.push("read")
+        reads.push(sessionID)
         const selected = sessions.get(sessionID)
         if (!selected) throw Object.assign(new Error("Absent"), { _tag: "SessionNotFoundError", sessionID })
         return structuredClone(selected)
@@ -91,6 +94,7 @@ async function fixture(t: TestContext) {
     getSharedServiceClient: async () => client,
     getSharedServiceEndpoint: async () => endpoint,
     getSharedServiceConnection: async () => connection,
+    getExistingSharedServiceConnection: () => connection,
     getServiceWslDistro: () => undefined,
     getServiceDirectory: () => "/worktree",
     getSessionEnvironment: async () => ({}),
@@ -106,7 +110,8 @@ async function fixture(t: TestContext) {
   registerSettingsRoutes(app, { settings, logger })
   t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }) })
   const url = (id: string, selected: string) => `/api/workspaces/${id}/sessions/${selected}/permission-mode`
-  return { app, bus, settings, modes, actions, writes, session, sessions, client, manager, logger, worktrees, cleanup,
+  return { app, bus, settings, modes, actions, reads, writes, session, sessions, client, manager, logger, worktrees, cleanup,
+    restartModes: () => new SessionPermissionModes(new SettingsService(resolveConfigLocation(root), bus, logger)),
     publish: (value: object) => {
       const event = { id: "evt_fixture", created: 0, ...value } as OpenCodeEvent
       nativeEventConnections.set(event, connection)
@@ -194,6 +199,100 @@ test("refreshes known supervised conversations on a location config event, inclu
     assert.equal((await f.set("autonomous", "two", copy.id)).statusCode, 200)
     assert.deepEqual(copy.permissions, copy === child ? [read, suffix] : [read])
   }
+})
+
+test("connection and config events refresh saved blocks without reopening sessions", { timeout: 5_000 }, async t => {
+  const f = await fixture(t)
+  const missing = { ...f.session, id: "ses_missing" }
+  f.sessions.set(missing.id, missing)
+  assert.equal((await f.set("supervised", "one", missing.id)).statusCode, 200)
+  f.sessions.delete(missing.id)
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const child = { ...f.session, id: "ses_child", parentID: f.session.id }
+  const fork = { ...f.session, id: "ses_fork", fork: { sessionID: f.session.id } } as SessionInfo
+  for (const copy of [child, fork]) {
+    f.sessions.set(copy.id, copy)
+    const signal = AbortSignal.timeout(5_000)
+    assert.deepEqual(await f.modes.refresh(sessionPermissionTarget(copy,
+      { client: f.client, distro: undefined, signal, current: () => signal.throwIfAborted() },
+      location => f.manager.ownsLocation("one", location))), { mode: "supervised" })
+  }
+
+  const modes = f.restartModes()
+  assert.deepEqual(modes.knownAt(undefined), [])
+  const refresh = modes.refresh.bind(modes)
+  let settled: () => void
+  let absent: () => void
+  const waitForCopies = () => new Promise<void>(resolve => { settled = resolve })
+  const waitForMissing = () => new Promise<void>(resolve => { absent = resolve })
+  const get = f.client.session.get.bind(f.client.session)
+  t.mock.method(f.client.session, "get", async (...args: Parameters<typeof get>) => {
+    try { return await get(...args) }
+    finally { if (args[0].sessionID === missing.id) absent() }
+  })
+  t.mock.method(modes, "refresh", async (target: Parameters<typeof refresh>[0]) => {
+    const result = await refresh(target)
+    if ((await target.read()).id === fork.id) settled()
+    return result
+  })
+  const warn = t.mock.method(f.logger, "warn")
+  const changed = (deny: PermissionRule) => f.replaceConfig([...config, { type: "document", info: { permissions: [deny] } }])
+  const startupDeny = shell("deny", "after startup *")
+  const startup = Promise.all([waitForCopies(), waitForMissing()])
+  changed(startupDeny)
+  f.bus.publish({ type: "instance.eventStatus", instanceId: "one", status: "connected", generation: 1 })
+  const stop = connectSessionPermissionRefresh(f.bus, f.manager, modes, f.worktrees, f.cleanup, f.logger)
+  t.after(stop)
+  await startup
+  for (const copy of [f.session, child, fork]) assert.deepEqual(copy.permissions, [read, ...block, startupDeny])
+  assert(f.reads.includes(missing.id))
+  assert.equal(warn.mock.callCount(), 0)
+
+  const nextDeny = shell("deny", "after config *")
+  changed(nextDeny)
+  const updated = Promise.all([waitForCopies(), waitForMissing()])
+  f.reads.length = 0
+  f.publish({ type: "config.updated", location: { directory: "/other" }, data: {} })
+  f.publish({ type: "config.updated", location: f.session.location, data: {} })
+  await updated
+  for (const copy of [f.session, child, fork]) assert.deepEqual(copy.permissions, [read, ...block, nextDeny])
+  assert.equal(f.reads.filter(id => id === missing.id).length, 1, "only the matching location tries the missing session")
+  assert.equal(warn.mock.callCount(), 0)
+})
+
+test("a scoped config event recovers a hash-only block through native pagination", { timeout: 5_000 }, async t => {
+  const f = await fixture(t)
+  const { id, time, location, projectID } = f.session
+  f.session.permissions = [read, ...block]
+  const key = createHash("sha256").update(JSON.stringify([`host:${process.platform}`, id, time.created])).digest("hex")
+  f.settings.setPrivateSessionPermissionBlock(key, block)
+  const modes = f.restartModes()
+  const locationGet = t.mock.fn(async () => ({ project: { id: projectID } }))
+  const list = t.mock.fn(async (input: { cursor?: string }) => input.cursor
+    ? { data: [f.session], cursor: {} }
+    : { data: [{ ...f.session, id: "ses_untracked" }], cursor: { next: "next" } })
+  Object.assign(f.client, { location: { get: locationGet } })
+  Object.assign(f.client.session, { list })
+  const refresh = modes.refresh.bind(modes)
+  let done: () => void
+  const updated = new Promise<void>(resolve => { done = resolve })
+  t.mock.method(modes, "refresh", async (target: Parameters<typeof refresh>[0]) => {
+    const result = await refresh(target)
+    done()
+    return result
+  })
+  const deny = shell("deny", "legacy *")
+  f.replaceConfig([...config, { type: "document", info: { permissions: [deny] } }])
+  t.after(connectSessionPermissionRefresh(f.bus, f.manager, modes, f.worktrees, f.cleanup, f.logger))
+  f.publish({ type: "config.updated", location, data: {} })
+  await updated
+  assert.deepEqual(list.mock.calls.map(call => call.arguments[0]), [
+    { project: projectID, directory: location.directory, limit: 100 }, { cursor: "next" },
+  ])
+  assert.deepEqual(f.writes, [id])
+  assert.deepEqual(f.session.permissions, [read, ...block, deny])
+  const saved = f.settings.getPrivateSessionPermissionState()[key] as { target: { id: string } }
+  assert.equal(saved.target.id, id)
 })
 
 test("preserves a verified refresh after a concurrent native addition and an uncertain response", async t => {

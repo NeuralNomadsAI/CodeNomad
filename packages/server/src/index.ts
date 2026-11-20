@@ -41,6 +41,9 @@ import { runCliUpgrade } from "./cli-upgrade"
 import { createServerShutdownHandler, installShutdownSignalHandlers, installShutdownStdinHandler, orchestrateServerShutdown } from "./shutdown"
 import { PermissionReceipts } from "./permissions/receipts"
 import { PermissionReceiptStore } from "./permissions/receipt-store"
+import { SessionPermissionModes } from "./permissions/session-mode"
+import { connectSessionPermissionRefresh } from "./server/routes/session-permission-refresh"
+import { SessionCleanupFence } from "./server/session-cleanup-fence"
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
@@ -531,6 +534,9 @@ async function main() {
   // Every listener admits the same worktrees: one fence (and its mission holds),
   // so a deletion through HTTPS drains a mission admitted through the bridge.
   const worktreeDeletionFence = new WorktreeDeletionFence()
+  const sessionPermissions = { modes: new SessionPermissionModes(settings), cleanup: new SessionCleanupFence() }
+  const stopPermissionRefresh = connectSessionPermissionRefresh(eventBus, workspaceManager, sessionPermissions.modes,
+    worktreeDeletionFence, sessionPermissions.cleanup, logger)
   const missionsHost = () => missionBridge !== "failed"
 
   // The same application behind every listener of this backend.
@@ -551,6 +557,7 @@ async function main() {
     remoteProxySessionManager,
     remoteControlManager,
     permissionReceipts,
+    sessionPermissions,
     panelExtensions,
     uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
     logger,
@@ -714,7 +721,7 @@ async function main() {
         {
           stopInstanceEventBridge: async () => {
             instanceEventBridge.shutdown()
-            await permissionReceipts.stop()
+            await Promise.all([permissionReceipts.stop(), stopPermissionRefresh()])
           },
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),

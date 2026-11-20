@@ -25,10 +25,12 @@ const blockStart = supervisedRules([], false)
 const savedBlock = sessionPermissionRules.refine(block => sameRules(block.slice(0, 2), blockStart))
 const retiredBlock = z.union([savedBlock, z.array(savedBlock).min(1)])
 type RetiredBlock = z.infer<typeof retiredBlock>
+const savedTarget = z.object({ id: z.string().min(1), created: z.number(), directory: z.string().min(1), distro: z.string().nullish() })
 const savedBlocks = z.object({
   active: savedBlock.nullish(), previous: z.array(retiredBlock),
-  revisions: z.array(savedBlock).default([]), pending: savedBlock.nullish(),
+  revisions: z.array(savedBlock).default([]), pending: savedBlock.nullish(), target: savedTarget.nullish().catch(undefined),
 })
+type SavedBlocks = z.infer<typeof savedBlocks>
 const sourceSessionID = (session: SessionInfo) => session.fork?.sessionID ?? session.parentID
 const ambiguous = "ambiguous" as const
 
@@ -60,7 +62,7 @@ export class SessionPermissionModes {
 
   constructor(private readonly settings: Settings) {}
 
-  private key(distro: string | undefined, session: Pick<SessionInfo, "id" | "time">): string {
+  private key(distro: string | undefined, session: { id: string; time: Pick<SessionInfo["time"], "created"> }): string {
     if (!session.id || !Number.isFinite(session.time.created)) throw new Error("Invalid session identity")
     const host = distro ? `wsl:${distro.toLowerCase()}` : `host:${process.platform}`
     return createHash("sha256").update(JSON.stringify([host, session.id, session.time.created])).digest("hex")
@@ -70,15 +72,20 @@ export class SessionPermissionModes {
     return sessionPermissionRules.parse(session.permissions ?? [])
   }
 
-  private owned(key: string, state = this.settings.getPrivateSessionPermissionState()) {
-    const saved = state[key]
+  private parseSaved(saved: unknown): SavedBlocks {
     return Array.isArray(saved) ? { active: savedBlock.parse(saved), previous: [], revisions: [], pending: undefined }
       : savedBlocks.parse(saved ?? { previous: [] })
   }
 
+  private owned(key: string, state = this.settings.getPrivateSessionPermissionState()) {
+    return this.parseSaved(state[key])
+  }
+
   private remember(key: string, active: PermissionRule[] | null, previous: RetiredBlock[] = [],
     revisions: PermissionRule[][] = [], pending?: PermissionRule[] | null) {
-    this.settings.setPrivateSessionPermissionBlock(key, active, previous, revisions, pending ?? undefined)
+    const target = active || pending ? this.known.get(key) : undefined
+    this.settings.setPrivateSessionPermissionBlock(key, active, previous, revisions, pending ?? undefined,
+      target && { ...target, distro: target.distro ?? null })
   }
 
   private track(key: string, distro: string | undefined, session: SessionInfo) {
@@ -87,6 +94,33 @@ export class SessionPermissionModes {
 
   knownAt(distro: string | undefined, directory?: string) {
     return [...this.known.values()].filter(session => session.distro === distro?.toLowerCase() && (!directory || session.directory === directory))
+  }
+
+  refreshTargets(distro: string | undefined, directory?: string) {
+    const host = distro?.toLowerCase()
+    const targets = new Map([...this.known].filter(([, target]) =>
+      target.distro === host && (!directory || target.directory === directory)))
+    const legacy = new Set<string>()
+    for (const [key, entry] of Object.entries(this.settings.getPrivateSessionPermissionState())) {
+      if (!/^[a-f0-9]{64}$/.test(key)) continue
+      let saved
+      try { saved = this.parseSaved(entry) }
+      catch { continue }
+      if (!saved.active && !saved.pending) continue
+      const { target } = saved
+      if (!target) {
+        if (!this.known.has(key)) legacy.add(key)
+        continue
+      }
+      if ((target.distro ?? undefined) !== host || (directory && target.directory !== directory)
+        || key !== this.key(distro, { id: target.id, time: { created: target.created } })) continue
+      if (!targets.has(key)) targets.set(key, { ...target, distro: target.distro ?? undefined })
+    }
+    return { targets: targets.values(), legacy }
+  }
+
+  matchLegacyTarget(distro: string | undefined, session: SessionInfo, legacy: Set<string>) {
+    return legacy.delete(this.key(distro, session))
   }
 
   forgetDeleted(distro: string | undefined, sessionID: string) {
@@ -140,8 +174,8 @@ export class SessionPermissionModes {
     if (session.parentID || blockPositions(rules, block).length !== 1
       || !sameRules(rules, [...original, ...block])) throw new Error("Native session permission creation was not confirmed")
     const key = this.key(distro, session)
-    this.remember(key, block)
     this.track(key, distro, session)
+    this.remember(key, block)
   }
 
   read(target: NativeTarget): Promise<ConversationPermissionModeResponse> {
@@ -184,7 +218,7 @@ export class SessionPermissionModes {
         if (sameRules(owned, replacement)) {
           const fresh = currentRules(await target.read())
           if (!sameRules(fresh, rules)) { rules = fresh; continue }
-          if (!local || saved.pending) this.remember(key, owned, saved.previous, revisions)
+          if (!local || saved.pending || saved.target?.directory !== initial.location.directory) this.remember(key, owned, saved.previous, revisions)
           return { mode: "supervised" }
         }
         const updated = [...prefix, ...replacement, ...rules.slice(index + owned.length)]
@@ -275,6 +309,7 @@ export class SessionPermissionModes {
           const past = retained?.previous ?? history
           const retired = prior && !sameRules(prior, block) && !past.some(entry => !Array.isArray(entry[0]) && sameRules(entry as PermissionRule[], prior))
             ? [...past, prior] : past
+          this.track(key, target.distro, initial)
           this.remember(key, block, retired)
           const fresh = currentRules(await target.read())
           if (!sameRules(fresh, rules)) {

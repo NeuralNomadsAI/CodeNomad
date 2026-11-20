@@ -102,20 +102,21 @@ into `ask`, keeping native ordering. Home-relative edit resources that need
 expansion by the native config loader are refused if their native absolute path
 cannot be established. The block takes precedence over agent-specific rules where
 they overlap. CodeNomad reads the effective configuration at the conversation's
-native Location when enabling Supervised, when `config.updated` invalidates a
-known Supervised conversation, on native stream reconnection, and before
-forwarding a prompt, command or shell from CodeNomad. A send waits for a
-successful refresh. The event refresh covers conversations observed by the
-running backend; other conversations are checked when CodeNomad next sends input.
+native Location when enabling Supervised and before forwarding a prompt, command
+or shell from CodeNomad. A send waits for a successful refresh. On first native
+connection, reconnection, and `config.updated`, the backend also refreshes saved
+Supervised sessions in the affected Locations in the background. Native clients
+use the stored rules until that refresh completes.
 
 Matching saved project **Always Allow** approvals can still settle an `ask`.
 Reads, external-directory actions, MCP and delegation retain their own rules.
 Open requests keep their original decision context. This gates agent tool requests;
 approved tools run under the same OS account and isolation as in Autonomous.
 
-The exact contiguous block is recorded in private backend state. Subagents and
-forks receive a native copy at creation and can change modes independently. With
-no matching local block, the backend checks
+Private backend state records the exact contiguous block and the native session
+identity. Hash-only records are matched against scoped native session metadata.
+Subagents and forks receive a native copy at creation and can change modes
+independently. With no matching local block, the backend checks
 the copy against blocks recorded along its owned native parent or fork lineage,
 including blocks retired by a source that changed modes. Returning to Autonomous
 removes only the matching block from the selected conversation, preserving the

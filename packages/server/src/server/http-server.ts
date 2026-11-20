@@ -167,6 +167,7 @@ interface HttpServerDeps {
   panelExtensions?: PanelExtensionStore
   /** Shared by every listener of one backend; a fresh one serves a lone server. */
   worktreeDeletionFence?: WorktreeDeletionFence
+  sessionPermissions?: { modes: SessionPermissionModes; cleanup: SessionCleanupFence }
   /** See `registerMissionRoutes`. */
   missionsHost?: () => boolean
   /** Shared by every listener of one backend; a fresh in-memory one serves a lone server. */
@@ -420,7 +421,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   const developerCdp = new DeveloperCdp()
-  const permissionModes = new SessionPermissionModes(deps.settings)
+  const permissionModes = deps.sessionPermissions?.modes ?? new SessionPermissionModes(deps.settings)
   const scheduleSettingsActivation = new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager)
   registerAutomationPluginRoute(app, {
     permissionModes,
@@ -477,10 +478,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, permissionModes })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
-  const sessionCleanup = new SessionCleanupFence()
-  const stopPermissionRefresh = connectSessionPermissionRefresh(deps.eventBus, deps.workspaceManager, permissionModes,
-    worktreeDeletionFence, sessionCleanup, apiLogger)
-  app.addHook("onClose", async () => stopPermissionRefresh())
+  const sessionCleanup = deps.sessionPermissions?.cleanup ?? new SessionCleanupFence()
+  if (!deps.sessionPermissions) {
+    const stopPermissionRefresh = connectSessionPermissionRefresh(deps.eventBus, deps.workspaceManager, permissionModes,
+      worktreeDeletionFence, sessionCleanup, apiLogger)
+    app.addHook("onClose", async () => stopPermissionRefresh())
+  }
   registerSessionPermissionModeRoutes(app, { workspaceManager: deps.workspaceManager, modes: permissionModes, worktreeDeletionFence, cleanup: sessionCleanup })
   const isProtected = registerSessionFavoritesRoutes(app, { workspaceManager: deps.workspaceManager, settings: deps.settings, eventBus: deps.eventBus, cleanup: sessionCleanup })
   registerSessionCleanupRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, cleanup: sessionCleanup, isProtected })
