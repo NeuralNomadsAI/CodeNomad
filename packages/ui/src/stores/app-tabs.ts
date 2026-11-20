@@ -15,6 +15,7 @@ import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authorit
 import { remoteRestoreTabs, type RemoteRestoreTab } from "./remote-restore-tabs"
 import { generateUUID } from "../lib/client-identity"
 import { sameServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
+import { parseInstanceKey } from "../lib/backend-identity"
 
 export interface InstanceAppTab {
   id: string
@@ -30,6 +31,11 @@ export interface SideCarAppTab {
 
 interface BlankAppTab { id: string; kind: "blank"; server?: ServerSelectionIntent }
 export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab | BlankAppTab
+
+export function allowsAutomaticLocalSetup(tab: AppTabRecord): boolean {
+  if (tab.kind === "instance") return parseInstanceKey(tab.instance.id).backendId === "local"
+  return tab.kind !== "remote-restore" && (tab.kind !== "blank" || !tab.server)
+}
 
 const [blankTab, setBlankTab] = createSignal<BlankAppTab>()
 const [blankServer, setBlankServer] = createSignal<ServerSelectionIntent>()

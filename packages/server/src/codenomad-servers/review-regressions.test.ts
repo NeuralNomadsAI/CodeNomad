@@ -8,7 +8,7 @@ import { RemoteServerBrowseManager } from "./browse-manager"
 import { startFakeCodeNomad } from "./test-support/fake-codenomad"
 
 for (const change of ["address", "tls"] as const) {
-  test(`R1 queued passwords retain their admitted destination and TLS authority: ${change}`, { timeout: 15_000 }, async t => {
+  test(`queued passwords retain their admitted destination and TLS authority: ${change}`, { timeout: 15_000 }, async t => {
     const first = await startFakeCodeNomad(), replacement = await startFakeCodeNomad()
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr7-review-"))
     const profiles = [{ id: "saved", baseUrl: first.origin, skipTlsVerify: false }]
@@ -34,7 +34,7 @@ for (const change of ["address", "tls"] as const) {
   })
 }
 
-test("R1 stored identity is bound to TLS policy across manager lifetimes", async t => {
+test("stored identity is bound to TLS policy across manager lifetimes", async t => {
   const remote = await startFakeCodeNomad()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr7-review-tls-"))
   const profiles = [{ id: "saved", baseUrl: remote.origin, skipTlsVerify: true }]
@@ -51,7 +51,7 @@ test("R1 stored identity is bound to TLS policy across manager lifetimes", async
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "remote-server-credentials.json"), "utf8")), { servers: {} })
 })
 
-test("R2 forget revokes every listener's shared connection and credential cache", { timeout: 15_000 }, async t => {
+test("forget revokes every listener's shared connection and credential cache", { timeout: 15_000 }, async t => {
   const remote = await startFakeCodeNomad()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr7-review-shared-"))
   const settings = { getOwner: () => ({ remoteServers: [{ id: "saved", baseUrl: remote.origin, skipTlsVerify: false }] }), configYamlPathForAuthority: () => path.join(dir, "config.yaml") }
@@ -72,7 +72,7 @@ test("R2 forget revokes every listener's shared connection and credential cache"
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "remote-server-credentials.json"), "utf8")), { servers: {} })
 })
 
-test("R1 a failed replacement under another TLS policy cannot retain the disk identity", async t => {
+test("a failed replacement under another TLS policy cannot retain the disk identity", async t => {
   const remote = await startFakeCodeNomad()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr7-review-policy-"))
   const profiles = [{ id: "saved", baseUrl: remote.origin, skipTlsVerify: true }]
@@ -87,7 +87,7 @@ test("R1 a failed replacement under another TLS policy cannot retain the disk id
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "remote-server-credentials.json"), "utf8")), { servers: {} })
 })
 
-test("R2 closing one listener preserves the other listener's connection owner and credential rotation", async t => {
+test("closing one listener preserves the other listener's connection owner and credential rotation", async t => {
   const remote = await startFakeCodeNomad()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr7-review-close-"))
   const settings = { getOwner: () => ({ remoteServers: [{ id: "saved", baseUrl: remote.origin }] }), configYamlPathForAuthority: () => path.join(dir, "config.yaml") }

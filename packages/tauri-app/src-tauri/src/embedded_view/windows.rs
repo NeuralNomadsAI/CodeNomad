@@ -145,7 +145,6 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
 
 pub(super) fn privacy<R: tauri::Runtime>(
     view: &tauri::Webview<R>,
-    restricted: bool,
 ) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         ICoreWebView2Settings3, ICoreWebView2Settings4,
@@ -155,16 +154,16 @@ pub(super) fn privacy<R: tauri::Runtime>(
     view.with_webview(move |native| {
         let result = (|| unsafe {
             let settings = native.controller().CoreWebView2()?.Settings()?;
-            settings.SetIsStatusBarEnabled(!restricted)?;
-            settings.SetAreDefaultContextMenusEnabled(!restricted)?;
-            settings.SetAreDefaultScriptDialogsEnabled(!restricted)?;
-            settings.SetIsBuiltInErrorPageEnabled(!restricted)?;
+            settings.SetIsStatusBarEnabled(false)?;
+            settings.SetAreDefaultContextMenusEnabled(false)?;
+            settings.SetAreDefaultScriptDialogsEnabled(false)?;
+            settings.SetIsBuiltInErrorPageEnabled(false)?;
             let autofill = settings.cast::<ICoreWebView2Settings4>()?;
-            autofill.SetIsPasswordAutosaveEnabled(!restricted)?;
-            autofill.SetIsGeneralAutofillEnabled(!restricted)?;
+            autofill.SetIsPasswordAutosaveEnabled(false)?;
+            autofill.SetIsGeneralAutofillEnabled(false)?;
             settings
                 .cast::<ICoreWebView2Settings3>()?
-                .SetAreBrowserAcceleratorKeysEnabled(!restricted)?;
+                .SetAreBrowserAcceleratorKeysEnabled(false)?;
             Ok::<(), webview2_com::Error>(())
         })();
         let _ = sender.send(result.map_err(|error| error.to_string()));

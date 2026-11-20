@@ -57,14 +57,14 @@ test("detach revokes transport, deletes reactive statuses and subscriptions, the
   const old = getSseManager("removed"), seen: boolean[] = [], statuses: string[] = []
   createRoot(dispose => {
     t.after(dispose)
-    createComputed(() => seen.push(sseManager.getStatuses().has("removed~ws")))
+    createComputed(() => seen.push(sseManager.getRawStatus("removed~ws") !== null))
   })
   t.after(backendEvents.forInstance(() => "removed~ws").onTransportStatus(status => statuses.push(status)))
   detach(); detach()
   assert.deepEqual(statuses, ["disconnected"])
   assert.equal(sseManager.getStatus("removed~ws"), null)
-  assert.equal(sseManager.getStatuses().has("removed~ws"), false)
-  assert.equal(old.getStatuses().size, 0)
+  assert.equal(sseManager.getRawStatus("removed~ws"), null)
+  assert.equal(old.getBackendStatuses().size, 0)
   assert.equal(seen.at(-1), false)
   assert.equal(sseManager.getStatus("kept~ws"), "connected")
   // Only the kept owner and this test's status observer remain above baseline.

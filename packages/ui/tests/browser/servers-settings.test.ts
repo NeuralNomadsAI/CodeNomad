@@ -521,12 +521,15 @@ test("two concurrent new additions share the normalized profile and keep both ex
 
 test("renaming an existing exact URL preserves it offline even when it contains a saved path", { timeout: 90_000 }, async t => {
   const f = await fixture(t), { page } = f
-  const saved = { ...f.rows[0], baseUrl: f.a.origin + "/saved-path" }
+  const baseUrl = f.a.origin + "/saved-path"
+  const saved = { ...f.rows[0], baseUrl, name: baseUrl }
   f.settings.mergePatchDoc("state", { ui: { remoteServers: [saved, f.rows[1]] } })
   await f.sync()
-  await edit(page, "Alpha")
-  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Path rename")
-  await page.getByRole("textbox", { name: "Name", exact: true }).press("Enter")
+  await edit(page, new URL(baseUrl).host)
+  const name = page.getByRole("textbox", { name: "Name", exact: true })
+  assert.equal(await name.inputValue(), saved.name)
+  await name.fill("Path rename")
+  await name.press("Enter")
   await page.getByRole("dialog").waitFor({ state: "hidden" })
   assert.equal(f.profileRows().find(row => row.id === "a")?.baseUrl, saved.baseUrl)
   assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)

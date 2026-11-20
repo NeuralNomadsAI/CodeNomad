@@ -31,7 +31,6 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 /** Internal backend seam. All explicit HTTP dispatches, including probes, use this fetch. */
 export function createExplicitTransport(options: {
   origin: string
-  credentials?: { username: string; password: string }
   signal?: AbortSignal
   ca?: string
   skipTlsVerify?: boolean
@@ -50,9 +49,6 @@ export function createExplicitTransport(options: {
 }, resolve?: ResolveAddresses) {
   const origin = normalizeExplicitOrigin(options.origin)
   if (options.ca !== undefined) throw new ExplicitEndpointError("custom_ca_unsupported")
-  // Copy secret inputs; subsequent caller mutation cannot retarget credentials.
-  const credentials = options.credentials ? { ...options.credentials } : undefined
-  if (credentials?.username.includes(":")) throw new ExplicitEndpointError("invalid_origin")
   const lifetime = options.signal ?? new AbortController().signal
   const fetch: typeof globalThis.fetch = async (input, init) => {
     let agent: Agent | undefined
@@ -85,7 +81,6 @@ export function createExplicitTransport(options: {
         return dispatch({ ...options, headers }, handler)
       }) : agent
       const headers = filterHeaders(request.headers, requestDenied)
-      if (credentials) headers.set("authorization", `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`)
       for (const [name, value] of Object.entries(options.headers?.() ?? {})) if (name.toLowerCase() !== "origin") headers.set(name, value)
       if (options.sendOwnOriginOnMutation && !["GET", "HEAD", "OPTIONS"].includes(request.method)) headers.set("origin", origin)
       const response = await undiciFetch(url, {

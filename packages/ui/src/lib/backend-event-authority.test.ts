@@ -196,7 +196,7 @@ test("SSE invalidation can revoke its manager before its specialized callback", 
   a.event({ type: "instance.event", instanceId: "ws", event: { id: "e", type: "session.deleted", created: 1,
     durable: { aggregateID: "s", seq: 1, version: 2 }, data: { sessionID: "s" } } })
   assert.deepEqual(seen, ["invalidate"])
-  assert.equal(manager.getStatuses().size, 0)
+  assert.equal(manager.getBackendStatuses().size, 0)
   assert.equal(sseManager.getStatus("nested~ws"), null)
 })
 
@@ -432,7 +432,7 @@ test("reentrant manager replacement adopts the owner installed during old-state 
   createRoot(dispose => {
     t.after(dispose)
     createComputed(() => {
-      if (old.getStatuses().size) return
+      if (old.getBackendStatuses().size) return
       nested = getSseManager(id)
       nested.seedStatus(`${id}~ws`, "connected")
     })
@@ -441,5 +441,5 @@ test("reentrant manager replacement adopts the owner installed during old-state 
   assert.ok(nested)
   assert.equal(replacement, nested)
   assert.equal(getSseManager(id), nested)
-  assert.equal(sseManager.getStatuses().get(`${id}~ws`), "connected")
+  assert.equal(sseManager.getRawStatus(`${id}~ws`), "connected")
 })

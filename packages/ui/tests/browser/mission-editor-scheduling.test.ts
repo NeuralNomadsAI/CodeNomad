@@ -708,7 +708,7 @@ for (const firstMatch of [false, true]) test(`filtered search pages require expl
   } finally { await page.close() }
 })
 
-for (const held of [false, true]) test(`source keyboard navigation scrolls the real popup and selecting with Enter never submits the form (held scroll: ${held})`, async t => {
+for (const held of [false, true]) test(`source keyboard navigation scrolls the real popup and selecting with Enter never submits the form (held scroll: ${held})`, async () => {
   const page = await browser.newPage(), consoleErrors: string[] = [], failed: string[] = [], posts: string[] = []
   page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()) })
   page.on("requestfailed", request => failed.push(`${request.url()}: ${request.failure()?.errorText}`))
@@ -753,13 +753,10 @@ for (const held of [false, true]) test(`source keyboard navigation scrolls the r
       const field = document.querySelector<HTMLInputElement>('.mission-source-popover input[role="combobox"]')!
       const list = document.querySelector('.mission-source-popover [role="listbox"]')!
       const focused = list.querySelector<HTMLElement>('[data-highlighted]')
-      const box = focused?.getBoundingClientRect(), port = list.getBoundingClientRect()
       return { aria: field.getAttribute("aria-activedescendant"), focusedKey: focused?.getAttribute("data-key"),
-        actualID: focused?.id, connected: focused?.isConnected, visible: Boolean(box && box.top >= port.top - 1 && box.bottom <= port.bottom + 1),
-        scrollTop: list.scrollTop, selected: list.querySelectorAll('[aria-selected="true"]').length,
-        focus: document.activeElement === field, barrier: window.sourceScrollDelivery?.state() }
+        actualID: focused?.id, selected: list.querySelectorAll('[aria-selected="true"]').length,
+        focus: document.activeElement === field }
     })
-    t.diagnostic(JSON.stringify(snapshot))
     assert.equal(snapshot.focusedKey, "ses_23"); assert.equal(snapshot.selected, 0); assert.equal(snapshot.focus, true)
     assert.equal(nativeReads, beforeReads)
     assert.equal(snapshot.aria, snapshot.actualID)

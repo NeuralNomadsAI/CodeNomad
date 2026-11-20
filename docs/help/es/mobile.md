@@ -4,7 +4,7 @@ Usa la interfaz de navegador en un teléfono o tableta para continuar trabajando
 
 ## Conectarse desde un teléfono o tableta {#connect}
 
-Los servidores guardados están disponibles en Inicio y Configuración → Servidores. [Restaurar pestañas remotas](projects.md#restore-remote-tabs). Un proyecto no disponible conserva su pestaña: **Reintentar** recupera un registro existente; **Abrir** abre explícitamente un proyecto ausente.
+Los servidores guardados están disponibles en Inicio y Configuración → Servidores. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
 
 1. En el anfitrión, abre **Configuración → Acceso remoto → Control remoto** y elige **Iniciar control remoto**.
 2. Escanea el QR de emparejamiento con tu dispositivo móvil y abre el enlace en el navegador que quieras seguir usando.

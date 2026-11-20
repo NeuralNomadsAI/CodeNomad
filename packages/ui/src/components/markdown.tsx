@@ -441,7 +441,7 @@ export function Markdown(props: MarkdownProps) {
     if (!instanceId || !sessionId || !html().includes("data-local-image")) return
     const store = messageStoreBus.getOrCreate(instanceId)
     const candidates = [...store.getSessionMessageIds(sessionId)].reverse()
-      .flatMap(id => { const message = store.getMessage(id); return message ? messageImageCandidates(message, true) : [] })
+      .flatMap(id => { const message = store.getMessage(id); return message ? messageImageCandidates(message) : [] })
     const labels = document.createElement("div")
     labels.innerHTML = html()
     const shown = new Set([...labels.querySelectorAll<HTMLElement>("[data-local-image]")].map(element =>

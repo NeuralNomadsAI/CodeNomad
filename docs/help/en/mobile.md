@@ -4,7 +4,7 @@ Use the browser UI on a phone or tablet to continue work on the backend host. In
 
 ## Connect from a phone or tablet {#connect}
 
-Saved servers are available from Home and Settings → Servers. [Restore remote tabs](projects.md#restore-remote-tabs). An unavailable project keeps its tab: **Retry** reconnects to an existing record; **Open** explicitly opens a missing project.
+Saved servers are available from Home and Settings → Servers. [Restore remote tabs](projects.md#restore-remote-tabs).
 
 1. On the host, open **Settings → Remote Access → Remote Control**, then choose **Start Remote Control**.
 2. Scan the pairing QR code with your mobile device and open the link in the browser you intend to keep using.

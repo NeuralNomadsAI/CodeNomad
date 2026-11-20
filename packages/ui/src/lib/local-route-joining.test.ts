@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { test } from "node:test"
 
 // Literal expectations checked against origin/feat/multi-backend's api-client,
-// panel-extensions-api, tool-content and sdk-manager. Each process imports the
+// panel-extensions-api and sdk-manager. Each process imports the
 // real local singletons with a fresh injected base; no module-cache substitution.
 const cases = [
   { base: undefined, events: "/api/events", panel: "/api/panel-extensions", resource: "", http: "/api/meta" },
@@ -25,16 +25,19 @@ test("injected local URL joins match the integration baseline character for char
       globalThis.fetch = async input => { requests.push(String(input)); return Response.json({}); };
       const { localTransport } = await import(${moduleUrl("./backend-transport.ts")});
       const { panelExtensionsApi } = await import(${moduleUrl("./panel-extensions-api.ts")});
-      const { toolImageSource } = await import(${moduleUrl("./tool-content.ts")});
       const { buildInstanceBaseUrl, SDKManager } = await import(${moduleUrl("./sdk-manager.ts")});
       assert.equal(localTransport.eventsUrl, row.events);
       await panelExtensionsApi.list();
       assert.deepEqual(requests, [row.panel]);
+      const { createMediaSource } = await import(${moduleUrl("./media-source.ts")});
+      const { serverEvents } = await import(${moduleUrl("./server-events.ts")});
+      serverEvents.dispose();
+      const { createRoot } = await import("solid-js");
       const uri = "/api/workspaces/w/session-media/s/m/0/0/" + "a".repeat(64);
-      assert.equal(toolImageSource({ type: "file", mime: "image/png", uri }), row.resource + uri);
-      if (row.base !== undefined && !row.base.startsWith("https://")) {
-        assert.equal(toolImageSource({ type: "file", mime: "image/png", uri }, row.base), row.resource + uri);
-      }
+      let dispose;
+      const media = createRoot(stop => { dispose = stop; return createMediaSource(() => "w", () => uri); });
+      assert.equal(media(), row.resource + uri);
+      dispose();
       assert.equal(buildInstanceBaseUrl("/workspaces/w/instance"), row.resource + "/workspaces/w/instance/");
       let http;
       try { http = localTransport.url("/api/meta"); } catch (error) { http = error.name; }

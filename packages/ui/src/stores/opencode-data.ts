@@ -271,7 +271,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       directory,
       event: event as any,
       connection: {
-        status: () => sseManager.getStatuses().get(instanceId) === "connected" ? "connected" : "reconnecting",
+        status: () => sseManager.getRawStatus(instanceId) === "connected" ? "connected" : "reconnecting",
       },
       onError: (error) => log.warn("Failed to refresh OpenCode projection", { instanceId, error }),
     })

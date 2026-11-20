@@ -9,7 +9,7 @@ for (const mode of ["control", "reader"]) for (const delivery of ["immediate", "
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-consumers.tsx"></script></body></html>' }] })
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
-  const page = await browser.newPage(), errors: string[] = [], schedules: string[] = [], recurrences: string[] = [], remoteHistory: string[] = []
+  const page = await browser.newPage(), errors: string[] = [], schedules: string[] = [], remoteHistory: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript({ content: 'window.EventSource = class extends EventTarget { close() {} }' })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
@@ -31,7 +31,6 @@ for (const mode of ["control", "reader"]) for (const delivery of ["immediate", "
       return route.fulfill({ json: { version: 1, projectID: "p", schedules: [] } })
     }
     if (request.pathname === "/api/backends/lab/api/workspaces/mission/missions/recurrence") {
-      recurrences.push(request.pathname)
       return route.fulfill({ json: { version: 1, projectID: "p", schedules: [], actions: [] } })
     }
     return route.fulfill({ status: 503, json: { error: "Inventory unavailable in this fixture" } })
@@ -68,12 +67,10 @@ for (const mode of ["control", "reader"]) for (const delivery of ["immediate", "
     await recurrence
     await schedule
     const result = await page.evaluate(() => (window as any).backendConsumers)
-    assert.deepEqual(result.reads.concat(remoteHistory.map(key => `lab~${key}`)).sort(), [result.folder, `lab~${result.folder}`].sort())
-    assert.ok(remoteHistory.every(key => key === result.folder), "remote storage HTTP receives the exact physical folder key")
+    assert.deepEqual(result.reads, [result.folder], "local storage receives the physical folder key")
+    assert.deepEqual(remoteHistory, [result.folder], "remote storage HTTP receives the physical folder key")
     if (mode === "control") assert.ok(schedules.length)
     assert.ok(schedules.every(directory => directory === "/repo"), JSON.stringify(schedules))
-    assert.ok(recurrences.length)
-    assert.ok(recurrences.every(path => path === "/api/backends/lab/api/workspaces/mission/missions/recurrence"))
     assert.deepEqual(errors, [])
   } finally { releaseRemote(); await browser.close() }
 })

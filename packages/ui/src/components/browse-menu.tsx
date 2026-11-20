@@ -3,7 +3,7 @@ import { Globe, Laptop, Server } from "lucide-solid"
 import type { RemoteServerBrowseResponse, RemoteServerProfile, SideCar } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { qualifiedServerDisplayName } from "../lib/codenomad-link"
-import { withHotkey } from "../lib/hotkeys"
+import { allowsPlainNavigation, withHotkey } from "../lib/hotkeys"
 import { sameServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
 import { getServerMeta, serversManageable, sidecarsAllowed } from "../lib/server-meta"
 import ServerAddField from "./server-add-field"
@@ -74,7 +74,7 @@ export default function BrowseMenu(props: BrowseMenuProps) {
   }
 
   function handleKeyDown(event: KeyboardEvent) {
-    if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return
+    if (!allowsPlainNavigation(event)) return
     const items = navItems()
     const index = items.indexOf(document.activeElement as HTMLElement)
     const move = (next: number) => { if (items.length) { event.preventDefault(); items[(next + items.length) % items.length]?.focus() } }

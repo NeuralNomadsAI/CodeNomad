@@ -7,7 +7,6 @@ import { serverApi } from "./api-client"
 import { authenticatedFetch, authRecovery } from "./auth-recovery"
 import { backendOf, backends, createBackendClient, createRemoteBackendClient, localBackend } from "./backend-client"
 import { createPanelExtensionsApi } from "./panel-extensions-api"
-import { toolImageSource } from "./tool-content"
 import { sdkManager } from "./sdk-manager"
 import { getServerMeta } from "./server-meta"
 import { serverEvents } from "./server-events"
@@ -265,9 +264,7 @@ test("the remote factory routes HTTP, SDK, media, SSE and login through the loca
   await client.sdk.createClient("remote_1~ws", "/workspaces/ws/instance").session.prompt({ sessionID: "s", text: "fixture" })
   await createPanelExtensionsApi(client).panelExtensionsApi.list()
   const imagePath = `/api/workspaces/ws/session-media/s/m/0/0/${"a".repeat(64)}`
-  const image = toolImageSource({ type: "file", mime: "image/png", uri: imagePath }, client)!
-  assert.equal(image, `${relay}${imagePath}`)
-  await client.fetch(image, { credentials: "include" })
+  await client.fetch(client.url(imagePath), { credentials: "include" })
   client.events.start()
   await until(() => sources.length === 1, "relay stream starts")
   assert.match(sources[0].url, /^https:\/\/ui\.invalid\/api\/backends\/remote_1\/api\/events\?clientId=/)
@@ -282,6 +279,7 @@ test("the remote factory routes HTTP, SDK, media, SSE and login through the loca
   assert.ok(requests.some(request => request.url === `${relay}/workspaces/ws/instance/api/session/s/prompt`))
   assert.ok(requests.some(request => request.url === `${relay}/api/storage/config/ui`))
   assert.ok(requests.some(request => request.url === `${relay}/api/panel-extensions`))
+  assert.ok(requests.some(request => request.url === `${relay}${imagePath}`))
   for (const id of ["", "local", "../escape", "a/b", "a?b", "a".repeat(65)]) {
     assert.throws(() => createRemoteBackendClient(id), TypeError)
   }

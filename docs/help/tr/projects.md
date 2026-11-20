@@ -43,7 +43,9 @@ Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, 
 
 ## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
 
-Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçimi ve taslakları korunur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya yeni bir **Eşleştirme bağlantısı** ile **Bağlan** seçin. Diğer sunucular kullanılabilir kalır. **Sunucu bulunamadı**, kayıtlı sunucunun eksik olduğunu gösterir.
+Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçimi ve taslakları korunur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya **Yeni eşleştirme bağlantısı** alanındaki bağlantıyla **Bağlan** seçin. Diğer sunucular kullanılabilir kalır. **Sunucu bulunamadı**, kayıtlı sunucunun eksik olduğunu gösterir.
+
+**Yeniden dene**, var olan bir projeye yeniden bağlanır. Sunucuya erişilebiliyor ancak proje bulunamıyorsa **Aç** seçeneğini kullanın.
 
 **Yeniden dene**, başlangıçta otomatik geri yükleme kapalıyken de bekleyen sekmeleri kurtarır. Bildirimler mevcut bekleyen sekmeyi seçer. Onaylanmamış bir konuşma işlemini yeniden göndermeden önce sonucunu kontrol edin.
 

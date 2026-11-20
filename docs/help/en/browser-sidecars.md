@@ -16,11 +16,13 @@ The local preview close button returns the tab to chat. Duplicate tabs share the
 
 Each tab saves its chat/preview choice; the session saves its shared URL, viewport template and history. Saved pages load only when you explicitly reopen the session browser. Persistence keeps URLs and a cursor; live forms, DOM, POST bodies and JavaScript memory end with the document. History is bounded to 32 URLs per session and a shared window budget; older entries may be trimmed. Restoring a URL may load a fresh page.
 
-Remote project previews use the project’s server and show the application URL. Closing the preview or its tab, disconnecting the server, or quitting ends the live page. Reopening loads the saved address and history, not unsaved page work. Keep internal loading addresses private. [Available and unavailable surfaces](remote-control.md#remote-surface).
+Remote project previews use the project’s server and show the application URL. Closing the preview or its tab, disconnecting the server, or quitting ends the live page. Reopening loads the saved address and history, not unsaved page work. Keep internal loading addresses private.
 
 Preview controls appear once the host and the remote project server confirm that previews are available.
 
 Native remote previews suppress context menus, clipboard export, link dragging, printing, pop-ups, downloads, page dialogs and permission prompts to keep internal loading addresses private. Save page work before closing.
+
+For Remote Control, **Web previews** is on by default under **Settings → Remote Access → Remote Control** on the host. Turning it off ends previews and their WebSockets; reloading hides **Open web preview**. Signing out or revoking a paired device ends that client's previews and their WebSockets.
 
 ## Shared sign-ins and automation boundaries {#signins-automation}
 

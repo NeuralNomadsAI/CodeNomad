@@ -4,7 +4,7 @@ Ana bilgisayarda çalışmayı sürdürmek için telefon veya tabletin tarayıc�
 
 ## Bir telefon veya tabletten bağlanın {#connect}
 
-Kayıtlı sunucular Ana sayfa ve Ayarlar → Sunucular üzerinden kullanılabilir. [Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs). Kullanılamayan proje sekmesini korur: **Yeniden dene** mevcut kayda bağlanır; **Aç** eksik projeyi açıkça açar.
+Kayıtlı sunucular Ana sayfa ve Ayarlar → Sunucular üzerinden kullanılabilir. [Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
 
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesini açın, ardından **Uzaktan Kontrolü başlat** öğesini seçin.
 2. Eşleştirme QR kodunu mobil cihazınızla tarayın ve bağlantıyı kullanmaya devam etmek istediğiniz tarayıcıda açın.

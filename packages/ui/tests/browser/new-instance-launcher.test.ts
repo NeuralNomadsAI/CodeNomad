@@ -167,6 +167,11 @@ test("typing and Enter open a new occurrence; the separate Open action joins the
     await launcher(page).getByRole('searchbox').focus()
     await page.keyboard.type("blend")
     await page.waitForFunction(() => document.querySelectorAll(".new-instance-launcher-recent-primary").length === 1)
+    const search = launcher(page).getByRole("searchbox")
+    assert.equal(await search.evaluate(element => element.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter", bubbles: true, cancelable: true, isComposing: true,
+    }))), true)
+    assert.deepEqual(await calls(), [])
     await page.keyboard.press("Enter")
     await launcher(page).waitFor({ state: "detached" })
     assert.deepEqual(await calls(), ["folder:D:/blender"])

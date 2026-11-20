@@ -68,7 +68,7 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
                     aria-label={`${t("settings.servers.open")}: ${displayName(server)}`} title={`${t("settings.servers.open")}: ${displayName(server)}`} onClick={() => void open(server)}><ExternalLink class="w-4 h-4" /></button>
                   <Show when={manageable()}><button type="button" class="selector-button selector-button-secondary w-auto"
                     aria-label={`${t("folderSelection.remoteProject.edit")}: ${displayName(server)}`} title={`${t("folderSelection.remoteProject.edit")}: ${displayName(server)}`}
-                    onClick={() => { if (manageable()) setDialog({ initial: { id: server.id, name: displayName(server), baseUrl: server.baseUrl, skipTlsVerify: server.skipTlsVerify,
+                    onClick={() => { if (manageable()) setDialog({ initial: { id: server.id, name: server.name, baseUrl: server.baseUrl, skipTlsVerify: server.skipTlsVerify,
                       ...(server.ssh ? { ssh: { ...server.ssh } } : {}) } }) }}><Pencil class="w-4 h-4" /></button>
                   <button type="button" class="selector-button selector-button-secondary w-auto"
                     aria-label={`${t("folderSelection.servers.remove")}: ${displayName(server)}`} title={`${t("folderSelection.servers.remove")}: ${displayName(server)}`} onClick={() => void remove(server)}><Trash2 class="w-4 h-4" /></button></Show>

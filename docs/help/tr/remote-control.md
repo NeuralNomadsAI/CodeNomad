@@ -73,11 +73,11 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | Kayıtlı sunucular ve arka uç aktarımı | Özellik ve ana bilgisayar yetenekleri izin verdiğinde kimliği doğrulanmış uzak istemciler tüm kayıtlı sunucuları kullanabilir/yönetebilir. Yeni sunucu parolaları/eşleştirme bağlantıları düz LAN HTTP yerine Uzaktan Kontrol veya HTTPS gerektirir. [Kayıtlı sunuculara](remote-access.md#saved-servers) bakın. |
 | Masaüstü uzak pencereleri ve pencere proxy'si | Yalnızca ana bilgisayarda (`/api/remote-proxy/`). |
 | SideCar **içerik proxy'si** | SideCar WebSocket'leri gibi loopback gerektirir (`/sidecars/`). `/api/sidecars` kayıt API'leri, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. |
-| Web önizleme içeriği | Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında **Web önizlemeleri** açık olduğu sürece (varsayılan) kullanılabilir. Her önizleme adresi sayfasını eşleştirme olmadan açar; bu yüzden gizli tutun. Anahtarı kapatmak sunulan önizlemeleri ve WebSocket bağlantılarını durdurur; eşleştirilmiş cihazlar yeniden yüklendiğinde **Web önizlemesini aç** seçeneğini gizler. |
+| Web önizleme içeriği | [Bir oturum tarayıcısı açın](browser-sidecars.md#session-browser) |
 | Otomasyon köprüsü | Kullanılamaz (`/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. |
 | WebSocket yükseltmeleri | Web önizlemelerinde ve eşleştirilmiş cihazlarda [canlı sesli konuşmalarda](voice.md#conversation) kullanılabilir. |
 
-Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`/api/remote-control/`) için ana bilgisayarda loopback bağlantısı kullanın. Doğrudan LAN erişiminde de bu işlemler loopback gerektirir; bkz. [İzin verilen kaynaklar](remote-access.md#upgrading). Uzaktan Kontrol web önizlemeleri, adreslerindeki yetenek belirtecini kullanır ve ana bilgisayarda etkin oldukları sürece kullanılabilir kalır; bu adresi gizli tutun.
+Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`/api/remote-control/`) için ana bilgisayarda loopback bağlantısı kullanın. Doğrudan LAN erişiminde de bu işlemler loopback gerektirir; bkz. [İzin verilen kaynaklar](remote-access.md#upgrading).
 
 ## Aktarma ve gizlilik {#relay-privacy}
 

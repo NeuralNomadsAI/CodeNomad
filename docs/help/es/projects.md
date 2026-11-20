@@ -42,7 +42,9 @@ Con la restauración al iniciar activada, cada pestaña restante recupera sus pr
 
 ## Restaurar pestañas remotas {#restore-remote-tabs}
 
-Al recargar con la restauración activada, las pestañas remotas conservan su orden, selección y borradores. Un servidor no disponible deja una pestaña en espera: elige **Reintentar** cuando vuelva, o **Conectar** con su usuario/contraseña o un nuevo **Enlace de emparejamiento**. Los demás servidores siguen disponibles. **Servidor no encontrado** indica que falta el servidor guardado.
+Al recargar con la restauración activada, las pestañas remotas conservan su orden, selección y borradores. Un servidor no disponible deja una pestaña en espera: elige **Reintentar** cuando vuelva, o **Conectar** con su usuario/contraseña o un enlace en **Nuevo enlace de vinculación**. Los demás servidores siguen disponibles. **Servidor no encontrado** indica que falta el servidor guardado.
+
+**Reintentar** vuelve a conectar con un proyecto existente. Si se puede acceder al servidor pero falta el proyecto, elige **Abrir**.
 
 **Reintentar** también recupera pestañas en espera con la restauración automática al iniciar desactivada. Las notificaciones seleccionan la pestaña en espera existente. Comprueba el resultado de una acción de conversación no confirmada antes de enviarla otra vez.
 

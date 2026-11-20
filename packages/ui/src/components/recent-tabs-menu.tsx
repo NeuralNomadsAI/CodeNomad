@@ -9,6 +9,7 @@ import { remoteRecentProjectsUsable, type RemoteRecentProject } from "../stores/
 import { ensureSidecarsLoaded } from "../stores/sidecars"
 import { sidecarsAllowed } from "../lib/server-meta"
 import { sameServerSelection } from "../lib/native/server-selection-intent"
+import { allowsPlainNavigation } from "../lib/hotkeys"
 
 /** The quick launcher's recent choices, with a separate action to join an open tab. */
 export default function RecentTabsMenu(props: {
@@ -49,6 +50,7 @@ export default function RecentTabsMenu(props: {
     props.onSelectFolder(recent.path)
   }
   function navigate(event: KeyboardEvent, fromSearch = false) {
+    if (!allowsPlainNavigation(event)) return
     if ((event.target as HTMLElement).closest("[data-remote-view-session]")) return
     if (props.isLoading || !matches().length) return
     if (event.key === "ArrowDown" || event.key === "ArrowUp" || (!fromSearch && (event.key === "Home" || event.key === "End"))) {

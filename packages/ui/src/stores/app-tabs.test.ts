@@ -6,7 +6,7 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 import { serverApi } from "../lib/api-client.ts"
 import type { Instance } from "../types/instance.ts"
 import {
-  activeAppTabId,
+  activeAppTab, activeAppTabId, allowsAutomaticLocalSetup,
   appTabs,
   attachInstanceTab,
   closeInstanceTab,
@@ -79,6 +79,16 @@ describe("renderer-local workspace tabs", () => {
     toast.custom = () => "test-toast"
   })
   afterEach(() => { serverApi.deleteWorkspace = originalDelete; toast.custom = originalToast })
+  it("allows automatic local setup only in a blank tab not browsing a saved server", () => {
+    openBlankTab()
+    const tab = activeAppTab()!
+    try {
+      assert.equal(allowsAutomaticLocalSetup(tab), true)
+      openBlankTab({ id: "remote", baseUrl: "https://server.example", skipTlsVerify: false })
+      assert.equal(activeAppTab()?.id, tab.id)
+      assert.equal(allowsAutomaticLocalSetup(activeAppTab()!), false)
+    } finally { closeBlankTab(tab.id) }
+  })
   it("reselects a single blank until it is filled, excludes it from capture, and closes it locally", () => {
     const existing = instance("before-blank")
     const chosen = instance("blank-choice")

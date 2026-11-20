@@ -219,6 +219,8 @@ the host and the project's attached backend. A host event-stream open lets mount
 views recover missing host metadata through the shared cache. If the initial read
 is still pending, recovery waits for it and shares one follow-up read on failure.
 
+#### Preview transport validation
+
 `preview-capabilities.test.ts` covers content-origin reservation, equal remote
 tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
 destination ownership, revocation and the real remote CodeNomad path proxy.
@@ -330,7 +332,7 @@ Native open claims retain their request deadline and backend-generation fence. T
 
 ## Focused Validation
 
-- Remote preview transport: `remote-control/remote-client-previews.test.ts` covers two owners with colliding tokens over Remote Control, TLS proxy and LAN, including content/WS, channel isolation and revocation.
+- Remote preview transport: see the [capability validation inventory](#preview-transport-validation).
 
 - Server: `automation-plugin.test.ts`, `automation/desktop-plugin.test.ts`, `routes/automation-plugin.test.ts`, and the shared pruning-presence regressions
 - Native discovery: build with `npm run build:automation --workspace @neuralnomads/codenomad`, then run `node scripts/test-automation-native.mjs <absolute-cli-path>`. The fixture uses an isolated daemon/config/database and exercises ordinary-project discovery, all tools at startup, execution fences, independent leases, shutdown and reopening. CI runs it against the minimum and latest OpenCode runtimes.

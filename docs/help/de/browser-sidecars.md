@@ -16,11 +16,13 @@ Das Schließen der lokalen Vorschau führt zum Chat zurück. Doppelte Tabs teile
 
 Jede Registerkarte speichert ihre Chat-/Vorschauwahl; die Sitzung speichert gemeinsame URL, Viewport-Vorlage und Verlauf. Gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen des Sitzungsbrowsers. Gespeichert werden URLs und ein Zeiger; aktive Formulare, DOM, POST-Inhalte und JavaScript-Speicher enden mit dem Dokument. Der Verlauf ist auf 32 URLs je Sitzung und ein gemeinsames Fensterbudget begrenzt; ältere Einträge können gekürzt werden. Eine wiederhergestellte URL kann neu geladen werden.
 
-Remote-Vorschauen nutzen den Projektserver und zeigen die Anwendungs-URL. Schließen der Vorschau oder des Tabs, Trennen des Servers oder Beenden beendet die Live-Seite. Beim erneuten Öffnen werden Adresse und Verlauf geladen, ungespeicherte Eingaben gehen verloren. Halten Sie interne Ladeadressen privat. [Verfügbare und nicht verfügbare Oberflächen](remote-control.md#remote-surface).
+Remote-Vorschauen nutzen den Projektserver und zeigen die Anwendungs-URL. Schließen der Vorschau oder des Tabs, Trennen des Servers oder Beenden beendet die Live-Seite. Beim erneuten Öffnen werden Adresse und Verlauf geladen, ungespeicherte Eingaben gehen verloren. Halten Sie interne Ladeadressen privat.
 
 Native entfernte Vorschauen unterdrücken Kontextmenüs, Zwischenablageexport, Link-Ziehen, Drucken, Pop-ups, Downloads, Seitendialoge und Berechtigungsabfragen, damit interne Ladeadressen privat bleiben. Speichern Sie die Arbeit der Seite vor dem Schließen.
 
 Die Vorschau-Bedienelemente erscheinen, sobald der Host und der Server des entfernten Projekts die Verfügbarkeit der Vorschau bestätigen.
+
+Für die Fernsteuerung sind **Web-Vorschauen** unter **Einstellungen → Remote-Zugriff → Fernsteuerung** auf dem Host standardmäßig eingeschaltet. Das Ausschalten beendet Vorschauen und ihre WebSockets; nach dem Neuladen wird **Web-Vorschau öffnen** ausgeblendet. Beim Abmelden oder Widerrufen eines gekoppelten Geräts enden dessen Vorschauen und WebSocket-Verbindungen.
 
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
 

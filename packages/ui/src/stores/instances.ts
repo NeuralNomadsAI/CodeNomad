@@ -1578,13 +1578,14 @@ serverEvents.onOpen((backendId) => {
     }
     await refreshWorkspaceList(backendId, backend.api, signal, connectionCurrent)
   }
-  publishLatestWorkspaceLoad(refresh().then(
+  const load = refresh().then(
     () => ({}),
     (error) => {
-      log.warn("Failed to reconcile workspaces after event reconnect", error)
+      log.warn("Failed to reconcile workspaces after event reconnect", { backendId, error })
       return { error }
     },
-  ))
+  )
+  if (backendId === LOCAL_BACKEND_ID) publishLatestWorkspaceLoad(load)
 })
 
 async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> {
