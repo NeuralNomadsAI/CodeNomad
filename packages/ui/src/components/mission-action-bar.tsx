@@ -81,16 +81,16 @@ export function MissionActionBar(props: {
   const toolbar = () => <div ref={bar} class="mission-action-bar" role="toolbar" aria-label={props.label}>
     <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={[primaryLabel(), feedbackText()].filter(Boolean).join(" — ")}
       disabled={!props.primary || props.primary.disabled || props.primary.busy} aria-busy={props.primary?.busy || undefined} onClick={() => void props.primary?.onSelect()}>
-      <Show when={props.primary?.busy} fallback={primaryIcon(primaryKey())}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
+      <Show when={props.primary?.busy} fallback={primaryIcon(primaryKey())}><span class="inline-flex animate-spin"><LoaderCircle class="h-3.5 w-3.5" aria-hidden="true" /></span></Show>
     </button>
     <button type="button" class="mission-control-icon-button" aria-label={stopLabel()} title={stopLabel()}
       disabled={!props.stop || props.stop.disabled || props.stop.busy} aria-busy={props.stop?.busy || undefined} onClick={() => void props.stop?.onSelect()}>
-      <Show when={props.stop?.busy} fallback={<Square class="h-3.5 w-3.5" aria-hidden="true" />}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
+      <Show when={props.stop?.busy} fallback={<Square class="h-3.5 w-3.5" aria-hidden="true" />}><span class="inline-flex animate-spin"><LoaderCircle class="h-3.5 w-3.5" aria-hidden="true" /></span></Show>
     </button>
     <Show when={props.runNow}>{runNow =>
       <button type="button" class="mission-control-icon-button" aria-label={runNow().ariaLabel ?? runNow().label} title={runNow().ariaLabel ?? runNow().label}
         disabled={runNow().disabled || runNow().busy} aria-busy={runNow().busy || undefined} onClick={() => void runNow().onSelect()}>
-        <Show when={runNow().busy} fallback={<FastForward class="h-3.5 w-3.5" aria-hidden="true" />}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
+        <Show when={runNow().busy} fallback={<FastForward class="h-3.5 w-3.5" aria-hidden="true" />}><span class="inline-flex animate-spin"><LoaderCircle class="h-3.5 w-3.5" aria-hidden="true" /></span></Show>
       </button>}
     </Show>
     <button type="button" class="mission-control-icon-button icon-toggle mission-overview-toggle" aria-pressed={props.reading}
@@ -103,7 +103,7 @@ export function MissionActionBar(props: {
     </button>
     <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
       disabled={!props.onDelete || props.deleteDisabled || props.deleteBusy} aria-busy={props.deleteBusy || undefined} onClick={() => props.onDelete?.()}>
-      <Show when={props.deleteBusy} fallback={<Trash2 class="h-4 w-4" aria-hidden="true" />}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
+      <Show when={props.deleteBusy} fallback={<Trash2 class="h-4 w-4" aria-hidden="true" />}><span class="inline-flex animate-spin"><LoaderCircle class="h-3.5 w-3.5" aria-hidden="true" /></span></Show>
     </button>
     <ActionOverflowMenu label={t("messageItem.actions.more")} items={menu} triggerClass="mission-control-icon-button" />
   </div>

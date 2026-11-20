@@ -116,16 +116,3 @@
   padding: 12px;
   color: var(--text-primary);
 }
-
-.remote-spin {
-  animation: remote-spin 1s linear infinite;
-}
-
-@keyframes remote-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}

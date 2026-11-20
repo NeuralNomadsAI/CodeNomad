@@ -108,7 +108,7 @@ function ToolStatusIndicator(props: { status: Accessor<string>; t: ReturnType<ty
         <Hourglass class="w-4 h-4" />
       </span>
       <span class="tool-call-header-status-icon" aria-hidden="true" style={{ display: isVisible("running") ? "inline-flex" : "none" }}>
-        <Loader2 class="w-4 h-4 animate-spin" />
+        <span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" /></span>
       </span>
       <span class="tool-call-header-status-icon" aria-hidden="true" style={{ display: isVisible("completed") ? "inline-flex" : "none" }}>
         <Check class="w-4 h-4" />
