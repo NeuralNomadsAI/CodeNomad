@@ -195,22 +195,74 @@ fn resolve_legacy_electron_data_directory_for(
     }
 }
 
+/// This process's cross-host participant, published before its running marker so
+/// a peer never sees that marker without it and mistakes it for a legacy host.
+/// Dropped unregistered, it removes itself.
+pub(super) struct Participant {
+    path: PathBuf,
+    owner: Option<Owner>,
+}
+
+impl Participant {
+    pub(super) fn publish(election_directory: &Path) -> Result<Option<Self>, String> {
+        let Some(current_identity) = process_start_identity(std::process::id()) else {
+            return Ok(None);
+        };
+        let owner = Owner {
+            pid: std::process::id(),
+            run_token: uuid::Uuid::new_v4().to_string(),
+            process_start_identity: current_identity,
+        };
+        fs::create_dir_all(election_directory)
+            .map_err(|err| format!("failed to create cross-host election directory: {err}"))?;
+        let path = participant_path(election_directory, &owner);
+        publish_participant(&path, &owner)?;
+        Ok(Some(Self {
+            path,
+            owner: Some(owner),
+        }))
+    }
+}
+
+impl Drop for Participant {
+    fn drop(&mut self) {
+        if let Some(owner) = self.owner.take() {
+            let _ = remove_participant_if_owned(&self.path, &owner);
+        }
+    }
+}
+
 impl Registration {
+    #[cfg(test)]
     pub(super) fn register(
         election_directory: &Path,
         primary_candidate: bool,
         legacy_electron_data: Option<&Path>,
     ) -> Result<Option<Self>, String> {
-        let Some(current_identity) = process_start_identity(std::process::id()) else {
+        let Some(participant) = Participant::publish(election_directory)? else {
             return Ok(None);
         };
+        Self::register_participant(
+            election_directory,
+            participant,
+            primary_candidate,
+            legacy_electron_data,
+        )
+    }
+
+    pub(super) fn register_participant(
+        election_directory: &Path,
+        mut participant: Participant,
+        primary_candidate: bool,
+        legacy_electron_data: Option<&Path>,
+    ) -> Result<Option<Self>, String> {
+        let owner = participant
+            .owner
+            .take()
+            .ok_or_else(|| "cross-host participant was already registered".to_string())?;
         Self::register_with_legacy(
             election_directory,
-            Owner {
-                pid: std::process::id(),
-                run_token: uuid::Uuid::new_v4().to_string(),
-                process_start_identity: current_identity,
-            },
+            owner,
             primary_candidate,
             legacy_electron_data,
             pid_is_alive,
@@ -340,24 +392,17 @@ impl Registration {
         result
     }
 
-    /// The won election alone, without the legacy Electron recheck: registration
-    /// already reconciled markers with a grace period, and a peer may publish its
-    /// running marker just before its participant.
-    pub(super) fn owns_shared_lease(&self) -> bool {
-        !self.released
-            && self.primary
-            && read_if_exists(&owner_path(&self.election_directory))
-                .ok()
-                .flatten()
-                .and_then(|value| parse_owner(&value))
-                .is_some_and(|owner| owner == self.owner)
-    }
-
     pub(super) fn is_primary(&self) -> bool {
-        if !self.owns_shared_lease() {
+        if self.released || !self.primary {
             return false;
         }
-        self.legacy_electron_data
+        let shared = read_if_exists(&owner_path(&self.election_directory))
+            .ok()
+            .flatten()
+            .and_then(|value| parse_owner(&value))
+            .is_some_and(|owner| owner == self.owner);
+        let legacy_clear = self
+            .legacy_electron_data
             .as_deref()
             .map(|path| {
                 has_live_legacy_electron_with(
@@ -370,7 +415,8 @@ impl Registration {
             })
             .transpose()
             .map(|blocked| !blocked.unwrap_or(false))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        shared && legacy_clear
     }
 
     pub(super) fn release(&mut self) -> Result<bool, String> {
@@ -1087,37 +1133,21 @@ mod tests {
     }
 
     #[test]
-    fn peer_marker_before_its_participant_keeps_the_won_lease() {
-        use crate::client_state::process;
+    fn an_early_participant_is_reused_or_removed() {
+        let directory = tempfile::tempdir().unwrap();
+        let count = || participants(directory.path()).unwrap().len();
+        drop(Participant::publish(directory.path()).unwrap().unwrap());
+        assert_eq!(count(), 0);
 
-        let root = tempfile::tempdir().unwrap();
-        let election = root.path().join("election");
-        let electron = root.path().join("electron");
-        let tauri = root.path().join("tauri");
-        fs::create_dir_all(&electron).unwrap();
-        fs::create_dir_all(&tauri).unwrap();
+        let participant = Participant::publish(directory.path()).unwrap().unwrap();
         let registration =
-            process::Registration::initialize(&tauri, &election, Some(&electron)).unwrap();
-
-        // Electron writes its running marker before its cross-host participant.
-        let peer = Owner {
-            pid: std::process::id(),
-            run_token: "peer".to_string(),
-            process_start_identity: process_start_identity(std::process::id()).unwrap(),
-        };
-        fs::write(
-            electron.join(format!("client-state.running.{}.peer.json", peer.pid)),
-            serialize_owner(&peer).unwrap(),
-        )
-        .unwrap();
-        // Initialization (and so hydration) follows the won lease...
+            Registration::register_participant(directory.path(), participant, true, None)
+                .unwrap()
+                .unwrap();
         assert!(registration.is_primary());
-        let state = registration.finish();
-        // ...while run-time writes wait for the participant.
-        assert!(!state.is_primary());
-        publish_participant(&participant_path(&election, &peer), &peer).unwrap();
-        assert!(state.is_primary());
-        state.release_locks();
+        assert_eq!(count(), 1);
+        drop(registration);
+        assert_eq!(count(), 0);
     }
 
     #[test]

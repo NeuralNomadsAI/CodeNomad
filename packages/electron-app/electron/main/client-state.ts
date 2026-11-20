@@ -15,6 +15,8 @@ import {
 import { getProcessStartIdentity } from "./client-state-process-identity"
 import {
   CrossHostRegistration,
+  publishCrossHostParticipant,
+  removeCrossHostParticipant,
   crossHostParticipants,
   resolveCrossHostElectionDirectory,
   resolveCrossHostStatePath,
@@ -156,6 +158,11 @@ export class ClientStateManager {
     this.lockPath = join(userDataPath, PRIMARY_LOCK_FILENAME)
     const registrationLockPath = join(userDataPath, REGISTRATION_LOCK_FILENAME)
 
+    try {
+      publishCrossHostParticipant(crossHostElectionDirectory, this.owner)
+    } catch (error) {
+      console.warn("[client-state] failed to publish cross-host participant", error)
+    }
     const election = electClientStateProcess(
       userDataPath,
       this.owner,
@@ -195,14 +202,13 @@ export class ClientStateManager {
       )
     } catch (error) {
       console.warn("[client-state] failed to register cross-host ownership", error)
+      try { removeCrossHostParticipant(crossHostElectionDirectory, this.owner) } catch {}
     }
     if (!this.crossHostRegistration?.isPrimary) {
       if (election) removeProcessOwnerLockIfOwned(this.lockPath, this.owner)
       this.primary = false
     }
-    // Hydrate on the won lease, already reconciled with legacy markers; isPrimary
-    // rechecks them for writes, and an unhydrated primary would overwrite saved state.
-    if (this.primary) {
+    if (this.isPrimary) {
       const legacySharedStatePath = options?.legacySharedStatePath === undefined
         ? (options?.crossHostElectionDirectory ? null : resolveLegacyCrossHostStatePath())
         : options.legacySharedStatePath

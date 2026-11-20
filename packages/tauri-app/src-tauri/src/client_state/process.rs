@@ -66,6 +66,11 @@ impl Registration {
         } else {
             read_registration_owner(&registration_owner_path)
         };
+        let participant =
+            cross_host::Participant::publish(cross_host_election_dir).unwrap_or_else(|err| {
+                eprintln!("[client-state] failed to publish cross-host participant: {err}");
+                None
+            });
         let running_marker =
             create_running_marker(app_data_dir, acknowledged_registration.as_deref())?;
         let lock_path = app_data_dir.join(PRIMARY_LOCK_FILENAME);
@@ -107,21 +112,24 @@ impl Registration {
             }
         };
 
-        let cross_host_registration = match cross_host::Registration::register(
-            cross_host_election_dir,
-            primary_lock.is_some(),
-            legacy_electron_data_dir,
-        ) {
-            Ok(Some(registration)) => Some(registration),
-            Ok(None) => None,
-            Err(err) => {
+        let cross_host_registration = match participant.map(|participant| {
+            cross_host::Registration::register_participant(
+                cross_host_election_dir,
+                participant,
+                primary_lock.is_some(),
+                legacy_electron_data_dir,
+            )
+        }) {
+            Some(Ok(Some(registration))) => Some(registration),
+            Some(Ok(None)) | None => None,
+            Some(Err(err)) => {
                 eprintln!("[client-state] failed to register cross-host ownership: {err}");
                 None
             }
         };
         if !cross_host_registration
             .as_ref()
-            .is_some_and(cross_host::Registration::owns_shared_lease)
+            .is_some_and(cross_host::Registration::is_primary)
         {
             if let Some(file) = primary_lock.take() {
                 release_primary_file(&file);
@@ -137,14 +145,12 @@ impl Registration {
         })
     }
 
-    /// Initialization decision (lock release, migration, hydration): the won
-    /// lease, already reconciled with legacy markers. `ProcessState` rechecks them.
     pub(super) fn is_primary(&self) -> bool {
         self.primary_lock.is_some()
             && self
                 .cross_host_registration
                 .as_ref()
-                .is_some_and(cross_host::Registration::owns_shared_lease)
+                .is_some_and(cross_host::Registration::is_primary)
     }
 
     pub(super) fn finish(self) -> ProcessState {
