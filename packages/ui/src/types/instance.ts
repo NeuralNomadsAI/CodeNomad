@@ -28,6 +28,7 @@ export interface Instance {
   id: string
   /** The CodeNomad backend owning this workspace; absent for the local backend. */
   backendId?: BackendId
+  serverId?: string
   folder: string
   projectName?: string
   port: number

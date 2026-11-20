@@ -107,7 +107,6 @@ Only if `multiBackend` is set to `false`, use the separate desktop-window flow b
 2. In **Connect to Server**, enter **Server name** and **Server URL** using a trusted HTTPS origin. Leave **Skip TLS verification for self-signed certificates.** unchecked; establish trust instead.
 3. Choose **Save** to bookmark, or **Connect** to save and open it. Sign in on that server.
 
-To open a saved server straight from the command line, start the desktop app with `--connect-server <name>` (or `--connect-server=<name>`), using the server's saved name, or with its `https://` URL. CodeNomad opens only the remote window, with the same checks and sign-in as **Connect**; when CodeNomad is already running, its current window opens it instead of a new one. A URL that matches no saved server is saved under its host name. Launch values never carry credentials: a URL with a user name, password or pairing code is refused. On Windows, the Tauri build refuses to start when a launch argument contains `|`; use the server's URL instead, or rename the server.
 
 Closing the last local window while remote windows stay open keeps its tabs: **Window → New Window** in a remote window, or starting CodeNomad again, reopens it.
 
@@ -118,3 +117,7 @@ For Remote Control, paste a fresh pairing link into **Server URL** instead. The 
 On Home or in a new tab, choose **Browse**, then a server. Paste an address or pairing link into **Server address or link** to save a server. Sign in if asked. Click a folder to enter it; press Enter in the path field or choose **Open** (the arrow) to open it. **Back to Browse** returns to the server list.
 
 Local and remote projects share the same window. **Recent tabs** shows the selected server’s shortcuts while you browse; mixed recents show the server icon and name for projects opened here. If a saved remote tab is waiting for its server, select it and use **Retry** or **Connect**. Its drafts stay with that tab.
+
+### `--connect-server` {#connect-server}
+
+This command opens a separate remote window regardless of `multiBackend`. To open a saved server straight from the command line, start the desktop app with `--connect-server <name>` (or `--connect-server=<name>`), using the server's saved name, or with its `https://` URL. On a command-only start, CodeNomad opens just the remote window; if it is already running, the current local window handles the request. A URL that matches no saved server is saved under its host name. Launch values never carry credentials: a URL with a user name, password or pairing code is refused. On Windows, the Tauri build refuses to start when a launch argument contains `|`; use the server's URL instead, or rename the server.

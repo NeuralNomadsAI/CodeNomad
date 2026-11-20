@@ -3,7 +3,7 @@ import type {
   RestorableTabState,
   RestorableWorkspaceTabState,
 } from "./client-state-codec"
-import { workspaceIdentity } from "./app-session-reconciliation"
+import { matchesRestoredServer, workspaceInstallationKey } from "./app-session-reconciliation"
 import type { BackendId } from "../lib/backend-transport"
 export interface RestoreTabResult {
   status: "pending" | "restored" | "removed"
@@ -28,7 +28,9 @@ export interface RestorableWorkspaceRuntimeAuthority {
   sessionSelection?: boolean
 }
 /** A live workspace tab, matched to a saved one by runtime binding or by (backend, folder, occurrence). */
-export interface PreservedWorkspaceRef { runtimeTabId: string; folder: string; occurrence: number; backendId?: BackendId }
+export interface PreservedWorkspaceRef { runtimeTabId: string; folder: string; occurrence: number; backendId?: BackendId; serverId?: string }
+const workspaceKey = (tab: { folder: string; backendId?: BackendId; serverId?: string }) =>
+  `workspace:${workspaceInstallationKey(tab.folder, tab.backendId, tab.serverId)}`
 interface TabIdentity {
   key: string
   occurrence: number
@@ -38,7 +40,7 @@ function mapTabIdentities(tabs: readonly RestorableTabState[]): TabIdentity[] {
   const nextOccurrences = new Map<string, number>()
   return tabs.map((tab) => {
     const key = tab.kind === "workspace"
-      ? `workspace:${workspaceIdentity(tab.folder, tab.backendId)}`
+      ? workspaceKey(tab)
       : `sidecar:${tab.sidecarId}`
     const inferred = nextOccurrences.get(key) ?? 0
     const occurrence = tab.kind === "workspace" ? tab.occurrence ?? inferred : inferred
@@ -98,10 +100,15 @@ function findWorkspaceSourceIndex(
   workspace: PreservedWorkspaceRef,
 ): number | undefined {
   const runtimeIndex = preservation.results.findIndex((result) => result.runtimeTabId === workspace.runtimeTabId)
-  if (runtimeIndex >= 0) return runtimeIndex
-  const identity = `workspace:${workspaceIdentity(workspace.folder, workspace.backendId)}:${workspace.occurrence}`
+  if (runtimeIndex >= 0) {
+    const source = preservation.sourceTabs[runtimeIndex]
+    if (source?.kind === "workspace" && matchesRestoredServer(source, workspace.serverId)) return runtimeIndex
+  }
+  const identity = `${workspaceKey(workspace)}:${workspace.occurrence}`
   const index = mapTabIdentities(preservation.sourceTabs).findIndex((candidate) => candidate.value === identity)
   if (index < 0) return undefined
+  const source = preservation.sourceTabs[index]
+  if (source?.kind !== "workspace" || !matchesRestoredServer(source, workspace.serverId)) return undefined
   const result = preservation.results[index]
   // Occurrences describe the old global workspace order, not a live binding.
   // Another window can later occupy that occurrence during concurrent startup.
@@ -174,6 +181,7 @@ function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): 
     kind: "workspace",
     folder: source.folder,
     ...(source.backendId ? { backendId: source.backendId } : {}),
+    ...(source.serverId ? { serverId: source.serverId } : {}),
     drafts: keep(source.drafts),
     attachments: keep(source.attachments),
     scrollSnapshots: keep(source.scrollSnapshots),
@@ -265,6 +273,8 @@ export function mergeRestorableSessionState(
   const claimed = new Set<number>()
   const claim = (sourceIndex: number, currentIndex: number | undefined) => {
     if (currentIndex === undefined || !current.tabs[currentIndex] || claimed.has(currentIndex)) return
+    const source = preservation.sourceTabs[sourceIndex], target = current.tabs[currentIndex]
+    if (source.kind === "workspace" && target.kind === "workspace" && source.serverId !== target.serverId) return
     matches[sourceIndex] = currentIndex
     claimed.add(currentIndex)
   }

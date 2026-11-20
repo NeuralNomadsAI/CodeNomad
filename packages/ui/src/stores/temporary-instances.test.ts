@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { serverApi } from "../lib/api-client"
+import { createBackendClient, registerBackendClient } from "../lib/backend-client"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import toast from "solid-toast"
 
@@ -27,11 +28,11 @@ serverApi.abandonTemporaryFolder = async (path) => { calls.push(`abandon:${path}
 
 const { tGlobal } = await import("../lib/i18n")
 const { clearToastHistory, getToastHistory } = await import("../lib/notifications")
-const { serverEvents } = await import("../lib/server-events")
+const { backendEvents, serverEvents } = await import("../lib/server-events")
 const { alertDialogState } = await import("./alerts")
 const { activeAppTabId, appTabs, attachInstanceTab, selectInstanceTab } = await import("./app-tabs")
 const { addInstance, instances, removeInstance, updateInstance } = await import("./instances")
-const { closeTemporaryInstance, openTemporaryInstance } = await import("./temporary-instances")
+const { closeTemporaryInstance, keepTemporaryInstance, openTemporaryInstance } = await import("./temporary-instances")
 const { clearInstanceDraftPrompts, getSessionDraftPrompt, setSessionDraftPrompt, setSessions } = await import("./session-state")
 
 const folder = "D:\\CodeNomad\\temporary-workspaces\\20261009-120000-abcd"
@@ -46,7 +47,8 @@ function open(...ids: string[]) {
 }
 function openEmpty(...ids: string[]) {
   for (const id of ids) {
-    addInstance({ id, folder, projectName: "Temporary · 12:00", port: 0, pid: 0, proxyPath: "", status: "ready", client: null, temporary: true })
+    addInstance({ id, ...(id.startsWith("remote~") ? { backendId: "remote" } : {}),
+      folder, projectName: "Temporary · 12:00", port: 0, pid: 0, proxyPath: "", status: "ready", client: null, temporary: true })
     attachInstanceTab(id)
   }
 }
@@ -119,6 +121,32 @@ test("a successful discard closes the tab", async () => {
     assert.deepEqual(calls, ["discard:gone:inactive"])
     assert.equal(tabOpen("gone"), false)
   } finally { reset("gone") }
+})
+
+test("keep and discard use the owning backend and its raw workspace ID", async () => {
+  const requests: string[] = []
+  const origin = "https://remote.example"
+  const backend = createBackendClient({
+    id: "remote", baseUrl: origin,
+    fetcher: async (input, init) => {
+      const url = new URL(String(input))
+      assert.equal(url.origin, origin)
+      if (url.pathname.startsWith("/api/workspaces/")) requests.push(`${init?.method} ${url.pathname}`)
+      return Response.json({})
+    },
+  })
+  const unregister = registerBackendClient(backend)
+  const detach = backendEvents.attach(backend.id, backend.events)
+  open("remote~keep", "remote~discard")
+  try {
+    assert.equal(await keepTemporaryInstance("remote~keep"), true)
+    const closing = closeTemporaryInstance("remote~discard")
+    await answer("discard")
+    await closing
+    assert.deepEqual(requests, ["POST /api/workspaces/keep/keep", "POST /api/workspaces/discard/discard"])
+    assert.deepEqual(calls, [])
+    assert.equal(tabOpen("remote~discard"), false)
+  } finally { reset("remote~keep", "remote~discard"); detach(); unregister() }
 })
 
 for (const code of ["temporary_not_empty", "temporary_running"]) {

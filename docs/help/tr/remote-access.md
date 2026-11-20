@@ -107,7 +107,6 @@ Yalnızca `multiBackend` değeri `false` ise aşağıdaki ayrı masaüstü pence
 2. **Sunucuya Bağlan** penceresinde, güvenilir bir HTTPS kaynağını kullanarak **Sunucu adı** ve **Sunucu URL'si** öğesini girin. **Kendinden imzalı sertifikalar için TLS doğrulamasını atla.** öğesini işaretlemeden bırakın; bunun yerine güven oluşturun.
 3. Yer imlerine eklemek için **Kaydet** öğesini veya kaydedip açmak için **Bağlan** öğesini seçin. Bu sunucuda oturum açın.
 
-Kayıtlı bir sunucuyu doğrudan komut satırından açmak için masaüstü uygulamasını sunucunun kayıtlı adıyla veya `https://` URL'siyle `--connect-server <ad>` (ya da `--connect-server=<ad>`) seçeneğiyle başlatın. CodeNomad yalnızca uzak pencereyi açar; denetimler ve oturum açma **Bağlan** ile aynıdır. CodeNomad zaten çalışıyorsa sunucuyu yeni bir pencere yerine geçerli penceresi açar. Hiçbir kayıtlı sunucuyla eşleşmeyen bir URL, ana bilgisayar adıyla kaydedilir. Başlatma değerleri hiçbir zaman kimlik bilgisi taşımaz: kullanıcı adı, parola veya eşleştirme kodu içeren bir URL reddedilir. Windows'ta bir başlatma bağımsız değişkeni `|` içerdiğinde Tauri derlemesi başlamaz; bunun yerine sunucunun URL'sini kullanın veya sunucuyu yeniden adlandırın.
 
 Uzak pencereler açık kalırken son yerel pencereyi kapatmak sekmelerini korur: uzak penceredeki **Pencere → Yeni pencere** ya da CodeNomad'ı yeniden başlatmak onu yeniden açar.
 
@@ -118,3 +117,7 @@ Uzaktan Kontrol için bunun yerine **Sunucu URL'si** öğesine yeni bir eşleşt
 Ana sayfada veya yeni sekmede **Gözat** bölümünden sunucuyu seçin. Sunucuyu kaydetmek için adresini veya eşleme bağlantısını yapıştırın. Gerekirse oturum açın. Klasörde gezinmek için klasöre tıklayın; açmak için yol alanında Enter tuşuna basın veya **Aç** düğmesine basın. Geri düğmesi sunucu listesine döner.
 
 Yerel ve uzak projeler aynı pencerede açılır. Gezinirken **Son sekmeler** seçili sunucunun kısayollarını gösterir. Karma listede burada açtığınız projelerin sunucu simgesi ve adı görünür. Geri yüklenen bir sekme sunucuyu bekliyorsa o sekmede yeniden deneyin veya bağlanın. Taslaklar sekmede kalır.
+
+### `--connect-server` {#connect-server}
+
+Bu komut, `multiBackend` ayarından bağımsız olarak ayrı bir uzak pencere açar. Kayıtlı bir sunucuyu doğrudan komut satırından açmak için masaüstü uygulamasını sunucunun kayıtlı adıyla veya `https://` URL'siyle `--connect-server <ad>` (ya da `--connect-server=<ad>`) seçeneğiyle başlatın. CodeNomad yalnızca uzak pencereyi açar; denetimler ve oturum açma **Bağlan** ile aynıdır. CodeNomad zaten çalışıyorsa sunucuyu yeni bir pencere yerine geçerli penceresi açar. Hiçbir kayıtlı sunucuyla eşleşmeyen bir URL, ana bilgisayar adıyla kaydedilir. Başlatma değerleri hiçbir zaman kimlik bilgisi taşımaz: kullanıcı adı, parola veya eşleştirme kodu içeren bir URL reddedilir. Windows'ta bir başlatma bağımsız değişkeni `|` içerdiğinde Tauri derlemesi başlamaz; bunun yerine sunucunun URL'sini kullanın veya sunucuyu yeniden adlandırın.

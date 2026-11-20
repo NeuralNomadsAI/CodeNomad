@@ -555,10 +555,10 @@ export function createServerApi(ctx: BackendHttp) {
       return request("/api/workspaces/temporary/abandon", { method: "POST", body: JSON.stringify({ path }) })
     },
     keepTemporaryWorkspace(id: string): Promise<void> {
-      return request(`/api/workspaces/${encodeURIComponent(id)}/keep`, { method: "POST" })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(id).workspaceId)}/keep`, { method: "POST" })
     },
     discardTemporaryWorkspace(id: string, options: { onlyIfEmpty?: boolean } = {}): Promise<void> {
-      return request(`/api/workspaces/${encodeURIComponent(id)}/discard`, { method: "POST", body: JSON.stringify(options) })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(id).workspaceId)}/discard`, { method: "POST", body: JSON.stringify(options) })
     },
     getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
       const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))

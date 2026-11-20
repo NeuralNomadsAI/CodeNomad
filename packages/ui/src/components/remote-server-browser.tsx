@@ -5,6 +5,7 @@ import type { RemoteServerBrowseResponse, RemoteServerProfile } from "../../../s
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { qualifiedServerDisplayName } from "../lib/codenomad-link"
+import { supportsPairingLink } from "../lib/remote-pairing-link"
 import { useConfig } from "../stores/preferences"
 import { closeRemoteServer, openRemoteProject, openRemoteProjectForProfile, remoteServerSelection, selectedRemoteProfile } from "../stores/remote-project-open"
 import { backendRegistry } from "../stores/remote-backends"
@@ -41,7 +42,8 @@ export function RemoteServerBrowser(props: {
   const [requestedPath, setRequestedPath] = createSignal<string>()
   const [pendingOpen, setPendingOpen] = createSignal(props.recent?.path)
   const needsCredentials = () => ["needs_credentials", "auth", "pairing_unavailable", "unauthorized"].includes(error())
-  const pairing = () => needsCredentials() && new URL(props.profile.baseUrl).hostname.endsWith(".opentunnel.xyz")
+  const pairing = () => needsCredentials() && supportsPairingLink(props.profile.baseUrl)
+  const password = () => needsCredentials() && !new URL(props.profile.baseUrl).hostname.endsWith(".opentunnel.xyz")
   const canOpen = () => !!path().trim() && !(result()?.listing.metadata.pathKind === "drives" && path().trim() === result()?.listing.metadata.currentPath)
   async function browse(folder?: string) {
     setRequestedPath(folder)
@@ -139,7 +141,7 @@ export function RemoteServerBrowser(props: {
         <p role="alert" class="server-add-field-error">{t("remoteBrowse.pairAgain", { name: name() })}</p>
         <ServerAddField pairingProfile={props.profile} navAttribute="data-browse-nav" onAdded={() => void connected()} />
       </Show>
-      <Show when={needsCredentials() && !pairing()}>
+      <Show when={password()}>
         <RemoteServerSignin busy={busy()} onConnect={credentials => void connect(credentials)} />
       </Show>
       <Show when={error() && error() !== "needs_credentials" && !pairing()}><p role="alert" class="server-add-field-error">{t(error() === "refused" || error().endsWith(": 426")
