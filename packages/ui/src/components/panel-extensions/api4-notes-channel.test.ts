@@ -25,7 +25,7 @@ function mount(t: TestContext, notes: (...args: any[]) => Promise<unknown>, inst
   ;(sdkManager as any).clients.set(`${instanceId}:${proxyPath}`, client)
   addInstance({ id: instanceId, folder: "/repo", port: 0, pid: 0, proxyPath, status: "ready", client } as any)
   const { receive, dispose } = createRoot(dispose => ({
-    receive: useApi4Channel({ instanceId, id: "a.b", digest: "a".repeat(64), sessionId: current.sessionId,
+    receive: useApi4Channel({ instanceId, id: "a.b", digest: "a".repeat(64), name: "Notes", sessionId: current.sessionId,
       permissions: ["session.context", "panel.notes"], send: value => sent.push(value),
       host: { activeSessionId: () => current.sessionId, isPhoneLayout: () => false, closePanel: () => {}, promptInputApi: () => null } }),
     dispose,

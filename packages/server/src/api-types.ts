@@ -284,12 +284,16 @@ export interface WorktreeListResponse {
 export interface WorktreeCreateRequest {
   slug: string
   fromSlug?: string
+  /** The existing branch's expected tip: refuse a missing or moved branch instead of creating one. */
+  revision?: string
   /** Optional branch name (defaults to slug). */
   branch?: string
 }
 
 export interface WorktreeSessionMoveRequest {
   worktreeSlug: string
+  /** The branch the target must still have checked out when the family moves. */
+  branch?: string
 }
 
 export interface WorktreeSessionMoveResponse {

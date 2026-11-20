@@ -10,6 +10,7 @@ import {
 } from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
 import { GitRequiredError } from "./git-requirement"
+import { runWorktreeGit } from "./git-process"
 
 export class NestedFolderUnavailableError extends Error {
   readonly code = "nested_folder_unavailable"
@@ -157,13 +158,15 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
   }
 }
 
-export async function createNativeWorktree(context: NativeWorktreeContext, branch: string, fromSlug = "root") {
+/** `revision`: check out the existing branch only at that tip, never create it. */
+export async function createNativeWorktree(context: NativeWorktreeContext, branch: string, fromSlug = "root", revision?: string) {
   const catalogue = await listNativeWorktrees(context)
   const source = catalogue.worktrees.find(entry => entry.slug === fromSlug)
   if (!catalogue.isGitRepo || !source?.serviceRoot || source.nestedFolderMissing || !catalogue.defaultDirectory) {
     throw new Error("Source worktree not found")
   }
   const policy = await prepareWorktreeBranch(source.registeredDirectory!, branch)
+  if (revision !== undefined && (!policy.existing || policy.revision !== revision)) throw new Error("Branch changed before its worktree was created")
   // An ignored or untracked opened folder would be absent from the new checkout.
   if (!await revisionContainsFolder(source.directory, policy.revision)) throw new NestedFolderUnavailableError()
   await ensureCodenomadGitExclude(context.workspacePath)
@@ -189,6 +192,12 @@ export async function createNativeWorktree(context: NativeWorktreeContext, branc
     // Native creation deliberately detaches HEAD. Branch selection remains Git
     // policy: preserve a named branch without duplicating worktree management.
     await attachWorktreeBranch(host, branch, policy.existing)
+    if (revision !== undefined) {
+      // The full ref: a same-named tag makes the short name `heads/<branch>`.
+      const [head, ref] = await Promise.all([runWorktreeGit(host, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined),
+        runWorktreeGit(host, ["symbolic-ref", "--quiet", "HEAD"]).catch(() => undefined)])
+      if (head !== revision || ref !== `refs/heads/${branch}`) throw new Error("Branch changed before its worktree was created")
+    }
   } catch (error) {
     try {
       await client.worktree.remove({ projectID: current.project.id, directory: created.directory, force: false }, options)

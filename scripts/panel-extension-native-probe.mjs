@@ -20,11 +20,14 @@ const API4_FRAME_METHODS = {
   "opencode.designAgent": {},
   "panel.preferences": { preferences: ["get", "set"] },
   "panel.notes": { notes: ["get", "set", "list", "delete", "open"] },
+  "repository.workItems.read": { workItems: ["list", "open"] },
+  "repository.worktrees.read": { worktrees: ["list"] },
+  "repository.worktrees.write": { worktrees: ["open"] },
 }
 const LEGACY_FRAME_METHODS = { 1: {}, 2: { assets: ["list", "read"] }, 3: { workItems: ["list", "open"] } }
-const LISTENERS = { 2: { assets: ["onChanged"] }, 4: { images: ["onChanged"], notes: ["onChanged"] } }
+const LISTENERS = { 2: { assets: ["onChanged"] }, 4: { images: ["onChanged"], notes: ["onChanged"], worktrees: ["onChanged"] } }
 const ARGS = {
-  "assets.read": ["probe-target", { thumbnail: true }], "workItems.list": [{ kind: "issue" }], "workItems.open": ["issue", 1],
+  "assets.read": ["probe-target", { thumbnail: true }], "workItems.list": [{ kind: "issue" }], "workItems.open": ["issue", 1], "worktrees.open": ["issue", 1],
   "images.read": ["probe-target", { thumbnail: true }], "composer.prefill": [{ text: "probe" }], "preferences.set": [{ probe: true }],
   "notes.set": ["probe", 0], "notes.delete": ["probe-session", 1], "notes.open": ["probe-session"],
 }
