@@ -321,7 +321,7 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
   with the branch and never follows a copy or rename (`git branch -c`/`-m`); a branch name alone is never proof, and links of another repository identity
   or whose ref is gone are ignored. The exact lookup (`workItemBranchLookup`, used to open)
   answers `conflict` when the name now holds another branch: one that no longer contains the
-  start commit, or whose reflog does not begin with CodeNomad's own creation marker (`update-ref -m 'codenomad: work item <kind>/<number>'`): a branch recreated by `git branch`, a fetch or a copy is refused, and so is one whose creation entry expired from a reflog that still has later entries; without any reflog, ancestry alone decides. `list` (only while the selected remote still names the repository) joins the links to the worktree inventory, read again on each call;
+  start commit, or whose reflog's creation entry (Git writes it from the null object ID; deleting a ref deletes its reflog) is not CodeNomad's own marker (`update-ref -m 'codenomad: work item <kind>/<number>'`): a branch recreated by `git branch`, a fetch or a copy is refused; once the creation entry expired, or without a reflog, ancestry alone decides. A branch whose name differs only by case (one ref on case-insensitive file systems) is a `conflict` too, checked again right before creation. `list` (only while the selected remote still names the repository) joins the links to the worktree inventory, read again on each call;
   `current` is the inventory's match for the displayed family, never the `root` fallback of
   a miss. `onChanged` fires when the inventory, a worktree's branch or the family's worktree
   changes, not when a link alone changes.

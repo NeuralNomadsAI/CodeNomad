@@ -273,7 +273,6 @@ export function useApi4Channel(props: {
         // Only that branch at that tip: a branch deleted or replaced meanwhile is refused, never recreated.
         destination = (await createWorktree(props.instanceId, branch.branch, "root", branch.revision)).slug
         branchName = branch.branch
-        await reloadWorktrees(props.instanceId)
       }
       // The target must still check out the item's branch when the family moves; the move reports its own failure.
       await consented(branchName)

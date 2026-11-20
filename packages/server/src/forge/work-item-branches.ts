@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import { open } from "node:fs/promises"
 import path from "node:path"
 import type { ForgeProvider, ForgeWorkItemKind } from "../panel-extensions/contract"
 import { runGitProcess } from "../workspaces/git-process"
@@ -104,27 +105,47 @@ export async function lookupWorkItemBranch(directory: string, source: WorkItemBr
   return !url || url === "changed" ? { status: "unavailable" } : linkedBranch(directory, source, kind, number)
 }
 
-/** The exact lookup once the remote was checked. */
-// Only the item's own name can hold its link (copies and renames never match), so the lookup reads that one key.
+/** The oldest reflog entry of `ref`, read from the files backend; undefined without one. */
+async function firstReflogEntry(directory: string, ref: string) {
+  const file = await git(directory, ["rev-parse", "--path-format=absolute", "--git-path", `logs/${ref}`]).catch(() => "")
+  if (!file) return undefined
+  const handle = await open(file, "r").catch(() => undefined)
+  if (!handle) return undefined
+  try {
+    const { bytesRead, buffer } = await handle.read(Buffer.alloc(4096), 0, 4096, 0)
+    const entry = /^([0-9a-f]{40}|[0-9a-f]{64}) [0-9a-f]+ [^\t\n]*\t([^\n]*)/.exec(buffer.subarray(0, bytesRead).toString("utf8"))
+    return entry ? { creation: /^0+$/.test(entry[1]!), message: entry[2]!.trim() } : undefined
+  } finally { await handle.close() }
+}
+
+/** A branch whose name differs from `name` only by case: one ref on case-insensitive file systems. */
+async function caseTwin(directory: string, name: string) {
+  const refs = (await git(directory, ["for-each-ref", "--format=%(refname)", "refs/heads/"]).catch(() => "")).split(/\r?\n/)
+  return refs.find(ref => ref !== `refs/heads/${name}` && ref.toLowerCase() === `refs/heads/${name}`.toLowerCase())?.slice("refs/heads/".length)
+}
+
+/** The exact lookup once the remote was checked. Only the item's own name can hold its link (copies and renames never match), so it reads that one key. */
 async function linkedBranch(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number): Promise<WorkItemBranchLookup> {
   const repository = workItemRepository(source), name = itemBranch(kind, number), ref = `refs/heads/${name}`
   const value = LINK.exec(await git(directory, ["config", "--local", "--get", `branch.${name}.${KEY}`]).catch(() => ""))
   const exists = await git(directory, ["rev-parse", "--verify", "--quiet", ref]).then(Boolean, () => false)
+  const twin = await caseTwin(directory, name)
+  if (twin) return { status: "conflict", branch: twin }
   if (!exists) return { status: "ok", repository, branch: null }
   // The name holds a branch that is not this item's link: nothing CodeNomad may reuse or create.
   if (!value || value[1] !== repository || value[2] !== kind.toLowerCase() || Number(value[3]) !== number || value[5] !== name) {
     return { status: "conflict", branch: name }
   }
   const link = { branch: name, start: value[4]! }
-  const [contains, reflog] = await Promise.all([
+  const [contains, first] = await Promise.all([
     git(directory, ["merge-base", "--is-ancestor", link.start, ref])
       .then(() => true, (error: { code?: unknown }) => { if (error.code === 1 || error.code === 128) return false; throw error }),
-    git(directory, ["reflog", "show", "--format=%gs", ref, "--"]).catch(() => ""),
+    firstReflogEntry(directory, ref),
   ])
-  const created = reflog.split(/\r?\n/).at(-1) ?? ""
-  // Positive proof: a reflog that begins with anything but CodeNomad's marker belongs to another
-  // creation (git branch, fetch, copy…). Without a reflog (disabled, or wholly expired) ancestry alone decides.
-  const recreated = reflog !== "" && created !== creationMarker(kind, number)
+  // Git writes a ref's creation as a reflog entry from the null object ID, and deleting the ref
+  // deletes its reflog: a surviving creation entry must be CodeNomad's own. Once it expired
+  // (later entries kept) or without a reflog, ancestry alone decides.
+  const recreated = first?.creation === true && first.message !== creationMarker(kind, number)
   return contains && !recreated ? { status: "ok", repository: workItemRepository(source), branch: link.branch } : { status: "conflict", branch: link.branch }
 }
 
@@ -235,6 +256,9 @@ async function create(directory: string, source: WorkItemBranchSource, kind: For
   }
   const refused = await admitted()
   if (refused) return refused
+  // A case-only twin is the same ref on case-insensitive file systems: never shadow it.
+  const twin = await caseTwin(directory, branch)
+  if (twin) return { status: "conflict", branch: twin }
   // Created only if absent (empty old value), with CodeNomad's own reflog marker.
   try { await git(directory, ["update-ref", "-m", creationMarker(kind, number), `refs/heads/${branch}`, revision, ""]) } catch { return { status: "conflict", branch } }
   // Undoing removes only CodeNomad's link; the ref goes too unless something adopted it

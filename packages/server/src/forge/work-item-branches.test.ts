@@ -155,6 +155,27 @@ describe("work item branches", () => {
     assert.deepEqual(await lookup(clone, source, "issue", 20), { status: "conflict", branch: "issue-20" })
   })
 
+  it("never creates a branch that differs from an existing one only by case", async () => {
+    const { clone, source } = await project()
+    git(clone, "switch", "-q", "-c", "Issue-42"); commit(clone, "unmerged work"); git(clone, "switch", "-q", "main")
+    const tip = git(clone, "rev-parse", "refs/heads/Issue-42")
+    git(clone, "pack-refs", "--all")
+    assert.deepEqual(await lookup(clone, source, "issue", 42), { status: "conflict", branch: "Issue-42" })
+    assert.deepEqual(await create(clone, source, "issue", 42), { status: "conflict", branch: "Issue-42" })
+    assert.deepEqual(git(clone, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/").split("\n").filter(line => /issue-42/i.test(line)),
+      [`refs/heads/Issue-42 ${tip}`])
+  })
+
+  it("keeps a link whose creation entry expired from a reflog that goes on", async () => {
+    const { clone, source } = await project()
+    assert.equal((await createWorkItemBranch(clone, source, "issue", 43)).status, "ok")
+    await new Promise(resolve => setTimeout(resolve, 1_100))
+    git(clone, "switch", "-q", "issue-43"); commit(clone, "work"); git(clone, "switch", "-q", "main")
+    git(clone, "reflog", "expire", `--expire=${git(clone, "log", "-1", "--format=%ct", "issue-43")}`, "refs/heads/issue-43")
+    assert.equal(git(clone, "reflog", "show", "--format=%gs", "refs/heads/issue-43"), "commit: work")
+    assert.deepEqual(await lookup(clone, source, "issue", 43), { status: "ok", branch: "issue-43" })
+  })
+
   it("follows the remote Git selects now: an upstream added after discovery is a change", async () => {
     const { clone, source } = await project()
     git(clone, "remote", "add", "upstream", "https://github.com/parent/repo.git")
