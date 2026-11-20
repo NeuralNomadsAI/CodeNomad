@@ -16,7 +16,9 @@ export async function sha256(value: string): Promise<string> {
 
 export interface EncodedPartition { key: string; text: string; bytes: number }
 // Saves repeat most partitions unchanged; reuse their canonical text and key by plain
-// JSON, which equal values share. Bounded LRU: blob-heavy snapshots simply miss.
+// JSON, which equal values share. Callers pass normalized JSON data only (no Date,
+// toJSON or undefined members), so equal plain JSON means equal canonical JSON.
+// Bounded LRU: blob-heavy snapshots simply miss.
 const MAX_CACHED_CHARACTERS = 8 * 1024 * 1024
 const cache = new Map<string, EncodedPartition>()
 let cachedCharacters = 0
@@ -27,6 +29,9 @@ export async function encodePartition(value: unknown): Promise<EncodedPartition>
   if (hit) { cache.delete(plain); cache.set(plain, hit); return hit }
   const text = canonicalJson(value)
   const encoded = { key: await sha256(text), text, bytes: encoder.encode(text).byteLength }
+  // A concurrent call for the same value may have stored it during the digest.
+  const stored = cache.get(plain)
+  if (stored) return stored
   cache.set(plain, encoded)
   cachedCharacters += plain.length + text.length
   for (const [oldest, entry] of cache) {

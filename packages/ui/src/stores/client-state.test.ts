@@ -570,7 +570,7 @@ describe("partitioned client state", () => {
     assert.equal(commits.length, 1)
   })
 
-  it("skips the native commit when a capture re-encodes to the committed graph", async () => {
+  it("skips an unchanged debounced commit, clears a stale error and republishes on flush", async (t) => {
     const encoded = await encodeClientSnapshotV2(snapshot("restored"))
     const commits: any[] = []
     const state = await boot({
@@ -579,17 +579,29 @@ describe("partitioned client state", () => {
       commitClientStatePartitions: async (_token, value) => { commits.push(value); return true },
       clearClientState: async () => true, setClientStateRestoreEnabled: async () => true,
     })
-    for (const sidecar of ["first", "first", "first", "second"]) {
+    const debounced = async (sidecar: string) => {
       state.updateRestorableSession(session(sidecar))
-      await state.flushClientState()
+      await new Promise((resolve) => setTimeout(resolve, 400))
     }
+    for (const sidecar of ["first", "first", "first", "second"]) await debounced(sidecar)
     assert.deepEqual(commits.map((commit) => commit.snapshot.revision), [2, 5])
-    // Clearing forgets the committed graph, so the same state is written again.
-    await state.clearRestoredClientState()
-    await state.setRestorePreviousStateEnabled(true)
+    // A save that fails before committing, then a return to the committed graph,
+    // leaves no stale error for the next flush.
+    const digest = t.mock.method(crypto.subtle, "digest", async () => { throw new Error("digest failed") })
+    await debounced("broken")
+    digest.mock.restore()
+    await debounced("second")
+    await state.flushClientState()
+    assert.equal(commits.length, 2)
+    // An explicit flush republishes even an unchanged graph, so a lost host copy heals.
     state.updateRestorableSession(session("second"))
     await state.flushClientState()
     assert.equal(commits.length, 3)
+    // Clearing forgets the committed graph, so the same state is written again.
+    await state.clearRestoredClientState()
+    await state.setRestorePreviousStateEnabled(true)
+    await debounced("second")
+    assert.equal(commits.length, 4)
   })
 
   it("commits one atomic graph without a monolithic save or automatic load rewrite", async () => {

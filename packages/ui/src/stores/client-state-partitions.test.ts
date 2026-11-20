@@ -3,6 +3,7 @@ import { it } from "node:test"
 
 import type { ClientSnapshotV1, RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import { canCommitClientSnapshotV2, canonicalJson, decodeClientSnapshotV2, encodeClientSnapshotV2, sha256 } from "./client-state-partitions.ts"
+import { encodePartition } from "./client-state-partition-json.ts"
 
 const attachment = (id: string) => ({
   id,
@@ -158,6 +159,15 @@ it("re-encodes an unchanged catalog-heavy snapshot without hashing it again", as
   const third = await encodeClientSnapshotV2(changed)
   assert.notEqual(third.root.sessionPartition, first.root.sessionPartition)
   assert.ok(digest.mock.callCount() > 0)
+})
+
+it("keeps one cached copy of a partition encoded concurrently", async (t) => {
+  const value = { format: 2, index: 0, data: "x".repeat(700 * 1024) }
+  await Promise.all(Array.from({ length: 16 }, () => encodePartition(value)))
+  const digest = t.mock.method(crypto.subtle, "digest")
+  // The bound counted the value once, so it is still cached.
+  await encodePartition(structuredClone(value))
+  assert.equal(digest.mock.callCount(), 0)
 })
 
 it("uses the native graph cap without truncating the encoded key list", async () => {

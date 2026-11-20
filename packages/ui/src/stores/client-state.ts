@@ -93,7 +93,9 @@ const cancelSaveTimer = () => {
   saveTimer = null
 }
 
-function enqueuePendingSave(): Promise<void> {
+// Explicit flushes (navigation, close, host requests) always republish, so a graph
+// lost on the host side is rewritten; debounced saves skip an unchanged graph.
+function enqueuePendingSave(republish = false): Promise<void> {
   cancelSaveTimer()
   if (!dirty || !canWriteSnapshot()) return writeQueue
   const snapshot: ClientSnapshotV1 = {
@@ -117,7 +119,10 @@ function enqueuePendingSave(): Promise<void> {
         throw new Error("Client snapshot exceeds the V1 1 MiB limit and partition persistence is unavailable")
       }
       const content = partitioned && JSON.stringify({ ...partitioned.root, revision: 0, savedAt: 0 })
-      if (content && content === committedContent) return
+      if (!republish && content && content === committedContent) {
+        lastSaveError = undefined
+        return
+      }
       committedContent = null
       const accepted = partitioned
         ? await commitNativeClientStatePartitions({
@@ -296,7 +301,7 @@ export async function flushClientState(): Promise<void> {
       return
     }
     try {
-      await enqueuePendingSave()
+      await enqueuePendingSave(true)
       lastError = undefined
     } catch (error) {
       lastError = error
