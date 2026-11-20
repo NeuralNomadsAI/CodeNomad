@@ -39,7 +39,7 @@ pub fn identity(directory: &std::path::Path) -> String {
     let s = crate::files::node_path::Style::host().normalize(&directory.to_string_lossy());
     if cfg!(windows) { s.to_lowercase() } else { s }
 }
-#[cfg(test)]
+/// `isBlocked`: a deletion in progress overlaps `directory`.
 pub fn is_blocked(directory: &str) -> bool {
     let target = normalize(directory);
     STATE.lock().unwrap().blocked.keys().any(|b| overlap(b, &target))

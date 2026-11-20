@@ -144,6 +144,55 @@ export async function run({ call, fixture, folder, root }) {
   const opened = await call("/api/workspaces", send({ path: path.join(outside, "inner") }, "POST"))
   const w = await opened.json()
   out.externalFiles = await read(`/api/workspaces/${w.id}/files?path=.&directory=${encodeURIComponent(w.path)}`)
+  // The conversation list and pending requests as the UI reads them on opening: a Git project, a
+  // folder without Git in the root and outside it, then right after a worktree is created.
+  const count = result => ({ status: result.status, count: Array.isArray(result.body?.data ?? result.body) ? (result.body.data ?? result.body).length : null })
+  const lists = async directory => {
+    const opened = await call("/api/workspaces", send({ path: directory }, "POST"))
+    const ws = await opened.json()
+    const at = ws.location?.directory ?? ws.path
+    const instance = `${ws.proxyPath}/api`
+    const seen = { open: opened.status }
+    seen.session = (await read(`${instance}/session`, send({ title: "Host list" }, "POST"))).status
+    const projects = await call(`${instance}/project`).then(r => r.json().then(body => ({ status: r.status, body })))
+    seen.projects = { status: projects.status, count: Array.isArray(projects.body) ? projects.body.length : null }
+    const query = data => new URLSearchParams({ limit: "50", order: "desc", ...data })
+    seen.byDirectory = count(await read(`${instance}/session?${query({ directory: at })}`))
+    seen.byProject = []
+    for (const project of [...(Array.isArray(projects.body) ? projects.body : []).map(p => p.id), "global"])
+      seen.byProject.push(count(await read(`${instance}/session?${query({ project })}`)))
+    const pending = await read(`/api/workspaces/${ws.id}/pending-requests?${new URLSearchParams({ directories: at })}`)
+    seen.pending = { status: pending.status, supported: pending.body?.supported, directories: pending.body?.directories?.map(d => d.status) }
+    return { ws, at, seen }
+  }
+  out.listsGit = (await lists(path.join(root, folder))).seen
+  out.listsPlain = (await lists(path.join(root, "No Repository"))).seen
+  out.listsOutside = (await lists(path.join(outside, "inner"))).seen
+  const { ws: project, at } = await lists(path.join(root, folder))
+  const tree = await call(`/api/workspaces/${project.id}/worktrees`, send({ slug: "host-list", fromSlug: "root" }, "POST"))
+  const created = await tree.json()
+  const both = new URLSearchParams([["directories", at], ["directories", created.serviceDirectory ?? created.directory ?? ""]])
+  const fresh = await read(`/api/workspaces/${project.id}/pending-requests?${both}`)
+  out.pendingAfterWorktree = { created: tree.status, status: fresh.status, directories: fresh.body?.directories?.map(d => d.status), error: fresh.body?.error }
+  const pending = async (directories, optional = []) => {
+    const query = new URLSearchParams([...directories.map(d => ["directories", d]), ...optional.map(d => ["optionalDirectories", d])])
+    const r = await read(`/api/workspaces/${project.id}/pending-requests?${query}`)
+    return { status: r.status, error: r.body?.error, directories: r.body?.directories?.map(d => [d.directory, d.status, d.reason]) }
+  }
+  const gone = path.join(at, ".codenomad", "worktrees", "gone"), absent = path.join(outside, "gone")
+  out.pendingCases = {
+    subfolder: await pending([path.join(at, "nested")]),
+    missingOptional: await pending([at, gone], [gone]),
+    missingMandatory: await pending([at, gone]),
+    outsideOptional: await pending([at, outside], [outside]),
+    absentOutsideOptional: await pending([at, absent], [absent]),
+    foreignOnly: await pending([outside]),
+    excludedOnly: await pending([absent], [absent]),
+    invalidOptional: await pending([at], [outside]),
+    duplicates: await pending([at, at]),
+  }
+  await call(`/api/workspaces/${project.id}/worktrees/${created.slug}`, { method: "DELETE" })
+  out.pendingAfterDeletion = await pending([at, created.serviceDirectory ?? created.directory], [created.serviceDirectory ?? created.directory])
   for (const id of [w.id, (await (await call("/api/workspaces")).json()).map(item => item.id)].flat()) await call(`/api/workspaces/${id}`, { method: "DELETE" })
   return out
 }

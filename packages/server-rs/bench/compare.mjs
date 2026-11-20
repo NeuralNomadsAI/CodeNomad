@@ -61,7 +61,7 @@ async function start(label, fixture, folder, password, trustedCA) {
   else Object.assign(env, { CNRS_HTTPS_BIND: "127.0.0.1:0", CNRS_HTTPS_NAME: "127.0.0.1", CNRS_FIXTURE_INGRESS: "1",
     CNRS_FIXTURE_MISSIONS_READ: "1", CNRS_FIXTURE_MISSIONS_RUN: "1",
     CNRS_FIXTURE_MISSIONS_REGISTRY: path.join(fixture.env.LOCALAPPDATA, "CodeNomad", "automation-bridges"),
-    ...(mode === "memory" ? provisionEnv(root, "memory") : mode === "design" ? provisionEnv(root) : {}) })
+    ...(mode === "memory" ? provisionEnv(root, "memory") : mode === "design" || mode === "host" ? provisionEnv(root) : {}) })
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
   if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CODENOMAD_REMOTE_CONTROL: "disabled", CLI_CONFIG: path.join(root, label === "ts" ? "ts.yaml" : "rust.yaml") })
   const child = label === "ts"

@@ -1,4 +1,4 @@
-//! Location ownership for `subagent-depth` only: `WorkspaceManager.getServiceDirectoryForPath` /
+//! Location ownership for `subagent-depth` and `pending-requests`: `WorkspaceManager.getServiceDirectoryForPath` /
 //! `ownsLocation` / `getWorktreeIdentityForPath` through `resolveOwnedWorktree` (non-strict, host
 //! paths). Unlike the exact `worktrees::owns`/`placement` used by every other prototype route, a
 //! subfolder of an owned checkout is admitted, including one that does not exist yet:
@@ -58,7 +58,8 @@ pub fn within(root: &Path, candidate: &Path) -> bool {
             && !relative.starts_with(&format!("..{}", std::path::MAIN_SEPARATOR))
             && !style.is_absolute(&relative)
 }
-async fn common_directory(dir: &Path) -> Option<PathBuf> {
+/// `readGitCommonDirectory`: the canonical Git common directory, `None` when unreadable.
+pub async fn common_directory(dir: &Path) -> Option<PathBuf> {
     let out = crate::git::run(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024)
         .await
         .ok()?

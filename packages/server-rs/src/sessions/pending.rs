@@ -1,14 +1,21 @@
 //! Pending questions and permissions of a workspace, from the native pending-requests plugin.
 use axum::{
     Json,
-    extract::{Path, RawQuery, State},
+    extract::{Path as Route, RawQuery, State},
     http::{StatusCode as Status, header},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{
+    io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
-use crate::{Error, Shared, error, unavailable};
+use crate::{
+    App, Error, Shared, Workspace, error, unavailable,
+    worktrees::{fence, ownership},
+};
 
 /// `PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS` and `READINESS_WAIT_MS` of the reference.
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -57,107 +64,410 @@ pub async fn await_plugin(
     }
 }
 
+/// Where one submitted directory stands before the native read (`pending-requests.ts`).
+enum Candidate {
+    /// Owned: its service directory, deletion-fence key and, off the root, its Git common directory.
+    Owned {
+        directory: String,
+        fence: String,
+        common: Option<PathBuf>,
+    },
+    /// Optional history whose host directory is absent, owned by `fence` (its own or an ancestor's).
+    Missing {
+        directory: Option<String>,
+        fence: String,
+        ancestor: bool,
+    },
+    /// Optional history proven outside the project.
+    Outside {
+        proof: String,
+    },
+    Error(&'static str),
+}
+
+/// `missingHost`: only a path that does not exist at all.
+fn missing(path: &str) -> bool {
+    std::fs::symlink_metadata(path).is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+}
+fn real(path: &Path) -> Option<PathBuf> {
+    dunce::canonicalize(path).ok()
+}
+
+struct Batch<'a> {
+    app: &'a App,
+    workspace: &'a Workspace,
+    root: String,
+    common: tokio::sync::OnceCell<Option<PathBuf>>,
+}
+impl Batch<'_> {
+    async fn workspace_common(&self) -> Option<PathBuf> {
+        self.common.get_or_init(|| ownership::common_directory(&self.workspace.path)).await.clone()
+    }
+    /// `outsideHistory`: an absent direct child of a canonical folder outside the checkout,
+    /// or an existing folder of another repository.
+    async fn outside(&self, candidate: &str) -> Result<Option<String>, ()> {
+        if !Path::new(candidate).is_absolute() {
+            return Ok(None);
+        }
+        if missing(candidate) {
+            let root = real(&self.workspace.path).ok_or(())?;
+            if ownership::within(&root, Path::new(candidate)) {
+                return Ok(None);
+            }
+            let parent = Path::new(candidate).parent().ok_or(())?;
+            return Ok((real(parent).as_deref() == Some(parent))
+                .then(|| format!("missing\0{candidate}\0{}", parent.display())));
+        }
+        let common = ownership::common_directory(Path::new(candidate)).await.ok_or(())?;
+        if Some(&common) == self.workspace_common().await.as_ref() {
+            return Ok(None);
+        }
+        Ok(Some(format!("foreign\0{}\0{}", real(Path::new(candidate)).ok_or(())?.display(), common.display())))
+    }
+    /// `ownedMissingAncestor`: the nearest existing ancestor, owned canonically and of this repository.
+    async fn owned_ancestor(&self, candidate: &str) -> Option<String> {
+        let mut ancestor = PathBuf::from(candidate);
+        for _ in 0..64 {
+            if !missing(&ancestor.to_string_lossy()) {
+                let owned = ownership::resolve(self.app, self.workspace, &ancestor.to_string_lossy()).await?;
+                let fence = fence::identity(&owned.checkout);
+                if fence::is_blocked(&fence)
+                    || real(&ancestor) != real(Path::new(&owned.directory))
+                    || ownership::common_directory(&ancestor).await != self.workspace_common().await
+                {
+                    return None;
+                }
+                return Some(fence);
+            }
+            ancestor = ancestor.parent()?.to_path_buf();
+        }
+        None
+    }
+    async fn classify(&self, candidate: &str, optional: bool) -> Candidate {
+        let Some(owned) = ownership::resolve(self.app, self.workspace, candidate).await else {
+            if !optional {
+                return Candidate::Error("not-owned");
+            }
+            let ancestor = if Path::new(candidate).is_absolute() && missing(candidate) {
+                self.owned_ancestor(candidate).await
+            } else {
+                None
+            };
+            return match ancestor {
+                Some(fence) => Candidate::Missing { directory: None, fence, ancestor: true },
+                None => match self.outside(candidate).await {
+                    Ok(Some(proof)) => Candidate::Outside { proof },
+                    Ok(None) if !missing(candidate) => Candidate::Error("not-owned"),
+                    _ => Candidate::Error("unverified"),
+                },
+            };
+        };
+        let fence = fence::identity(&owned.checkout);
+        if fence::is_blocked(&fence) {
+            return Candidate::Error("deleting");
+        }
+        let root = owned.directory == self.root;
+        if !root && missing(&owned.directory) {
+            return match optional {
+                true => Candidate::Missing { directory: Some(owned.directory), fence, ancestor: false },
+                false => Candidate::Error("missing"),
+            };
+        }
+        let common = if root { None } else { ownership::common_directory(Path::new(&owned.directory)).await };
+        if !root && common.is_none() {
+            return Candidate::Error("unverified");
+        }
+        Candidate::Owned { directory: owned.directory, fence, common }
+    }
+    /// `revalidateCandidates`: each admitted or excluded directory still stands as it was read.
+    async fn still(&self, submitted: &str, candidate: &Candidate) -> bool {
+        let owned = || ownership::resolve(self.app, self.workspace, submitted);
+        match candidate {
+            Candidate::Owned { directory, fence, common } => {
+                !fence::is_blocked(fence)
+                    && owned()
+                        .await
+                        .is_some_and(|o| &o.directory == directory && fence::identity(&o.checkout) == *fence)
+                    && (*directory == self.root || ownership::common_directory(Path::new(directory)).await == *common)
+            }
+            Candidate::Missing { directory, fence, ancestor } => {
+                !fence::is_blocked(fence)
+                    && owned().await.map(|o| o.directory) == *directory
+                    && missing(directory.as_deref().unwrap_or(submitted))
+                    && (!ancestor || self.owned_ancestor(submitted).await.as_ref() == Some(fence))
+            }
+            Candidate::Outside { proof } => {
+                owned().await.is_none() && self.outside(submitted).await.ok().flatten().as_ref() == Some(proof)
+            }
+            Candidate::Error(_) => true,
+        }
+    }
+    fn deleting(candidate: &Candidate) -> bool {
+        match candidate {
+            Candidate::Owned { fence, .. } | Candidate::Missing { fence, .. } => fence::is_blocked(fence),
+            _ => false,
+        }
+    }
+}
+
+enum Refusal {
+    Unavailable,
+    Timeout,
+}
+fn refused(kind: Refusal) -> Error {
+    let body = match kind {
+        Refusal::Unavailable => json!({"error": "Pending requests unavailable; retain existing queues"}),
+        Refusal::Timeout => json!({"error": "Pending requests unavailable; retain existing queues", "code": "timeout"}),
+    };
+    (Status::SERVICE_UNAVAILABLE, Json(body))
+}
+
+/// `GET /api/workspaces/:id/pending-requests?directories=…[&optionalDirectories=…]`: the pending
+/// permissions and Forms of each owned directory, through the pruning plugin's snapshot RPC.
 pub async fn snapshot(
     State(app): State<Shared>,
-    Path(id): Path<String>,
+    Route(id): Route<String>,
     RawQuery(query): RawQuery,
 ) -> Result<Response, Error> {
-    let bad = || error(Status::BAD_REQUEST, "Invalid pending request directories");
+    let no_store = |body: Value| ([(header::CACHE_CONTROL, "no-store")], Json(body)).into_response();
     let mut parsed = app.native.url();
     parsed.set_query(query.as_deref());
-    let items: Vec<_> = parsed.query_pairs().collect();
-    if items.is_empty()
-        || items.len() > 128
-        || items.iter().any(|(key, value)| {
-            !matches!(key.as_ref(), "directories" | "optionalDirectories")
-                || value.is_empty()
-                || value.encode_utf16().count() > 4096
+    let items: Vec<(String, String)> = parsed.query_pairs().into_owned().collect();
+    let list = |key: &str| items.iter().filter(|(k, _)| k == key).map(|(_, v)| v.clone()).collect::<Vec<_>>();
+    let (directories, optional) = (list("directories"), list("optionalDirectories"));
+    if directories.is_empty()
+        || directories.len() > 64
+        || optional.len() > 64
+        || items.iter().any(|(k, v)| {
+            !matches!(k.as_str(), "directories" | "optionalDirectories") || !(1..=4096).contains(&v.chars().count())
         })
     {
-        return Err(bad());
-    }
-    let mandatory: Vec<_> = items.iter().filter(|(key, _)| key == "directories").map(|(_, value)| value).collect();
-    let optional: Vec<_> =
-        items.iter().filter(|(key, _)| key == "optionalDirectories").map(|(_, value)| value).collect();
-    if mandatory.is_empty()
-        || mandatory.len() > 64
-        || optional.len() > 64
-        || optional.iter().any(|path| !mandatory.contains(path))
-    {
-        return Err(bad());
+        return Err(error(Status::BAD_REQUEST, "Invalid pending request directories"));
     }
     let workspace = app.workspace(&id)?;
+    let mut submitted: Vec<String> = Vec::new();
+    for d in directories {
+        if !submitted.contains(&d) {
+            submitted.push(d);
+        }
+    }
+    if optional.iter().any(|d| !submitted.contains(d)) {
+        return Ok((
+            Status::BAD_REQUEST,
+            [(header::CACHE_CONTROL, "no-store")],
+            Json(json!({"error": "Invalid optional pending request directories"})),
+        )
+            .into_response());
+    }
     if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
         return Ok(unavailable());
     }
-    let directory = workspace.location["directory"].as_str().ok_or_else(bad)?;
-    let placement = same_file::Handle::from_path(&workspace.path).map_err(|_| bad())?;
-    if mandatory.iter().any(|path| path.as_ref() != directory) {
-        return Err(error(Status::FORBIDDEN, "Directory does not belong to workspace"));
-    }
     let deadline = tokio::time::Instant::now() + SNAPSHOT_TIMEOUT;
-    let fail = || error(Status::SERVICE_UNAVAILABLE, "Pending requests unavailable; retain existing queues");
-    let timeout = || {
-        (
-            Status::SERVICE_UNAVAILABLE,
-            Json(json!({"error":"Pending requests unavailable; retain existing queues","code":"timeout"})),
-        )
-    };
-    // Warm only the authorized bootstrap: the validated read below proves
-    // registration (reference #1590, `awaitNativePlugin`, 5 s readiness wait).
-    match await_plugin(&app, SESSION_PRUNING_PLUGIN, directory, deadline).await {
-        Ok(()) => {}
-        Err(PluginWait::TimedOut) => return Err(timeout()),
-        Err(PluginWait::Failed) => return Err(fail()),
+    match tokio::time::timeout_at(deadline, read(&app, &id, &workspace, &submitted, &optional, deadline)).await {
+        Ok(Ok(body)) => Ok(no_store(body)),
+        Ok(Err(Ok(response))) => Ok(response),
+        Ok(Err(Err(kind))) => Err(refused(kind)),
+        Err(_) => Err(refused(Refusal::Timeout)),
     }
-    app.workspace(&id)?;
-    let resp = app
+}
+
+/// The checked read; `Err(Ok)` is a refusal with its own body, `Err(Err)` a 503.
+async fn read(
+    app: &App,
+    id: &str,
+    workspace: &Workspace,
+    submitted: &[String],
+    optional: &[String],
+    deadline: tokio::time::Instant,
+) -> Result<Value, Result<Response, Refusal>> {
+    let bootstrap = workspace.location["directory"].as_str().ok_or(Err(Refusal::Unavailable))?.to_owned();
+    let placement = same_file::Handle::from_path(&workspace.path).map_err(|_| Err(Refusal::Unavailable))?;
+    let root =
+        ownership::resolve(app, workspace, &workspace.path.to_string_lossy()).await.ok_or(Err(Refusal::Unavailable))?;
+    let root_fence = fence::identity(&root.checkout);
+    let batch = Batch { app, workspace, root: root.directory.clone(), common: Default::default() };
+    if !Path::new(&bootstrap).is_absolute()
+        || ownership::resolve(app, workspace, &bootstrap).await.map(|o| o.directory) != Some(root.directory.clone())
+    {
+        return Err(Err(Refusal::Unavailable));
+    }
+    let current = || {
+        app.workspace(id).is_ok_and(|w| {
+            w.id == workspace.id
+                && w.path == workspace.path
+                && w.location["directory"] == bootstrap.as_str()
+                && same_file::Handle::from_path(&w.path).is_ok_and(|h| h == placement)
+        }) && !fence::is_blocked(&root_fence)
+    };
+    if !current() {
+        return Err(Err(Refusal::Unavailable));
+    }
+    let mut candidates = Vec::new();
+    for directory in submitted {
+        candidates.push((directory.clone(), batch.classify(directory, optional.contains(directory)).await));
+    }
+    let mut reported: Vec<Value> = Vec::new();
+    for (directory, candidate) in &candidates {
+        match candidate {
+            Candidate::Error(reason) => {
+                reported.push(json!({"directory": directory, "status": "error", "reason": reason}))
+            }
+            Candidate::Missing { .. } | Candidate::Outside { .. } => {
+                reported.push(json!({"directory": directory, "status": "excluded"}))
+            }
+            Candidate::Owned { .. } => {}
+        }
+    }
+    let resolved: Vec<&(String, Candidate)> =
+        candidates.iter().filter(|(_, c)| matches!(c, Candidate::Owned { .. })).collect();
+    let forbidden = |directories: Vec<Value>| {
+        Err(Ok((
+            Status::FORBIDDEN,
+            [(header::CACHE_CONTROL, "no-store")],
+            Json(json!({"error": "Directory does not belong to workspace", "directories": directories})),
+        )
+            .into_response()))
+    };
+    if resolved.is_empty() && reported.iter().any(|d| d["status"] != "excluded") {
+        return forbidden(reported);
+    }
+    if !current() {
+        return Err(Err(Refusal::Unavailable));
+    }
+    match await_plugin(app, SESSION_PRUNING_PLUGIN, &bootstrap, deadline).await {
+        Ok(()) => {}
+        Err(PluginWait::TimedOut) => return Err(Err(Refusal::Timeout)),
+        Err(PluginWait::Failed) => return Err(Err(Refusal::Unavailable)),
+    }
+    let revalidate = || async {
+        let mut failed: Vec<(String, &'static str)> = Vec::new();
+        for (directory, candidate) in &candidates {
+            if !batch.still(directory, candidate).await {
+                failed.push((directory.clone(), if Batch::deleting(candidate) { "deleting" } else { "changed" }));
+            }
+        }
+        failed
+    };
+    let failed = revalidate().await;
+    if !current() {
+        return Err(Err(Refusal::Unavailable));
+    }
+    let admitted: Vec<&String> = resolved
+        .iter()
+        .filter(|(d, _)| !failed.iter().any(|(f, _)| f == d))
+        .map(|(_, c)| match c {
+            Candidate::Owned { directory, .. } => directory,
+            _ => unreachable!(),
+        })
+        .collect();
+    let with_failures = |reported: &[Value], failed: &[(String, &str)]| {
+        let mut out: Vec<Value> =
+            reported.iter().filter(|d| !failed.iter().any(|(f, _)| d["directory"] == f.as_str())).cloned().collect();
+        out.extend(failed.iter().map(|(d, reason)| json!({"directory": d, "status": "error", "reason": reason})));
+        out
+    };
+    if admitted.is_empty() && !failed.is_empty() {
+        return forbidden(with_failures(&reported, &failed));
+    }
+    let mut expected: Vec<String> = Vec::new();
+    for directory in if admitted.is_empty() { vec![&root.directory] } else { admitted } {
+        if !expected.contains(directory) {
+            expected.push(directory.clone());
+        }
+    }
+    let response = app
         .native
-        .rpc("codenomad.pending-requests/snapshot", directory, &json!({"directories": [directory]}))
+        .rpc("codenomad.pending-requests/snapshot", &bootstrap, &json!({"directories": expected}))
         .timeout(deadline.saturating_duration_since(tokio::time::Instant::now()))
         .send()
         .await
-        .map_err(|e| if e.is_timeout() { timeout() } else { fail() })?;
-    let status = resp.status();
+        .map_err(|e| Err(if e.is_timeout() { Refusal::Timeout } else { Refusal::Unavailable }))?;
+    let status = response.status();
+    if !current() {
+        return Err(Err(Refusal::Unavailable));
+    }
     if status == Status::BAD_REQUEST {
-        let data: Option<Value> = resp.json().await.ok();
-        data.filter(|d| crate::opencode::native_rpc_absent(d, status)).ok_or_else(fail)?;
-        app.workspace(&id)?;
-        if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
-            return Ok(unavailable());
+        let data: Option<Value> = response.json().await.ok();
+        data.filter(|d| crate::opencode::native_rpc_absent(d, status)).ok_or(Err(Refusal::Unavailable))?;
+        revalidate().await;
+        if !current() || !crate::worktrees::exact_root_supported(app, workspace).await.unwrap_or(false) {
+            return Err(Err(Refusal::Unavailable));
         }
-        return Ok(([(header::CACHE_CONTROL, "no-store")], Json(json!({"supported":false}))).into_response());
+        return Ok(json!({"supported": false}));
     }
-    if status.is_success() {
-        let body = crate::opencode::read_json(resp, 4 * 1024 * 1024).await.ok();
-        let valid =
-            |b: &Value| crate::sessions::history::pending_valid(b) && b["output"]["originDirectory"] == directory;
-        let body = body.filter(valid).ok_or_else(fail)?;
-        let rows = body["output"]["data"].as_array();
-        let rows = rows.filter(|r| r.len() == 1 && r[0]["directory"] == directory).ok_or_else(fail)?;
-        let locations = rows[0]["locations"].as_array().ok_or_else(fail)?;
-        let current = app.workspace(&id)?;
-        if current.path != workspace.path
-            || !same_file::Handle::from_path(&current.path).is_ok_and(|current| current == placement)
-            || !crate::worktrees::exact_root_supported(&app, &current).await?
-        {
-            return Err(fail());
+    if !status.is_success() {
+        return Err(Err(Refusal::Unavailable));
+    }
+    let body = crate::opencode::read_json(response, 4 * 1024 * 1024)
+        .await
+        .ok()
+        .filter(crate::sessions::history::pending_valid)
+        .ok_or(Err(Refusal::Unavailable))?;
+    let native = &body["output"];
+    let data = native["data"].as_array().ok_or(Err(Refusal::Unavailable))?;
+    let covered: Vec<&str> = data.iter().filter_map(|e| e["directory"].as_str()).collect();
+    let mut distinct = covered.clone();
+    distinct.sort();
+    distinct.dedup();
+    if covered.len() != expected.len()
+        || distinct.len() != expected.len()
+        || covered.iter().any(|d| !expected.iter().any(|e| e == d))
+        || data.iter().map(|e| e["locations"].as_array().map_or(0, Vec::len)).sum::<usize>() > 64
+    {
+        return Err(Err(Refusal::Unavailable));
+    }
+    let mut placement_failed: Vec<(String, &'static str)> = Vec::new();
+    let mut ok: Vec<Value> = Vec::new();
+    for entry in data {
+        let directory = entry["directory"].as_str().unwrap_or_default();
+        let snapshots = entry["locations"].as_array().ok_or(Err(Refusal::Unavailable))?;
+        let mut seen: Vec<&Value> = snapshots.iter().map(|s| &s["location"]["directory"]).collect();
+        seen.sort_by_key(|v| v.to_string());
+        seen.dedup();
+        let count = |key: &str| snapshots.iter().map(|s| s[key].as_array().map_or(0, Vec::len)).sum::<usize>();
+        if seen.len() != snapshots.len() || count("permissions") > 1024 || count("forms") > 1024 {
+            return Err(Err(Refusal::Unavailable));
         }
-        let result = if locations.len() > 1
-            || locations
-                .iter()
-                .any(|row| row["location"]["directory"] != directory || row["location"].get("workspaceID").is_some())
-        {
-            json!({"supported":true,"directories":[{"directory":directory,"status":"error","reason":"not-owned"}]})
-        } else {
-            let locations = if locations.is_empty() {
-                json!([{"location":{"directory":directory},"permissions":[],"forms":[]}])
-            } else {
-                Value::Array(locations.clone())
-            };
-            json!({"supported":true,"directories":[{"directory":directory,"status":"ok","locations":locations}]})
-        };
-        return Ok(([(header::CACHE_CONTROL, "no-store")], Json(result)).into_response());
+        let mut locations = Vec::new();
+        let mut rejected = None;
+        for snapshot in snapshots {
+            let at = snapshot["location"]["directory"].as_str().unwrap_or_default();
+            let owned = snapshot["location"].get("workspaceID").is_none()
+                && Path::new(at).is_absolute()
+                && ownership::resolve(app, workspace, at).await.is_some_and(|o| o.directory == directory);
+            if !owned {
+                rejected = Some("not-owned");
+                break;
+            }
+            locations.push(json!({"location": {"directory": at}, "permissions": snapshot["permissions"], "forms": snapshot["forms"]}));
+        }
+        if locations.is_empty() && rejected.is_none() {
+            locations.push(json!({"location": {"directory": directory}, "permissions": [], "forms": []}));
+        }
+        for (submitted, candidate) in &resolved {
+            if matches!(candidate, Candidate::Owned { directory: d, .. } if d == directory) {
+                match rejected {
+                    Some(reason) => placement_failed.push((submitted.clone(), reason)),
+                    None => ok.push(json!({"directory": submitted, "status": "ok", "locations": locations})),
+                }
+            }
+        }
     }
-    Err(fail())
+    let origin = native["originDirectory"].as_str().unwrap_or_default();
+    if !Path::new(origin).is_absolute()
+        || ownership::resolve(app, workspace, origin).await.map(|o| o.directory) != Some(root.directory.clone())
+    {
+        return Err(Err(Refusal::Unavailable));
+    }
+    let mut failed = revalidate().await;
+    if !current() {
+        return Err(Err(Refusal::Unavailable));
+    }
+    for (directory, reason) in placement_failed {
+        if !failed.iter().any(|(f, _)| *f == directory) {
+            failed.push((directory, reason));
+        }
+    }
+    reported.extend(ok);
+    Ok(json!({"supported": true, "directories": with_failures(&reported, &failed)}))
 }
