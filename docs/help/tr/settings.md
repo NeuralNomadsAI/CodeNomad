@@ -87,7 +87,7 @@ Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı ona
 
 Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, sıkıştırma ve sistem bağlamı için aynı sırayla bir işaretçi bulunur. İşaretçiler **Mesaj içeriği** ayarlarını izler: orada bir araç türünü, akıl yürütmeyi veya sistem mesajlarını gizlemek, bekleyen izni olan araç dışında bunların işaretçilerini de gizler; **Hiçbir şey** tüm araç işaretçilerini gizler. Görünürlük ve genişletme ayarları yalnızca sunumu değiştirir. Saklanan araçları/akıl yürütmeyi kaldırmaz veya model bağlamını sıkıştırmaz. Yıkıcı işlemler için bkz. [Geçmiş ve temizleme](history.md).
 
-İleti düzenleyicisinin yüksekliği ekran klavyesi dahil görünür konuşmayı izler: en az 44 piksel tabanıyla minimum %8, maksimum %60. Elle seçilen yükseklik oran olarak saklanır; dar genişlik ve uzun metin sınırları yükseltmez. Genişletilmiş izin/soru, kayıtlı yüksekliği veya taslağı değiştirmeden düzenleyiciyi geçici küçültür. Yeniden boyutlandırmaya dönmek için isteği daraltın veya sonuçlandırın.
+İleti düzenleyicisinin yüksekliğini elle ayarlarken ekran klavyesi kapalıyken konuşma alanının yüksekliği esas alınır: en az %8 (44 pikselden az olamaz), en çok %60. Dar bir düzen veya uzun metin bu sınırları yükseltmez. Klavye açıldığında kontroller ve mesajlar için yer bırakmak üzere alan geçici olarak küçülebilir; kayıtlı yükseklik oranı değişmez. Genişletilmiş izin/soru, kayıtlı yüksekliği veya taslağı değiştirmeden düzenleyiciyi geçici küçültür. Yeniden boyutlandırmaya dönmek için isteği daraltın veya sonuçlandırın.
 
 ## Bildirimler ve rozetler {#notifications}
 
