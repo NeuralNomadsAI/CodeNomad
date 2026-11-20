@@ -1,6 +1,6 @@
 # codenomad-rs
 
-Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It runs as a remote backend, and `codenomad-rs serve [options]` honours the launch contract Tauri uses with the TypeScript server; Tauri launches it instead of the TypeScript server when started with `CODENOMAD_SERVER_IMPL=rust`.
+Rust server for CodeNomad: it serves the same HTTP/SSE API as `packages/server` to the Solid UI and drives the OpenCode daemon. It runs as a remote backend, and `codenomad-rs serve [options]` honours the launch contract Tauri uses with the TypeScript server; Tauri launches it instead of the TypeScript server when started with `CODENOMAD_SERVER_IMPL=rust`, or when the selected `config.yaml` sets `server.implementation: rust` (the variable wins; any other value means TypeScript).
 
 ## Desktop host
 
