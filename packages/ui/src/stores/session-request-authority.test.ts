@@ -12,6 +12,7 @@ import { fetchCommands, getCommands } from "./commands.ts"
 import { beginMessageHistoryTraversal, deleteSession, fetchAgents, fetchProviders, fetchSessions, forkSession, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadAllSessions, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
 import { openListedSession } from "./history-search-sessions.ts"
+import { liveVoiceAgent } from "./live-voice-agent.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
 import { useActiveSessionMessageLoad } from "../lib/hooks/use-active-session-message-load.ts"
@@ -1200,7 +1201,7 @@ describe("session request authority", () => {
     }
   })
 
-  it("retries a latest-window response raced by a native message event queued before the frame", async t => {
+  it("retries a latest-window response raced by a delta queued before the frame", async t => {
     const instanceId = "latest-window-race", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
     const staleLatest = deferred<any>()
@@ -1220,9 +1221,7 @@ describe("session request authority", () => {
       assert.equal(isLatestMessageWindow(instanceId, sessionId), false)
       const store = messageStoreBus.getOrCreate(instanceId)
       const hydration = t.mock.method(store, "hydrateMessages")
-      const revision = getOpenCodeMessageRevision(instanceId, sessionId)
       holdEventFrame(t)
-      const request = loadLatestMessageWindow(instanceId, sessionId)
       serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
         id: "live",
         type: "session.step.started",
@@ -1236,11 +1235,20 @@ describe("session request authority", () => {
           model: { providerID: "provider", id: "model" },
           started: 2,
         },
+      } }, { type: "instance.event", instanceId, event: {
+        id: "text", type: "session.text.started", created: 3, location: { directory: "/work" },
+        durable: { aggregateID: sessionId, seq: 2, version: 1 },
+        data: { sessionID: sessionId, assistantMessageID: "fresh", ordinal: 0 },
       } }])
-      assert.equal(getOpenCodeMessageRevision(instanceId, sessionId), revision, "the native event is still queued")
+      const revision = getOpenCodeMessageRevision(instanceId, sessionId)
+      const request = loadLatestMessageWindow(instanceId, sessionId)
+      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+        id: "delta", type: "session.text.delta", created: 4, location: { directory: "/work" },
+        data: { sessionID: sessionId, assistantMessageID: "fresh", ordinal: 0, delta: "live" },
+      } }])
+      assert.equal(getOpenCodeMessageRevision(instanceId, sessionId), revision, "the delta is still queued")
       staleLatest.resolve({ data: [apiMessage("stale")], cursor: {} })
       assert.equal(await request, true)
-      serverEvents.flushPendingBatch()
 
       assert.deepEqual(store.getSessionMessageIds(sessionId), ["fresh"])
       assert.equal(calls, 4)
@@ -1263,12 +1271,38 @@ describe("session request authority", () => {
         id: "deleted", type: "session.deleted", created: 2, location: { directory: "/work" },
         durable: { aggregateID: sessionId, seq: 1, version: 2 }, data: { sessionID: sessionId },
       } }])
-      assert.equal(sessions().get(instanceId)?.has(sessionId), true, "the deletion is still queued")
+      assert.equal(sessions().get(instanceId)?.has(sessionId) ?? false, false, "the deletion is visible before paint")
       assert.deepEqual({ opened: await opening, prepared }, { opened: false, prepared: 0 })
-      assert.equal(sessions().get(instanceId)?.has(sessionId) ?? false, false)
     } finally {
       cleanup()
     }
+  })
+
+  it("voice reads only the visible reply as soon as staged undo arrives", async t => {
+    const instanceId = "voice-staged-undo", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const reply = (id: string, text: string) => ({
+      ...apiMessage(id), time: { created: 1, completed: 2 }, content: [{ type: "text", text }],
+    })
+    client.message = { list: async () => ({ data: [
+      reply("msg_3", "Undo-hidden reply"), { id: "msg_2", type: "user", text: "Prompt", time: { created: 1 } },
+      reply("msg_1", "Visible reply"),
+    ] }) }
+    const target = session(instanceId, sessionId)
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, target]])))
+    holdEventFrame(t)
+    try {
+      assert.equal(await loadMessages(instanceId, sessionId), true)
+      const voice = liveVoiceAgent({ instance: instances().get(instanceId)!, session: target, key: "fixture" },
+        { canSend: () => true, followUp: () => "queue" })
+      const read = () => voice({ name: "get_last_reply", arguments: {} }, () => true)
+      assert.deepEqual(await read(), { text: "Undo-hidden reply" })
+      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+        id: "undo", type: "session.revert.staged", created: 2, location: { directory: "/work" },
+        durable: { aggregateID: sessionId, seq: 1, version: 1 }, data: { sessionID: sessionId, revert: { messageID: "msg_2" } },
+      } }])
+      assert.deepEqual(await read(), { text: "Visible reply" })
+    } finally { cleanup() }
   })
 
   it("ignores permission and form races but retries a message delta", async () => {

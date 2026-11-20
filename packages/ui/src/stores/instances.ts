@@ -928,7 +928,6 @@ async function syncPendingPermissions(
       remote.push(...response.data.map((request) => ({ request, location: authority, key })))
     }
 
-    serverEvents.flushPendingBatch()
     if (!isCurrent() || (pendingPermissionMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
@@ -1015,7 +1014,6 @@ async function syncPendingForms(
         key,
       })))
     }
-    serverEvents.flushPendingBatch()
     if (!isCurrent() || (pendingFormMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
@@ -1230,7 +1228,6 @@ async function runPendingRequestLiveness(instanceId: string): Promise<void> {
   if (hasRunningSession || Array.from(compactions.values()).some((entry) => entry.active) || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
     try {
       const active = await withPendingRequestTimeout(instanceId, (signal) => refreshSessionRuntimeStatus(instanceId, signal), false)
-      serverEvents.flushPendingBatch()
       if (active && instances().get(instanceId)?.client === client) {
         for (const [id, baseline] of compactions) {
           if (baseline.active && pendingCompactions.get(instanceId)?.get(id) === baseline && !Object.prototype.hasOwnProperty.call(active, id)) {

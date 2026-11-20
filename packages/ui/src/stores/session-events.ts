@@ -204,6 +204,7 @@ export function nativeSessionLifecycleGeneration(instanceId: string, sessionId: 
 }
 
 function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generation: number): boolean {
+  // Even without a fresh start event, a delta advances the native lifecycle.
   serverEvents.flushPendingBatch()
   return nativeSessionLifecycleGeneration(instanceId, sessionId) === generation
 }

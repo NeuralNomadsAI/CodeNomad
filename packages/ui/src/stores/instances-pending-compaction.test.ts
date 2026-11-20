@@ -238,9 +238,8 @@ test("liveness handles a missed end for an unloaded child, but an active or newl
     } }])
     active.resolve({})
     await polling
-    assert.equal(brokerReads, 0, "a stale status read cannot settle a newer delta queued before the frame")
+    assert.equal(brokerReads, 0, "a stale status read cannot settle newer compaction activity received before paint")
   } finally {
-    serverEvents.flushPendingBatch()
     Reflect.deleteProperty(globalThis, "requestAnimationFrame")
   }
   a.client.session.active = async () => ({})

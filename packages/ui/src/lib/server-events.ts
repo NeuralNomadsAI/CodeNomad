@@ -17,6 +17,12 @@ const RETRY_MAX_DELAY = 10000
 const FRAME_FALLBACK_MS = 32
 const log = getLogger("sse")
 
+function isStreamingDelta(event: WorkspaceEventPayload): boolean {
+  if (event.type !== "instance.event") return false
+  const type = event.event?.type
+  return type === "session.text.delta" || type === "session.reasoning.delta"
+}
+
 function logSse(message: string, context?: Record<string, unknown>) {
   if (context) {
     log.info(message, context)
@@ -200,8 +206,14 @@ class ServerEvents {
       this.dispatchBatch(events)
       return
     }
-    for (const event of events) this.pendingBatch.push(event)
-    if (this.cancelBatchWake) return
+    // Deliver the prefix through the last immediate event together with any
+    // earlier deltas. Only a trailing run of text/reasoning can wait for paint.
+    let boundary = events.length - 1
+    while (boundary >= 0 && isStreamingDelta(events[boundary])) boundary--
+    for (let index = 0; index <= boundary; index++) this.pendingBatch.push(events[index])
+    if (boundary >= 0) this.flushPendingBatch()
+    for (let index = boundary + 1; index < events.length; index++) this.pendingBatch.push(events[index])
+    if (!this.pendingBatch.length || this.cancelBatchWake) return
 
     const wake = () => {
       if (this.cancelBatchWake === cancel) this.flushPendingBatch()
@@ -218,7 +230,7 @@ class ServerEvents {
     this.cancelBatchWake = cancel
   }
 
-  /** Delivers accepted events before a consumer checks authority or changes the view. */
+  /** Delivers buffered deltas before a consumer reads the transcript or its live state. */
   flushPendingBatch(): void {
     this.cancelBatchWake?.()
     this.cancelBatchWake = undefined

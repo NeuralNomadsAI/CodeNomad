@@ -4,14 +4,23 @@ import { createMemo, createRoot, createSignal } from "solid-js"
 import { serverApi } from "./api-client"
 import { authRecovery } from "./auth-recovery"
 import { serverEvents } from "./server-events"
+import type { WorkspaceEventPayload } from "../../../server/src/api-types"
+
+function native(id: string, type = "session.text.delta"): WorkspaceEventPayload {
+  return { type: "instance.event", instanceId: "fixture", event: {
+    id, type, created: 1, location: { directory: "/work" }, data: { sessionID: "session" },
+  } } as WorkspaceEventPayload
+}
 
 async function setup(t: TestContext) {
   const sources: Array<{
-    event: (id: string) => void; disconnect: () => void; onopen: (() => void) | null; closed: boolean
+    event: (id: string, type?: string) => void; receive: (event: WorkspaceEventPayload) => void
+    disconnect: () => void; onopen: (() => void) | null; closed: boolean
   }> = []
   t.mock.method(serverApi, "connectEvents", (receive: Parameters<typeof serverApi.connectEvents>[0], disconnect: () => void) => {
     const source = {
-      event: (workspaceId: string) => receive({ type: "workspace.worktreesChanged", workspaceId }),
+      event: (id: string, type?: string) => receive(native(id, type)),
+      receive,
       disconnect,
       onopen: null, closed: false,
       close: () => { source.closed = true },
@@ -21,6 +30,7 @@ async function setup(t: TestContext) {
   })
   t.mock.method(authRecovery, "check", async () => {})
   t.mock.timers.enable({ apis: ["setTimeout"] })
+  t.after(() => serverEvents.flushPendingBatch())
   const document = { hidden: false }
   const frames = new Map<number, FrameRequestCallback>()
   let frameId = 0
@@ -54,17 +64,17 @@ test("separate SSE arrivals publish one Solid update per frame without losing FI
     const [current, setCurrent] = createSignal("")
     createMemo(() => { publications.push(current()) })
     t.after(serverEvents.on("*", event => {
-      if (event.type === "workspace.worktreesChanged") calls.push(`any:${event.workspaceId}`)
+      if (event.type === "instance.event") calls.push(`any:${event.event.id}`)
     }))
-    t.after(serverEvents.on("workspace.worktreesChanged", event => {
-      if (event.type !== "workspace.worktreesChanged") return
-      calls.push(`typed:${event.workspaceId}`)
-      setCurrent(event.workspaceId)
+    t.after(serverEvents.on("instance.event", event => {
+      if (event.type !== "instance.event") return
+      calls.push(`typed:${event.event.id}`)
+      setCurrent(event.event.id)
     }))
   })
   source.event("a")
   await Promise.resolve()
-  source.event("b")
+  source.event("b", "session.reasoning.delta")
   assert.deepEqual(calls, [], "SSE arrivals wait for their frame")
   assert.equal(frames.size, 1)
   paint()
@@ -77,11 +87,51 @@ test("separate SSE arrivals publish one Solid update per frame without losing FI
   assert.equal(calls.length, 6)
 })
 
+test("structural events deliver immediately with their earlier deltas in one Solid batch", async t => {
+  const { sources: [source], frames, paint } = await setup(t)
+  const calls: string[] = [], publications: string[] = []
+  createRoot(dispose => {
+    t.after(dispose)
+    const [current, setCurrent] = createSignal("")
+    createMemo(() => { publications.push(current()) })
+    t.after(serverEvents.on("*", event => {
+      const label = event.type === "instance.event" ? event.event.id : event.type
+      calls.push(label)
+      setCurrent(label)
+    }))
+  })
+  source.event("text")
+  source.event("reasoning", "session.reasoning.delta")
+  const retiredFrame = [...frames.values()][0]!
+  assert.deepEqual(calls, [])
+  source.event("execution", "session.execution.started")
+  assert.deepEqual(calls, ["text", "reasoning", "execution"])
+  assert.deepEqual(publications, ["", "execution"], "the deltas and the boundary share a single Solid update")
+  assert.equal(frames.size, 0)
+
+  source.event("tail")
+  retiredFrame(0)
+  assert.equal(calls.at(-1), "execution", "the retired frame cannot deliver the new tail")
+  source.receive({ type: "workspace.worktreesChanged", workspaceId: "fixture" })
+  source.event("tool-input", "session.tool.input.delta")
+  source.event("compaction", "session.compaction.delta")
+  source.event("deletion", "session.deleted")
+  source.event("form", "form.replied")
+  source.event("permission", "permission.replied")
+  assert.deepEqual(calls, ["text", "reasoning", "execution", "tail", "workspace.worktreesChanged",
+    "tool-input", "compaction", "deletion", "form", "permission"])
+  assert.deepEqual(publications, ["", "execution", "workspace.worktreesChanged", "tool-input", "compaction",
+    "deletion", "form", "permission"])
+  paint()
+  t.mock.timers.tick(1000)
+  assert.equal(calls.length, 10, "cancelled wakes never replay the deltas")
+})
+
 test("the timer drives hidden or suspended frames and wakes only once", async t => {
   const { sources: [source], document, frames } = await setup(t)
   const delivered: string[] = []
-  t.after(serverEvents.on("workspace.worktreesChanged", event => {
-    if (event.type === "workspace.worktreesChanged") delivered.push(event.workspaceId)
+  t.after(serverEvents.on("instance.event", event => {
+    if (event.type === "instance.event") delivered.push(event.event.id)
   }))
   document.hidden = true
   source.event("hidden-a")
@@ -109,9 +159,9 @@ test("a transport error drains accepted events before disconnect and fences call
   const [previous] = sources
   const order: string[] = []
   const publish = () => { order.push("published") }
-  t.after(serverEvents.on("workspace.worktreesChanged", event => {
-    if (event.type !== "workspace.worktreesChanged") return
-    order.push(event.workspaceId)
+  t.after(serverEvents.on("instance.event", event => {
+    if (event.type !== "instance.event") return
+    order.push(event.event.id)
     assert.ok(serverEvents.deferUntilBatchEnd(publish))
   }))
   t.after(serverEvents.onOpen(() => { order.push("open") }))

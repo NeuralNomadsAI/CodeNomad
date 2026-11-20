@@ -1022,7 +1022,7 @@ test("permission mutations do not discard authoritative Forms; settlement tombst
 })
 
 for (const kind of ["form", "permission"] as const) {
-  test(`a queued ${kind} settlement fences a stale pending-request snapshot`, async () => {
+  test(`a live ${kind} settlement fences a stale pending-request snapshot before paint`, async () => {
     const h = harness()
     const id = "settled"
     const isSettled = kind === "form" ? hasSettledForm : hasRepliedPermission
@@ -1051,16 +1051,14 @@ for (const kind of ["form", "permission"] as const) {
         ? { id: "cancelled", type: "form.cancelled", created: 1, location, data: { id, sessionID: "global" } }
         : { id: "replied", type: "permission.replied", created: 1, location, data: { requestID: id, sessionID: "background", reply: "once" } },
       }])
-      assert.equal(isSettled(h.id, id), false, "the settlement has not reached the store")
+      assert.equal(isSettled(h.id, id), true, "the live settlement does not wait for paint")
       pending.resolve(snapshot(h.directory, kind === "permission" ? [permission(id)] : [], kind === "form" ? [form(id)] : []))
       await syncing
 
       assert.deepEqual(observed, [], "the stale request never reaches the dock")
-      assert.equal(isSettled(h.id, id), true)
       assert.equal(reads, 2, "the superseded scan reads again")
     } finally {
       dispose()
-      serverEvents.flushPendingBatch()
       Reflect.deleteProperty(globalThis, "requestAnimationFrame")
       h.cleanup()
     }

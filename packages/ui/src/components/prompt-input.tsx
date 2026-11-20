@@ -465,16 +465,13 @@ export default function PromptInput(props: PromptInputProps) {
   )
 
   async function handleSend(alternate = false) {
-    const { instanceId, sessionId } = props
-    const hadSession = sessions().get(instanceId)?.has(sessionId)
-    // The optimistic echo must use the lifecycle events already received.
+    // A buffered delta can be the first evidence that execution is active.
     serverEvents.flushPendingBatch()
-    if (props.instanceId !== instanceId || props.sessionId !== sessionId
-      || (hadSession && !sessions().get(instanceId)?.has(sessionId))) return
     const draftText = prompt()
     const text = draftText.trim()
     const currentAttachments = attachments()
     if (props.disabled || props.sendBlocked || isReadingFiles() || submissionsInFlight() > 0 || (!text && currentAttachments.length === 0)) return
+    const { instanceId, sessionId } = props
     const followUp = preferences().followUpBehavior
     const deliveryFor = (busy: boolean) => resolvePromptDelivery(
       busy || sessionPromptAwaitingExecution(instanceId, sessionId), followUp, alternate,

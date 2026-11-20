@@ -819,8 +819,7 @@ function writeActiveParentSession(instanceId: string, parentSessionId: string | 
 
 function canSelectSession(instanceId: string, sessionId: string, gesture?: SurfaceGesture): boolean {
   if (gesture && !gesture.current()) return false
-  // Deliver accepted SSE under the old selection and check the target afterwards:
-  // the batch may have deleted or moved it.
+  // Reduce and publish buffered deltas under the old selection.
   serverEvents.flushPendingBatch()
   return (!gesture || gesture.current())
     && !authoritativelyDeletedSessionKeys().has(getDraftKey(instanceId, sessionId))

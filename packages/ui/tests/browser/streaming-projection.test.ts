@@ -133,8 +133,7 @@ async function queueSseReply(page: Page) {
   const time = Date.now()
   await page.clock.install({ time })
   await page.clock.pauseAt(time + 60_000)
-  await page.evaluate(() => (window as any).streamingFixture.resetCounts())
-  await observeSse(page, "evt_projection_4")
+  await observeSse(page, "evt_projection_2")
   const assistantMessageID = "msg_live"
   const location = { directory: "/fixture" }
   const base = { sessionID: "active", assistantMessageID }
@@ -149,6 +148,12 @@ async function queueSseReply(page: Page) {
     durable: { ...durable, seq: 2 },
     data: { ...base, ordinal: 0 },
   } })
+  await waitForSse(page)
+  const started = await snapshot(page)
+  assert.equal(started.status, "working", "step start is visible before paint")
+  assert.ok(started.revision >= 2, "both starts reduce immediately")
+  await page.evaluate(() => (window as any).streamingFixture.resetCounts())
+  await observeSse(page, "evt_projection_4")
   for (const [seq, delta] of [[3, "first"], [4, " second"]] as const) {
     stream.send({ type: "instance.event", instanceId: "streaming-fixture", event: {
       id: `evt_projection_${seq}`, type: "session.text.delta", created: seq, location,
@@ -156,14 +161,16 @@ async function queueSseReply(page: Page) {
     } })
   }
   await waitForSse(page)
-  assert.equal((await snapshot(page)).projections, 0, "the reply waits for the first frame or a selection change")
+  const queued = await snapshot(page)
+  assert.equal(queued.projections, 0, "the deltas wait for paint or a barrier")
+  assert.equal(queued.revision, started.revision, "the deltas have not reduced yet")
 }
 
-test("an SSE reply projects once, in its delivery frame", { timeout: 120_000 }, () => open(async page => {
+test("SSE deltas project once, in their delivery frame", { timeout: 120_000 }, () => open(async page => {
   await queueSseReply(page)
   await page.clock.runFor(16)
   const firstFrame = await snapshot(page)
-  assert.ok(firstFrame.revision >= 4, "the reducer admitted both starts and both deltas in the first frame")
+  assert.ok(firstFrame.revision >= 4, "the reducer admitted both deltas in the first frame")
   assert.equal(firstFrame.text, "first second", "the first frame publishes every delta in FIFO order")
   assert.equal(firstFrame.projections, 1)
   assert.equal(firstFrame.messageLists, 0)
@@ -171,7 +178,23 @@ test("an SSE reply projects once, in its delivery frame", { timeout: 120_000 }, 
   assert.equal((await snapshot(page)).projections, 1, "there is no later projection frame or fallback replay")
 }))
 
-for (const timing of ["before the frame", "after the frame", "during prompt preparation"] as const) {
+test("a structural SSE event publishes earlier deltas in the same Solid update before paint", { timeout: 120_000 }, () => open(async page => {
+  await queueSseReply(page)
+  await observeSse(page, "evt_reasoning_started")
+  stream.send({ type: "instance.event", instanceId: "streaming-fixture", event: {
+    id: "evt_reasoning_started", type: "session.reasoning.started", created: 5, location: { directory: "/fixture" },
+    durable: { aggregateID: "active", version: 1, seq: 3 },
+    data: { sessionID: "active", assistantMessageID: "msg_live", ordinal: 0 },
+  } })
+  await waitForSse(page)
+  const state = await snapshot(page)
+  assert.equal(state.text, "first second")
+  assert.equal(state.projections, 1)
+  await page.clock.runFor(64)
+  assert.equal((await snapshot(page)).projections, 1)
+}))
+
+for (const timing of ["before Enter", "during prompt preparation"] as const) {
   test(`Enter honors Queue when execution starts ${timing}`, { timeout: 120_000 }, () => open(async page => {
     await page.evaluate(() => (window as any).streamingFixture.setPreferences({ followUpBehavior: "queue" }))
     const input = page.locator(".session-view textarea").first()
@@ -203,11 +226,7 @@ for (const timing of ["before the frame", "after the frame", "during prompt prep
         durable: { aggregateID: "active", seq: 1, version: 1 }, data: { sessionID: "active" },
       } })
       await waitForSse(page)
-      assert.equal((await snapshot(page)).status, "idle", "the received event is still waiting for its frame")
-      if (timing === "after the frame") {
-        await page.clock.runFor(16)
-        assert.equal((await snapshot(page)).status, "working")
-      }
+      assert.equal((await snapshot(page)).status, "working", "execution start is visible before paint")
       if (timing !== "during prompt preparation") {
         await input.press("Enter")
         await preparing.promise

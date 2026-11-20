@@ -7,7 +7,6 @@ import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
 import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
 import { setSessionSearchDestination } from "./session-search"
-import { serverEvents } from "../lib/server-events"
 import type { SessionSearchMatch } from "../lib/session-search"
 
 export interface HistorySessionLabel {
@@ -124,15 +123,11 @@ export function openHistoryMatchSession(instanceId: string, sessionId: string, m
  */
 export async function openListedSession(instanceId: string, sessionId: string, current: () => boolean, prepare?: () => void,
   intent: SurfaceGesture = beginGesture({ instanceId, sessionId })): Promise<boolean> {
-  serverEvents.flushPendingBatch()
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
-  const admitted = () => {
-    serverEvents.flushPendingBatch()
-    return intent.current() && current() && instances().get(instanceId)?.client === client
-      && getOpenCodeInstanceGeneration(instanceId) === generation
-      && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
-  }
+  const admitted = () => intent.current() && current() && instances().get(instanceId)?.client === client
+    && getOpenCodeInstanceGeneration(instanceId) === generation
+    && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
   if (!admitted()) return false
   await hydrateRestoredSessionChain(instanceId, [sessionId], undefined, admitted)
   if (!admitted() || !sessions().get(instanceId)?.has(sessionId)) return false

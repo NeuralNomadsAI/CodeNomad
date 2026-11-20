@@ -147,16 +147,13 @@ logs separate event age, location resolution, queue wait and ownership time
 
 ### UI event stream liveness
 
-`lib/server-events.ts` delivers arriving SSE payloads in order in one Solid
-batch per animation frame, with a timer when frames are suspended. Transcript
-projections run at the end of that same batch. Session selection, visibility
-changes and transport status transitions drain accepted payloads before changing
-the view or reconciling; callbacks from a replaced stream remain fenced.
-Transcript window reads drain before capturing revisions and before checking
-authority after an await. Opening a listed session drains before checking
-hydration and navigation authority, including before preparing the destination.
-Lifecycle reconciliation, pending Form/Permission snapshots and compaction
-liveness drain before checking their publication fences.
+`lib/server-events.ts` queues only native text and reasoning deltas until the
+next frame (or a fallback timer). Every other event delivers at once in FIFO
+order, in the same Solid batch as any queued predecessors. Transcript projections
+run at that batch's end. Selection, visibility and transport transitions drain
+pending deltas first; callbacks from a replaced stream stay fenced. Transcript
+window reads drain before capturing or validating revisions. Lifecycle checks
+also drain because a delta can be the first evidence of running work.
 
 `lib/server-events.ts` restarts the shared UI event stream once a connected
 stream has carried no batch, open or ping for 45 s (`lib/stream-staleness.ts`,

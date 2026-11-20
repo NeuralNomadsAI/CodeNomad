@@ -180,7 +180,7 @@ describe("V2 session lifecycle signals", () => {
     assert.equal(getToastHistory().length, 0)
   })
 
-  it("keeps working and skips completion when the next execution is queued before the activity reply", async t => {
+  it("keeps working and skips completion when a buffered delta arrives before the activity reply", async t => {
     await enableCompletionHistory()
     let reply!: (value: Record<string, never>) => void
     const response = new Promise<Record<string, never>>(resolve => { reply = resolve })
@@ -191,11 +191,11 @@ describe("V2 session lifecycle signals", () => {
       assert.equal(request.mock.callCount(), 1)
       const generation = nativeSessionLifecycleGeneration(instanceId, "root")
       serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
-        id: "next", type: "session.execution.started", created: ++sequence,
-        durable: { aggregateID: "root", seq: sequence, version: 1 },
-        location: { directory: "/work" }, data: { sessionID: "root" },
+        id: "next", type: "session.text.delta", created: ++sequence,
+        location: { directory: "/work" },
+        data: { sessionID: "root", assistantMessageID: "msg_next", ordinal: 0, delta: "live" },
       } }])
-      assert.equal(nativeSessionLifecycleGeneration(instanceId, "root"), generation, "the next execution has not reached the store")
+      assert.equal(nativeSessionLifecycleGeneration(instanceId, "root"), generation, "the delta is still queued")
       reply({})
       await response
 
