@@ -21,7 +21,6 @@ export function useLiveVoiceConversation(options: {
   active: () => boolean
   followUp: () => FollowUpBehavior
   canSend: () => boolean
-  composerSending?: () => boolean
 }) {
   const [state, setState] = createSignal<LiveVoiceState>({ phase: "closed" })
   const [transcript, setTranscript] = createSignal<readonly LiveVoiceTranscriptRow[]>([])

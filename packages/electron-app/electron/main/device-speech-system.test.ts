@@ -28,6 +28,14 @@ test("system locales never silently fall back from an explicit region", () => {
   assert.equal(resolveSystemSpeechLocale(locales, "es"), undefined)
 })
 
+test("Chinese script tags prefer exact recognizers and fall back to their default regions", () => {
+  assert.equal(resolveSystemSpeechLocale(["zh-CN", "zh-Hans"], "zh-Hans"), "zh-Hans")
+  assert.equal(resolveSystemSpeechLocale(["zh-TW", "zh-CN"], "zh-hans"), "zh-CN")
+  assert.equal(resolveSystemSpeechLocale(["zh-CN", "zh-TW"], "zh-Hant"), "zh-TW")
+  assert.equal(resolveSystemSpeechLocale(["zh-CN"], "zh-Hant"), undefined)
+  assert.equal(resolveSystemSpeechLocale(["zh-CN"], "zh-SG"), undefined)
+})
+
 test("finish sends one control message and accepts text after native exit", { timeout: 5000 }, async () => {
   const { result, events, finish } = operation(`
     const emit = frame => console.log(JSON.stringify(frame))

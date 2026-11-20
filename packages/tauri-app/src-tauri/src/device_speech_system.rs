@@ -89,8 +89,17 @@ pub(crate) fn resolve_locale<'a>(locales: &'a [String], requested: &str) -> Opti
     {
         return Some(exact);
     }
+    let requested_language = requested.to_ascii_lowercase();
     if requested.contains('-') {
-        return None;
+        let region = match requested_language.as_str() {
+            "zh-hans" => "zh-CN",
+            "zh-hant" => "zh-TW",
+            _ => return None,
+        };
+        return locales
+            .iter()
+            .find(|locale| locale.eq_ignore_ascii_case(region))
+            .map(String::as_str);
     }
     let mut candidates = locales.iter().filter(|locale| {
         locale
@@ -102,7 +111,7 @@ pub(crate) fn resolve_locale<'a>(locales: &'a [String], requested: &str) -> Opti
     if candidates.next().is_none() {
         return Some(first);
     }
-    let preferred = match requested.to_ascii_lowercase().as_str() {
+    let preferred = match requested_language.as_str() {
         "en" => "en-US",
         "fr" => "fr-FR",
         _ => return None,
@@ -169,6 +178,17 @@ mod tests {
         assert_eq!(resolve_locale(&locales, "fr"), Some("fr-CA"));
         assert_eq!(resolve_locale(&locales, "fr-FR"), None);
         assert_eq!(resolve_locale(&locales, "es"), None);
+    }
+
+    #[test]
+    fn chinese_scripts_prefer_exact_recognizers_then_default_regions() {
+        let locales = ["zh-CN", "zh-TW"].map(str::to_owned);
+        let exact = ["zh-CN", "zh-Hans"].map(str::to_owned);
+        assert_eq!(resolve_locale(&exact, "zh-Hans"), Some("zh-Hans"));
+        assert_eq!(resolve_locale(&locales, "zh-hans"), Some("zh-CN"));
+        assert_eq!(resolve_locale(&locales, "zh-Hant"), Some("zh-TW"));
+        assert_eq!(resolve_locale(&locales[..1], "zh-Hant"), None);
+        assert_eq!(resolve_locale(&locales, "zh-SG"), None);
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]

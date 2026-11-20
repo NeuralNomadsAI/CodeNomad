@@ -218,7 +218,7 @@ async function sendMessage(
   prompt: string,
   attachments: Attachment[] = [],
   options: { delivery?: SessionInboxDelivery | (() => SessionInboxDelivery); restoredPayload?: SessionInboxUserPayload;
-    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean } = {},
+    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean; prepareAdmission?: () => Promise<void> } = {},
 ): Promise<string> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -337,7 +337,7 @@ async function sendMessage(
     store.markSendPending(messageId)
     projected = true
   }
-  if (typeof options.delivery !== "function") projectSend()
+  if (typeof options.delivery !== "function" && !options.prepareAdmission) projectSend()
 
   withSession(instanceId, sessionId, () => {
     /* trigger reactivity for legacy session data */
@@ -359,6 +359,7 @@ async function sendMessage(
 
   try {
     return await admitSessionAction(instanceId, sessionId, async () => {
+      if (options.prepareAdmission) await options.prepareAdmission()
       const currentInstance = instances().get(instanceId)
       const currentSession = sessions().get(instanceId)?.get(sessionId)
       if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
@@ -370,7 +371,7 @@ async function sendMessage(
         if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
         delivery = options.delivery()
         projectSend()
-      }
+      } else if (options.prepareAdmission) projectSend()
       if (delivery !== "queue" && !options.preserveNativeProfile) {
         if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
         if (currentSession.model.providerId && currentSession.model.modelId) {

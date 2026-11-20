@@ -112,7 +112,8 @@ const resentPayloads: Parameters<PromptInputApi["restoreQueuedPrompt"]>[1][] = [
 let composer: PromptInputApi | undefined
 let holdNextSend = false
 let releaseSend: (() => void) | undefined
-await applyUiSettings({ locale: new URL(location.href).searchParams.get("locale") === "he" ? "he" : "en", showPromptVoiceInput: true })
+const locale = new URL(location.href).searchParams.get("locale")
+await applyUiSettings({ locale: locale === "he" || locale === "zh-Hans" ? locale : "en", showPromptVoiceInput: true })
 if (new URLSearchParams(location.search).has("history")) await addToHistory(folder, "Previously sent")
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={showAlerts}><AlertDialog /></Show>

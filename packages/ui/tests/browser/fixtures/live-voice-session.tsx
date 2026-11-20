@@ -29,7 +29,9 @@ const params = new URLSearchParams(location.search)
 const interactive = params.has("ui")
 const title = params.get("title") ?? (interactive ? "Feature ABC — משימה 42" : "Conversation")
 const path = "/voice-fixture"
-const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false, admissionResumed: false, historyReads: 0 }
+const info = { capture: 0, released: 0, prompts: [] as unknown[], admissionHeld: false, admissionResumed: false, historyReads: 0,
+  historyCursors: [] as (string | null)[],
+}
 const playback = { rendered: 0, flushed: -1 }
 window.AudioWorkletNode = class extends AudioWorkletNode {
   constructor(...args: ConstructorParameters<typeof AudioWorkletNode>) {
@@ -169,6 +171,29 @@ function Fixture() {
       latestPage = new Promise(resolve => { releaseHistory = resolve })
     },
     releaseHistory: () => releaseHistory?.(),
+    hideLatestPage(repeated = false) {
+      const revert = { messageID: "m01000" }
+      setSessions(previous => {
+        const own = new Map(previous.get(instanceId))
+        own.set(sessionId, { ...own.get(sessionId)!, revert })
+        return new Map(previous).set(instanceId, own)
+      })
+      store.setSessionRevert(sessionId, revert)
+      info.historyCursors = []
+      const row = (id: string, text: string) => ({
+        id, type: "assistant", agent: "build", model: { providerID: "fixture", id: "fixture" },
+        time: { created: 10 }, content: [{ type: "text", text }],
+      })
+      client.message.list = async ({ cursor }: { cursor?: string }) => {
+        info.historyCursors.push(cursor ?? null)
+        return cursor && !repeated
+          ? { data: [row("m00999", "Last answer still visible")], cursor: {} }
+          : {
+            data: Array.from({ length: MESSAGE_WINDOW_PAGE_SIZE }, (_, index) => row(`m0${2000 - index}`, "Hidden by undo")),
+            cursor: { next: "older-visible" },
+          }
+      }
+    },
     history: () => ({ kind: store.getMessageWindow(sessionId)?.kind, ids: store.getSessionMessageIds(sessionId) }),
     startExecution: () => emit("session.execution.started", {}),
     finishExecution: () => emit("session.execution.succeeded", {}),

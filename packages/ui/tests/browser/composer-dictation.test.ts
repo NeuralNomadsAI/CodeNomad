@@ -8,7 +8,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>
 before(async () => { fixture = await startProductFixture("composer-dictation") })
 after(async () => { await fixture?.close() })
 
-async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-api-legacy" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[] } = {}) {
+async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-api-legacy" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" | "zh-Hans" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[]; systemLocale?: string } = {}) {
   const context = await fixture.browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
@@ -20,7 +20,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
   page.on("pageerror", error => errors.push(error))
   try {
     if (native) {
-      const installNativeBridge = (kind: typeof native) => {
+      const installNativeBridge = (kind: typeof native, systemLocale: string) => {
         const requests: Array<Record<string, unknown>> = []
         const settings = {
           opened: [] as string[], engine: "system", state: "needsPreparation", token: "plan-initial",
@@ -95,7 +95,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
               }
             }
             switch (request.action) {
-              case "read": return { ok: true, value: { engine: "system", system: "ready", systemLocales: ["en-US"], hex: { state: "unavailable" } } }
+              case "read": return { ok: true, value: { engine: "system", system: "ready", systemLocales: [systemLocale], hex: { state: "unavailable" } } }
               case "start": return { ok: true, value: { id: "00000000-0000-4000-8000-000000000001" } }
               case "status": return { ok: true, value: { state: bridge.operation, text: "WSL text" } }
               case "finish": bridge.operation = "transcribed"; return { ok: true, value: null }
@@ -130,7 +130,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
           Object.assign(window, { electronAPI: desktop, __CODENOMAD_RUNTIME_HOST__: "electron" })
         }
       }
-      await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(native)}); }`)
+      await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(native)}, ${JSON.stringify(options.systemLocale ?? "en-US")}); }`)
     }
     await context.route("**/api/**", async route => {
       const url = route.request().url()
@@ -595,6 +595,15 @@ test("a WSL draft captures and finishes on the local host without uploading audi
   assert.deepEqual(capture.requests, [])
 }, false, "wsl"))
 
+test("Simplified Chinese can start System dictation with the installed zh-CN recognizer", () => withComposer(async page => {
+  await page.locator(".prompt-actions-menu-trigger").click()
+  const dictate = page.locator('[data-action-key="voice"]')
+  assert.equal(await dictate.locator(".action-overflow-item-label").textContent(), "听写")
+  await dictate.click()
+  await page.waitForFunction(() => (window as any).native.requests.some(({ action, locale, engine }: any) =>
+    action === "start" && locale === "zh-Hans" && engine === "system"))
+}, false, "wsl", false, "zh-Hans", false, false, { systemLocale: "zh-CN" }))
+
 test("Classic conversation is available with playback but without API dictation", () => withComposer(async page => {
   const more = page.getByRole("button", { name: "More actions", exact: true })
   await more.click()
@@ -928,7 +937,8 @@ for (const surface of ["composer", "Voice settings"] as const) {
         assert.equal(await cancel.evaluate(el => el === document.activeElement), true)
         await page.keyboard.press("Space")
         await status.waitFor({ state: "hidden" })
-        if (inComposer) assert.equal(await field(page).evaluate(el => el === document.activeElement), true)
+        const restored = inComposer ? field(page) : page.getByRole("button", { name: "Test API input", exact: true })
+        assert.equal(await restored.evaluate(el => el === document.activeElement), true)
         await page.clock.runFor(200)
         assert.equal(await requests(), 0)
         assert.equal(await field(page).inputValue(), draft)

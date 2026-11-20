@@ -18,6 +18,7 @@ import { getRootClient } from "./opencode-client"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 
 const title = (label: string | undefined) => (label ?? "").slice(0, 256)
+const VOICE_UNDO_SEEK_PAGES = 8
 
 export function liveVoiceTargetSession(instanceId: string, sessionId: string | undefined) {
   if (!sessionId || activeInstanceId() !== instanceId || activeSessionId().get(instanceId) !== sessionId) return
@@ -58,18 +59,27 @@ export function liveVoiceContext({ instance, session }: Target): LiveVoiceContex
 export function liveVoiceAgent({ instance, session }: Target, options: {
   followUp: () => FollowUpBehavior
   canSend: () => boolean
-  composerSending?: () => boolean
 }) {
   const instanceId = instance.id
   const sessionId = session.id
   async function recentAssistant(current: () => boolean) {
     if (!isLatestMessageWindow(instanceId, sessionId)) {
-      const latest = await getRootClient(instanceId).message.list({
+      const client = getRootClient(instanceId)
+      const revertBoundary = () => sessions().get(instanceId)?.get(sessionId)?.revert?.messageID
+      const boundary = revertBoundary()
+      let page = await client.message.list({
         sessionID: sessionId, limit: MESSAGE_WINDOW_PAGE_SIZE, order: "desc",
       })
-      if (!current()) return
-      const boundary = sessions().get(instanceId)?.get(sessionId)?.revert?.messageID
-      return latest.data.flatMap(raw => {
+      const seen = new Set<string>()
+      while (current() && revertBoundary() === boundary && boundary && page.data.length
+        && page.data.every(raw => raw.id >= boundary)) {
+        const cursor = page.cursor?.next
+        if (!cursor || seen.has(cursor) || seen.size >= VOICE_UNDO_SEEK_PAGES - 1) break
+        seen.add(cursor)
+        page = await client.message.list({ sessionID: sessionId, limit: MESSAGE_WINDOW_PAGE_SIZE, cursor })
+      }
+      if (!current() || revertBoundary() !== boundary) return
+      return page.data.flatMap(raw => {
         if (boundary && raw.id >= boundary) return []
         const { message, info } = normalizeSessionMessage(sessionId, raw)
         return info.role === "assistant" && info.nativeType !== "system" ? [{ parts: message.parts, info }] : []
@@ -119,13 +129,14 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
         const admissionCurrent = () => current() && options.canSend()
         if (!admissionCurrent()) return { error: "This conversation cannot accept a message now." }
         const latest = () => isLatestMessageWindow(instanceId, sessionId)
-        if (!latest()) await loadLatestMessageWindow(instanceId, sessionId)
-        if (!admissionCurrent() || !latest()) return { error: "This conversation cannot accept a message now." }
         let delivery: "queue" | "steer" | undefined
         await sendMessage(instanceId, sessionId, tool.arguments.text.trim(), [], {
+          prepareAdmission: async () => {
+            if (admissionCurrent() && !latest()) await loadLatestMessageWindow(instanceId, sessionId)
+          },
           admissionCurrent: () => admissionCurrent() && latest(),
           delivery: () => delivery = resolvePromptDelivery(
-            sessionPromptAwaitingExecution(instanceId, sessionId) || isSessionBusy(instanceId, sessionId) || !!options.composerSending?.(),
+            sessionPromptAwaitingExecution(instanceId, sessionId) || isSessionBusy(instanceId, sessionId),
             options.followUp(),
           ),
         })

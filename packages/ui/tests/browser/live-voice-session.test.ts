@@ -342,6 +342,31 @@ test("a typed send queues behind a confirmed voice send before the native start 
   } finally { await context.close() }
 })
 
+test("a later typed send does not demote the voice prompt awaiting admission on an idle session", async () => {
+  const { page, context, openConsent, acceptConsent, waitForSent } = await fixture("gemini", true)
+  try {
+    await openConsent()
+    const send = await acceptConsent()
+    await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.setFirstPrompt("delay")
+      fixture.holdAdmission()
+    })
+    send({ type: "tool-call", name: "send_to_agent", id: "first", arguments: { text: "first" } })
+    await page.waitForFunction(() => (window as any).fixture.waitingAdmission())
+    const field = page.getByRole("textbox").first()
+    await field.fill("typed follow-up")
+    await field.press("Enter")
+    assert.equal(await field.inputValue(), "")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.info.prompts), [])
+    await page.evaluate(() => (window as any).fixture.releaseAdmission())
+    assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "first")).output), { delivery: "submitted" })
+    await page.waitForFunction(() => (window as any).fixture.info.prompts.length === 2)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.info.prompts.map((prompt: any) => [prompt.text, prompt.delivery, prompt.resume])),
+      [["first", "steer", undefined], ["typed follow-up", "queue", false]])
+  } finally { await context.close() }
+})
+
 test("get_last_reply reads the latest answer without replacing the displayed history", async () => {
   const { page, context, start, waitForSent } = await fixture()
   try {
@@ -354,6 +379,27 @@ test("get_last_reply reads the latest answer without replacing the displayed his
     await page.evaluate(() => (window as any).fixture.releaseHistory())
     assert.deepEqual(JSON.parse((await waitForSent(item => item.id === "reply")).output), { text: "Newest answer" })
     assert.deepEqual(await history(), before)
+  } finally { await context.close() }
+})
+
+test("get_last_reply seeks past a reverted tail without moving history or following a repeated cursor", async () => {
+  const { page, context, start, waitForSent } = await fixture()
+  try {
+    const send = await start()
+    await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.openHistory()
+      fixture.hideLatestPage()
+    })
+    const history = () => page.evaluate(() => (window as any).fixture.history())
+    const before = await history()
+    for (const [id, text] of [["visible", "Last answer still visible"], ["repeated", ""]] as const) {
+      await page.evaluate(repeated => (window as any).fixture.hideLatestPage(repeated), id === "repeated")
+      send({ type: "tool-call", name: "get_last_reply", id, arguments: {} })
+      assert.deepEqual(JSON.parse((await waitForSent(item => item.id === id)).output), { text })
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.info.historyCursors), [null, "older-visible"])
+      assert.deepEqual(await history(), before)
+    }
   } finally { await context.close() }
 })
 

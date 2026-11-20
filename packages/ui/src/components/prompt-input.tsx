@@ -796,7 +796,6 @@ export default function PromptInput(props: PromptInputProps) {
     active: () => props.isActive !== false,
     followUp: () => preferences().followUpBehavior,
     canSend: () => !props.disabled && !props.sendBlocked,
-    composerSending: () => submissionsInFlight() > 0,
   })
   const liveVoiceTargetLabel = () => sessions().get(props.instanceId)?.get(props.sessionId)?.title || t("voice.command.activeSession")
   const conversationIsLiveEngine = () => liveVoice.state().phase !== "closed" ||

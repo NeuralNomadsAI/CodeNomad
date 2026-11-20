@@ -99,7 +99,11 @@ export function VoiceDictationCard(props: {
           <button ref={transcribeButton} type="button" class="selector-button selector-button-secondary w-auto" onClick={test.confirmTranscription}>
             {t("promptInput.voiceInput.transcribe")}
           </button>
-          <button type="button" class="selector-button selector-button-secondary w-auto" onClick={test.cancelRecording}>
+          <button type="button" class="selector-button selector-button-secondary w-auto" onClick={({ currentTarget }) => {
+            const restoreFocus = currentTarget === document.activeElement
+            test.cancelRecording()
+            if (restoreFocus && document.activeElement === document.body) testButton?.focus({ preventScroll: true })
+          }}>
             {t("alertDialog.actions.cancel")}
           </button>
         </Show>

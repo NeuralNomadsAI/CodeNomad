@@ -76,7 +76,9 @@ export function isSpeechLocale(value: unknown): value is string {
 export function resolveSystemSpeechLocale(locales: readonly string[], requested: string): string | undefined {
   const tag = requested.toLowerCase()
   const exact = locales.find(locale => locale.toLowerCase() === tag)
-  if (exact || tag.includes("-")) return exact
+  if (exact) return exact
+  const scriptRegion = tag === "zh-hans" ? "zh-cn" : tag === "zh-hant" ? "zh-tw" : undefined
+  if (tag.includes("-")) return locales.find(locale => locale.toLowerCase() === scriptRegion)
   const candidates = locales.filter(locale => locale.toLowerCase().split("-")[0] === tag)
   return candidates.length === 1 ? candidates[0] :
     candidates.find(locale => locale.toLowerCase() === (tag === "en" ? "en-us" : tag === "fr" ? "fr-fr" : tag))
