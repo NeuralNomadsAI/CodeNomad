@@ -83,8 +83,9 @@ test("compaction resume microtasks retain admission and an obsolete active hold 
   let reads = 0
   serverApi.getPendingRequests = async () => { reads++; return { supported: true, directories: [{ directory: h.directory,
     status: "ok", locations: [{ location: { directory: h.directory }, permissions: [], forms: [] }] }] } }
+  const now = Date.now()
   const compact = (phase: "started" | "ended", seq: number) => sseManager["handleEvent"](h.id, {
-    id: `compaction-${seq}`, created: seq, type: `session.compaction.${phase}`, location: { directory: h.directory },
+    id: `compaction-${seq}`, created: now + seq, type: `session.compaction.${phase}`, location: { directory: h.directory },
     durable: { aggregateID: "unloaded", seq, version: 1 }, data: { sessionID: "unloaded", reason: "auto" },
   } as any)
   compact("started", 1)
