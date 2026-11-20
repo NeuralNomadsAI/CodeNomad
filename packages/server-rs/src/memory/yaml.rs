@@ -286,10 +286,7 @@ fn plain_value(lines: &[&str]) -> Result<String> {
         }
     }
     let value = parts.join(" ");
-    if value.is_empty() || resolves_non_string(&value) {
-        return Err(malformed());
-    }
-    Ok(value)
+    if value.is_empty() || resolves_non_string(&value) { Err(malformed()) } else { Ok(value) }
 }
 
 fn find_comment(text: &str) -> Option<usize> {
@@ -322,10 +319,7 @@ fn single_value(lines: &[&str]) -> Result<String> {
         }
         out.push(c);
     }
-    let end = end.ok_or_else(malformed)?;
-    if !trailing_ok(&body[end..]) || body[end..].contains('\n') {
-        return Err(malformed());
-    }
+    end.filter(|end| trailing_ok(&body[*end..]) && !body[*end..].contains('\n')).ok_or_else(malformed)?;
     Ok(out)
 }
 
@@ -398,10 +392,7 @@ fn double_value(lines: &[&str]) -> Result<String> {
     }
     let end = closed.ok_or_else(malformed)?;
     let tail: String = body[end..].iter().collect();
-    if !trailing_ok(&tail) || tail.contains('\n') {
-        return Err(malformed());
-    }
-    Ok(out)
+    if !trailing_ok(&tail) || tail.contains('\n') { Err(malformed()) } else { Ok(out) }
 }
 
 /// `parseDocument` + `toJS` + the exact key set check for the header block.

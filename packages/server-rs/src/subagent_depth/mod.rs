@@ -88,10 +88,9 @@ fn query_directory(raw: Option<&str>) -> Option<String> {
 /// The strict `Mutation` body.
 fn mutation(body: &[u8]) -> Option<(String, Option<f64>, String)> {
     let v: Value = serde_json::from_slice(body).ok()?;
-    let o = v.as_object()?;
-    if o.len() != 3 || !["location", "depth", "expectation"].iter().all(|k| o.contains_key(*k)) {
-        return None;
-    }
+    let o = v
+        .as_object()
+        .filter(|o| o.len() == 3 && ["location", "depth", "expectation"].iter().all(|k| o.contains_key(*k)))?;
     let location = o["location"].as_object().filter(|l| l.len() == 1)?;
     let directory = location_directory(location.get("directory")?.as_str()?)?;
     let depth = match &o["depth"] {
@@ -119,10 +118,7 @@ async fn native(app: &App, path: &str, query: &[(&str, &str)], timeout: u64, max
         .send()
         .await
         .map_err(|_| ())?;
-    if response.status() != Status::OK {
-        return Err(());
-    }
-    crate::opencode::read_json(response, max).await
+    if response.status() != Status::OK { Err(()) } else { crate::opencode::read_json(response, max).await }
 }
 fn workspace(app: &App, id: &str) -> Option<Workspace> {
     app.workspace(id).ok().filter(|w| w.status == "ready")

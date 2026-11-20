@@ -70,10 +70,7 @@ pub fn under(root: &Path, path: &Path) -> bool {
 /// filesystem access when `path` is not admitted under `root`.
 pub fn canonical(root: &Path, path: impl AsRef<Path>) -> Option<PathBuf> {
     let path = path.as_ref();
-    if !under(root, path) {
-        return None;
-    }
-    dunce::canonicalize(path).ok()
+    if !under(root, path) { None } else { dunce::canonicalize(path).ok() }
 }
 
 #[cfg(test)]

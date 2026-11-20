@@ -39,10 +39,7 @@ impl Style {
             let rest: String = c[if abs { 3 } else { 2 }..].iter().collect();
             return (format!("{}:{}", c[0], if abs { "\\" } else { "" }), abs, rest);
         }
-        if sep(0) {
-            return ("\\".into(), true, c[1..].iter().collect());
-        }
-        (String::new(), false, p.into())
+        if sep(0) { ("\\".into(), true, c[1..].iter().collect()) } else { (String::new(), false, p.into()) }
     }
     pub fn is_absolute(self, p: &str) -> bool {
         let c: Vec<char> = p.chars().collect();

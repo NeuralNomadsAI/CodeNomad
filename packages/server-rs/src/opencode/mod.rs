@@ -124,10 +124,8 @@ pub async fn session_record(app: &App, id: &str) -> Result<Value, Error> {
         bench::route_trace(format_args!("session-record native-status {}", response.status().as_u16()));
     }
     if response.status() == Status::NOT_FOUND {
-        let declared = read_json(response, 4096).await.map_err(|_| upstream_error())?;
-        if declared["_tag"] != "SessionNotFoundError" || declared["sessionID"] != id {
-            return Err(upstream_error());
-        }
+        let declared = read_json(response, 4096).await.ok();
+        declared.filter(|d| d["_tag"] == "SessionNotFoundError" && d["sessionID"] == id).ok_or_else(upstream_error)?;
         return Err((
             Status::NOT_FOUND,
             Json(json!({"_tag":"SessionNotFoundError","sessionID":id,"message":"Session not found"})),
@@ -140,10 +138,7 @@ pub async fn session_record(app: &App, id: &str) -> Result<Value, Error> {
         .await
         .map_err(|_| upstream_error())?;
     let response = response.get("data").unwrap_or(&response);
-    if response["id"] != id {
-        return Err(upstream_error());
-    }
-    Ok(response.clone())
+    if response["id"] != id { Err(upstream_error()) } else { Ok(response.clone()) }
 }
 
 pub async fn session_directory(app: &App, id: &str) -> Result<String, Error> {

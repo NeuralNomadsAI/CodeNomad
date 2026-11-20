@@ -104,10 +104,7 @@ fn lookup_native(_pid: u32) -> State {
 }
 
 pub fn lookup(pid: i64) -> State {
-    if pid <= 0 || pid > u32::MAX as i64 {
-        return State::Unknown;
-    }
-    lookup_native(pid as u32)
+    if pid <= 0 || pid > u32::MAX as i64 { State::Unknown } else { lookup_native(pid as u32) }
 }
 
 /// `process.kill(pid, 0)` answering ESRCH: a confirmed absence.
@@ -290,10 +287,7 @@ pub async fn acquire(directory: &Path, cancel: Option<&CancellationToken>) -> Re
         if p == pid {
             return State::Live(self_state().to_owned());
         }
-        if confirmed_absent(p) {
-            return State::Dead;
-        }
-        lookup(p)
+        if confirmed_absent(p) { State::Dead } else { lookup(p) }
     };
     let unavailable = |_| fail(Code::Unreadable, "Memory storage is unavailable");
     super::store::private_dir(&candidate, false).map_err(unavailable)?;

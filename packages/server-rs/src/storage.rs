@@ -37,10 +37,7 @@ pub fn read_bounded(file: &Path, default: Value, max: usize) -> Result<Value, Er
         Ok(file) => {
             let mut bytes = Vec::new();
             file.take((max + 1) as u64).read_to_end(&mut bytes).map_err(|_| failed())?;
-            if bytes.len() > max {
-                return Err(failed());
-            }
-            serde_json::from_slice(&bytes).map_err(|_| failed())
+            if bytes.len() > max { Err(failed()) } else { serde_json::from_slice(&bytes).map_err(|_| failed()) }
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(default),
         Err(_) => Err(failed()),

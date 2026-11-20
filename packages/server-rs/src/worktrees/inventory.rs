@@ -36,10 +36,7 @@ fn identity(path: &Path) -> Result<String, Error> {
 }
 fn small(path: &Path) -> Result<Vec<u8>, Error> {
     use std::io::Read;
-    let meta = std::fs::symlink_metadata(path).map_err(|_| native_error())?;
-    if !meta.is_file() || meta.len() > 4096 {
-        return Err(native_error());
-    }
+    std::fs::symlink_metadata(path).ok().filter(|m| m.is_file() && m.len() <= 4096).ok_or_else(native_error)?;
     let mut value = Vec::new();
     std::fs::File::open(path).and_then(|f| f.take(4097).read_to_end(&mut value)).map_err(|_| native_error())?;
     if value.len() > 4096 { Err(native_error()) } else { Ok(value) }

@@ -120,10 +120,8 @@ pub async fn snapshot(
         .map_err(|e| if e.is_timeout() { timeout() } else { fail() })?;
     let status = resp.status();
     if status == Status::BAD_REQUEST {
-        let data: Value = resp.json().await.map_err(|_| fail())?;
-        if !crate::opencode::native_rpc_absent(&data, status) {
-            return Err(fail());
-        }
+        let data: Option<Value> = resp.json().await.ok();
+        data.filter(|d| crate::opencode::native_rpc_absent(d, status)).ok_or_else(fail)?;
         app.workspace(&id)?;
         if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
             return Ok(unavailable());
@@ -131,14 +129,12 @@ pub async fn snapshot(
         return Ok(([(header::CACHE_CONTROL, "no-store")], Json(json!({"supported":false}))).into_response());
     }
     if status.is_success() {
-        let body = crate::opencode::read_json(resp, 4 * 1024 * 1024).await.map_err(|_| fail())?;
-        if !crate::sessions::history::pending_valid(&body) || body["output"]["originDirectory"] != directory {
-            return Err(fail());
-        }
-        let rows = body["output"]["data"].as_array().ok_or_else(fail)?;
-        if rows.len() != 1 || rows[0]["directory"] != directory {
-            return Err(fail());
-        }
+        let body = crate::opencode::read_json(resp, 4 * 1024 * 1024).await.ok();
+        let valid =
+            |b: &Value| crate::sessions::history::pending_valid(b) && b["output"]["originDirectory"] == directory;
+        let body = body.filter(valid).ok_or_else(fail)?;
+        let rows = body["output"]["data"].as_array();
+        let rows = rows.filter(|r| r.len() == 1 && r[0]["directory"] == directory).ok_or_else(fail)?;
         let locations = rows[0]["locations"].as_array().ok_or_else(fail)?;
         let current = app.workspace(&id)?;
         if current.path != workspace.path

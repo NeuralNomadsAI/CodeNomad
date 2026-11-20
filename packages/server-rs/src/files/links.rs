@@ -45,10 +45,7 @@ fn not_file() -> Error {
 /// File bytes through links; `None` when the path is missing or unreadable.
 pub fn read(base: &Path, relative: &str, max: usize) -> Result<Option<Vec<u8>>, Error> {
     guard(base, relative)?;
-    let file = match std::fs::File::open(target(base, relative)) {
-        Ok(file) => file,
-        Err(_) => return Ok(None),
-    };
+    let Ok(file) = std::fs::File::open(target(base, relative)) else { return Ok(None) };
     if !file.metadata().is_ok_and(|m| m.is_file()) {
         return Err(not_file());
     }
@@ -56,10 +53,7 @@ pub fn read(base: &Path, relative: &str, max: usize) -> Result<Option<Vec<u8>>, 
     if file.take(max as u64 + 1).read_to_end(&mut bytes).is_err() {
         return Ok(None);
     }
-    if bytes.len() > max {
-        return Err(large());
-    }
-    Ok(Some(bytes))
+    if bytes.len() > max { Err(large()) } else { Ok(Some(bytes)) }
 }
 
 /// A diff's working-tree side: anything unreadable (missing, directory,
@@ -83,10 +77,7 @@ mod tests {
             // A junction needs no privilege.
             let status =
                 std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(link).arg(target).output()?;
-            if !status.status.success() {
-                return Err(io::Error::other("mklink /J failed"));
-            }
-            Ok(())
+            if !status.status.success() { Err(io::Error::other("mklink /J failed")) } else { Ok(()) }
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(target, link)

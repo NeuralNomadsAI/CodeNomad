@@ -57,10 +57,13 @@ fn finish(remote: bool, result: Result<Value, MemoryError>, principal: &Principa
 
 /// `gate.ts`: memory reaches remote browsers only; a server-device request through the
 /// ingress gets 404 (the direct listener already refuses server-device requests).
-fn server_device(remote: bool, headers: &HeaderMap) -> Option<Response> {
-    (remote && headers.contains_key("x-codenomad-server-request")).then(|| {
-        (Status::NOT_FOUND, [(header::CONNECTION, "close")], Json(json!({"error": "Not found"}))).into_response()
-    })
+fn server_device(remote: bool, headers: &HeaderMap) -> Result<(), Response> {
+    if remote && headers.contains_key("x-codenomad-server-request") {
+        return Err(
+            (Status::NOT_FOUND, [(header::CONNECTION, "close")], Json(json!({"error": "Not found"}))).into_response()
+        );
+    }
+    Ok(())
 }
 
 pub async fn settings(
@@ -70,18 +73,13 @@ pub async fn settings(
     method: Method,
     headers: HeaderMap,
     bytes: Bytes,
-) -> Response {
+) -> Result<Response, Response> {
     let remote = channel.is_some();
-    if let Some(refused) = server_device(remote, &headers) {
-        return refused;
-    }
+    server_device(remote, &headers)?;
     if method != Method::PUT {
-        return finish(remote, service::enabled(&app).map(|e| json!({"enabled": e})), &principal);
+        return Ok(finish(remote, service::enabled(&app).map(|e| json!({"enabled": e})), &principal));
     }
-    let parsed = match body(&headers, &bytes, 1024 * 1024) {
-        Ok(v) => v,
-        Err(r) => return r,
-    };
+    let parsed = body(&headers, &bytes, 1024 * 1024)?;
     let value = parsed
         .as_ref()
         .and_then(Value::as_object)
@@ -89,10 +87,10 @@ pub async fn settings(
         .and_then(|o| o.get("enabled"))
         .and_then(Value::as_bool);
     let Some(value) = value else {
-        return finish(remote, Err(fail(Code::Invalid, "Invalid memory preference")), &principal);
+        return Ok(finish(remote, Err(fail(Code::Invalid, "Invalid memory preference")), &principal));
     };
     let result = service::set_enabled(&app, value, Some(&principal.0)).await.map(|e| json!({"enabled": e}));
-    finish(remote, result, &principal)
+    Ok(finish(remote, result, &principal))
 }
 
 pub async fn operation(
@@ -101,27 +99,20 @@ pub async fn operation(
     channel: Option<axum::Extension<crate::auth::tls::Channel>>,
     headers: HeaderMap,
     bytes: Bytes,
-) -> Response {
+) -> Result<Response, Response> {
     let remote = channel.is_some();
-    if let Some(refused) = server_device(remote, &headers) {
-        return refused;
-    }
-    let parsed = match body(&headers, &bytes, 32 * 1024) {
-        Ok(v) => v,
-        Err(r) => return r,
-    };
+    server_device(remote, &headers)?;
+    let parsed = body(&headers, &bytes, 32 * 1024)?;
     let request =
         parsed.as_ref().and_then(Value::as_object).filter(|o| o.keys().all(|k| k == "operation" || k == "context"));
-    let valid = request.is_some_and(|o| {
+    let Some(o) = request.filter(|o| {
         o.get("operation").and_then(service::parse_operation).is_some()
             && o.get("context").is_none_or(|c| service::parse_context(c).is_some())
-    });
-    if !valid {
-        return finish(remote, Err(fail(Code::Invalid, "Invalid memory request")), &principal);
-    }
-    let o = request.expect("validated");
+    }) else {
+        return Ok(finish(remote, Err(fail(Code::Invalid, "Invalid memory request")), &principal));
+    };
     let result = service::execute_ui(&app, &o["operation"], o.get("context").cloned(), Some(&principal.0)).await;
-    finish(remote, result, &principal)
+    Ok(finish(remote, result, &principal))
 }
 
 /// `memory-probe`, `memory-input` and `memory-context` of the automation bridge.

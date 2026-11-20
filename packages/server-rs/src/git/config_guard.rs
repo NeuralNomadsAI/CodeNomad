@@ -30,10 +30,7 @@ pub fn forbidden(key: &str) -> bool {
 
 fn check(listing: &str) -> Result<(), Error> {
     // Scope names (`local`, `worktree`, `command`) never match a refused key.
-    if listing.split(['\0', '\t', '\n']).any(forbidden) {
-        return Err(refused());
-    }
-    Ok(())
+    if listing.split(['\0', '\t', '\n']).any(forbidden) { Err(refused()) } else { Ok(()) }
 }
 
 pub async fn effective(dir: &Path) -> Result<(), Error> {

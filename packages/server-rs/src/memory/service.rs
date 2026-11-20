@@ -133,10 +133,7 @@ pub fn parse_operation(value: &Value) -> Option<Operation> {
 }
 /// `MemoryContextSchema`.
 pub fn parse_context(value: &Value) -> Option<(String, Option<String>)> {
-    let o = value.as_object()?;
-    if !exact(o, &["workspaceId", "directory"]) {
-        return None;
-    }
+    let o = value.as_object().filter(|o| exact(o, &["workspaceId", "directory"]))?;
     let w = o.get("workspaceId")?.as_str().filter(|s| (1..=200).contains(&model::points(s)))?.to_owned();
     let d = match o.get("directory") {
         None => None,
@@ -175,10 +172,8 @@ pub async fn session_target(app: &App, session: &str) -> Result<String> {
         .await
         .map_err(|_| fail(Code::Unreadable, "Memory session is unavailable"))?;
     let not_owned = || fail(Code::Invalid, "Session location is not owned");
-    let location = record.get("location").filter(|l| l.is_object()).ok_or_else(not_owned)?;
-    if location.get("workspaceID").is_some() {
-        return Err(not_owned());
-    }
+    let location =
+        record.get("location").filter(|l| l.is_object() && l.get("workspaceID").is_none()).ok_or_else(not_owned)?;
     let directory = location["directory"].as_str().ok_or_else(not_owned)?.to_owned();
     let workspaces = app.inner.lock().unwrap().workspaces.clone();
     for w in workspaces {

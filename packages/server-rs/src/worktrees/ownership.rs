@@ -92,10 +92,7 @@ pub async fn resolve(app: &App, w: &Workspace, directory: &str) -> Option<Owned>
             return None;
         }
     }
-    let resolved = resolve_directory(directory)?;
-    if !resolved.starts_with(&app.root) {
-        return None;
-    }
+    let resolved = resolve_directory(directory).filter(|r| r.starts_with(&app.root))?;
     for fresh in [false, true] {
         // A non-Git folder has no inventory: only the opened folder itself is owned.
         let catalogue = crate::worktrees::linked::catalogue(app, w, fresh).await.ok()?;

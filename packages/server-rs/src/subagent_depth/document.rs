@@ -38,10 +38,8 @@ pub fn decode(requested: String, write: String, exists: bool, mode: u32, content
         text.remove(0);
     }
     let tree = jsonc::parse_tree(&text, true);
-    let root = tree.root.filter(|_| tree.errors == 0).ok_or(MALFORMED)?;
-    if tree.node(root).kind != jsonc::NodeType::Object {
-        return Err(MALFORMED);
-    }
+    let object = |root: &usize| tree.errors == 0 && tree.node(*root).kind == jsonc::NodeType::Object;
+    let root = tree.root.filter(object).ok_or(MALFORMED)?;
     let plugins_key = utf16("plugins");
     if tree.node(root).children.iter().filter(|p| tree.key_of(**p) == Some(&plugins_key)).count() > 1 {
         return Err(DocError::Invalid("OpenCode configuration has duplicate plugins keys"));
@@ -311,10 +309,7 @@ fn removal(d: &Document, edits: &[Edit], path: &[Seg]) -> R<Option<Text>> {
     let (result, errors) = jsonc::parse(&updated, true);
     let original = jsonc::parse(&d.text, true).0.ok_or(DocError::Plain)?;
     let expected = without(original, path).ok_or(DocError::Plain)?;
-    if errors || result.as_ref() != Some(&expected) {
-        return Ok(None);
-    }
-    Ok(Some(finish(d, updated)))
+    if errors || result.as_ref() != Some(&expected) { Ok(None) } else { Ok(Some(finish(d, updated))) }
 }
 fn comma_near(text: &[u16], tree: &jsonc::Tree, members: &[usize], index: usize) -> Option<i64> {
     let following = next_token(text, tree.end(members[index]));

@@ -70,10 +70,7 @@ impl Cache {
     /// `getWorkspaceCandidates`.
     pub fn get(&self, root: &Path, scope: &str, owners: &[Uuid], now: u64) -> Option<Entries> {
         let mut state = self.0.lock().unwrap();
-        let cached = state.cache.get(root)?;
-        if cached.scope != scope {
-            return None;
-        }
+        let cached = state.cache.get(root).filter(|c| c.scope == scope)?;
         if cached.expires_at <= now || cached.owners != owners {
             state.cache.remove(root);
             return None;

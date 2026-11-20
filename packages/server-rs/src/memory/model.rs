@@ -139,16 +139,10 @@ fn valid_content(c: &Content) -> bool {
 /// `validateMemoryContent`: a strict `{ title, type, text }` object.
 pub fn content(value: &Value) -> Result<Content> {
     let invalid = || fail(Code::Invalid, "Invalid memory content");
-    let object = value.as_object().ok_or_else(invalid)?;
-    if object.len() != 3 {
-        return Err(invalid());
-    }
+    let object = value.as_object().filter(|o| o.len() == 3).ok_or_else(invalid)?;
     let field = |name: &str| object.get(name).and_then(Value::as_str).map(str::to_owned).ok_or_else(invalid);
     let parsed = Content { title: field("title")?, kind: field("type")?, text: field("text")? };
-    if !valid_content(&parsed) {
-        return Err(invalid());
-    }
-    Ok(parsed)
+    if !valid_content(&parsed) { Err(invalid()) } else { Ok(parsed) }
 }
 
 /// `validateMemoryEntry(value, code)`.

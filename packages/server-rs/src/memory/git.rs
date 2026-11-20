@@ -54,10 +54,7 @@ pub async fn execute(mut cmd: Command, timeout: Duration) -> std::result::Result
         tokio::try_join!(read_capped(out, 1024 * 1024), read_capped(err, 1024 * 1024), child.wait())
     })
     .await;
-    let (stdout, stderr, status) = match finished {
-        Ok(Ok(v)) => v,
-        _ => return Err(GitError::Failed),
-    };
+    let Ok(Ok((stdout, stderr, status))) = finished else { return Err(GitError::Failed) };
     let stdout = String::from_utf8_lossy(&stdout).into_owned();
     match status.code() {
         Some(0) => Ok(stdout),

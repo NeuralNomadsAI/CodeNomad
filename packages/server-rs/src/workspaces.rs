@@ -89,9 +89,9 @@ async fn create(
     if !paths::under(&app.root, &candidate) {
         return bad_request("Workspace directory is not authorized".into());
     }
-    let path = match dunce::canonicalize(candidate) {
-        Ok(path) if path.starts_with(&app.root) && path.is_dir() => path,
-        _ => return bad_request("Workspace directory is not authorized".into()),
+    let authorized = |path: &std::path::PathBuf| path.starts_with(&app.root) && path.is_dir();
+    let Some(path) = dunce::canonicalize(candidate).ok().filter(authorized) else {
+        return bad_request("Workspace directory is not authorized".into());
     };
     let validation = async {
         let response = app

@@ -86,10 +86,7 @@ fn read_bounded(path: &str) -> Result<(Vec<u8>, u32), ReadError> {
     }
     let mut contents = Vec::new();
     (&mut file).take(MAX + 1).read_to_end(&mut contents).map_err(|e| ReadError::Io(e.kind()))?;
-    if contents.len() as u64 > MAX {
-        return Err(too_large);
-    }
-    Ok((contents, mode(&meta)))
+    if contents.len() as u64 > MAX { Err(too_large) } else { Ok((contents, mode(&meta))) }
 }
 /// `readPluginControlDocument` on the host file system.
 pub fn load(requested: &str) -> R<Document> {

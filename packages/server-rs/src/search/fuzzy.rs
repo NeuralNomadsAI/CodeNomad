@@ -259,10 +259,7 @@ fn algorithm_spaces(search: &Search, target: &mut Target) -> Option<f64> {
         }
     }
     // `result.score = score` on the last space search's result (NULL without one).
-    if !any {
-        return None;
-    }
-    Some(score)
+    if !any { None } else { Some(score) }
 }
 
 fn score(search: &Search, target: &mut Target) -> Option<f64> {
@@ -282,10 +279,7 @@ pub fn single(search: &Search, text: &str) -> Option<f64> {
         return None;
     }
     let mut target = target(text);
-    if search.bitflags & target.bitflags != search.bitflags {
-        return None;
-    }
-    score(search, &mut target)
+    if search.bitflags & target.bitflags != search.bitflags { None } else { score(search, &mut target) }
 }
 
 /// The library's hacked FastPriorityQueue: a min-heap on score.

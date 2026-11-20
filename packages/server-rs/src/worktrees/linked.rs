@@ -46,10 +46,7 @@ pub async fn native(
     if let Some(body) = body {
         request = request.json(&body);
     }
-    let response = request.send().await.map_err(|_| native_error())?;
-    if !response.status().is_success() {
-        return Err(native_error());
-    }
+    let response = request.send().await.ok().filter(|r| r.status().is_success()).ok_or_else(native_error)?;
     if response.status() == Status::NO_CONTENT {
         return Ok(Value::Null);
     }
@@ -71,10 +68,7 @@ pub(super) async fn git(path: &Path, args: &[&str]) -> Result<String, Error> {
 }
 pub(super) fn physical(s: &str) -> Option<PathBuf> {
     // Network and device paths are never opened, whoever names them.
-    if !crate::files::paths::local_absolute(s) {
-        return None;
-    }
-    dunce::canonicalize(s).ok().filter(|p| p.is_dir())
+    if !crate::files::paths::local_absolute(s) { None } else { dunce::canonicalize(s).ok().filter(|p| p.is_dir()) }
 }
 pub(super) fn host(path: &Path) -> Result<&str, Error> {
     path.to_str().ok_or_else(native_error)
@@ -181,10 +175,8 @@ pub async fn create(
         "directory": catalogue.parent, "name": name});
     let created = native(&app, Method::POST, "/api/worktree", &[], Some(body), 64 * 1024).await?;
     let service = created["directory"].as_str().ok_or_else(native_error)?;
-    let destination = physical(service).ok_or_else(native_error)?;
-    if destination == catalogue.parent || !destination.starts_with(&catalogue.parent) {
-        return Err(native_error());
-    }
+    let inside = |d: &PathBuf| *d != catalogue.parent && d.starts_with(&catalogue.parent);
+    physical(service).filter(inside).ok_or_else(native_error)?;
     let confirmed = self::catalogue(&app, &w, false).await?;
     let checkout = confirmed
         .by_registered(service)
@@ -255,11 +247,8 @@ pub fn family(rows: &[Value], session: &str) -> Result<(String, Vec<Value>), Err
                 return Err(conflict("Session family contains a cycle"));
             }
             let row = lookup.get(id.as_str()).ok_or_else(|| conflict("Session family is incomplete"))?;
-            if let Some(parent) = row["parentID"].as_str() {
-                id = parent.into();
-            } else {
-                return Ok((id, depth));
-            }
+            let Some(parent) = row["parentID"].as_str() else { return Ok((id, depth)) };
+            id = parent.into();
         }
         Err(conflict("Session family exceeds the placement limit"))
     };

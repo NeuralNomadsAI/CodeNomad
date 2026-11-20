@@ -39,18 +39,16 @@ const IGNORED_DIRECTORIES: [&str; 11] =
 
 static CACHE: LazyLock<Cache> = LazyLock::new(Cache::default);
 
-pub async fn route(State(app): State<Shared>, Route(id): Route<String>, RawQuery(raw): RawQuery) -> Response {
-    let query = match query::parse(raw.as_deref()) {
-        Ok(query) => query,
-        Err(message) => return error(Status::BAD_REQUEST, &message).into_response(),
-    };
-    let root = match browser_root(&app, &id, query.directory.as_deref()).await {
-        Ok(root) => root,
-        Err(e) => return e.into_response(),
-    };
+pub async fn route(
+    State(app): State<Shared>,
+    Route(id): Route<String>,
+    RawQuery(raw): RawQuery,
+) -> Result<Response, crate::Error> {
+    let query = query::parse(raw.as_deref()).map_err(|message| error(Status::BAD_REQUEST, &message))?;
+    let root = browser_root(&app, &id, query.directory.as_deref()).await?;
     let owners = owners(&app, &root);
     let kind = query.kind.unwrap_or("all");
-    match search(&CACHE, root, &query.q, query.limit, kind, query.refresh == Some(true), owners).await {
+    Ok(match search(&CACHE, root, &query.q, query.limit, kind, query.refresh == Some(true), owners).await {
         Ok(entries) => Json(entries).into_response(),
         Err(Failure::Busy) => (
             Status::SERVICE_UNAVAILABLE,
@@ -59,7 +57,7 @@ pub async fn route(State(app): State<Shared>, Route(id): Route<String>, RawQuery
         )
             .into_response(),
         Err(Failure::Failed(message)) => error(Status::BAD_REQUEST, &message).into_response(),
-    }
+    })
 }
 
 /// `fileBrowserRoot`: the workspace folder, or `resolveOwnedWorktree(directory).directory`

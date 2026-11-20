@@ -309,9 +309,8 @@ pub async fn revoke(State(app): State<Shared>, RoutePath(id): RoutePath<Uuid>) -
 pub async fn exchange(State(app): State<Shared>, Extension(channel): Extension<Channel>, req: Request) -> Response {
     let server = req.uri().path().ends_with("/server-pair");
     let agent = req.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned();
-    let bytes = match axum::body::to_bytes(req.into_body(), 4096).await {
-        Ok(b) => b,
-        Err(_) => return reply(Status::PAYLOAD_TOO_LARGE, "Request body is too large"),
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 4096).await else {
+        return reply(Status::PAYLOAD_TOO_LARGE, "Request body is too large");
     };
     let value: Value = serde_json::from_slice(&bytes).unwrap_or_default();
     let code = value["code"].as_str().filter(|s| !s.is_empty() && s.encode_utf16().count() <= 256);

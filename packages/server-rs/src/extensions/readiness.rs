@@ -137,10 +137,7 @@ impl Owner {
             if self.closed.load(Ordering::SeqCst) {
                 return Err("Readiness lease closed".to_owned());
             }
-            if tokio::time::Instant::now() >= expires_at {
-                return Err(UNSUPPORTED.to_owned());
-            }
-            Ok(())
+            if tokio::time::Instant::now() >= expires_at { Err(UNSUPPORTED.to_owned()) } else { Ok(()) }
         };
         check()?;
         if self.pending.fetch_add(1, Ordering::SeqCst) >= MAX_PENDING {

@@ -60,10 +60,7 @@ pub fn dacl_protected(path: &Path) -> io::Result<bool> {
         let ok = GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) != 0;
         let e = io::Error::last_os_error();
         LocalFree(descriptor);
-        if !ok {
-            return Err(e);
-        }
-        Ok(control & SE_DACL_PROTECTED != 0)
+        if !ok { Err(e) } else { Ok(control & SE_DACL_PROTECTED != 0) }
     }
 }
 

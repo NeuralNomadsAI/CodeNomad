@@ -186,10 +186,7 @@ pub fn contained(dir: &Dir, path: &str, missing: bool) -> Result<(), Error> {
 fn bounded(mut file: impl Read, max: usize) -> Result<Vec<u8>, Error> {
     let mut bytes = Vec::new();
     file.by_ref().take((max + 1) as u64).read_to_end(&mut bytes).map_err(io_error)?;
-    if bytes.len() > max {
-        return Err(large());
-    }
-    Ok(bytes)
+    if bytes.len() > max { Err(large()) } else { Ok(bytes) }
 }
 fn version(b: &[u8]) -> String {
     format!("\"{:x}\"", Sha256::digest(b))

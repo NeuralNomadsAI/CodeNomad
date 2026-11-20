@@ -84,10 +84,9 @@ pub async fn handle(
     let bytes = to_bytes(req.into_body(), limit)
         .await
         .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
-    let input: Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    if !crate::sessions::contracts::valid(crate::sessions::contracts::get(&action, false), &input) {
-        return Err(invalid());
-    }
+    let schema = crate::sessions::contracts::get(&action, false);
+    let input: Option<Value> = serde_json::from_slice(&bytes).ok();
+    let input = input.filter(|i| crate::sessions::contracts::valid(schema, i)).ok_or_else(invalid)?;
     let session = input["sessionID"].as_str().ok_or_else(invalid)?;
     let request = async {
         let placement = match Placement::admit(&app, &id, session).await {

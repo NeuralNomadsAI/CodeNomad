@@ -141,10 +141,7 @@ fn verified(plugin: &Path, bundle: &[u8], hash: &str) -> io::Result<Result<Ident
     if format!("{:x}", actual.finalize()) != hash {
         return Ok(Err("payload SHA-256 differs from bundle"));
     }
-    if file.read(&mut chunk[..1])? != 0 {
-        return Ok(Err("payload has trailing bytes"));
-    }
-    Ok(Ok(held))
+    if file.read(&mut chunk[..1])? != 0 { Ok(Err("payload has trailing bytes")) } else { Ok(Ok(held)) }
 }
 
 fn temporary(path: &Path) -> PathBuf {

@@ -84,10 +84,7 @@ fn number(text: &str) -> f64 {
             let e = e.strip_prefix(['+', '-']).unwrap_or(e);
             !e.is_empty() && digits(e)
         });
-    if !valid {
-        return f64::NAN;
-    }
-    t.parse().unwrap_or(f64::NAN)
+    if !valid { f64::NAN } else { t.parse().unwrap_or(f64::NAN) }
 }
 
 const SAFE: f64 = 9_007_199_254_740_991.0;

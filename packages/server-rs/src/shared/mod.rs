@@ -49,8 +49,5 @@ pub fn test_dir(name: &str) -> std::path::PathBuf {
 pub async fn read_capped(mut stream: impl AsyncRead + Unpin, max: usize) -> std::io::Result<Vec<u8>> {
     let mut out = Vec::new();
     (&mut stream).take((max + 1) as u64).read_to_end(&mut out).await?;
-    if out.len() > max {
-        return Err(std::io::Error::other("Git output exceeds limit"));
-    }
-    Ok(out)
+    if out.len() > max { Err(std::io::Error::other("Git output exceeds limit")) } else { Ok(out) }
 }
