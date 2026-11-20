@@ -19,11 +19,12 @@ const input = z.object({ mode: z.enum(["autonomous", "supervised"]) }).strict()
 const sessionIDPattern = /^ses[A-Za-z0-9_-]{1,511}$/
 export const ordinaryPermissionSession = (id: string) => sessionIDPattern.test(id) && !isReservedMissionScheduleSessionID(id)
 
-export function sessionPermissionTarget(initial: SessionInfo, target: Omit<NativeTarget, "read" | "readAncestor">,
+export function sessionPermissionTarget(initial: SessionInfo, target: Omit<NativeTarget, "sessionID" | "read" | "readAncestor">,
   owns: (location: SessionInfo["location"]) => Promise<boolean>): NativeTarget {
   const { client, current, signal } = target
   return {
     ...target,
+    sessionID: initial.id,
     read: async () => {
       current()
       const latest = await client.session.get({ sessionID: initial.id }, { signal })

@@ -105,8 +105,11 @@ they overlap. CodeNomad reads the effective configuration at the conversation's
 native Location when enabling Supervised and before forwarding a prompt, command
 or shell from CodeNomad. A send waits for a successful refresh. On first native
 connection, reconnection, and `config.updated`, the backend also refreshes saved
-Supervised sessions in the affected Locations in the background. Native clients
-use the stored rules until that refresh completes.
+Supervised sessions in the affected Locations in the background. A native
+`session.permissions` event refreshes that conversation's block, projecting any
+changed rules before it and leaving trailing rules in place. An unchanged block
+requires no write, including when the event echoes the backend's own update.
+Native clients use the stored rules until the refresh completes.
 
 Matching saved project **Always Allow** approvals can still settle an `ask`.
 Reads, external-directory actions, MCP and delegation retain their own rules.
@@ -126,10 +129,12 @@ child and fork copies. A rule deliberately added by another native client after
 the block keeps its native precedence.
 A missing or unowned ancestor ends the lookup. Proof uses
 native lineage and exact rule values; rules have no per-entry native identity.
-Writes from one backend serialize, read immediately before and after the native
-update, and retry a detected concurrent change from fresh rules. OpenCode replaces the whole array
-without compare-and-swap, so a write by an independent native client between
-the check and update can be undetectable.
+Mode writes, projection refreshes and native session PATCHes through the same
+backend share a per-session lock and read fresh state before forwarding. Mode
+writes and refreshes verify the resulting rules and retry a detected concurrent
+change from fresh rules. A native PATCH keeps OpenCode's whole-array replacement
+semantics. An independent native client can still write between a backend read
+and update because OpenCode offers no compare-and-swap.
 
 `ui.settings.newConversationPermissions` defaults to Autonomous. The workspace
 proxy, paused Mission creation, managed independent roots and the Images
@@ -151,11 +156,12 @@ changed-diff and late-copy regressions. Both run on isolated fixtures only.
 
 `permissions/receipts.test.ts` exercises disk reload, all decisions and their
 provenance, cascades, ownership, deletion and mutation failure paths.
-`session-permission-mode.test.ts` covers config projection and refresh, two tabs,
-exact removal, inherited blocks, concurrent changes and private state.
+`session-permission-mode.test.ts` covers config and session-event projection,
+unchanged echoes, exact removal, inherited blocks, concurrent mode and proxy
+writes, and private state.
 `node scripts/test-session-permission-mode-native.mjs <absolute-opencode-executable>`
 exercises the route and proxy, native child and fork copies, and native config
-events against a private OpenCode process.
+and session permission events against a private OpenCode process.
 `tests/browser/conversation-permissions.test.ts` exercises the Status buttons
 and folded summary, a second window, reconnect, saved customization and General
 settings.

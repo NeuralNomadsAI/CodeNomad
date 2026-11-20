@@ -804,7 +804,9 @@ Immediate creation retains its original request and physical scope before dispat
 HTTP outcome. Unknown native transport outcomes use `creationReceipt` under project
 exclusion: the immutable creation event and document digest confirm the exact input.
 Positive proof releases the original physical hold and selects the Mission; a
-certified terminal refusal restores the form. Missing or unreadable evidence retains
+coordinator's Supervised block is recovered separately from a fresh, unique
+match without altering native rules. A certified terminal refusal restores the
+form. Missing or unreadable creation evidence retains
 the request with read-only Refresh, silently. Scope conflicts reconcile that retained
 request in its original Location. The backend retains at most 128 outcomes; terminal
 entries may be evicted, while unresolved entries stay reserved for its lifetime.

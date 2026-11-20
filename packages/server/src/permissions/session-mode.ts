@@ -12,6 +12,7 @@ export class SessionModeConflict extends Error {}
 
 type Settings = Pick<SettingsService, "getPrivateSessionPermissionState" | "setPrivateSessionPermissionBlock" | "getRawConfigOwner">
 export type NativeTarget = {
+  sessionID: string
   client: OpenCodeClient
   read(): Promise<SessionInfo>
   readAncestor(sessionID: string): Promise<SessionInfo | undefined>
@@ -176,6 +177,16 @@ export class SessionPermissionModes {
     const key = this.key(distro, session)
     this.track(key, distro, session)
     this.remember(key, block)
+  }
+
+  /** Recover only a unique copy from a proven creation, without replacing newer ownership. */
+  recoverNewRoot(target: NativeTarget, block: PermissionRule[]): Promise<void> {
+    return this.exclusive(target, async (key, session) => {
+      if (sourceSessionID(session) || blockPositions(this.rules(session), block).length !== 1
+        || Object.hasOwn(this.settings.getPrivateSessionPermissionState(), key)) return
+      this.track(key, target.distro, session)
+      this.remember(key, block)
+    })
   }
 
   read(target: NativeTarget): Promise<ConversationPermissionModeResponse> {
@@ -357,19 +368,21 @@ export class SessionPermissionModes {
     return { confirmed: currentRules(await target.read()), failure }
   }
 
-  private async exclusive<T>(target: NativeTarget, run: (key: string, session: SessionInfo) => Promise<T>): Promise<T> {
-    const first = await target.read()
-    const key = this.key(target.distro, first)
+  async withSessionLock<T>(target: NativeTarget, run: (session: SessionInfo) => Promise<T>): Promise<T> {
+    const key = JSON.stringify([target.distro?.toLowerCase(), target.sessionID])
     const previous = this.pending.get(key)
     const task = Promise.resolve(previous).catch(() => {}).then(async () => {
       target.current()
-      const fresh = previous ? await target.read() : first
+      const fresh = await target.read()
       target.current()
-      if (this.key(target.distro, fresh) !== key) throw new SessionModeConflict("Session identity changed")
-      return run(key, fresh)
+      return run(fresh)
     })
     this.pending.set(key, task)
     try { return await task }
     finally { if (this.pending.get(key) === task) this.pending.delete(key) }
+  }
+
+  private exclusive<T>(target: NativeTarget, run: (key: string, session: SessionInfo) => Promise<T>): Promise<T> {
+    return this.withSessionLock(target, session => run(this.key(target.distro, session), session))
   }
 }

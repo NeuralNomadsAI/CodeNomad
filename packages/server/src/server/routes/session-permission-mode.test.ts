@@ -32,6 +32,12 @@ const config: ConfigGetOutput = [
 ]
 const block = [edit("ask"), shell("ask"), edit("deny"), shell("deny"), shell("ask", "echo *"), shell("deny", "rm *"), edit("ask", "notes/*")]
 
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(r => { resolve = r })
+  return { promise, resolve }
+}
+
 test("projects native config patterns in source order and leaves other actions and agents alone", () => {
   assert.deepEqual(supervisedRules(config, false), block)
   assert.deepEqual(supervisedRules([{ type: "document", info: { permissions: [{ action: "Sh?ll", effect: "deny", resource: "rm *" }] } }], true),
@@ -53,7 +59,7 @@ async function fixture(t: TestContext) {
   const actions: string[] = []
   const reads: string[] = []
   const writes: string[] = []
-  let mutate: ((rules: PermissionRule[]) => void) | undefined
+  let mutate: ((rules: PermissionRule[]) => void | Promise<void>) | undefined
   let configEntries = config
   let dispatched: (() => void) | undefined
   const client = {
@@ -82,7 +88,12 @@ async function fixture(t: TestContext) {
   } as unknown as ServiceConnection["client"]
   const endpoint = { url: "http://127.0.0.1:1" }
   const connection = { client, endpoint, assertCurrent() {}, invalidate() {}, profile: async () => "modern",
-    fetch: async (input: string) => {
+    fetch: async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH" && input.endsWith(`/session/${sessionID}`)) {
+        actions.push("proxy write")
+        session.permissions = JSON.parse(String(init.body)).permissions
+        return Response.json({ data: session })
+      }
       if (!input.endsWith("/prompt")) return new Response(null, { status: 404 })
       dispatched?.()
       return new Response(null, { status: 204 })
@@ -110,7 +121,7 @@ async function fixture(t: TestContext) {
   registerSettingsRoutes(app, { settings, logger })
   t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }) })
   const url = (id: string, selected: string) => `/api/workspaces/${id}/sessions/${selected}/permission-mode`
-  return { app, bus, settings, modes, actions, reads, writes, session, sessions, client, manager, logger, worktrees, cleanup,
+  return { app, bus, settings, modes, actions, reads, writes, session, sessions, client, connection, manager, logger, worktrees, cleanup,
     restartModes: () => new SessionPermissionModes(new SettingsService(resolveConfigLocation(root), bus, logger)),
     publish: (value: object) => {
       const event = { id: "evt_fixture", created: 0, ...value } as OpenCodeEvent
@@ -141,6 +152,89 @@ test("the session proxy refreshes before forwarding without a config event and b
   assert.equal((await send()).statusCode, 503)
   assert.equal(sends.length, 1)
   assert.deepEqual(f.session.permissions, [read, ...block, deny])
+})
+
+test("session permission events project an inserted deny once and leave explicit trailing rules in place", async t => {
+  const f = await fixture(t)
+  assert.equal((await f.set("supervised")).statusCode, 200)
+  const shellDeny = shell("deny", "echo inserted")
+  const editDeny = edit("deny", "private.txt")
+  const suffix = shell("allow", "echo other")
+  const publish = () => f.publish({ type: "session.permissions", data: { sessionID: f.session.id, permissions: f.session.permissions } })
+  let refreshes = 0
+  const refresh = f.modes.refresh.bind(f.modes)
+  t.mock.method(f.modes, "refresh", async (target: Parameters<typeof refresh>[0]) => {
+    refreshes++
+    return refresh(target)
+  })
+  f.mutate(rules => {
+    // The native SSE echo can arrive before the write is acknowledged.
+    f.session.permissions = rules
+    publish()
+  })
+  const stop = connectSessionPermissionRefresh(f.bus, f.manager, f.modes, f.worktrees, f.cleanup, f.logger)
+  t.after(stop)
+  f.session.permissions = [read, shellDeny, editDeny, ...block, suffix]
+  publish()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(f.session.permissions, [read, shellDeny, editDeny, ...block, shellDeny, editDeny, suffix])
+  assert.equal(refreshes, 2, "the echo confirms unchanged rules without rewriting")
+  assert.deepEqual(f.writes, [f.session.id, f.session.id])
+  assert.equal((await f.set("autonomous")).statusCode, 200)
+  assert.deepEqual(f.session.permissions, [read, shellDeny, editDeny, suffix])
+})
+
+test("serialized native proxy PATCH cannot lose an acknowledged deny to a mode write", { timeout: 5_000 }, async t => {
+  const f = await fixture(t)
+  registerInstanceProxyRoutes(f.app, { workspaceManager: f.manager, logger: f.logger, worktreeDeletionFence: f.worktrees,
+    sessionCleanup: f.cleanup, permissionModes: f.modes })
+  const modeStarted = deferred(), releaseMode = deferred()
+  f.mutate(async rules => {
+    modeStarted.resolve()
+    await releaseMode.promise
+    f.session.permissions = rules
+  })
+  const changing = f.set("supervised").then(reply => reply)
+  await modeStarted.promise
+  const patchEntered = deferred()
+  const enter = f.cleanup.enterMutation.bind(f.cleanup)
+  t.mock.method(f.cleanup, "enterMutation", (id: string) => { patchEntered.resolve(); return enter(id) })
+  const deny = shell("deny", "echo proxy")
+  const patch = f.app.inject({ method: "PATCH", url: `/workspaces/two/instance/api/session/${f.session.id}`,
+    payload: { permissions: [read, deny] } }).then(reply => reply)
+  try {
+    await patchEntered.promise
+    await new Promise<void>(resolve => setImmediate(resolve))
+  } finally { releaseMode.resolve() }
+  const [modeReply, patchReply] = await Promise.all([changing, patch])
+  assert.equal(modeReply.statusCode, 200, modeReply.body)
+  assert.equal(patchReply.statusCode, 200, patchReply.body)
+  assert.deepEqual(f.session.permissions, [read, deny])
+})
+
+test("a mode write queued behind a native PATCH projects the freshly written deny", { timeout: 5_000 }, async t => {
+  const f = await fixture(t)
+  registerInstanceProxyRoutes(f.app, { workspaceManager: f.manager, logger: f.logger, worktreeDeletionFence: f.worktrees,
+    sessionCleanup: f.cleanup, permissionModes: f.modes })
+  const patchStarted = deferred(), releasePatch = deferred()
+  const fetch = f.connection.fetch
+  t.mock.method(f.connection, "fetch", async (...args: Parameters<typeof fetch>) => {
+    patchStarted.resolve()
+    await releasePatch.promise
+    return fetch(...args)
+  })
+  const deny = shell("deny", "echo proxy first")
+  const patch = f.app.inject({ method: "PATCH", url: `/workspaces/two/instance/api/session/${f.session.id}`,
+    payload: { permissions: [read, deny] } }).then(reply => reply)
+  await patchStarted.promise
+  const changing = f.set("supervised").then(reply => reply)
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve))
+  } finally { releasePatch.resolve() }
+  const [patchReply, modeReply] = await Promise.all([patch, changing])
+  assert.equal(patchReply.statusCode, 200, patchReply.body)
+  assert.equal(modeReply.statusCode, 200, modeReply.body)
+  assert.deepEqual(f.session.permissions, [read, deny, ...block, deny])
 })
 
 test("refreshes known supervised conversations on a location config event, including copied rules", async t => {

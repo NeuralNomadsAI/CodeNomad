@@ -197,6 +197,32 @@ test("lost creation acknowledgement is read by its original request without anot
   } finally { await f.close() }
 })
 
+test("durable creation settles a lost acknowledgement independently of later coordinator permission edits", async () => {
+  for (const change of ["unrelated", "removed", "ambiguous", "unavailable"] as const) {
+    const f = await fixture(false, 20, true)
+    try {
+      f.loseAck()
+      assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })).json().code, "creation-uncertain")
+      await assert.rejects(f.fence.run(physical, [physical], async () => assert.fail("pending create")), /Timed out/)
+      const root = [...f.sessions.values()][0]
+      const block = structuredClone(root.permissions)
+      const extra = { action: "read", resource: "fixture.txt", effect: "deny" }
+      const changed = change === "unrelated" ? [extra, ...block] : change === "removed" ? [extra] : [...block, extra, ...block]
+      root.permissions = changed
+      if (change === "unavailable") f.sessions.delete(root.id)
+      const { writes } = f
+      const receipt = await f.app.inject({ url: "/api/workspaces/workspace/missions/creation/create" })
+      assert.equal(receipt.json().state, "created", change)
+      assert.equal(receipt.json().mission.coordinatorSessionId, root.id)
+      assert.deepEqual(f.confirmedPermissions, change === "unrelated" ? [block] : [])
+      assert.deepEqual(root.permissions, changed)
+      assert.equal(f.rpcCreates, 1)
+      assert.equal(f.writes, writes)
+      await f.fence.run(physical, [physical], async () => {})
+    } finally { await f.close() }
+  }
+})
+
 test("the original terminal refusal is recoverable; an absent request is unknown", async () => {
   const f = await fixture()
   try {

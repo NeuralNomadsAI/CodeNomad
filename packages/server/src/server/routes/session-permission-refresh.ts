@@ -123,7 +123,7 @@ export function connectSessionPermissionRefresh(bus: EventBus, manager: Pick<Wor
       scheduleLocation(instanceId, connection, location?.directory)
     } else if (event.type === "session.created" && event.data.parentID && event.data.permissions?.length) {
       schedule(instanceId, connection, { id: event.data.sessionID })
-    } else if (event.type === "session.forked" || event.type === "session.moved") {
+    } else if (event.type === "session.forked" || event.type === "session.moved" || event.type === "session.permissions") {
       schedule(instanceId, connection, { id: event.data.sessionID })
     } else if (event.type === "session.deleted") {
       modes.forgetDeleted(distro, event.data.sessionID)

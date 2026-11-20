@@ -18,6 +18,7 @@ import { nativeDocumentID } from "../../missions/launch-policy"
 import type { MissionPanelMap } from "../../missions/mission-panel-map"
 import type { MissionPreparationOptions } from "../../missions/preparation-input"
 import type { SessionPermissionModes } from "../../permissions/session-mode"
+import { sessionPermissionTarget } from "./session-permission-mode"
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
@@ -148,14 +149,22 @@ export async function prepareMissionCreation(input: {
     if (disposed) throw new Error("Mission creation preparation was released")
     await admission.assertCurrent()
   }
-  const confirmPermissions = async (id: string) => {
+  const confirmPermissions = async (id: string, recovering = false) => {
     if (!permissions) return
-    const session = await client.session.get({ sessionID: id }, { signal: AbortSignal.timeout(10_000) })
+    const signal = AbortSignal.timeout(10_000)
+    const session = await client.session.get({ sessionID: id }, { signal })
     if (session.id !== id || session.projectID !== projectID || !sameLocation(session.location, location)) {
       throw new MissionCreationHoldError("creation-uncertain")
     }
     await admission.assertReceiptCurrent()
-    input.permissionModes!.confirmNewRoot(session, distro, permissions, [])
+    const modes = input.permissionModes!
+    if (!recovering) {
+      modes.confirmNewRoot(session, distro, permissions, [])
+      return
+    }
+    const current = () => { signal.throwIfAborted(); connection.assertCurrent() }
+    await modes.recoverNewRoot(sessionPermissionTarget(session, { client, distro, signal, current },
+      candidate => manager.ownsLocation(workspaceID, candidate, client, { signal })), permissions)
   }
   return {
     missionID, sessionID, creationMessageID, request: structuredClone(nativeInput), dispose,
@@ -168,8 +177,10 @@ export async function prepareMissionCreation(input: {
       if (result.requestID !== request.requestId || result.projectID !== projectID || result.mission?.id !== missionID
         || result.mission.projectID !== projectID) return
       if (!isCoordinator(result.mission.coordinatorSessionId)) return
-      if (admission.uncertain) await confirmPermissions(result.mission.coordinatorSessionId)
+      const recoverPermissions = admission.uncertain
       admission.reconcile()
+      // The durable receipt settles creation; current session rules only establish block ownership.
+      if (recoverPermissions) await confirmPermissions(result.mission.coordinatorSessionId, true).catch(() => {})
       return result.mission
     },
     /** False until the native create is attempted: any earlier failure proves no effect. */

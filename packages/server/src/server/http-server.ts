@@ -111,7 +111,7 @@ import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaS
 import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
-import { SessionPermissionModes } from "../permissions/session-mode"
+import { SessionModeConflict, SessionPermissionModes } from "../permissions/session-mode"
 import { appendSessionProjection, sessionPermissionRules, blockPositions } from "../permissions/session-mode-rules"
 import { registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./routes/session-permission-mode"
 import { connectSessionPermissionRefresh } from "./routes/session-permission-refresh"
@@ -1502,6 +1502,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         }
       }
     }
+    // The native session PATCH can replace the entire permission array.
+    const patchSession = args.permissionModes && request.method === "PATCH" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
+      ? authorizedSession : undefined
     if (connection || workspaceManager.getSharedServiceFetch) {
       const headers = sanitizeInstanceProxyRequestHeaders(request.headers, instanceAuthHeader)
       delete headers[LOCATION_CONTEXT_HEADER]
@@ -1514,7 +1517,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       // A transcript page read by the UI: large tool images load on demand.
       const deferMedia = request.method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(pathname)
         && wantsDeferredMedia(request.headers)
-      return await forwardRuntimeRequest({
+      const forward = () => forwardRuntimeRequest({
         transform: deferMedia && sessionId
           ? body => deferToolMedia((body as { data?: unknown } | null)?.data, { workspaceId, sessionId })
           : undefined,
@@ -1526,11 +1529,37 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         } : runtimeFetch, release: releaseMutation,
         retainMutation: ordinarySessionMutation && targetSessionId && args.sessionCleanup
           ? confirmed => { if (!confirmed) args.sessionCleanup!.markUncertain(targetSessionId) }
-          : confirmRoot ? () => {} : undefined,
+          : confirmRoot || patchSession ? () => {} : undefined,
         invalidate: () => connection ? connection.invalidate() : workspaceManager.invalidateSharedServiceConnection?.(),
       })
+      if (!patchSession) return await forward()
+      const client = await clientForRequest()
+      const target = sessionPermissionTarget(patchSession, {
+        client, signal, distro: workspaceManager.getServiceWslDistro?.(workspaceId),
+        current: () => {
+          signal.throwIfAborted()
+          connection?.assertCurrent()
+          if (workspaceManager.get(workspaceId) !== workspace) throw new SessionModeConflict("Workspace changed")
+        },
+      }, location => workspaceManager.ownsLocation(workspaceId, location, client, { signal }))
+      try {
+        return await args.permissionModes!.withSessionLock(target, fresh => {
+          assertOrdinaryMissionScheduleBody({ metadata: fresh.metadata })
+          return forward()
+        })
+      } catch (error) {
+        if (isSessionNotFoundError(error) && error.sessionID === patchSession.id) {
+          releaseMutation?.()
+          return reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: patchSession.id, message: "Session not found" })
+        }
+        if (error instanceof SessionModeConflict || error instanceof MissionScheduleInputError) {
+          releaseMutation?.()
+          return reply.code(error instanceof MissionScheduleInputError ? error.statusCode : 409).send({ error: error.message })
+        }
+        throw error
+      }
     }
-    if (confirmRoot || ordinarySessionMutation && targetSessionId && args.sessionCleanup) {
+    if (confirmRoot || patchSession || ordinarySessionMutation && targetSessionId && args.sessionCleanup) {
       releaseMutation?.()
       return reply.code(503).send({ error: "Session mutation transport is unavailable" })
     }

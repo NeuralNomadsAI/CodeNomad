@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import Fastify from "fastify"
 import pino from "pino"
 import { register } from "tsx/esm/api"
+import { setTimeout as delay } from "node:timers/promises"
 import { runIsolated } from "./test-opencode-location-native.mjs"
 
 // Use the same module instance as the relay's native event attribution map.
@@ -44,7 +45,18 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
   const otherLocation = await client.location.get({ location: { directory: otherDirectory } })
   const workspaces = Object.fromEntries(["a", "b"].map(id => [id, { id, path: directory }]))
   const owns = candidate => [directory, otherLocation.directory].some(owned => path.resolve(candidate) === path.resolve(owned))
-  const connection = { ...native, profile: async () => "modern" }
+  let modeWriteGate, proxyAdmission
+  const connection = {
+    ...native,
+    profile: async () => "modern",
+    client: { ...client, session: { ...client.session, update: async (input, options) => {
+      if (input.sessionID === modeWriteGate?.sessionID) {
+        modeWriteGate.started()
+        await modeWriteGate.released
+      }
+      return client.session.update(input, options)
+    } } },
+  }
   const workspaceManager = {
     get: id => workspaces[id],
     getSharedServiceConnection: async () => connection,
@@ -52,7 +64,10 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
     getInstanceAuthorizationHeader: () => undefined,
     getServiceDirectory: () => directory,
     getServiceWslDistro: () => undefined,
-    getWorktreeIdentityForPath: async (_id, candidate) => owns(candidate) ? directory : undefined,
+    getWorktreeIdentityForPath: async (id, candidate) => {
+      if (id === "b") proxyAdmission?.()
+      return owns(candidate) ? directory : undefined
+    },
     ownsDirectory: async (_id, candidate) => owns(candidate),
     ownsLocation: async (_id, candidate) => owns(candidate.directory),
     ownsPath: async () => true,
@@ -154,29 +169,67 @@ await runIsolated(process.argv[2], async ({ client, connection: native, root }) 
     assert.deepEqual((await read()).permissions, [initial, appended])
     assert.ok((await client.permission.list({ sessionID: original.id }, options)).some(request => request.id === pending.id))
     await client.permission.reply({ sessionID: original.id, requestID: pending.id, decision: "reject" }, options)
+
+    const started = Promise.withResolvers(), gate = Promise.withResolvers(), admitted = Promise.withResolvers()
+    modeWriteGate = { sessionID: original.id, started: started.resolve, released: gate.promise }
+    proxyAdmission = admitted.resolve
+    const changing = mode("a", original.id, "supervised")
+    const proxyDeny = rule("shell", "echo proxy-race", "deny")
+    let patch
+    try {
+      await Promise.race([started.promise, changing.then(() => assert.fail("mode write did not reach gate"))])
+      patch = app.inject({ method: "PATCH", url: `/workspaces/b/instance/api/session/${original.id}`,
+        payload: { permissions: [initial, appended, proxyDeny] } }).then(reply => reply)
+      await Promise.race([admitted.promise, patch.then(reply => assert.fail(`proxy failed admission: ${reply.statusCode}`))])
+      assert.equal(await Promise.race([patch.then(() => "answered"), delay(350, "waiting")]), "waiting",
+        "the native PATCH must wait for the in-flight mode update")
+    } finally {
+      gate.resolve()
+      await Promise.allSettled([changing, patch])
+      modeWriteGate = proxyAdmission = undefined
+    }
+    const patched = await patch
+    assert.equal(patched.statusCode, 204, patched.body)
+    assert.equal(await changing, "supervised")
+    assert.deepEqual((await read()).permissions, [initial, appended, proxyDeny])
+    assert.equal((await nativePermission(original.id, "shell", proxyDeny.resource)).effect, "deny")
+    console.log("PASS: same-backend native PATCH waits for the in-flight mode write and retains its deny")
+
     const stopRefresh = connectSessionPermissionRefresh(bus, workspaceManager, modes, worktreeDeletionFence, cleanup, logger)
     const watching = new AbortController()
     const refreshStream = client.event.subscribe({ signal: AbortSignal.any([watching.signal, AbortSignal.timeout(15_000)]),
       types: ["config.updated", "session.permissions"] })[Symbol.asyncIterator]()
     try {
       assert.equal((await refreshStream.next()).value.type, "server.connected")
-      const deny = rule("shell", "echo refresh-fixture", "deny")
-      await writeFile(configPath, JSON.stringify({ permissions: [...config.permissions, deny] }))
-      let refreshed = false
-      for await (const event of { [Symbol.asyncIterator]: () => refreshStream }) {
-        if (event.type === "config.updated") {
+      const nextPermissions = async () => {
+        for (;;) {
+          const { value: event, done } = await refreshStream.next()
+          if (done) assert.fail("native permission event did not arrive")
           nativeEventConnections.set(event, connection)
           bus.publish({ type: "instance.event", event, instanceId: "a" })
-        } else if (event.type === "session.permissions" && event.data.sessionID === created.id) {
-          assert.deepEqual(event.data.permissions, [initial, ...expected, deny])
-          refreshed = true
-          break
+          if (event.type === "session.permissions" && event.data.sessionID === created.id) return event.data.permissions
         }
       }
-      assert.equal(refreshed, true, "native configuration event must update the active block")
+      const deny = rule("shell", "echo refresh-fixture", "deny")
+      await writeFile(configPath, JSON.stringify({ permissions: [...config.permissions, deny] }))
+      assert.deepEqual(await nextPermissions(), [initial, ...expected, deny])
       assert.equal((await nativePermission(created.id, "shell", deny.resource)).effect, "deny")
+      const insertedShell = rule("shell", "echo inserted", "deny")
+      const insertedEdit = rule("edit", path.join(directory, "private.txt"), "deny")
+      const prefix = [initial, insertedShell, insertedEdit]
+      const otherClientRules = [...prefix, ...expected, deny, appended]
+      await client.session.update({ sessionID: created.id, permissions: otherClientRules }, options)
+      const unprojected = await nativePermission(created.id, "shell", insertedShell.resource)
+      assert.equal(unprojected.effect, "ask")
+      await client.permission.reply({ sessionID: created.id, requestID: unprojected.id, decision: "reject" }, options)
+      assert.deepEqual(await nextPermissions(), otherClientRules)
+      assert.deepEqual(await nextPermissions(), [...prefix, ...expected, deny, insertedShell, insertedEdit, appended])
+      for (const inserted of [insertedShell, insertedEdit]) {
+        assert.equal((await nativePermission(created.id, inserted.action, inserted.resource)).effect, "deny")
+      }
       assert.equal(await mode("a", created.id, "autonomous"), "autonomous")
-      assert.deepEqual((await client.session.get({ sessionID: created.id })).permissions, [initial])
+      assert.deepEqual((await client.session.get({ sessionID: created.id })).permissions, [...prefix, appended])
+      console.log("PASS: native permission event makes inserted shell and edit denies effective and autonomous retains them")
     } finally {
       watching.abort()
       await refreshStream.return?.()
