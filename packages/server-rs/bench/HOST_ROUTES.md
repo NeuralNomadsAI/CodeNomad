@@ -31,19 +31,19 @@ Rust state: **ported** before this change, **here** ported for this usage, **hos
 | * | `/workspaces/:id/instance/api/*` (agent, command, location, mcp, model, provider, project, session, prompt, model, inbox, instructions, integration, websearch/provider) | conversation, Providers | 200, 204 | ported (allow list) |
 | GET | `/workspaces/:id/yolo/sessions/:ses` | conversation | 200 | decided |
 | GET | `/api/opencode/update` | start-up, project, OpenCode | 200 | to decide |
-| GET | `/api/speech/capabilities` | start-up | 200 | to decide |
+| GET | `/api/speech/capabilities` | start-up | 200 | decided (voice frozen while it is redesigned) |
 | GET | `/api/config-files`, `/api/config-files/:id/content` | Config Files | 200 | to decide |
 | GET | `/api/opencode/login-start` | Missions | 200 | to decide |
 | GET | `/api/remote-control/status` | Remote Access | 200 | to decide |
-| GET | `/api/sidecars` | SideCars | 200 | to decide |
+| GET | `/api/sidecars` | SideCars | 200 | here, with POST, PUT, DELETE and the `/sidecars/:id/*` proxy (HTTP, WebSocket), compared by `sidecars` |
 | POST | `/api/storage/binaries/validate` | Providers | 200 | to decide |
-| GET | `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Stats | 200 | to decide |
+| GET | `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Stats | 200 | here, compared by `usage` |
 
 The TS worktree creation with a session move stayed pending on this fixture (over 120 s), so the journey stops at the dialog; the TS instance storage answered GET 403 and PUT 404 once the conversation started.
 
 ## Not ported, by decision
 
-Yolo (its read is removed from Rust), sign-out (`/api/auth/logout` and its relayed form), the remote window proxy (`remote-proxy`, `--connect-server`), the downloaded UI (`--ui-auto-update`), the release monitor, old migrations (`settings/migrate.ts`, legacy and retired installations), and the dead code of the usage audit's section 2: among ported routes, the reads `GET /api/workspaces/:id/files/content` (its `PUT` stays) and `GET /api/filesystem/files/content` are removed from Rust; `GET`/`PATCH /api/storage/config` and `/api/storage/state` stay unported. The bench no longer compares them (Yolo in `http`, file content reads in `files`, `links` and `hardening`, sign-out in every mode's qualification and in `launch`).
+Voice (`/api/speech/*`, frozen while it is redesigned), Yolo (its read is removed from Rust), sign-out (`/api/auth/logout` and its relayed form), the remote window proxy (`remote-proxy`, `--connect-server`), the downloaded UI (`--ui-auto-update`), the release monitor, old migrations (`settings/migrate.ts`, legacy and retired installations), and the dead code of the usage audit's section 2: among ported routes, the reads `GET /api/workspaces/:id/files/content` (its `PUT` stays) and `GET /api/filesystem/files/content` are removed from Rust; `GET`/`PATCH /api/storage/config` and `/api/storage/state` stay unported. The bench no longer compares them (Yolo in `http`, file content reads in `files`, `links` and `hardening`, sign-out in every mode's qualification and in `launch`).
 
 ## To decide
 
@@ -52,13 +52,11 @@ Observed but not ported, then not observed and therefore not kept. Opinion: usef
 | Route | Called by, when | Reference behaviour | Opinion |
 |---|---|---|---|
 | GET `/api/opencode/update` | start-up, opening a project, Settings › OpenCode | installed and latest OpenCode versions, update availability | useful (with the OpenCode service work) |
-| GET `/api/speech/capabilities` | start-up | which speech providers are configured | useful if voice is kept |
+| GET `/api/usage/:provider` | the conversation Status panel's provider usage section (not Settings › Stats; not observed by the journey) | per-provider balances and quotas (`usage/*`) | doubtful |
 | GET `/api/config-files`, `/:id/content` | Settings › Config Files | lists and reads the raw `opencode.json(c)` files (non-atomic editor) | doubtful |
 | GET `/api/opencode/login-start` | Settings › Missions | OpenCode start at login for Mission calendars | doubtful while Missions are frozen |
 | GET `/api/remote-control/status` | Settings › Remote Access | Remote Access listener and tunnel state | useful (remote access) |
-| GET `/api/sidecars` | Settings › SideCars | configured SideCars | useful if SideCars are kept |
 | POST `/api/storage/binaries/validate` | Settings › Providers / OpenCode binary | probes an OpenCode executable (`--version`) | useful (with the OpenCode service work) |
-| GET `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Settings › Stats | aggregated usage of the OpenCode service | doubtful |
 | PATCH `/api/storage/config/:owner` | Preferences store, when a preference changes (not exercised by the journey) | merge patch with normalization, speech key pairing, host-only check, Missions conditional mode | useful |
 | GET, PATCH `/api/storage/state/:owner` other than `ui` | not observed (`sessionFavorites` is refused) | owner merge patch | dead |
 | GET `/api/workspaces/:id/git-branches` | Mission editor sources only | local `refs/heads/*` of an owned checkout inside the deletion fence | doubtful while Missions are frozen |
@@ -70,3 +68,5 @@ Observed but not ported, then not observed and therefore not kept. Opinion: usef
 - `PATCH /api/storage/state/ui` touching multi-backend profiles (`remoteServers`, remote project history) answers 501: this host does not serve them and does not compact their history.
 - The unrestricted folder browser and workspace creation still refuse UNC shares and device paths (audit M2).
 - Session favorites stay in the data folder rather than in `state.yaml`.
+- SideCar content and WebSockets are served on the loopback listener only: the host's `sidecarsOverDirectHttps` opt-in is not served, so `/api/meta` reports `sidecarsAllowed: false` on the HTTPS listener (the reference's default). A refused SideCar upgrade carries the admission's JSON error body (the reference answers empty).
+- HTTPS SideCars verify against `NODE_EXTRA_CA_CERTS` alone: public authorities never certify 127.0.0.1. A relayed JSON body is re-encoded like `JSON.stringify`, keeping integer-like keys in their received order.

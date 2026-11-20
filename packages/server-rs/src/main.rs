@@ -20,8 +20,10 @@ mod service;
 mod sessions;
 mod settings;
 mod shared;
+mod sidecars;
 mod storage;
 mod subagent_depth;
+mod usage;
 mod workspaces;
 mod worktrees;
 
@@ -134,6 +136,8 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(events::routes())
         .merge(extensions::routes())
         .merge(missions::routes())
+        .merge(sidecars::routes())
+        .merge(usage::routes())
         .merge(opencode::routes());
 
     let shutdown = CancellationToken::new();
@@ -163,8 +167,10 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         tokio::spawn(tls.serve(remote, shutdown.clone()))
     });
     let ui = Arc::new(launch.ui);
+    tokio::spawn(sidecars::probe(state.clone()));
     let local = routes
         .merge(auth::local_routes())
+        .merge(sidecars::proxy::routes())
         .fallback(move |req: Request| {
             let ui = ui.clone();
             async move { host::ui::serve(&ui, req).await }

@@ -57,6 +57,8 @@ pub struct App {
     pub calendar_slot: tokio::sync::Mutex<()>,
     pub calendar_claims: missions::calendar::Claims,
     pub calendar_holds: missions::calendar::Holds,
+    pub sidecars: Lock<Vec<crate::sidecars::SideCar>>,
+    pub usage: crate::usage::Usage,
 }
 
 #[derive(Default)]
@@ -103,6 +105,8 @@ impl App {
         calendar_profile: Option<PathBuf>,
     ) -> Self {
         Self {
+            sidecars: Lock::new(crate::sidecars::load(&settings.owner(crate::settings::Kind::Config, "server"))),
+            usage: Default::default(),
             auth,
             port,
             data,
