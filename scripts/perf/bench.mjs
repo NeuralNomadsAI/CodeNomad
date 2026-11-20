@@ -8,7 +8,7 @@ import { withBrowser } from "./browser.mjs"
 import { withDaemon } from "./daemon-host.mjs"
 import { privatePath, runDirectory } from "./isolation.mjs"
 import { MARKER, p95, sleep, sseReader } from "./lib.mjs"
-import { seed, waitIdle } from "./seed.mjs"
+import { seed, waitIdle, withSampleSessions } from "./seed.mjs"
 import { withTui } from "./tui.mjs"
 
 const { values, positionals: [binary] } = parseArgs({
@@ -67,8 +67,12 @@ async function measure(daemon, ids, driver, countWork) {
     assert.equal(outcomes.size, ids.length, "Timed out waiting for successful native completions")
     const expected = Array.from({ length: Math.ceil(chunks / 8) }, (_, i) => `MKAA${run}${String(i * 8).padStart(4, "0")}K`)
     const last = expected.at(-1)
-    assert(expected.every(key => daemon.markers.has(key)), "Missing synthetic provider marker")
-    assert(daemonAt.has(last), "The daemon stream never published the final marker")
+    for (const i of ids.keys()) {
+      const code = sessionCode(i)
+      const forSession = key => key.replace("MKAA", `MK${code}`)
+      assert(expected.every(key => daemon.markers.has(forSession(key))), `Missing synthetic provider marker for ${code}`)
+      assert(daemonAt.has(forSession(last)), `The daemon stream never published the final marker for ${code}`)
+    }
     const rendered = Date.now() + 30_000
     let observation = await driver.collect()
     while (observation.shown[last] === undefined && Date.now() < rendered) {
@@ -99,7 +103,7 @@ async function measure(daemon, ids, driver, countWork) {
 }
 
 await withDaemon(binary, path.join(root, "daemon"), chunks, async daemon => {
-  const ids = await seed(daemon, turns, Math.max(32, ...(levels ?? [])))
+  const templates = await seed(daemon, turns, Math.max(32, ...(levels ?? [])))
   const write = async (scenario, kind, label, round, level, result) => {
     const stem = path.join(results, `${scenario}-${label}-r${round}-L${level}`)
     const { coverage, ...data } = result
@@ -115,14 +119,14 @@ await withDaemon(binary, path.join(root, "daemon"), chunks, async daemon => {
     for (let round = 0; round < rounds; round++) {
       for (let i = 0; i < entries.length; i++) {
         const { label, tree } = entries[(i + round) % entries.length]
-        const run = async driver => {
-          await sleep(3000)
-          for (const level of samples) {
-            await write(scenario, tree ? "codenomad" : "tui", label, round, level, await measure(daemon, ids.slice(0, level), driver, countWork))
+        for (const level of samples) await withSampleSessions(daemon, templates.slice(0, level), async ids => {
+          const run = async driver => {
+            await sleep(3000)
+            await write(scenario, tree ? "codenomad" : "tui", label, round, level, await measure(daemon, ids, driver, countWork))
           }
-        }
-        if (tree) await withBrowser(daemon, tree, path.join(root, `${scenario}-${label}-${round}`), run)
-        else await withTui(binary, daemon, ids[0], run)
+          if (tree) await withBrowser(daemon, tree, path.join(root, `${scenario}-${label}-${round}-${level}`), run)
+          else await withTui(binary, daemon, ids[0], run)
+        })
       }
     }
   }

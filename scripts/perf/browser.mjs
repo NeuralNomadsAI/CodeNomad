@@ -57,7 +57,7 @@ export async function withBrowser(daemon, tree, root, run) {
           await cdp.send("Profiler.stopPreciseCoverage")
           return result.filter(script => /\/assets\/[^/]+\.js$/.test(script.url)).map(script => ({
             url: new URL(script.url).pathname.split("/").pop(),
-            fns: script.functions.filter(fn => fn.ranges[0].count > 0).map(fn => [fn.functionName, fn.ranges[0].startOffset, fn.ranges[0].count]),
+            fns: script.functions.map(fn => [fn.functionName, fn.ranges[0].startOffset, fn.ranges[0].count]),
           }))
         },
         async typeKey(i) {

@@ -76,7 +76,11 @@ if (values.calibrate) {
 }
 
 const budgets = load(new URL("./perf-budgets.json", import.meta.url))
-if (values.base) assertRatchet(load(values.base), budgets)
+if (values.base) {
+  const base = load(values.base)
+  assertRatchet(base, budgets)
+  budgets.callsByFile = base.callsByFile
+}
 const { report, failures } = budgetReport(budgets, counter, ratios)
 console.log(report)
 if (values.summary) appendFileSync(values.summary, report)

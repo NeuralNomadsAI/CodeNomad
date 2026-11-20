@@ -14,7 +14,7 @@ export async function waitIdle(daemon, id) {
 
 export async function seed(daemon, turns, count) {
   const create = async title => (await daemon.call("POST", "/api/session", { title, location: { directory: daemon.project } })).data.id
-  const foreground = await create("Foreground history")
+  const foreground = await create("Seed foreground history")
   const background = []
   for (let i = 1; i < count; i++) background.push(await create(`Background ${String(i).padStart(2, "0")}`))
   const prompt = async (id, text) => {
@@ -31,4 +31,18 @@ export async function seed(daemon, turns, count) {
     if (i % 50 === 0) console.log(`Seeded ${i} of ${turns} history turns`)
   }
   return [foreground, ...background]
+}
+
+export async function withSampleSessions(daemon, templates, run) {
+  const sessions = []
+  try {
+    for (let i = 0; i < templates.length; i++) {
+      const { data: { id } } = await daemon.call("POST", `/api/session/${templates[i]}/fork`, {})
+      sessions.push(id)
+      if (i === 0) await daemon.call("PATCH", `/api/session/${id}`, { title: "Foreground history" })
+    }
+    await run(sessions)
+  } finally {
+    for (const id of sessions) await daemon.call("DELETE", `/api/session/${id}`)
+  }
 }

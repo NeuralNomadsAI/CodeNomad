@@ -15,7 +15,13 @@
   window.EventSource = class extends window.EventSource {
     constructor(url, init) {
       super(url, init)
-      this.addEventListener("message", () => { if (sample) sample.pageFrames++ })
+      this.addEventListener("message", ({ data }) => {
+        if (!sample) return
+        let payload
+        try { payload = JSON.parse(data) } catch { return }
+        if (payload?.type === "instance.event" && typeof payload.event?.type === "string"
+          && !["server.connected", "server.heartbeat"].includes(payload.event.type)) sample.pageFrames++
+      })
     }
   }
   const start = () => {
@@ -26,7 +32,7 @@
       function scanText(node) {
         if (!node.data.includes("MK")) return
         const element = node.parentElement
-        if (owner.visibleOnly && !element?.closest(".message-stream")) return
+        if (!element?.closest(".message-stream")) return
         for (const match of node.data.matchAll(markers)) {
           if (!(match[0] in owner.shown)) found.set(match[0], { node, index: match.index })
         }
@@ -46,10 +52,9 @@
         const range = document.createRange()
         for (const [marker, { node, index }] of found) {
           const element = node.parentElement
-          if (node.data.slice(index, index + marker.length) !== marker) continue
-          if (!owner.visibleOnly) { owner.shown[marker] ??= at; continue }
           const stream = element?.closest(".message-stream")
-          if (!stream) continue
+          if (!node.isConnected || !stream || node.data.slice(index, index + marker.length) !== marker) continue
+          if (!owner.visibleOnly) { owner.shown[marker] ??= at; continue }
           if (!element.checkVisibility({ visibilityProperty: true })) continue
           range.setStart(node, index)
           range.setEnd(node, index + marker.length)

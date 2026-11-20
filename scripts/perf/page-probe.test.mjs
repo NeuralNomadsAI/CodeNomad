@@ -31,6 +31,14 @@ test("renderer probe counts attributes but observes only visible markers and com
     assert.equal(shot.keyAt, undefined)
     await page.locator("#composer").press("a")
     await page.waitForFunction(() => window.__perf.keyAt())
+    await page.evaluate(() => {
+      window.__perf.arm(false)
+      const stream = document.querySelector("main")
+      stream.innerHTML = "<p>MKAA020001K</p><p>MKAA020002K</p>"
+      queueMicrotask(() => stream.lastElementChild.remove())
+    })
+    await page.waitForFunction(() => window.__perf.collect().shown.MKAA020001K)
+    assert.deepEqual(await page.evaluate(() => Object.keys(window.__perf.collect().shown)), ["MKAA020001K"])
   } finally {
     try { await browser?.close() } finally { await rm(root, { recursive: true, force: true }) }
   }

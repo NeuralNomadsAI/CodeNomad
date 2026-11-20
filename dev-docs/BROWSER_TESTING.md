@@ -82,7 +82,9 @@ The PR build runs `scripts/perf/bench.mjs` on Linux against a pinned OpenCode
 binary, a loopback provider, an owned daemon and a private headless Chromium
 profile. The foreground session has 300 history turns. The guard compares three
 8-session samples of JavaScript calls, Solid computations and DOM mutations per
-native event. At 8 and 32 sessions it compares the final foreground marker at
+native event. Each client and level forks the same seed histories and must
+complete the expected stream in every active session. At 8 and 32 sessions the
+guard compares the final foreground marker at
 the next browser frame or on the TUI screen, plus p95 key latency. The browser
 probe does not require transcript rows to intersect the viewport during the
 sample. Both clients must observe the final marker; intermediate-marker coverage

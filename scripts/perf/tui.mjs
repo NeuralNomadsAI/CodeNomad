@@ -15,7 +15,6 @@ export async function withTui(cli, daemon, session, run) {
   const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 0 })
   let screen = "", seen, waiter
   const data = p.onData(raw => {
-    const at = now()
     term.write(raw, () => {
       const b = term.buffer.active
       screen = ""
@@ -24,6 +23,7 @@ export async function withTui(cli, daemon, session, run) {
         if (y > 0 && !line?.isWrapped) screen += "\n"
         screen += line?.translateToString(!b.getLine(b.viewportY + y + 1)?.isWrapped) ?? ""
       }
+      const at = now()
       if (seen) for (const marker of screen.match(MARKER) ?? []) seen[marker] ??= at
       waiter?.(screen, at)
     })
