@@ -329,7 +329,8 @@ codenomad.worktrees.onChanged(() => { /* list again */ })
     be an ancestor. Any other creation entry, a logged copy or rename into the name, an unlinked branch
     of that name, or one differing only by case (one ref on case-insensitive file systems) answers
     `conflict`. Every lookup and write first requires the selected remote, read without the forge cache,
-    to still name the repository (another one answers `changed`, an `upstream` added meanwhile included).
+    to still name the repository (an `upstream` added meanwhile included): otherwise a lookup or list
+    answers `unavailable` and a write `changed`.
   - *List.* `list` joins the links (at most 200, advisory) to the server's fresh worktree inventory:
     `worktree` when any checkout has the branch, even one lacking the opened folder; `current` when every
     loaded member of the displayed family is in it. `onChanged` fires when the inventory, a worktree's

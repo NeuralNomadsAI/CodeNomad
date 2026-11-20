@@ -191,7 +191,7 @@ function fetchHead(directory: string, remote: string, head: string, scratch: str
     })
     // Taken once the process exists: the tree stop admits a root started no later than this.
     const spawnedBy = new Date()
-    let stderr = "", failure: unknown
+    let stderr = "", failure: unknown, fallback: ReturnType<typeof setTimeout> | undefined
     child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 64 * 1024) stderr += chunk.toString() })
     const killTree = () => {
       if (child.pid === undefined || child.exitCode !== null) return
@@ -204,13 +204,15 @@ function fetchHead(directory: string, remote: string, head: string, scratch: str
       failure = reason
       killTree()
       // A tree that never closes still frees the caller (stopping one on Windows takes a few seconds).
-      setTimeout(() => { child.kill("SIGKILL"); reject(reason) }, 35_000).unref()
+      fallback = setTimeout(() => { child.kill("SIGKILL"); reject(reason) }, 35_000)
+      fallback.unref()
     }
     const abort = () => stop(signal!.reason ?? new Error("Fetch abandoned"))
     const timer = setTimeout(() => stop(new Error("Pull request fetch timed out")), FETCH_TIMEOUT_MS)
     signal?.addEventListener("abort", abort, { once: true })
     const settle = (error?: unknown) => {
       clearTimeout(timer)
+      clearTimeout(fallback)
       signal?.removeEventListener("abort", abort)
       if (failure !== undefined) reject(failure)
       else if (error) reject(error)

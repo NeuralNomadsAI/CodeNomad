@@ -838,3 +838,34 @@ test("worktrees: a family split across worktrees is offered the move, and moved 
     assert.deepEqual(moves, [{ move: ["ses_work", "linked"] }])
   } finally { await page.close() }
 })
+test("worktrees: a child moved alone changes current and notifies the panel", async () => {
+  await install()
+  assert.equal((await createWorkItemBranch(repository, itemSource, "issue", 124)).status, "ok")
+  const { page } = await open()
+  const place = (child: string) => page.evaluate(async (directory) => {
+    const storePath = "/src/stores/session-state.ts"
+    const store = await import(storePath)
+    store.setSessions((state: any) => {
+      const instance = new Map<any, any>(state.get("api4-instance"))
+      instance.set("ses_work", { ...instance.get("ses_work"), location: { directory: "/fixture/.codenomad/worktrees/linked" } })
+      instance.set("ses_other", { ...instance.get("ses_other"), parentId: "ses_work", location: { directory } })
+      return new Map(state).set("api4-instance", instance)
+    })
+  }, child)
+  try {
+    await showPanel(page)
+    await page.evaluate(async () => { const fixture = (window as any).fixture; fixture.addWorktree("linked", "issue-124"); await fixture.reloadWorktrees() })
+    await place("/fixture/.codenomad/worktrees/linked")
+    assert.equal(((await call(page, "worktrees.list")).ok as any[]).find(entry => entry.number === 124)?.current, true)
+    await page.waitForTimeout(300)
+    const before = await frameOf(page).locator("body").evaluate(() => (window as any).worktreeChanges)
+    await place("/fixture")
+    let after = before
+    for (let attempt = 0; attempt < 60 && after <= before; attempt++) {
+      await page.waitForTimeout(50)
+      after = await frameOf(page).locator("body").evaluate(() => (window as any).worktreeChanges)
+    }
+    assert.ok(after > before, "the panel was told to list again")
+    assert.equal(((await call(page, "worktrees.list")).ok as any[]).find(entry => entry.number === 124)?.current, false)
+  } finally { await page.close() }
+})

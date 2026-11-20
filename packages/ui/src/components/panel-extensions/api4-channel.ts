@@ -74,15 +74,15 @@ export function useApi4Channel(props: {
   const authority = { instanceId: props.instanceId, id: props.id, digest: props.digest }
   const session = props.sessionId && props.sessionId !== "info" ? props.sessionId : null
   const granted = (permission: string) => props.permissions.includes(permission)
-  // The family's worktree as the inventory matches it, never the "root" fallback of a miss.
-  const familyWorktree = () => session ? getWorktreeForSession(props.instanceId, getParentSessionId(props.instanceId, session)) : undefined
-  // Every loaded member of the displayed family is in that worktree (OpenCode can move one session alone).
-  const familyAt = (slug: string | undefined) => {
-    if (!session || slug === undefined) return false
+  // Each loaded family member's worktree as the inventory matches it, never the "root" fallback of a miss
+  // (OpenCode can move one session alone); `familyAt` when all are in that one.
+  const familyPlacement = () => {
+    if (!session) return []
     const root = getParentSessionId(props.instanceId, session)
     return [...(sessions().get(props.instanceId)?.values() ?? [])].filter(member => getParentSessionId(props.instanceId, member.id) === root)
-      .every(member => getWorktreeForSession(props.instanceId, member.id)?.slug === slug)
+      .map(member => getWorktreeForSession(props.instanceId, member.id)?.slug)
   }
+  const familyAt = (slug: string | undefined) => slug !== undefined && session !== null && familyPlacement().every(member => member === slug)
   let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined
   let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false }
   const current = () => !disposed && connected && nativeConnected && (props.host.activeSessionId() ?? null) === props.sessionId
@@ -125,7 +125,7 @@ export function useApi4Channel(props: {
     // Worktrees, their branches, or the family's worktree changed: the frame lists again.
     const worktrees = createMemo(() => JSON.stringify([getWorktrees(props.instanceId).map(worktree => [worktree.slug, worktree.branch ?? null,
       worktree.nestedFolderMissing === true]),
-      familyWorktree()?.slug ?? null]))
+      familyPlacement().map(slug => slug ?? null)]))
     createEffect(on(worktrees, () => { if (!disposed && connected && nativeConnected) props.send({ type: "worktrees:changed" }) }, { defer: true }))
   }
 
