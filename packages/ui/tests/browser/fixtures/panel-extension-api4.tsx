@@ -65,7 +65,9 @@ const client: any = {
 // The project's worktrees; creating one and moving a family are recorded, and moves can be refused.
 const worktrees: any[] = [{ slug: "root", label: "main", directory: "/fixture", kind: "root", branch: "main" }]
 const worktreeCalls: unknown[] = [], refusal = { move: false }
-serverApi.fetchWorktrees = async () => ({ isGitRepo: true, defaultDirectory: "/fixture/.codenomad/worktrees", worktrees: [...worktrees] })
+// `fixture.cachedInventory`, when set, is what a non-fresh read answers, as the server's cache may.
+serverApi.fetchWorktrees = async (_id, fresh) => ({ isGitRepo: true, defaultDirectory: "/fixture/.codenomad/worktrees",
+  worktrees: [...(!fresh && (window as any).fixture?.cachedInventory ? (window as any).fixture.cachedInventory : worktrees)] })
 serverApi.createWorktree = async (_id, input) => {
   worktreeCalls.push({ create: input.slug })
   // `fixture.gate`, when set, holds the creation until the test opens it.
@@ -137,6 +139,7 @@ window.addEventListener("message", event => { if (event.data?.fixtureAnswer) fra
   openPanel: () => setPanelOpen(true),
   worktreeCalls: () => worktreeCalls.splice(0),
   refuseMoves: (value: boolean) => { refusal.move = value },
+  freezeInventory: () => { (window as any).fixture.cachedInventory = [...worktrees] },
   addWorktree: (slug: string, branch: string) => { worktrees.push({ slug, label: branch, directory: `/fixture/.codenomad/worktrees/${slug}`, kind: "worktree", branch }) },
   move: (slug: string) => setWorktreeSlugForParentSession(instanceId, "ses_work", slug).catch(() => {}),
   location: (id: string) => infos[id]?.location?.directory ?? "/fixture",

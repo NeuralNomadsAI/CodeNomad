@@ -8,6 +8,7 @@ import { serverEvents } from "../../lib/server-events"
 import { tGlobal } from "../../lib/i18n"
 import { showToastNotification, type ToastHandle } from "../../lib/notifications"
 import { HttpResponseError } from "../../lib/retryable-file-search"
+import { serverApi } from "../../lib/api-client"
 import { alertDialogState, showConfirmDialog } from "../../stores/alerts"
 import { createWorktree, getParentSessionId, getWorktreeForSession, getWorktreeSlugForParentSession, getWorktrees, reloadWorktrees,
   setWorktreeSlugForParentSession } from "../../stores/worktrees"
@@ -192,14 +193,16 @@ export function useApi4Channel(props: {
   }
 
   // The item's own link, looked up exactly on the server (the listing is bounded); a name that
-  // now holds another branch counts as no worktree, and creating it then reports the conflict.
+  // now holds another branch is a conflict.
   async function itemWorktree(kind: ForgeWorkItemKind, number: number, signal: AbortSignal) {
-    // A fresh inventory: a checkout added since the first load counts.
-    const [answer] = await Promise.all([panelExtensionsApi4.workItemBranchLookup(authority, kind, number, signal), reloadWorktrees(props.instanceId)])
+    // The server's fresh inventory itself, not the shared display store a cached read may overwrite:
+    // the dialog and its acceptance see a checkout added meanwhile.
+    const [answer, inventory] = await Promise.all([panelExtensionsApi4.workItemBranchLookup(authority, kind, number, signal),
+      serverApi.fetchWorktrees(props.instanceId, true)])
     if (answer.status === "unavailable") return null
     if (answer.status === "conflict") return { conflict: answer.branch }
     const slug = answer.status === "ok" && answer.branch !== null
-      ? getWorktrees(props.instanceId).find(worktree => !worktree.nestedFolderMissing && worktree.branch === answer.branch)?.slug : undefined
+      ? inventory.worktrees.find(worktree => !worktree.nestedFolderMissing && worktree.branch === answer.branch)?.slug : undefined
     return { repository: answer.repository, branch: answer.branch ?? undefined, slug, current: slug !== undefined && slug === familyWorktree()?.slug }
   }
 

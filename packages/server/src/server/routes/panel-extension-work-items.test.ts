@@ -92,12 +92,16 @@ test("a branch write starts from the displayed worktree and writes nothing once 
   git(project, "remote", "add", "origin", "https://github.com/o/r.git")
   git(project, "worktree", "add", "-q", "-b", "feature", displayed)
   git(displayed, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "displayed")
+  // The opened folder of that worktree holds an unrelated repository: its HEAD must not count.
+  const nested = path.join(displayed, "nested")
+  git(directory, "init", "-q", "-b", "main", nested)
+  git(nested, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "nested")
   const writer = await readPanelExtensionArchive(fixtureArchive("<p>Write</p>", { apiVersion: 4,
     permissions: ["session.context", "repository.workItems.read", "repository.worktrees.read", "repository.worktrees.write"] }))
   let discovery: (() => Promise<void>) | undefined
   const forge = { branchSource: async () => { await discovery?.(); return { provider: "github", host: "github.com", path: "o/r", name: "origin" } } } as unknown as ForgeWorkItems
   registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: () => ({ id: "i", path: project }),
-    getWorktrees: async () => ({ worktrees: [{ slug: "root", directory: project }, { slug: "feature", directory: displayed }] }) } as any })
+    getWorktrees: async () => ({ worktrees: [{ slug: "root", directory: project }, { slug: "feature", directory: nested, registeredDirectory: displayed }] }) } as any })
   const write = (extra = {}) => app.inject({ method: "POST", url: `/api/panel-extensions/${writer.manifest.id}/workItemBranch`,
     payload: { instanceId: "i", digest: writer.digest, kind: "issue", repository: "github.com/o/r", ...extra } })
   try {

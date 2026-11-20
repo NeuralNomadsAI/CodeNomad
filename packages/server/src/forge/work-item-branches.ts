@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import path from "node:path"
 import type { ForgeProvider, ForgeWorkItemKind } from "../panel-extensions/contract"
 import { runGitProcess } from "../workspaces/git-process"
 import { stopWindowsProcessTree } from "../process-tree"
@@ -68,7 +69,9 @@ async function links(directory: string, source: Pick<WorkItemBranchSource, "host
 }
 
 /** Existing local branches linked to items of `source`'s repository, at most 200 (display only: opening uses the exact lookup). */
-export async function readWorkItemBranches(directory: string, source: Pick<WorkItemBranchSource, "host" | "path">): Promise<WorkItemBranch[]> {
+export async function readWorkItemBranches(directory: string, source: WorkItemBranchSource, signal?: AbortSignal): Promise<WorkItemBranch[] | undefined> {
+  // The selected remote must still name the repository, as for every exact lookup.
+  if (await remoteUrl(directory, source, signal) !== "ok") return undefined
   return (await links(directory, source)).slice(0, MAX_LISTED).map(({ start: _start, ...link }) => link)
 }
 
@@ -108,8 +111,10 @@ async function linkedBranch(directory: string, source: WorkItemBranchSource, kin
   const repository = workItemRepository(source), name = itemBranch(kind, number), ref = `refs/heads/${name}`
   const value = LINK.exec(await git(directory, ["config", "--local", "--get", `branch.${name}.${KEY}`]).catch(() => ""))
   const exists = await git(directory, ["rev-parse", "--verify", "--quiet", ref]).then(Boolean, () => false)
-  if (!value || !exists || value[1] !== repository || value[2] !== kind.toLowerCase() || Number(value[3]) !== number || value[5] !== name) {
-    return { status: "ok", repository, branch: null }
+  if (!exists) return { status: "ok", repository, branch: null }
+  // The name holds a branch that is not this item's link: nothing CodeNomad may reuse or create.
+  if (!value || value[1] !== repository || value[2] !== kind.toLowerCase() || Number(value[3]) !== number || value[5] !== name) {
+    return { status: "conflict", branch: name }
   }
   const link = { branch: name, start: value[4]! }
   const [contains, reflog] = await Promise.all([
@@ -130,11 +135,15 @@ async function linkedBranch(directory: string, source: WorkItemBranchSource, kin
  */
 export function createWorkItemBranch(directory: string, source: WorkItemBranchSource, kind: ForgeWorkItemKind, number: number,
   guard: WorkItemBranchGuard = {}): Promise<WorkItemBranchResult> {
-  const previous = locks.get(directory) ?? Promise.resolve()
-  const run = previous.catch(() => {}).then(() => create(directory, source, kind, number, guard))
-  locks.set(directory, run)
-  void run.catch(() => {}).finally(() => { if (locks.get(directory) === run) locks.delete(directory) })
-  return run
+  // One lock per repository: linked checkouts and nested folders share their Git common directory.
+  const key = git(directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).then(common => path.resolve(common).toLowerCase(), () => directory)
+  return key.then(key => {
+    const previous = locks.get(key) ?? Promise.resolve()
+    const run = previous.catch(() => {}).then(() => create(directory, source, kind, number, guard))
+    locks.set(key, run)
+    void run.catch(() => {}).finally(() => { if (locks.get(key) === run) locks.delete(key) })
+    return run
+  })
 }
 
 /**

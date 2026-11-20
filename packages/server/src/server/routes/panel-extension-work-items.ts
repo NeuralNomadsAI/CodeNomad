@@ -62,7 +62,8 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
   // asks the user before each creation; addons never name a branch, remote or revision.
   route("workItemBranches", "repository.worktrees.read", z.object(authority).strict(), async (directory, _input, signal) => {
     const source = await deps.forge.branchSource(directory, signal)
-    return source ? { status: "ok", branches: await readWorkItemBranches(directory, source) } : { status: "unavailable" }
+    const branches = source && await readWorkItemBranches(directory, source, signal)
+    return branches ? { status: "ok", branches } : { status: "unavailable" }
   })
   // Opening looks up the item's own link, beyond the listing's bound.
   route("workItemBranchLookup", "repository.worktrees.read", urlSchema, async (directory, input, signal) => {
@@ -74,8 +75,10 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
     const source = await deps.forge.branchSource(directory, signal)
     if (!source) return { status: "unavailable" }
     if (workItemRepository(source) !== input.repository) return { status: "changed" }
-    const base = input.fromSlug === undefined ? undefined : (await deps.workspaceManager.getWorktrees(input.instanceId, "cached"))
-      .worktrees.find(worktree => worktree.slug === input.fromSlug && !worktree.nestedFolderMissing)?.directory
+    const worktree = input.fromSlug === undefined ? undefined : (await deps.workspaceManager.getWorktrees(input.instanceId, "cached"))
+      .worktrees.find(worktree => worktree.slug === input.fromSlug && !worktree.nestedFolderMissing)
+    // HEAD of the checkout root, as worktree creation reads it, never of a repository nested in the opened folder.
+    const base = worktree?.registeredDirectory ?? worktree?.directory
     if (input.fromSlug !== undefined && !base) return { status: "unavailable" }
     return createWorkItemBranch(directory, source, input.kind, input.number, { base, check: current, signal })
   })

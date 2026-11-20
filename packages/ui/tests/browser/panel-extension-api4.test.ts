@@ -744,3 +744,18 @@ test("worktrees: a name holding another branch is reported before any dialog", a
     assert.equal(await page.getByRole("button", { name: "Create and move", exact: true }).count(), 0)
   } finally { await page.close() }
 })
+test("worktrees: acceptance reads a fresh inventory, not the server's cache", async () => {
+  await install()
+  assert.equal((await createWorkItemBranch(repository, itemSource, "issue", 27)).status, "ok")
+  const { page } = await open()
+  try {
+    await showPanel(page)
+    await fixtureCall(page, "freezeInventory")
+    assert.deepEqual(await call(page, "worktrees.open", "issue", 27), { ok: "confirming" })
+    await page.getByText("Create a worktree for issue #27 and move this conversation there?").waitFor()
+    await fixtureCall(page, "addWorktree", "external", "issue-27")
+    await page.getByRole("button", { name: "Create and move", exact: true }).click()
+    await page.getByText("The worktree for issue #27 changed. Try again.").first().waitFor()
+    assert.deepEqual(await worktreeCalls(page), [])
+  } finally { await page.close() }
+})

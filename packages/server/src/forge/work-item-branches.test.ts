@@ -65,10 +65,12 @@ describe("work item branches", () => {
     assert.deepEqual(await create(clone, source, "issue", 3), { status: "ok", branch: "issue-3", created: false })
     assert.deepEqual(await create(clone, source, "issue", 4), { status: "ok", branch: "issue-4", created: true })
     assert.equal(git(clone, "rev-parse", "issue-4"), base)
-    assert.deepEqual(await readWorkItemBranches(clone, { host: source.host.toUpperCase(), path: source.path }),
+    assert.deepEqual(await readWorkItemBranches(clone, { ...source, host: source.host.toUpperCase() }),
       [{ kind: "issue", number: 3, branch: "issue-3" }, { kind: "issue", number: 4, branch: "issue-4" }])
-    assert.deepEqual(await readWorkItemBranches(clone, { host: source.host, path: source.path.toUpperCase() }), [], "the path keeps its case")
-    assert.deepEqual(await readWorkItemBranches(clone, { host: source.host, path: "team/other" }), [])
+    assert.equal(await readWorkItemBranches(clone, { ...source, path: source.path.toUpperCase() }), undefined, "the path keeps its case")
+    assert.equal(await readWorkItemBranches(clone, { ...source, path: "team/other" }), undefined)
+    git(clone, "remote", "set-url", "origin", "https://github.com/team/new.git")
+    assert.equal(await readWorkItemBranches(clone, source), undefined, "a retargeted remote lists nothing of the old repository")
   })
 
   it("fetches a pull or merge request head as the repository publishes it, leaving no scratch ref", async () => {
@@ -80,7 +82,7 @@ describe("work item branches", () => {
     assert.deepEqual(await create(clone, { ...source, provider: "gitlab" }, "pullRequest", 8), { status: "ok", branch: "pr-8", created: true })
     assert.equal(git(clone, "rev-parse", "pr-8"), head)
     assert.equal(git(clone, "for-each-ref", "refs/codenomad/"), "")
-    assert.deepEqual((await readWorkItemBranches(clone, source)).map(link => link.branch).sort(), ["pr-7", "pr-8"])
+    assert.deepEqual((await readWorkItemBranches(clone, source))!.map(link => link.branch).sort(), ["pr-7", "pr-8"])
   })
 
   it("never moves another branch through the remote's configured refspecs", async () => {
@@ -214,6 +216,7 @@ describe("work item branches", () => {
   it("never takes over an unlinked branch of the same name, and reports a missing head", async () => {
     const { clone, base, source } = await project()
     git(clone, "branch", "pr-7", base)
+    assert.deepEqual(await lookup(clone, source, "pullRequest", 7), { status: "conflict", branch: "pr-7" }, "reported before any dialog")
     assert.deepEqual(await create(clone, source, "pullRequest", 7), { status: "conflict", branch: "pr-7" })
     assert.equal(git(clone, "rev-parse", "pr-7"), base)
     assert.deepEqual(await create(clone, source, "pullRequest", 9), { status: "unavailable" })
@@ -257,7 +260,7 @@ describe("work item branches", () => {
     const value = (i: number) => `${source.host}/${source.path}#issue/${i}@${base}/issue-${i}`
     execFileSync("git", ["-C", clone, "update-ref", "--stdin"], { input: Array.from({ length: 201 }, (_, i) => `create refs/heads/issue-${i + 1} ${base}\n`).join("") })
     appendFileSync(path.join(clone, ".git", "config"), Array.from({ length: 201 }, (_, i) => `\n[branch "issue-${i + 1}"]\n\tcodenomad-work-item = \"${value(i + 1)}\"\n`).join(""))
-    assert.equal((await readWorkItemBranches(clone, source)).length, 200)
+    assert.equal((await readWorkItemBranches(clone, source))!.length, 200)
     assert.deepEqual(await lookup(clone, source, "issue", 201), { status: "ok", branch: "issue-201" })
   })
 
