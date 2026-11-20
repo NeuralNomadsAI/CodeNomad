@@ -8,7 +8,8 @@ const below = (root, file) => {
   const relative = path.relative(root, file)
   return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`)
 }
-const unsafeRoots = [os.homedir(), ...(process.platform === "win32" ? ["C:\\Users\\Admin"] : [])]
+// The account's own profile (os.userInfo asks the system), even when HOME/USERPROFILE point elsewhere.
+const unsafeRoots = [...new Set([os.homedir(), os.userInfo().homedir])]
 
 export async function outsideUserHome(directory) {
   const resolved = await realpath(directory)
