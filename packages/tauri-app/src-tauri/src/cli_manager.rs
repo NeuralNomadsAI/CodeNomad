@@ -23,7 +23,7 @@ use std::mem::{size_of, zeroed};
 use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -1216,7 +1216,7 @@ impl CliProcessManager {
 
         let use_user_shell = supports_user_shell();
 
-        if !use_user_shell && which::which(&resolution.node_binary).is_err() {
+        if !use_user_shell && resolution.runner != Runner::Rust && which::which(&resolution.node_binary).is_err() {
             return Err(anyhow::anyhow!(
                 "Node binary '{}' not found. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
                 resolution.node_binary
@@ -1253,10 +1253,7 @@ impl CliProcessManager {
         if !manager.is_current_generation(generation) {
             return Ok(());
         }
-        let cmd = DirectCommand {
-            program: resolution.node_binary.clone(),
-            args: resolution.runner_args(&args),
-        };
+        let cmd = resolution.command(&args);
         let mut child = {
             log_line(&format!("spawn command: {} {:?}", cmd.program, cmd.args));
             #[cfg(windows)]
@@ -1301,6 +1298,8 @@ impl CliProcessManager {
                 },
             );
             c.env("CODENOMAD_NATIVE_PARENT", "1");
+            // Unix replaces the environment with the user shell's: keep the Rust server's backtraces.
+            c.env("RUST_BACKTRACE", "1");
             c.env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", if cfg!(any(windows, target_os = "macos", target_os = "linux")) { "1" } else { "0" });
             configure_spawn(&mut c);
             if let Some(ref cwd) = cwd {
@@ -1709,10 +1708,32 @@ struct CliEntry {
 enum Runner {
     Node,
     Tsx,
+    /// The Rust server binary, run directly; `node_binary` only serves the user-shell probe.
+    Rust,
 }
+
+/// `CODENOMAD_SERVER_IMPL=rust` launches the Rust server binary instead of the Node server.
+fn uses_rust_server(value: Option<&str>) -> bool {
+    value.is_some_and(|v| v.trim().eq_ignore_ascii_case("rust"))
+}
+
+const RUST_SERVER_FILE: &str = if cfg!(windows) { "codenomad-rs.exe" } else { "codenomad-rs" };
 
 impl CliEntry {
     fn resolve(app: &AppHandle, dev: bool) -> anyhow::Result<Self> {
+        if uses_rust_server(std::env::var("CODENOMAD_SERVER_IMPL").ok().as_deref()) {
+            let exe_dir = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf));
+            let target_dir = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
+            let entry = resolve_rust_server(dev, exe_dir, workspace_root(), target_dir)
+                .ok_or_else(|| anyhow::anyhow!("Unable to locate the CodeNomad Rust server (codenomad-rs). Build packages/server-rs or rebuild the desktop bundle."))?;
+            return Ok(Self {
+                entry: entry.to_string_lossy().into_owned(),
+                runner: Runner::Rust,
+                runner_path: None,
+                node_binary: resolve_bundled_node_binary().unwrap_or_else(|_| "node".to_string()),
+                node_args: Vec::new(),
+            });
+        }
         if dev {
             let node_binary = std::env::var("NODE_BINARY").unwrap_or_else(|_| "node".to_string());
             if let Some(tsx_path) = resolve_tsx(app) {
@@ -1790,6 +1811,13 @@ impl CliEntry {
             args.push("true".to_string());
         }
         args
+    }
+
+    fn command(&self, cli_args: &[String]) -> DirectCommand {
+        if self.runner == Runner::Rust {
+            return DirectCommand { program: self.entry.clone(), args: cli_args.to_vec() };
+        }
+        DirectCommand { program: self.node_binary.clone(), args: self.runner_args(cli_args) }
     }
 
     fn runner_args(&self, cli_args: &[String]) -> Vec<String> {
@@ -1881,25 +1909,41 @@ fn prod_entry_candidates(
     exe_dir: Option<PathBuf>,
     workspace: Option<PathBuf>,
 ) -> Vec<Option<PathBuf>> {
-    let mut candidates = Vec::new();
-
-    if let Some(dir) = exe_dir {
-        candidates.push(Some(dir.join("resources/server/dist/bin.js")));
-
-        let resources = dir.join("../Resources");
-        candidates.push(Some(resources.join("server/dist/bin.js")));
-        candidates.push(Some(resources.join("resources/server/dist/bin.js")));
-
-        let linux_resource_roots = [dir.join("../lib/CodeNomad"), dir.join("../lib/codenomad")];
-        for root in linux_resource_roots {
-            candidates.push(Some(root.join("server/dist/bin.js")));
-            candidates.push(Some(root.join("resources/server/dist/bin.js")));
-        }
-    }
-
+    let mut candidates: Vec<_> = packaged_servers(exe_dir).into_iter().map(|dir| Some(dir.join("dist/bin.js"))).collect();
     candidates.push(workspace.map(|p| p.join("packages/server/dist/bin.js")));
-
     candidates
+}
+
+/// The packaged `server` folders (Windows, macOS, Linux layouts), in preference order.
+fn packaged_servers(exe_dir: Option<PathBuf>) -> Vec<PathBuf> {
+    let Some(dir) = exe_dir else { return Vec::new() };
+    let resources = dir.join("../Resources");
+    let mut roots = vec![dir.join("resources"), resources.clone(), resources.join("resources")];
+    for root in [dir.join("../lib/CodeNomad"), dir.join("../lib/codenomad")] {
+        roots.push(root.clone());
+        roots.push(root.join("resources"));
+    }
+    roots.into_iter().map(|root| root.join("server")).collect()
+}
+
+/// The packaged binary sits in `server/`, beside the `public/` UI it serves.
+/// Development prefers the newest Cargo build (debug or release).
+fn resolve_rust_server(
+    dev: bool,
+    exe_dir: Option<PathBuf>,
+    workspace: Option<PathBuf>,
+    cargo_target_dir: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let packaged = packaged_servers(exe_dir).into_iter().map(|dir| dir.join(RUST_SERVER_FILE)).find(|p| p.is_file());
+    let built = cargo_target_dir
+        .into_iter()
+        .chain(workspace.map(|p| p.join("packages/server-rs/target")))
+        .flat_map(|dir| ["debug", "release"].map(|profile| dir.join(profile).join(RUST_SERVER_FILE)))
+        .filter_map(|p| Some((p.metadata().ok()?.modified().ok()?, p)))
+        .rev()
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, p)| p);
+    if dev { built.or(packaged) } else { packaged.or(built) }
 }
 
 #[cfg(unix)]
@@ -2107,6 +2151,41 @@ pub(crate) mod tests {
             candidates.last(),
             Some(&workspace.join("packages/server/dist/bin.js"))
         );
+    }
+
+    #[test]
+    fn rust_server_resolves_from_resources_or_the_newest_cargo_build() {
+        assert!(!uses_rust_server(None));
+        assert!(!uses_rust_server(Some("node")));
+        assert!(uses_rust_server(Some(" Rust ")));
+
+        let root = tempfile::tempdir().unwrap();
+        let place = |dir: &str| {
+            let path = root.path().join(dir).join(RUST_SERVER_FILE);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "").unwrap();
+            path
+        };
+        let exe_dir = Some(root.path().join("app"));
+        let workspace = Some(root.path().join("repo"));
+        let resolve = |dev, target: Option<PathBuf>| resolve_rust_server(dev, exe_dir.clone(), workspace.clone(), target);
+        assert_eq!(resolve(false, None), None);
+
+        let release = place("repo/packages/server-rs/target/release");
+        let debug = place("repo/packages/server-rs/target/debug");
+        let old = SystemTime::now() - Duration::from_secs(60);
+        fs::File::options().write(true).open(&release).unwrap().set_modified(old).unwrap();
+        assert_eq!(resolve(true, None), Some(debug.clone()));
+        let custom = place("cargo-target/release");
+        assert_eq!(resolve(true, Some(root.path().join("cargo-target"))), Some(custom));
+
+        let packaged = place("app/resources/server");
+        assert_eq!(resolve(false, None), Some(packaged.clone()));
+        assert_eq!(resolve(true, None), Some(debug));
+
+        let entry = CliEntry { entry: packaged.to_string_lossy().into_owned(), runner: Runner::Rust, runner_path: None, node_binary: "node".into(), node_args: Vec::new() };
+        let command = entry.command(&["serve".to_string()]);
+        assert_eq!((command.program.as_str(), command.args), (entry.entry.as_str(), vec!["serve".to_string()]));
     }
 
     #[test]
